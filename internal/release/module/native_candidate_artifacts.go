@@ -154,6 +154,7 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 	result.AuthorizationPolicyRevision = targetPolicy.revision
 	result.AuthorizationPolicyDigest = targetPolicy.digest
 	result.AuthorizationFingerprint = authorizationFingerprint
+	result.AuthorizationSnapshot = targetPolicy.snapshot
 	result.Generation.AccessPolicyJSON = targetPolicy.canonical
 	result.Generation.Restrictions = candidateRestrictions(targetPolicy.snapshot)
 	if err := retainNativeServingDocuments(&result.Generation, compiledProject); err != nil {
@@ -429,6 +430,10 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 		targetPolicy.canonical != inspected.Generation.AccessPolicyJSON || authorizationFingerprint != inspected.AuthorizationFingerprint {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("target authorization policy changed after candidate inspection"))
 	}
+	// Carry the revalidated candidate-graph snapshot forward so the native
+	// delivery planner can bind its compound execution evidence before any
+	// physical consequence is admitted.
+	inspected.AuthorizationSnapshot = targetPolicy.snapshot
 	_, publicationsJSON, appearancesJSON, err := nativeServingDocuments(compiledProject)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
@@ -579,6 +584,7 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 		targetPolicy.canonical != inspected.Generation.AccessPolicyJSON || authorizationFingerprint != inspected.AuthorizationFingerprint {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("target authorization policy changed after candidate inspection"))
 	}
+	inspected.AuthorizationSnapshot = targetPolicy.snapshot
 	_, publicationsJSON, appearancesJSON, err := nativeServingDocumentsFromManifest(compiled.Manifest)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)

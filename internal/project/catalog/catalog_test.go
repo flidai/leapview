@@ -291,6 +291,69 @@ func TestListCursorIsBoundToParent(t *testing.T) {
 	}
 }
 
+func TestSearchCursorIsBoundToPrincipalAuthorizationContext(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "model_a", Kind: projectgraph.KindModel, Name: "a"},
+		{ID: "model_b", Kind: projectgraph.KindModel, Name: "b"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principalA, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_a")
+	principalB, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_b")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{
+		grant(t, project, "grant_a", principalA, "model_a", projectgraph.KindModel),
+		grant(t, project, "grant_b", principalA, "model_b", projectgraph.KindModel),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, _ := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{
+		principalA.ID: {principalA}, principalB.ID: {principalB},
+	}})
+	first, err := service.Search(t.Context(), SearchRequest{PrincipalID: principalA.ID, Query: "model", Limit: 1})
+	if err != nil || first.NextCursor == "" || len(first.Items) != 1 {
+		t.Fatalf("first page = %#v, %v", first, err)
+	}
+	second, err := service.Search(t.Context(), SearchRequest{PrincipalID: principalB.ID, Query: "model", Limit: 1, Cursor: first.NextCursor})
+	if !errors.Is(err, ErrInvalidCursor) || len(second.Items) != 0 {
+		t.Fatalf("cross-principal page = %#v, %v, want invalid cursor and no items", second, err)
+	}
+}
+
+func TestSearchCursorReauthorizesSemanticVisibilityOnContinuation(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "semantic_a", Kind: projectgraph.KindSemanticModel, Name: "a"},
+		{ID: "semantic_b", Kind: projectgraph.KindSemanticModel, Name: "b"},
+		{ID: "semantic_c", Kind: projectgraph.KindSemanticModel, Name: "c"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowB := true
+	service, err := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{}, WithSemanticModelVisibility(func(_ context.Context, _ Lease, _ string, id projectgraph.ResourceID) (bool, error) {
+		return id != "semantic_b" || allowB, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.Search(t.Context(), SearchRequest{PrincipalID: "dev", DevAuthBypass: true, Query: "semantic", Limit: 1})
+	if err != nil || first.NextCursor == "" || first.Items[0].Ref.ID != "semantic_a" {
+		t.Fatalf("first page = %#v, %v", first, err)
+	}
+	allowB = false
+	second, err := service.Search(t.Context(), SearchRequest{PrincipalID: "dev", DevAuthBypass: true, Query: "semantic", Limit: 1, Cursor: first.NextCursor})
+	if err != nil || len(second.Items) != 1 || second.Items[0].Ref.ID != "semantic_c" {
+		t.Fatalf("second page = %#v, %v, want reauthorized semantic_c", second, err)
+	}
+}
+
 func TestSearchRejectsOversizedQuery(t *testing.T) {
 	service, _, principal, _ := catalogFixture(t, nil)
 	_, err := service.Search(context.Background(), SearchRequest{PrincipalID: principal.ID, Query: strings.Repeat("x", MaxQueryLength+1)})

@@ -159,8 +159,8 @@ model ProjectClaimUnavailableFailure {}
 interface ProjectClaimBootstrap {
   @summary("Bootstrap this unclaimed instance with an issuer-owned ProjectUID")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "project.claim.bootstrapped", guarantee: "transactional" })
   @apigen.auditPayload(ProjectClaimBootstrappedAuditPayload)
   @apigen.failsWith(ProjectClaimInvalidFailure)
@@ -766,13 +766,13 @@ model SeparationOfDutyRequiredFailure {}
 
 @route("/projects/{project}/candidate-sync")
 @tag("Deployments")
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT", action: "delivery.plan", resolver: "delivery" })
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 interface CandidateSynchronization {
   @summary("Plan content-addressed synchronization for the current author's private candidate")
   @route("/plan")
   @post
-  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.command(#{ auditAction: "candidate.source_sync_planned" })
   @apigen.auditPayload(CandidateSourceSyncPlannedAuditPayload)
   @apigen.failsWith(CandidateUnavailableFailure)
@@ -789,7 +789,7 @@ interface CandidateSynchronization {
   @doc("This source-only operation stores immutable bytes for a later target-owned delivery plan. It must not create a candidate, acquire physical credentials, or perform catalog work.")
   @route("/source")
   @post
-  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.failsWith(CandidateUnavailableFailure)
   @apigen.failsWith(CandidateConflictFailure)
   @apigen.failsWith(InvalidCandidateFailure)
@@ -800,7 +800,7 @@ interface CandidateSynchronization {
   @summary("Upload a missing immutable private-candidate source blob")
   @route("/blobs/{digest}")
   @put
-  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.failsWith(CandidateUnavailableFailure)
   @apigen.failsWith(CandidateConflictFailure)
   @apigen.failsWith(InvalidCandidateFailure)
@@ -903,8 +903,8 @@ model DeliveryMutationInvalidFailure {}
 interface DeliveryStatus {
   @summary("Create an immutable target-owned delivery plan")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "delivery.plan", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.command(#{ auditAction: "delivery.plan.created", guarantee: "transactional" })
   @apigen.auditPayload(DeliveryCommandAuditPayload)
   @apigen.failsWith(DeliveryReadUnavailableFailure)
@@ -921,8 +921,8 @@ interface DeliveryStatus {
   @summary("Build and seal one immutable delivery plan")
   @route("/plans/{plan}/build")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE", action: "delivery.build", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.command(#{ auditAction: "delivery.build.sealed", guarantee: "transactional" })
   @apigen.auditPayload(DeliveryCommandAuditPayload)
   @apigen.failsWith(DeliveryObjectNotFoundFailure)
@@ -940,8 +940,8 @@ interface DeliveryStatus {
   @summary("Publish a sealed candidate with the target CAS fence")
   @route("/candidates/{candidate}/publish")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH", action: "delivery.publish", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.command(#{ auditAction: "delivery.publication.requested", guarantee: "transactional" })
   @apigen.auditPayload(DeliveryCommandAuditPayload)
   @apigen.failsWith(DeliveryObjectNotFoundFailure)
@@ -959,8 +959,8 @@ interface DeliveryStatus {
   @summary("Request approval for a pending canonical delivery publication")
   @route("/publications/{publication}/approval-requests")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH", action: "delivery.publish", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.command(#{
     auditAction: "delivery.publication.approval_requested",
     guarantee: "transactional",
@@ -976,8 +976,8 @@ interface DeliveryStatus {
   @summary("Approve a canonical delivery publication")
   @route("/publications/{publication}/approval-requests/{approval}/approve")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "delivery.approve", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.command(#{
     auditAction: "delivery.publication.approved",
     guarantee: "transactional",
@@ -993,8 +993,8 @@ interface DeliveryStatus {
   @summary("Deny a canonical delivery publication")
   @route("/publications/{publication}/approval-requests/{approval}/deny")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "delivery.approve", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.command(#{
     auditAction: "delivery.publication.denied",
     guarantee: "transactional",
@@ -1010,8 +1010,8 @@ interface DeliveryStatus {
   @summary("Revoke a canonical delivery publication approval")
   @route("/publications/{publication}/approval-requests/{approval}/revoke")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "delivery.approve", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.command(#{
     auditAction: "delivery.publication.approval_revoked",
     guarantee: "transactional",
@@ -1026,15 +1026,15 @@ interface DeliveryStatus {
   @summary("Get canonical delivery publication approval")
   @route("/publications/{publication}/approval-requests/{approval}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "delivery.read", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   getDeliveryPublicationApproval(@path @apigen.target project: ResourceId, @path publication: string, @path approval: string): OkJson<DeploymentApprovalResponse> | CommonErrors;
 
   @summary("Rollback by selecting a retained generation with the target CAS fence")
   @route("/generations/{generation}/rollback")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "delivery.rollback", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.command(#{ auditAction: "delivery.rollback.requested", guarantee: "transactional" })
   @apigen.auditPayload(DeliveryCommandAuditPayload)
   @apigen.failsWith(DeliveryObjectNotFoundFailure)
@@ -1052,8 +1052,8 @@ interface DeliveryStatus {
   @summary("Preview one immutable delivery plan and its durable evidence")
   @route("/plans/{plan}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "delivery.read", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @extension("x-leapview-audit-action", "delivery.plan.read")
   @apigen.failsWith(DeliveryObjectNotFoundFailure)
   @apigen.failsWith(DeliveryReadUnavailableFailure)
@@ -1063,8 +1063,8 @@ interface DeliveryStatus {
   @summary("Get build-attempt status and exact sealed identities")
   @route("/builds/{build}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "delivery.read", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @extension("x-leapview-audit-action", "delivery.build.read")
   @apigen.failsWith(DeliveryObjectNotFoundFailure)
   @apigen.failsWith(DeliveryReadUnavailableFailure)
@@ -1074,8 +1074,8 @@ interface DeliveryStatus {
   @summary("Get snapshot-seal verification status and relation evidence digests")
   @route("/seals/{seal}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "delivery.read", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @extension("x-leapview-audit-action", "delivery.seal.read")
   @apigen.failsWith(DeliveryObjectNotFoundFailure)
   @apigen.failsWith(DeliveryReadUnavailableFailure)
@@ -1085,8 +1085,8 @@ interface DeliveryStatus {
   @summary("Get candidate status and exact serving-artifact identities")
   @route("/candidates/{candidate}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "delivery.read", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @extension("x-leapview-audit-action", "delivery.candidate.read")
   @apigen.failsWith(DeliveryObjectNotFoundFailure)
   @apigen.failsWith(DeliveryReadUnavailableFailure)
@@ -1096,8 +1096,8 @@ interface DeliveryStatus {
   @summary("Get generation status and rollback evidence")
   @route("/generations/{generation}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "delivery.read", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @extension("x-leapview-audit-action", "delivery.generation.read")
   @apigen.failsWith(DeliveryObjectNotFoundFailure)
   @apigen.failsWith(DeliveryReadUnavailableFailure)
@@ -1107,8 +1107,8 @@ interface DeliveryStatus {
   @summary("Get publication or rollback CAS result evidence")
   @route("/publications/{publication}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "delivery.read", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @extension("x-leapview-audit-action", "delivery.publication.read")
   @apigen.failsWith(DeliveryObjectNotFoundFailure)
   @apigen.failsWith(DeliveryReadUnavailableFailure)
@@ -1118,8 +1118,8 @@ interface DeliveryStatus {
   @summary("Inspect target snapshot state and degraded status")
   @route("/operator")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "delivery.read", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @extension("x-leapview-audit-action", "delivery.operator.read")
   @apigen.failsWith(DeliveryObjectNotFoundFailure)
   @apigen.failsWith(DeliveryReadUnavailableFailure)

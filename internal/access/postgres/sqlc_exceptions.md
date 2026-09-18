@@ -12,12 +12,13 @@ functions, role grants, and the `DO` grant blocks. SQLC must parse this file,
 but must never replace or generate it.
 
 The same rule applies to the access-owned forward migrations
-`002_typed_attribute_registry.sql` and `003_semantic_attribute_control.sql`.
-They define the profile-qualified registry/control tables, immutable identity
-and tombstone triggers, singleton revision/digest guards, subject/definition
-checks, and role ACLs. Those are schema authority and remain handwritten
-migration input. SQLC generates only the stable leaves declared in the
-capability-local query files.
+`002_typed_attribute_registry.sql`, `003_semantic_attribute_control.sql`, and
+`026_durable_authority_grants.sql`. They define the profile-qualified
+registry/control and durable-grant tables, immutable identity and tombstone
+triggers, singleton revision/digest guards, subject/definition checks, and
+role ACLs. Those are schema authority and remain handwritten migration input.
+SQLC generates only the stable leaves declared in the capability-local query
+files.
 
 ## Repository SQL
 
@@ -30,12 +31,14 @@ capability-local query files.
 `queries/oauth.sql`, `queries/principal.sql`, `queries/core_ops.sql`,
 `queries/extended_ops.sql`, `queries/authoring_ops.sql`,
 `queries/scim_ops.sql`, `queries/snapshot_ops.sql`, `queries/audit_ops.sql`,
-and `queries/semantic_attribute_control.sql`
+`queries/semantic_attribute_control.sql`, and `queries/durable_grants.sql`
 contain the stable OAuth, principal, core access, extended access, device
 authorization, authoring credential, instance-clock, SCIM, snapshot, and audit
 leaves, including semantic registry/control reads, writes, version predicates,
-and ordered projections. `internal/db/*.go` is generated with sqlc v1.31.1 and
-`sql_package: pgx/v5`. Repository Go files retain transaction ownership,
+ordered projections, and the durable resource-share, execution, grant-admin,
+credential-evidence, target-activity, and typed revoke leaves. `internal/db/*.go`
+is generated with sqlc v1.31.1 and `sql_package: pgx/v5`. Repository Go files
+retain transaction ownership,
 fosite and authoring replay/error mapping, secret handling, audit orchestration,
 state-machine checks, semantic registry/control digest calculation,
 canonicalization, authorization invariants, and domain conversion around those

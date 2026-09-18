@@ -149,7 +149,10 @@ func TestPrincipalLifecycleIsAuditedAndDisableRejectsCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	apiToken, _, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{
-		PrincipalID: target.ID, Name: "before-disable", ExpiresAt: time.Now().Add(time.Hour),
+		PrincipalID:  target.ID,
+		Name:         "before-disable",
+		Capabilities: access.LegacyProjectCapabilities(),
+		ExpiresAt:    time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)

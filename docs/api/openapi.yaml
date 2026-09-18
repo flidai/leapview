@@ -599,6 +599,12 @@ paths:
       tags:
         - Agent
       x-apigen-operation-kind: query
+      x-authz:
+        action: platform.settings.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     patch:
       operationId: updateAgentConfig
       summary: Update the agent configuration
@@ -885,7 +891,7 @@ paths:
             schema_version: 1
           required: true
           success_action: agent.config.updated
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: INVALID_AGENT_CONFIG
@@ -899,6 +905,13 @@ paths:
         owner: LeapViewAPI.Agent
         ui:
           action_id: agent.config.update
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.settings.update
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/agent/conversations:
     get:
       operationId: listAgentConversations
@@ -4889,7 +4902,7 @@ paths:
               example:
                 items:
                   - action: example
-                    capability: PROJECT_ADMIN
+                    capability: PLATFORM_ADMIN
                     correlationId: example
                     createdAt: "2026-01-02T15:04:05Z"
                     id: example
@@ -5141,7 +5154,12 @@ paths:
       tags:
         - Audit
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.audit.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/capabilities:
     get:
       operationId: getCapabilities
@@ -5978,7 +5996,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/appearance:
@@ -6282,7 +6302,9 @@ paths:
           action_id: dashboard.appearance.update
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: dashboard.update
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}:
@@ -6556,7 +6578,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/filters/{filter}:
@@ -6888,7 +6912,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/filters/{filter}/values:
@@ -7220,7 +7246,9 @@ paths:
                   visualID: example
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/query:
@@ -7569,7 +7597,9 @@ paths:
                   visualID: example
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/visuals/{visual}:
@@ -7858,7 +7888,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/visuals/{visual}/query:
@@ -8265,7 +8297,9 @@ paths:
           - visual
           - query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
       x-leapview-response-trailers:
@@ -8555,7 +8589,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     post:
       operationId: createGroup
       summary: Create a group
@@ -8860,7 +8899,7 @@ paths:
             schema_version: 1
           required: true
           success_action: group.created
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: GROUP_INVALID
             kind: invalid
@@ -8870,7 +8909,13 @@ paths:
         owner: LeapViewAPI.Access
         ui:
           action_id: group.create
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/groups/{group}:
     delete:
       operationId: deleteGroup
@@ -9143,7 +9188,7 @@ paths:
             schema_version: 1
           required: true
           success_action: group.deleted
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: GROUP_NOT_MUTABLE
             kind: invalid
@@ -9159,7 +9204,13 @@ paths:
           type: group
         ui:
           action_id: group.delete
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     get:
       operationId: getGroup
       summary: Get a group
@@ -9428,7 +9479,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     patch:
       operationId: updateGroup
       summary: Update a group
@@ -9730,7 +9786,7 @@ paths:
             schema_version: 1
           required: true
           success_action: group.updated
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: GROUP_NOT_MUTABLE
@@ -9747,7 +9803,13 @@ paths:
           type: group
         ui:
           action_id: group.update
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/groups/{group}/members:
     get:
       operationId: listGroupMembers
@@ -10035,7 +10097,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/groups/{group}/members/{principal}:
     delete:
       operationId: removeGroupMember
@@ -10312,7 +10379,7 @@ paths:
             schema_version: 1
           required: true
           success_action: group.member_removed
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: GROUP_NOT_MUTABLE
             kind: invalid
@@ -10328,7 +10395,13 @@ paths:
           type: group
         ui:
           action_id: group.member.remove
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     put:
       operationId: addGroupMember
       summary: Add a group member
@@ -10609,7 +10682,7 @@ paths:
             schema_version: 1
           required: true
           success_action: group.member_added
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: GROUP_NOT_MUTABLE
             kind: invalid
@@ -10625,7 +10698,13 @@ paths:
           type: group
         ui:
           action_id: group.member.add
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/groups/{group}/semantic-attributes:
     get:
       operationId: listGroupSemanticAttributeAssignments
@@ -10921,7 +11000,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/groups/{group}/semantic-attributes/{attribute}:
     delete:
       operationId: removeGroupSemanticAttributeAssignment
@@ -11217,7 +11301,7 @@ paths:
             schema_version: 1
           required: true
           success_action: semantic_attribute.assignment.tombstone
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: SEMANTIC_ATTRIBUTE_ASSIGNMENT_NOT_FOUND
@@ -11228,7 +11312,13 @@ paths:
         target:
           parameter: group
           type: group
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     put:
       operationId: upsertGroupSemanticAttributeAssignment
       parameters:
@@ -11559,7 +11649,7 @@ paths:
             schema_version: 1
           required: true
           success_action: semantic_attribute.assignment.set
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: SEMANTIC_ATTRIBUTE_INVALID
@@ -11574,7 +11664,13 @@ paths:
         target:
           parameter: group
           type: group
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/instance:
     get:
       operationId: getInstance
@@ -12508,7 +12604,7 @@ paths:
             schema_version: 1
           required: true
           success_action: product.logo.deleted
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: PRODUCT_IDENTITY_PRECONDITION_FAILED
@@ -12518,7 +12614,13 @@ paths:
         owner: LeapViewAPI
         ui:
           action_id: product-settings.logo.delete
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.settings.update
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
     put:
       operationId: uploadProductLogo
@@ -12819,7 +12921,7 @@ paths:
             schema_version: 1
           required: true
           success_action: product.logo.updated
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: INVALID_PRODUCT_LOGO
@@ -12833,7 +12935,13 @@ paths:
         owner: LeapViewAPI
         ui:
           action_id: product-settings.logo.upload
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.settings.update
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
   /api/v1/instance/logo/{digest}:
     get:
@@ -13107,7 +13215,12 @@ paths:
       tags:
         - Instance
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.settings.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
   /api/v1/instance/project-claim:
     post:
@@ -13418,11 +13531,13 @@ paths:
             status_code: 503
         idempotency: required
         owner: LeapViewAPI.Deployment
-        privilege: PROJECT_ADMIN
+        privilege: PLATFORM_ADMIN
       x-authz:
+        action: platform.access.manage
         mode: privilege
-        privilege: PROJECT_ADMIN
-      x-leapview-object-scope: platform
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/instance/settings:
     get:
       operationId: getProductSettings
@@ -13688,7 +13803,12 @@ paths:
       tags:
         - Instance
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.settings.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
     patch:
       operationId: updateProductSettings
@@ -13983,7 +14103,7 @@ paths:
             schema_version: 1
           required: true
           success_action: product.identity.updated
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: INVALID_PRODUCT_IDENTITY
@@ -13997,7 +14117,13 @@ paths:
         owner: LeapViewAPI
         ui:
           action_id: product-settings.identity.update
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.settings.update
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
   /api/v1/instance/settings/reset:
     post:
@@ -14293,7 +14419,7 @@ paths:
             schema_version: 1
           required: true
           success_action: product.identity.reset
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: PRODUCT_IDENTITY_PRECONDITION_FAILED
@@ -14304,7 +14430,13 @@ paths:
         owner: LeapViewAPI
         ui:
           action_id: product-settings.identity.reset
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.settings.update
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
   /api/v1/instance/system:
     get:
@@ -15213,12 +15345,21 @@ paths:
               example:
                 items:
                   - capabilities:
-                      - PROJECT_ADMIN
+                      - PLATFORM_ADMIN
                     createdAt: "2026-01-02T15:04:05Z"
                     expiresAt: "2026-01-02T15:04:05Z"
                     id: example
                     lastUsedAt: "2026-01-02T15:04:05Z"
                     name: example
+                    permissionProfile: leapview.permissions/v1
+                    permissions:
+                      - action: dashboard.read
+                        profile: leapview.permissions/v1
+                        target:
+                          projectId: project:analytics
+                          resourceId: dashboard:sales
+                          resourceKind: dashboard
+                          scope: resource
                     revokedAt: "2026-01-02T15:04:05Z"
                 page:
                   nextCursor: example
@@ -15489,12 +15630,21 @@ paths:
               example:
                 apiToken:
                   capabilities:
-                    - PROJECT_ADMIN
+                    - PLATFORM_ADMIN
                   createdAt: "2026-01-02T15:04:05Z"
                   expiresAt: "2026-01-02T15:04:05Z"
                   id: example
                   lastUsedAt: "2026-01-02T15:04:05Z"
                   name: example
+                  permissionProfile: leapview.permissions/v1
+                  permissions:
+                    - action: dashboard.read
+                      profile: leapview.permissions/v1
+                      target:
+                        projectId: project:analytics
+                        resourceId: dashboard:sales
+                        resourceKind: dashboard
+                        scope: resource
                   revokedAt: "2026-01-02T15:04:05Z"
                 token: example
         '400':
@@ -15741,10 +15891,16 @@ paths:
             schema:
               $ref: '#/components/schemas/APITokenCreateRequest'
             example:
-              capabilities:
-                - PROJECT_ADMIN
               expiresAt: "2026-01-02T15:04:05Z"
               name: example
+              permissions:
+                - action: dashboard.read
+                  profile: leapview.permissions/v1
+                  target:
+                    projectId: project:analytics
+                    resourceId: dashboard:sales
+                    resourceKind: dashboard
+                    scope: resource
       x-apigen-operation-kind: command
       x-apigen-command:
         additional_exposures:
@@ -16091,7 +16247,7 @@ paths:
               example:
                 items:
                   - capabilities:
-                      - PROJECT_ADMIN
+                      - PLATFORM_ADMIN
                     clientId: example
                     createdAt: "2026-01-02T15:04:05Z"
                     current: true
@@ -17228,7 +17384,7 @@ paths:
                 $ref: '#/components/schemas/EffectiveCapabilitiesResponse'
               example:
                 capabilities:
-                  - PROJECT_ADMIN
+                  - PLATFORM_ADMIN
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -18912,7 +19068,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     post:
       operationId: createPrincipal
       summary: Create a local principal
@@ -19211,7 +19372,7 @@ paths:
             schema_version: 1
           required: true
           success_action: principal.local_user.created
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: PRINCIPAL_ALREADY_EXISTS
             kind: conflict
@@ -19221,7 +19382,13 @@ paths:
         owner: LeapViewAPI.Access
         ui:
           action_id: principal.create
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/principals/{principal}:
     delete:
       operationId: deletePrincipal
@@ -19494,7 +19661,7 @@ paths:
             schema_version: 1
           required: true
           success_action: principal.deleted
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: PRINCIPAL_OWNS_OBJECTS
             kind: conflict
@@ -19514,7 +19681,13 @@ paths:
           type: principal
         ui:
           action_id: principal.delete
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     get:
       operationId: getPrincipal
       summary: Get a principal
@@ -19790,7 +19963,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     patch:
       operationId: updatePrincipal
       summary: Update a principal
@@ -20099,7 +20277,7 @@ paths:
             schema_version: 1
           required: true
           success_action: principal.updated
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: PRINCIPAL_NOT_MUTABLE
@@ -20116,7 +20294,13 @@ paths:
           type: principal
         ui:
           action_id: principal.update
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/principals/{principal}/avatar/{digest}:
     get:
       operationId: getPrincipalAvatar
@@ -20701,7 +20885,7 @@ paths:
             schema_version: 1
           required: true
           success_action: principal.blocked
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: PRINCIPAL_NOT_MUTABLE
             kind: invalid
@@ -20718,7 +20902,13 @@ paths:
           type: principal
         ui:
           action_id: principal.block
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/principals/{principal}/enable:
     post:
       operationId: enablePrincipal
@@ -21024,7 +21214,7 @@ paths:
             schema_version: 1
           required: true
           success_action: principal.unblocked
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: PRINCIPAL_NOT_MUTABLE
             kind: invalid
@@ -21041,7 +21231,13 @@ paths:
           type: principal
         ui:
           action_id: principal.unblock
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/principals/{principal}/password-reset:
     post:
       operationId: resetPrincipalPassword
@@ -21332,7 +21528,7 @@ paths:
             schema_version: 1
           required: true
           success_action: principal.local_password.reset
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: PRINCIPAL_NOT_FOUND
             kind: not_found
@@ -21345,7 +21541,13 @@ paths:
           type: principal
         ui:
           action_id: principal.password.reset
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/principals/{principal}/semantic-attributes:
     get:
       operationId: listPrincipalSemanticAttributeAssignments
@@ -21641,7 +21843,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/principals/{principal}/semantic-attributes/{attribute}:
     delete:
       operationId: removePrincipalSemanticAttributeAssignment
@@ -21937,7 +22144,7 @@ paths:
             schema_version: 1
           required: true
           success_action: semantic_attribute.assignment.tombstone
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: SEMANTIC_ATTRIBUTE_ASSIGNMENT_NOT_FOUND
@@ -21948,7 +22155,13 @@ paths:
         target:
           parameter: principal
           type: principal
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     put:
       operationId: upsertPrincipalSemanticAttributeAssignment
       parameters:
@@ -22279,7 +22492,7 @@ paths:
             schema_version: 1
           required: true
           success_action: semantic_attribute.assignment.set
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: SEMANTIC_ATTRIBUTE_INVALID
@@ -22294,7 +22507,13 @@ paths:
         target:
           parameter: principal
           type: principal
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/principals/{principal}/sessions:
     get:
       operationId: listPrincipalSessions
@@ -22585,7 +22804,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/principals/{principal}/sessions/{session}:
     delete:
       operationId: revokePrincipalSession
@@ -22860,7 +23084,7 @@ paths:
             schema_version: 1
           required: true
           success_action: session.revoked
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: SESSION_NOT_FOUND
             kind: not_found
@@ -22872,7 +23096,13 @@ paths:
           type: principal
         ui:
           action_id: principal.session.revoke
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/projects/{project}:
     get:
       operationId: getProject
@@ -23141,7 +23371,9 @@ paths:
         - Projects
       x-apigen-operation-kind: query
       x-authz:
+        action: project.settings.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/audit-events:
@@ -23237,7 +23469,7 @@ paths:
               example:
                 items:
                   - action: example
-                    capability: PROJECT_ADMIN
+                    capability: PLATFORM_ADMIN
                     correlationId: example
                     createdAt: "2026-01-02T15:04:05Z"
                     id: example
@@ -23490,7 +23722,9 @@ paths:
         - Audit
       x-apigen-operation-kind: query
       x-authz:
+        action: audit.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/authoring/catalog:
@@ -24483,7 +24717,9 @@ paths:
         - Dashboard Authoring
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authoring/dashboards/{dashboard}/draft:
@@ -24902,7 +25138,9 @@ paths:
         - Dashboard Authoring
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.update
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authoring/dashboards/{dashboard}/drafts/{draft}/preview:
@@ -25360,7 +25598,9 @@ paths:
                 revisionId: example
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.update
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authoring/dashboards/{dashboard}/drafts/{draft}/revisions/{revision}:
@@ -25732,7 +25972,9 @@ paths:
         - Dashboard Authoring
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.update
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authoring/dashboards/{dashboard}/revisions/{revision}:
@@ -26098,7 +26340,9 @@ paths:
         - Dashboard Authoring
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authoring/drafts:
@@ -26136,87 +26380,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DashboardAuthoringMutationResponse'
+                $ref: '#/components/schemas/DashboardAuthoringCreateReceipt'
               example:
-                lifecycle:
-                  draft:
-                    dashboardId: example
-                    id: example
-                    provenance:
-                      actorId: example
-                      baseSemanticIdentity:
-                        environment: example
-                        generationId: example
-                        projectId: example
-                      conversationId: example
-                      origin: example
-                      source:
-                        metadata:
-                          key: example
-                        path: example
-                        ref: example
-                        repository: example
-                        revision: example
-                      toolCallId: example
-                    revision:
-                      contentHash: example
-                      number: 1
-                      revisionId: example
-                  id: example
-                  ownerPrincipalId: example
-                  projectId: example
-                  published:
-                    compilation:
-                      authoredRevision:
-                        contentHash: example
-                        number: 1
-                        revisionId: example
-                      definitionHash: example
-                      semanticIdentity:
-                        environment: example
-                        generationId: example
-                        projectId: example
-                      semanticModelId: example
-                    provenance:
-                      actorId: example
-                      baseSemanticIdentity:
-                        environment: example
-                        generationId: example
-                        projectId: example
-                      conversationId: example
-                      origin: example
-                      source:
-                        metadata:
-                          key: example
-                        path: example
-                        ref: example
-                        repository: example
-                        revision: example
-                      toolCallId: example
-                    publishedAt: "2026-01-02T15:04:05Z"
-                    revision:
-                      contentHash: example
-                      number: 1
-                      revisionId: example
-                  revalidation:
-                    code: example
-                    dependencyIds:
-                      - example
-                    failedAt: "2026-01-02T15:04:05Z"
-                    identity:
-                      environment: example
-                      generationId: example
-                      projectId: example
-                    message: example
-                  semanticModel: example
-                  slug: example
-                  status: example
-                  title: example
-                  visibility: example
-                revision:
-                  contentHash: example
-                  number: 1
-                  revisionId: example
+                id: example
+                status: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -26489,7 +26656,7 @@ paths:
             schema_version: 1
           required: true
           success_action: dashboard_authoring.draft_created
-        authz_mode: authenticated
+        authz_mode: privilege
         failures: []
         idempotency: required
         owner: LeapViewAPI.Dashboard
@@ -26498,6 +26665,13 @@ paths:
           type: project
         ui:
           action_id: dashboard.builder.create
+        privilege: RESOURCE_EDIT
+      x-authz:
+        action: dashboard.create
+        mode: privilege
+        resolver: project
+        privilege: RESOURCE_EDIT
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/authoring/forks:
     post:
       operationId: forkDashboardAuthoringDraft
@@ -26533,87 +26707,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DashboardAuthoringMutationResponse'
+                $ref: '#/components/schemas/DashboardAuthoringCreateReceipt'
               example:
-                lifecycle:
-                  draft:
-                    dashboardId: example
-                    id: example
-                    provenance:
-                      actorId: example
-                      baseSemanticIdentity:
-                        environment: example
-                        generationId: example
-                        projectId: example
-                      conversationId: example
-                      origin: example
-                      source:
-                        metadata:
-                          key: example
-                        path: example
-                        ref: example
-                        repository: example
-                        revision: example
-                      toolCallId: example
-                    revision:
-                      contentHash: example
-                      number: 1
-                      revisionId: example
-                  id: example
-                  ownerPrincipalId: example
-                  projectId: example
-                  published:
-                    compilation:
-                      authoredRevision:
-                        contentHash: example
-                        number: 1
-                        revisionId: example
-                      definitionHash: example
-                      semanticIdentity:
-                        environment: example
-                        generationId: example
-                        projectId: example
-                      semanticModelId: example
-                    provenance:
-                      actorId: example
-                      baseSemanticIdentity:
-                        environment: example
-                        generationId: example
-                        projectId: example
-                      conversationId: example
-                      origin: example
-                      source:
-                        metadata:
-                          key: example
-                        path: example
-                        ref: example
-                        repository: example
-                        revision: example
-                      toolCallId: example
-                    publishedAt: "2026-01-02T15:04:05Z"
-                    revision:
-                      contentHash: example
-                      number: 1
-                      revisionId: example
-                  revalidation:
-                    code: example
-                    dependencyIds:
-                      - example
-                    failedAt: "2026-01-02T15:04:05Z"
-                    identity:
-                      environment: example
-                      generationId: example
-                      projectId: example
-                    message: example
-                  semanticModel: example
-                  slug: example
-                  status: example
-                  title: example
-                  visibility: example
-                revision:
-                  contentHash: example
-                  number: 1
-                  revisionId: example
+                id: example
+                status: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -26888,7 +26985,7 @@ paths:
             schema_version: 1
           required: true
           success_action: dashboard_authoring.draft_forked
-        authz_mode: authenticated
+        authz_mode: privilege
         failures: []
         idempotency: required
         owner: LeapViewAPI.Dashboard
@@ -26897,6 +26994,13 @@ paths:
           type: project
         ui:
           action_id: dashboard.builder.fork
+        privilege: RESOURCE_EDIT
+      x-authz:
+        action: dashboard.create
+        mode: privilege
+        resolver: project
+        privilege: RESOURCE_EDIT
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/authoring/sources/{kind}/{dashboard}/export:
     get:
       operationId: exportDashboardAuthoringSource
@@ -27179,7 +27283,9 @@ paths:
         - Dashboard Authoring
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authorization-checks:
@@ -27206,7 +27312,7 @@ paths:
               example:
                 decisions:
                   - allowed: true
-                    capability: PROJECT_ADMIN
+                    capability: PLATFORM_ADMIN
                     grantId: example
                     grantResourceId: example
                     inherited: true
@@ -27462,7 +27568,7 @@ paths:
               $ref: '#/components/schemas/AuthorizationBatchCheckRequest'
             example:
               checks:
-                - capability: PROJECT_ADMIN
+                - capability: PLATFORM_ADMIN
                   resourceId: example
                   resourceKind: project
       x-apigen-operation-kind: query
@@ -27816,9 +27922,11 @@ paths:
           type: project
         privilege: RESOURCE_EDIT
       x-authz:
+        action: delivery.plan
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_EDIT
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
       x-apigen-manual: true
   /api/v1/projects/{project}/candidate-sync/plan:
     post:
@@ -28158,9 +28266,11 @@ paths:
           type: project
         privilege: RESOURCE_EDIT
       x-authz:
+        action: delivery.plan
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_EDIT
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/candidate-sync/source:
     post:
       operationId: retainProjectCandidateSource
@@ -28505,9 +28615,11 @@ paths:
           type: project
         privilege: RESOURCE_EDIT
       x-authz:
+        action: delivery.plan
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_EDIT
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/connections:
     get:
       operationId: listManagedConnections
@@ -29070,7 +29182,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/active-revision:
@@ -29352,7 +29466,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/revisions:
@@ -29653,7 +29769,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/revisions/{revision}:
@@ -29946,7 +30064,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions:
@@ -30274,7 +30394,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
     post:
@@ -30674,7 +30796,9 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}:
@@ -30988,7 +31112,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/cancel:
@@ -31379,7 +31505,9 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/events:
@@ -31713,7 +31841,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/finalize:
@@ -32120,7 +32250,9 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads:
@@ -32498,7 +32630,9 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads/{multipartUpload}/abort:
@@ -32870,7 +33004,9 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: connection
   ? /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads/{multipartUpload}/complete
@@ -33257,7 +33393,9 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: connection
   ? /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads/{multipartUpload}/parts/{partNumber}/sign
@@ -33580,7 +33718,9 @@ paths:
               size: 1
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/dashboard-publications:
@@ -34150,6 +34290,12 @@ paths:
       tags:
         - Publications
       x-apigen-operation-kind: query
+      x-authz:
+        action: dashboard.read
+        mode: privilege
+        resolver: dashboard
+        privilege: RESOURCE_READ
+      x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/dashboard-publications/{publication}/resume:
     post:
       operationId: resumeDashboardPublication
@@ -34502,9 +34648,11 @@ paths:
           action_id: dashboard.publication.resume
         privilege: RESOURCE_PUBLISH
       x-authz:
+        action: dashboard.publish
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_PUBLISH
-      x-leapview-object-scope: project
+      x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/dashboard-publications/{publication}/rotate:
     post:
       operationId: rotateDashboardPublication
@@ -34857,9 +35005,11 @@ paths:
           action_id: dashboard.publication.rotate
         privilege: RESOURCE_PUBLISH
       x-authz:
+        action: dashboard.publish
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_PUBLISH
-      x-leapview-object-scope: project
+      x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/dashboard-publications/{publication}/suspend:
     post:
       operationId: suspendDashboardPublication
@@ -35212,9 +35362,11 @@ paths:
           action_id: dashboard.publication.suspend
         privilege: RESOURCE_PUBLISH
       x-authz:
+        action: dashboard.publish
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_PUBLISH
-      x-leapview-object-scope: project
+      x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/delivery:
     post:
       operationId: createDeliveryPlan
@@ -35617,9 +35769,11 @@ paths:
           type: project
         privilege: RESOURCE_READ
       x-authz:
+        action: delivery.plan
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/builds/{build}:
     get:
       operationId: getDeliveryBuildStatus
@@ -35909,10 +36063,12 @@ paths:
         - Delivery
       x-apigen-operation-kind: query
       x-authz:
+        action: delivery.read
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_READ
       x-leapview-audit-action: delivery.build.read
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/candidates/{candidate}:
     get:
       operationId: getDeliveryCandidateStatus
@@ -36216,10 +36372,12 @@ paths:
         - Delivery
       x-apigen-operation-kind: query
       x-authz:
+        action: delivery.read
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_READ
       x-leapview-audit-action: delivery.candidate.read
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/candidates/{candidate}/publish:
     post:
       operationId: publishDeliveryCandidate
@@ -36585,9 +36743,11 @@ paths:
           type: project
         privilege: RESOURCE_PUBLISH
       x-authz:
+        action: delivery.publish
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_PUBLISH
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/generations/{generation}:
     get:
       operationId: getDeliveryGenerationStatus
@@ -36877,10 +37037,12 @@ paths:
         - Delivery
       x-apigen-operation-kind: query
       x-authz:
+        action: delivery.read
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_READ
       x-leapview-audit-action: delivery.generation.read
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/generations/{generation}/rollback:
     post:
       operationId: rollbackDeliveryGeneration
@@ -37246,9 +37408,11 @@ paths:
           type: project
         privilege: PROJECT_ADMIN
       x-authz:
+        action: delivery.rollback
         mode: privilege
+        resolver: delivery
         privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/operator:
     get:
       operationId: getDeliveryOperatorSnapshot
@@ -37561,10 +37725,12 @@ paths:
         - Delivery
       x-apigen-operation-kind: query
       x-authz:
+        action: delivery.read
         mode: privilege
+        resolver: delivery
         privilege: PROJECT_ADMIN
       x-leapview-audit-action: delivery.operator.read
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/plans/{plan}:
     get:
       operationId: getDeliveryPlanPreview
@@ -37884,10 +38050,12 @@ paths:
         - Delivery
       x-apigen-operation-kind: query
       x-authz:
+        action: delivery.read
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_READ
       x-leapview-audit-action: delivery.plan.read
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/plans/{plan}/build:
     post:
       operationId: buildDeliveryPlan
@@ -38253,9 +38421,11 @@ paths:
           type: project
         privilege: RESOURCE_USE
       x-authz:
+        action: delivery.build
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_USE
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/publications/{publication}:
     get:
       operationId: getDeliveryPublicationEvidence
@@ -38539,10 +38709,12 @@ paths:
         - Delivery
       x-apigen-operation-kind: query
       x-authz:
+        action: delivery.read
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_READ
       x-leapview-audit-action: delivery.publication.read
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/publications/{publication}/approval-requests:
     post:
       operationId: requestDeliveryPublicationApproval
@@ -38884,9 +39056,11 @@ paths:
           type: project
         privilege: RESOURCE_PUBLISH
       x-authz:
+        action: delivery.publish
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_PUBLISH
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}:
     get:
       operationId: getDeliveryPublicationApproval
@@ -39177,9 +39351,11 @@ paths:
         - Delivery
       x-apigen-operation-kind: query
       x-authz:
+        action: delivery.read
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}/approve:
     post:
       operationId: approveDeliveryPublicationApproval
@@ -39531,9 +39707,11 @@ paths:
           type: project
         privilege: PROJECT_ADMIN
       x-authz:
+        action: delivery.approve
         mode: privilege
+        resolver: delivery
         privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}/deny:
     post:
       operationId: denyDeliveryPublicationApproval
@@ -39885,9 +40063,11 @@ paths:
           type: project
         privilege: PROJECT_ADMIN
       x-authz:
+        action: delivery.approve
         mode: privilege
+        resolver: delivery
         privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}/revoke:
     post:
       operationId: revokeDeliveryPublicationApproval
@@ -40235,9 +40415,11 @@ paths:
           type: project
         privilege: PROJECT_ADMIN
       x-authz:
+        action: delivery.approve
         mode: privilege
+        resolver: delivery
         privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/delivery/seals/{seal}:
     get:
       operationId: getDeliverySealStatus
@@ -40523,10 +40705,12 @@ paths:
         - Delivery
       x-apigen-operation-kind: query
       x-authz:
+        action: delivery.read
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_READ
       x-leapview-audit-action: delivery.seal.read
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/effective-capabilities:
     get:
       operationId: listEffectiveCapabilities
@@ -40567,10 +40751,10 @@ paths:
                 $ref: '#/components/schemas/EffectiveCapabilityListResponse'
               example:
                 capabilities:
-                  - PROJECT_ADMIN
+                  - PLATFORM_ADMIN
                 effectiveGrants:
                   - allowed: true
-                    capability: PROJECT_ADMIN
+                    capability: PLATFORM_ADMIN
                     grantId: example
                     grantResourceId: example
                     inherited: true
@@ -40822,333 +41006,15 @@ paths:
         - Access
       x-apigen-operation-kind: query
       x-authz:
+        action: project.access.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
-  /api/v1/projects/{project}/grants:
-    get:
-      operationId: listGrants
-      summary: List grants
-      parameters:
-        - name: project
-          in: path
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        - name: resourceKind
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/ResourceKind'
-          example: project
-          explode: false
-        - name: resourceId
-          in: query
-          required: false
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-          explode: false
-        - name: includeInherited
-          in: query
-          required: false
-          schema:
-            type: boolean
-          example: true
-          explode: false
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int32
-            minimum: 1
-            maximum: 200
-          example: 1
-          explode: false
-        - name: pageToken
-          in: query
-          required: false
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 2048
-          example: example
-          explode: false
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/GrantListResponse'
-              example:
-                items:
-                  - capability: PROJECT_ADMIN
-                    createdAt: "2026-01-02T15:04:05Z"
-                    id: example
-                    inherited: true
-                    parentId: example
-                    parentResourceId: example
-                    parentResourceKind: project
-                    resourceId: example
-                    resourceKind: project
-                    subjectId: example
-                    subjectType: example
-                page:
-                  nextCursor: example
-        '400':
-          description: The server could not understand the request due to invalid
-            syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Access
-      x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
+  /api/v1/projects/{project}/grant-admin-envelopes:
     post:
-      operationId: createGrant
-      summary: Create a grant
+      operationId: issueGrantAdminEnvelope
+      summary: Issue a project-bound grant-administration envelope
       parameters:
         - name: project
           in: path
@@ -41179,19 +41045,31 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GrantResponse'
+                $ref: '#/components/schemas/GrantAdminEnvelopeResponse'
               example:
-                capability: PROJECT_ADMIN
-                createdAt: "2026-01-02T15:04:05Z"
+                expiresAt: "2026-01-02T15:04:05Z"
+                fingerprint: example
                 id: example
-                inherited: true
-                parentId: example
-                parentResourceId: example
-                parentResourceKind: project
-                resourceId: example
-                resourceKind: project
-                subjectId: example
-                subjectType: example
+                idempotencyKey: example
+                issuedAt: "2026-01-02T15:04:05Z"
+                permissions:
+                  - action: dashboard.read
+                    profile: leapview.permissions/v1
+                    target:
+                      projectId: project:analytics
+                      resourceId: dashboard:sales
+                      resourceKind: dashboard
+                      scope: resource
+                profile: example
+                projectId: example
+                recipientSelector: example
+                requestDigest: example
+                revocationReason: example
+                revokedAt: "2026-01-02T15:04:05Z"
+                revokedByPrincipalId: example
+                roleVersion: example
+                targetResourceId: example
+                targetResourceKind: project
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -41434,65 +41312,70 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GrantRequest'
+              $ref: '#/components/schemas/GrantAdminEnvelopeIssueRequest'
             example:
-              capability: PROJECT_ADMIN
-              resourceId: example
-              resourceKind: project
-              subjectId: example
-              subjectType: example
+              permissions:
+                - action: dashboard.read
+                  profile: leapview.permissions/v1
+                  target:
+                    projectId: project:analytics
+                    resourceId: dashboard:sales
+                    resourceKind: dashboard
+                    scope: resource
+              recipientSelector: example
+              roleVersion: example
+              targetResourceId: example
+              targetResourceKind: project
+              ttlSeconds: 1
       x-apigen-operation-kind: command
       x-apigen-command:
-        additional_exposures:
-          - ui
         audit:
           guarantee: transactional
           payload:
             fields:
-              - name: capability
-                sensitivity: public
-              - name: environment
-                sensitivity: public
-              - name: operationId
+              - name: envelopeId
                 sensitivity: internal
-              - name: resourceId
+              - name: fingerprint
                 sensitivity: internal
-              - name: resourceKind
+              - name: projectId
+                sensitivity: internal
+              - name: recipientSelector
                 sensitivity: public
-              - name: subjectId
-                sensitivity: pii
-              - name: subjectType
-                sensitivity: public
-              - name: surface
+              - name: roleVersion
                 sensitivity: public
             retention: security
             schema:
-              ref: GrantAuditPayload
+              ref: GrantAdminEnvelopeAuditPayload
             schema_version: 1
           required: true
-          success_action: grant.created
+          success_action: grant_admin_envelope.issued
         authz_mode: privilege
         failures:
-          - code: GRANT_INVALID
+          - code: GRANT_ADMIN_ENVELOPE_CONFLICT
+            kind: conflict
+            public_detail: The grant-administration envelope request conflicts with
+              current state.
+            status_code: 409
+          - code: GRANT_ADMIN_ENVELOPE_INVALID
             kind: invalid
-            public_detail: The grant request is invalid.
+            public_detail: The grant-administration envelope request is invalid.
             status_code: 400
         idempotency: required
         owner: LeapViewAPI.Access
         target:
           parameter: project
           type: project
-        ui:
-          action_id: project.access.grant.create
         privilege: PROJECT_ADMIN
       x-authz:
+        action: project.access.manage
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
-  /api/v1/projects/{project}/grants/{grant}:
+  /api/v1/projects/{project}/grant-admin-envelopes/{envelope}:
     delete:
-      operationId: deleteGrant
-      summary: Delete a grant
+      operationId: revokeGrantAdminEnvelope
+      summary: Revoke a project-bound grant-administration envelope
       parameters:
         - name: project
           in: path
@@ -41503,314 +41386,7 @@ paths:
             maxLength: 200
             pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
-        - name: grant
-          in: path
-          required: true
-          schema:
-            type: string
-          example: example
-      responses:
-        '204':
-          description: 'There is no content to send for this request, but the headers
-            may be useful. '
-        '400':
-          description: The server could not understand the request due to invalid
-            syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Access
-      x-apigen-operation-kind: command
-      x-apigen-command:
-        additional_exposures:
-          - ui
-        audit:
-          guarantee: transactional
-          payload:
-            fields:
-              - name: capability
-                sensitivity: public
-              - name: environment
-                sensitivity: public
-              - name: operationId
-                sensitivity: internal
-              - name: resourceId
-                sensitivity: internal
-              - name: resourceKind
-                sensitivity: public
-              - name: subjectId
-                sensitivity: pii
-              - name: subjectType
-                sensitivity: public
-              - name: surface
-                sensitivity: public
-            retention: security
-            schema:
-              ref: GrantAuditPayload
-            schema_version: 1
-          required: true
-          success_action: grant.deleted
-        authz_mode: privilege
-        failures:
-          - code: GRANT_NOT_FOUND
-            kind: not_found
-            public_detail: Grant not found.
-            status_code: 404
-        owner: LeapViewAPI.Access
-        target:
-          parameter: project
-          type: project
-        ui:
-          action_id: project.access.grant.delete
-        privilege: PROJECT_ADMIN
-      x-authz:
-        mode: privilege
-        privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
-    get:
-      operationId: getGrant
-      summary: Get a resource capability grant
-      parameters:
-        - name: project
-          in: path
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        - name: grant
+        - name: envelope
           in: path
           required: true
           schema:
@@ -41822,305 +41398,31 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GrantResponse'
+                $ref: '#/components/schemas/GrantAdminEnvelopeResponse'
               example:
-                capability: PROJECT_ADMIN
-                createdAt: "2026-01-02T15:04:05Z"
+                expiresAt: "2026-01-02T15:04:05Z"
+                fingerprint: example
                 id: example
-                inherited: true
-                parentId: example
-                parentResourceId: example
-                parentResourceKind: project
-                resourceId: example
-                resourceKind: project
-                subjectId: example
-                subjectType: example
-        '400':
-          description: The server could not understand the request due to invalid
-            syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Access
-      x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
-    patch:
-      operationId: updateGrant
-      summary: Update a resource capability grant
-      parameters:
-        - name: project
-          in: path
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        - name: grant
-          in: path
-          required: true
-          schema:
-            type: string
-          example: example
-        - name: If-Match
-          in: header
-          required: true
-          schema:
-            type: string
-          example: example
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/GrantResponse'
-              example:
-                capability: PROJECT_ADMIN
-                createdAt: "2026-01-02T15:04:05Z"
-                id: example
-                inherited: true
-                parentId: example
-                parentResourceId: example
-                parentResourceKind: project
-                resourceId: example
-                resourceKind: project
-                subjectId: example
-                subjectType: example
+                idempotencyKey: example
+                issuedAt: "2026-01-02T15:04:05Z"
+                permissions:
+                  - action: dashboard.read
+                    profile: leapview.permissions/v1
+                    target:
+                      projectId: project:analytics
+                      resourceId: dashboard:sales
+                      resourceKind: dashboard
+                      scope: resource
+                profile: example
+                projectId: example
+                recipientSelector: example
+                requestDigest: example
+                revocationReason: example
+                revokedAt: "2026-01-02T15:04:05Z"
+                revokedByPrincipalId: example
+                roleVersion: example
+                targetResourceId: example
+                targetResourceKind: project
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -42363,51 +41665,40 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GrantRequest'
+              $ref: '#/components/schemas/GrantAdminEnvelopeRevokeRequest'
             example:
-              capability: PROJECT_ADMIN
-              resourceId: example
-              resourceKind: project
-              subjectId: example
-              subjectType: example
+              reason: example
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
           guarantee: transactional
           payload:
             fields:
-              - name: capability
-                sensitivity: public
-              - name: environment
-                sensitivity: public
-              - name: operationId
+              - name: envelopeId
                 sensitivity: internal
-              - name: resourceId
+              - name: fingerprint
                 sensitivity: internal
-              - name: resourceKind
+              - name: projectId
+                sensitivity: internal
+              - name: recipientSelector
                 sensitivity: public
-              - name: subjectId
-                sensitivity: pii
-              - name: subjectType
-                sensitivity: public
-              - name: surface
+              - name: roleVersion
                 sensitivity: public
             retention: security
             schema:
-              ref: GrantAuditPayload
+              ref: GrantAdminEnvelopeAuditPayload
             schema_version: 1
           required: true
-          success_action: grant.updated
+          success_action: grant_admin_envelope.revoked
         authz_mode: privilege
-        concurrency: if-match
         failures:
-          - code: GRANT_INVALID
+          - code: GRANT_ADMIN_ENVELOPE_INVALID
             kind: invalid
-            public_detail: The grant is invalid.
-            status_code: 422
-          - code: GRANT_NOT_FOUND
+            public_detail: The grant-administration envelope request is invalid.
+            status_code: 400
+          - code: GRANT_ADMIN_ENVELOPE_NOT_FOUND
             kind: not_found
-            public_detail: Grant not found.
+            public_detail: The grant-administration envelope was not found.
             status_code: 404
         owner: LeapViewAPI.Access
         target:
@@ -42415,7 +41706,9 @@ paths:
           type: project
         privilege: PROJECT_ADMIN
       x-authz:
+        action: project.access.manage
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/query-events:
@@ -42810,7 +42103,9 @@ paths:
         - Audit
       x-apigen-operation-kind: query
       x-authz:
+        action: audit.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/refresh-runs:
@@ -43445,7 +42740,7 @@ paths:
             schema_version: 1
           required: true
           success_action: refresh.queued
-        authz_mode: authenticated
+        authz_mode: privilege
         execution:
           cancellation: supported
           events_operation: listRefreshRunEvents
@@ -43480,6 +42775,13 @@ paths:
           type: project
         ui:
           action_id: refresh.run
+        privilege: RESOURCE_USE
+      x-authz:
+        action: pipeline.run
+        mode: privilege
+        resolver: pipeline
+        privilege: RESOURCE_USE
+      x-leapview-object-scope: pipeline
   /api/v1/projects/{project}/refresh-runs/{run}:
     get:
       operationId: getRefreshRun
@@ -44784,9 +44086,11 @@ paths:
         - Releases
       x-apigen-operation-kind: query
       x-authz:
+        action: delivery.read
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
     post:
       operationId: createRelease
       summary: Create a draft project release
@@ -45231,9 +44535,11 @@ paths:
           type: project
         privilege: RESOURCE_PUBLISH
       x-authz:
+        action: delivery.plan
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_PUBLISH
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/releases/{release}:
     get:
       operationId: getRelease
@@ -45567,9 +44873,11 @@ paths:
         - Releases
       x-apigen-operation-kind: query
       x-authz:
+        action: delivery.read
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/releases/{release}/events:
     get:
       operationId: listReleaseEvents
@@ -45890,9 +45198,11 @@ paths:
         - Releases
       x-apigen-operation-kind: query
       x-authz:
+        action: delivery.read
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_READ
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
   /api/v1/projects/{project}/releases/{release}/finalize:
     post:
       operationId: finalizeRelease
@@ -46297,9 +45607,381 @@ paths:
           type: project
         privilege: RESOURCE_PUBLISH
       x-authz:
+        action: delivery.build
         mode: privilege
+        resolver: delivery
         privilege: RESOURCE_PUBLISH
-      x-leapview-object-scope: project
+      x-leapview-object-scope: delivery
+  /api/v1/projects/{project}/resource-share-grants:
+    post:
+      operationId: issueResourceShareGrant
+      summary: Issue an exact durable resource-share grant
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created
+            as a result.
+          headers:
+            location:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceShareGrantResponse'
+              example:
+                expiresAt: "2026-01-02T15:04:05Z"
+                fingerprint: example
+                id: example
+                idempotencyKey: example
+                instanceId: example
+                issuedAt: "2026-01-02T15:04:05Z"
+                permissions:
+                  - action: dashboard.read
+                    profile: leapview.permissions/v1
+                    target:
+                      projectId: project:analytics
+                      resourceId: dashboard:sales
+                      resourceKind: dashboard
+                      scope: resource
+                profile: example
+                projectId: example
+                recipientId: example
+                recipientType: example
+                requestDigest: example
+                resourceId: example
+                resourceKind: project
+                resourceUid: example
+                revocationReason: example
+                revokedAt: "2026-01-02T15:04:05Z"
+                revokedByPrincipalId: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceShareGrantIssueRequest'
+            example:
+              permissions:
+                - action: dashboard.read
+                  profile: leapview.permissions/v1
+                  target:
+                    projectId: project:analytics
+                    resourceId: dashboard:sales
+                    resourceKind: dashboard
+                    scope: resource
+              recipientId: example
+              recipientType: example
+              resourceId: example
+              resourceKind: project
+              resourceUid: example
+              ttlSeconds: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: fingerprint
+                sensitivity: internal
+              - name: grantId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: recipientId
+                sensitivity: pii
+              - name: recipientType
+                sensitivity: public
+              - name: resourceId
+                sensitivity: internal
+              - name: resourceKind
+                sensitivity: public
+              - name: resourceUid
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ResourceShareGrantAuditPayload
+            schema_version: 1
+          required: true
+          success_action: resource_share_grant.issued
+        authz_mode: privilege
+        failures:
+          - code: RESOURCE_SHARE_GRANT_CONFLICT
+            kind: conflict
+            public_detail: The durable resource-share request conflicts with current
+              state.
+            status_code: 409
+          - code: RESOURCE_SHARE_GRANT_INVALID
+            kind: invalid
+            public_detail: The durable resource-share request is invalid.
+            status_code: 400
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: project
+          type: project
+        privilege: RESOURCE_SHARE
+      x-authz:
+        action: resource.share
+        mode: privilege
+        resolver: resource-share
+        privilege: RESOURCE_SHARE
+      x-leapview-object-scope: resource-share
   /api/v1/projects/{project}/role-bindings:
     get:
       operationId: listProjectRoleBindings
@@ -46344,9 +46026,18 @@ paths:
                 environment: example
                 items:
                   - capabilities:
-                      - PROJECT_ADMIN
+                      - PLATFORM_ADMIN
                     id: example
                     name: example
+                    permissionProfile: leapview.permissions/v1
+                    permissions:
+                      - action: dashboard.read
+                        profile: leapview.permissions/v1
+                        target:
+                          projectId: project:analytics
+                          resourceId: dashboard:sales
+                          resourceKind: dashboard
+                          scope: resource
                     policyDigest: example
                     policyRevision: 1
                     role: example
@@ -46597,7 +46288,9 @@ paths:
         - Access
       x-apigen-operation-kind: query
       x-authz:
+        action: project.access.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
     post:
@@ -46631,9 +46324,18 @@ paths:
                 $ref: '#/components/schemas/RoleBindingResponse'
               example:
                 capabilities:
-                  - PROJECT_ADMIN
+                  - PLATFORM_ADMIN
                 id: example
                 name: example
+                permissionProfile: leapview.permissions/v1
+                permissions:
+                  - action: dashboard.read
+                    profile: leapview.permissions/v1
+                    target:
+                      projectId: project:analytics
+                      resourceId: dashboard:sales
+                      resourceKind: dashboard
+                      scope: resource
                 policyDigest: example
                 policyRevision: 1
                 role: example
@@ -46884,6 +46586,7 @@ paths:
               $ref: '#/components/schemas/RoleBindingCreateRequest'
             example:
               expectedRevision: 1
+              grantAdminEnvelopeId: example
               id: example
               name: example
               role: example
@@ -46940,7 +46643,351 @@ paths:
           type: project
         privilege: PROJECT_ADMIN
       x-authz:
+        action: project.access.manage
         mode: privilege
+        resolver: project
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
+  /api/v1/projects/{project}/role-bindings/{binding}:
+    delete:
+      operationId: deleteProjectRoleBinding
+      summary: Remove a target-owned project role binding
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: binding
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleBindingMutationResponse'
+              example:
+                environment: example
+                policyDigest: example
+                policyRevision: 1
+                projectId: example
+                targetId: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleBindingDeleteRequest'
+            example:
+              expectedRevision: 1
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: bindingId
+                sensitivity: internal
+              - name: environment
+                sensitivity: internal
+              - name: policyDigest
+                sensitivity: internal
+              - name: policyRevision
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: role
+                sensitivity: public
+              - name: subjectId
+                sensitivity: pii
+              - name: subjectType
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: RoleBindingAuditPayload
+            schema_version: 1
+          required: true
+          success_action: role_binding.removed
+        authz_mode: privilege
+        failures:
+          - code: ROLE_BINDING_CONFLICT
+            kind: conflict
+            public_detail: The authorization policy conflicts with current state.
+            status_code: 409
+          - code: ROLE_BINDING_INVALID
+            kind: invalid
+            public_detail: The role binding request is invalid.
+            status_code: 400
+          - code: ROLE_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: The authorization policy was not found.
+            status_code: 404
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: project
+          type: project
+        privilege: PROJECT_ADMIN
+      x-authz:
+        action: project.access.manage
+        mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/roles:
@@ -46986,7 +47033,7 @@ paths:
               example:
                 items:
                   - capabilities:
-                      - PROJECT_ADMIN
+                      - PLATFORM_ADMIN
                     name: example
                 page:
                   nextCursor: example
@@ -47229,7 +47276,9 @@ paths:
         - Access
       x-apigen-operation-kind: query
       x-authz:
+        action: project.access.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/targets/{target}/connection-bindings:
@@ -47525,7 +47574,9 @@ paths:
         - Connections
       x-apigen-operation-kind: query
       x-authz:
+        action: project.settings.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
     post:
@@ -47917,7 +47968,9 @@ paths:
           action_id: connection.binding.configure
         privilege: PROJECT_ADMIN
       x-authz:
+        action: project.settings.update
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}:
@@ -48221,7 +48274,9 @@ paths:
         - Connections
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
     put:
@@ -48610,7 +48665,9 @@ paths:
           action_id: connection.binding.update
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/disable:
@@ -48979,7 +49036,9 @@ paths:
           action_id: connection.binding.disable
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/enable:
@@ -49344,7 +49403,9 @@ paths:
           action_id: connection.binding.enable
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/health:
@@ -49639,7 +49700,9 @@ paths:
         - Connections
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/plan:
@@ -49955,7 +50018,9 @@ paths:
                   tlsMode: example
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/refresh:
@@ -50323,7 +50388,9 @@ paths:
           action_id: connection.binding.refresh
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/test:
@@ -50693,9 +50760,349 @@ paths:
           action_id: connection.binding.test
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
+  /api/v1/resource-share-grants/{grant}:
+    delete:
+      operationId: revokeResourceShareGrant
+      summary: Revoke a durable resource-share grant
+      parameters:
+        - name: grant
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceShareGrantResponse'
+              example:
+                expiresAt: "2026-01-02T15:04:05Z"
+                fingerprint: example
+                id: example
+                idempotencyKey: example
+                instanceId: example
+                issuedAt: "2026-01-02T15:04:05Z"
+                permissions:
+                  - action: dashboard.read
+                    profile: leapview.permissions/v1
+                    target:
+                      projectId: project:analytics
+                      resourceId: dashboard:sales
+                      resourceKind: dashboard
+                      scope: resource
+                profile: example
+                projectId: example
+                recipientId: example
+                recipientType: example
+                requestDigest: example
+                resourceId: example
+                resourceKind: project
+                resourceUid: example
+                revocationReason: example
+                revokedAt: "2026-01-02T15:04:05Z"
+                revokedByPrincipalId: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceShareGrantRevokeRequest'
+            example:
+              reason: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: fingerprint
+                sensitivity: internal
+              - name: grantId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: recipientId
+                sensitivity: pii
+              - name: recipientType
+                sensitivity: public
+              - name: resourceId
+                sensitivity: internal
+              - name: resourceKind
+                sensitivity: public
+              - name: resourceUid
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ResourceShareGrantAuditPayload
+            schema_version: 1
+          required: true
+          success_action: resource_share_grant.revoked
+        authz_mode: privilege
+        failures:
+          - code: RESOURCE_SHARE_GRANT_INVALID
+            kind: invalid
+            public_detail: The durable resource-share request is invalid.
+            status_code: 400
+          - code: RESOURCE_SHARE_GRANT_NOT_FOUND
+            kind: not_found
+            public_detail: The durable resource-share grant was not found.
+            status_code: 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: grant
+          type: grant
+        privilege: RESOURCE_SHARE
+      x-authz:
+        action: resource.share
+        mode: privilege
+        resolver: resource-share
+        privilege: RESOURCE_SHARE
+      x-leapview-object-scope: resource-share
   /api/v1/search:
     get:
       operationId: search
@@ -51307,7 +51714,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     post:
       operationId: registerSemanticAttribute
       parameters:
@@ -51631,7 +52043,7 @@ paths:
             schema_version: 1
           required: true
           success_action: semantic_attribute.register
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: SEMANTIC_ATTRIBUTE_CONFLICT
             kind: conflict
@@ -51643,7 +52055,13 @@ paths:
             status_code: 400
         idempotency: required
         owner: LeapViewAPI.Access
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/semantic-attributes/{attribute}:
     get:
       operationId: getSemanticAttributeDefinition
@@ -51915,7 +52333,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     patch:
       operationId: updateSemanticAttributeMetadata
       parameters:
@@ -52233,7 +52656,7 @@ paths:
             schema_version: 1
           required: true
           success_action: semantic_attribute.metadata_update
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: SEMANTIC_ATTRIBUTE_INVALID
@@ -52248,7 +52671,13 @@ paths:
         target:
           parameter: attribute
           type: attribute
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/semantic-attributes/{attribute}/claim-mappings:
     get:
       operationId: listSemanticAttributeClaimMappings
@@ -52539,7 +52968,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     post:
       operationId: upsertSemanticAttributeClaimMapping
       parameters:
@@ -52868,7 +53302,7 @@ paths:
             schema_version: 1
           required: true
           success_action: semantic_attribute.claim_mapping.set
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: SEMANTIC_ATTRIBUTE_INVALID
@@ -52884,7 +53318,13 @@ paths:
         target:
           parameter: attribute
           type: attribute
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/semantic-attributes/{attribute}/claim-mappings/{mapping}:
     delete:
       operationId: removeSemanticAttributeClaimMapping
@@ -53184,7 +53624,7 @@ paths:
             schema_version: 1
           required: true
           success_action: semantic_attribute.claim_mapping.tombstone
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: SEMANTIC_ATTRIBUTE_CLAIM_MAPPING_NOT_FOUND
@@ -53195,7 +53635,13 @@ paths:
         target:
           parameter: attribute
           type: attribute
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/semantic-attributes/{attribute}/disable:
     post:
       operationId: disableSemanticAttribute
@@ -53510,7 +53956,7 @@ paths:
             schema_version: 1
           required: true
           success_action: semantic_attribute.disable
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: SEMANTIC_ATTRIBUTE_NOT_FOUND
@@ -53522,7 +53968,13 @@ paths:
         target:
           parameter: attribute
           type: attribute
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/semantic-attributes/{attribute}/impact-preview:
     post:
       operationId: previewSemanticAttributeImpact
@@ -53804,7 +54256,12 @@ paths:
                   timestampValue: example
                   type: String
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/semantic-attributes/{attribute}/restore:
     post:
       operationId: restoreSemanticAttribute
@@ -54119,7 +54576,7 @@ paths:
             schema_version: 1
           required: true
           success_action: semantic_attribute.enable
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: SEMANTIC_ATTRIBUTE_NOT_FOUND
@@ -54131,7 +54588,13 @@ paths:
         target:
           parameter: attribute
           type: attribute
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/semantic-models:
     get:
       operationId: listSemanticModels
@@ -54690,7 +55153,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/datasets:
@@ -54981,7 +55446,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/datasets/{dataset}:
@@ -55262,7 +55729,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/datasets/{dataset}/fields:
@@ -55568,7 +56037,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/datasets/{dataset}/preview:
@@ -55919,7 +56390,9 @@ paths:
                   field: example
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.query
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_USE
       x-leapview-object-scope: semantic-model
       x-leapview-response-trailers:
@@ -56236,7 +56709,9 @@ paths:
                   field: example
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.query
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_USE
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/fields:
@@ -56536,7 +57011,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/query:
@@ -56935,7 +57412,9 @@ paths:
           - semantic-model
           - query
       x-authz:
+        action: semantic.query
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_USE
       x-leapview-object-scope: semantic-model
       x-leapview-response-trailers:
@@ -57250,7 +57729,9 @@ paths:
                 grain: second
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.query
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_USE
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/relationships:
@@ -57545,7 +58026,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/sources:
@@ -57837,7 +58320,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/service-principals:
@@ -58121,7 +58606,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     post:
       operationId: createServicePrincipal
       summary: Create a service principal
@@ -58418,7 +58908,7 @@ paths:
             schema_version: 1
           required: true
           success_action: service_principal.created
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: SERVICE_PRINCIPAL_INVALID
             kind: invalid
@@ -58428,7 +58918,13 @@ paths:
         owner: LeapViewAPI.Access
         ui:
           action_id: service-account.create
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/service-principals/{servicePrincipal}:
     delete:
       operationId: deleteServicePrincipal
@@ -58697,7 +59193,7 @@ paths:
             schema_version: 1
           required: true
           success_action: service_principal.deleted
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: SERVICE_PRINCIPAL_NOT_FOUND
             kind: not_found
@@ -58709,7 +59205,13 @@ paths:
           type: servicePrincipal
         ui:
           action_id: service-account.delete
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     get:
       operationId: getServicePrincipal
       summary: Get a service principal
@@ -58974,7 +59476,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     patch:
       operationId: updateServicePrincipal
       summary: Update a service principal
@@ -59266,7 +59773,7 @@ paths:
             schema_version: 1
           required: true
           success_action: service_principal.updated
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: SERVICE_PRINCIPAL_OWNS_OBJECTS
@@ -59281,7 +59788,13 @@ paths:
         target:
           parameter: servicePrincipal
           type: servicePrincipal
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/service-principals/{servicePrincipal}/secrets:
     get:
       operationId: listServicePrincipalSecrets
@@ -59568,7 +60081,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     post:
       operationId: createServicePrincipalSecret
       summary: Create a service principal secret
@@ -59872,7 +60390,7 @@ paths:
             schema_version: 1
           required: true
           success_action: service_principal_secret.created
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: SERVICE_PRINCIPAL_SECRET_INVALID
             kind: invalid
@@ -59885,7 +60403,13 @@ paths:
           type: servicePrincipal
         ui:
           action_id: service-account.secret.create
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/service-principals/{servicePrincipal}/secrets/{secret}:
     delete:
       operationId: revokeServicePrincipalSecret
@@ -60160,7 +60684,7 @@ paths:
             schema_version: 1
           required: true
           success_action: service_principal_secret.revoked
-        authz_mode: authenticated
+        authz_mode: privilege
         failures:
           - code: SERVICE_PRINCIPAL_SECRET_NOT_FOUND
             kind: not_found
@@ -60172,7 +60696,13 @@ paths:
           type: servicePrincipal
         ui:
           action_id: service-account.secret.revoke
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.access.manage
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     get:
       operationId: getServicePrincipalSecret
       summary: Get service-principal secret metadata
@@ -60442,7 +60972,12 @@ paths:
       tags:
         - Access
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.access.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
 security:
   - BearerAuth: []
 components:
@@ -60461,37 +60996,51 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         name: example
     APITokenCreateRequest:
       type: object
       required:
         - name
+        - permissions
       properties:
         name:
           type: string
           example: example
-        capabilities:
+        permissions:
           type: array
           items:
-            $ref: '#/components/schemas/Capability'
-          description: Omit to keep the token dynamically constrained by the principal's
-            effective capabilities at request time. An explicit list must be a subset
-            of the principal's current effective capabilities.
+            $ref: '#/components/schemas/PermissionPair'
+          description: Required explicit action-target attenuation pairs. An empty
+            list creates an authentication-only token; omitted or null permissions
+            are invalid. A pair's catalog profile and target are persisted without
+            expanding independent action/resource lists.
           example:
-            - PROJECT_ADMIN
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
         expiresAt:
           type: string
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
-        capabilities:
-          - PROJECT_ADMIN
         expiresAt: "2026-01-02T15:04:05Z"
         name: example
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
     APITokenCreateResponse:
       type: object
       required:
@@ -60506,12 +61055,21 @@ components:
       example:
         apiToken:
           capabilities:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
           createdAt: "2026-01-02T15:04:05Z"
           expiresAt: "2026-01-02T15:04:05Z"
           id: example
           lastUsedAt: "2026-01-02T15:04:05Z"
           name: example
+          permissionProfile: leapview.permissions/v1
+          permissions:
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
           revokedAt: "2026-01-02T15:04:05Z"
         token: example
     APITokenListResponse:
@@ -60526,24 +61084,42 @@ components:
             $ref: '#/components/schemas/APITokenResponse'
           example:
             - capabilities:
-                - PROJECT_ADMIN
+                - PLATFORM_ADMIN
               createdAt: "2026-01-02T15:04:05Z"
               expiresAt: "2026-01-02T15:04:05Z"
               id: example
               lastUsedAt: "2026-01-02T15:04:05Z"
               name: example
+              permissionProfile: leapview.permissions/v1
+              permissions:
+                - action: dashboard.read
+                  profile: leapview.permissions/v1
+                  target:
+                    projectId: project:analytics
+                    resourceId: dashboard:sales
+                    resourceKind: dashboard
+                    scope: resource
               revokedAt: "2026-01-02T15:04:05Z"
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
           - capabilities:
-              - PROJECT_ADMIN
+              - PLATFORM_ADMIN
             createdAt: "2026-01-02T15:04:05Z"
             expiresAt: "2026-01-02T15:04:05Z"
             id: example
             lastUsedAt: "2026-01-02T15:04:05Z"
             name: example
+            permissionProfile: leapview.permissions/v1
+            permissions:
+              - action: dashboard.read
+                profile: leapview.permissions/v1
+                target:
+                  projectId: project:analytics
+                  resourceId: dashboard:sales
+                  resourceKind: dashboard
+                  scope: resource
             revokedAt: "2026-01-02T15:04:05Z"
         page:
           nextCursor: example
@@ -60552,6 +61128,7 @@ components:
       required:
         - id
         - name
+        - permissions
         - createdAt
       properties:
         id:
@@ -60560,15 +61137,32 @@ components:
         name:
           type: string
           example: example
+        permissionProfile:
+          $ref: '#/components/schemas/PermissionCatalogProfile'
+          description: The versioned catalog profile for typed action-target permissions.
+            Legacy capability-only rows omit this value.
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionPair'
+          description: The exact action-target pairs persisted for this token. Legacy
+            capability-only rows expose an explicit empty array.
+          example:
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
         capabilities:
           type: array
           items:
             $ref: '#/components/schemas/Capability'
-          description: Present when the token has an explicit capability allowlist.
-            When omitted, the principal's effective capabilities are evaluated dynamically
-            at request time.
+          description: Legacy capability allowlist retained during migration. Legacy
+            NULL values are returned as an empty deny-all list.
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
         expiresAt:
           type: string
           format: date-time
@@ -60587,12 +61181,21 @@ components:
           example: "2026-01-02T15:04:05Z"
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         createdAt: "2026-01-02T15:04:05Z"
         expiresAt: "2026-01-02T15:04:05Z"
         id: example
         lastUsedAt: "2026-01-02T15:04:05Z"
         name: example
+        permissionProfile: leapview.permissions/v1
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
         revokedAt: "2026-01-02T15:04:05Z"
     AgentCommandAuditPayload:
       type: object
@@ -61184,7 +61787,7 @@ components:
             $ref: '#/components/schemas/AuditEventResponse'
           example:
             - action: example
-              capability: PROJECT_ADMIN
+              capability: PLATFORM_ADMIN
               correlationId: example
               createdAt: "2026-01-02T15:04:05Z"
               id: example
@@ -61201,7 +61804,7 @@ components:
       example:
         items:
           - action: example
-            capability: PROJECT_ADMIN
+            capability: PLATFORM_ADMIN
             correlationId: example
             createdAt: "2026-01-02T15:04:05Z"
             id: example
@@ -61274,7 +61877,7 @@ components:
           example: "2026-01-02T15:04:05Z"
       example:
         action: example
-        capability: PROJECT_ADMIN
+        capability: PLATFORM_ADMIN
         correlationId: example
         createdAt: "2026-01-02T15:04:05Z"
         id: example
@@ -61303,7 +61906,7 @@ components:
             $ref: '#/components/schemas/AuthoringSessionResponse'
           example:
             - capabilities:
-                - PROJECT_ADMIN
+                - PLATFORM_ADMIN
               clientId: example
               createdAt: "2026-01-02T15:04:05Z"
               current: true
@@ -61319,7 +61922,7 @@ components:
       example:
         items:
           - capabilities:
-              - PROJECT_ADMIN
+              - PLATFORM_ADMIN
             clientId: example
             createdAt: "2026-01-02T15:04:05Z"
             current: true
@@ -61371,7 +61974,7 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
         createdAt:
           type: string
           format: date-time
@@ -61390,7 +61993,7 @@ components:
           example: "2026-01-02T15:04:05Z"
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         clientId: example
         createdAt: "2026-01-02T15:04:05Z"
         current: true
@@ -61430,10 +62033,10 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         clientId: example
         kind: example
         projectId: example
@@ -61448,12 +62051,12 @@ components:
           items:
             $ref: '#/components/schemas/AuthorizationCheckRequest'
           example:
-            - capability: PROJECT_ADMIN
+            - capability: PLATFORM_ADMIN
               resourceId: example
               resourceKind: project
       example:
         checks:
-          - capability: PROJECT_ADMIN
+          - capability: PLATFORM_ADMIN
             resourceId: example
             resourceKind: project
     AuthorizationBatchCheckResponse:
@@ -61467,7 +62070,7 @@ components:
             $ref: '#/components/schemas/AuthorizationDecisionResponse'
           example:
             - allowed: true
-              capability: PROJECT_ADMIN
+              capability: PLATFORM_ADMIN
               grantId: example
               grantResourceId: example
               inherited: true
@@ -61481,7 +62084,7 @@ components:
       example:
         decisions:
           - allowed: true
-            capability: PROJECT_ADMIN
+            capability: PLATFORM_ADMIN
             grantId: example
             grantResourceId: example
             inherited: true
@@ -61510,7 +62113,7 @@ components:
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       example:
-        capability: PROJECT_ADMIN
+        capability: PLATFORM_ADMIN
         resourceId: example
         resourceKind: project
     AuthorizationDecisionResponse:
@@ -61565,7 +62168,7 @@ components:
           example: true
       example:
         allowed: true
-        capability: PROJECT_ADMIN
+        capability: PLATFORM_ADMIN
         grantId: example
         grantResourceId: example
         inherited: true
@@ -61985,6 +62588,7 @@ components:
     Capability:
       type: string
       enum:
+        - PLATFORM_ADMIN
         - PROJECT_ADMIN
         - RESOURCE_USE
         - RESOURCE_READ
@@ -61992,7 +62596,7 @@ components:
         - RESOURCE_MANAGE
         - RESOURCE_SHARE
         - RESOURCE_PUBLISH
-      example: PROJECT_ADMIN
+      example: PLATFORM_ADMIN
     CartesianDashboardPresentation:
       type: object
       allOf:
@@ -63280,6 +63884,29 @@ components:
           generationId: example
           projectId: example
         semanticModelId: example
+    DashboardAuthoringCreateReceipt:
+      type: object
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        status:
+          type: string
+          enum:
+            - draft
+            - published
+            - archived
+          example: example
+      description: Creation returns only a new identity and bounded lifecycle status.
+      example:
+        id: example
+        status: example
     DashboardAuthoringCreateRequest:
       type: object
       required:
@@ -73157,13 +73784,13 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
         decision:
           type: string
           example: example
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         clientId: example
         decision: example
         projectId: example
@@ -73285,11 +73912,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Capability'
+          description: Project-scoped capabilities from the active authorization snapshot.
+            Durable instance/platform authority is intentionally reported through
+            its separate administration contract.
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
     EffectiveCapabilityListResponse:
       type: object
       required:
@@ -73311,14 +73941,14 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
         effectiveGrants:
           type: array
           items:
             $ref: '#/components/schemas/AuthorizationDecisionResponse'
           example:
             - allowed: true
-              capability: PROJECT_ADMIN
+              capability: PLATFORM_ADMIN
               grantId: example
               grantResourceId: example
               inherited: true
@@ -73331,10 +73961,10 @@ components:
               subjectType: example
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         effectiveGrants:
           - allowed: true
-            capability: PROJECT_ADMIN
+            capability: PLATFORM_ADMIN
             grantId: example
             grantResourceId: example
             inherited: true
@@ -73712,182 +74342,205 @@ components:
         nullStyle:
           color: accent
           icon: circle
-    GrantAuditPayload:
+    GrantAdminEnvelopeAuditPayload:
       type: object
       required:
-        - operationId
-        - resourceId
-        - resourceKind
-        - environment
-        - subjectId
-        - subjectType
-        - capability
-        - surface
+        - envelopeId
+        - projectId
+        - recipientSelector
+        - roleVersion
+        - fingerprint
       properties:
-        operationId:
+        envelopeId:
           type: string
           example: example
-        resourceId:
+        projectId:
           type: string
           minLength: 1
           maxLength: 200
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
-        resourceKind:
-          $ref: '#/components/schemas/ResourceKind'
-        environment:
+        recipientSelector:
           type: string
           example: example
-        subjectId:
+        roleVersion:
           type: string
           example: example
-        subjectType:
-          type: string
-          example: example
-        capability:
-          $ref: '#/components/schemas/Capability'
-        surface:
+        fingerprint:
           type: string
           example: example
       example:
-        capability: PROJECT_ADMIN
-        environment: example
-        operationId: example
-        resourceId: example
-        resourceKind: project
-        subjectId: example
-        subjectType: example
-        surface: example
-    GrantListResponse:
+        envelopeId: example
+        fingerprint: example
+        projectId: example
+        recipientSelector: example
+        roleVersion: example
+    GrantAdminEnvelopeIssueRequest:
       type: object
       required:
-        - items
-        - page
+        - permissions
+        - recipientSelector
+        - roleVersion
+        - ttlSeconds
       properties:
-        items:
+        permissions:
           type: array
           items:
-            $ref: '#/components/schemas/GrantResponse'
+            $ref: '#/components/schemas/PermissionPair'
           example:
-            - capability: PROJECT_ADMIN
-              createdAt: "2026-01-02T15:04:05Z"
-              id: example
-              inherited: true
-              parentId: example
-              parentResourceId: example
-              parentResourceKind: project
-              resourceId: example
-              resourceKind: project
-              subjectId: example
-              subjectType: example
-        page:
-          $ref: '#/components/schemas/PageInfo'
-      example:
-        items:
-          - capability: PROJECT_ADMIN
-            createdAt: "2026-01-02T15:04:05Z"
-            id: example
-            inherited: true
-            parentId: example
-            parentResourceId: example
-            parentResourceKind: project
-            resourceId: example
-            resourceKind: project
-            subjectId: example
-            subjectType: example
-        page:
-          nextCursor: example
-    GrantRequest:
-      type: object
-      required:
-        - resourceKind
-        - resourceId
-        - subjectType
-        - subjectId
-        - capability
-      properties:
-        resourceKind:
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
+        recipientSelector:
+          type: string
+          example: example
+        roleVersion:
+          type: string
+          example: example
+        targetResourceKind:
           $ref: '#/components/schemas/ResourceKind'
-        resourceId:
+        targetResourceId:
           type: string
           minLength: 1
           maxLength: 200
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
-        subjectType:
-          type: string
-          example: example
-        subjectId:
-          type: string
-          example: example
-        capability:
-          $ref: '#/components/schemas/Capability'
+        ttlSeconds:
+          type: integer
+          format: int64
+          description: Required bounded lifetime in seconds; the server derives issuance
+            and expiry timestamps.
+          example: 1
       example:
-        capability: PROJECT_ADMIN
-        resourceId: example
-        resourceKind: project
-        subjectId: example
-        subjectType: example
-    GrantResponse:
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
+        recipientSelector: example
+        roleVersion: example
+        targetResourceId: example
+        targetResourceKind: project
+        ttlSeconds: 1
+    GrantAdminEnvelopeResponse:
       type: object
       required:
         - id
-        - resourceId
-        - resourceKind
-        - subjectType
-        - subjectId
-        - capability
-        - createdAt
+        - profile
+        - projectId
+        - permissions
+        - recipientSelector
+        - roleVersion
+        - issuedAt
+        - expiresAt
+        - fingerprint
+        - idempotencyKey
+        - requestDigest
       properties:
         id:
           type: string
           example: example
-        resourceId:
+        profile:
+          type: string
+          example: example
+        projectId:
           type: string
           minLength: 1
           maxLength: 200
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
-        resourceKind:
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionPair'
+          example:
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
+        targetResourceKind:
           $ref: '#/components/schemas/ResourceKind'
-        subjectType:
-          type: string
-          example: example
-        subjectId:
-          type: string
-          example: example
-        capability:
-          $ref: '#/components/schemas/Capability'
-        inherited:
-          type: boolean
-          example: true
-        parentId:
-          type: string
-          example: example
-        parentResourceKind:
-          $ref: '#/components/schemas/ResourceKind'
-        parentResourceId:
+        targetResourceId:
           type: string
           minLength: 1
           maxLength: 200
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
-        createdAt:
+        recipientSelector:
+          type: string
+          example: example
+        roleVersion:
+          type: string
+          example: example
+        issuedAt:
           type: string
           format: date-time
           example: "2026-01-02T15:04:05Z"
+        expiresAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        fingerprint:
+          type: string
+          example: example
+        idempotencyKey:
+          type: string
+          example: example
+        requestDigest:
+          type: string
+          example: example
+        revokedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        revokedByPrincipalId:
+          type: string
+          example: example
+        revocationReason:
+          type: string
+          example: example
       example:
-        capability: PROJECT_ADMIN
-        createdAt: "2026-01-02T15:04:05Z"
+        expiresAt: "2026-01-02T15:04:05Z"
+        fingerprint: example
         id: example
-        inherited: true
-        parentId: example
-        parentResourceId: example
-        parentResourceKind: project
-        resourceId: example
-        resourceKind: project
-        subjectId: example
-        subjectType: example
+        idempotencyKey: example
+        issuedAt: "2026-01-02T15:04:05Z"
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
+        profile: example
+        projectId: example
+        recipientSelector: example
+        requestDigest: example
+        revocationReason: example
+        revokedAt: "2026-01-02T15:04:05Z"
+        revokedByPrincipalId: example
+        roleVersion: example
+        targetResourceId: example
+        targetResourceKind: project
+    GrantAdminEnvelopeRevokeRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          example: example
+      example:
+        reason: example
     GridVisualizationPresentation:
       type: object
       required:
@@ -75827,6 +76480,119 @@ components:
         kind: example
         maximumFractionDigits: 1
         minimumFractionDigits: 1
+    PermissionAction:
+      type: string
+      enum:
+        - dashboard.read
+        - dashboard.create
+        - dashboard.update
+        - dashboard.delete
+        - dashboard.publish
+        - semantic.read
+        - semantic.query
+        - semantic.consume
+        - semantic.create
+        - semantic.update
+        - semantic.delete
+        - source.read
+        - source.create
+        - source.update
+        - source.delete
+        - model.read
+        - model.create
+        - model.update
+        - model.delete
+        - pipeline.read
+        - pipeline.create
+        - pipeline.run
+        - pipeline.update
+        - pipeline.delete
+        - connection.read
+        - connection.create
+        - connection.use
+        - connection.manage
+        - resource.share
+        - delivery.read
+        - delivery.plan
+        - delivery.build
+        - delivery.publish
+        - delivery.approve
+        - delivery.activate
+        - delivery.rollback
+        - project.settings.read
+        - project.settings.update
+        - project.access.read
+        - project.access.manage
+        - project.access.delegate
+        - audit.read
+        - workload.delegate
+        - platform.settings.read
+        - platform.settings.update
+        - platform.access.read
+        - platform.access.manage
+        - platform.audit.read
+      example: dashboard.read
+    PermissionCatalogProfile:
+      type: string
+      enum:
+        - leapview.permissions/v1
+      example: leapview.permissions/v1
+    PermissionPair:
+      type: object
+      required:
+        - action
+        - target
+        - profile
+      properties:
+        action:
+          $ref: '#/components/schemas/PermissionAction'
+        target:
+          $ref: '#/components/schemas/PermissionTarget'
+        profile:
+          $ref: '#/components/schemas/PermissionCatalogProfile'
+      example:
+        action: dashboard.read
+        profile: leapview.permissions/v1
+        target:
+          projectId: project:analytics
+          resourceId: dashboard:sales
+          resourceKind: dashboard
+          scope: resource
+    PermissionScope:
+      type: string
+      enum:
+        - instance
+        - project
+        - resource
+      example: instance
+    PermissionTarget:
+      type: object
+      required:
+        - scope
+      properties:
+        scope:
+          $ref: '#/components/schemas/PermissionScope'
+        instanceId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        resourceKind:
+          $ref: '#/components/schemas/ResourceKind'
+        resourceId:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        includeFuture:
+          type: boolean
+          example: true
+      example:
+        projectId: project:analytics
+        resourceId: dashboard:sales
+        resourceKind: dashboard
+        scope: resource
     PivotDashboardQuery:
       type: object
       allOf:
@@ -79254,6 +80020,239 @@ components:
         - pipeline
         - dashboard
       example: project
+    ResourceShareGrantAuditPayload:
+      type: object
+      required:
+        - grantId
+        - projectId
+        - resourceKind
+        - resourceId
+        - resourceUid
+        - recipientType
+        - recipientId
+        - fingerprint
+      properties:
+        grantId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        resourceKind:
+          $ref: '#/components/schemas/ResourceKind'
+        resourceId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        resourceUid:
+          type: string
+          example: example
+        recipientType:
+          type: string
+          example: example
+        recipientId:
+          type: string
+          example: example
+        fingerprint:
+          type: string
+          example: example
+      example:
+        fingerprint: example
+        grantId: example
+        projectId: example
+        recipientId: example
+        recipientType: example
+        resourceId: example
+        resourceKind: project
+        resourceUid: example
+    ResourceShareGrantIssueRequest:
+      type: object
+      required:
+        - resourceUid
+        - resourceKind
+        - resourceId
+        - recipientType
+        - recipientId
+        - permissions
+      properties:
+        resourceUid:
+          type: string
+          example: example
+        resourceKind:
+          $ref: '#/components/schemas/ResourceKind'
+        resourceId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        recipientType:
+          type: string
+          example: example
+        recipientId:
+          type: string
+          example: example
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionPair'
+          example:
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
+        ttlSeconds:
+          type: integer
+          format: int64
+          description: Optional bounded lifetime in seconds. The server derives issuance
+            and expiry timestamps.
+          example: 1
+      example:
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
+        recipientId: example
+        recipientType: example
+        resourceId: example
+        resourceKind: project
+        resourceUid: example
+        ttlSeconds: 1
+    ResourceShareGrantResponse:
+      type: object
+      required:
+        - id
+        - profile
+        - instanceId
+        - projectId
+        - resourceUid
+        - resourceKind
+        - resourceId
+        - recipientType
+        - recipientId
+        - permissions
+        - issuedAt
+        - fingerprint
+        - idempotencyKey
+        - requestDigest
+      properties:
+        id:
+          type: string
+          example: example
+        profile:
+          type: string
+          example: example
+        instanceId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        resourceUid:
+          type: string
+          example: example
+        resourceKind:
+          $ref: '#/components/schemas/ResourceKind'
+        resourceId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        recipientType:
+          type: string
+          example: example
+        recipientId:
+          type: string
+          example: example
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionPair'
+          example:
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
+        issuedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        expiresAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        fingerprint:
+          type: string
+          example: example
+        idempotencyKey:
+          type: string
+          example: example
+        requestDigest:
+          type: string
+          example: example
+        revokedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        revokedByPrincipalId:
+          type: string
+          example: example
+        revocationReason:
+          type: string
+          example: example
+      example:
+        expiresAt: "2026-01-02T15:04:05Z"
+        fingerprint: example
+        id: example
+        idempotencyKey: example
+        instanceId: example
+        issuedAt: "2026-01-02T15:04:05Z"
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
+        profile: example
+        projectId: example
+        recipientId: example
+        recipientType: example
+        requestDigest: example
+        resourceId: example
+        resourceKind: project
+        resourceUid: example
+        revocationReason: example
+        revokedAt: "2026-01-02T15:04:05Z"
+        revokedByPrincipalId: example
+    ResourceShareGrantRevokeRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          example: example
+      example:
+        reason: example
     RoleBindingAuditPayload:
       type: object
       required:
@@ -79315,6 +80314,7 @@ components:
         - subjectType
         - subjectId
         - role
+        - grantAdminEnvelopeId
         - expectedRevision
       properties:
         id:
@@ -79331,6 +80331,13 @@ components:
           example: example
         role:
           type: string
+          description: A versioned named role from the typed permission catalog. The
+            server captures its exact expansion.
+          example: example
+        grantAdminEnvelopeId:
+          type: string
+          description: A live bounded envelope authorizing this exact recipient and
+            role expansion.
           example: example
         expectedRevision:
           type: integer
@@ -79340,11 +80347,25 @@ components:
           example: 1
       example:
         expectedRevision: 1
+        grantAdminEnvelopeId: example
         id: example
         name: example
         role: example
         subjectId: example
         subjectType: example
+    RoleBindingDeleteRequest:
+      type: object
+      required:
+        - expectedRevision
+      properties:
+        expectedRevision:
+          type: integer
+          format: int64
+          description: Compare-and-swap fence for the policy revision containing the
+            binding.
+          example: 1
+      example:
+        expectedRevision: 1
     RoleBindingListResponse:
       type: object
       required:
@@ -79362,9 +80383,18 @@ components:
             $ref: '#/components/schemas/RoleBindingResponse'
           example:
             - capabilities:
-                - PROJECT_ADMIN
+                - PLATFORM_ADMIN
               id: example
               name: example
+              permissionProfile: leapview.permissions/v1
+              permissions:
+                - action: dashboard.read
+                  profile: leapview.permissions/v1
+                  target:
+                    projectId: project:analytics
+                    resourceId: dashboard:sales
+                    resourceKind: dashboard
+                    scope: resource
               policyDigest: example
               policyRevision: 1
               role: example
@@ -79395,9 +80425,18 @@ components:
         environment: example
         items:
           - capabilities:
-              - PROJECT_ADMIN
+              - PLATFORM_ADMIN
             id: example
             name: example
+            permissionProfile: leapview.permissions/v1
+            permissions:
+              - action: dashboard.read
+                profile: leapview.permissions/v1
+                target:
+                  projectId: project:analytics
+                  resourceId: dashboard:sales
+                  resourceKind: dashboard
+                  scope: resource
             policyDigest: example
             policyRevision: 1
             role: example
@@ -79405,6 +80444,40 @@ components:
             subjectType: example
         page:
           nextCursor: example
+        policyDigest: example
+        policyRevision: 1
+        projectId: example
+        targetId: example
+    RoleBindingMutationResponse:
+      type: object
+      required:
+        - targetId
+        - projectId
+        - environment
+        - policyRevision
+        - policyDigest
+      properties:
+        targetId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        environment:
+          type: string
+          example: example
+        policyRevision:
+          type: integer
+          format: int64
+          example: 1
+        policyDigest:
+          type: string
+          example: example
+      example:
+        environment: example
         policyDigest: example
         policyRevision: 1
         projectId: example
@@ -79417,7 +80490,6 @@ components:
         - subjectType
         - subjectId
         - role
-        - capabilities
         - policyRevision
         - policyDigest
       properties:
@@ -79436,14 +80508,31 @@ components:
         role:
           type: string
           example: example
+        permissionProfile:
+          $ref: '#/components/schemas/PermissionCatalogProfile'
+          description: The versioned typed permission profile captured with this assignment.
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionPair'
+          description: The exact immutable action-target expansion captured at assignment
+            time.
+          example:
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
         capabilities:
           type: array
           items:
             $ref: '#/components/schemas/Capability'
-          description: The immutable capability bundle derived from role by the target
-            authority.
+          description: Legacy read-only capability evidence. New role bindings never
+            populate this field.
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
         policyRevision:
           type: integer
           format: int64
@@ -79453,9 +80542,18 @@ components:
           example: example
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         id: example
         name: example
+        permissionProfile: leapview.permissions/v1
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
         policyDigest: example
         policyRevision: 1
         role: example
@@ -79473,14 +80571,14 @@ components:
             $ref: '#/components/schemas/RoleResponse'
           example:
             - capabilities:
-                - PROJECT_ADMIN
+                - PLATFORM_ADMIN
               name: example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
           - capabilities:
-              - PROJECT_ADMIN
+              - PLATFORM_ADMIN
             name: example
         page:
           nextCursor: example
@@ -79498,10 +80596,10 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         name: example
     RulesVisualizationConditionalRule:
       type: object

@@ -18,13 +18,14 @@ import (
 )
 
 type canonicalAuthorizer struct {
-	denied bool
-	calls  []service.AuthorizationRequest
+	denied         bool
+	denyDependency bool
+	calls          []service.AuthorizationRequest
 }
 
 func (a *canonicalAuthorizer) Authorize(_ context.Context, request service.AuthorizationRequest) error {
 	a.calls = append(a.calls, request)
-	if a.denied {
+	if a.denied || (a.denyDependency && request.DependencyChange) {
 		return errors.New("denied")
 	}
 	return nil
@@ -230,6 +231,33 @@ func TestCanonicalServiceCreateEditPublishArchiveAndAuthorization(t *testing.T) 
 	}
 	if len(authorizer.calls) < 4 || authorizer.calls[0].Action != authoring.AuthorizationActionEdit || authorizer.calls[len(authorizer.calls)-1].Action != authoring.AuthorizationActionArchive {
 		t.Fatalf("authorization calls = %#v", authorizer.calls)
+	}
+}
+
+func TestCanonicalServiceRejectsSemanticModelChangeWithoutDependencyAuthority(t *testing.T) {
+	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{denyDependency: true}, &canonicalCompiler{}
+	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-created", "draft-created", "revision-created", "revision-edited")
+	created, err := svc.Create(t.Context(), service.CreateRequest{
+		ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "actor", Title: "Orders", Slug: "orders",
+		SemanticModel: "model:original", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-dependency",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedModel := "model:replacement"
+	_, err = svc.Execute(t.Context(), "project:test", authoring.Command{
+		ID: "edit-dependency", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID,
+		ExpectedRevision: created.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"},
+		Metadata: &authoring.MetadataPatch{SemanticModel: &changedModel},
+	})
+	if err == nil || err.Error() != "denied" {
+		t.Fatalf("semantic model dependency change error = %v, want denial", err)
+	}
+	if repository.lifecycle.SemanticModel != "model:original" {
+		t.Fatalf("denied dependency change mutated lifecycle to %q", repository.lifecycle.SemanticModel)
+	}
+	if len(authorizer.calls) != 3 || !authorizer.calls[2].DependencyChange || authorizer.calls[2].SemanticModel != graph.ResourceID(changedModel) {
+		t.Fatalf("dependency authorization calls = %#v", authorizer.calls)
 	}
 }
 

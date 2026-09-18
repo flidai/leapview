@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool"
+	"github.com/flidai/leapview/internal/access"
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
@@ -27,19 +28,28 @@ type Scope struct {
 }
 
 type CredentialScope struct {
-	ProjectID    string
-	Restricted   bool
-	Capabilities []string
+	ProjectID         string
+	Restricted        bool
+	Capabilities      []string
+	PermissionProfile string
+	Permissions       []access.PermissionPair
 }
 
 type APIGenAuthorizeFunc func(ctx context.Context, scope Scope, operationID string) (agentcore.ToolResult, bool)
 
+// APIGenAuthorizeOperationFunc receives the built request so an authorizer
+// can bind typed action/target permissions to the exact route and arguments.
+// Authorize remains supported for lightweight providers that only need the
+// operation identity.
+type APIGenAuthorizeOperationFunc func(ctx context.Context, scope Scope, operation APIGenOperation, request *http.Request) (agentcore.ToolResult, bool)
+
 type APIGenDispatchFunc func(scope Scope, operationID string, writer http.ResponseWriter, request *http.Request) bool
 
 type APIGenProvider struct {
-	Authorize  APIGenAuthorizeFunc
-	Dispatch   APIGenDispatchFunc
-	Operations []APIGenOperation
+	Authorize          APIGenAuthorizeFunc
+	AuthorizeOperation APIGenAuthorizeOperationFunc
+	Dispatch           APIGenDispatchFunc
+	Operations         []APIGenOperation
 }
 
 const maxAgentQueryRows = 50
@@ -104,7 +114,7 @@ func requireToolObjectSchema(input json.RawMessage) json.RawMessage {
 }
 
 func (p APIGenProvider) Run(ctx context.Context, scope Scope, operation APIGenOperation, call agentcore.ToolCall) agentcore.ToolResult {
-	if p.Authorize == nil {
+	if p.Authorize == nil && p.AuthorizeOperation == nil {
 		return apigenAgentToolError("authorization_failed", "agent tool authorizer is not configured")
 	}
 	arguments := normalizeCuratedQueryArguments(operation.Tool.Name, call.Arguments)
@@ -114,8 +124,19 @@ func (p APIGenProvider) Run(ctx context.Context, scope Scope, operation APIGenOp
 	}
 	request = withAPIGenRouteContext(request, operation.Tool.Path)
 	runScope := scope
-	runScope.ProjectID = strings.TrimSpace(chi.URLParam(request, "project"))
-	if errResult, ok := p.Authorize(ctx, runScope, operation.Contract.OperationID); !ok {
+	if projectID := strings.TrimSpace(chi.URLParam(request, "project")); projectID != "" {
+		runScope.ProjectID = projectID
+	}
+	var errResult agentcore.ToolResult
+	var authorized bool
+	if p.AuthorizeOperation != nil {
+		errResult, authorized = p.AuthorizeOperation(ctx, runScope, operation, request)
+	} else if p.Authorize != nil {
+		errResult, authorized = p.Authorize(ctx, runScope, operation.Contract.OperationID)
+	} else {
+		return apigenAgentToolError("authorization_failed", "agent tool authorizer is not configured")
+	}
+	if !authorized {
 		return errResult
 	}
 	ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{

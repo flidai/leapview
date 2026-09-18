@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
 	"github.com/flidai/leapview/internal/dashboard/authoring/catalog"
@@ -26,11 +27,12 @@ import (
 // used by the composed application boundary. Runtime acquisition remains a
 // callback so the transport does not depend on registry topology.
 type Options struct {
-	Authoring      *authoringservice.Service
-	Repository     authoring.Repository
-	Authorizer     authoringservice.Authorizer
-	Compiler       authoringservice.Compiler
-	AcquireRuntime sourceadapter.AcquireRuntime
+	Authoring       *authoringservice.Service
+	Repository      authoring.Repository
+	Authorizer      authoringservice.Authorizer
+	Compiler        authoringservice.Compiler
+	AcquireRuntime  sourceadapter.AcquireRuntime
+	PreviewGovernor dataquery.Governor
 }
 
 // Application is the small canonical dashboard authoring application
@@ -38,12 +40,13 @@ type Options struct {
 // created only for the request that needs them, each with a fixed project
 // provider.
 type Application struct {
-	authoring      *authoringservice.Service
-	compiler       authoringservice.Compiler
-	sources        *sourceadapter.Adapter
-	repository     authoring.Repository
-	authorizer     authoringservice.Authorizer
-	acquireRuntime sourceadapter.AcquireRuntime
+	authoring       *authoringservice.Service
+	compiler        authoringservice.Compiler
+	sources         *sourceadapter.Adapter
+	repository      authoring.Repository
+	authorizer      authoringservice.Authorizer
+	acquireRuntime  sourceadapter.AcquireRuntime
+	previewGovernor dataquery.Governor
 }
 
 // New validates the composition ports and builds the source adapter once.
@@ -74,13 +77,25 @@ func New(options Options) (*Application, error) {
 		return nil, err
 	}
 	return &Application{
-		authoring:      options.Authoring,
-		compiler:       options.Compiler,
-		sources:        sources,
-		repository:     options.Repository,
-		authorizer:     options.Authorizer,
-		acquireRuntime: acquireRuntime,
+		authoring:       options.Authoring,
+		compiler:        options.Compiler,
+		sources:         sources,
+		repository:      options.Repository,
+		authorizer:      options.Authorizer,
+		acquireRuntime:  acquireRuntime,
+		previewGovernor: options.PreviewGovernor,
 	}, nil
+}
+
+// SetPreviewGovernor installs the canonical query authorization boundary used
+// by direct draft preview execution. Composition may call this after the
+// active metrics decorator is built because authoring is constructed earlier
+// than the transport/runtime surfaces.
+func (a *Application) SetPreviewGovernor(governor dataquery.Governor) {
+	if a == nil {
+		return
+	}
+	a.previewGovernor = governor
 }
 
 // NewGenerationRevalidator binds the durable authoring repository and the
@@ -239,6 +254,7 @@ func (a *Application) Preview(ctx context.Context, request preview.PreviewReques
 		Repository: a.repository,
 		Authorizer: a.authorizer,
 		Provider:   projectProvider{projectID: projectID, acquire: a.acquireRuntime},
+		Governor:   a.previewGovernor,
 	})
 	if err != nil {
 		return preview.Preview{}, err

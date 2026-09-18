@@ -62,7 +62,7 @@ test('profile settings renders the signed-in identity and editable local fields'
         active: 'profile',
         profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', avatarUrl: '/profile/avatar.png', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
         security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
-        tokens: { items: [], capabilities: [] },
+        tokens: { items: [], capabilities: [], permissionOptionsReady: false },
       } })
       const element = document.querySelector('lv-admin-page') as any
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
@@ -251,27 +251,27 @@ test('profile settings renders the signed-in identity and editable local fields'
   }
 })
 
-test('personal API tokens use capability selectors', async () => {
+test('personal API tokens use exact typed permission selectors', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 700 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-personal-settings'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const profile = 'leapview.permissions/v1'
+      const permissionTarget = (resourceId: string) => ({ scope: 'resource', projectId: 'project_1', resourceKind: 'dashboard', resourceId })
       mergePatch({ page: {
         kind: 'admin', title: 'API tokens', active: 'api-tokens', headerTitle: 'API tokens', headerDetail: 'Manage personal API and CLI credentials.',
       }, personalSettings: {
         active: 'api-tokens',
         profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
         security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
-        tokens: { items: [], capabilities: [
-          { value: 'PROJECT_ADMIN', label: 'Administer project', description: 'Manage project-level access and settings.', category: 'Administration' },
-          { value: 'RESOURCE_USE', label: 'Use resource', description: 'Open and use the project resource.', category: 'Resource' },
-          { value: 'RESOURCE_READ', label: 'Read resource', description: 'View the resource and its governed data.', category: 'Resource' },
-          { value: 'RESOURCE_EDIT', label: 'Edit resource', description: 'Create and update the resource.', category: 'Resource' },
-          { value: 'RESOURCE_MANAGE', label: 'Manage resource', description: 'Delete and administer the resource.', category: 'Resource' },
-          { value: 'RESOURCE_SHARE', label: 'Share resource', description: 'Share the resource with other principals.', category: 'Resource' },
-          { value: 'RESOURCE_PUBLISH', label: 'Publish resource', description: 'Publish the resource to serving.', category: 'Resource' },
+        tokens: { items: [], permissionOptionsReady: true, capabilities: [
+          { value: 'project-settings', label: 'Administer project', description: 'Manage project-level access and settings.', category: 'Administration', permissions: [{ action: 'project.settings.read', profile, target: { scope: 'project', projectId: 'project_1' } }] },
+          { value: 'dashboard-use', label: 'Use resource', description: 'Open and use the project resource.', category: 'Resource', permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-use') }] },
+          { value: 'dashboard-read', label: 'Read resource', description: 'View the resource and its governed data.', category: 'Resource', permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-read') }] },
+          { value: 'dashboard-edit', label: 'Edit resource', description: 'Create and update the resource.', category: 'Resource', permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-edit') }] },
+          { value: 'dashboard-manage', label: 'Manage resource', description: 'Delete and administer the resource.', category: 'Resource', permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-manage') }] },
         ] },
       } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
@@ -286,6 +286,7 @@ test('personal API tokens use capability selectors', async () => {
         createDisabled: create.disabled,
         rawProjectField: Boolean(root.querySelector('input[placeholder*="Project ID"]')),
         rawPrivilegeField: Boolean(root.querySelector('input[placeholder*="Privileges"]')),
+        emptyPermissionText: root.querySelector('.selected-permissions .permission-empty')?.textContent?.trim(),
       }
 
       name.value = 'Sales automation'
@@ -320,7 +321,7 @@ test('personal API tokens use capability selectors', async () => {
       search.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await personal.updateComplete
       const filteredPermissions = Array.from(root.querySelectorAll('.permission-option .settings-label')).map((label) => label.textContent?.trim())
-      const readPermission = root.querySelector('input[type="checkbox"][value="resource-content"]') as HTMLInputElement
+      const readPermission = root.querySelector('input[type="checkbox"][value="typed-2"]') as HTMLInputElement
       const readDescription = root.querySelector('.permission-option .settings-description') as HTMLElement
       const readDescribedBy = readPermission.getAttribute('aria-describedby') === readDescription.id
       readPermission.click()
@@ -365,7 +366,7 @@ test('personal API tokens use capability selectors', async () => {
       await personal.updateComplete
       ;(root.querySelector('#token-confirm .primary') as HTMLButtonElement).click()
       mergePatch({ personalSettings: { tokens: { items: [
-        { id: 'token-1', name: 'Sales automation', capabilities: ['RESOURCE_READ'], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '', revokedAt: '' },
+        { id: 'token-1', name: 'Sales automation', permissionProfile: profile, permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-read') }], capabilities: [], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '', revokedAt: '' },
       ], newToken: 'lv_created_secret' } } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await personal.updateComplete
@@ -420,6 +421,7 @@ test('personal API tokens use capability selectors', async () => {
       createDisabled: true,
       rawProjectField: false,
       rawPrivilegeField: false,
+      emptyPermissionText: 'No project or resource authority selected. The token will have no project or resource authority.',
     })
     expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
     expect(state.menuLayout.listScrollable).toBe(true)
@@ -433,10 +435,10 @@ test('personal API tokens use capability selectors', async () => {
       selectedCount: '0 selected',
       categorySummaries: ['Administration 0 / 1', 'Resource 0 / 4'],
     })
-    expect(state.filteredPermissions).toEqual(['Resource access'])
+    expect(state.filteredPermissions).toEqual(['Read resource'])
     expect(state.readDescribedBy).toBe(true)
     expect(state.selectedMenuState).toEqual({ count: '1 selected', selected: 'true', categorySummary: 'Resource 1 / 4' })
-    expect(state.selectedPermissions).toEqual(['Resource access'])
+    expect(state.selectedPermissions).toEqual(['Read resource'])
     expect(state.menuClosed).toBe(true)
     expect(state.searchFocused).toBe(true)
     expect(state.triggerFocused).toBe(true)
@@ -446,10 +448,10 @@ test('personal API tokens use capability selectors', async () => {
       { value: 'custom', label: 'Custom' },
     ])
     expect(state.confirmation).toContain('It will expire ')
-    expect(state.confirmation).not.toContain('never')
-    expect(state.command).toMatchObject({
-      action: 'create', name: 'Sales automation', capabilities: ['RESOURCE_USE', 'RESOURCE_READ'],
-    })
+	expect(state.confirmation).not.toContain('never')
+	expect(state.command).toMatchObject({
+	  action: 'create', name: 'Sales automation', permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target: { scope: 'resource', projectId: 'project_1', resourceKind: 'dashboard', resourceId: 'dashboard-read' } }],
+	})
     const commandExpiry = (state.command as { expiresAt?: string }).expiresAt
     expect(typeof commandExpiry).toBe('string')
     expect(Date.parse(commandExpiry ?? '')).toBeGreaterThan(Date.now())
@@ -473,8 +475,8 @@ test('personal API tokens use capability selectors', async () => {
   }
 })
 
-test('personal API token permissions expose enforceable access levels', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+test('personal API tokens persist and render an explicit empty authority list', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 700 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-personal-settings'))
@@ -486,14 +488,65 @@ test('personal API token permissions expose enforceable access levels', async ()
         active: 'api-tokens',
         profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
         security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
-        tokens: { items: [], capabilities: [
-          { value: 'PROJECT_ADMIN', label: 'Project administration', description: 'Manage project-level access and settings.', category: 'Administration' },
-          { value: 'RESOURCE_USE', label: 'Use resource', description: 'Open and use the project resource.', category: 'Resource' },
-          { value: 'RESOURCE_READ', label: 'Read resource', description: 'View the resource and its governed data.', category: 'Resource' },
-          { value: 'RESOURCE_EDIT', label: 'Edit resource', description: 'Create and update the resource.', category: 'Resource' },
-          { value: 'RESOURCE_MANAGE', label: 'Manage resource', description: 'Delete and administer the resource.', category: 'Resource' },
-          { value: 'RESOURCE_SHARE', label: 'Share resource', description: 'Share the resource with other principals.', category: 'Resource' },
-          { value: 'RESOURCE_PUBLISH', label: 'Publish resource', description: 'Publish the resource to serving.', category: 'Resource' },
+        tokens: { items: [], permissionOptionsReady: true, capabilities: [{
+          value: 'RESOURCE_READ', label: 'Read dashboard', description: 'Read this dashboard.', category: 'Dashboard',
+          permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target: { scope: 'resource', projectId: 'project_1', resourceKind: 'dashboard', resourceId: 'dashboard_1' } }],
+        }] },
+      } })
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      const admin = document.querySelector('lv-admin-page') as any
+      await admin.updateComplete
+      const personal = (admin.shadowRoot as ShadowRoot).querySelector('lv-personal-settings') as any
+      await personal.updateComplete
+      const root = personal.shadowRoot as ShadowRoot
+      const name = root.querySelector('#token-name') as HTMLInputElement
+      name.value = 'Authentication-only automation'
+      name.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await personal.updateComplete
+
+      let command: any = null
+	  personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+	  ;(root.querySelector('.token-form') as HTMLFormElement).dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
+	  await personal.updateComplete
+	  ;(root.querySelector('#token-confirm .primary') as HTMLButtonElement).click()
+	  await personal.updateComplete
+
+      mergePatch({ personalSettings: { tokens: { items: [
+        { id: 'token-empty', name: 'Authentication-only automation', permissionProfile: 'leapview.permissions/v1', permissions: [], capabilities: [], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '', revokedAt: '' },
+      ] } } })
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      await personal.updateComplete
+      return {
+        command,
+        tokenSummary: Array.from(root.querySelectorAll('.card:last-child .settings-description')).at(-1)?.textContent?.replace(/\s+/g, ' ').trim(),
+      }
+    })
+
+	expect(state.command).toMatchObject({ action: 'create', name: 'Authentication-only automation', permissions: [] })
+	expect(Date.parse((state.command as { expiresAt: string }).expiresAt)).toBeGreaterThan(Date.now())
+    expect(state.tokenSummary).toContain('No project or resource authority')
+  } finally {
+    await page.close()
+  }
+})
+
+test('personal API token UI submits action-target pairs without a Cartesian expansion', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-personal-settings'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const target = { scope: 'resource', projectId: 'project_1', resourceKind: 'dashboard', resourceId: 'dashboard_1' }
+      mergePatch({ page: {
+        kind: 'admin', title: 'API tokens', active: 'api-tokens', headerTitle: 'API tokens', headerDetail: 'Manage personal API and CLI credentials.',
+      }, personalSettings: {
+        active: 'api-tokens',
+        profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
+        security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
+        tokens: { items: [], permissionOptionsReady: true, capabilities: [
+          { value: 'RESOURCE_USE', label: 'Use dashboard', description: 'Use this dashboard.', category: 'Dashboard', permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target }] },
+          { value: 'RESOURCE_READ', label: 'Read dashboard', description: 'Read this dashboard.', category: 'Dashboard', permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target }] },
         ] },
       } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
@@ -502,66 +555,36 @@ test('personal API token permissions expose enforceable access levels', async ()
       const personal = (admin.shadowRoot as ShadowRoot).querySelector('lv-personal-settings') as any
       await personal.updateComplete
       const root = personal.shadowRoot as ShadowRoot
+      ;(root.querySelector('#token-name') as HTMLInputElement).value = 'Dashboard reader'
+      ;(root.querySelector('#token-name') as HTMLInputElement).dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       ;(root.querySelector('.permission-trigger') as HTMLButtonElement).click()
       await personal.updateComplete
-      ;(root.querySelector('input[type="checkbox"][value="project-administration"]') as HTMLInputElement).click()
+      ;(root.querySelector('input[type="checkbox"][value="typed-0"]') as HTMLInputElement).click()
       await personal.updateComplete
-      ;(root.querySelector('input[type="checkbox"][value="resource-content"]') as HTMLInputElement).click()
-      await personal.updateComplete
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-      await personal.updateComplete
-
-      const administrationAccess = root.querySelector('.permission-access-trigger[data-permission="project-administration"]') as HTMLButtonElement
-      const initialAdministrationAccess = administrationAccess.textContent?.replace(/\s+/g, ' ').trim()
-      administrationAccess.click()
-      await personal.updateComplete
-      const administrationAccessOptions = Array.from(root.querySelectorAll('.permission-access-option')).map((option) => option.textContent?.trim())
-      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('.permission-access-option')).find((option) => option.textContent?.trim() === 'Read and write'))?.click()
-      await personal.updateComplete
-
-      const resourceAccess = root.querySelector('.permission-access-trigger[data-permission="resource-content"]') as HTMLButtonElement
-      const initialResourceAccess = resourceAccess.textContent?.replace(/\s+/g, ' ').trim()
-      resourceAccess.click()
-      await personal.updateComplete
-      const resourceAccessOptions = Array.from(root.querySelectorAll('.permission-access-option')).map((option) => option.textContent?.trim())
-      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('.permission-access-option')).find((option) => option.textContent?.trim() === 'Read and write'))?.click()
-      await personal.updateComplete
-
-      ;(root.querySelector('#token-name') as HTMLInputElement).value = 'Content automation'
-      ;(root.querySelector('#token-name') as HTMLInputElement).dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-      await personal.updateComplete
-      let command: any = null
-      personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
-      ;(root.querySelector('.token-form') as HTMLFormElement).dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
-      await personal.updateComplete
-      ;(root.querySelector('#token-confirm .primary') as HTMLButtonElement).click()
-      await personal.updateComplete
+	  let command: unknown = null
+	  personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+	  ;(root.querySelector('.token-form') as HTMLFormElement).dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
+	  await personal.updateComplete
+	  ;(root.querySelector('#token-confirm .primary') as HTMLButtonElement).click()
+	  await personal.updateComplete
+	  mergePatch({ personalSettings: { tokens: { items: [
+		{ id: 'token-typed', name: 'Dashboard reader', permissionProfile: 'leapview.permissions/v1', permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target }], capabilities: [], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '', revokedAt: '' },
+	  ] } } })
+	  await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+	  await personal.updateComplete
       return {
-        initialAdministrationAccess,
-        administrationAccessOptions,
-        selectedAdministrationAccess: administrationAccess.textContent?.replace(/\s+/g, ' ').trim(),
-        initialResourceAccess,
-        resourceAccessOptions,
-        selectedResourceAccess: resourceAccess.textContent?.replace(/\s+/g, ' ').trim(),
-        selectedPermissions: Array.from(root.querySelectorAll('.selected-permission .settings-label')).map((label) => label.textContent?.trim()),
-        fixedAccessControls: root.querySelectorAll('.permission-access-fixed').length,
         command,
+        summary: Array.from(root.querySelectorAll('.card:last-child .settings-description')).at(-1)?.textContent?.replace(/\s+/g, ' ').trim(),
       }
     })
-
-    expect(state.initialAdministrationAccess).toBe('Access: Read-only')
-    expect(state.administrationAccessOptions).toEqual(['Read-only', 'Read and write'])
-    expect(state.selectedAdministrationAccess).toBe('Access: Read and write')
-    expect(state.initialResourceAccess).toBe('Access: Read-only')
-    expect(state.resourceAccessOptions).toEqual(['Read-only', 'Read and write'])
-    expect(state.selectedResourceAccess).toBe('Access: Read and write')
-    expect(state.selectedPermissions).toEqual(['Project administration', 'Resource access'])
-    expect(state.fixedAccessControls).toBe(0)
-    expect(state.command).toMatchObject({
-      action: 'create', name: 'Content automation', capabilities: ['PROJECT_ADMIN', 'RESOURCE_USE', 'RESOURCE_READ', 'RESOURCE_EDIT'],
+    const command = state.command as { action: string, name: string, permissions: unknown[], expiresAt: string }
+    expect(command).toMatchObject({
+      action: 'create', name: 'Dashboard reader',
+      permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target: { scope: 'resource', projectId: 'project_1', resourceKind: 'dashboard', resourceId: 'dashboard_1' } }],
     })
-    expect(typeof state.command.expiresAt).toBe('string')
-    expect(Date.parse(state.command.expiresAt)).toBeGreaterThan(Date.now())
+    expect(typeof command.expiresAt).toBe('string')
+    expect(Date.parse(command.expiresAt)).toBeGreaterThan(Date.now())
+    expect(state.summary).toContain('dashboard.read · dashboard dashboard_1')
   } finally {
     await page.close()
   }

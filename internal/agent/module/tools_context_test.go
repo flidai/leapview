@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	agentcap "github.com/flidai/leapview/internal/agent"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
@@ -40,5 +41,12 @@ func TestExecutionScopeConfinesDevelopmentBypassToEnabledServers(t *testing.T) {
 	}
 	if got := (&Module{allowDevAuthBypass: true}).executionScope(scope); !got.DevAuthBypass {
 		t.Fatalf("development execution scope removed enabled bypass: %#v", got)
+	}
+}
+
+func TestAgentToolCredentialRejectsOmittedCapabilityScope(t *testing.T) {
+	scope := agentcap.Scope{Credential: agentcap.CredentialScope{Restricted: true}}
+	if agentCredentialAllowsCapability(scope, access.CapabilityResourceRead) {
+		t.Fatal("omitted token scope unexpectedly authorized agent capability")
 	}
 }

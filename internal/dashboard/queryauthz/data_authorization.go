@@ -41,6 +41,11 @@ type Options struct {
 	PrincipalFromContext      func(context.Context) (Principal, bool)
 	CredentialFromContext     func(context.Context) (access.APICredential, bool)
 	AuditRecorder             access.CanonicalAuditRecorder
+	// SemanticConsumption is the bounded compatibility binding between the
+	// catalog's semantic.consume action and the still-legacy principal grants.
+	// Dashboard execution requires RESOURCE_USE on the exact SemanticModel as
+	// well as a matching typed credential pair when a typed token is present.
+	SemanticConsumption SemanticConsumptionRequirement
 }
 
 type Metrics struct {
@@ -52,6 +57,7 @@ type Metrics struct {
 	principalFromContext      func(context.Context) (Principal, bool)
 	credentialFromContext     func(context.Context) (access.APICredential, bool)
 	auditRecorder             access.CanonicalAuditRecorder
+	semanticConsumption       SemanticConsumptionRequirement
 }
 
 var _ queryruntime.SpatialTileStreamExpirer = Metrics{}
@@ -104,6 +110,7 @@ func New(metrics queryruntime.Metrics, options Options) Metrics {
 		principalFromContext:      options.PrincipalFromContext,
 		credentialFromContext:     options.CredentialFromContext,
 		auditRecorder:             options.AuditRecorder,
+		semanticConsumption:       options.SemanticConsumption.withDefault(),
 	}
 }
 
@@ -358,9 +365,13 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsCapability(ctx, snapshot, principalID, credential.Token, capabilityAction) {
+	if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsDataQuery(ctx, snapshot, principalID, credential.Token, request, objects, capabilityAction) {
 		err := DeniedError{PrincipalID: principalID, Capability: capabilityAction, Credential: true}
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
+		return request, nil, err
+	}
+	if err := m.requireSemanticConsumption(ctx, snapshot, principalID, request, objects); err != nil {
+		_ = m.recordDataAccessAudit(ctx, request, m.semanticConsumption.withDefault().Capability, "denied", err)
 		return request, nil, err
 	}
 	bootstrapCandidateOwner := candidateQuery && candidateCapability.BootstrapAuthorized &&
@@ -423,6 +434,11 @@ func (m Metrics) authorizeDataQuery(ctx context.Context, snapshot accesssnapshot
 	subjects, err := m.subjects(ctx, principalID)
 	if err != nil {
 		return false, err
+	}
+	if handled, allowed, typedErr := authorizeTypedSemanticQuery(ctx, snapshot, subjects, request, objects); typedErr != nil {
+		return false, typedErr
+	} else if handled {
+		return allowed, nil
 	}
 	allows := func(resource access.ResourceRef) (bool, error) {
 		for _, subject := range subjects {
@@ -1323,7 +1339,9 @@ func (m Metrics) capabilityAllowed(ctx context.Context, snapshot accesssnapshot.
 
 func (m Metrics) tokenAllowsCapability(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, token access.APIToken, capability access.Capability) bool {
 	if token.Capabilities == nil {
-		return true
+		// A missing token allowlist is an invalid/legacy persisted form. It
+		// must never fall back to the principal's current authority.
+		return false
 	}
 	allowed, err := m.capabilityAllowed(ctx, snapshot, principalID, token, capability)
 	if err == nil && allowed {

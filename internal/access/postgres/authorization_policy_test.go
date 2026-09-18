@@ -46,6 +46,23 @@ func TestAuthorizationPolicyPostgreSQLCASIdempotencyAndHistoricalReads(t *testin
 	if second.Revision != 2 || second.Digest == first.Digest {
 		t.Fatalf("changed policy = %+v, want revision 2 and a new digest", second)
 	}
+	removed, err := repo.RemoveAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: binding.ID, IdempotencyKey: "policy-remove", ExpectedRevision: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.Revision != 3 || removed.Digest == second.Digest || len(removed.RoleBindings) != 0 {
+		t.Fatalf("removed policy = %+v, want empty revision 3 with a new digest", removed)
+	}
+	removeReplay, err := repo.RemoveAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: binding.ID, IdempotencyKey: "policy-remove", ExpectedRevision: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(removeReplay, removed) {
+		t.Fatalf("remove replay = %+v, want exact result %+v", removeReplay, removed)
+	}
+	if _, err := repo.RemoveAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: binding.ID, IdempotencyKey: "policy-remove-other", ExpectedRevision: 3}); !errors.Is(err, access.ErrAuthorizationPolicyNotFound) {
+		t.Fatalf("missing binding removal error = %v, want ErrAuthorizationPolicyNotFound", err)
+	}
 	historical, err := repo.AuthorizationPolicyRevision(ctx, scope, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -64,14 +81,14 @@ func TestAuthorizationPolicyPostgreSQLCASIdempotencyAndHistoricalReads(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := ValidateAuthorizationPolicyRevisionTx(ctx, tx, scope, second.Revision, second.Digest)
+	sealed, err := ValidateAuthorizationPolicyRevisionTx(ctx, tx, scope, removed.Revision, removed.Digest)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
 	}
-	if sealed.Revision != second.Revision || sealed.Digest != second.Digest {
+	if sealed.Revision != removed.Revision || sealed.Digest != removed.Digest {
 		_ = tx.Rollback(ctx)
-		t.Fatalf("tx-bound policy = %+v, want revision/digest %d/%s", sealed, second.Revision, second.Digest)
+		t.Fatalf("tx-bound policy = %+v, want revision/digest %d/%s", sealed, removed.Revision, removed.Digest)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)

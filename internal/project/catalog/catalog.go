@@ -6,11 +6,9 @@ package catalog
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 
@@ -160,6 +158,7 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, erro
 	if s == nil || s.leases == nil || s.subjects == nil {
 		return Page{}, ErrUnavailable
 	}
+	request.PrincipalID = strings.TrimSpace(request.PrincipalID)
 	request.Query = strings.TrimSpace(request.Query)
 	if request.Query == "" {
 		return Page{}, fmt.Errorf("%w: query is required", ErrInvalidRequest)
@@ -181,7 +180,7 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, erro
 		return Page{}, err
 	}
 	domain := strings.ToLower(strings.TrimSpace(request.Domain))
-	items := make([]Result, 0)
+	candidates := make([]projectgraph.Resource, 0)
 	for _, resource := range graph.Resources() {
 		if len(kinds) != 0 && !containsKind(kinds, resource.Kind) {
 			continue
@@ -192,36 +191,43 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, erro
 		if !matches(resource, request.Query) {
 			continue
 		}
-		semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
-		if err != nil {
-			return Page{}, err
-		}
-		if !semanticAllowed {
-			continue
-		}
-		allowed := request.DevAuthBypass
-		if !request.DevAuthBypass {
-			allowed, err = allowsAny(snapshot, subjects, resource)
-			if err != nil {
-				return Page{}, err
-			}
-		}
-		if allowed {
-			items = append(items, resultFor(resource))
-		}
+		candidates = append(candidates, resource)
 	}
-	sortResults(items)
+	sortResources(candidates)
 	digest, err := snapshotDigest(snapshot)
 	if err != nil {
 		return Page{}, err
 	}
-	return paginate(items, request.Cursor, cursorInput{Snapshot: digest, Query: request.Query, Kinds: kinds, Domain: domain, Limit: limit})
+	page, err := access.AuthorizeAndPaginate(ctx, candidates, access.DiscoveryRequest{
+		Collection: "project-catalog.search", PrincipalID: request.PrincipalID,
+		SecurityContext: catalogSecurityContext(digest, request.PrincipalID, request.DevAuthBypass, subjects),
+		Snapshot:        digest, Query: request.Query, Filter: catalogFilter(kinds, domain, ""),
+		Limit: limit, DefaultLimit: DefaultLimit, MaxLimit: MaxLimit, Cursor: request.Cursor,
+	}, func(ctx context.Context, resource projectgraph.Resource) (bool, error) {
+		semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
+		if err != nil || !semanticAllowed {
+			return false, err
+		}
+		if request.DevAuthBypass {
+			return true, nil
+		}
+		return allowsAny(snapshot, subjects, resource)
+	})
+	if err != nil {
+		return Page{}, catalogPaginationError(err)
+	}
+	items := make([]Result, 0, len(page.Items))
+	for _, resource := range page.Items {
+		items = append(items, resultFor(resource))
+	}
+	return Page{Items: items, NextCursor: page.NextCursor}, nil
 }
 
 func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 	if s == nil || s.leases == nil || s.subjects == nil {
 		return Page{}, ErrUnavailable
 	}
+	request.PrincipalID = strings.TrimSpace(request.PrincipalID)
 	lease, snapshot, graph, subjects, err := s.authorized(ctx, request.PrincipalID, request.DevAuthBypass)
 	if err != nil {
 		return Page{}, err
@@ -264,7 +270,7 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 		}
 		parent = request.Parent.ID
 	}
-	items := make([]Result, 0)
+	candidates := make([]projectgraph.Resource, 0)
 	seen := map[projectgraph.ResourceID]struct{}{}
 	if parent == "" {
 		// Project graphs do not require edges from the root. Root browsing is a
@@ -277,24 +283,8 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 			if domain != "" && strings.ToLower(resource.Metadata.Domain) != domain {
 				continue
 			}
-			semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
-			if err != nil {
-				return Page{}, err
-			}
-			if !semanticAllowed {
-				continue
-			}
-			allowed := request.DevAuthBypass
-			if !request.DevAuthBypass {
-				allowed, err = allowsAny(snapshot, subjects, resource)
-				if err != nil {
-					return Page{}, err
-				}
-			}
-			if allowed {
-				seen[resource.ID] = struct{}{}
-				items = append(items, resultFor(resource))
-			}
+			seen[resource.ID] = struct{}{}
+			candidates = append(candidates, resource)
 		}
 	} else {
 		// Child browsing follows authored graph edges in the dependency
@@ -310,30 +300,14 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 			if domain != "" && strings.ToLower(resource.Metadata.Domain) != domain {
 				continue
 			}
-			semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
-			if err != nil {
-				return Page{}, err
-			}
-			if !semanticAllowed {
-				continue
-			}
 			if _, ok := seen[resource.ID]; ok {
 				continue
 			}
-			allowed := request.DevAuthBypass
-			if !request.DevAuthBypass {
-				allowed, err = allowsAny(snapshot, subjects, resource)
-				if err != nil {
-					return Page{}, err
-				}
-			}
-			if allowed {
-				seen[resource.ID] = struct{}{}
-				items = append(items, resultFor(resource))
-			}
+			seen[resource.ID] = struct{}{}
+			candidates = append(candidates, resource)
 		}
 	}
-	sortResults(items)
+	sortResources(candidates)
 	parentKey := ""
 	if request.Parent != nil {
 		parentKey = string(request.Parent.Kind) + ":" + request.Parent.ID.String()
@@ -342,7 +316,29 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 	if err != nil {
 		return Page{}, err
 	}
-	return paginate(items, request.Cursor, cursorInput{Snapshot: digest, Kinds: kinds, Domain: domain, Limit: limit, Parent: parentKey})
+	page, err := access.AuthorizeAndPaginate(ctx, candidates, access.DiscoveryRequest{
+		Collection: "project-catalog.list", PrincipalID: request.PrincipalID,
+		SecurityContext: catalogSecurityContext(digest, request.PrincipalID, request.DevAuthBypass, subjects),
+		Snapshot:        digest, Filter: catalogFilter(kinds, domain, parentKey),
+		Limit: limit, DefaultLimit: DefaultLimit, MaxLimit: MaxLimit, Cursor: request.Cursor,
+	}, func(ctx context.Context, resource projectgraph.Resource) (bool, error) {
+		semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
+		if err != nil || !semanticAllowed {
+			return false, err
+		}
+		if request.DevAuthBypass {
+			return true, nil
+		}
+		return allowsAny(snapshot, subjects, resource)
+	})
+	if err != nil {
+		return Page{}, catalogPaginationError(err)
+	}
+	items := make([]Result, 0, len(page.Items))
+	for _, resource := range page.Items {
+		items = append(items, resultFor(resource))
+	}
+	return Page{Items: items, NextCursor: page.NextCursor}, nil
 }
 
 // Resolve validates the exact ID/kind against the leased graph and then checks
@@ -483,16 +479,16 @@ func matches(resource projectgraph.Resource, query string) bool {
 	return true
 }
 
-func sortResults(items []Result) {
+func sortResources(items []projectgraph.Resource) {
 	sort.SliceStable(items, func(i, j int) bool {
 		left, right := strings.ToLower(items[i].Name), strings.ToLower(items[j].Name)
 		if left != right {
 			return left < right
 		}
-		if items[i].Ref.Kind != items[j].Ref.Kind {
-			return items[i].Ref.Kind < items[j].Ref.Kind
+		if items[i].Kind != items[j].Kind {
+			return items[i].Kind < items[j].Kind
 		}
-		return items[i].Ref.ID < items[j].Ref.ID
+		return items[i].ID < items[j].ID
 	})
 }
 
@@ -537,66 +533,43 @@ func containsKind(kinds []projectgraph.Kind, wanted projectgraph.Kind) bool {
 	return false
 }
 
-type cursorInput struct {
-	Snapshot string
-	Query    string
-	Kinds    []projectgraph.Kind
-	Domain   string
-	Limit    int
-	Parent   string
-}
-type cursorWire struct {
-	Snapshot string              `json:"snapshot"`
-	Query    string              `json:"query,omitempty"`
-	Kinds    []projectgraph.Kind `json:"kinds,omitempty"`
-	Domain   string              `json:"domain,omitempty"`
-	Limit    int                 `json:"limit"`
-	Parent   string              `json:"parent,omitempty"`
-	Offset   int                 `json:"offset"`
-}
-
-func paginate(items []Result, cursor string, input cursorInput) (Page, error) {
-	offset := 0
-	if strings.TrimSpace(cursor) != "" {
-		if len(cursor) > MaxCursorLength {
-			return Page{}, ErrInvalidCursor
+func catalogSecurityContext(snapshotDigest, principalID string, devAuthBypass bool, subjects []access.SubjectRef) string {
+	canonicalSubjects := append([]access.SubjectRef(nil), subjects...)
+	sort.Slice(canonicalSubjects, func(i, j int) bool {
+		if canonicalSubjects[i].Kind != canonicalSubjects[j].Kind {
+			return canonicalSubjects[i].Kind < canonicalSubjects[j].Kind
 		}
-		decoded, err := base64.RawURLEncoding.DecodeString(cursor)
-		if err != nil {
-			return Page{}, ErrInvalidCursor
-		}
-		var wire cursorWire
-		if err := json.Unmarshal(decoded, &wire); err != nil || wire.Offset < 0 {
-			return Page{}, ErrInvalidCursor
-		}
-		if wire.Snapshot != input.Snapshot {
-			return Page{}, ErrSnapshotChanged
-		}
-		if wire.Query != input.Query || wire.Domain != input.Domain || wire.Limit != input.Limit || wire.Parent != input.Parent || !sameKinds(wire.Kinds, input.Kinds) {
-			return Page{}, ErrInvalidCursor
-		}
-		offset = wire.Offset
-	}
-	if offset > len(items) {
-		return Page{}, ErrInvalidCursor
-	}
-	end := offset + input.Limit
-	if end > len(items) {
-		end = len(items)
-	}
-	page := Page{Items: append([]Result(nil), items[offset:end]...)}
-	if end < len(items) {
-		encoded, err := json.Marshal(cursorWire{Snapshot: input.Snapshot, Query: input.Query, Kinds: input.Kinds, Domain: input.Domain, Limit: input.Limit, Parent: input.Parent, Offset: end})
-		if err != nil {
-			return Page{}, err
-		}
-		page.NextCursor = base64.RawURLEncoding.EncodeToString(encoded)
-	}
-	return page, nil
+		return canonicalSubjects[i].ID < canonicalSubjects[j].ID
+	})
+	payload, _ := json.Marshal(struct {
+		Principal string              `json:"principal"`
+		Bypass    bool                `json:"bypass"`
+		Snapshot  string              `json:"snapshot"`
+		Subjects  []access.SubjectRef `json:"subjects"`
+	}{Principal: principalID, Bypass: devAuthBypass, Snapshot: snapshotDigest, Subjects: canonicalSubjects})
+	return string(payload)
 }
 
-func sameKinds(left, right []projectgraph.Kind) bool {
-	return slices.Equal(left, right)
+func catalogFilter(kinds []projectgraph.Kind, domain, parent string) string {
+	payload, _ := json.Marshal(struct {
+		Kinds  []projectgraph.Kind `json:"kinds,omitempty"`
+		Domain string              `json:"domain,omitempty"`
+		Parent string              `json:"parent,omitempty"`
+	}{Kinds: kinds, Domain: domain, Parent: parent})
+	return string(payload)
+}
+
+func catalogPaginationError(err error) error {
+	switch {
+	case errors.Is(err, access.ErrInvalidDiscoveryCursor):
+		return ErrInvalidCursor
+	case errors.Is(err, access.ErrDiscoveryContextChanged):
+		return ErrInvalidCursor
+	case errors.Is(err, access.ErrDiscoverySnapshotChanged):
+		return ErrSnapshotChanged
+	default:
+		return err
+	}
 }
 
 func snapshotDigest(snapshot accesssnapshot.AuthorizationSnapshot) (string, error) {

@@ -54,6 +54,15 @@ type RoleBinding struct {
 	Subject      SubjectRef   `json:"subject"`
 	Role         ProjectRole  `json:"role"`
 	Capabilities []Capability `json:"capabilities"`
+	// PermissionProfile and Permissions are the typed authority for new
+	// assignments. Capabilities is retained only for historical compatibility
+	// rows and must never be expanded into typed authority implicitly.
+	PermissionProfile string           `json:"permissionProfile,omitempty"`
+	Permissions       []PermissionPair `json:"permissions,omitempty"`
+	// PermissionRole identifies the versioned preset whose expansion is
+	// captured in Permissions. Role remains for historical project-policy
+	// rows and is not consulted by typed evaluation.
+	PermissionRole PermissionRole `json:"permissionRole,omitempty"`
 }
 
 // AuthorizationPolicy is the exact target-owned policy document plus its
@@ -78,6 +87,16 @@ type AuthorizationRoleBindingInput struct {
 	IdempotencyKey   string
 }
 
+// AuthorizationRoleBindingDeleteInput removes one binding by stable identity.
+// The mutation has the same revision CAS and idempotency guarantees as an
+// upsert; historical policy revisions remain immutable and readable.
+type AuthorizationRoleBindingDeleteInput struct {
+	Scope            AuthorizationPolicyScope
+	BindingID        string
+	ExpectedRevision int64
+	IdempotencyKey   string
+}
+
 // AuthorizationPolicyReader is intentionally narrow so release planning can
 // consume target policy state without gaining mutation authority.
 type AuthorizationPolicyReader interface {
@@ -89,19 +108,31 @@ type AuthorizationPolicyReader interface {
 // boundary. Implementations must preserve CAS and idempotency semantics.
 type AuthorizationPolicyWriter interface {
 	UpsertAuthorizationRoleBinding(context.Context, AuthorizationRoleBindingInput) (AuthorizationPolicy, error)
+	RemoveAuthorizationRoleBinding(context.Context, AuthorizationRoleBindingDeleteInput) (AuthorizationPolicy, error)
 }
 
 // ValidateAuthorizationRoleBinding applies the same role and capability
 // validation used by serving snapshots without requiring a project graph.
 func ValidateAuthorizationRoleBinding(binding RoleBinding) error {
-	if strings.TrimSpace(binding.ID) != binding.ID || binding.ID == "" || len(binding.ID) > 255 || strings.ContainsAny(binding.ID, "\x00\r\n") {
-		return fmt.Errorf("%w: binding id is invalid", ErrAuthorizationPolicyInvalidBinding)
+	if err := ValidateAuthorizationRoleBindingID(binding.ID); err != nil {
+		return err
 	}
 	if strings.TrimSpace(binding.Name) != binding.Name || len(binding.Name) > 255 || strings.ContainsAny(binding.Name, "\x00\r\n") {
 		return fmt.Errorf("%w: binding name is invalid", ErrAuthorizationPolicyInvalidBinding)
 	}
 	if err := binding.Subject.Validate(); err != nil {
 		return fmt.Errorf("%w: subject: %w", ErrAuthorizationPolicyInvalidBinding, err)
+	}
+	if binding.PermissionProfile != "" || binding.Permissions != nil {
+		if err := ValidateTypedRoleBinding(binding); err != nil {
+			return err
+		}
+		// A single row must have one authoritative representation. Legacy
+		// capabilities remain available only when the typed fields are absent.
+		if binding.Capabilities != nil {
+			return fmt.Errorf("%w: typed role binding cannot carry legacy capabilities", ErrAuthorizationPolicyInvalidBinding)
+		}
+		return nil
 	}
 	role, err := ParseProjectRole(string(binding.Role))
 	if err != nil {
@@ -115,6 +146,15 @@ func ValidateAuthorizationRoleBinding(binding RoleBinding) error {
 		if capability != want[index] {
 			return fmt.Errorf("%w: role %q has a non-canonical capability bundle", ErrAuthorizationPolicyInvalidBinding, role)
 		}
+	}
+	return nil
+}
+
+// ValidateAuthorizationRoleBindingID validates the stable identifier shared by
+// role-binding create, update, and removal commands.
+func ValidateAuthorizationRoleBindingID(id string) error {
+	if strings.TrimSpace(id) != id || id == "" || len(id) > 255 || strings.ContainsAny(id, "\x00\r\n") {
+		return fmt.Errorf("%w: binding id is invalid", ErrAuthorizationPolicyInvalidBinding)
 	}
 	return nil
 }
@@ -151,7 +191,11 @@ func AuthorizationPolicyDigest(scope AuthorizationPolicyScope, bindings []RoleBi
 			return "", fmt.Errorf("%w: duplicate binding id %q", ErrAuthorizationPolicyConflict, canonical[i].ID)
 		}
 		seenID[canonical[i].ID] = struct{}{}
-		key := string(canonical[i].Subject.Kind) + "\x00" + canonical[i].Subject.ID + "\x00" + string(canonical[i].Role)
+		roleKey := string(canonical[i].Role)
+		if canonical[i].TypedRoleBinding() {
+			roleKey = string(canonical[i].PermissionRole)
+		}
+		key := string(canonical[i].Subject.Kind) + "\x00" + canonical[i].Subject.ID + "\x00" + roleKey
 		if _, exists := seenSubjectRole[key]; exists {
 			return "", fmt.Errorf("%w: duplicate subject/role for %q", ErrAuthorizationPolicyConflict, canonical[i].ID)
 		}
@@ -424,17 +468,56 @@ type APITokenInput struct {
 	ExpiresAt    time.Time
 }
 
+// ScopedAPITokenInput is the ADR-0025 credential contract. Permissions is
+// required: nil is omission and invalid, while an explicit empty slice creates
+// an identity-only token. The legacy APITokenInput remains only for bounded
+// migration/bootstrap callers until generic capabilities are retired.
+type ScopedAPITokenInput struct {
+	PrincipalID string
+	Name        string
+	Permissions []PermissionPair
+	ExpiresAt   time.Time
+}
+
 const APITokenNameInitialPublisher = "initial-publisher"
 
 type APIToken struct {
-	ID           string
-	PrincipalID  string
-	Name         string
-	Capabilities []Capability
-	ExpiresAt    string
-	CreatedAt    string
-	LastUsedAt   string
-	RevokedAt    string
+	ID          string
+	PrincipalID string
+	Name        string
+	// TokenFingerprint is the non-secret durable fingerprint used to bind
+	// queued caller authority back to the initiating credential. It is never a
+	// bearer secret and is not exposed by token presentation DTOs.
+	TokenFingerprint  string
+	Capabilities      []Capability
+	PermissionProfile string
+	Permissions       []PermissionPair
+	ExpiresAt         string
+	CreatedAt         string
+	LastUsedAt        string
+	RevokedAt         string
+}
+
+// APITokenAuthorityEvidenceReader resolves a token by immutable evidence for
+// asynchronous revalidation. Implementations must check token lifecycle and
+// the bound principal at the supplied instant; callers must still validate
+// the returned permission ceiling against their operation envelope.
+type APITokenAuthorityEvidenceReader interface {
+	APITokenAuthorityEvidence(context.Context, string, string, time.Time) (APIToken, error)
+}
+
+// SessionAuthorityEvidenceReader resolves a browser session by its durable
+// non-secret identity. Revalidation must provide the fingerprint captured at
+// authentication time; it must never retain or replay the bearer cookie.
+type SessionAuthorityEvidenceReader interface {
+	SessionAuthorityEvidence(context.Context, string, string, string, time.Time) (Session, error)
+}
+
+// ScopedAPITokenRepository is implemented only by the native PostgreSQL
+// authority. The retained SQLite fixture deliberately does not acquire this
+// production credential contract while it is being removed.
+type ScopedAPITokenRepository interface {
+	CreateScopedAPITokenWithMetadata(context.Context, ScopedAPITokenInput) (string, APIToken, error)
 }
 
 // BootstrapAPITokenEvidenceReader is the narrow durable revalidation port
@@ -454,13 +537,17 @@ type APICredential struct {
 type CredentialEvidence struct {
 	Class       string
 	ID          string
+	Fingerprint string
 	PrincipalID string
 	ExpiresAt   time.Time
 }
 
 type Session struct {
-	ID                string
-	PrincipalID       string
+	ID          string
+	PrincipalID string
+	// TokenFingerprint is non-secret evidence used only to bind an async job
+	// back to the browser session that initiated it.
+	TokenFingerprint  string
 	Kind              SessionKind
 	InstanceID        string
 	ProfileID         string

@@ -503,6 +503,8 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
 		if credential != nil {
 			ctx = context.WithValue(ctx, apiCredentialContextKey{}, *credential)
+		} else if evidence, found := a.sessionEvidence(r, principal.ID); found {
+			ctx = withSessionCredentialEvidence(ctx, evidence)
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

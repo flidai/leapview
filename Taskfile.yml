@@ -586,6 +586,7 @@ tasks:
       - task: duckdbsql:generate
       - task: db:generate
       - task: config:generate
+      - task: permission-contracts:generate
       - task: api:generate
       - task: agent-contracts:generate
       - task: ui-signals:generate
@@ -600,6 +601,7 @@ tasks:
       - task: lucide-icons:generate
       - task: cli-docs:generate
       - task: agent-tool-docs:generate
+      - task: permission-docs:generate
       - task: node:deps
       - task: docs:render
 
@@ -670,6 +672,7 @@ tasks:
       - task: data-resource-contracts:generate
       - task: cli-docs:generate
       - task: agent-tool-docs:generate
+      - task: permission-docs:generate
       - task: node:deps
       - task: docs:render
 
@@ -715,6 +718,7 @@ tasks:
     cmds:
       - bun run docs:validate-diagrams
       - go run ./internal/app/tools/agenttooldocgen --check
+      - go run ./internal/app/tools/permissiondocgen --check
       - go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen --check
       - go run ./internal/app/tools/docsitegen --check
       - go test ./internal/app/site/http -run '^TestEveryRenderedDocumentationLinkResolves$' -count=1
@@ -784,6 +788,44 @@ tasks:
       - docs/reference/agent-tools/manifest.json
     cmds:
       - go run ./internal/app/tools/agenttooldocgen
+
+  permission-docs:generate:
+    desc: Generate the public typed permission and role reference from the canonical Go catalog
+    method: checksum
+    sources:
+      - Taskfile.yml
+      - internal/access/permission_catalog.go
+      - internal/access/permission_roles.go
+      - internal/app/tools/permissiondocgen/**/*.go
+    generates:
+      - docs/articles/reference/permissions.md
+    cmds:
+      - go run ./internal/app/tools/permissiondocgen
+
+  permission-docs:check:
+    desc: Verify the public typed permission and role reference is current
+    cmds:
+      - go run ./internal/app/tools/permissiondocgen --check
+
+  permission-contracts:generate:
+    desc: Generate typed permission transport, catalog, and PostgreSQL contracts
+    method: checksum
+    sources:
+      - Taskfile.yml
+      - internal/access/permission_catalog.go
+      - internal/access/permission_roles.go
+      - internal/app/tools/permissioncontractgen/**/*.go
+    generates:
+      - api/typespec/generated/permissions.tsp
+      - internal/access/generated/permission_catalog.json
+      - internal/access/postgres/permission_contract.sql
+    cmds:
+      - go run ./internal/app/tools/permissioncontractgen
+
+  permission-contracts:check:
+    desc: Verify generated typed permission contracts are current
+    cmds:
+      - go run ./internal/app/tools/permissioncontractgen --check
 
   db:generate:
     desc: Generate PostgreSQL adapter code from checked-in schemas and queries
@@ -954,8 +996,9 @@ tasks:
       - task: duckdbsql:generated:check
       - task: generated:git-check
       - task: config:check
+      - task: permission-contracts:check
       - |
-        changed="$(git status --porcelain -- .env.example adr/specifications/standards-conformance-matrix.md docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md internal/agent/contracts internal/project/contracts internal/project/ui/signals/models.gen.go api/gen/data-resources-ir.json api/gen/pipeline-ir.json web/generated/data-resources web/generated/pipeline schemas/config schemas/desktop schemas/json pkg/duckdbsql/metadata_generated.go pkg/duckdbsql/ast_schema_generated.go pkg/duckdbsql/function_docs_generated.go pkg/duckdbsql/upstream.lock.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/ast_schema_snapshot.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/enum_schema_snapshot.json pkg/duckdbsql/internal/upstream/function_docs.lock.json)"
+        changed="$(git status --porcelain -- .env.example adr/specifications/standards-conformance-matrix.md docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md docs/articles/reference/permissions.md api/typespec/generated/permissions.tsp internal/access/generated/permission_catalog.json internal/access/postgres/permission_contract.sql internal/agent/contracts internal/project/contracts internal/project/ui/signals/models.gen.go api/gen/data-resources-ir.json api/gen/pipeline-ir.json web/generated/data-resources web/generated/pipeline schemas/config schemas/desktop schemas/json pkg/duckdbsql/metadata_generated.go pkg/duckdbsql/ast_schema_generated.go pkg/duckdbsql/function_docs_generated.go pkg/duckdbsql/upstream.lock.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/ast_schema_snapshot.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/enum_schema_snapshot.json pkg/duckdbsql/internal/upstream/function_docs.lock.json)"
         test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
 
   generated:git-check:
@@ -978,6 +1021,7 @@ tasks:
     deps:
       - apigen:build
       - dashboard-contracts:generate
+      - permission-contracts:generate
     method: checksum
     run: once
     sources:

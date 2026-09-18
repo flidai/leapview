@@ -88,9 +88,9 @@ model ManagedDataS3MultipartCompleteRequest {
 }
 
 @tag("Managed Data")
-@doc("S3 multipart transport lifecycle. Part signing is a query because it issues transient upload authorization without mutating durable multipart state. Completion and abortion commands durably accept a provider transition; provider work is recoverable but external to the SQLite transaction.")
+@doc("S3 multipart transport lifecycle. Part signing is a query because it issues transient upload authorization without mutating durable multipart state. Completion and abortion commands durably accept a provider transition; provider work is recoverable but external to the PostgreSQL transaction.")
 @route("/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads")
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT", action: "connection.manage", resolver: "connection" })
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 @apigen.auditPayload(ManagedDataS3MultipartAuditPayload)
 interface ManagedDataS3MultipartUploads {
@@ -119,7 +119,7 @@ interface ManagedDataS3MultipartUploads {
   @doc("Query: issues a short-lived signed part-upload request and does not change durable multipart state.")
   @route("/{multipartUpload}/parts/{partNumber}/sign")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT", action: "connection.manage", resolver: "connection" })
   @apigen.query
   @extension("x-leapview-object-scope", "connection")
   signManagedDataS3MultipartPart(

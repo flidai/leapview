@@ -61,12 +61,27 @@ func mutationResponse(result authoringservice.Result) (dashboardgen.DashboardAut
 	return response, nil
 }
 
+func resourceCreateReceipt(result authoringservice.Result) (authoring.ResourceCreateReceipt, error) {
+	if err := result.Lifecycle.Validate(); err != nil {
+		return authoring.ResourceCreateReceipt{}, err
+	}
+	if err := result.Revision.ValidateComplete(); err != nil {
+		return authoring.ResourceCreateReceipt{}, err
+	}
+	return authoring.ResourceCreateReceipt{ID: result.Lifecycle.ID.String(), Status: string(result.Lifecycle.Status)}, nil
+}
+
 // AuthoringAPI is the versioned, headless dashboard authoring transport. It
 // is mounted beneath the public API protocol by the dashboard module, so
 // bearer authentication and request IDs are established by that middleware.
 type AuthoringAPI struct {
 	Application HeadlessAuthoringApplication
 	ActorID     func(*nethttp.Request) string
+	// AuthorizeTypedDashboardAction is the body-aware action boundary for the
+	// command union. Generated transport metadata protects create/fork/preview
+	// routes with their fixed target/action; execute is intentionally resolved
+	// after decoding because edit, publish, and archive are one endpoint.
+	AuthorizeTypedDashboardAction func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (typed bool, allowed bool, err error)
 	// RecordAudit is retained for source compatibility with older focused
 	// fixtures. Production authoring mutations use the transaction-bound
 	// Access recorder carried by the authoring repository instead.
@@ -444,11 +459,12 @@ func (h AuthoringAPI) CreateDraft(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeAuthoringError(w, r, err)
 		return
 	}
-	response, err := mutationResponse(result)
+	response, err := resourceCreateReceipt(result)
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
+	w.Header().Set("Location", "/api/v1/projects/"+url.PathEscape(projectID.String())+"/authoring/dashboards/"+url.PathEscape(response.ID))
 	writeJSON(w, nethttp.StatusCreated, response)
 }
 
@@ -475,6 +491,10 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 	command, origin, err := commandFromAPIGen(input, key, actor)
 	if err != nil {
 		writeAuthoringError(w, r, err)
+		return
+	}
+	if authErr := h.authorizeTypedCommand(r.Context(), projectID, command); authErr != nil {
+		writeAuthoringError(w, r, authErr)
 		return
 	}
 	privilege := authoringCommandCapability(command)
@@ -546,11 +566,12 @@ func (h AuthoringAPI) Fork(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	response, err := mutationResponse(result)
+	response, err := resourceCreateReceipt(result)
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
+	w.Header().Set("Location", "/api/v1/projects/"+url.PathEscape(projectID.String())+"/authoring/dashboards/"+url.PathEscape(response.ID))
 	writeJSON(w, nethttp.StatusCreated, response)
 }
 
@@ -1181,6 +1202,23 @@ func authoringCommandCapability(command authoring.Command) access.Capability {
 		}
 	}
 	return capability
+}
+
+func authoringCommandTypedAction(command authoring.Command) (access.Action, bool) {
+	action, err := command.RequiredAction()
+	if err != nil {
+		return "", false
+	}
+	switch action {
+	case authoring.AuthorizationActionEdit:
+		return access.ActionDashboardUpdate, true
+	case authoring.AuthorizationActionPublish:
+		return access.ActionDashboardPublish, true
+	case authoring.AuthorizationActionArchive:
+		return access.ActionDashboardDelete, true
+	default:
+		return "", false
+	}
 }
 
 func buildAuthoringAuditIntent(contract apigencommand.Contract, project, idempotencyKey, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, requestID, correlationID string) (access.AuditIntent, error) {

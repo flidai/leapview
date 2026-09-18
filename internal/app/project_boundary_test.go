@@ -25,8 +25,7 @@ func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
 	admin := testPlatformPrincipal(t, ctx, store, "audit-boundary@example.com", "Audit Boundary")
-	token := testAPIToken(t, ctx, store, admin.ID, "audit-boundary")
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: testAuth(store, accessmodule.AuthConfig{DevBypass: true})}))
 	if err := candidateSourceAuditRecorder(server.routes.accessModule)(ctx, deploymentmodule.CandidateSourceAuditEvent{
 		PrincipalID: admin.ID, ProjectID: testProjectID, Action: "candidate.source.resolved",
 		Capability: access.CapabilityResourcePublish, Status: "success", MetadataJSON: `{}`,
@@ -42,7 +41,7 @@ func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+testProjectID.String()+"/audit-events?action=candidate.source.resolved", nil)
-	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Authorization", "Bearer dev")
 	response := httptest.NewRecorder()
 	server.Routes().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -62,7 +61,7 @@ func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
 	}
 
 	foreign := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project:foreign/audit-events?action=candidate.source.resolved", nil)
-	foreign.Header.Set("Authorization", "Bearer "+token)
+	foreign.Header.Set("Authorization", "Bearer dev")
 	foreignResponse := httptest.NewRecorder()
 	server.Routes().ServeHTTP(foreignResponse, foreign)
 	if foreignResponse.Code != http.StatusNotFound || strings.Contains(foreignResponse.Body.String(), "candidate.source.resolved") {
@@ -70,7 +69,7 @@ func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
 	}
 
 	platform := httptest.NewRequest(http.MethodGet, "/api/v1/audit-events?action=candidate.source.resolved", nil)
-	platform.Header.Set("Authorization", "Bearer "+token)
+	platform.Header.Set("Authorization", "Bearer dev")
 	platformResponse := httptest.NewRecorder()
 	server.Routes().ServeHTTP(platformResponse, platform)
 	if platformResponse.Code != http.StatusOK || !strings.Contains(platformResponse.Body.String(), `"projectId":"`+testProjectID.String()+`"`) {
@@ -78,7 +77,7 @@ func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
 	}
 
 	platformOnly := httptest.NewRequest(http.MethodGet, "/api/v1/audit-events?action=principal.theme.updated", nil)
-	platformOnly.Header.Set("Authorization", "Bearer "+token)
+	platformOnly.Header.Set("Authorization", "Bearer dev")
 	platformOnlyResponse := httptest.NewRecorder()
 	server.Routes().ServeHTTP(platformOnlyResponse, platformOnly)
 	var platformOnlyPayload struct {
@@ -225,10 +224,8 @@ func TestProjectBoundarySelectorFenceCoversPublicRouteInventory(t *testing.T) {
 
 func TestProjectBoundaryRejectsGeneratedAPIRequestBodySelectors(t *testing.T) {
 	store := testStore(t)
-	principal := testPlatformPrincipal(t, t.Context(), store, "selector-boundary@example.com", "Selector Boundary")
-	token := testAPIToken(t, t.Context(), store, principal.ID, "selector-boundary")
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		Auth:  testAuth(store, accessmodule.AuthConfig{APITokenOnly: true}),
+		Auth:  testAuth(store, accessmodule.AuthConfig{DevBypass: true}),
 		Agent: agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "model"}),
 	}))
 
@@ -269,7 +266,7 @@ func TestProjectBoundaryRejectsGeneratedAPIRequestBodySelectors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requestFor := func(body, key string) *http.Request {
 				request := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(body))
-				request.Header.Set("Authorization", "Bearer "+token)
+				request.Header.Set("Authorization", "Bearer dev")
 				request.Header.Set("Content-Type", "application/json")
 				request.Header.Set("Accept", "application/json")
 				request.Header.Set("Idempotency-Key", key)

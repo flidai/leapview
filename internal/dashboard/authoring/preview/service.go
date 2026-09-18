@@ -76,6 +76,10 @@ type Options struct {
 	Repository DraftRepository
 	Authorizer authoringservice.Authorizer
 	Provider   PreviewProvider
+	// Governor is the canonical data-query authorization boundary for draft
+	// execution. Compile-only callers may omit it, but Preview requires it so
+	// an authoring credential cannot turn directly into an ungoverned query.
+	Governor dataquery.Governor
 }
 
 // Service executes strict, non-persistent dashboard draft previews.
@@ -83,6 +87,7 @@ type Service struct {
 	repository DraftRepository
 	authorizer authoringservice.Authorizer
 	provider   PreviewProvider
+	governor   dataquery.Governor
 }
 
 func NewService(options Options) (*Service, error) {
@@ -95,7 +100,7 @@ func NewService(options Options) (*Service, error) {
 	if options.Provider == nil {
 		return nil, fmt.Errorf("dashboard preview runtime provider is required")
 	}
-	return &Service{repository: options.Repository, authorizer: options.Authorizer, provider: options.Provider}, nil
+	return &Service{repository: options.Repository, authorizer: options.Authorizer, provider: options.Provider, governor: options.Governor}, nil
 }
 
 // PreviewRequest identifies one exact draft revision and the page to render.
@@ -186,6 +191,27 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	if pageID == "" {
 		return Preview{}, fmt.Errorf("preview page id is required")
 	}
+	if s.governor == nil {
+		return Preview{}, fmt.Errorf("dashboard preview query governor is required")
+	}
+	// The preview runtime is leased directly so it can execute an exact draft
+	// definition. Carry the canonical governor through that runtime boundary;
+	// the materialization runtime performs admission for every generated query.
+	ctx = dataquery.WithGovernor(ctx, s.governor)
+	// Dashboard draft visuals are compiled from authored state and therefore
+	// construct a new semantic query shape. Mark the context before compiling
+	// and querying so the governed runtime applies semantic.query plus its
+	// semantic.consume prerequisite to every participating model. The marker is
+	// intentionally private to draft preview; published dashboard execution
+	// remains on the consume-only path.
+	metadata := dataquery.MetadataFromContext(ctx)
+	metadata.ProjectID = request.ProjectID
+	metadata.Surface = dataquery.SurfaceDashboard
+	metadata.Operation = dataquery.OperationDashboardDraftPreview
+	if metadata.PrincipalID == "" {
+		metadata.PrincipalID = strings.TrimSpace(request.ActorID)
+	}
+	ctx = dataquery.WithMetadata(ctx, metadata)
 	prepared, err := s.prepareCompilation(ctx, CompileRequest{
 		ProjectID: request.ProjectID, ActorID: request.ActorID,
 		DashboardID: request.DashboardID, DraftID: request.DraftID,
@@ -198,11 +224,6 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	// Preview executes directly on the leased runtime, bypassing the published
 	// metrics audit wrapper. Retain the authorized actor for scoped data/tile
 	// capabilities, which subsequent HTTP requests redeem as that principal.
-	metadata := dataquery.MetadataFromContext(ctx)
-	if metadata.PrincipalID == "" {
-		metadata.PrincipalID = strings.TrimSpace(request.ActorID)
-		ctx = dataquery.WithMetadata(ctx, metadata)
-	}
 	var patch dashboard.Patch
 	if request.Window != nil {
 		windowRuntime, ok := prepared.runtime.(visualizationWindowRuntime)

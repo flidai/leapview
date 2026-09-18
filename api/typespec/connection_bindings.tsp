@@ -182,7 +182,7 @@ model TargetConnectionBindingHealthResponse {
 interface TargetConnectionBindings {
   @summary("List target connection bindings")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.settings.read", resolver: "project" })
   @extension("x-leapview-object-scope", "project")
   listTargetConnectionBindings(
     @path project: ResourceId,
@@ -191,7 +191,7 @@ interface TargetConnectionBindings {
 
   @summary("Create a target connection binding")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.settings.update", resolver: "project" })
   @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
@@ -216,7 +216,7 @@ interface TargetConnectionBindings {
   @summary("Get target connection binding metadata")
   @route("/{connection}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.read", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   getTargetConnectionBinding(
     @path project: ResourceId,
@@ -228,7 +228,7 @@ interface TargetConnectionBindings {
   @doc("Query classification: computes dependencies and a confirmation token without mutating durable binding or runtime state.")
   @route("/{connection}/plan")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.query
   planTargetConnectionBindingChange(
@@ -241,7 +241,7 @@ interface TargetConnectionBindings {
   @summary("Update target connection binding metadata")
   @route("/{connection}")
   @put
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
@@ -268,7 +268,7 @@ interface TargetConnectionBindings {
   @doc("Command classification: testing can persist validated health/version state and promote the replacement runtime pool.")
   @route("/{connection}/test")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
@@ -293,7 +293,7 @@ interface TargetConnectionBindings {
   @summary("Refresh credentials and replace the validated target pool")
   @route("/{connection}/refresh")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
@@ -318,7 +318,7 @@ interface TargetConnectionBindings {
   @summary("Enable a target connection binding")
   @route("/{connection}/enable")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
@@ -342,7 +342,7 @@ interface TargetConnectionBindings {
   @summary("Disable a target connection binding")
   @route("/{connection}/disable")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
@@ -367,7 +367,7 @@ interface TargetConnectionBindings {
   @summary("Get redacted target connection runtime health")
   @route("/{connection}/health")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "connection.read", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   getTargetConnectionBindingHealth(
     @path project: ResourceId,

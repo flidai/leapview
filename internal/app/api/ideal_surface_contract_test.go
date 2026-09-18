@@ -49,7 +49,12 @@ func TestIdealV1Surface(t *testing.T) {
 		"/api/v1/projects/{project}/refresh-runs/{run}/cancel":                                                {"post"},
 		"/api/v1/agent/conversations/{conversation}/runs":                                                     {"get", "post"},
 		"/api/v1/agent/conversations/{conversation}/runs/{run}/cancel":                                        {"post"},
-		"/api/v1/projects/{project}/grants/{grant}":                                                           {"get", "patch", "delete"},
+		"/api/v1/projects/{project}/role-bindings":                                                            {"get", "post"},
+		"/api/v1/projects/{project}/role-bindings/{binding}":                                                  {"delete"},
+		"/api/v1/projects/{project}/resource-share-grants":                                                    {"post"},
+		"/api/v1/resource-share-grants/{grant}":                                                               {"delete"},
+		"/api/v1/projects/{project}/grant-admin-envelopes":                                                    {"post"},
+		"/api/v1/projects/{project}/grant-admin-envelopes/{envelope}":                                         {"delete"},
 	}
 	for path, methods := range required {
 		for _, method := range methods {
@@ -69,6 +74,7 @@ func TestIdealV1Surface(t *testing.T) {
 		"/api/v1/agent/conversations/{conversation}/turns",
 		"/api/v1/projects/{project}/data-policies",
 		"/api/v1/projects/{project}/data-policies/{policy}",
+		"/api/v1/projects/{project}/grants/{grant}",
 	}
 	for _, path := range removed {
 		if _, ok := paths[path]; ok {
@@ -291,7 +297,6 @@ func TestIdealAPIUsesBoundedInputsAndBodylessDeletes(t *testing.T) {
 		"/api/v1/me/sessions/{session}",
 		"/api/v1/service-principals/{servicePrincipal}",
 		"/api/v1/groups/{group}",
-		"/api/v1/projects/{project}/grants/{grant}",
 	} {
 		op := openAPIOperation(t, paths, path, "delete")
 		responses := openAPIMap(t, op, "responses")

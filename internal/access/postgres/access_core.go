@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -927,16 +928,25 @@ func (r *Repository) PrincipalForToken(ctx context.Context, token string) (acces
 	if err != nil {
 		return access.Principal{}, err
 	}
-	row, err := accessdb.New(db).FindBrowserSession(ctx, r.secretFingerprint(token))
+	fingerprint := r.secretFingerprint(token)
+	row, err := accessdb.New(db).FindBrowserSession(ctx, fingerprint)
+	if err == nil {
+		if !hmac.Equal(row.TokenFingerprint, fingerprint) || !verifySecret(token, row.Verifier) {
+			return access.Principal{}, pgx.ErrNoRows
+		}
+		_ = accessdb.New(db).TouchBrowserSession(ctx, row.TokenFingerprint)
+		return r.PrincipalByID(ctx, principalUUID(row.ID))
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return access.Principal{}, err
+	}
+	desktop, err := r.DesktopSessionForToken(ctx, token)
 	if err != nil {
 		return access.Principal{}, err
 	}
-	if !hmac.Equal(row.TokenFingerprint, r.secretFingerprint(token)) || !verifySecret(token, row.Verifier) {
-		return access.Principal{}, pgx.ErrNoRows
-	}
-	_ = accessdb.New(db).TouchBrowserSession(ctx, row.TokenFingerprint)
-	return r.PrincipalByID(ctx, principalUUID(row.ID))
+	return r.PrincipalByID(ctx, desktop.PrincipalID)
 }
+
 func (r *Repository) DeleteSession(ctx context.Context, token string) error {
 	db, err := r.requireDB()
 	if err != nil {
@@ -1023,11 +1033,11 @@ func (r *Repository) RevokeSessionForPrincipal(ctx context.Context, pid, id stri
 }
 
 func capabilitiesJSON(caps []access.Capability) ([]byte, error) {
+	if caps == nil {
+		return nil, access.ErrTokenCapabilitiesRequired
+	}
 	if err := access.ValidateTokenCapabilities(caps, access.CanonicalCapabilities()); err != nil {
 		return nil, err
-	}
-	if caps == nil {
-		return nil, nil
 	}
 	return json.Marshal(caps)
 }
@@ -1041,7 +1051,10 @@ func databaseExpiryValid(ctx context.Context, db DBTX, expiresAt time.Time) (boo
 }
 
 func (r *Repository) CreateAPIToken(ctx context.Context, pid, name string) (string, error) {
-	t, _, e := r.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: pid, Name: name})
+	// This legacy convenience method has no capability parameter. Preserve its
+	// historical broad helper behavior by materializing an explicit allowlist;
+	// token creation itself never persists an omitted (NULL) scope.
+	t, _, e := r.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: pid, Name: name, Capabilities: access.LegacyProjectCapabilities()})
 	return t, e
 }
 func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.APITokenInput) (string, access.APIToken, error) {
@@ -1102,6 +1115,7 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.A
 	row, e := r.apiToken(ctx, id)
 	return tok, row, e
 }
+
 func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, error) {
 	db, _ := r.requireDB()
 	parsedID, err := pgUUID(id)
@@ -1112,14 +1126,31 @@ func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, 
 	if err != nil {
 		return access.APIToken{}, err
 	}
-	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name,
+	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name, TokenFingerprint: hex.EncodeToString(row.TokenFingerprint),
 		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt),
 		LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
+	if row.PermissionProfile != nil {
+		permissions, err := access.DecodePermissionPairs(row.Permissions)
+		if err != nil {
+			return access.APIToken{}, fmt.Errorf("decode API token permissions: %w", err)
+		}
+		t.PermissionProfile = *row.PermissionProfile
+		t.Permissions = permissions
+		t.Capabilities = []access.Capability{}
+		return t, nil
+	}
+	// NULL/null is a legacy omitted scope. It is deliberately represented as
+	// explicit deny-all so old credentials cannot regain current authority.
+	t.Capabilities = []access.Capability{}
 	if len(row.Capabilities) > 0 && string(row.Capabilities) != "null" {
-		_ = json.Unmarshal(row.Capabilities, &t.Capabilities)
+		var capabilities []access.Capability
+		if err := json.Unmarshal(row.Capabilities, &capabilities); err == nil && capabilities != nil && access.ValidateTokenCapabilities(capabilities, access.CanonicalCapabilities()) == nil {
+			t.Capabilities = capabilities
+		}
 	}
 	return t, nil
 }
+
 func (r *Repository) apiTokenForSecret(ctx context.Context, secret string) (access.APIToken, error) {
 	db, err := r.requireDB()
 	if err != nil {

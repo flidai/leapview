@@ -22,6 +22,7 @@ type previewFixture struct {
 	repository *previewRepository
 	authorizer *previewAuthorizer
 	provider   *previewProvider
+	governor   *previewGovernor
 	runtime    *previewRuntime
 	service    *Service
 	request    PreviewRequest
@@ -44,11 +45,12 @@ func newPreviewFixture(t *testing.T) previewFixture {
 	provider := &previewProvider{lease: &previewLease{runtime: runtime, identity: identity}}
 	repo := &previewRepository{lifecycle: lifecycle, revision: revision}
 	auth := &previewAuthorizer{}
-	svc, err := NewService(Options{Repository: repo, Authorizer: auth, Provider: provider})
+	governor := &previewGovernor{}
+	svc, err := NewService(Options{Repository: repo, Authorizer: auth, Provider: provider, Governor: governor})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return previewFixture{repository: repo, authorizer: auth, provider: provider, runtime: runtime, service: svc, request: PreviewRequest{ProjectID: "project", ActorID: "actor", DashboardID: "sales", DraftID: "draft-1", ExpectedRevision: revision.Token(), PageID: "overview"}, revision: revision}
+	return previewFixture{repository: repo, authorizer: auth, provider: provider, governor: governor, runtime: runtime, service: svc, request: PreviewRequest{ProjectID: "project", ActorID: "actor", DashboardID: "sales", DraftID: "draft-1", ExpectedRevision: revision.Token(), PageID: "overview"}, revision: revision}
 }
 
 func previewDocument() document.DashboardDocument {
@@ -71,6 +73,39 @@ func TestPreviewAuthorizesBeforeRevisionAndRuntimeReads(t *testing.T) {
 	}
 	if len(f.authorizer.requests) != 1 || f.authorizer.requests[0].Action != authoring.AuthorizationActionEdit {
 		t.Fatalf("authorization = %#v", f.authorizer.requests)
+	}
+}
+
+func TestPreviewRequiresGovernorBeforeDraftReads(t *testing.T) {
+	f := newPreviewFixture(t)
+	f.service.governor = nil
+	if _, err := f.service.Preview(t.Context(), f.request); err == nil {
+		t.Fatal("preview without query governor succeeded")
+	}
+	if f.authorizer != nil && len(f.authorizer.requests) != 0 {
+		t.Fatalf("preview without governor authorized draft: %#v", f.authorizer.requests)
+	}
+	if f.repository.getRevisionCalls != 0 || f.provider.acquireCalls != 0 {
+		t.Fatalf("preview without governor touched draft/runtime: revision=%d acquire=%d", f.repository.getRevisionCalls, f.provider.acquireCalls)
+	}
+}
+
+func TestPreviewPassesGovernorToLeasedRuntimeAndPropagatesDenial(t *testing.T) {
+	f := newPreviewFixture(t)
+	if _, err := f.service.Preview(t.Context(), f.request); err != nil {
+		t.Fatal(err)
+	}
+	if !f.runtime.governorSeen || f.governor.calls != 1 {
+		t.Fatalf("governor propagation = seen %t calls %d", f.runtime.governorSeen, f.governor.calls)
+	}
+
+	f = newPreviewFixture(t)
+	f.governor.err = errors.New("preview query denied")
+	if _, err := f.service.Preview(t.Context(), f.request); !errors.Is(err, f.governor.err) {
+		t.Fatalf("governor denial error = %v", err)
+	}
+	if f.provider.lease.releases != 1 {
+		t.Fatalf("denied preview released %d leases, want 1", f.provider.lease.releases)
 	}
 }
 
@@ -265,6 +300,17 @@ type previewRuntime struct {
 	modelID                     graph.ResourceID
 	model                       *semanticmodel.Model
 	projectionCalls, queryCalls int
+	governorSeen                bool
+}
+
+type previewGovernor struct {
+	calls int
+	err   error
+}
+
+func (g *previewGovernor) GovernDataQuery(_ context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
+	g.calls++
+	return request, nil, g.err
 }
 
 func (r *previewRuntime) Close() error              { return nil }
@@ -280,6 +326,14 @@ func (r *previewRuntime) SemanticModelProjection(id graph.ResourceID) (*semantic
 func (r *previewRuntime) QueryDashboardPageForDefinition(ctx context.Context, _ definition.Definition, _ string, _ dashboard.Filters) (dashboard.Patch, error) {
 	r.queryCalls++
 	r.queryMetadata = dataquery.MetadataFromContext(ctx)
+	governor, ok := dataquery.GovernorFromContext(ctx)
+	if !ok {
+		return dashboard.EmptyPatch(dashboard.Filters{}, nil), errors.New("preview query governor was not propagated")
+	}
+	r.governorSeen = true
+	if _, _, err := governor.GovernDataQuery(ctx, dataquery.Query{}); err != nil {
+		return dashboard.EmptyPatch(dashboard.Filters{}, nil), err
+	}
 	return dashboard.EmptyPatch(dashboard.Filters{}, nil), nil
 }
 

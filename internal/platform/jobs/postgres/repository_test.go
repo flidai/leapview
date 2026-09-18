@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/flidai/leapview/pkg/permissions"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -33,6 +34,57 @@ func TestMarkRunningRejectsStaleRiverAttempt(t *testing.T) {
 	}
 	assertProductRunning(t, repository, job.ID, 1)
 	assertRiverFence(t, pool, riverID, rivertype.JobStateRunning, 2, []string{"owner-a", "owner-b"}, false)
+}
+
+func TestRepositoryPersistsValidatedAuthorityEnvelope(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "jobs_authority_envelope")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+	repository := NewRepository(pool)
+	authority := testAuthorityEnvelope(t, time.Now().Add(time.Hour))
+	job, err := repository.Enqueue(t.Context(), jobs.EnqueueInput{
+		ID: "authority-envelope-job", Kind: "release.finalize", WorkloadClass: "background", PrincipalID: "principal-a",
+		PartitionKey: "project-a", ResourceKind: "release", ResourceID: "release-a", EstimatedMemoryBytes: 1,
+		Payload: []byte(`{"release":"release-a"}`), Authority: authority,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := repository.Get(t.Context(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Authority.Profile != jobs.AuthorityEnvelopeProfile || got.Authority.Mode != jobs.CallerAuthorityMode || got.Authority.Credential == nil || got.Authority.Credential.ID != "token-a" {
+		t.Fatalf("persisted authority = %#v", got.Authority)
+	}
+	if len(got.Authority.Permissions) != 1 || got.Authority.Permissions[0].Action != permissions.Action("delivery.publish") {
+		t.Fatalf("persisted authority permissions = %#v", got.Authority.Permissions)
+	}
+}
+
+func testAuthorityEnvelope(t *testing.T, expiresAt time.Time) jobs.AuthorityEnvelope {
+	t.Helper()
+	pair, err := permissions.NewProjectPair("leapview.permissions/v1", permissions.Action("delivery.publish"), "project-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return jobs.AuthorityEnvelope{
+		Profile: jobs.AuthorityEnvelopeProfile, Mode: jobs.CallerAuthorityMode,
+		ActorPrincipalID: "principal-a", ExecutionPrincipalID: "principal-a",
+		Credential:  &jobs.CredentialEvidence{Class: jobs.CredentialClassAPIToken, ID: "token-a", Fingerprint: "fp-a", ExpiresAt: expiresAt},
+		Target:      jobs.AuthorityTarget{InstanceID: "instance-a", ProjectID: "project-a", Environment: "production", ResourceKind: "release", ResourceID: "release-a"},
+		Permissions: []permissions.Pair{pair},
+	}
 }
 
 func TestRiverResultFenceRejectsStaleFinalizerAndStripsCurrentFence(t *testing.T) {

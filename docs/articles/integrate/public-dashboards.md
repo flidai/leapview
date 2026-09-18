@@ -2,6 +2,10 @@
 
 Dashboard publications expose one compiled dashboard as an anonymous, governed read surface. Each publication has a stable standalone URL and an iframe URL. Publishing does not create an API credential, inherit the deployer's permissions, or make arbitrary semantic queries available.
 
+## Qualification boundary
+
+Public and embedded dashboards are a separately governed surface. They remain outside the qualified private typed-permission profile until dedicated public/embed consumer, stream, cache, and output evidence exists. This is an evidence boundary only: it does not change public behavior, publication controls, or the safeguards described below.
+
 ## Configure a publication
 
 Dashboard publication state belongs to the target control plane, not the portable analytics source root. Ask a target administrator to configure the publication for the exact compiled dashboard and default page, then use **Admin → Publications** or the dashboard-publication API to inspect and operate it.

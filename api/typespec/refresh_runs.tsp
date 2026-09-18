@@ -103,7 +103,8 @@ interface RefreshRuns {
 
   @summary("Create a refresh run")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_USE", action: "pipeline.run", resolver: "pipeline" })
+  @extension("x-leapview-object-scope", "pipeline")
   @apigen.ui("refresh.run")
   @apigen.failsWith(InvalidRefreshRunFailure)
   @apigen.failsWith(RefreshRunConflictFailure)

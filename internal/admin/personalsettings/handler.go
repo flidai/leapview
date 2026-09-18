@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/flidai/leapview/pkg/pagestream"
@@ -14,6 +15,7 @@ import (
 
 type PrincipalProvider func(*http.Request) (string, bool)
 type SessionProvider func(*http.Request) (string, bool)
+type CredentialProvider func(*http.Request) (access.APICredential, bool)
 
 type commandSignals struct {
 	Profile          ProfileCommand          `json:"personalProfileCommand"`
@@ -28,6 +30,11 @@ type Handler struct {
 	Service          *Service
 	CurrentPrincipal PrincipalProvider
 	CurrentSession   SessionProvider
+	// CurrentCredential is populated only for API-token and authoring
+	// credentials. Personal settings are a browser-session surface; bearer
+	// callers use the typed Current User API, which applies child-token
+	// attenuation against the initiating credential.
+	CurrentCredential CredentialProvider
 }
 
 // Bootstrap emits the settings state as a normal Datastar signal patch. The
@@ -37,6 +44,9 @@ func (h Handler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 	principalID, ok := h.currentPrincipal(r)
 	if !ok {
 		h.writeError(w, r, ErrPrincipalRequired, http.StatusUnauthorized)
+		return
+	}
+	if h.rejectCredential(w, r) {
 		return
 	}
 	state, err := h.load(r, principalID)
@@ -54,6 +64,9 @@ func (h Handler) Command(w http.ResponseWriter, r *http.Request) {
 	principalID, ok := h.currentPrincipal(r)
 	if !ok {
 		h.writeError(w, r, ErrPrincipalRequired, http.StatusUnauthorized)
+		return
+	}
+	if h.rejectCredential(w, r) {
 		return
 	}
 	if h.Service == nil {
@@ -108,6 +121,17 @@ func (h Handler) Command(w http.ResponseWriter, r *http.Request) {
 		state.Tokens.NewToken = newToken
 	}
 	_ = pagestream.PatchResponse(w, r, BootstrapSignals(state))
+}
+
+func (h Handler) rejectCredential(w http.ResponseWriter, r *http.Request) bool {
+	if h.CurrentCredential == nil {
+		return false
+	}
+	if _, credential := h.CurrentCredential(r); !credential {
+		return false
+	}
+	h.writeError(w, r, access.ErrForbidden, http.StatusForbidden)
+	return true
 }
 
 func beginPersonalSettingsInvocation(r *http.Request, signals commandSignals) (*http.Request, error) {

@@ -41,14 +41,19 @@ type DeliveryPlan struct {
 	Provenance            DeliveryProvenance      `json:"provenance"`
 	Governance            DeliveryGovernance      `json:"governance"`
 	Evidence              DeliveryPlanEvidence    `json:"evidence"`
-	PipelinePlan          *PipelinePlan           `json:"pipelinePlan,omitempty"`
-	ExecutionDigest       string                  `json:"executionDigest"`
-	ProvenanceDigest      string                  `json:"provenanceDigest"`
-	GovernanceDigest      string                  `json:"governanceDigest"`
-	EvidenceDigest        string                  `json:"evidenceDigest"`
-	Digest                string                  `json:"digest"`
-	Status                DeliveryPlanStatus      `json:"status"`
-	CreatedAt             time.Time               `json:"createdAt"`
+	// Authorization is immutable compound authority evidence. It is optional
+	// for historical plans, while native production plans attach it before
+	// persistence and validate it on every rehydration.
+	Authorization       *DeliveryAuthorizationExecution `json:"authorization,omitempty"`
+	PipelinePlan        *PipelinePlan                   `json:"pipelinePlan,omitempty"`
+	AuthorizationDigest string                          `json:"authorizationDigest,omitempty"`
+	ExecutionDigest     string                          `json:"executionDigest"`
+	ProvenanceDigest    string                          `json:"provenanceDigest"`
+	GovernanceDigest    string                          `json:"governanceDigest"`
+	EvidenceDigest      string                          `json:"evidenceDigest"`
+	Digest              string                          `json:"digest"`
+	Status              DeliveryPlanStatus              `json:"status"`
+	CreatedAt           time.Time                       `json:"createdAt"`
 }
 
 // NewDeliveryPlan validates and computes all canonical identity digests. The
@@ -109,12 +114,21 @@ func NewDeliveryPlan(plan DeliveryPlan) (DeliveryPlan, error) {
 	if plan.EvidenceDigest, err = plan.Evidence.Digest(); err != nil {
 		return DeliveryPlan{}, err
 	}
+	if err := plan.validateAuthorization(); err != nil {
+		return DeliveryPlan{}, err
+	}
+	if plan.Authorization != nil {
+		if plan.AuthorizationDigest, err = canonicalJSONDigest(plan.Authorization); err != nil {
+			return DeliveryPlan{}, err
+		}
+	}
 	plan.Digest, err = canonicalJSONDigest(deliveryPlanCanonical{
 		ID: plan.ID, SourceOwnerID: plan.SourceOwnerID, TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment,
 		Operation: plan.Operation, SourceDigest: plan.SourceDigest, ServingArtifactDigest: plan.ServingArtifactDigest, BaseGenerationID: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest,
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest,
-		PipelinePlanDigest: pipelinePlanDigest(plan.PipelinePlan),
+		AuthorizationDigest: plan.AuthorizationDigest,
+		PipelinePlanDigest:  pipelinePlanDigest(plan.PipelinePlan),
 	})
 	if err != nil {
 		return DeliveryPlan{}, err
@@ -137,6 +151,7 @@ type deliveryPlanCanonical struct {
 	ProvenanceDigest      string                `json:"provenanceDigest"`
 	GovernanceDigest      string                `json:"governanceDigest"`
 	EvidenceDigest        string                `json:"evidenceDigest"`
+	AuthorizationDigest   string                `json:"authorizationDigest,omitempty"`
 	PipelinePlanDigest    string                `json:"pipelinePlanDigest,omitempty"`
 }
 
@@ -145,6 +160,47 @@ func pipelinePlanDigest(plan *PipelinePlan) string {
 		return ""
 	}
 	return plan.Digest
+}
+
+// validateAuthorization verifies the persisted execution projection against
+// the exact declaration it carries. The original typed snapshot is not
+// persisted here; its digest is the immutable evidence identity and any
+// current-snapshot revalidation remains an explicit authority operation.
+func (plan DeliveryPlan) validateAuthorization() error {
+	if plan.Authorization == nil {
+		if plan.AuthorizationDigest != "" {
+			return fmt.Errorf("%w: authorization digest is present without authorization evidence", ErrDeliveryConflict)
+		}
+		return nil
+	}
+	authority, err := plan.AuthorizationPlan()
+	if err != nil {
+		return err
+	}
+	if err := authority.ValidateExecution(*plan.Authorization); err != nil {
+		return fmt.Errorf("%w: compound authorization evidence: %v", ErrDeliveryConflict, err)
+	}
+	return nil
+}
+
+// AuthorizationPlan reconstructs the immutable declaration represented by a
+// persisted execution projection. It is useful at later delivery boundaries
+// that need to re-evaluate current subject authority without accepting a
+// caller-supplied action/resource collection.
+func (plan DeliveryPlan) AuthorizationPlan() (DeliveryAuthorizationPlan, error) {
+	if plan.Authorization == nil {
+		return DeliveryAuthorizationPlan{}, fmt.Errorf("%w: compound authorization evidence is absent", ErrDeliveryConflict)
+	}
+	authority := DeliveryAuthorizationPlan{
+		ProjectID:           plan.ProjectID,
+		TargetID:            plan.TargetID,
+		ChangedResources:    append([]DeliveryChangedResource(nil), plan.Authorization.ChangedResources...),
+		Dependencies:        append([]DeliveryDependency(nil), plan.Authorization.Dependencies...),
+		ConnectionBindings:  append([]DeliveryConnectionBinding(nil), plan.Authorization.ConnectionBindings...),
+		DeliveryTransitions: append([]DeliveryTransition(nil), plan.Authorization.DeliveryTransitions...),
+		SnapshotDigest:      plan.Authorization.SnapshotDigest,
+	}
+	return authority, nil
 }
 
 func (plan DeliveryPlan) validateWithoutDigests() error {
@@ -199,6 +255,9 @@ func (plan DeliveryPlan) validateWithoutDigests() error {
 		return err
 	}
 	if err := plan.Evidence.Validate(); err != nil {
+		return err
+	}
+	if err := plan.validateAuthorization(); err != nil {
 		return err
 	}
 	if plan.PipelinePlan != nil {
@@ -256,12 +315,22 @@ func (plan DeliveryPlan) Validate() error {
 	if err != nil || expectedEvidence != plan.EvidenceDigest {
 		return fmt.Errorf("%w: evidence digest does not match canonical inputs", ErrDeliveryConflict)
 	}
+	expectedAuthorization := ""
+	if plan.Authorization != nil {
+		expectedAuthorization, err = canonicalJSONDigest(plan.Authorization)
+		if err != nil || expectedAuthorization != plan.AuthorizationDigest {
+			return fmt.Errorf("%w: authorization digest does not match canonical inputs", ErrDeliveryConflict)
+		}
+	} else if plan.AuthorizationDigest != "" {
+		return fmt.Errorf("%w: authorization digest is present without authorization evidence", ErrDeliveryConflict)
+	}
 	expectedPlan, err := canonicalJSONDigest(deliveryPlanCanonical{
 		ID: plan.ID, SourceOwnerID: plan.SourceOwnerID, TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment,
 		Operation: plan.Operation, SourceDigest: plan.SourceDigest, ServingArtifactDigest: plan.ServingArtifactDigest, BaseGenerationID: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest,
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest,
-		PipelinePlanDigest: pipelinePlanDigest(plan.PipelinePlan),
+		AuthorizationDigest: expectedAuthorization,
+		PipelinePlanDigest:  pipelinePlanDigest(plan.PipelinePlan),
 	})
 	if err != nil || expectedPlan != plan.Digest {
 		return fmt.Errorf("%w: plan digest does not match canonical inputs", ErrDeliveryConflict)

@@ -65,7 +65,7 @@ ORDER BY revision DESC
 LIMIT 1;
 
 -- name: ListAuthorizationPolicyRoleBindings :many
-SELECT id, name, subject_kind, subject_id, role, capabilities
+SELECT id, name, subject_kind, subject_id, role, capabilities, permission_profile, permissions, permission_role
 FROM access.authorization_policy_role_binding
 WHERE target_id = sqlc.arg(target_id)
   AND project_id = sqlc.arg(project_id)
@@ -74,7 +74,7 @@ WHERE target_id = sqlc.arg(target_id)
 ORDER BY id;
 
 -- name: GetAuthorizationPolicyRoleBinding :one
-SELECT id, name, subject_kind, subject_id, role, capabilities
+SELECT id, name, subject_kind, subject_id, role, capabilities, permission_profile, permissions, permission_role
 FROM access.authorization_policy_role_binding
 WHERE target_id = sqlc.arg(target_id)
   AND project_id = sqlc.arg(project_id)
@@ -84,9 +84,10 @@ WHERE target_id = sqlc.arg(target_id)
 
 -- name: InsertAuthorizationPolicyRoleBinding :exec
 INSERT INTO access.authorization_policy_role_binding
-    (target_id, project_id, environment, revision, id, subject_kind, subject_id, role, capabilities, name)
+    (target_id, project_id, environment, revision, id, subject_kind, subject_id, role, capabilities, permission_profile, permissions, permission_role, name)
 VALUES (sqlc.arg(target_id), sqlc.arg(project_id), sqlc.arg(environment), sqlc.arg(revision), sqlc.arg(id),
-        sqlc.arg(subject_kind), sqlc.arg(subject_id), sqlc.arg(role), sqlc.arg(capabilities)::jsonb, sqlc.arg(name));
+        sqlc.arg(subject_kind), sqlc.arg(subject_id), sqlc.arg(role), sqlc.narg(capabilities)::jsonb,
+        sqlc.narg(permission_profile), sqlc.narg(permissions)::jsonb, sqlc.narg(permission_role), sqlc.arg(name));
 
 -- name: GetAuthorizationPolicyOperation :one
 SELECT request_digest, revision, policy_digest, binding_id

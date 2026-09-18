@@ -185,7 +185,7 @@ func canonicalMetricsWithSnapshot(t testing.TB, snapshot accesssnapshot.Authoriz
 			if credentialID == "" {
 				return access.APICredential{}, false
 			}
-			return access.APICredential{Token: access.APIToken{ID: credentialID}}, true
+			return access.APICredential{Token: access.APIToken{ID: credentialID, Capabilities: access.LegacyProjectCapabilities()}}, true
 		},
 		AuditRecorder: recorder,
 	})
@@ -408,10 +408,11 @@ func TestCanonicalTokenAttenuationAndProjectIdentity(t *testing.T) {
 		},
 	})
 	query := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_sales", Kind: dataquery.KindSemanticRows}
-	// Nil means dynamic attenuation and follows current effective capabilities.
+	// A nil token allowlist is a legacy/invalid form and must not inherit
+	// current effective capabilities.
 	tokenCaps = nil
-	if _, _, err := metrics.GovernDataQuery(context.Background(), query); err != nil {
-		t.Fatalf("nil token attenuation: %v", err)
+	if _, _, err := metrics.GovernDataQuery(context.Background(), query); err == nil {
+		t.Fatal("nil token allowlist unexpectedly authorized")
 	}
 	// A non-nil empty list is explicit deny-all, not dynamic.
 	tokenCaps = []access.Capability{}
@@ -423,8 +424,8 @@ func TestCanonicalTokenAttenuationAndProjectIdentity(t *testing.T) {
 	if _, _, err := metrics.GovernDataQuery(context.Background(), query); err == nil {
 		t.Fatal("attenuated token unexpectedly authorized RESOURCE_USE")
 	}
-	// Dynamic tokens are re-evaluated against a revoked serving snapshot.
-	tokenCaps = nil
+	// An explicit allowlist is re-evaluated against a revoked serving snapshot.
+	tokenCaps = []access.Capability{access.CapabilityResourceUse}
 	graph, revokedIdentity, _, _, _ := canonicalGraph(t)
 	revoked, err := accesssnapshot.NewAuthorizationSnapshot(revokedIdentity, graph, nil, nil)
 	if err != nil {
@@ -432,7 +433,7 @@ func TestCanonicalTokenAttenuationAndProjectIdentity(t *testing.T) {
 	}
 	currentSnapshot = revoked
 	if _, _, err := metrics.GovernDataQuery(context.Background(), query); err == nil {
-		t.Fatal("revoked dynamic token retained authorization")
+		t.Fatal("revoked token retained authorization")
 	}
 	_ = identity
 }

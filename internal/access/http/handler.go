@@ -43,6 +43,7 @@ type SessionProvider func(*stdhttp.Request) (string, bool)
 type EffectiveCapabilitiesProvider func(context.Context, *stdhttp.Request, string) ([]access.Capability, error)
 type PlatformAdminProvider func(context.Context, string) (bool, error)
 type RequestPlatformAdminProvider func(context.Context, *stdhttp.Request, string) (bool, error)
+type DurableGrantServiceProvider func(*stdhttp.Request) (*access.DurableGrantService, error)
 
 type AuthoringAuthentication interface {
 	InstanceID() string
@@ -68,8 +69,14 @@ type Handler struct {
 	CurrentCredential              CredentialProvider
 	CurrentSession                 SessionProvider
 	CurrentEffectiveCapabilities   func(context.Context, string) ([]access.Capability, error)
-	CurrentProjectID               func(context.Context) (projectgraph.ResourceID, error)
-	RequestEffectiveCapabilities   EffectiveCapabilitiesProvider
+	// CurrentEffectivePermissionOptions resolves durable, exact action-target
+	// authority for session-authenticated token issuance. It is never sourced
+	// from browser picker data.
+	CurrentEffectivePermissionOptions func(context.Context, string) ([]access.PermissionPair, error)
+	CurrentProjectID                  func(context.Context) (projectgraph.ResourceID, error)
+	DurableGrantService               DurableGrantServiceProvider
+	DurableGrantInstanceID            string
+	RequestEffectiveCapabilities      EffectiveCapabilitiesProvider
 	// PlatformAdmin evaluates the durable instance-wide role. It is retained as
 	// a narrow callback for non-module callers; RequestPlatformAdmin additionally
 	// applies request-credential attenuation.
@@ -153,8 +160,8 @@ func (h Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Reque
 			writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
 			return false
 		}
-		if credential.Token.ID != "" && credential.Token.Capabilities != nil {
-			if len(credential.Token.Capabilities) == 0 || !containsCapability(credential.Token.Capabilities, access.CapabilityProjectAdmin) {
+		if credential.Token.ID != "" {
+			if len(credential.Token.Capabilities) == 0 || !containsCapability(credential.Token.Capabilities, access.CapabilityPlatformAdmin) {
 				writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
 				return false
 			}
@@ -303,15 +310,38 @@ func groupAuditMetadata(row access.Group) map[string]any {
 	return map[string]any{"provider": row.Provider, "externalId": row.ExternalID, "displayName": row.Name}
 }
 func apiTokenDTO(row access.APIToken) map[string]any {
-	out := map[string]any{"id": row.ID, "principalId": row.PrincipalID, "name": row.Name, "expiresAt": emptyToNil(row.ExpiresAt), "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt)}
-	if row.Capabilities != nil {
-		values := make([]string, 0, len(row.Capabilities))
-		for _, capability := range row.Capabilities {
-			values = append(values, string(capability))
-		}
-		out["capabilities"] = values
+	values := make([]string, 0, len(row.Capabilities))
+	for _, capability := range row.Capabilities {
+		values = append(values, string(capability))
 	}
-	return out
+	permissions := make([]map[string]any, 0, len(row.Permissions))
+	for _, permission := range row.Permissions {
+		target := map[string]any{"scope": string(permission.Target.Scope)}
+		if permission.Target.InstanceID != "" {
+			target["instanceId"] = permission.Target.InstanceID
+		}
+		if permission.Target.ProjectID != "" {
+			target["projectId"] = permission.Target.ProjectID.String()
+		}
+		if permission.Target.ResourceKind != "" {
+			target["resourceKind"] = string(permission.Target.ResourceKind)
+		}
+		if permission.Target.ResourceID != "" {
+			target["resourceId"] = permission.Target.ResourceID.String()
+		}
+		if permission.Target.IncludeFuture {
+			target["includeFuture"] = true
+		}
+		permissions = append(permissions, map[string]any{
+			"action": string(permission.Action), "target": target, "profile": permission.Profile,
+		})
+	}
+	return map[string]any{
+		"id": row.ID, "principalId": row.PrincipalID, "name": row.Name,
+		"permissionProfile": emptyToNil(row.PermissionProfile), "permissions": permissions,
+		"capabilities": values, "expiresAt": emptyToNil(row.ExpiresAt),
+		"createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt),
+	}
 }
 func servicePrincipalSecretDTO(row access.ServicePrincipalSecret, raw string) map[string]any {
 	out := map[string]any{"id": row.ID, "servicePrincipalId": row.ServicePrincipalID, "name": row.Name, "expiresAt": row.ExpiresAt, "createdAt": row.CreatedAt, "revokedAt": emptyToNil(row.RevokedAt)}

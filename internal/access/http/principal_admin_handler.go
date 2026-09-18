@@ -412,7 +412,11 @@ func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		token, _, mutationErr = tx.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{
 			PrincipalID: principal.ID,
 			Name:        "oauth-client-credentials",
-			ExpiresAt:   time.Now().Add(ttl),
+			// OAuth client-credentials here is intentionally identity-only. An
+			// explicit empty allowlist is required; omission is invalid and must
+			// never inherit the service principal's current authority.
+			Capabilities: []access.Capability{},
+			ExpiresAt:    time.Now().Add(ttl),
 		})
 		return auditInput(r, "oauth.token.created", principal.ID, "api_token", "", "", "success", map[string]any{"grantType": "client_credentials"}), mutationErr
 	})

@@ -15,24 +15,9 @@ import (
 // revision locked by admission is exactly the immutable serving document and
 // graph-bound authorization fingerprint retained by the generation.
 func validateGenerationAuthorizationSnapshot(policy access.AuthorizationPolicy, admission GenerationAdmissionInput) error {
-	manifestPolicy := projectmanifest.AccessPolicy{RoleBindings: make(map[string]projectmanifest.RoleBinding, len(policy.RoleBindings))}
-	for _, binding := range policy.RoleBindings {
-		if err := access.ValidateAuthorizationRoleBinding(binding); err != nil {
-			return fmt.Errorf("%w: target authorization role binding %q: %v", deploymentnative.ErrInvalid, binding.ID, err)
-		}
-		subject := projectmanifest.Subject{Kind: string(binding.Subject.Kind)}
-		switch binding.Subject.Kind {
-		case access.SubjectKindPrincipal:
-			subject.PrincipalID = binding.Subject.ID
-		case access.SubjectKindGroup:
-			subject.Group = binding.Subject.ID
-		default:
-			return fmt.Errorf("%w: unsupported target authorization subject kind %q", deploymentnative.ErrInvalid, binding.Subject.Kind)
-		}
-		if _, exists := manifestPolicy.RoleBindings[binding.ID]; exists {
-			return fmt.Errorf("%w: duplicate target authorization role binding %q", deploymentnative.ErrConflict, binding.ID)
-		}
-		manifestPolicy.RoleBindings[binding.ID] = projectmanifest.RoleBinding{ID: binding.ID, Name: binding.Name, Role: string(binding.Role), Subject: subject}
+	manifestPolicy, err := projectmanifest.AccessPolicyFromAuthorizationPolicy(policy)
+	if err != nil {
+		return fmt.Errorf("%w: project target authorization policy: %v", deploymentnative.ErrInvalid, err)
 	}
 	encoded, err := json.Marshal(manifestPolicy)
 	if err != nil {

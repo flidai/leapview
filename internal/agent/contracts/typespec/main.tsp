@@ -404,6 +404,13 @@ model DashboardAuthoringCreateInput {
   slug?: string;
 }
 
+@apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "create"] })
+model DashboardAuthoringCreateReceipt {
+  @minLength(1)
+  id: string;
+  status: "draft" | "published" | "archived";
+}
+
 @apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring"] })
 model DashboardAuthoringResult {
   revision: Record<unknown>;

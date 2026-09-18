@@ -101,26 +101,5 @@ func (service *nativeCandidateArtifactPhases) resolveTargetAuthorizationPolicy(
 }
 
 func targetAuthorizationManifestPolicy(policy access.AuthorizationPolicy) (projectmanifest.AccessPolicy, error) {
-	result := projectmanifest.AccessPolicy{RoleBindings: make(map[string]projectmanifest.RoleBinding, len(policy.RoleBindings))}
-	for _, binding := range policy.RoleBindings {
-		if err := access.ValidateAuthorizationRoleBinding(binding); err != nil {
-			return projectmanifest.AccessPolicy{}, err
-		}
-		subject := projectmanifest.Subject{Kind: string(binding.Subject.Kind)}
-		switch binding.Subject.Kind {
-		case access.SubjectKindPrincipal:
-			subject.PrincipalID = binding.Subject.ID
-		case access.SubjectKindGroup:
-			subject.Group = binding.Subject.ID
-		default:
-			return projectmanifest.AccessPolicy{}, fmt.Errorf("unsupported target authorization subject kind %q", binding.Subject.Kind)
-		}
-		if _, duplicate := result.RoleBindings[binding.ID]; duplicate {
-			return projectmanifest.AccessPolicy{}, fmt.Errorf("duplicate target authorization role binding %q", binding.ID)
-		}
-		result.RoleBindings[binding.ID] = projectmanifest.RoleBinding{
-			ID: binding.ID, Name: binding.Name, Role: string(binding.Role), Subject: subject,
-		}
-	}
-	return result, nil
+	return projectmanifest.AccessPolicyFromAuthorizationPolicy(policy)
 }

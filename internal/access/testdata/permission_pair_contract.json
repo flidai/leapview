@@ -1,0 +1,280 @@
+[
+  {
+    "name": "explicit empty typed authority",
+    "profile": "leapview.permissions/v1",
+    "pairs": [],
+    "valid": true
+  },
+  {
+    "name": "exact semantic consume",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "semantic.consume",
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "semantic_model",
+          "resourceId": "semantic:orders"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "explicit future dashboard selector",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "dashboard.read",
+        "target": {
+          "scope": "project",
+          "projectId": "project:analytics",
+          "resourceKind": "dashboard",
+          "includeFuture": true
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "project creation action",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "pipeline.create",
+        "target": {
+          "scope": "project",
+          "projectId": "project:analytics"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "explicit false future selector is normalized",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "pipeline.create",
+        "target": {
+          "scope": "project",
+          "projectId": "project:analytics",
+          "includeFuture": false
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "instance administration action",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "platform.audit.read",
+        "target": {
+          "scope": "instance",
+          "instanceId": "instance:primary"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "missing outer profile",
+    "pairs": [],
+    "valid": false
+  },
+  {
+    "name": "unknown outer profile",
+    "profile": "leapview.permissions/v999",
+    "pairs": [],
+    "valid": false
+  },
+  {
+    "name": "missing pair profile",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "dashboard.read",
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "dashboard",
+          "resourceId": "dashboard:sales"
+        }
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "null pair profile",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "dashboard.read",
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "dashboard",
+          "resourceId": "dashboard:sales"
+        },
+        "profile": null
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "missing action",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "dashboard",
+          "resourceId": "dashboard:sales"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "null action",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": null,
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "dashboard",
+          "resourceId": "dashboard:sales"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "unknown pair field",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "dashboard.read",
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "dashboard",
+          "resourceId": "dashboard:sales"
+        },
+        "profile": "leapview.permissions/v1",
+        "authority": true
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "unknown target field",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "dashboard.read",
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "dashboard",
+          "resourceId": "dashboard:sales",
+          "owner": "principal:admin"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "null optional target field",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "dashboard.read",
+        "target": {
+          "scope": "resource",
+          "instanceId": null,
+          "projectId": "project:analytics",
+          "resourceKind": "dashboard",
+          "resourceId": "dashboard:sales"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "resource kind relabeling",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "semantic.consume",
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "dashboard",
+          "resourceId": "semantic:orders"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "invalid resource identity",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "dashboard.read",
+        "target": {
+          "scope": "resource",
+          "projectId": "project analytics",
+          "resourceKind": "dashboard",
+          "resourceId": "dashboard:sales"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "duplicate pair",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "dashboard.read",
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "dashboard",
+          "resourceId": "dashboard:sales"
+        },
+        "profile": "leapview.permissions/v1"
+      },
+      {
+        "action": "dashboard.read",
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "dashboard",
+          "resourceId": "dashboard:sales"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": false
+  }
+]

@@ -157,17 +157,20 @@ alias GetAgentConfigOK = OkJson<AgentConfigResponse>;
 @tag("Agent")
 @doc("Platform-wide agent configuration. The update command is shared by API and administration UI invocations.")
 @route("/agent/config")
-@apigen.authz(#{ mode: "authenticated" })
-@extension("x-leapview-object-scope", "platform")
+@extension("x-leapview-object-scope", "instance")
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 @apigen.auditPayload(AgentCommandAuditPayload)
 interface AgentConfiguration {
   @summary("Get the agent configuration")
   @get
+  @extension("x-leapview-object-scope", "instance")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.read", resolver: "instance" })
   getAgentConfig(): GetAgentConfigOK | CommonErrors;
 
   @summary("Update the agent configuration")
   @patch
+  @extension("x-leapview-object-scope", "instance")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.update", resolver: "instance" })
   @apigen.ui("agent.config.update")
   @apigen.failsWith(InvalidAgentConfigFailure)
   @apigen.failsWith(AgentConfigUnavailableFailure)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringaccessadapter "github.com/flidai/leapview/internal/dashboard/authoring/accessadapter"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
@@ -31,6 +32,8 @@ type RevisionID = authoring.RevisionID
 // dashboard authoring operations.
 type AuthorizeResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error)
 type AuthorizeProjectCapability func(context.Context, string, projectgraph.ResourceID, access.Capability) (bool, error)
+type AuthorizeTypedResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Action) (typed bool, allowed bool, err error)
+type AuthorizeTypedProject func(context.Context, string, projectgraph.ResourceID, access.Action) (typed bool, allowed bool, err error)
 
 // AuthoringConfig contains only capability composition ports. Project export
 // behavior is injected as a function so dashboard authoring does not import
@@ -41,7 +44,10 @@ type AuthoringConfig struct {
 	Persistence                *NativePersistence
 	AuthorizeResource          AuthorizeResource
 	AuthorizeProjectCapability AuthorizeProjectCapability
+	AuthorizeTypedResource     AuthorizeTypedResource
+	AuthorizeTypedProject      AuthorizeTypedProject
 	AcquireRuntime             func(context.Context) (runtimehost.Lease, error)
+	PreviewGovernor            dataquery.Governor
 }
 
 // BuildAuthoring constructs the complete dashboard authoring application and
@@ -69,6 +75,8 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 	authorizer, err := authoringaccessadapter.New(authoringaccessadapter.Options{
 		AuthorizeResource:          authoringaccessadapter.AuthorizeResource(config.AuthorizeResource),
 		AuthorizeProjectCapability: authoringaccessadapter.AuthorizeProjectCapability(config.AuthorizeProjectCapability),
+		AuthorizeTypedResource:     authoringaccessadapter.AuthorizeTypedResource(config.AuthorizeTypedResource),
+		AuthorizeTypedProject:      authoringaccessadapter.AuthorizeTypedProject(config.AuthorizeTypedProject),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build dashboard authoring access adapter: %w", err)
@@ -96,11 +104,12 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 		return nil, fmt.Errorf("build dashboard authoring service: %w", err)
 	}
 	application, err := authoringapplication.New(authoringapplication.Options{
-		Authoring:      service,
-		Repository:     repository,
-		Authorizer:     authorizer,
-		Compiler:       compiler,
-		AcquireRuntime: config.AcquireRuntime,
+		Authoring:       service,
+		Repository:      repository,
+		Authorizer:      authorizer,
+		Compiler:        compiler,
+		AcquireRuntime:  config.AcquireRuntime,
+		PreviewGovernor: config.PreviewGovernor,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build dashboard authoring application: %w", err)

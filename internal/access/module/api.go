@@ -97,6 +97,16 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.ListProjectRoleBindings(w, r)
 	case "createProjectRoleBinding":
 		m.handler.CreateProjectRoleBinding(w, r)
+	case "issueResourceShareGrant":
+		m.handler.IssueResourceShareGrant(w, r)
+	case "revokeResourceShareGrant":
+		m.handler.RevokeResourceShareGrant(w, r)
+	case "issueGrantAdminEnvelope":
+		m.handler.IssueGrantAdminEnvelope(w, r)
+	case "revokeGrantAdminEnvelope":
+		m.handler.RevokeGrantAdminEnvelope(w, r)
+	case "deleteProjectRoleBinding":
+		m.handler.DeleteProjectRoleBinding(w, r)
 	case "listGroupSemanticAttributeAssignments":
 		m.handler.ListGroupSemanticAttributeAssignments(w, r)
 	case "removeGroupSemanticAttributeAssignment":

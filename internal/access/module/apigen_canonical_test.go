@@ -78,6 +78,39 @@ func apigenResolver(parameter string, kind projectgraph.Kind) APIGenResourceReso
 	}
 }
 
+func TestAPIGenDeliveryFamilyOutsideNativeDeliveryPathResolvesProjectNamespace(t *testing.T) {
+	contract := APIGenOperationContract{
+		OperationID: "listReleases",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/projects/{project}/releases",
+		Protected:   true,
+		AuthzMode:   "privilege",
+		Action:      string(access.ActionDeliveryRead),
+		Resolver:    string(access.TypedOperationResolverDelivery),
+		Extensions: map[string]any{
+			apiGenObjectScopeExtension: "delivery",
+			"x-authz":                  map[string]any{"mode": "privilege", "privilege": string(access.CapabilityResourceRead)},
+		},
+	}
+	module := browserGuardModule(nil, Principal{ID: "principal"}, true)
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: "project_demo"},
+		map[string]APIGenOperationContract{contract.OperationID: contract},
+		APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProjectNamespace)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, ok := authorizer.resourceResolverForContract(contract)
+	if !ok || resolver == nil {
+		t.Fatal("delivery-family project resolver was not created")
+	}
+	resources := resolver(apigenRequest(http.MethodGet, contract.Path, map[string]string{"project": "project_demo"}), "project_demo")
+	if len(resources) != 1 || resources[0].Kind() != projectgraph.KindProjectNamespace || resources[0].ID() != "project_demo" {
+		t.Fatalf("resolved resources = %#v, want exact project namespace", resources)
+	}
+}
+
 func apigenSnapshot(t *testing.T, principalID, groupID string, resourceID projectgraph.ResourceID, resourceKind projectgraph.Kind, direct, group bool) (projectgraph.ServingIdentity, accesssnapshot.AuthorizationSnapshot) {
 	t.Helper()
 	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
@@ -341,12 +374,12 @@ func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.
 		handler.ServeHTTP(recorder, request)
 		return recorder.Code
 	}
-	dynamicSecret, dynamicToken, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "dynamic", ExpiresAt: time.Now().Add(time.Hour)})
+	dynamicSecret, dynamicToken, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "read-only", Capabilities: []access.Capability{access.CapabilityResourceRead}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := call(dynamicSecret); got != http.StatusNoContent {
-		t.Fatalf("dynamic token status = %d, want 204", got)
+		t.Fatalf("read-only token status = %d, want 204", got)
 	}
 	denySecret, _, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "deny-all", Capabilities: []access.Capability{}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
@@ -460,11 +493,25 @@ func generatedAPIGenContracts() map[string]APIGenOperationContract {
 		}
 		contracts[operationID] = APIGenOperationContract{
 			OperationID: contract.OperationID, Method: contract.Method, Path: contract.Path,
-			Protected: contract.Protected, AuthzMode: contract.AuthzMode, Command: command,
+			Protected: contract.Protected, AuthzMode: contract.AuthzMode, Action: authzAction(contract), Resolver: authzResolver(contract), Command: command,
 			Extensions: contract.Extensions,
 		}
 	}
 	return contracts
+}
+
+func authzAction(contract accessgen.GenOperationContract) string {
+	if contract.Authz == nil {
+		return ""
+	}
+	return contract.Authz.Action
+}
+
+func authzResolver(contract accessgen.GenOperationContract) string {
+	if contract.Authz == nil {
+		return ""
+	}
+	return contract.Authz.Resolver
 }
 
 func TestAPIGenEveryGeneratedOperationConstructsWithCanonicalResolvers(t *testing.T) {
@@ -477,7 +524,9 @@ func TestAPIGenEveryGeneratedOperationConstructsWithCanonicalResolvers(t *testin
 		Dashboard:     apigenResolver("dashboard", projectgraph.KindDashboard),
 		SemanticModel: apigenResolver("model", projectgraph.KindSemanticModel),
 		Connection:    apigenResolver("connection", projectgraph.KindConnection),
+		ResourceShare: apigenResolver("resourceId", projectgraph.KindDashboard),
 		Project:       apigenResolver("project", projectgraph.KindProjectNamespace),
+		Instance:      func(*http.Request) string { return "instance_test" },
 	})
 	if err != nil {
 		t.Fatalf("generated operation contracts are not constructible: %v", err)
@@ -1728,6 +1777,40 @@ func TestAPIGenResourceResolverRejectsMismatchedCanonicalScope(t *testing.T) {
 		if _, ok := authorizer.resourceResolverForContract(contract); ok {
 			t.Errorf("%s accepted a mismatched or legacy scope", name)
 		}
+	}
+}
+
+func TestAPIGenTypedResolverOwnsSecurityTargetWhenCommandTargetIsProtocolScope(t *testing.T) {
+	contract := APIGenOperationContract{
+		OperationID: "createRefreshRun", Path: "/api/v1/projects/{project}/refresh-runs",
+		Protected: true, AuthzMode: "privilege", Action: string(access.ActionPipelineRun), Resolver: string(access.TypedOperationResolverPipeline),
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: string(access.CapabilityResourceUse), Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "pipeline", "x-authz": map[string]any{"mode": "privilege", "privilege": string(access.CapabilityResourceUse)}},
+	}
+	typed, err := NewAPIGenTypedOperationRequirementService(map[string]APIGenOperationContract{"createRefreshRun": contract})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := access.NewResourceRef("pipeline:orders", projectgraph.KindPipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer := &APIGenAuthorizer{
+		typed: typed,
+		scopes: map[string]apiGenResourceScope{
+			"pipeline": {pathParameter: "pipeline", kind: projectgraph.KindPipeline, resolver: func(*http.Request, projectgraph.ResourceID) []access.ResourceRef {
+				return []access.ResourceRef{resolved}
+			}},
+		},
+	}
+	resolver, ok := authorizer.resourceResolverForContract(contract)
+	if !ok || resolver == nil {
+		t.Fatal("typed Pipeline resolver was rejected because the command protocol target is Project")
+	}
+	request := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/refresh-runs", map[string]string{"project": "project_demo"})
+	resources := resolver(request, "project_demo")
+	if len(resources) != 1 || resources[0] != resolved {
+		t.Fatalf("resolved resources = %#v, want %#v", resources, []access.ResourceRef{resolved})
 	}
 }
 

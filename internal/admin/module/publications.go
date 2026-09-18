@@ -59,8 +59,11 @@ func (m *Module) authorizePublicationReplay(r *http.Request) bool {
 	if principal.DevBypass {
 		return true
 	}
-	credential, hasCredential := m.credential(r)
-	allowed, err := m.capabilityAllowed(r, principal.ID, projectID.String(), access.CapabilityResourcePublish, credential, hasCredential)
+	dashboardID, err := m.publicationDashboard(r.Context(), projectID, command.Publication)
+	if err != nil {
+		return false
+	}
+	allowed, err := m.authorizeDashboardAction(r.Context(), principal.ID, projectID, dashboardID, access.ActionDashboardPublish)
 	return err == nil && allowed
 }
 
@@ -77,8 +80,11 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 		return err
 	}
 	if !principal.DevBypass {
-		credential, hasCredential := m.credential(r)
-		allowed, err := m.capabilityAllowed(r, principal.ID, projectID.String(), access.CapabilityResourcePublish, credential, hasCredential)
+		dashboardID, resolveErr := m.publicationDashboard(r.Context(), projectID, command.Publication)
+		if resolveErr != nil {
+			return publication.ErrNotFound
+		}
+		allowed, err := m.authorizeDashboardAction(r.Context(), principal.ID, projectID, dashboardID, access.ActionDashboardPublish)
 		if err != nil {
 			return err
 		}
@@ -149,29 +155,27 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 	if err != nil {
 		return nil, false, err
 	}
-	var credential *access.APICredential
-	if resolved, ok := m.credential(r); ok {
-		credential = &resolved
-	}
-	canManage := principal.DevBypass || (m.access == nil && m.currentEffectiveCapabilities == nil)
-	if !canManage {
-		credentialValue := access.APICredential{}
-		if credential != nil {
-			credentialValue = *credential
-		}
-		canManage, err = m.capabilityAllowed(r, principal.ID, projectID.String(), access.CapabilityResourcePublish, credentialValue, credential != nil)
-		if err != nil {
-			return nil, false, err
-		}
-	}
+	canManage := principal.DevBypass
 	out := make([]ui.AdminPublication, 0, len(rows))
 	for _, row := range rows {
 		if row.ProjectID != projectID {
 			continue
 		}
-		if !canManage {
+		rowAllowed := principal.DevBypass
+		if !rowAllowed {
+			dashboardID, parseErr := projectgraph.NewResourceID(row.Dashboard)
+			if parseErr != nil {
+				return nil, false, parseErr
+			}
+			rowAllowed, err = m.authorizeDashboardAction(r.Context(), principal.ID, projectID, dashboardID, access.ActionDashboardPublish)
+			if err != nil {
+				return nil, false, err
+			}
+		}
+		if !rowAllowed {
 			continue
 		}
+		canManage = true
 		dto := m.publications.PublicationDTO(row)
 		events, err := m.publications.PublicationEvents(r.Context(), row.ID)
 		if err != nil {
@@ -194,6 +198,29 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 		})
 	}
 	return out, canManage, nil
+}
+
+func (m *Module) publicationDashboard(ctx context.Context, projectID projectgraph.ResourceID, name string) (projectgraph.ResourceID, error) {
+	if m == nil || m.publications == nil || strings.TrimSpace(name) == "" {
+		return "", publication.ErrNotFound
+	}
+	rows, err := m.publications.ProjectPublications(ctx, projectID)
+	if err != nil {
+		return "", err
+	}
+	for _, row := range rows {
+		if row.ProjectID == projectID && row.Name == strings.TrimSpace(name) {
+			return projectgraph.NewResourceID(row.Dashboard)
+		}
+	}
+	return "", publication.ErrNotFound
+}
+
+func (m *Module) authorizeDashboardAction(ctx context.Context, principalID string, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, error) {
+	if m == nil || m.authorizeTypedDashboardAction == nil {
+		return false, errors.New("typed dashboard authorization is unavailable")
+	}
+	return m.authorizeTypedDashboardAction(ctx, principalID, projectID, dashboardID, action)
 }
 
 func (m *Module) activeProjectID(ctx context.Context) (projectgraph.ResourceID, error) {
@@ -239,10 +266,10 @@ func (m *Module) capabilityAllowed(r *http.Request, principalID, projectID strin
 		}
 		return false, nil
 	}
-	// A nil token capability list is dynamic and inherits the current snapshot;
-	// an explicit empty list denies every capability.
+	// A nil token capability list is an invalid/legacy persisted form and
+	// denies every capability; an explicit empty list does the same.
 	if credential.Token.Capabilities == nil {
-		return true, nil
+		return false, nil
 	}
 	for _, capability := range credential.Token.Capabilities {
 		if capability == required {

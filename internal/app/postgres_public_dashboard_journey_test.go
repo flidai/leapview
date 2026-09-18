@@ -36,11 +36,31 @@ func TestPostgresPublicDashboardJourney(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed journey principal: %v", err)
 	}
-	journeyToken, _, err := fixture.Graph.Access.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{
-		PrincipalID: principal.ID, Name: "journey-public-dashboard", ExpiresAt: time.Now().Add(time.Hour),
+	publicationPermissions, err := access.ExpandPermissionRole(access.PermissionRolePublisher, postgresJourneyProject)
+	if err != nil {
+		t.Fatalf("expand journey publication permissions: %v", err)
+	}
+	journeyToken, _, err := fixture.Graph.Access.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{
+		PrincipalID: principal.ID,
+		Name:        "journey-public-dashboard",
+		Permissions: publicationPermissions,
+		ExpiresAt:   time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("create journey API token: %v", err)
+	}
+	authoringPermissions, err := access.ExpandPermissionRole(access.PermissionRoleEditor, postgresJourneyProject)
+	if err != nil {
+		t.Fatalf("expand journey authoring permissions: %v", err)
+	}
+	authoringToken, _, err := fixture.Graph.Access.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{
+		PrincipalID: principal.ID,
+		Name:        "journey-dashboard-authoring",
+		Permissions: authoringPermissions,
+		ExpiresAt:   time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create journey authoring token: %v", err)
 	}
 	auth, err := accessmodule.NewAuth(fixture.AccessPersistence.Repository, accessmodule.AuthConfig{
 		APITokenOnly: true, CSRFKey: strings.Repeat("journey-auth", 4),
@@ -68,7 +88,7 @@ func TestPostgresPublicDashboardJourney(t *testing.T) {
 	// must generate canonical UUIDv7 identities that the event/audit boundary
 	// can carry transactionally.
 	authoringCreate := fixture.Request(t.Context(), http.MethodPost, "/api/v1/projects/"+postgresJourneyProject.String()+"/authoring/drafts", strings.NewReader(`{"title":"Journey dashboard","semanticModel":"semantic:journey"}`))
-	authoringCreate.Header.Set("Authorization", "Bearer "+journeyToken)
+	authoringCreate.Header.Set("Authorization", "Bearer "+authoringToken)
 	authoringCreate.Header.Set("Content-Type", "application/json")
 	authoringCreate.Header.Set("Idempotency-Key", "0198f2c0-7c7a-7f00-8a11-000000000011")
 	authoringResponse := httptest.NewRecorder()
@@ -176,7 +196,10 @@ func TestPostgresPublicDashboardJourney(t *testing.T) {
 		return recorder
 	}
 
-	list := apiRequest(http.MethodGet, "/api/v1/projects/"+postgresJourneyProject.String()+"/dashboard-publications", "", 0)
+	listRequest := fixture.Request(t.Context(), http.MethodGet, "/api/v1/projects/"+postgresJourneyProject.String()+"/dashboard-publications", strings.NewReader(""))
+	listRequest.Header.Set("Authorization", "Bearer "+authoringToken)
+	list := httptest.NewRecorder()
+	handler.ServeHTTP(list, listRequest)
 	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"publicUrl":"http://localhost/public/dashboards/`+oldPublicID+`"`) || !strings.Contains(list.Body.String(), `"embedUrl":"http://localhost/embed/dashboards/`+oldPublicID+`"`) {
 		t.Fatalf("publication list = %d %s", list.Code, list.Body.String())
 	}
@@ -293,6 +316,7 @@ type postgresPublicJourneyRuntime struct {
 	artifact    servingstate.Artifact
 	graph       projectgraph.ProjectGraph
 	principalID string
+	typedGrants []accesssnapshot.Grant
 }
 
 func newPostgresPublicJourneyRuntime(t *testing.T, projectID projectgraph.ResourceID, principalID string) *runtimehostmodule.Module {
@@ -343,7 +367,19 @@ func (r *postgresPublicJourneyRuntime) Prepare(_ context.Context, input runtimeh
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, r.graph, []accesssnapshot.RoleBinding{{ID: "journey-admin-binding", Name: "Journey administrator", Subject: subject, Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin)}}, nil, nil)
+	editor, err := access.NewTypedRoleBinding("journey-editor-binding", "Journey editor", subject, access.PermissionRoleEditor, identity.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	publisher, err := access.NewTypedRoleBinding("journey-publisher-binding", "Journey publisher", subject, access.PermissionRolePublisher, identity.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, r.graph, []accesssnapshot.RoleBinding{
+		{ID: "journey-admin-binding", Name: "Journey administrator", Subject: subject, Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin)},
+		editor,
+		publisher,
+	}, r.typedGrants, nil)
 	if err != nil {
 		return nil, err
 	}

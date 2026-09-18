@@ -202,6 +202,52 @@ func TestNormalizeGenerationAdmissionAcceptsExactEvidence(t *testing.T) {
 	}
 }
 
+func TestValidateGenerationAuthorizationSnapshotPreservesTypedAuthority(t *testing.T) {
+	input := validGenerationAdmissionInput(t)
+	projectID := input.Bundle.ProjectID
+	binding, err := access.NewTypedRoleBinding(
+		"binding-admission-viewer",
+		"Admission viewer",
+		access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: admissionPolicySubjectID},
+		access.PermissionRoleViewer,
+		projectID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := access.AuthorizationPolicy{
+		Scope: access.AuthorizationPolicyScope{
+			TargetID: input.Generation.TargetID, ProjectID: projectID.String(), Environment: string(input.Bundle.Environment),
+		},
+		RoleBindings: []access.RoleBinding{binding},
+	}
+	manifestPolicy, err := projectmanifest.AccessPolicyFromAuthorizationPolicy(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(manifestPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Bundle.AccessPolicyJSON = string(encoded)
+	snapshot, err := projectmanifest.CompileAuthorizationSnapshot(
+		projectgraph.ServingIdentity{ProjectID: projectID, Environment: string(input.Bundle.Environment), GenerationID: release.CandidatePolicyGenerationID},
+		input.Graph,
+		manifestPolicy,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Generation.SecurityDomainFingerprint, err = snapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validateGenerationAuthorizationSnapshot(policy, input); err != nil {
+		t.Fatalf("validate typed generation authorization snapshot: %v", err)
+	}
+}
+
 func TestNormalizeGenerationAdmissionRejectsResourceInventoryAuthorityDrift(t *testing.T) {
 	tests := []struct {
 		name   string

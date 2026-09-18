@@ -1,0 +1,820 @@
+{
+  "profile": "leapview.permissions/v1",
+  "actions": [
+    {
+      "action": "dashboard.read",
+      "family": "Dashboard",
+      "description": "View an approved dashboard definition and shell.",
+      "scope": "resource",
+      "resourceKinds": [
+        "dashboard"
+      ],
+      "checkKinds": [
+        "dashboard"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "dashboard.create",
+      "family": "Dashboard",
+      "description": "Create a dashboard in the bound Project.",
+      "scope": "project",
+      "resourceKinds": [
+        "dashboard"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "dashboard.update",
+      "family": "Dashboard",
+      "description": "Edit an existing dashboard definition.",
+      "scope": "resource",
+      "resourceKinds": [
+        "dashboard"
+      ],
+      "checkKinds": [
+        "dashboard"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "dashboard.delete",
+      "family": "Dashboard",
+      "description": "Delete or archive an existing dashboard.",
+      "scope": "resource",
+      "resourceKinds": [
+        "dashboard"
+      ],
+      "checkKinds": [
+        "dashboard"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "dashboard.publish",
+      "family": "Dashboard",
+      "description": "Publish an approved dashboard revision.",
+      "scope": "resource",
+      "resourceKinds": [
+        "dashboard"
+      ],
+      "checkKinds": [
+        "dashboard"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "semantic.read",
+      "family": "Semantic consumption",
+      "description": "Discover governed semantic metadata.",
+      "scope": "resource",
+      "resourceKinds": [
+        "semantic_model"
+      ],
+      "checkKinds": [
+        "semantic_model"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "semantic.query",
+      "family": "Semantic consumption",
+      "description": "Construct an arbitrary governed semantic query.",
+      "scope": "resource",
+      "resourceKinds": [
+        "semantic_model"
+      ],
+      "checkKinds": [
+        "semantic_model"
+      ],
+      "prerequisites": [
+        "semantic.consume"
+      ],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "semantic.consume",
+      "family": "Semantic consumption",
+      "description": "Consume governed data from an exact SemanticModel.",
+      "scope": "resource",
+      "resourceKinds": [
+        "semantic_model"
+      ],
+      "checkKinds": [
+        "semantic_model"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "semantic.create",
+      "family": "Development",
+      "description": "Create a SemanticModel definition in the bound Project.",
+      "scope": "project",
+      "resourceKinds": [
+        "semantic_model"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "semantic.update",
+      "family": "Development",
+      "description": "Update a SemanticModel definition.",
+      "scope": "resource",
+      "resourceKinds": [
+        "semantic_model"
+      ],
+      "checkKinds": [
+        "semantic_model"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "semantic.delete",
+      "family": "Development",
+      "description": "Delete a SemanticModel definition.",
+      "scope": "resource",
+      "resourceKinds": [
+        "semantic_model"
+      ],
+      "checkKinds": [
+        "semantic_model"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "source.read",
+      "family": "Development",
+      "description": "Read a Source definition.",
+      "scope": "resource",
+      "resourceKinds": [
+        "source"
+      ],
+      "checkKinds": [
+        "source"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "source.create",
+      "family": "Development",
+      "description": "Create a Source definition in the bound Project.",
+      "scope": "project",
+      "resourceKinds": [
+        "source"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "source.update",
+      "family": "Development",
+      "description": "Update a Source definition.",
+      "scope": "resource",
+      "resourceKinds": [
+        "source"
+      ],
+      "checkKinds": [
+        "source"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "source.delete",
+      "family": "Development",
+      "description": "Delete a Source definition.",
+      "scope": "resource",
+      "resourceKinds": [
+        "source"
+      ],
+      "checkKinds": [
+        "source"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "model.read",
+      "family": "Development",
+      "description": "Read a Model definition.",
+      "scope": "resource",
+      "resourceKinds": [
+        "model"
+      ],
+      "checkKinds": [
+        "model"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "model.create",
+      "family": "Development",
+      "description": "Create a Model definition in the bound Project.",
+      "scope": "project",
+      "resourceKinds": [
+        "model"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "model.update",
+      "family": "Development",
+      "description": "Update a Model definition.",
+      "scope": "resource",
+      "resourceKinds": [
+        "model"
+      ],
+      "checkKinds": [
+        "model"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "model.delete",
+      "family": "Development",
+      "description": "Delete a Model definition.",
+      "scope": "resource",
+      "resourceKinds": [
+        "model"
+      ],
+      "checkKinds": [
+        "model"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "pipeline.read",
+      "family": "Pipeline",
+      "description": "Read a Pipeline definition and bounded operational status.",
+      "scope": "resource",
+      "resourceKinds": [
+        "pipeline"
+      ],
+      "checkKinds": [
+        "pipeline"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "pipeline.create",
+      "family": "Pipeline",
+      "description": "Create a Pipeline in the bound Project.",
+      "scope": "project",
+      "resourceKinds": [
+        "pipeline"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "pipeline.run",
+      "family": "Pipeline",
+      "description": "Trigger an approved Pipeline revision.",
+      "scope": "resource",
+      "resourceKinds": [
+        "pipeline"
+      ],
+      "checkKinds": [
+        "pipeline"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "pipeline.update",
+      "family": "Pipeline",
+      "description": "Update a Pipeline definition.",
+      "scope": "resource",
+      "resourceKinds": [
+        "pipeline"
+      ],
+      "checkKinds": [
+        "pipeline"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "pipeline.delete",
+      "family": "Pipeline",
+      "description": "Delete a Pipeline definition.",
+      "scope": "resource",
+      "resourceKinds": [
+        "pipeline"
+      ],
+      "checkKinds": [
+        "pipeline"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "connection.read",
+      "family": "Connection",
+      "description": "Read redacted Connection metadata.",
+      "scope": "resource",
+      "resourceKinds": [
+        "connection"
+      ],
+      "checkKinds": [
+        "connection"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "connection.create",
+      "family": "Connection",
+      "description": "Create a Connection in the bound Project.",
+      "scope": "project",
+      "resourceKinds": [
+        "connection"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "connection.use",
+      "family": "Connection",
+      "description": "Execute through an approved Connection binding without revealing credentials.",
+      "scope": "resource",
+      "resourceKinds": [
+        "connection"
+      ],
+      "checkKinds": [
+        "connection"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "connection.manage",
+      "family": "Connection",
+      "description": "Update, rotate, test, or delete a Connection.",
+      "scope": "resource",
+      "resourceKinds": [
+        "connection"
+      ],
+      "checkKinds": [
+        "connection"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "resource.share",
+      "family": "Sharing",
+      "description": "Issue a bounded independent grant on an exact supported resource.",
+      "scope": "resource",
+      "resourceKinds": [
+        "connection",
+        "source",
+        "model",
+        "semantic_model",
+        "pipeline",
+        "dashboard"
+      ],
+      "checkKinds": [
+        "connection",
+        "source",
+        "model",
+        "semantic_model",
+        "pipeline",
+        "dashboard"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "delivery.read",
+      "family": "Delivery",
+      "description": "Inspect delivery plans and retained evidence.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "delivery.plan",
+      "family": "Delivery",
+      "description": "Persist an exact delivery plan.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "delivery.build",
+      "family": "Delivery",
+      "description": "Build an approved delivery candidate.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "delivery.publish",
+      "family": "Delivery",
+      "description": "Publish a built delivery candidate.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "delivery.approve",
+      "family": "Delivery",
+      "description": "Approve a protected delivery candidate.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "delivery.activate",
+      "family": "Delivery",
+      "description": "Activate an approved delivery publication.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "delivery.rollback",
+      "family": "Delivery",
+      "description": "Rollback to eligible retained delivery evidence.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "project.settings.read",
+      "family": "Project administration",
+      "description": "Read Project settings.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "project.settings.update",
+      "family": "Project administration",
+      "description": "Update Project settings.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "project.access.read",
+      "family": "Project administration",
+      "description": "Inspect Project access assignments.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "project.access.manage",
+      "family": "Project administration",
+      "description": "Maintain Project access without unbounded privilege issuance.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "project.access.delegate",
+      "family": "Project administration",
+      "description": "Issue authority within an explicit grant-administration envelope.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "audit.read",
+      "family": "Project administration",
+      "description": "Read authorized Project audit evidence.",
+      "scope": "project",
+      "resourceKinds": [
+        "project"
+      ],
+      "checkKinds": [
+        "project"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
+      "action": "workload.delegate",
+      "family": "Workload delegation",
+      "description": "Issue a bounded execution grant for an exact Pipeline and workload principal.",
+      "scope": "resource",
+      "resourceKinds": [
+        "pipeline"
+      ],
+      "checkKinds": [
+        "pipeline"
+      ],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "platform.settings.read",
+      "family": "Platform administration",
+      "description": "Read instance settings.",
+      "scope": "instance",
+      "resourceKinds": [],
+      "checkKinds": [],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "platform.settings.update",
+      "family": "Platform administration",
+      "description": "Update instance settings.",
+      "scope": "instance",
+      "resourceKinds": [],
+      "checkKinds": [],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "platform.access.read",
+      "family": "Platform administration",
+      "description": "Inspect instance access assignments.",
+      "scope": "instance",
+      "resourceKinds": [],
+      "checkKinds": [],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "platform.access.manage",
+      "family": "Platform administration",
+      "description": "Manage instance access assignments.",
+      "scope": "instance",
+      "resourceKinds": [],
+      "checkKinds": [],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    },
+    {
+      "action": "platform.audit.read",
+      "family": "Platform administration",
+      "description": "Read authorized instance audit evidence.",
+      "scope": "instance",
+      "resourceKinds": [],
+      "checkKinds": [],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": true
+    }
+  ],
+  "roles": [
+    {
+      "role": "viewer",
+      "profile": "leapview.permissions/v1",
+      "description": "View approved dashboards and consume explicitly scoped semantic data.",
+      "actions": [
+        "dashboard.read",
+        "semantic.consume"
+      ]
+    },
+    {
+      "role": "explorer",
+      "profile": "leapview.permissions/v1",
+      "description": "View approved dashboards and discover and query explicitly scoped semantic data.",
+      "actions": [
+        "dashboard.read",
+        "semantic.read",
+        "semantic.consume",
+        "semantic.query"
+      ]
+    },
+    {
+      "role": "editor",
+      "profile": "leapview.permissions/v1",
+      "description": "Explore governed data and create or update authored resources without publish, delete, share, run, or administration authority.",
+      "actions": [
+        "dashboard.read",
+        "dashboard.create",
+        "dashboard.update",
+        "semantic.read",
+        "semantic.consume",
+        "semantic.query",
+        "semantic.create",
+        "semantic.update",
+        "source.read",
+        "source.create",
+        "source.update",
+        "model.read",
+        "model.create",
+        "model.update",
+        "pipeline.read",
+        "pipeline.create",
+        "pipeline.update",
+        "connection.read",
+        "connection.create",
+        "connection.use"
+      ]
+    },
+    {
+      "role": "project_admin",
+      "profile": "leapview.permissions/v1",
+      "description": "Manage Project settings and access without acquiring semantic data or platform authority.",
+      "actions": [
+        "project.settings.read",
+        "project.settings.update",
+        "project.access.read",
+        "project.access.manage",
+        "project.access.delegate",
+        "audit.read"
+      ]
+    },
+    {
+      "role": "publisher",
+      "profile": "leapview.permissions/v1",
+      "description": "Publish explicitly scoped dashboards without editing, deletion, sharing, or release authority.",
+      "actions": [
+        "dashboard.read",
+        "dashboard.publish"
+      ]
+    },
+    {
+      "role": "release_approver",
+      "profile": "leapview.permissions/v1",
+      "description": "Inspect and approve protected delivery candidates.",
+      "actions": [
+        "delivery.read",
+        "delivery.approve"
+      ]
+    },
+    {
+      "role": "release_operator",
+      "profile": "leapview.permissions/v1",
+      "description": "Plan, build, publish, activate, and roll back qualified releases without approval authority.",
+      "actions": [
+        "delivery.read",
+        "delivery.plan",
+        "delivery.build",
+        "delivery.publish",
+        "delivery.activate",
+        "delivery.rollback"
+      ]
+    },
+    {
+      "role": "auditor",
+      "profile": "leapview.permissions/v1",
+      "description": "Inspect Project access, delivery evidence, and audit events without mutation authority.",
+      "actions": [
+        "project.access.read",
+        "delivery.read",
+        "audit.read"
+      ]
+    }
+  ]
+}

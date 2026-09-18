@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
@@ -131,7 +132,7 @@ func TestDashboardAuthoringQualificationCreateCopyEditCompilePreviewPublishArchi
 	}
 	provider := &qualificationProvider{lease: &qualificationLease{runtime: runtime, identity: identity}}
 	previewService, err := preview.NewService(preview.Options{
-		Repository: repository, Authorizer: qualificationAuthorizer{}, Provider: provider,
+		Repository: repository, Authorizer: qualificationAuthorizer{}, Provider: provider, Governor: qualificationGovernor{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -333,6 +334,12 @@ func (l *qualificationLease) Release()                        {}
 type qualificationRuntime struct {
 	model      *semanticmodel.Model
 	queryCalls int
+}
+
+type qualificationGovernor struct{}
+
+func (qualificationGovernor) GovernDataQuery(_ context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
+	return request, nil, nil
 }
 
 func (r *qualificationRuntime) Close() error { return nil }

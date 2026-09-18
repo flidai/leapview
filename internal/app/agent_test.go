@@ -106,7 +106,7 @@ func TestAgentConfigurationCommandUsesGeneratedPublicContract(t *testing.T) {
 	ctx := t.Context()
 	store := testStore(t)
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "agent-config")
+	token := testTypedInstanceAPIToken(t, ctx, store, owner.ID, "agent-config", access.ActionPlatformSettingsRead, access.ActionPlatformSettingsUpdate)
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 

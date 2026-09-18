@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
@@ -25,6 +26,11 @@ type CredentialMode string
 // reads and writes. The alias keeps application composition on the module
 // surface while preserving the capability-owned contract.
 type QueryAuditStore = queryaudit.Store
+
+// QueryGovernor is the analytics-module surface for governed execution. It is
+// re-exported here so application composition does not depend on a capability
+// implementation package merely to wire an already-built governor.
+type QueryGovernor = dataquery.Governor
 
 const (
 	CredentialModeNonSecret              CredentialMode = "non_secret"

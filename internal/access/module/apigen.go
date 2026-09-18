@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -20,57 +19,10 @@ const apiGenObjectScopeExtension = "x-leapview-object-scope"
 
 var errAPIGenResourceNotFound = errors.New("generated API resource not found")
 
-// APIGenResourceResolver resolves the exact graph resources named by one
-// generated route. Resolvers must return canonical ResourceRefs; they may not
-// infer a project or resource from an untyped fallback.
-type APIGenResourceResolver func(*http.Request, projectgraph.ResourceID) []access.ResourceRef
-
-// APIGenDeliveryAuthorizer handles target-owned delivery routes whose public
-// project path is an authorization scope, not a graph ResourceRef. The
-// callback authorizes against the leased active snapshot and exact operation
-// capability; generated project-resource validation is intentionally bypassed
-// for this narrow route family.
-type APIGenDeliveryAuthorizer func(context.Context, *http.Request, string, string, projectgraph.ResourceID, access.Capability) (bool, error)
-
-type APIGenResourceResolvers struct {
-	Dashboard     APIGenResourceResolver
-	SemanticModel APIGenResourceResolver
-	Connection    APIGenResourceResolver
-	Project       APIGenResourceResolver
-	Delivery      APIGenDeliveryAuthorizer
-}
-
 type apiGenResourceScope struct {
 	pathParameter string
 	resolver      APIGenResourceResolver
 	kind          projectgraph.Kind
-}
-
-type APIGenOperationContract struct {
-	OperationID string
-	Method      string
-	Path        string
-	Protected   bool
-	AuthzMode   string
-	Command     *APIGenCommandContract
-	Extensions  map[string]any
-}
-
-// APIGenCommandContract is the authorization subset of APIGen's normalized
-// command descriptor. Privilege is retained as the generated field name at
-// this boundary while its value is required to be a canonical capability.
-type APIGenCommandContract struct {
-	Owner       string
-	AuthzMode   string
-	Privilege   string
-	Target      *APIGenCommandTarget
-	Idempotency string
-	Concurrency string
-}
-
-type APIGenCommandTarget struct {
-	Parameter string
-	Type      string
 }
 
 // APIGenAuthorizer applies the same browser and immutable-snapshot guards to
@@ -78,11 +30,14 @@ type APIGenCommandTarget struct {
 // resource capability operations; platform-scoped operations use the durable
 // platform-role evaluator and remain available without an active generation.
 type APIGenAuthorizer struct {
-	module     *Module
-	runtime    apigenRuntimeHost
-	scopes     map[string]apiGenResourceScope
-	operations map[string]APIGenOperationContract
-	delivery   APIGenDeliveryAuthorizer
+	module        *Module
+	runtime       apigenRuntimeHost
+	scopes        map[string]apiGenResourceScope
+	operations    map[string]APIGenOperationContract
+	typed         *APIGenTypedOperationRequirementService
+	instance      APIGenInstanceResolver
+	delivery      APIGenDeliveryAuthorizer
+	resourceShare APIGenResourceResolver
 	// bootstrap is an explicit, narrow pre-activation authorization seam. It
 	// is intentionally optional and is only consulted for candidate routes;
 	// active generations continue through the immutable snapshot path.
@@ -123,15 +78,25 @@ func (m *Module) APIGenAuthorizer(runtime apigenRuntimeHost, operations map[stri
 	if m == nil {
 		return nil, fmt.Errorf("access module is required")
 	}
+	typed, err := NewAPIGenTypedOperationRequirementService(operations)
+	if err != nil {
+		return nil, err
+	}
 	authorizer := &APIGenAuthorizer{
-		module:     m,
-		runtime:    runtime,
-		operations: operations,
-		delivery:   resolvers.Delivery,
+		module:        m,
+		runtime:       runtime,
+		operations:    operations,
+		typed:         typed,
+		delivery:      resolvers.Delivery,
+		instance:      resolvers.Instance,
+		resourceShare: resolvers.ResourceShare,
 		scopes: map[string]apiGenResourceScope{
 			"dashboard":      {pathParameter: "dashboard", resolver: resolvers.Dashboard, kind: projectgraph.KindDashboard},
 			"semantic-model": {pathParameter: "model", resolver: resolvers.SemanticModel, kind: projectgraph.KindSemanticModel},
 			"connection":     {pathParameter: "connection", resolver: resolvers.Connection, kind: projectgraph.KindConnection},
+			"source":         {pathParameter: "source", resolver: resolvers.Source, kind: projectgraph.KindSource},
+			"model":          {pathParameter: "model", resolver: resolvers.Model, kind: projectgraph.KindModel},
+			"pipeline":       {pathParameter: "pipeline", resolver: resolvers.Pipeline, kind: projectgraph.KindPipeline},
 			"project":        {pathParameter: "project", resolver: resolvers.Project, kind: projectgraph.KindProjectNamespace},
 		},
 	}
@@ -151,7 +116,7 @@ func apiGenOperationNeedsRuntime(contract APIGenOperationContract) bool {
 		return false
 	}
 	scope, ok := apiGenScope(contract)
-	if !ok || scope == "platform" {
+	if !ok || scope == "platform" || scope == "instance" {
 		return false
 	}
 	return contract.AuthzMode == "privilege"
@@ -231,10 +196,38 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 			dispatch.ServeHTTP(w, r)
 		})
 	}
-	if scope == "platform" {
+	if scope == "platform" || scope == "instance" {
+		if scope == "instance" {
+			if requirement, ok := a.typedRequirement(operationID); ok && requirement.Resolver == access.TypedOperationResolverInstance {
+				if a.instance == nil {
+					return nil, false
+				}
+				return a.protectInstance(operationID, next), true
+			}
+			// An instance-scoped operation without a typed resolver is
+			// ambiguous; it must not fall back to platform role authorization.
+			return nil, false
+		}
 		return a.module.RequirePlatformAdmin(next), true
 	}
+	capability, hasCapability := apiGenOperationCapability(contract)
 	if contract.AuthzMode == "authenticated" {
+		if _, typed := a.typedRequirement(operationID); typed {
+			// An authenticated operation with typed metadata is still an exact
+			// authorization operation. It must resolve a graph target and use the
+			// immutable typed principal/group snapshot path; plain authentication
+			// must never become a legacy fallback. Missing scope/resolver metadata
+			// therefore makes the operation unavailable until its contract is
+			// completed.
+			if scope == "" || scope == "platform" || scope == "instance" || a.runtime == nil {
+				return nil, false
+			}
+			resolver, resolverOK := a.resourceResolverForContract(contract)
+			if !resolverOK || resolver == nil {
+				return nil, false
+			}
+			return a.protectResources(operationID, capability, resolver, next), true
+		}
 		if scope != "" && scope != "principal" {
 			return nil, false
 		}
@@ -250,9 +243,13 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 	if scope == "" || scope == "principal" {
 		return nil, false
 	}
-	capability, ok := apiGenOperationCapability(contract)
-	if !ok {
-		return nil, false
+	if !hasCapability {
+		// A typed operation may omit the legacy capability while its exact
+		// action/resolver pair is still complete. Unknown/partial metadata is
+		// rejected by the typed requirement service and never reaches here.
+		if _, typed := a.typedRequirement(operationID); !typed {
+			return nil, false
+		}
 	}
 	if isDeliveryAPIGenOperation(contract) {
 		if a.delivery == nil || a.runtime == nil {
@@ -331,220 +328,6 @@ func isBootstrapAPIGenOperation(operationID string) bool {
 	default:
 		return false
 	}
-}
-
-func isDeliveryAPIGenOperation(contract APIGenOperationContract) bool {
-	// Generated contracts carry the public API prefix (currently /api/v1),
-	// while this authorizer only cares about the target-owned delivery suffix.
-	return strings.Contains(contract.Path, "/projects/{project}/delivery")
-}
-
-// isBootstrapDeliveryAPIGenOperation is the exact delivery allowlist needed to
-// establish and resolve a plan before the target has an active generation.
-// It includes reviewer approval so its dedicated credential path can run
-// before the first generation; ordinary authoring operations use the narrower
-// allowlist below.
-func isBootstrapDeliveryAPIGenOperation(operationID string) bool {
-	switch operationID {
-	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview",
-		"requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval":
-		return true
-	default:
-		return false
-	}
-}
-
-// isAuthoringDeliveryBootstrapOperation is the exact delivery allowlist for
-// scoped authoring credentials. Publication approval remains reviewer-only
-// and runs through its dedicated exact-scope validator and marker; the
-// downstream approval authority prevents a principal from approving its own
-// publication.
-func isAuthoringDeliveryBootstrapOperation(operationID string) bool {
-	switch operationID {
-	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "requestDeliveryPublicationApproval":
-		return true
-	default:
-		return false
-	}
-}
-
-func (a *APIGenAuthorizer) protectDelivery(operationID string, capability access.Capability, next http.Handler) http.Handler {
-	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		a.authorizeDeliveryRequest(w, r, operationID, capability, next)
-	}))
-}
-
-// protectDeliveryBootstrapAware admits the initial delivery commands through
-// the explicit pre-activation bootstrap decision. The opaque markers bind the
-// exact principal/project/capability for downstream coordinators, which
-// recheck their durable active-generation and immutable-snapshot fences before
-// committing state. The allowlisted delivery operations accept an exact-scope
-// authoring credential through this branch; publication approval has its own
-// reviewer-only marker, while all other bootstrap requests remain restricted
-// to explicit REST API tokens by AuthorizeBootstrapRequest.
-func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, capability access.Capability, next http.Handler) http.Handler {
-	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		principal, ok := a.module.CurrentPrincipal(r)
-		if !ok || strings.TrimSpace(principal.ID) == "" {
-			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
-			return
-		}
-		projectID, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
-		if err != nil || projectID != a.runtime.ProjectID() {
-			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-			return
-		}
-		decision, err := a.bootstrap(r.Context(), r, operationID, projectID, capability)
-		if err != nil {
-			a.module.logger.WarnContext(
-				r.Context(),
-				"generated API bootstrap authorization failed",
-				"operation", operationID,
-				"project", projectID,
-				"capability", capability,
-				"error", err,
-			)
-			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-			return
-		}
-		if decision.Handled {
-			// This delivery bootstrap branch accepts an authoring credential only
-			// for its explicit allowlist. Its durable project/target/capability
-			// and platform-admin checks remain centralized in this validator; do
-			// not broaden the exception to other bootstrap operations.
-			if operationID != "approveDeliveryPublicationApproval" && isAuthoringDeliveryBootstrapOperation(operationID) {
-				if credential, found := a.module.requestCredential(r); found && credential.Authoring != nil {
-					authorized, err := a.module.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), capability)
-					if err != nil {
-						a.module.logger.WarnContext(
-							r.Context(),
-							"generated API authoring bootstrap credential authorization failed",
-							"operation", operationID,
-							"project", projectID,
-							"capability", capability,
-							"error", err,
-						)
-						http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-						return
-					}
-					if !authorized || !decision.Allowed {
-						http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-						return
-					}
-					marked := r.WithContext(withBootstrapAuthorization(r.Context(), projectID, principal.ID, capability))
-					next.ServeHTTP(w, marked)
-					return
-				}
-			}
-			if operationID == "approveDeliveryPublicationApproval" {
-				// Approval is the sole fresh-target reviewer exception. It accepts an
-				// explicitly PROJECT_ADMIN-attenuated reviewer credential after the
-				// durable bootstrap decision has allowed this exact operation. Do not
-				// route it through the generic platform-admin bootstrap path.
-				if !decision.Allowed {
-					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-					return
-				}
-				authorized, err := a.module.AuthorizePublicationApprovalBootstrapRequest(r.Context(), r, projectID.String())
-				if err != nil {
-					a.module.logger.WarnContext(
-						r.Context(),
-						"generated API publication approval bootstrap credential authorization failed",
-						"operation", operationID,
-						"project", projectID,
-						"capability", capability,
-						"error", err,
-					)
-					http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-					return
-				}
-				if !authorized {
-					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-					return
-				}
-				marked := r.WithContext(withPublicationApprovalBootstrapAuthorization(r.Context(), projectID, principal.ID))
-				next.ServeHTTP(w, marked)
-				return
-			}
-			if bearerToken(r) == "" {
-				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
-				return
-			}
-			authorized, err := a.module.AuthorizeBootstrapRequest(r.Context(), r, capability)
-			if err != nil {
-				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-				return
-			}
-			if !authorized || !decision.Allowed {
-				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-				return
-			}
-			marked := r.WithContext(withBootstrapAuthorization(r.Context(), projectID, principal.ID, capability))
-			next.ServeHTTP(w, marked)
-			return
-		}
-		a.authorizeDeliveryRequest(w, r, operationID, capability, next)
-	}))
-}
-
-func (a *APIGenAuthorizer) authorizeDeliveryRequest(w http.ResponseWriter, r *http.Request, operationID string, capability access.Capability, next http.Handler) {
-	principal, ok := a.module.CurrentPrincipal(r)
-	if !ok || strings.TrimSpace(principal.ID) == "" {
-		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
-		return
-	}
-	projectID, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
-	if err != nil || projectID != a.runtime.ProjectID() {
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		return
-	}
-	objectID := deliveryObjectID(operationID, r)
-	allowed, err := a.delivery(r.Context(), r, operationID, objectID, projectID, capability)
-	if err != nil {
-		a.module.logger.WarnContext(
-			r.Context(),
-			"generated delivery API authorization failed",
-			"operation", operationID,
-			"object", objectID,
-			"project", projectID,
-			"capability", capability,
-			"error", err,
-		)
-		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-		return
-	}
-	if !allowed {
-		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-		return
-	}
-	next.ServeHTTP(w, r)
-}
-
-func deliveryObjectID(operationID string, r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	parameter := ""
-	switch operationID {
-	case "buildDeliveryPlan", "getDeliveryPlanPreview":
-		parameter = "plan"
-	case "publishDeliveryCandidate", "getDeliveryCandidateStatus":
-		parameter = "candidate"
-	case "rollbackDeliveryGeneration", "getDeliveryGenerationStatus":
-		parameter = "generation"
-	case "getDeliveryBuildStatus":
-		parameter = "build"
-	case "getDeliverySealStatus":
-		parameter = "seal"
-	case "getDeliveryPublicationEvidence":
-		parameter = "publication"
-	case "requestDeliveryPublicationApproval", "getDeliveryPublicationApproval", "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
-		parameter = "publication"
-	}
-	if parameter == "" {
-		return ""
-	}
-	return strings.TrimSpace(chi.URLParam(r, parameter))
 }
 
 func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capability access.Capability, next http.Handler) http.Handler {
@@ -648,94 +431,6 @@ func (a *APIGenAuthorizer) resourceResolverForContractMust(operationID string) A
 	return resolver
 }
 
-func (a *APIGenAuthorizer) protectResources(operationID string, capability access.Capability, resolve APIGenResourceResolver, next http.Handler) http.Handler {
-	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		principal, ok := a.module.CurrentPrincipal(r)
-		if !ok || strings.TrimSpace(principal.ID) == "" {
-			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
-			return
-		}
-		projectID := a.runtime.ProjectID()
-		if err := projectID.Validate(); err != nil {
-			a.module.logger.WarnContext(r.Context(), "generated API active project identity is unavailable", "operation", operationID, "error", err)
-			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-			return
-		}
-		resources := resolve(r, projectID)
-		if len(resources) == 0 {
-			http.NotFound(w, r)
-			return
-		}
-		for _, resource := range resources {
-			if err := resource.Validate(); err != nil {
-				http.NotFound(w, r)
-				return
-			}
-		}
-		if principal.DevBypass {
-			next.ServeHTTP(w, r)
-			return
-		}
-		allowed, err := a.authorizeResources(r.Context(), principal.ID, projectID, resources, capability)
-		if err != nil {
-			slog.Default().WarnContext(r.Context(), "generated API resource authorization failed", "capability", capability, "project", projectID, "error", err)
-			if errors.Is(err, errAPIGenResourceNotFound) {
-				http.NotFound(w, r)
-				return
-			}
-			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-			return
-		}
-		if !allowed {
-			a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
-		effective, err := a.module.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
-		if err != nil {
-			slog.Default().WarnContext(r.Context(), "generated API effective capability resolution failed", "capability", capability, "project", projectID, "error", err)
-			if errors.Is(err, access.ErrForbidden) {
-				a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
-				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-				return
-			}
-			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-			return
-		}
-		if !containsCapability(effective, capability) {
-			a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	}))
-}
-
-func (a *APIGenAuthorizer) recordResourceAuthorizationDenial(r *http.Request, operationID string, projectID projectgraph.ResourceID, principalID string, resource access.ResourceRef, capability access.Capability) {
-	if a == nil || a.module == nil || a.module.repository == nil || r == nil {
-		return
-	}
-	repository, err := a.module.repository()
-	if err != nil || repository == nil {
-		a.module.logger.WarnContext(r.Context(), "generated API authorization denial audit repository unavailable", "operation", operationID, "error", err)
-		return
-	}
-	input := authAuditInput(r, "authorization.denied", principalID, string(resource.Kind()), resource.ID().String(), capability, "denied", map[string]any{"operationId": operationID})
-	input.ProjectID = projectID.String()
-	if err := access.PersistAuditEvent(r.Context(), repository, input); err != nil {
-		a.module.logger.WarnContext(r.Context(), "generated API authorization denial audit failed", "operation", operationID, "error", err)
-	}
-}
-
-func containsCapability(capabilities []access.Capability, expected access.Capability) bool {
-	for _, capability := range capabilities {
-		if capability == expected {
-			return true
-		}
-	}
-	return false
-}
-
 func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resources []access.ResourceRef, capability access.Capability) (bool, error) {
 	lease, err := a.runtime.Acquire(ctx)
 	if err != nil {
@@ -830,8 +525,10 @@ func (a *APIGenAuthorizer) validateOperation(operationID string, contract APIGen
 		return fmt.Errorf("APIGen operation %q extension authz mode does not match operation", operationID)
 	}
 	if contract.AuthzMode == "authenticated" {
-		if scope != "" && scope != "platform" && scope != "principal" {
-			return fmt.Errorf("APIGen operation %q has invalid authenticated resource scope", operationID)
+		if scope != "" && scope != "platform" && scope != "principal" && scope != "instance" {
+			if _, typed := a.typedRequirement(operationID); !typed {
+				return fmt.Errorf("APIGen operation %q has invalid authenticated resource scope", operationID)
+			}
 		}
 		return nil
 	}
@@ -840,11 +537,22 @@ func (a *APIGenAuthorizer) validateOperation(operationID string, contract APIGen
 			return fmt.Errorf("APIGen operation %q requires an exact resource or platform scope", operationID)
 		}
 		if _, ok := apiGenOperationCapability(contract); !ok {
-			return fmt.Errorf("APIGen operation %q has invalid capability", operationID)
+			// Typed operations may intentionally omit the legacy capability.
+			// Their action/resolver pair is the complete authorization contract.
+			if _, typed := a.typedRequirement(operationID); !typed {
+				return fmt.Errorf("APIGen operation %q has invalid capability", operationID)
+			}
 		}
 		if isDeliveryAPIGenOperation(contract) {
 			if a.delivery == nil {
 				return fmt.Errorf("APIGen delivery operation %q has no target authorizer", operationID)
+			}
+			return nil
+		}
+		if scope == "instance" {
+			requirement, typed := a.typedRequirement(operationID)
+			if !typed || requirement.Resolver != access.TypedOperationResolverInstance || a.instance == nil {
+				return fmt.Errorf("APIGen instance operation %q requires an instance typed resolver", operationID)
 			}
 			return nil
 		}
@@ -926,7 +634,7 @@ func apiGenScope(contract APIGenOperationContract) (string, bool) {
 		return "", false
 	}
 	switch scope {
-	case "dashboard", "semantic-model", "connection", "project", "platform", "principal":
+	case "dashboard", "semantic-model", "connection", "source", "model", "pipeline", "project", "resource-share", "delivery", "instance", "platform", "principal":
 		return scope, true
 	default:
 		return "", false
@@ -934,6 +642,41 @@ func apiGenScope(contract APIGenOperationContract) (string, bool) {
 }
 
 func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationContract) (APIGenResourceResolver, bool) {
+	// Typed authorization metadata names the security target. A generated
+	// command target may instead describe its protocol identity (for example,
+	// a Project-scoped refresh command whose exact Pipeline target is carried
+	// in the JSON body). Keep those contracts separate and let the product-owned
+	// resolver extract the typed target; malformed or absent targets still fail
+	// closed when the resolver returns no resources.
+	if requirement, typed := a.typedRequirement(contract.OperationID); typed {
+		scope, scopeOK := apiGenScope(contract)
+		if !scopeOK || scope != string(requirement.Resolver) {
+			return nil, false
+		}
+		if requirement.Resolver == access.TypedOperationResolverResourceShare {
+			if a.resourceShare == nil {
+				return nil, false
+			}
+			return a.boundResourceShareResolver(contract), true
+		}
+		if requirement.Resolver == access.TypedOperationResolverDelivery {
+			// Native /delivery routes use the target-owned delivery authorizer.
+			// Other delivery-family APIs (releases and candidate source sync)
+			// authorize against the exact Project namespace named by their path.
+			definition, ok := a.scopes["project"]
+			if !ok || definition.resolver == nil || !strings.Contains(contract.Path, "{project}") {
+				return nil, false
+			}
+			return a.boundResourceResolver(definition, true), true
+		}
+		if requirement.Resolver != access.TypedOperationResolverInstance {
+			definition, ok := a.scopes[scope]
+			if !ok || definition.resolver == nil {
+				return nil, false
+			}
+			return a.boundResourceResolver(definition, strings.Contains(contract.Path, "{project}")), true
+		}
+	}
 	if contract.Command != nil && contract.Command.Target != nil {
 		target := *contract.Command.Target
 		scope, scopeOK := apiGenScope(contract)
@@ -941,7 +684,7 @@ func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationC
 			return nil, false
 		}
 		switch target.Type {
-		case "dashboard", "semantic-model", "connection", "project":
+		case "dashboard", "semantic-model", "connection", "source", "model", "pipeline", "project":
 			if scope != "" && scope != target.Type {
 				return nil, false
 			}
@@ -963,7 +706,7 @@ func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationC
 	if !scopeOK {
 		return nil, false
 	}
-	if scope == "platform" || scope == "principal" {
+	if scope == "platform" || scope == "principal" || scope == "instance" || scope == "delivery" {
 		return nil, true
 	}
 	if scope == "" {
@@ -974,6 +717,31 @@ func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationC
 		return nil, false
 	}
 	return a.boundResourceResolver(definition, strings.Contains(contract.Path, "{project}")), true
+}
+
+func (a *APIGenAuthorizer) boundResourceShareResolver(contract APIGenOperationContract) APIGenResourceResolver {
+	return func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
+		if strings.Contains(contract.Path, "{project}") {
+			requestedProject, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
+			if err != nil || requestedProject != active {
+				return nil
+			}
+		}
+		resources := a.resourceShare(r, active)
+		if len(resources) == 0 {
+			return nil
+		}
+		requirement, ok := a.typedRequirement(contract.OperationID)
+		if !ok {
+			return nil
+		}
+		for _, resource := range resources {
+			if requirement.ValidateResource(resource) != nil {
+				return nil
+			}
+		}
+		return resources
+	}
 }
 
 func (a *APIGenAuthorizer) boundResourceResolver(definition apiGenResourceScope, assertProject bool) APIGenResourceResolver {

@@ -54,6 +54,12 @@ func TestBootstrapTokenCapabilityAllowsProjectAdminForProjectOperations(t *testi
 	if bootstrapTokenAllowsCapability([]access.Capability{access.CapabilityResourceRead}, access.CapabilityResourceEdit) {
 		t.Fatal("narrow token unexpectedly satisfied RESOURCE_EDIT")
 	}
+	if bootstrapTokenAllowsCapability(admin, access.CapabilityPlatformAdmin) {
+		t.Fatal("PROJECT_ADMIN token unexpectedly satisfied PLATFORM_ADMIN")
+	}
+	if !bootstrapTokenAllowsCapability([]access.Capability{access.CapabilityPlatformAdmin}, access.CapabilityPlatformAdmin) {
+		t.Fatal("PLATFORM_ADMIN token did not satisfy PLATFORM_ADMIN")
+	}
 }
 
 func (r bootstrapCredentialRepository) BootstrapAPITokenEvidence(context.Context, string, string, time.Time) (access.APIToken, error) {

@@ -56,6 +56,7 @@ import (
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/pagestream"
 )
 
@@ -373,7 +374,37 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(err)
 	}
-	workloadBundle, err := buildWorkloadCapability(ctx, workloadCapabilityConfig{Persistence: &jobsPersistence, Production: production, NodeID: nodeID, LeaseTimeout: cfg.RefreshJobLeaseTimeout, RiverJobTimeout: cfg.JobExecutionTimeout, Logger: slog.Default(), Workload: workloadmodule.Config{Policy: cfg.WorkloadConfig()}})
+	var authorityRevalidator jobs.AuthorityRevalidator
+	if production {
+		tokenEvidence, evidenceSupported := accessBundle.Repository.(access.APITokenAuthorityEvidenceReader)
+		if !evidenceSupported {
+			return fail(errors.New("PostgreSQL access repository does not support async token authority evidence"))
+		}
+		sessionEvidence, sessionEvidenceSupported := accessBundle.Repository.(access.SessionAuthorityEvidenceReader)
+		if !sessionEvidenceSupported {
+			return fail(errors.New("PostgreSQL access repository does not support browser-session authority evidence"))
+		}
+		executionGrants, executionGrantsSupported := accessBundle.Repository.(executionGrantAuthorityReader)
+		if !executionGrantsSupported {
+			return fail(errors.New("PostgreSQL access repository does not support execution-grant authority evidence"))
+		}
+		authorityRevalidator = newAuthorityRevalidator(tokenEvidence, sessionEvidence, executionGrants, func(authCtx context.Context, principalID string, projectID projectgraph.ResourceID, environment string, resource access.ResourceRef, capability access.Capability) (bool, error) {
+			if runtimeHost == nil {
+				return false, errors.New("active runtime host is unavailable")
+			}
+			if string(runtimeHost.Environment()) != environment {
+				return false, errors.New("active runtime environment does not match job authority")
+			}
+			return authorizeProjectResources(authCtx, accessBundle.Module, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, capability)
+		}, func(authCtx context.Context, principalID string, pair access.PermissionPair, environment string) (bool, error) {
+			return authorizeCurrentDelegatedPermission(authCtx, accessBundle.Module, runtimeHost, principalID, pair, environment)
+		}, instanceID, string(environment))
+	}
+	var requiredAuthorityKinds map[string]struct{}
+	if production {
+		requiredAuthorityKinds = map[string]struct{}{"refresh_pipeline": {}}
+	}
+	workloadBundle, err := buildWorkloadCapability(ctx, workloadCapabilityConfig{Persistence: &jobsPersistence, Production: production, NodeID: nodeID, LeaseTimeout: cfg.RefreshJobLeaseTimeout, RiverJobTimeout: cfg.JobExecutionTimeout, Logger: slog.Default(), AuthorityRevalidator: authorityRevalidator, RequiredAuthorityKinds: requiredAuthorityKinds, Workload: workloadmodule.Config{Policy: cfg.WorkloadConfig()}})
 	if err != nil {
 		return fail(err)
 	}
@@ -601,6 +632,10 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		return authorizeAuthoringResource(ctx, accessBundle.Module, runtimeHost, principal, project, resource, capability)
 	}, AuthorizeProjectCapability: func(ctx context.Context, principal string, project projectgraph.ResourceID, capability access.Capability) (bool, error) {
 		return authorizeAuthoringProject(ctx, accessBundle.Module, runtimeHost, principal, project, capability)
+	}, AuthorizeTypedResource: func(ctx context.Context, principal string, project projectgraph.ResourceID, resource access.ResourceRef, action access.Action) (bool, bool, error) {
+		return authorizeTypedResourceAction(ctx, accessBundle.Module, runtimeHost, principal, project, []access.ResourceRef{resource}, action)
+	}, AuthorizeTypedProject: func(ctx context.Context, principal string, project projectgraph.ResourceID, action access.Action) (bool, bool, error) {
+		return authorizeTypedAuthoringProjectAction(ctx, accessBundle.Module, runtimeHost, principal, project, action)
 	}, AcquireRuntime: runtimeHost.Acquire})
 	if err != nil {
 		return fail(err)
@@ -728,6 +763,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		return fail(fmt.Errorf("build semantic activation fence: %w", err))
 	}
 	nativeRefreshFinalizer.BeforeActivationCommit = semanticActivation.ValidatePublication
+	nativeAuthorizeDelivery := nativeDeliveryAuthorization(accessBundle.Module.AuthorizationSubjects)
 	planCoordinator, err := appdeploymentpostgres.NewNativeCreatePlanCoordinator(appdeploymentpostgres.NativeCreatePlanConfig{
 		Repository:         graph.DeploymentRepository,
 		TargetID:           instanceID,
@@ -748,10 +784,12 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 				RetentionWindow:        cfg.DeliveryRollbackRetention().String(),
 			}, nil
 		},
-		Events:     graph.DeploymentPersistence.Events,
-		Audit:      graph.DeploymentPersistence.Audit,
-		Workflow:   graph.DeploymentPersistence.Workflow,
-		Operations: graph.DeploymentPersistence.Operations,
+		AuthorizeDelivery:            nativeAuthorizeDelivery,
+		RequireCompoundAuthorization: production,
+		Events:                       graph.DeploymentPersistence.Events,
+		Audit:                        graph.DeploymentPersistence.Audit,
+		Workflow:                     graph.DeploymentPersistence.Workflow,
+		Operations:                   graph.DeploymentPersistence.Operations,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("build native delivery plan coordinator: %w", err))
@@ -785,35 +823,37 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		return appdeploymentpostgres.DuckLakePhysicalMarkerResolverFactory{Config: duckLakeConfig}.OpenReadOnly(openCtx)
 	})
 	buildCoordinator, err := appdeploymentpostgres.NewNativeBuildCoordinator(appdeploymentpostgres.NativeBuildConfig{
-		Repository:            graph.DeploymentRepository,
-		TargetID:              instanceID,
-		Environment:           string(environment),
-		Sources:               nativeProjectSource.CandidateSourceReader,
-		Artifacts:             release,
-		ArtifactRecovery:      release,
-		BindingEvidence:       candidateConnections,
-		Connections:           candidateConnections,
-		ManagedData:           managedData.RuntimeResolution(),
-		ContractAuthority:     contractAuthority,
-		PhysicalPoolID:        physicalPoolID,
-		CompatibilityDigest:   compatibilityDigest,
-		Operations:            buildOperations,
-		Heartbeat:             heartbeat,
-		AttemptAdmission:      attemptAdmission,
-		AttemptTermination:    attemptTermination,
-		GenerationAdmission:   generationAdmission,
-		PhysicalFactory:       physicalFactory,
-		ObservationWriter:     graph.DuckLakeControlLedger,
-		MarkerResolverFactory: markerFactory,
-		MarkerQuarantine:      graph.DuckLakeControlLedger,
-		ObservationReader:     graph.DuckLakeControlLedger,
-		SnapshotFactory:       appdeploymentpostgres.NativeQualificationSnapshotInspectorFactory{QualificationFactory: qualificationFactory},
-		QualificationFactory:  qualificationFactory,
-		RuntimeVersion:        runtimeVersion,
-		Bounds:                nativeCandidateGateBounds(production),
-		Events:                graph.DeploymentPersistence.Events,
-		Audit:                 graph.DeploymentPersistence.Audit,
-		Workflow:              graph.DeploymentPersistence.Workflow,
+		Repository:                   graph.DeploymentRepository,
+		TargetID:                     instanceID,
+		Environment:                  string(environment),
+		Sources:                      nativeProjectSource.CandidateSourceReader,
+		Artifacts:                    release,
+		ArtifactRecovery:             release,
+		BindingEvidence:              candidateConnections,
+		Connections:                  candidateConnections,
+		ManagedData:                  managedData.RuntimeResolution(),
+		ContractAuthority:            contractAuthority,
+		PhysicalPoolID:               physicalPoolID,
+		CompatibilityDigest:          compatibilityDigest,
+		Operations:                   buildOperations,
+		Heartbeat:                    heartbeat,
+		AttemptAdmission:             attemptAdmission,
+		AttemptTermination:           attemptTermination,
+		GenerationAdmission:          generationAdmission,
+		PhysicalFactory:              physicalFactory,
+		ObservationWriter:            graph.DuckLakeControlLedger,
+		MarkerResolverFactory:        markerFactory,
+		MarkerQuarantine:             graph.DuckLakeControlLedger,
+		ObservationReader:            graph.DuckLakeControlLedger,
+		SnapshotFactory:              appdeploymentpostgres.NativeQualificationSnapshotInspectorFactory{QualificationFactory: qualificationFactory},
+		QualificationFactory:         qualificationFactory,
+		AuthorizeDelivery:            nativeAuthorizeDelivery,
+		RequireCompoundAuthorization: production,
+		RuntimeVersion:               runtimeVersion,
+		Bounds:                       nativeCandidateGateBounds(production),
+		Events:                       graph.DeploymentPersistence.Events,
+		Audit:                        graph.DeploymentPersistence.Audit,
+		Workflow:                     graph.DeploymentPersistence.Workflow,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("build native delivery build coordinator: %w", err))

@@ -80,6 +80,16 @@ type dashboardAuthoringCreateInput struct {
 	Slug          string `json:"slug,omitempty"`
 }
 
+func dashboardAuthoringCreateReceipt(result authoringservice.Result) (dashboardauthoring.ResourceCreateReceipt, error) {
+	if err := result.Lifecycle.Validate(); err != nil {
+		return dashboardauthoring.ResourceCreateReceipt{}, err
+	}
+	if err := result.Revision.ValidateComplete(); err != nil {
+		return dashboardauthoring.ResourceCreateReceipt{}, err
+	}
+	return dashboardauthoring.ResourceCreateReceipt{ID: result.Lifecycle.ID.String(), Status: string(result.Lifecycle.Status)}, nil
+}
+
 // dashboardAuthoringCommandInput embeds the closed domain command so the
 // JSON contract has no model-controlled actor or provenance fields.
 type dashboardAuthoringCommandInput struct {
@@ -294,7 +304,7 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			command := dashboardauthoring.Command{DashboardID: input.DashboardID, DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, AssignField: &dashboardauthoring.AssignFieldPayload{PageID: input.PageID, VisualID: input.VisualID, FieldID: input.FieldID, Role: input.Role}}
 			return p.executeIntent(ctx, scope, call, command)
 		}),
-		p.definition(CreateDashboardDraftToolName, "Create a private dashboard draft owned by the authenticated principal. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.", "write", agentcontracts.DashboardAuthoringCreateInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "create"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
+		p.definition(CreateDashboardDraftToolName, "Create a private dashboard draft owned by the authenticated principal. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.", "write", agentcontracts.DashboardAuthoringCreateInputSchemaJSON, agentcontracts.DashboardAuthoringCreateReceiptSchemaJSON, []string{"dashboard", "authoring", "create"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringCreateInput
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
@@ -311,7 +321,11 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if err != nil {
 				return authoringToolError(err)
 			}
-			return agentcore.ToolResult{Content: value}
+			receipt, err := dashboardAuthoringCreateReceipt(value)
+			if err != nil {
+				return authoringToolError(err)
+			}
+			return agentcore.ToolResult{Content: receipt}
 		}),
 		p.definition(ExecuteDashboardCommandToolName, "Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision. Actor and agent provenance are server-bound.", "destructive", agentcontracts.DashboardAuthoringCommandInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "command"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringCommandInput
@@ -428,7 +442,13 @@ func (p DashboardAuthoringProvider) definition(name, description, effect, input,
 }
 
 func (p DashboardAuthoringProvider) prepare(ctx context.Context, scope Scope, action dashboardauthoring.AuthorizationAction) (projectgraph.ResourceID, agentcore.ToolResult, bool) {
-	_ = action
+	// The application facade remains the authorization owner and evaluates the
+	// same domain action through the dashboard typed-access adapter. Validate it
+	// here as well so an agent/MCP adapter can never silently discard an unknown
+	// action before reaching that boundary.
+	if err := action.Validate(); err != nil {
+		return "", ToolError("forbidden", "agent authoring action is unsupported"), false
+	}
 	project := p.ProjectID
 	var err error
 	if p.ResolveProjectID != nil {
@@ -442,6 +462,12 @@ func (p DashboardAuthoringProvider) prepare(ctx context.Context, scope Scope, ac
 	}
 	if strings.TrimSpace(scope.PrincipalID) == "" {
 		return "", ToolError("authentication_required", "agent authoring tools require an authenticated principal"), false
+	}
+	if scope.Credential.PermissionProfile != "" || scope.Credential.Permissions != nil {
+		// Authoring tools predate typed APIGen action/resolver metadata. They
+		// must not execute through the principal's broader application
+		// authority until each operation has an exact typed target contract.
+		return "", ToolError("forbidden", "typed credential scope is not supported by authoring tools"), false
 	}
 	return project, agentcore.ToolResult{}, true
 }

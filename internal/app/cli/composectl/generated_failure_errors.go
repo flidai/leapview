@@ -34,17 +34,6 @@ func mapQualificationCreatePrincipalFailure(err error) error {
 	return accessgen.MatchGenCreatePrincipalFailure(failure, handler)
 }
 
-func mapQualificationCreateGrantFailure(err error) error {
-	var failure accessgen.GenCreateGrantFailure
-	if !errors.As(err, &failure) {
-		return err
-	}
-	handler := func(problem apigenclient.ProblemDetails) error {
-		return qualificationGeneratedProblemError("grant qualification reviewer", problem)
-	}
-	return accessgen.MatchGenCreateGrantFailure(failure, handler)
-}
-
 func mapQualificationCreateCurrentAPITokenFailure(err error) error {
 	var failure accessgen.GenCreateCurrentAPITokenFailure
 	if !errors.As(err, &failure) {

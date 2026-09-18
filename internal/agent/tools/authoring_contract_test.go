@@ -82,3 +82,82 @@ func TestDashboardSourceToolResultsMatchGeneratedOutputSchemas(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateDashboardDraftReturnsBoundedReceipt(t *testing.T) {
+	app := &projectAuthoringFake{createResult: createResultForTest()}
+	catalog, err := agentcore.NewToolCatalog((DashboardAuthoringProvider{
+		Application: app,
+		ProjectID:   projectIDForTest(),
+		Resolve:     (&projectResolverFake{}).Resolve,
+	}).Definitions(Scope{PrincipalID: "principal"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := catalog.Execute(t.Context(), agentcore.ToolCall{
+		ID:        "create-receipt",
+		Name:      CreateDashboardDraftToolName,
+		Arguments: json.RawMessage(`{"title":"Sales","semanticModelId":"semantic_sales"}`),
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("create_dashboard_draft result=%#v err=%v", result, err)
+	}
+	receipt, ok := result.Content.(dashboardauthoring.ResourceCreateReceipt)
+	if !ok {
+		t.Fatalf("create_dashboard_draft content type=%T, want project api receipt", result.Content)
+	}
+	if receipt.ID != "dashboard_sales" || receipt.Status != "draft" {
+		t.Fatalf("create_dashboard_draft receipt=%#v", receipt)
+	}
+}
+
+func TestCreateDashboardDraftReceiptOmitsLifecycleRevisionAndOwner(t *testing.T) {
+	app := &projectAuthoringFake{createResult: createResultForTest()}
+	definition := definitionByName((DashboardAuthoringProvider{
+		Application: app,
+		ProjectID:   projectIDForTest(),
+		Resolve:     (&projectResolverFake{}).Resolve,
+	}).Definitions(Scope{PrincipalID: "principal"}), CreateDashboardDraftToolName)
+	var schema struct {
+		AdditionalProperties bool                       `json:"additionalProperties"`
+		Properties           map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(definition.OutputSchema, &schema); err != nil {
+		t.Fatalf("decode create_dashboard_draft output schema: %v", err)
+	}
+	if schema.AdditionalProperties || len(schema.Properties) != 2 {
+		t.Fatalf("create_dashboard_draft output schema=%s, want closed id/status object", definition.OutputSchema)
+	}
+	for _, field := range []string{"id", "status"} {
+		if _, ok := schema.Properties[field]; !ok {
+			t.Fatalf("create_dashboard_draft output schema missing %q: %s", field, definition.OutputSchema)
+		}
+	}
+	result, err := definition.Handler.Run(t.Context(), agentcore.ToolCall{
+		ID:        "create-receipt-shape",
+		Arguments: json.RawMessage(`{"title":"Sales","semanticModelId":"semantic_sales"}`),
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("create_dashboard_draft result=%#v err=%v", result, err)
+	}
+	payload, err := json.Marshal(result.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 2 {
+		t.Fatalf("create_dashboard_draft receipt fields=%v, want only id and status", fields)
+	}
+	for _, field := range []string{"id", "status"} {
+		if _, ok := fields[field]; !ok {
+			t.Fatalf("create_dashboard_draft receipt missing %q: %s", field, payload)
+		}
+	}
+	for _, forbidden := range []string{"lifecycle", "revision", "ownerPrincipalId", "projectId", "draft", "published"} {
+		if _, ok := fields[forbidden]; ok {
+			t.Fatalf("create_dashboard_draft receipt leaked %q: %s", forbidden, payload)
+		}
+	}
+}

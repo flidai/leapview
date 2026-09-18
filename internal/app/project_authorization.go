@@ -111,6 +111,23 @@ func authorizeProjectResources(
 	})
 }
 
+func authorizeProjectResourcesWithTypedAction(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	resources []access.ResourceRef,
+	capability access.Capability,
+	action access.Action,
+) (bool, error) {
+	return authorizeProjectResourcesWithCapability(ctx, accessModule, runtimeHost, principalID, projectID, resources, false, func(access.ResourceRef) access.Capability {
+		return capability
+	}, func(access.ResourceRef) (access.Action, bool) {
+		return action, true
+	})
+}
+
 func authorizeDeliveryProjectResources(
 	ctx context.Context,
 	accessModule canonicalAccessModule,
@@ -134,6 +151,7 @@ func authorizeProjectResourcesWithCapability(
 	resources []access.ResourceRef,
 	_ bool,
 	capabilityFor func(access.ResourceRef) access.Capability,
+	typedActionFor ...func(access.ResourceRef) (access.Action, bool),
 ) (bool, error) {
 	if accessModule == nil || runtimeHost == nil {
 		return false, fmt.Errorf("authorization modules are required")
@@ -170,9 +188,35 @@ func authorizeProjectResourcesWithCapability(
 	if err != nil {
 		return false, err
 	}
+	var typedActionResolver func(access.ResourceRef) (access.Action, bool)
+	if len(typedActionFor) > 1 {
+		return false, fmt.Errorf("at most one typed action resolver is supported")
+	}
+	if len(typedActionFor) == 1 {
+		typedActionResolver = typedActionFor[0]
+	}
+	var typed, allowed bool
 	snapshot := authorizedLease.AuthorizationSnapshot()
 	if snapshot.Identity() != lease.Identity() {
 		return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
+	}
+	if err := snapshot.ValidateBound(); err != nil {
+		return false, err
+	}
+	if typedActionResolver != nil {
+		typed, allowed, err = typedPermissionDecisionForSnapshot(ctx, principalID, projectID, resources, typedActionResolver, snapshot, subjects)
+	} else {
+		typed, allowed, err = typedDashboardReadDecisionForSnapshot(ctx, principalID, projectID, resources, capabilityFor, snapshot, subjects)
+	}
+	if err != nil {
+		return false, err
+	}
+	if typed {
+		// A migrated typed operation is decided entirely from typed principal /
+		// group authority plus the optional credential ceiling. Do not run the
+		// legacy capability projection after a successful typed decision: a
+		// typed-only assignment must be sufficient on its own.
+		return allowed, nil
 	}
 	for _, resource := range resources {
 		capability := capabilityFor(resource)
@@ -262,6 +306,17 @@ func protectProjectResources(
 	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
+	return protectProjectResourcesWithTypedAction(accessModule, runtimeHost, capability, "", resolve, next)
+}
+
+func protectProjectResourcesWithTypedAction(
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	capability access.Capability,
+	action access.Action,
+	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
+	next http.HandlerFunc,
+) http.HandlerFunc {
 	if accessModule == nil || runtimeHost == nil || resolve == nil {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -293,7 +348,15 @@ func protectProjectResources(
 			next(w, r)
 			return
 		}
-		allowed, err := authorizeProjectResources(r.Context(), accessModule, runtimeHost, principal.ID, projectID, resources, capability)
+		var allowed bool
+		var err error
+		if action == "" {
+			allowed, err = authorizeProjectResources(r.Context(), accessModule, runtimeHost, principal.ID, projectID, resources, capability)
+		} else {
+			allowed, err = authorizeProjectResourcesWithCapability(r.Context(), accessModule, runtimeHost, principal.ID, projectID, resources, false, func(access.ResourceRef) access.Capability {
+				return capability
+			}, func(access.ResourceRef) (access.Action, bool) { return action, true })
+		}
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
@@ -322,6 +385,17 @@ func protectProjectAuthoringResource(
 	capability access.Capability,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
+	return protectProjectAuthoringResourceWithTypedAction(accessModule, runtimeHost, authorizer, capability, "", next)
+}
+
+func protectProjectAuthoringResourceWithTypedAction(
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	authorizer repositoryDashboardAuthorizer,
+	capability access.Capability,
+	typedAction access.Action,
+	next http.HandlerFunc,
+) http.HandlerFunc {
 	if accessModule == nil || runtimeHost == nil || authorizer == nil || (capability != access.CapabilityResourceEdit && capability != access.CapabilityResourceManage) {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -346,6 +420,33 @@ func protectProjectAuthoringResource(
 		if principal.DevBypass {
 			next(w, r)
 			return
+		}
+		if typedAction != "" {
+			resource, resourceErr := access.NewResourceRef(projectgraph.ResourceID(dashboardID), projectgraph.KindDashboard)
+			if resourceErr != nil {
+				http.NotFound(w, r)
+				return
+			}
+			// Preserve an immediate closed-contract denial for malformed or
+			// attenuated credentials before acquiring a serving lease. The full
+			// decision below additionally resolves principal/group assignments
+			// from that same immutable generation.
+			credentialTyped, credentialAllowed := typedPermissionDecision(r.Context(), projectID, []access.ResourceRef{resource}, func(access.ResourceRef) (access.Action, bool) {
+				return typedAction, true
+			})
+			if credentialTyped && !credentialAllowed {
+				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
+				return
+			}
+			typed, allowed, typedErr := authorizeTypedResourceAction(r.Context(), accessModule, runtimeHost, principal.ID, projectID, []access.ResourceRef{resource}, typedAction)
+			if typedErr != nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			if typed && !allowed {
+				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
+				return
+			}
 		}
 		var err error
 		if capability == access.CapabilityResourceManage {

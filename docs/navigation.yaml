@@ -439,6 +439,12 @@ sections:
         type: reference
         summary: Review supported resource, data, visual, and integration surfaces.
         source: articles/reference/capabilities.md
+      - slug: reference/permissions
+        title: Typed permission catalog
+        type: reference
+        summary: Review canonical typed actions, target scopes, prerequisites, and role expansions.
+        source: articles/reference/permissions.md
+        generated: true
       - slug: reference/data-resource-connectors
         title: Data-resource connector capabilities
         type: reference

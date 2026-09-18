@@ -54,9 +54,28 @@ type Config struct {
 	// inject a complete PostgreSQL bundle.
 	Persistence *Persistence
 	// Production requires the typed PostgreSQL persistence bundle.
-	Production          bool
-	HTTP                HTTPConfig
-	Authorization       AuthorizationConfig
+	Production    bool
+	HTTP          HTTPConfig
+	Authorization AuthorizationConfig
+	// CurrentCredential resolves the request-bound credential evidence used to
+	// bind protected refresh work to its initiating token. It is required by
+	// native production queue paths; infrastructure credentials are not used.
+	CurrentCredential func(context.Context) (access.APICredential, bool)
+	// CurrentSessionEvidence resolves non-secret browser-session evidence from
+	// its dedicated request context. Browser sessions are not API credentials.
+	CurrentSessionEvidence func(context.Context) (access.CredentialEvidence, bool)
+	// ExecutionGrants is the read-only live authority source for scheduled work.
+	ExecutionGrants ExecutionGrantReader
+	// ExecutionGrantID is the default; the resolver supports per-occurrence grants.
+	ExecutionGrantID                 string
+	ResolveScheduledExecutionGrantID func(context.Context, refreshschedule.Occurrence) (string, error)
+	// InstanceID binds delegated envelopes to this durable process target.
+	InstanceID string
+	// AuthorityRevalidator protects refresh boundaries after dequeue.
+	AuthorityRevalidator jobs.AuthorityRevalidator
+	// RequireAuthority enables the durable authority envelope requirement for
+	// native production refresh admissions.
+	RequireAuthority    bool
 	Service             refreshrun.Service
 	Artifacts           refreshrun.ArtifactLoader
 	Admission           workload.Admitter
@@ -103,24 +122,29 @@ type AuthorizationConfig struct {
 }
 
 type Module struct {
-	handler             materializehttp.Handler
-	runs                RunPersistence
-	schedules           refreshschedule.Repository
-	service             refreshrun.Service
-	refreshClock        refreshschedule.Clock
-	scheduler           Scheduler
-	reconcileSchedules  func(context.Context) error
-	scheduleInterval    time.Duration
-	leaseTimeout        time.Duration
-	logger              *slog.Logger
-	events              EventStore
-	durableAudit        bool
-	refreshExecution    apigencommand.AsyncExecutionContract
-	resolveIdentity     func(context.Context) (projectgraph.ServingIdentity, error)
-	publishedVersion    PublishedDataVersionResolver
-	recoveryLifecycle   *RecoveryLifecycle
-	recoveryInterval    time.Duration
-	runFinishedCallback func(context.Context, refreshrun.JobRecord)
+	handler                 materializehttp.Handler
+	runs                    RunPersistence
+	schedules               refreshschedule.Repository
+	service                 refreshrun.Service
+	refreshClock            refreshschedule.Clock
+	scheduler               Scheduler
+	reconcileSchedules      func(context.Context) error
+	scheduleInterval        time.Duration
+	leaseTimeout            time.Duration
+	logger                  *slog.Logger
+	events                  EventStore
+	durableAudit            bool
+	refreshExecution        apigencommand.AsyncExecutionContract
+	resolveIdentity         func(context.Context) (projectgraph.ServingIdentity, error)
+	currentCredential       func(context.Context) (access.APICredential, bool)
+	currentSessionEvidence  func(context.Context) (access.CredentialEvidence, bool)
+	scheduledAuthority      *DelegatedWorkloadAuthorityService
+	executionGrantID        string
+	resolveExecutionGrantID func(context.Context, refreshschedule.Occurrence) (string, error)
+	publishedVersion        PublishedDataVersionResolver
+	recoveryLifecycle       *RecoveryLifecycle
+	recoveryInterval        time.Duration
+	runFinishedCallback     func(context.Context, refreshrun.JobRecord)
 
 	mu         sync.Mutex
 	background context.Context
@@ -188,13 +212,26 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		// inside the same transaction as the operation, run tree, queue job, and
 		// initial lifecycle event. It therefore satisfies the transactional
 		// command guarantee without the legacy post-commit audit recorder.
-		durableAudit:      durableRefreshAudit(config),
-		refreshExecution:  refreshExecution,
-		resolveIdentity:   config.ResolveIdentity,
+		durableAudit:           durableRefreshAudit(config),
+		refreshExecution:       refreshExecution,
+		resolveIdentity:        config.ResolveIdentity,
+		currentCredential:      config.CurrentCredential,
+		currentSessionEvidence: config.CurrentSessionEvidence,
+		executionGrantID:       config.ExecutionGrantID, resolveExecutionGrantID: config.ResolveScheduledExecutionGrantID,
 		publishedVersion:  config.PublishedVersion,
 		recoveryLifecycle: config.RecoveryLifecycle, recoveryInterval: recoveryInterval,
 	}
 	m.runFinishedCallback = m.runFinished(config.RunFinished)
+	if (config.EnableScheduler || config.Scheduler != nil) && (config.RequireAuthority || config.Production) {
+		capture, captureErr := NewDelegatedWorkloadAuthorityService(config.ExecutionGrants, config.InstanceID)
+		if captureErr != nil {
+			return nil, fmt.Errorf("configure scheduled delegated workload authority: %w", captureErr)
+		}
+		if strings.TrimSpace(config.ExecutionGrantID) == "" && config.ResolveScheduledExecutionGrantID == nil {
+			return nil, errors.New("configure scheduled delegated workload authority: execution grant selector is required")
+		}
+		m.scheduledAuthority = capture
+	}
 	m.handler.CurrentPrincipal = func(r *http.Request) (materializehttp.Principal, bool) {
 		if config.HTTP.CurrentPrincipal == nil {
 			return materializehttp.Principal{}, false
@@ -236,6 +273,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	m.runs = persistence.Runs
 	m.schedules = persistence.Schedules
 	m.service = config.Service
+	m.service.RequireAuthority = m.service.RequireAuthority || config.RequireAuthority || config.Production
+	m.service.AuthorityRevalidator = config.AuthorityRevalidator
 	if m.service.Artifacts == nil {
 		m.service.Artifacts = config.Artifacts
 	}
@@ -250,19 +289,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		}
 		m.scheduler = refreshschedule.Scheduler{
 			Repository: m.schedules, Clock: config.Clock, ResolveIdentity: config.ResolveIdentity,
-			Trigger: func(ctx context.Context, occurrence refreshschedule.Occurrence) error {
-				result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
-					Identity: occurrence.Identity, PrincipalID: "scheduler", EstimatedMemoryBytes: 1,
-					PipelineID: occurrence.PipelineID, TriggerType: refreshrun.TriggerSchedule,
-					ArtifactDigest: occurrence.ArtifactDigest, Occurrence: &occurrence,
-				})
-				if err == nil {
-					if result.Run.Status == refreshrun.RunStatusSkipped {
-						return refreshschedule.ErrOccurrenceSkipped
-					}
-				}
-				return err
-			},
+			Trigger: m.triggerScheduledRefresh,
 		}
 	}
 	if m.reconcileSchedules == nil && m.schedules != nil {
@@ -278,10 +305,14 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		if fromContext, ok := refreshrun.AuditIntentFromContext(ctx); ok {
 			intent = &fromContext
 		}
+		authority, authorityErr := m.captureAuthority(ctx, identity, pipelineIDValue, principalID)
+		if authorityErr != nil {
+			return refreshrun.RunRecord{}, authorityErr
+		}
 		result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
 			Identity: identity, PrincipalID: principalID, EstimatedMemoryBytes: 1,
 			PipelineID: pipelineIDValue, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
-			AuditIntent: intent, IdempotencyKey: idempotencyKey,
+			AuditIntent: intent, IdempotencyKey: idempotencyKey, Authority: authority,
 		})
 		if err != nil {
 			err = classifyQueueAdmissionError(err)
@@ -377,12 +408,17 @@ func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity project
 			return errors.New("refresh retry is invalid")
 		}
 	}
+	authority, err := m.captureAuthority(ctx, identity, pipeline, principalID)
+	if err != nil {
+		return err
+	}
 	// ADR-0014 models a retry as a fresh manual invocation. The prior run is
 	// validated above for UI safety, but it is not retained as mutable execution
 	// state on the new immutable pipeline occurrence.
 	result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
 		Identity: identity, PipelineID: pipeline, PrincipalID: principalID,
 		EstimatedMemoryBytes: 1, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
+		Authority: authority,
 	})
 	if err != nil {
 		return err

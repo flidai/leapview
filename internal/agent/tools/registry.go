@@ -14,6 +14,8 @@ type OperationContract struct {
 	Path        string
 	Protected   bool
 	AuthzMode   string
+	Action      string
+	Resolver    string
 	Manual      bool
 	Extensions  map[string]any
 }

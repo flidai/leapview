@@ -141,3 +141,25 @@ func TestSemanticQualificationMatrixCoversEveryRequirement(t *testing.T) {
 		}
 	}
 }
+
+func TestPrivateTypedQualificationExcludesPublicEmbedConsumers(t *testing.T) {
+	root := repoRoot(t)
+	publicDocs := readArchitectureFixture(t, root, "docs/articles/integrate/public-dashboards.md")
+	authorityFlow := readArchitectureFixture(t, root, "adr/specifications/resource-authorization-authority-flow.md")
+	for name, text := range map[string]string{
+		"public dashboard documentation":      publicDocs,
+		"authority-flow qualification ledger": authorityFlow,
+	} {
+		normalized := strings.Join(strings.Fields(text), " ")
+		for _, boundary := range []string{
+			"separately governed surface",
+			"outside the qualified private typed-permission profile",
+			"until dedicated public/embed",
+			"does not change public behavior",
+		} {
+			if !strings.Contains(normalized, boundary) {
+				t.Errorf("%s omits public/embed qualification boundary %q", name, boundary)
+			}
+		}
+	}
+}

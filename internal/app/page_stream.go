@@ -38,15 +38,14 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 		case routeDashboard:
 			return protectPageStreamResource(
 				routes.accessModule, runtime.runtimeHostModule,
-				access.CapabilityResourceRead, dashboardPageStreamResource,
+				access.CapabilityResourceRead, access.ActionDashboardRead, dashboardPageStreamResource,
 				next,
 			), true
 		case routeDashboardBuilder:
-			return protectPageStreamResource(
-				routes.accessModule, runtime.runtimeHostModule,
-				access.CapabilityResourceEdit, dashboardPageStreamResource,
-				next,
-			), true
+			// Drafts exist in the authoring repository before they enter an active
+			// serving graph. Authenticate here; Builder performs the exact durable
+			// and typed dashboard decision before emitting any projection.
+			return routes.accessModule.Authenticate(next), true
 		case routeChat:
 			return routes.accessModule.Authenticate(next), true
 		case routeAdmin:
@@ -109,6 +108,7 @@ func protectPageStreamResource(
 	accessModule *accessmodule.Module,
 	runtimeHost *runtimehostmodule.Module,
 	capability access.Capability,
+	action access.Action,
 	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
 	next http.Handler,
 ) http.Handler {
@@ -124,6 +124,6 @@ func protectPageStreamResource(
 			http.NotFound(w, r)
 			return
 		}
-		protectProjectResources(accessModule, runtimeHost, capability, resolve, next.ServeHTTP).ServeHTTP(w, r)
+		protectProjectResourcesWithTypedAction(accessModule, runtimeHost, capability, action, resolve, next.ServeHTTP).ServeHTTP(w, r)
 	})
 }

@@ -116,16 +116,16 @@ op getInstance(): OkJson<InstanceResponse> | PublicInstanceErrors;
 @summary("Get mutable product identity")
 @route("/instance/settings")
 @get
-@apigen.authz(#{ mode: "authenticated" })
+@apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.read", resolver: "instance" })
 @apigen.manual
-@extension("x-leapview-object-scope", "platform")
+@extension("x-leapview-object-scope", "instance")
 op getProductSettings(): ProductSettingsOK | CommonErrors;
 
 @tag("Instance")
 @summary("Update mutable product identity")
 @route("/instance/settings")
 @patch
-@apigen.authz(#{ mode: "authenticated" })
+@apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.update", resolver: "instance" })
 @apigen.manual
 @apigen.command(#{
   auditAction: "product.identity.updated",
@@ -136,7 +136,7 @@ op getProductSettings(): ProductSettingsOK | CommonErrors;
   ],
 })
 @apigen.auditPayload(ProductIdentityUpdatedAuditPayload)
-@extension("x-leapview-object-scope", "platform")
+@extension("x-leapview-object-scope", "instance")
 @apigen.ui("product-settings.identity.update")
 op updateProductSettings(@header("If-Match") ifMatch: string, @body body: ProductSettingsPatchRequest): ProductSettingsOK | CommonErrors;
 
@@ -144,7 +144,7 @@ op updateProductSettings(@header("If-Match") ifMatch: string, @body body: Produc
 @summary("Reset mutable product identity to its defaults")
 @route("/instance/settings/reset")
 @post
-@apigen.authz(#{ mode: "authenticated" })
+@apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.update", resolver: "instance" })
 @apigen.manual
 @apigen.command(#{
   auditAction: "product.identity.reset",
@@ -154,7 +154,7 @@ op updateProductSettings(@header("If-Match") ifMatch: string, @body body: Produc
   ],
 })
 @apigen.auditPayload(ProductIdentityUpdatedAuditPayload)
-@extension("x-leapview-object-scope", "platform")
+@extension("x-leapview-object-scope", "instance")
 @apigen.ui("product-settings.identity.reset")
 op resetProductSettings(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("If-Match") ifMatch: string): ProductSettingsOK | CommonErrors;
 
@@ -162,7 +162,7 @@ op resetProductSettings(@header("Idempotency-Key") idempotencyKey: IdempotencyKe
 @summary("Upload the product logo")
 @route("/instance/logo")
 @put
-@apigen.authz(#{ mode: "authenticated" })
+@apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.update", resolver: "instance" })
 @apigen.manual
 @apigen.command(#{
   auditAction: "product.logo.updated",
@@ -173,7 +173,7 @@ op resetProductSettings(@header("Idempotency-Key") idempotencyKey: IdempotencyKe
   ],
 })
 @apigen.auditPayload(ProductLogoUpdatedAuditPayload)
-@extension("x-leapview-object-scope", "platform")
+@extension("x-leapview-object-scope", "instance")
 @apigen.ui("product-settings.logo.upload")
 op uploadProductLogo(@header("If-Match") ifMatch: string, @header contentType: string, @body body: bytes): ProductSettingsOK | CommonErrors;
 
@@ -181,7 +181,7 @@ op uploadProductLogo(@header("If-Match") ifMatch: string, @header contentType: s
 @summary("Remove the product logo")
 @route("/instance/logo")
 @delete
-@apigen.authz(#{ mode: "authenticated" })
+@apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.update", resolver: "instance" })
 @apigen.manual
 @apigen.command(#{
   auditAction: "product.logo.deleted",
@@ -191,7 +191,7 @@ op uploadProductLogo(@header("If-Match") ifMatch: string, @header contentType: s
   ],
 })
 @apigen.auditPayload(ProductLogoDeletedAuditPayload)
-@extension("x-leapview-object-scope", "platform")
+@extension("x-leapview-object-scope", "instance")
 @apigen.ui("product-settings.logo.delete")
 op deleteProductLogo(@header("If-Match") ifMatch: string): ProductSettingsOK | CommonErrors;
 
@@ -199,9 +199,9 @@ op deleteProductLogo(@header("If-Match") ifMatch: string): ProductSettingsOK | C
 @summary("Read an immutable product logo")
 @route("/instance/logo/{digest}")
 @get
-@apigen.authz(#{ mode: "authenticated" })
+@apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.read", resolver: "instance" })
 @apigen.manual
-@extension("x-leapview-object-scope", "platform")
+@extension("x-leapview-object-scope", "instance")
 op getProductLogo(@path digest: string): ProductLogoImageResponse | CommonErrors;
 
 @tag("Instance")

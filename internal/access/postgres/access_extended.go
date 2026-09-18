@@ -401,67 +401,13 @@ func (r *Repository) DeleteAvatar(ctx context.Context, principalID string) error
 }
 
 func (r *Repository) InstallAuthorizationSnapshot(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot) error {
-	if err := snapshot.ValidateBound(); err != nil {
-		return fmt.Errorf("validate authorization snapshot: %w", err)
-	}
-	digest, err := snapshot.Digest()
-	if err != nil {
-		return err
-	}
 	tx, err := r.beginTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	identity := snapshot.Identity()
-	projectID, environment, generation := identity.ProjectID.String(), identity.Environment, identity.GenerationID
-	tag, err := accessdb.New(tx).InsertAuthorizationSnapshot(ctx, accessdb.InsertAuthorizationSnapshotParams{ProjectID: projectID, Environment: environment, GenerationID: generation, Digest: digest})
-	if err != nil {
+	if err := InstallAuthorizationSnapshotTx(ctx, tx, snapshot); err != nil {
 		return err
-	}
-	if tag.RowsAffected() == 0 {
-		installed, getErr := accessdb.New(tx).GetAuthorizationSnapshotDigest(ctx, accessdb.GetAuthorizationSnapshotDigestParams{ProjectID: projectID, Environment: environment, GenerationID: generation})
-		if getErr != nil {
-			return getErr
-		}
-		if installed != digest {
-			return fmt.Errorf("%w: project=%s environment=%s generation=%s", ErrAuthorizationSnapshotIdentityConflict, projectID, environment, generation)
-		}
-		return tx.Commit(ctx)
-	}
-	for _, binding := range snapshot.RoleBindings() {
-		caps, marshalErr := json.Marshal(binding.Capabilities)
-		if marshalErr != nil {
-			return marshalErr
-		}
-		if err = accessdb.New(tx).InsertAuthorizationRoleBinding(ctx, accessdb.InsertAuthorizationRoleBindingParams{ID: binding.ID, ProjectID: projectID,
-			Environment: environment, GenerationID: generation, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID,
-			Role: string(binding.Role), Capabilities: caps, Name: binding.Name}); err != nil {
-			return err
-		}
-	}
-	for _, grant := range snapshot.Grants() {
-		canonical := grant.Canonical
-		if err = accessdb.New(tx).InsertAuthorizationGrant(ctx, accessdb.InsertAuthorizationGrantParams{ID: grant.ID, ProjectID: projectID,
-			Environment: environment, GenerationID: generation, SubjectKind: string(canonical.Subject().Kind), SubjectID: canonical.Subject().ID,
-			ResourceID: canonical.Resource().ID().String(), ResourceKind: string(canonical.Resource().Kind()), Capability: canonical.Capability().String(), Name: grant.Name}); err != nil {
-			return err
-		}
-	}
-	for _, policy := range snapshot.DataPolicies() {
-		var subjectKind, subjectID *string
-		if policy.Subject != nil {
-			kind, value := string(policy.Subject.Kind), policy.Subject.ID
-			subjectKind, subjectID = &kind, &value
-		}
-		if !json.Valid([]byte(policy.ExpressionJSON)) {
-			return fmt.Errorf("data policy %q expression is invalid JSON", policy.ID)
-		}
-		if err = accessdb.New(tx).InsertAuthorizationDataPolicy(ctx, accessdb.InsertAuthorizationDataPolicyParams{ID: policy.ID, ProjectID: projectID,
-			Environment: environment, GenerationID: generation, ResourceID: policy.Resource.ID().String(), ResourceKind: string(policy.Resource.Kind()),
-			SubjectKind: subjectKind, SubjectID: subjectID, PolicyType: policy.PolicyType, Expression: []byte(policy.ExpressionJSON)}); err != nil {
-			return err
-		}
 	}
 	return tx.Commit(ctx)
 }

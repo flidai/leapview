@@ -314,11 +314,11 @@ func TestSemanticAttributeHTTPCredentialAttenuation(t *testing.T) {
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("narrow token status=%d", response.Code)
 	}
-	credential.Token.Capabilities = []access.Capability{access.CapabilityProjectAdmin}
+	credential.Token.Capabilities = []access.Capability{access.CapabilityPlatformAdmin}
 	response = httptest.NewRecorder()
 	handler.GetSemanticAttributeDefinition(response, request)
 	if response.Code != http.StatusOK {
-		t.Fatalf("project-admin token status=%d body=%s", response.Code, response.Body.String())
+		t.Fatalf("platform-admin token status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

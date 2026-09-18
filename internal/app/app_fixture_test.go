@@ -125,13 +125,52 @@ func testPlatformPrincipal(t *testing.T, ctx context.Context, store *testControl
 
 func testAPIToken(t *testing.T, ctx context.Context, store *testControlStore, principalID, name string) string {
 	t.Helper()
+	capabilities := append(
+		[]access.Capability{access.CapabilityPlatformAdmin},
+		access.LegacyProjectCapabilities()...,
+	)
 	secret, _, err := testAccessRepository(store).CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-		PrincipalID: principalID,
-		Name:        name,
-		ExpiresAt:   time.Now().Add(time.Hour),
+		PrincipalID:  principalID,
+		Name:         name,
+		Capabilities: capabilities,
+		ExpiresAt:    time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("create api token: %v", err)
+	}
+	return secret
+}
+
+func testTypedInstanceAPIToken(t *testing.T, ctx context.Context, store *testControlStore, principalID, name string, actions ...access.Action) string {
+	t.Helper()
+	permissions := make([]access.PermissionPair, 0, len(actions))
+	seen := make(map[string]struct{})
+	for _, action := range actions {
+		pair, err := access.NewInstancePermissionPair(action, "lvinst_test")
+		if err != nil {
+			t.Fatalf("create typed instance permission %q: %v", action, err)
+		}
+		required, err := access.RequiredPermissionPairs(pair)
+		if err != nil {
+			t.Fatalf("expand typed instance permission %q: %v", action, err)
+		}
+		for _, candidate := range required {
+			key := string(candidate.Action) + "\x00" + candidate.Target.InstanceID
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			permissions = append(permissions, candidate)
+		}
+	}
+	secret, _, err := store.fixture.Graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
+		PrincipalID: principalID,
+		Name:        name,
+		Permissions: permissions,
+		ExpiresAt:   time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create typed instance API token: %v", err)
 	}
 	return secret
 }

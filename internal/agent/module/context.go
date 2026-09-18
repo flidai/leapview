@@ -40,6 +40,8 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 		}
 		projectID, _ := m.activeProjectID(r.Context())
 		scope.ProjectID = projectID
+		catalogScope := ToolsScope(scope)
+		catalogScope.ProjectID = projectID
 		references := make([]agent.TurnReference, 0, len(candidate.References))
 		for _, reference := range candidate.References {
 			kind, err := projectgraph.ParseKind(strings.TrimSpace(reference.Reference.Kind))
@@ -50,7 +52,7 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 			if err != nil {
 				continue
 			}
-			item, err := m.catalog.Get(r.Context(), agenttools.Scope{ProjectID: projectID, PrincipalID: scope.PrincipalID}, agenttools.CatalogGetRequest{
+			item, err := (credentialCatalog{base: m.catalog}).Get(r.Context(), catalogScope, agenttools.CatalogGetRequest{
 				Ref: agenttools.CatalogRef{ID: id.String(), Kind: agenttools.CatalogType(kind)},
 			})
 			if err != nil {
@@ -266,7 +268,13 @@ func (m *Module) resolveContextResource(ctx context.Context, scope agent.Scope, 
 	return m.resolveResource(ctx, Scope{
 		ProjectID: projectID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
-		Credential:    CredentialScope{ProjectID: scope.Credential.ProjectID, Capabilities: append([]string(nil), scope.Credential.Capabilities...), Restricted: scope.Credential.Restricted},
+		Credential: CredentialScope{
+			ProjectID:         scope.Credential.ProjectID,
+			Capabilities:      append([]string(nil), scope.Credential.Capabilities...),
+			PermissionProfile: scope.Credential.PermissionProfile,
+			Permissions:       clonePermissionPairs(scope.Credential.Permissions),
+			Restricted:        scope.Credential.Restricted,
+		},
 	}, id, kind, capability)
 }
 
@@ -412,8 +420,11 @@ func resolvedVisualMetadata(component dashboard.PageVisual, visualID string, vis
 }
 
 func contextCredentialAllowsCapability(scope agent.Scope, capability access.Capability) bool {
-	if !scope.Credential.Restricted || scope.Credential.Capabilities == nil {
+	if !scope.Credential.Restricted {
 		return true
+	}
+	if scope.Credential.Capabilities == nil {
+		return false
 	}
 	for _, allowed := range scope.Credential.Capabilities {
 		if strings.EqualFold(strings.TrimSpace(allowed), string(capability)) {

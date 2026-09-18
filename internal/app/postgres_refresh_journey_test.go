@@ -9,14 +9,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshartifact "github.com/flidai/leapview/internal/refresh/artifact"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -36,16 +39,57 @@ const (
 // durable refresh outcome remains PostgreSQL-owned without duplicating the
 // run-tree SQL coverage in internal/refresh/module/postgres_integration_test.go.
 func TestPostgresRefreshRouteJourney(t *testing.T) {
-	fixture := NewPostgresJourneyFixture(t, PostgresJourneyFixtureOptions{NativeDashboard: true})
 	identity, err := projectgraph.NewServingIdentity(postgresJourneyProject, "prod", postgresRefreshJourneyGeneration)
 	if err != nil {
 		t.Fatal(err)
 	}
+	runtime, runPermission := newPostgresRefreshJourneyRuntime(t, identity)
+	fixture := NewPostgresJourneyFixture(t, PostgresJourneyFixtureOptions{
+		TargetID: "instance_00000000000000000000000000000099", NativeDashboard: true, BrowserSessionAuth: true,
+		RuntimeHost: runtime,
+	})
 	if _, err := fixture.SeedPrincipal(t.Context(), access.PrincipalInput{
 		ID: postgresRefreshJourneyPrincipal, Kind: access.PrincipalKindUser,
 		Email: "journey-refresh@example.test", DisplayName: "Journey Refresh",
 	}); err != nil {
 		t.Fatalf("seed refresh principal: %v", err)
+	}
+	if _, err := fixture.Graph.Access.SetPlatformRole(t.Context(), access.PlatformRoleInput{
+		PrincipalID: postgresRefreshJourneyPrincipal, Role: access.PlatformRoleAdmin,
+	}); err != nil {
+		t.Fatalf("grant refresh journey platform-admin role: %v", err)
+	}
+	sessionToken, err := fixture.Graph.Access.CreateSession(t.Context(), postgresRefreshJourneyPrincipal, time.Hour)
+	if err != nil {
+		t.Fatalf("create refresh browser session: %v", err)
+	}
+	session, err := fixture.Graph.Access.CredentialForSessionToken(t.Context(), sessionToken)
+	if err != nil {
+		t.Fatalf("resolve refresh browser session evidence: %v", err)
+	}
+	sessionExpiresAt, err := time.Parse(time.RFC3339Nano, session.ExpiresAt)
+	if err != nil {
+		t.Fatalf("parse refresh browser session expiry: %v", err)
+	}
+	sessionEvidence := access.CredentialEvidence{
+		Class: "session", ID: session.ID, Fingerprint: session.TokenFingerprint,
+		PrincipalID: session.PrincipalID, ExpiresAt: sessionExpiresAt.UTC(),
+	}
+	apiToken, _, err := fixture.Graph.Access.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{
+		PrincipalID: postgresRefreshJourneyPrincipal, Name: "refresh-journey-transport",
+		Capabilities: append([]access.Capability{access.CapabilityPlatformAdmin}, access.LegacyProjectCapabilities()...), ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create refresh API transport token: %v", err)
+	}
+	refreshToken, _, err := fixture.Graph.Access.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{
+		PrincipalID: postgresRefreshJourneyPrincipal,
+		Name:        "refresh-journey-command",
+		Permissions: []access.PermissionPair{runPermission},
+		ExpiresAt:   time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create refresh command token: %v", err)
 	}
 	state := journeyRefreshStateReader{
 		state:    servingstate.State{ID: servingstate.ID(identity.GenerationID), ProjectID: identity.ProjectID, Environment: servingstate.Environment(identity.Environment), Digest: postgresRefreshJourneyArtifact, DuckLakeSnapshotID: 1},
@@ -73,6 +117,10 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 			},
 			ServingIdentity: func(*http.Request) (projectgraph.ServingIdentity, error) { return identity, nil },
 		},
+		CurrentSessionEvidence: func(ctx context.Context) (access.CredentialEvidence, bool) {
+			evidence, ok := ctx.Value(postgresRefreshJourneySessionEvidenceContextKey{}).(access.CredentialEvidence)
+			return evidence, ok
+		},
 		Authorization: refreshmodule.AuthorizationConfig{
 			CurrentPrincipal: func(*http.Request) (refreshmodule.AuthorizationPrincipal, bool) {
 				return refreshmodule.AuthorizationPrincipal{ID: postgresRefreshJourneyPrincipal, DevBypass: true}, true
@@ -86,10 +134,16 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 	}
 	fixture.routes.refreshModule = module
 	fixture.Handler = Routes(fixture.routes, fixture.runtime, fixture.platform, fixture.policy)
+	innerHandler := fixture.Handler
+	fixture.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), postgresRefreshJourneySessionEvidenceContextKey{}, sessionEvidence)
+		innerHandler.ServeHTTP(w, r.WithContext(ctx))
+	})
 
 	request := func(method, path string, body io.Reader) *http.Request {
 		req := fixture.Request(t.Context(), method, path, body)
-		req.Header.Set("Authorization", "Bearer journey")
+		req.AddCookie(&http.Cookie{Name: "lv_session", Value: sessionToken})
+		req.Header.Set("Authorization", "Bearer "+apiToken)
 		return req
 	}
 	dispatch := func(req *http.Request) *httptest.ResponseRecorder {
@@ -99,7 +153,7 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 	}
 
 	createPath := "/api/v1/projects/" + postgresJourneyProject.String() + "/refresh-runs"
-	first := dispatch(requestWithHeaders(fixture, http.MethodPost, createPath, strings.NewReader(`{"pipelineId":"`+postgresRefreshJourneyPipeline+`"}`), map[string]string{"Idempotency-Key": postgresRefreshJourneyKey}))
+	first := dispatch(requestWithHeaders(fixture, sessionToken, refreshToken, sessionEvidence, http.MethodPost, createPath, strings.NewReader(`{"pipelineId":"`+postgresRefreshJourneyPipeline+`"}`), map[string]string{"Idempotency-Key": postgresRefreshJourneyKey}))
 	if first.Code != http.StatusAccepted {
 		t.Fatalf("manual refresh POST = %d body=%s", first.Code, first.Body.String())
 	}
@@ -123,7 +177,7 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 	}
 
 	// The second command is a protocol replay, not another queue admission.
-	replay := dispatch(requestWithHeaders(fixture, http.MethodPost, createPath, strings.NewReader(`{"pipelineId":"`+postgresRefreshJourneyPipeline+`"}`), map[string]string{"Idempotency-Key": postgresRefreshJourneyKey}))
+	replay := dispatch(requestWithHeaders(fixture, sessionToken, refreshToken, sessionEvidence, http.MethodPost, createPath, strings.NewReader(`{"pipelineId":"`+postgresRefreshJourneyPipeline+`"}`), map[string]string{"Idempotency-Key": postgresRefreshJourneyKey}))
 	if replay.Code != http.StatusAccepted || replay.Body.String() != first.Body.String() || replay.Header().Get("Idempotency-Replayed") != "true" {
 		t.Fatalf("refresh idempotent replay = %d body=%s, first=%s", replay.Code, replay.Body.String(), first.Body.String())
 	}
@@ -150,7 +204,7 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 		t.Fatalf("missing refresh GET = %d body=%s", missing.Code, missing.Body.String())
 	}
 
-	storage := dispatch(fixture.Request(t.Context(), http.MethodGet, "/admin/storage", nil))
+	storage := dispatch(request(http.MethodGet, "/admin/storage", nil))
 	if storage.Code != http.StatusOK || !strings.Contains(storage.Body.String(), `section="storage"`) {
 		t.Fatalf("admin storage shell = %d body=%s", storage.Code, storage.Body.String())
 	}
@@ -158,9 +212,62 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 
 // requestWithHeaders keeps the request construction in the journey explicit
 // while allowing command-specific protocol headers to be supplied.
-func requestWithHeaders(fixture *PostgresJourneyFixture, method, path string, body io.Reader, headers map[string]string) *http.Request {
+type postgresRefreshJourneySessionEvidenceContextKey struct{}
+
+func newPostgresRefreshJourneyRuntime(t *testing.T, identity projectgraph.ServingIdentity) (*runtimehostmodule.Module, access.PermissionPair) {
+	t.Helper()
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: postgresRefreshJourneyPipeline, Kind: projectgraph.KindPipeline, Name: "journey_refresh"},
+		{ID: postgresRefreshJourneyModel, Kind: projectgraph.KindSemanticModel, Name: "journey"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("build refresh journey graph: %v", err)
+	}
+	resource, err := access.NewResourceRef(postgresRefreshJourneyPipeline, projectgraph.KindPipeline)
+	if err != nil {
+		t.Fatalf("build refresh journey pipeline resource: %v", err)
+	}
+	pair, err := access.NewExactPermissionPair(access.ActionPipelineRun, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatalf("build refresh journey run permission: %v", err)
+	}
+	subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, postgresRefreshJourneyPrincipal)
+	if err != nil {
+		t.Fatalf("build refresh journey subject: %v", err)
+	}
+	grant, err := accesssnapshot.NewTypedPermissionGrant("journey-pipeline-run", "Journey Pipeline run", subject, pair)
+	if err != nil {
+		t.Fatalf("build refresh journey typed grant: %v", err)
+	}
+	repository := &postgresPublicJourneyRuntime{
+		state: servingstate.State{
+			ID: servingstate.ID(identity.GenerationID), ProjectID: identity.ProjectID,
+			Environment: servingstate.Environment(identity.Environment), Status: servingstate.StatusActive,
+			Source: servingstate.SourcePublish, Digest: postgresRefreshJourneyArtifact,
+		},
+		artifact: servingstate.Artifact{
+			ID: "artifact-journey", ServingStateID: servingstate.ID(identity.GenerationID),
+			Digest: postgresRefreshJourneyArtifact, Format: servingstate.ArtifactBundleFormat,
+		},
+		graph: graph, principalID: postgresRefreshJourneyPrincipal, typedGrants: []accesssnapshot.Grant{grant},
+	}
+	host, err := runtimehostmodule.Build(t.Context(), runtimehostmodule.Config{
+		States: repository, ProjectID: identity.ProjectID, Environment: servingstate.Environment(identity.Environment),
+		Factory: repository, Authorization: postgresPublicJourneyAuthorizationInstaller{},
+	})
+	if err != nil {
+		t.Fatalf("build refresh journey runtime host: %v", err)
+	}
+	t.Cleanup(func() { _ = host.Close() })
+	return host, pair
+}
+
+func requestWithHeaders(fixture *PostgresJourneyFixture, sessionToken, apiToken string, sessionEvidence access.CredentialEvidence, method, path string, body io.Reader, headers map[string]string) *http.Request {
 	req := fixture.Request(context.Background(), method, path, body)
-	req.Header.Set("Authorization", "Bearer journey")
+	req.AddCookie(&http.Cookie{Name: "lv_session", Value: sessionToken})
+	req.Header.Set("Authorization", "Bearer "+apiToken)
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), postgresRefreshJourneySessionEvidenceContextKey{}, sessionEvidence))
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
