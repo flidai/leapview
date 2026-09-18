@@ -874,7 +874,6 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"createCurrentAPIToken":            true,
 		"createGroup":                      true,
 		"createPrincipal":                  true,
-		"createRefreshRun":                 true,
 		"createServicePrincipal":           true,
 		"createServicePrincipalSecret":     true,
 		"decideDeviceAuthorization":        true,
