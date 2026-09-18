@@ -124,7 +124,7 @@ jobs:
         id: image
         run: |
           set -euo pipefail
-          tag=ghcr.io/flidai/leapview:candidate-d9719f29c7a69c509b9be1310bbcf95c7bee74d2
+          tag=ghcr.io/flidai/leapview:candidate-de169f187e61d2b0be1b0467a7a47e092bbb6d51
           docker pull "$tag"
           image="$(docker image inspect "$tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("ghcr.io/flidai/leapview@sha256:"))' | head -1)"
           echo "reference=$image" >> "$GITHUB_OUTPUT"
@@ -135,7 +135,7 @@ jobs:
           image: ${{ steps.image.outputs.reference }}
           repository: ghcr.io/flidai/leapview
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: d9719f29c7a69c509b9be1310bbcf95c7bee74d2
+          source-revision: de169f187e61d2b0be1b0467a7a47e092bbb6d51
       - name: Run complete image qualification with current token UI contract
         env:
           IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}

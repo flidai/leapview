@@ -11,7 +11,7 @@ import time
 import urllib.parse
 import urllib.request
 
-REVISION = 'd9719f29c7a69c509b9be1310bbcf95c7bee74d2'
+REVISION = 'de169f187e61d2b0be1b0467a7a47e092bbb6d51'
 RELEASE = Path('/opt/leapview-demo/releases') / REVISION
 IMAGE = (RELEASE / 'immutable-image.txt').read_text().strip()
 SERVICE = 'leapview-demo-current.service'

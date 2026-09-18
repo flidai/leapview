@@ -125,7 +125,7 @@ ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
   -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$pinned_known_hosts" \
   "root@$demo_host" 'bash -se' <<'REMOTE'
 set -euo pipefail
-revision=d9719f29c7a69c509b9be1310bbcf95c7bee74d2
+revision=de169f187e61d2b0be1b0467a7a47e092bbb6d51
 tag=ghcr.io/flidai/leapview:candidate-$revision
 release=/opt/leapview-demo/releases/$revision
 available_kb=$(df --output=avail /opt | tail -1 | tr -d ' ')
