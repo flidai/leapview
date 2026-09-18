@@ -61,10 +61,10 @@ func run(ctx context.Context) error {
 			return errors.New("deployment credential input is invalid")
 		}
 		var kind, status string
-		if err := pool.QueryRow(ctx, `SELECT kind,status FROM access.principal WHERE id=$1`, principalID).Scan(&kind, &status); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT principal_type,status FROM access.principal WHERE id=$1`, principalID).Scan(&kind, &status); err != nil {
 			return fmt.Errorf("resolve %s principal: %w", item.Name, err)
 		}
-		if kind != "service_principal" || status != "active" {
+		if kind != "service" || status != "active" {
 			return fmt.Errorf("%s principal is not active", item.Name)
 		}
 		fingerprint := hmac.New(sha256.New, []byte(key))

@@ -168,7 +168,7 @@ for container in $(docker ps --format '{{.Names}}' | grep -- '-postgres-1$'); do
 SELECT p.id,p.display_name,p.status,COUNT(s.id),COUNT(s.id) FILTER (WHERE s.revoked_at IS NULL AND s.expires_at > clock_timestamp())
 FROM access.principal p
 LEFT JOIN access.service_principal_secret s ON s.service_principal_id=p.id
-WHERE p.kind='service_principal'
+WHERE p.principal_type='service'
 GROUP BY p.id,p.display_name,p.status
 ORDER BY p.display_name;
 SQL
