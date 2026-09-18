@@ -149,7 +149,7 @@ pid,key=sys.argv[1:]
 items=dict(item.split(b"=",1) for item in open("/proc/"+pid+"/environ","rb").read().split(b"\0") if b"=" in item)
 sys.stdout.write(items.get(key.encode(),b"").decode())' "$pid" "$1"
 }
-export LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL="$(process_env LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL)"
+export LEAPVIEW_POSTGRES_CONTROL_URL="$(process_env LEAPVIEW_POSTGRES_CONTROL_URL)"
 export LEAPVIEW_TOKEN_HASH_KEY="$(process_env LEAPVIEW_TOKEN_HASH_KEY)"
 export LEAPVIEW_CSRF_KEY="$(process_env LEAPVIEW_CSRF_KEY)"
 chmod 0700 /tmp/recover-demo-credentials
