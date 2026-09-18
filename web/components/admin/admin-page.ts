@@ -149,7 +149,10 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .metrics {
       display: grid;
-          max-width: var(--lv-page-content-max-width);
+      width: 100%;
+      min-width: 0;
+      max-width: var(--lv-page-content-max-width);
+      box-sizing: border-box;
       grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
       gap: var(--base-size-12);
     }

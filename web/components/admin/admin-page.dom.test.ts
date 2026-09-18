@@ -1704,7 +1704,11 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
         },
         headerTitle: 'Agent',
         headerDetail: 'Platform agent prompt and read-only tool inventory.',
-        metrics: [{ label: 'Tools', value: '1' }],
+        metrics: [
+          { label: 'Status', value: 'Configured' },
+          { label: 'Model', value: 'fake-model' },
+          { label: 'Tools', value: '1' },
+        ],
         agent: {
           enabled: true,
           model: 'fake-model',
@@ -1865,6 +1869,25 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
     expect(state.activeMode).toBe('Edit')
     expect(state.status).toBe('Saved')
     expect(state.command).toEqual({ systemPrompt: 'Updated prompt' })
+
+    await page.setViewportSize({ width: 390, height: 820 })
+    const mobileMetrics = await page.evaluate(() => {
+      const elements = Array.from(document.querySelectorAll('lv-admin-page')) as HTMLElement[]
+      const element = elements.at(-1)!
+      const root = element.shadowRoot!
+      const grid = root.querySelector('.metrics') as HTMLElement
+      const cards = Array.from(root.querySelectorAll('.metric')) as HTMLElement[]
+      const gridRect = grid.getBoundingClientRect()
+      return {
+        gridRight: Math.round(gridRect.right),
+        viewportRight: innerWidth,
+        cardRights: cards.map((card) => Math.round(card.getBoundingClientRect().right)),
+        rows: new Set(cards.map((card) => Math.round(card.getBoundingClientRect().top))).size,
+      }
+    })
+    expect(mobileMetrics.gridRight).toBeLessThanOrEqual(mobileMetrics.viewportRight)
+    expect(Math.max(...mobileMetrics.cardRights)).toBeLessThanOrEqual(mobileMetrics.viewportRight)
+    expect(mobileMetrics.rows).toBeGreaterThan(1)
   } finally {
     await page.close()
   }

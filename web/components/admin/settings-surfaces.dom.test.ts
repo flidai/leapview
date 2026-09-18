@@ -18,7 +18,7 @@ beforeAll(async () => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
-      response.end('<!doctype html><main><lv-admin-page data-on:lv-service-account-command="service-account-command" data-on:lv-audit-log-command="audit-log-command"><lv-project-registry></lv-project-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration></lv-admin-page><script type="module" src="/settings-surfaces.js"></script></main>')
+      response.end('<!doctype html><style>:root { --lv-control-small: 28px; --base-size-4: 4px; --base-size-8: 8px; --lv-border-width: 1px; --lv-radius-small: 6px; }</style><main><lv-admin-page data-on:lv-service-account-command="service-account-command" data-on:lv-audit-log-command="audit-log-command"><lv-project-registry></lv-project-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration></lv-admin-page><script type="module" src="/settings-surfaces.js"></script></main>')
       return
     }
     const file = normalize(join(root, url.pathname))
@@ -51,16 +51,24 @@ test('settings surfaces render typed signals and emit commands', async () => {
       let detail: unknown = null
       element.addEventListener('lv-service-account-command', (event: CustomEvent) => { detail = event.detail })
       ;((element.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).click()
+      const createLink = (element.shadowRoot as ShadowRoot).querySelector<HTMLAnchorElement>('a.primary')!
+      const createLinkStyle = getComputedStyle(createLink)
       return {
         text: (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim(),
         detail,
-        createHref: (element.shadowRoot as ShadowRoot).querySelector<HTMLAnchorElement>('a.primary')?.getAttribute('href'),
+        createHref: createLink.getAttribute('href'),
+        createLinkDisplay: createLinkStyle.display,
+        createLinkMinHeight: createLinkStyle.minHeight,
+        createLinkPadding: createLinkStyle.padding,
         hasInlineCreateForm: Boolean((element.shadowRoot as ShadowRoot).querySelector('input[name="displayName"]')),
       }
     })
     expect(result.text).toContain('CI')
     expect(result.detail).toEqual({ action: 'select', accountId: 'svc-1' })
     expect(result.createHref).toBe('/admin/service-accounts/new')
+    expect(result.createLinkDisplay).toBe('flex')
+    expect(result.createLinkMinHeight).not.toBe('0px')
+    expect(result.createLinkPadding).not.toBe('0px')
     expect(result.hasInlineCreateForm).toBe(false)
   } finally { await page.close() }
 })

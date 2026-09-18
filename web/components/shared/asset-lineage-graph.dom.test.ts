@@ -126,6 +126,39 @@ test('asset lineage selection clears from the background and Escape', async () =
   }
 })
 
+test('asset lineage keeps dense graphs readable on initial fit', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
+  try {
+    await page.goto(`${baseURL}?dense=1`)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await page.waitForFunction(() => {
+      const graph = document.querySelector('lineage-test-host')?.shadowRoot?.querySelector('lv-asset-lineage-graph')
+      return graph?.querySelectorAll('.react-flow__node').length === 14
+    })
+
+    const state = await graph.evaluate((element) => {
+      const viewport = element.querySelector('.react-flow__viewport') as HTMLElement
+      const flow = element.querySelector('.react-flow') as HTMLElement
+      const selected = element.querySelector('.asset-lineage-node-selected') as HTMLElement
+      const match = (viewport as HTMLElement).style.transform.match(/scale\(([-\d.]+)\)/)
+      const flowRect = flow.getBoundingClientRect()
+      const selectedRect = selected.getBoundingClientRect()
+      return {
+        scale: Number(match?.[1]),
+        selectedVisible: selectedRect.top >= flowRect.top
+          && selectedRect.bottom <= flowRect.bottom
+          && selectedRect.left < flowRect.right
+          && selectedRect.right > flowRect.left,
+      }
+    })
+    expect(state.scale).toBeGreaterThanOrEqual(0.55)
+    expect(state.selectedVisible).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   return `
     <!doctype html>
@@ -185,11 +218,24 @@ function testDocument(): string {
             ],
             edges: [{ id: 'source-dashboard', source: 'source', target: 'dashboard', kind: 'uses_source', label: 'Provides source' }],
           }
+          const denseGraph = {
+            nodes: [
+              { id: 'connection', label: 'Finance connection', kind: 'connection', rank: -3 },
+              { id: 'source', label: 'Finance source', kind: 'source', rank: -2 },
+              ...Array.from({ length: 10 }, (_, index) => ({ id: \`model-\${index}\`, label: \`Finance model \${index + 1}\`, kind: 'model', rank: -1 })),
+              { id: 'semantic', label: 'Finance semantic model', kind: 'semantic_model', rank: 0, selected: true },
+              { id: 'dashboard', label: 'Finance dashboard', kind: 'dashboard', rank: 1 },
+            ],
+            edges: [],
+          }
+          const initialGraph = location.search.includes('dense=1') ? denseGraph : graph
           customElements.define('lineage-test-host', class extends HTMLElement {
             connectedCallback() {
               const root = this.attachShadow({ mode: 'open' })
               root.innerHTML = '<lv-asset-lineage-graph style="display:block;width:900px;height:420px"></lv-asset-lineage-graph>'
-              root.querySelector('lv-asset-lineage-graph').graph = graph
+              const element = root.querySelector('lv-asset-lineage-graph')
+              if (location.search.includes('dense=1')) element.style.width = '346px'
+              element.graph = initialGraph
             }
           })
         </script>

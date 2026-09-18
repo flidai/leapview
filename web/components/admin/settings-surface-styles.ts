@@ -39,6 +39,8 @@ export const tableStyles = css`
   .modal-actions { display: flex; justify-content: flex-end; gap: var(--base-size-8); }
   .primary { border-color: var(--lv-button-accent-border-rest); background: var(--lv-button-accent-bg-rest); color: var(--lv-button-accent-fg-rest); }
   .primary:hover { border-color: var(--lv-button-accent-border-hover); background: var(--lv-button-accent-bg-hover); }
+  a.primary { display: inline-flex; box-sizing: border-box; min-height: var(--lv-control-small); align-items: center; justify-content: center; border: var(--lv-border-width) solid var(--lv-button-accent-border-rest); border-radius: var(--lv-radius-small); padding: var(--base-size-4) var(--base-size-8); }
+  a.primary:hover { text-decoration: none; }
   .password-result { display: grid; gap: var(--base-size-12); }
   .password-value { display: block; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); padding: var(--base-size-12); font-family: var(--fontStack-monospace); overflow-wrap: anywhere; user-select: all; }
   .secret-result { display: grid; gap: var(--base-size-8); border: var(--lv-border-width) solid var(--lv-line-success-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-success-muted); padding: var(--base-size-12); }
@@ -79,6 +81,8 @@ export const tableStyles = css`
   .activity-copy { display: grid; gap: var(--base-size-2); }
   .detail-user-avatar { --lv-user-avatar-size: 100%; width: 100%; height: 100%; }
   .audit-row { cursor: pointer; }
+  .audit-table th:first-child,
+  .audit-table td:first-child { min-width: 9rem; white-space: nowrap; }
   .audit-row:hover, .audit-row:focus-visible { background: var(--lv-bg-control-hover); outline: 0; }
   .audit-row td:nth-child(2), .audit-row td:nth-child(3), .audit-row td:nth-child(4) { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .audit-detail { width: min(36rem, calc(100vw - var(--base-size-32))); }

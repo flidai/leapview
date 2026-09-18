@@ -47,6 +47,8 @@ type LineageEdge = {
 type LineageLayout = {
   rankIndex: Map<number, number>
   nodeIndex: Map<string, number>
+  rankNodeCount: Map<number, number>
+  maxNodeCount: number
 }
 
 type LineagePathState = {
@@ -65,6 +67,7 @@ const NODE_GAP_X = 260
 const NODE_GAP_Y = 124
 const NODE_OFFSET_X = 96
 const NODE_MIN_Y = 48
+const READABLE_FIT_MIN_ZOOM = 0.55
 
 class AssetLineageGraph extends LitElement {
   @property({ type: Object }) graph: LineageGraph | null = null
@@ -149,8 +152,8 @@ class AssetLineageGraph extends LitElement {
             edges: graph.edges.map((edge) => toFlowEdge(edge, pathState)),
             nodeTypes: { lineageNode: LineageNodeComponent },
             fitView: true,
-            fitViewOptions: { padding: 0.12 },
-            minZoom: 0.15,
+            fitViewOptions: { padding: 0.12, minZoom: READABLE_FIT_MIN_ZOOM },
+            minZoom: READABLE_FIT_MIN_ZOOM,
             maxZoom: 1.35,
             nodesDraggable: false,
             nodesConnectable: false,
@@ -533,26 +536,32 @@ function createLineageLayout(nodes: LineageNode[]): LineageLayout {
   const ranks = Array.from(new Set(nodes.map(nodeRank))).sort((left, right) => left - right)
   const rankIndex = new Map(ranks.map((rank, index) => [rank, index]))
   const nodeIndex = new Map<string, number>()
+  const rankNodeCount = new Map<number, number>()
+  let maxNodeCount = 0
 
   for (const rank of ranks) {
     const rankNodes = nodes
       .filter((candidate) => nodeRank(candidate) === rank)
       .sort((left, right) => nodeSortKey(left).localeCompare(nodeSortKey(right)))
+    rankNodeCount.set(rank, rankNodes.length)
+    maxNodeCount = Math.max(maxNodeCount, rankNodes.length)
     rankNodes.forEach((candidate, index) => {
       if (!nodeIndex.has(candidate.id)) nodeIndex.set(candidate.id, index)
     })
   }
 
-  return { rankIndex, nodeIndex }
+  return { rankIndex, nodeIndex, rankNodeCount, maxNodeCount }
 }
 
 function positionFor(node: LineageNode, layout: LineageLayout): { x: number; y: number } {
   const rank = nodeRank(node)
   const rankIndex = layout.rankIndex.get(rank) ?? 0
   const index = layout.nodeIndex.get(node.id) ?? 0
+  const rankNodeCount = layout.rankNodeCount.get(rank) ?? 1
+  const rankOffsetY = Math.max(0, layout.maxNodeCount - rankNodeCount) * NODE_GAP_Y / 2
   return {
     x: NODE_OFFSET_X + rankIndex * NODE_GAP_X,
-    y: NODE_MIN_Y + index * NODE_GAP_Y,
+    y: NODE_MIN_Y + rankOffsetY + index * NODE_GAP_Y,
   }
 }
 
