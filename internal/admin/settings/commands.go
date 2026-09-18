@@ -64,16 +64,18 @@ func applyServiceAccountCommand(ctx context.Context, mutator ServiceAccountMutat
 	}
 }
 
-func ApplyServiceAccountCommandAudited(ctx context.Context, repository access.Repository, actorID string, command ServiceAccountCommand) (string, error) {
+func ApplyServiceAccountCommandAudited(ctx context.Context, repository access.Repository, actorID string, command ServiceAccountCommand) (string, string, error) {
 	command = NormalizeServiceAccountCommand(command)
 	auditAction, ok := serviceAccountAuditAction(command.Action)
 	if !ok {
-		return "", errors.New("unknown service account action")
+		return "", "", errors.New("unknown service account action")
 	}
 	var secret string
+	var targetID string
 	mutation := func(tx access.Repository) (access.AuditEventInput, error) {
-		createdSecret, targetID, err := applyServiceAccountCommand(ctx, tx, command)
+		createdSecret, createdTargetID, err := applyServiceAccountCommand(ctx, tx, command)
 		secret = createdSecret
+		targetID = createdTargetID
 		return access.AuditEventInput{
 			PrincipalID: actorID, Action: auditAction,
 			ResourceKind: "service_principal", ResourceID: targetID, Status: "success", MetadataJSON: `{}`,
@@ -81,18 +83,18 @@ func ApplyServiceAccountCommandAudited(ctx context.Context, repository access.Re
 	}
 	if transactional, ok := repository.(access.AuditedMutationRepository); ok {
 		if err := transactional.RunAuditedMutation(ctx, mutation); err != nil {
-			return "", err
+			return "", "", err
 		}
-		return secret, nil
+		return secret, targetID, nil
 	}
 	event, err := mutation(repository)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := repository.RecordAuditEvent(ctx, event); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return secret, nil
+	return secret, targetID, nil
 }
 
 // serviceAccountAuditAction is the compatibility boundary for the legacy

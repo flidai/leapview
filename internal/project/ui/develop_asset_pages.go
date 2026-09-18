@@ -336,17 +336,18 @@ type AssetVersionsState struct {
 }
 
 type AssetVersionState struct {
-	ServingStateID string
-	Environment    string
-	Status         string
-	Digest         string
-	CreatedBy      string
-	CreatedAt      string
-	ActivatedAt    string
-	SnapshotID     string
-	SourceFile     string
-	PayloadJSON    string
-	ContentHash    string
+	ServingStateID       string
+	Environment          string
+	Status               string
+	Digest               string
+	CreatedBy            string
+	CreatedByDisplayName string
+	CreatedAt            string
+	ActivatedAt          string
+	SnapshotID           string
+	SourceFile           string
+	PayloadJSON          string
+	ContentHash          string
 }
 
 func validProjectAssetSectionName(section string) bool {

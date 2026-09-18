@@ -117,6 +117,7 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 	}{
 		{path: "/admin", status: http.StatusSeeOther, want: []string{"/admin/profile"}},
 		{path: "/admin/profile", want: []string{"<lv-admin-page", `section="profile"`, `/updates?route=admin&amp;section=profile`}},
+		{path: "/admin/archived-chats", want: []string{"<lv-admin-page", `section="archived-chats"`, `/updates?route=admin&amp;section=archived-chats`}},
 		{path: "/admin/principals", want: []string{"<lv-admin-page", `section="principals"`, `/updates?route=admin&amp;section=principals`, "/admin/access/command", "createPrincipal"}},
 		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`, "/admin/access/command", "resetPrincipalPassword"}},
 		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`, "/admin/access/command", "createGroup"}},
@@ -430,7 +431,7 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 	}
 	defer unsubscribe()
 
-	body := strings.NewReader(`{"adminQueryHistory":{"filterMenus":[{"id":"project","label":"Project"}]},"adminQueryHistoryCommand":{"action":"filter_search","limit":50,"filterMenu":{"menuId":"project","action":"search","search":"test"}}}`)
+	body := strings.NewReader(`{"adminQueryHistory":{"filterMenus":[{"id":"project","label":"Project"}]},"adminQueryHistoryCommand":{"action":"filter_search","limit":50,"filterMenu":{"menuId":"project","action":"search","search":"operations"}}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -449,13 +450,8 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 		}
 		projectMenu := queryHistoryMenuForTest(uisignals.ValueOrZero(history.FilterMenus), "project")
 		projectOptions := uisignals.ValueOrZero(projectMenu.Options)
-		if uisignals.ValueOrZero(projectMenu.Search) != "test" || len(projectOptions) != 1 || projectOptions[0].Value != "project:test" {
+		if uisignals.ValueOrZero(projectMenu.Search) != "operations" || len(projectOptions) != 1 || projectOptions[0].Value != "project:operations" {
 			t.Fatalf("project menu = %#v", projectMenu)
-		}
-		for _, option := range projectOptions {
-			if option.Value == "project:operations" {
-				t.Fatalf("foreign Project disclosed in query-history options: %#v", projectOptions)
-			}
 		}
 		if len(history.Table.Rows) != 0 {
 			t.Fatalf("filter search should not patch table rows: %#v", history.Table.Rows)

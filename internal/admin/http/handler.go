@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	nethttp "net/http"
 	"strings"
 
@@ -84,9 +85,18 @@ func (h Handler) APITokens(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	h.renderPage(w, r, "api-tokens")
 }
+func (h Handler) ArchivedChats(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	h.renderPage(w, r, "archived-chats")
+}
 func (h Handler) General(w nethttp.ResponseWriter, r *nethttp.Request) { h.renderPage(w, r, "general") }
 func (h Handler) ServiceAccounts(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "service-accounts")
+}
+func (h Handler) NewServiceAccount(w nethttp.ResponseWriter, r *nethttp.Request) {
+	h.renderPage(w, r, "service-accounts-new")
 }
 func (h Handler) Authentication(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "authentication")
@@ -190,7 +200,12 @@ func (h Handler) StorageTable(w nethttp.ResponseWriter, r *nethttp.Request) {
 			nethttp.NotFound(w, r)
 			return
 		}
-		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		logger := h.ReadModel.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.ErrorContext(r.Context(), "admin storage table inspection failed", "schema", chi.URLParam(r, "schema"), "table", chi.URLParam(r, "table"), "error", err)
+		nethttp.Error(w, "Storage table details are currently unavailable.", nethttp.StatusServiceUnavailable)
 		return
 	}
 	h.writePage(w, r, "storage-detail", data)
@@ -302,12 +317,16 @@ func (h Handler) ServiceAccountCommand(w nethttp.ResponseWriter, r *nethttp.Requ
 			actorID = principal.ID
 		}
 	}
-	secret, err := adminsettings.ApplyServiceAccountCommandAudited(r.Context(), h.SettingsRepository, actorID, request.Command)
+	secret, targetID, err := adminsettings.ApplyServiceAccountCommandAudited(r.Context(), h.SettingsRepository, actorID, request.Command)
 	if err != nil {
 		h.patchServiceAccountError(w, r, request.Command.AccountID, err)
 		return
 	}
-	state, err := adminsettings.LoadServiceAccounts(r.Context(), h.SettingsRepository, request.Command.AccountID)
+	selectedID := request.Command.AccountID
+	if targetID != "" {
+		selectedID = targetID
+	}
+	state, err := adminsettings.LoadServiceAccounts(r.Context(), h.SettingsRepository, selectedID)
 	if err != nil {
 		h.patchServiceAccountError(w, r, request.Command.AccountID, err)
 		return
@@ -411,7 +430,7 @@ func (h Handler) BootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.Request) 
 	if active == "" {
 		active = "profile"
 	}
-	if (active == "profile" || active == "security" || active == "api-tokens") && h.rejectAuthoringCredential(w, r) {
+	if (active == "profile" || active == "security" || active == "api-tokens" || active == "archived-chats") && h.rejectAuthoringCredential(w, r) {
 		return
 	}
 	var listState entityListSignals
@@ -501,7 +520,7 @@ func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals m
 		}
 		signals["productSettings"] = productsettings.Payload(state)
 		signals["productSettingsCommand"] = map[string]any{}
-	case "service-accounts":
+	case "service-accounts", "service-accounts-new":
 		if h.SettingsRepository == nil {
 			return nil
 		}
@@ -582,7 +601,7 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 		return h.readModel().StorageData(r), nil
 	case "storage-detail":
 		return h.readModel().StorageTableData(r, r.URL.Query().Get("schema"), r.URL.Query().Get("table"))
-	case "profile", "security", "api-tokens", "general", "service-accounts", "authentication", "audit", "system":
+	case "profile", "security", "api-tokens", "archived-chats", "general", "service-accounts", "service-accounts-new", "authentication", "audit", "system":
 		return h.readModel().SettingsData(r)
 	}
 	data, err := h.adminData(r)

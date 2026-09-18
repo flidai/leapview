@@ -224,6 +224,9 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 		return graph
 	}
 	selectedAnchor, selectedAnchorOK := lineageVisibleAnchor(selected, assets)
+	if !selectedAnchorOK {
+		return assetLineageGraph{}
+	}
 	out := assetLineageGraph{}
 	nodeIndex := map[string]int{}
 	addNode := func(asset projectview.DevelopAssetView) {
@@ -237,29 +240,21 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 		nodeIndex[asset.ID] = len(out.Nodes)
 		out.Nodes = append(out.Nodes, lineageNode(projectID, asset, lineageVisualLayer(asset.Type), selectedNode, edges))
 	}
+	addNode(selectedAnchor)
 
 	type collapsedEdge struct {
 		source string
 		target string
 		kind   string
-		label  string
 	}
-	candidates := []collapsedEdge{}
-	for _, node := range graph.Nodes {
-		asset, ok := assets[node.ID]
-		if !ok {
+	candidates := make([]collapsedEdge, 0, len(edges))
+	seenCandidates := map[string]struct{}{}
+	for _, edge := range edges {
+		if !isLineageDependencyEdge(edge) {
 			continue
 		}
-		if anchor, ok := lineageVisibleAnchor(asset, assets); ok {
-			addNode(anchor)
-		}
-	}
-	for _, edge := range graph.Edges {
-		if !isLineageDependencyEdge(projectview.DevelopEdgeView{Type: edge.Kind}) {
-			continue
-		}
-		consumer, consumerOK := assets[edge.Source]
-		provider, providerOK := assets[edge.Target]
+		consumer, consumerOK := assets[edge.FromAssetID]
+		provider, providerOK := assets[edge.ToAssetID]
 		if !consumerOK || !providerOK {
 			continue
 		}
@@ -268,35 +263,90 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 		if !sourceOK || !targetOK || source.ID == target.ID {
 			continue
 		}
-		policy := lineageProjectionEdge(source.Type, target.Type, edge.Kind)
-		addNode(source)
-		addNode(target)
-		candidates = append(candidates, collapsedEdge{
+		if lineageVisualLayer(source.Type) > lineageVisualLayer(target.Type) {
+			continue
+		}
+		policy := lineageProjectionEdge(source.Type, target.Type, edge.Type)
+		candidate := collapsedEdge{
 			source: source.ID,
 			target: target.ID,
 			kind:   policy.kind,
-			label:  policy.label,
-		})
-	}
-
-	seenEdges := map[string]struct{}{}
-	for _, edge := range candidates {
-		source := assets[edge.source]
-		target := assets[edge.target]
-		if lineageVisualLayer(source.Type) >= lineageVisualLayer(target.Type) {
+		}
+		key := candidate.source + "|" + candidate.target + "|" + candidate.kind
+		if _, ok := seenCandidates[key]; ok {
 			continue
 		}
+		seenCandidates[key] = struct{}{}
+		candidates = append(candidates, candidate)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].source+"|"+candidates[i].target+"|"+candidates[i].kind < candidates[j].source+"|"+candidates[j].target+"|"+candidates[j].kind
+	})
+
+	upstreamByTarget := map[string][]collapsedEdge{}
+	downstreamBySource := map[string][]collapsedEdge{}
+	for _, edge := range candidates {
+		upstreamByTarget[edge.target] = append(upstreamByTarget[edge.target], edge)
+		downstreamBySource[edge.source] = append(downstreamBySource[edge.source], edge)
+	}
+	relevant := make([]collapsedEdge, 0, len(candidates))
+	upstreamVisited := map[string]struct{}{selectedAnchor.ID: {}}
+	var walkUpstream func(string, string)
+	walkUpstream = func(targetID, visibleTargetID string) {
+		for _, edge := range upstreamByTarget[targetID] {
+			if _, seen := upstreamVisited[edge.source]; seen {
+				continue
+			}
+			upstreamVisited[edge.source] = struct{}{}
+			if lineageVisualLayer(assets[edge.source].Type) < lineageVisualLayer(assets[visibleTargetID].Type) {
+				policy := lineageProjectionEdge(assets[edge.source].Type, assets[visibleTargetID].Type, edge.kind)
+				relevant = append(relevant, collapsedEdge{source: edge.source, target: visibleTargetID, kind: policy.kind})
+				walkUpstream(edge.source, edge.source)
+				continue
+			}
+			walkUpstream(edge.source, visibleTargetID)
+		}
+	}
+	downstreamVisited := map[string]struct{}{selectedAnchor.ID: {}}
+	var walkDownstream func(string, string)
+	walkDownstream = func(sourceID, visibleSourceID string) {
+		for _, edge := range downstreamBySource[sourceID] {
+			if _, seen := downstreamVisited[edge.target]; seen {
+				continue
+			}
+			downstreamVisited[edge.target] = struct{}{}
+			if lineageVisualLayer(assets[edge.target].Type) > lineageVisualLayer(assets[visibleSourceID].Type) {
+				policy := lineageProjectionEdge(assets[visibleSourceID].Type, assets[edge.target].Type, edge.kind)
+				relevant = append(relevant, collapsedEdge{source: visibleSourceID, target: edge.target, kind: policy.kind})
+				walkDownstream(edge.target, edge.target)
+				continue
+			}
+			walkDownstream(edge.target, visibleSourceID)
+		}
+	}
+	walkUpstream(selectedAnchor.ID, selectedAnchor.ID)
+	walkDownstream(selectedAnchor.ID, selectedAnchor.ID)
+
+	seenEdges := map[string]struct{}{}
+	for _, edge := range relevant {
+		source := assets[edge.source]
+		target := assets[edge.target]
 		key := edge.source + "|" + edge.target + "|" + edge.kind
 		if _, ok := seenEdges[key]; ok {
 			continue
 		}
 		seenEdges[key] = struct{}{}
+		addNode(source)
+		addNode(target)
 		out.Edges = append(out.Edges, assetLineageEdge{
 			ID:     key,
 			Source: edge.source,
 			Target: edge.target,
-			Label:  uisignals.Optional(edge.label),
-			Kind:   edge.kind,
+			// The node titles and relationship tables carry the explanation;
+			// putting implementation labels on every edge makes the graph noisy
+			// and was particularly misleading for projected dependencies.
+			Label: nil,
+			Kind:  edge.kind,
 		})
 	}
 	sortLineageNodes(out.Nodes)
@@ -506,31 +556,26 @@ type lineageProjectionEdgeKey struct {
 }
 
 type lineageProjectionEdgePolicy struct {
-	key   lineageProjectionEdgeKey
-	kind  string
-	label string
+	key  lineageProjectionEdgeKey
+	kind string
 }
 
 var lineageProjectionEdges = []lineageProjectionEdgePolicy{
 	{
-		key:   lineageProjectionEdgeKey{sourceType: "connection", targetType: "source"},
-		kind:  "lineage_connection_source",
-		label: "Provides source",
+		key:  lineageProjectionEdgeKey{sourceType: "connection", targetType: "source"},
+		kind: "lineage_connection_source",
 	},
 	{
-		key:   lineageProjectionEdgeKey{sourceType: "source", targetType: "model"},
-		kind:  "lineage_source_model",
-		label: "Feeds model",
+		key:  lineageProjectionEdgeKey{sourceType: "source", targetType: "model"},
+		kind: "lineage_source_model",
 	},
 	{
-		key:   lineageProjectionEdgeKey{sourceType: "model", targetType: "semantic_model"},
-		kind:  "lineage_model_semantic_model",
-		label: "Feeds semantic model",
+		key:  lineageProjectionEdgeKey{sourceType: "model", targetType: "semantic_model"},
+		kind: "lineage_model_semantic_model",
 	},
 	{
-		key:   lineageProjectionEdgeKey{sourceType: "semantic_model", targetType: "dashboard"},
-		kind:  "lineage_semantic_model_dashboard",
-		label: "Powers dashboard",
+		key:  lineageProjectionEdgeKey{sourceType: "semantic_model", targetType: "dashboard"},
+		kind: "lineage_semantic_model_dashboard",
 	},
 }
 
@@ -542,18 +587,13 @@ func lineageProjectionEdge(sourceType, targetType, fallback string) lineageProje
 		}
 	}
 	return lineageProjectionEdgePolicy{
-		key:   key,
-		kind:  fallback,
-		label: labelFromKey(fallback),
+		key:  key,
+		kind: fallback,
 	}
 }
 
 func lineageCollapsedEdgeKind(sourceType, targetType, fallback string) string {
 	return lineageProjectionEdge(sourceType, targetType, fallback).kind
-}
-
-func lineageCollapsedEdgeLabel(sourceType, targetType, fallback string) string {
-	return lineageProjectionEdge(sourceType, targetType, fallback).label
 }
 
 func isRollupLineageAsset(typ string) bool {

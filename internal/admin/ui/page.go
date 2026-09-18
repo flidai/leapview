@@ -201,7 +201,7 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 			g.Attr("data-on:lv-product-settings-command", "$productSettingsCommand = evt.detail; evt.detail.action == 'refresh' ? ("+productRefresh+") : ("+productMutation+")"),
 		)
 	}
-	if active == "service-accounts" {
+	if active == "service-accounts" || active == "service-accounts-new" {
 		serviceAccountCommands := map[string]uicommand.Binding{
 			"create":        accessgen.GenUIActionCreateServicePrincipal(),
 			"delete":        accessgen.GenUIActionDeleteServicePrincipal(),
@@ -368,6 +368,9 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 	case "api-tokens":
 		page.HeaderTitle = "API tokens"
 		page.HeaderDetail = "Manage personal API and CLI credentials."
+	case "archived-chats":
+		page.HeaderTitle = "Archived chats"
+		page.HeaderDetail = "Restore or delete conversations hidden from your chat history."
 	case "general":
 		page.HeaderTitle = "General"
 		page.HeaderDetail = "Configure product identity and view instance details."
@@ -387,9 +390,14 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		page.HeaderDetail = "Organize users and assign access collectively."
 		page.ListFilterOptions = uisignals.OptionalSlice(adminGroupProviders(data.Groups))
 		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{{Title: "Groups", Table: uisignals.Pointer(adminGroupsGrid(filterAdminGroups(data.Groups, data.ListQuery, data.ListFilter)))}})
-	case "service-accounts":
+	case "service-accounts", "service-accounts-new":
 		page.HeaderTitle = "Service accounts"
-		page.HeaderDetail = "Manage machine identities and credentials."
+		if active == "service-accounts-new" {
+			page.HeaderTitle = "Create service account"
+			page.HeaderDetail = "Create a machine identity, then add a secret from its account page."
+		} else {
+			page.HeaderDetail = "Manage machine identities and credentials."
+		}
 	case "authentication":
 		page.HeaderTitle = "Authentication"
 		page.HeaderDetail = "Review login and provisioning configuration."
@@ -1001,56 +1009,6 @@ func adminGroupHref(groupID string) string {
 
 func adminPrincipalHref(principalID string) string {
 	return "/admin/principals/" + url.PathEscape(principalID)
-}
-
-func adminPageTitle(active string) string {
-	switch active {
-	case "api-tokens":
-		return "API tokens"
-	case "security":
-		return "Security & sessions"
-	case "general":
-		return "General"
-	case "principals":
-		return "Principals"
-	case "profile":
-		return "Profile"
-	case "principal-detail":
-		return "Principal"
-	case "groups":
-		return "Groups"
-	case "group-detail":
-		return "Group"
-	case "service-accounts":
-		return "Service accounts"
-	case "authentication":
-		return "Authentication"
-	case "agent":
-		return "Agent"
-	case "storage":
-		return "Storage"
-	case "storage-detail":
-		return "Storage table"
-	case "queries":
-		return "Query history"
-	case "audit":
-		return "Audit log"
-	case "system":
-		return "System"
-	case "publications":
-		return "Publications"
-	default:
-		return "Profile"
-	}
-}
-
-func normalizeAdminSection(active string) string {
-	switch strings.TrimSpace(active) {
-	case "profile", "security", "api-tokens", "general", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "storage-detail", "queries", "audit", "system", "publications":
-		return strings.TrimSpace(active)
-	default:
-		return "profile"
-	}
 }
 
 func AdminStorageSignalFromData(data AdminStorageData) AdminStorageSignal {

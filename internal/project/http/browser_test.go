@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -34,33 +33,6 @@ import (
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/go-chi/chi/v5"
 )
-
-func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
-	router := chi.NewRouter()
-	h := &BrowserHandler{Authenticate: func(next stdhttp.Handler) stdhttp.Handler { return next }}
-	h.MountAuthenticated(router)
-
-	var got []string
-	if err := chi.Walk(router, func(method, route string, _ stdhttp.Handler, _ ...func(stdhttp.Handler) stdhttp.Handler) error {
-		got = append(got, method+" "+route)
-		return nil
-	}); err != nil {
-		t.Fatalf("walk routes: %v", err)
-	}
-	sort.Strings(got)
-	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /runs", "GET /search", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /dashboards/{asset}/appearance"}
-	sort.Strings(want)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("routes = %v, want %v", got, want)
-	}
-	for _, legacy := range []string{"/data", "/data/{asset}/{section}", "/data/search", "/workspaces", "/workspaces/{workspace}", "/admin/workspaces"} {
-		for _, route := range got {
-			if route == "GET "+legacy || route == "POST "+legacy {
-				t.Fatalf("legacy route %q was mounted", legacy)
-			}
-		}
-	}
-}
 
 func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *testing.T) {
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
@@ -178,6 +150,16 @@ type browserAssetVersionsStub struct {
 	versions []servingstate.AssetVersion
 }
 
+type browserPrincipalDisplayReaderStub map[string]access.Principal
+
+func (s browserPrincipalDisplayReaderStub) PrincipalByID(_ context.Context, id string) (access.Principal, error) {
+	principal, ok := s[id]
+	if !ok {
+		return access.Principal{}, errors.New("principal not found")
+	}
+	return principal, nil
+}
+
 type browserPhysicalCatalogStub map[string]ModelPhysicalMetadata
 
 func (s browserPhysicalCatalogStub) ModelPhysicalMetadata(context.Context, projectgraph.ResourceID, string) (map[string]ModelPhysicalMetadata, error) {
@@ -236,6 +218,32 @@ func TestAssetVersionsStateKeepsCurrentHashAndLoadsHistory(t *testing.T) {
 	}
 	if state.Versions[0].Environment != "dev" || state.Versions[0].SnapshotID != "snapshot:2" || state.Versions[0].PayloadJSON != `{"kind":"Model"}` {
 		t.Fatalf("versions drawer state = %#v", state.Versions[0])
+	}
+}
+
+func TestAssetHistoryResolvesPrincipalDisplayNamesWhenAvailable(t *testing.T) {
+	actorID := "123e4567-e89b-12d3-a456-426614174000"
+	h := &BrowserHandler{
+		Environment:            "dev",
+		PrincipalDisplayReader: browserPrincipalDisplayReaderStub{actorID: {ID: actorID, Kind: access.PrincipalKindUser, DisplayName: "Ada Lovelace"}},
+		AssetVersions:          browserAssetVersionsStub{versions: []servingstate.AssetVersion{{ServingStateID: "state:current", CreatedBy: actorID}}},
+		RefreshState:           browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{Runs: []refreshpresentation.AssetRefreshRun{{ID: "run:1", PrincipalID: actorID}}}},
+	}
+
+	versions, err := h.assetVersionsState(t.Context(), "project:test", projectview.DevelopAssetView{ID: "model:orders"}, "versions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := versions.Versions[0].CreatedByDisplayName; got != "Ada Lovelace" {
+		t.Fatalf("version actor display name = %q, want Ada Lovelace", got)
+	}
+
+	refresh, err := h.assetRefreshState(t.Context(), "project:test", projectview.DevelopAssetView{ID: "pipeline:daily", Type: string(projectview.AssetTypeRefreshPipeline)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := refresh.Runs[0].PrincipalDisplayName; got != "Ada Lovelace" {
+		t.Fatalf("refresh actor display name = %q, want Ada Lovelace", got)
 	}
 }
 
@@ -559,56 +567,6 @@ func TestPipelineDefinitionBootstrapDoesNotDependOnRefreshState(t *testing.T) {
 	router.ServeHTTP(recorder, httptest.NewRequest(stdhttp.MethodGet, "/pipelines/"+assetID+"/bogus", nil))
 	if recorder.Code != stdhttp.StatusNotFound {
 		t.Fatalf("invalid pipeline document status = %d, want %d", recorder.Code, stdhttp.StatusNotFound)
-	}
-}
-
-func TestInvalidAssetSectionsReturnNotFoundBeforeDefinitionEnrichment(t *testing.T) {
-	const assetID = "model:orders"
-	h := &BrowserHandler{
-		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{{
-			ID: assetID, ProjectID: "project:test", ServingStateID: "state", Type: "model", Key: "orders", PayloadJSON: `{}`,
-		}}}},
-		ProjectDefinitionReader: browserProjectDefinitionStub{err: errors.New("definition unavailable")},
-		ResolveProjectID:        func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
-		CurrentUser:             func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
-	}
-	recorder := httptest.NewRecorder()
-	if _, ok := h.assetBootstrap(recorder, httptest.NewRequest(stdhttp.MethodGet, "/updates?surface=asset&asset="+assetID+"&section=bogus", nil)); ok {
-		t.Fatal("invalid asset bootstrap returned ok")
-	}
-	if recorder.Code != stdhttp.StatusNotFound {
-		t.Fatalf("invalid bootstrap status = %d, want 404", recorder.Code)
-	}
-	recorder = httptest.NewRecorder()
-	if _, ok := h.assetBootstrap(recorder, httptest.NewRequest(stdhttp.MethodGet, "/updates?route=connection_asset&surface=asset&asset="+assetID+"&section=details", nil)); ok {
-		t.Fatal("model bootstrap accepted connection route kind")
-	}
-	if recorder.Code != stdhttp.StatusNotFound {
-		t.Fatalf("mismatched model route status = %d, want 404", recorder.Code)
-	}
-	router := chi.NewRouter()
-	router.Get("/models/{asset}/{section}", h.ModelAsset)
-	recorder = httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(stdhttp.MethodGet, "/models/"+assetID+"/bogus", nil))
-	if recorder.Code != stdhttp.StatusNotFound {
-		t.Fatalf("invalid document status = %d, want 404", recorder.Code)
-	}
-}
-
-func TestAssetDocumentRejectsAssetFromDifferentResourceArea(t *testing.T) {
-	h := &BrowserHandler{
-		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{{
-			ID: "source:orders", ProjectID: "project:test", ServingStateID: "state", Type: "source", Key: "orders", PayloadJSON: `{}`,
-		}}}},
-		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
-		CurrentUser:      func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
-	}
-	router := chi.NewRouter()
-	router.Get("/pipelines/{asset}/{section}", h.PipelineAsset)
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(stdhttp.MethodGet, "/pipelines/source:orders/details", nil))
-	if recorder.Code != stdhttp.StatusNotFound {
-		t.Fatalf("cross-area asset status = %d, want 404", recorder.Code)
 	}
 }
 

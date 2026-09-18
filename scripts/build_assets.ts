@@ -72,6 +72,7 @@ for (const build of builds) {
   await runBuild(build)
 }
 await Bun.write('static/monaco-editor-css.css', Bun.file('static/admin-page.css'))
+await Bun.write('static/asset-lineage-graph.css', Bun.file('static/semantic-model-graph.css'))
 await buildMapLibreWorker('static')
 await validateProductionJavaScriptBundles()
 await writeStaticAssetVersion()

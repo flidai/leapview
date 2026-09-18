@@ -1,6 +1,6 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { Archive, MessageSquareText, Plus, Search } from 'lucide'
+import { Archive, MessageSquareText, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Trash2 } from 'lucide'
 import type { ChatConversationSummary } from '../../generated/signals'
 import { jsonAttribute } from '../shared/json-attribute'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -10,6 +10,19 @@ class LeapViewChatList extends LitElement {
   @property({ attribute: 'active-conversation-id' }) activeConversationId = ''
   @property({ type: Boolean, attribute: 'agent-enabled' }) agentEnabled = false
   @state() private search = ''
+  @state() private openMenuID = ''
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('keydown', this.onMenuKeydown)
+    document.addEventListener('pointerdown', this.closeMenuOnOutsidePointerdown)
+  }
+
+  override disconnectedCallback(): void {
+    document.removeEventListener('keydown', this.onMenuKeydown)
+    document.removeEventListener('pointerdown', this.closeMenuOnOutsidePointerdown)
+    super.disconnectedCallback()
+  }
 
   static styles = css`
     :host {
@@ -219,6 +232,16 @@ class LeapViewChatList extends LitElement {
       gap: var(--base-size-16);
     }
 
+    .options-menu { position: relative; z-index: 3; flex: 0 0 auto; }
+    .options-menu > summary { display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center; border-radius: var(--lv-radius-default); color: var(--lv-fg-muted); cursor: pointer; list-style: none; }
+    .options-menu > summary::-webkit-details-marker { display: none; }
+    .options-menu > summary:hover, .options-menu > summary:focus-visible { background: var(--lv-bg-panel); color: var(--lv-fg-default); outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+    .options-panel { position: absolute; top: calc(100% + 4px); right: 0; display: grid; min-width: 180px; padding: 4px; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); }
+    .chat-action { display: grid; width: 100%; min-height: 32px; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: var(--lv-radius-small); background: transparent; color: var(--lv-fg-default); cursor: pointer; text-align: left; font: var(--lv-type-body-compact); }
+    .chat-action:hover { background: var(--lv-bg-panel-muted); }
+    .chat-action.danger:hover { color: var(--lv-fg-danger); }
+    .chat-action.unavailable { cursor: not-allowed; color: var(--lv-fg-muted); opacity: .6; }
+
     .title {
       overflow: hidden;
       min-width: 0;
@@ -231,6 +254,7 @@ class LeapViewChatList extends LitElement {
 
     .date {
       flex: 0 0 auto;
+      margin-left: auto;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
       white-space: nowrap;
@@ -377,6 +401,17 @@ class LeapViewChatList extends LitElement {
           <div class="row-content">
             <span class="title">${title}</span>
             <time class="date" datetime=${conversation.updatedAt}>${conversation.updatedAt ? shortDate(conversation.updatedAt) : ''}</time>
+            <details class="options-menu" ?open=${this.openMenuID === conversation.id} @toggle=${(event: Event) => this.onMenuToggle(event, conversation.id)}>
+              <summary class="options-button" aria-label=${`More actions for ${title}`} title="More actions">${lucideIcon(MoreHorizontal)}</summary>
+              <div class="options-panel" role="menu" aria-label=${`Actions for ${title}`}>
+                <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'select', conversation, href)}><span aria-hidden="true"></span><span>Select</span></button>
+                <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, conversation.pinned ? 'unpin' : 'pin', conversation, href)}>${lucideIcon(conversation.pinned ? PinOff : Pin, { size: 16 })}<span>${conversation.pinned ? 'Unpin chat' : 'Pin chat'}</span></button>
+                <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'rename', conversation, href)}>${lucideIcon(Pencil, { size: 16 })}<span>Rename</span></button>
+                <button class="chat-action unavailable" type="button" role="menuitem" disabled title="Chat projects are not supported yet"><span aria-hidden="true"></span><span>Add to project</span></button>
+                <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'archive', conversation, href)}>${lucideIcon(Archive, { size: 16 })}<span>Archive chat</span></button>
+                <button class="chat-action danger" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'delete', conversation, href)}>${lucideIcon(Trash2, { size: 16 })}<span>Delete chat</span></button>
+              </div>
+            </details>
           </div>
         </td>
       </tr>
@@ -385,6 +420,58 @@ class LeapViewChatList extends LitElement {
 
   private onSearchInput = (event: Event): void => {
     this.search = (event.target as HTMLInputElement).value
+  }
+
+  private onMenuToggle(event: Event, conversationID: string): void {
+    const menu = event.currentTarget as HTMLDetailsElement
+    if (menu.open) this.openMenuID = conversationID
+    else if (this.openMenuID === conversationID) this.openMenuID = ''
+  }
+
+  private closeMenuOnOutsidePointerdown = (event: PointerEvent): void => {
+    if (!this.openMenuID) return
+    const menu = this.renderRoot.querySelector<HTMLDetailsElement>('.options-menu[open]')
+    if (menu && !event.composedPath().includes(menu)) {
+      menu.open = false
+      this.openMenuID = ''
+    }
+  }
+
+  private onMenuKeydown = (event: KeyboardEvent): void => {
+    const menu = this.renderRoot.querySelector<HTMLDetailsElement>('.options-menu[open]')
+    if (!menu) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      menu.open = false
+      this.openMenuID = ''
+      menu.querySelector<HTMLElement>('summary')?.focus()
+      return
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !event.composedPath().includes(menu)) return
+    const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'))
+    if (!items.length) return
+    event.preventDefault()
+    const current = items.indexOf(event.composedPath().find((target): target is HTMLButtonElement => target instanceof HTMLButtonElement) as HTMLButtonElement)
+    const index = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? items.length - 1
+        : event.key === 'ArrowDown'
+          ? current < 0 ? 0 : (current + 1) % items.length
+          : current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length
+    items[index].focus()
+  }
+
+  private runChatAction(event: MouseEvent, action: string, conversation: ChatConversationSummary, href: string): void {
+    event.stopPropagation()
+    const menu = (event.currentTarget as HTMLElement).closest('details')
+    if (menu instanceof HTMLDetailsElement) menu.open = false
+    this.openMenuID = ''
+    this.dispatchEvent(new CustomEvent('lv-chat-action', {
+      bubbles: true,
+      composed: true,
+      detail: { action, conversationId: conversation.id, title: conversation.title, href },
+    }))
   }
 }
 

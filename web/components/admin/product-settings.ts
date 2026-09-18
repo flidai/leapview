@@ -48,6 +48,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
   @state() private commandBusy = false
   @state() private commandError = ''
   @state() private message = ''
+  @state() private copiedRevision = false
   private lastRevision = -1
   private pendingRevision = -1
   private pendingError = ''
@@ -94,6 +95,8 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     .about-links a { color: var(--lv-fg-accent); }
     .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .65rem; }
     .status-card { display: grid; gap: .3rem; border: var(--lv-border-muted); border-radius: var(--lv-radius-small); padding: .7rem; }
+    .status-card { min-width: 0; }
+    .status-card strong, .status-card .status, .status-card .settings-value { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
     .status-card strong { font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
     .status { font: var(--lv-type-caption); }
     .status.enabled { color: var(--lv-fg-success); }
@@ -237,8 +240,8 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
         <h3>Build</h3>
         <div class="status-grid">
           ${this.statusCard('Version', Boolean(build.version), build.version || 'Unknown')}
-          ${this.statusCard('Revision', Boolean(build.revision), build.revision || 'Unknown')}
-          ${this.statusCard('Build time', Boolean(build.buildTime), build.buildTime || 'Unknown')}
+          <div class="status-card"><strong>Revision</strong><span class="status ${build.revision ? 'enabled' : 'disabled'}" title=${build.revision || 'Unknown'}>${build.revision || 'Unknown'}</span>${build.revision ? html`<button class="action" type="button" @click=${() => this.copyRevision(build.revision)}>${this.copiedRevision ? 'Copied' : 'Copy revision'}</button>` : nothing}</div>
+          ${this.statusCard('Build time', Boolean(build.buildTime), formatBuildTime(build.buildTime))}
           ${this.statusCard('Build state', !build.dirty, build.dirty ? 'Dirty' : build.development ? 'Development' : 'Release')}
         </div>
         <h3>Limits</h3>
@@ -270,6 +273,15 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
 
   private limitCard(label: string, value: number) {
     return html`<div class="status-card"><strong>${label}</strong><span class="settings-value">${formatLimit(value)}</span></div>`
+  }
+
+  private async copyRevision(revision: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(revision)
+      this.copiedRevision = true
+    } catch {
+      this.commandError = 'Copy failed. Select the revision manually.'
+    }
   }
 
   private handleDisplayNameInput = (event: Event): void => {
@@ -349,6 +361,13 @@ function formatLimit(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)} KB`
   return value.toLocaleString()
+}
+
+function formatBuildTime(value: string): string {
+  if (!value) return 'Unknown'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
 function productETag(revision: number): string {

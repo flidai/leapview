@@ -32,6 +32,7 @@ type ServiceAccountSignal struct {
 	DisplayName string `json:"displayName"`
 	Email       string `json:"email,omitempty"`
 	Kind        string `json:"kind"`
+	SecretCount int    `json:"secretCount"`
 	CreatedAt   string `json:"createdAt,omitempty"`
 	UpdatedAt   string `json:"updatedAt,omitempty"`
 	DisabledAt  string `json:"disabledAt,omitempty"`
@@ -72,9 +73,11 @@ type AuditEventSignal struct {
 	ID            string         `json:"id"`
 	ProjectID     string         `json:"projectId,omitempty"`
 	PrincipalID   string         `json:"principalId,omitempty"`
+	PrincipalName string         `json:"principalName,omitempty"`
 	Action        string         `json:"action"`
 	ResourceKind  string         `json:"resourceKind"`
 	ResourceID    string         `json:"resourceId"`
+	ResourceLabel string         `json:"resourceLabel,omitempty"`
 	Capability    string         `json:"capability,omitempty"`
 	Status        string         `json:"status,omitempty"`
 	RequestID     string         `json:"requestId,omitempty"`
@@ -169,6 +172,13 @@ func AuditEventSignalFromDomain(event access.AuditEvent) AuditEventSignal {
 		Status: event.Status, RequestID: event.RequestID, CorrelationID: event.CorrelationID, Metadata: metadata, CreatedAt: event.CreatedAt}
 }
 
+func auditDisplayName(primary, fallback string) string {
+	if value := strings.TrimSpace(primary); value != "" {
+		return value
+	}
+	return strings.TrimSpace(fallback)
+}
+
 // LoadAuditLog reads the canonical access audit stream. ProjectID is retained
 // in the UI filter contract for future graph-scoped events; current identity
 // audit records are globally keyed by resource kind/id.
@@ -186,6 +196,40 @@ func LoadAuditLog(ctx context.Context, repository access.Repository, filters Aud
 	if err != nil {
 		return state, err
 	}
+	principalNames := map[string]string{}
+	resourceNames := map[string]string{}
+	if principals, principalErr := repository.ListPrincipals(ctx, access.PrincipalFilter{}); principalErr == nil {
+		for _, principal := range principals {
+			name := auditDisplayName(principal.DisplayName, principal.Email)
+			if name == "" {
+				name = "Unknown principal"
+			}
+			principalNames[principal.ID] = name
+			resourceName := auditDisplayName(principal.DisplayName, principal.Email)
+			if resourceName == "" {
+				resourceName = "Principal"
+			}
+			resourceNames["principal:"+principal.ID] = resourceName
+		}
+	}
+	if groups, groupErr := repository.ListAllGroups(ctx); groupErr == nil {
+		for _, group := range groups {
+			name := strings.TrimSpace(group.Name)
+			if name == "" {
+				name = "Group"
+			}
+			resourceNames["group:"+group.ID] = name
+		}
+	}
+	if servicePrincipals, serviceErr := repository.ListServicePrincipals(ctx); serviceErr == nil {
+		for _, principal := range servicePrincipals {
+			name := auditDisplayName(principal.DisplayName, principal.Email)
+			if name == "" {
+				name = "Service account"
+			}
+			resourceNames["service_principal:"+principal.ID] = name
+		}
+	}
 	state.HasMore = len(rows) > limit
 	if state.HasMore {
 		rows = rows[:limit]
@@ -193,8 +237,26 @@ func LoadAuditLog(ctx context.Context, repository access.Repository, filters Aud
 		state.NextCursor = AuditPageToken(last.CreatedAt, last.ID)
 	}
 	for _, row := range rows {
-		state.Items = append(state.Items, AuditEventSignalFromDomain(row))
+		item := AuditEventSignalFromDomain(row)
+		if item.PrincipalID == "" {
+			item.PrincipalName = "System"
+		} else if name := principalNames[item.PrincipalID]; name != "" {
+			item.PrincipalName = name
+		}
+		item.ResourceLabel = resourceNames[item.ResourceKind+":"+item.ResourceID]
+		if item.ResourceLabel == "" {
+			item.ResourceLabel = humanizeAuditValue(item.ResourceKind)
+		}
+		state.Items = append(state.Items, item)
 	}
 	state.LoadedCount = len(state.Items)
 	return state, nil
+}
+
+func humanizeAuditValue(value string) string {
+	value = strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(value), "_", " "), ".", " ")
+	if value == "" {
+		return "Resource"
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
 }

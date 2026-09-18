@@ -769,7 +769,8 @@ func buildApplicationSurfaces(
 			}
 			return result, nil
 		},
-		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID,
+		PrincipalDisplayReader: data.AccessRepo,
+		ResolveProjectID:       runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 		},
