@@ -66,7 +66,7 @@ def main():
     assert runtime_env['LEAPVIEW_HOME'] == str(HOME_PATH)
     assert ready(), 'Predecessor must be healthy'
     previous = json.loads(output(f'/proc/{pid}/exe', 'version', '--json'))
-    assert previous['revision'] == 'b89fdcfcf292bd1b6f879be38e31872febcc6c9f', 'Predecessor changed'
+    assert previous['revision'] == 'a9328056d1727b71f5e42fb10fe285b201898a62', 'Predecessor changed'
     identity = json.loads(output(str(RELEASE / 'leapview'), 'version', '--json'))
     assert identity['revision'] == REVISION and identity['dirty'] is False
     assert (RELEASE / 'immutable-image.txt').read_text().strip() == IMAGE
