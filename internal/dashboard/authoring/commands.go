@@ -1490,7 +1490,7 @@ func validatePayload(payload authoringPayload) error {
 		default:
 			return fmt.Errorf("%w: unsupported interaction target effect %q", ErrInvalidPayload, value.Effect)
 		}
-	case *PublishPayload, *ArchivePayload:
+	case *PublishPayload, *ArchivePayload, *DeletePayload:
 	default:
 		return fmt.Errorf("%w: unsupported payload %T", ErrInvalidPayload, payload)
 	}

@@ -77,7 +77,7 @@ The browser builder is a closed command surface. Each row below is a browser com
 | Dashboard visibility | `set_visibility` | `private` or `organization` visibility | Dashboard document, lifecycle revision history, and restricted/access policy details remain server-owned or code-only |
 | Dashboard metadata | `update_dashboard_metadata` | Dashboard title and description | Slug, semantic model, visibility, icon/color, pages, visuals, and advanced metadata remain unchanged or code-only |
 | Publish | `publish` | The exact current draft revision selected by the browser | Draft bytes, revision history, publication evidence, and serving deployment remain server-owned; publish does not deploy a full project |
-| Archive | `archive` | Dashboard lifecycle state | Retained revisions, authored source, and evidence remain preserved; archive does not delete the document |
+| Delete | `delete` | The current authored dashboard | Dashboard content and retained revisions are permanently removed; only audit and idempotency evidence remain |
 | Add page | `add_page` | Page title and optional page ID | The server allocates missing IDs; description, grid, components, and advanced page metadata use canonical defaults or remain code-only |
 | Rename page | `rename_page` | Page title | Page ID, description, grid, components, and page bindings remain unchanged; description is code-only here |
 | Page metadata | `update_page_metadata` | Page description; the current title is carried to preserve it | Page ID, grid, components, bindings, and advanced page metadata remain unchanged or code-only |

@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS dashboard.authoring_delete_commands (
 CREATE INDEX IF NOT EXISTS authoring_delete_commands_project_idx
     ON dashboard.authoring_delete_commands(project_id, dashboard_id, created_at DESC);
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION dashboard.authoring_delete_dashboard(
     p_project_id text, p_dashboard_id text, p_expected_revision_id uuid,
     p_expected_revision_number bigint, p_expected_content_hash text,
@@ -102,6 +103,7 @@ BEGIN
     RETURN 1;
 END;
 $$;
+-- +goose StatementEnd
 
 REVOKE ALL ON TABLE dashboard.authoring_delete_commands FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.authoring_delete_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz) FROM PUBLIC;
@@ -118,7 +120,9 @@ RESET ROLE;
 SET LOCAL ROLE leapview_control_owner;
 -- The command fence and deletion audit must remain available for retries and
 -- historical inspection after a migration rollback request.
+-- +goose StatementBegin
 DO $$ BEGIN
     RAISE EXCEPTION 'dashboard authoring delete evidence is immutable; destructive down is forbidden';
 END $$;
+-- +goose StatementEnd
 RESET ROLE;

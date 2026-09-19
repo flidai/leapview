@@ -529,7 +529,7 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, err)
 		return
 	}
-	if command.Archive != nil {
+	if command.Delete != nil {
 		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"builder": map[string]any{"redirectTo": "/"}})
 		return
 	}
@@ -951,6 +951,8 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.Publish = &authoring.PublishPayload{}
 	case "archive":
 		command.Archive = &authoring.ArchivePayload{}
+	case "delete":
+		command.Delete = &authoring.DeletePayload{}
 	case "set_visibility":
 		visibility := authoring.Visibility(strings.TrimSpace(s.Visibility))
 		if err := visibility.Validate(); err != nil {
