@@ -440,6 +440,36 @@ pid=subprocess.check_output(['systemctl','show','leapview-demo-current.service',
 args=[s.decode() for s in open('/proc/'+pid+'/cmdline','rb').read().split(b'\0') if s]
 print('Expected serve --production arguments:', args[1:]==['serve','--production'])
 PYARGS
+printf 'Managed-data Olist object integrity:\n'
+python3 - <<'PYDATA'
+import hashlib
+from pathlib import Path
+
+root = Path('/tmp/leapview-demo-host-state/managed-data/objects')
+revision = 'sha256:caa765c9d72853f7c69ec83b7f95b574b8aa3f74e607a35066001aeeeddd5c88'
+files = {
+  'olist_customers_dataset.csv': ('983a422239e1712ded753b3bf9ecf47dc73f144d306029dcfa99e70a226883d2', 9033957),
+  'olist_geolocation_dataset.csv': ('b514f6fc991b9566aeba02aa5d67e2c3630f034b60a0e05aa0d082a3b66d88d6', 61273883),
+  'olist_order_items_dataset.csv': ('0bc4d068c4fe38cbb01bd90e8746e3c613fe7b4baef75fab7b0e329701c3e279', 15438671),
+  'olist_order_payments_dataset.csv': ('4f713964f2815dbbaa40b9488268c55aac3627bfce5aa96cf58d1f3616de3cc0', 5777138),
+  'olist_order_reviews_dataset.csv': ('012b61c7593e34f51fa614efdf802b9c7056ce6aae5307ddb93236e7cfc797d7', 14451670),
+  'olist_orders_dataset.csv': ('8df58ef3d2d7e9944010f7beecd9b75367f5588ec6e3c91cec19ae3345ef9ecf', 17654914),
+  'olist_products_dataset.csv': ('3e6569628a17fbc75fd206ee357b59e20364b9afa90f5b6cd5b4d624c58aa9cc', 2379446),
+  'olist_sellers_dataset.csv': ('1f643d2b950373b85735e7794b20986f528d7a000432e7c6f9bcbb44d0846a0e', 174703),
+  'product_category_name_translation.csv': ('a81f0d1f27b27e7293f761bc79e3ce8f348ee39c4b3ed3e49bde38f478586278', 2613),
+}
+for logical, (digest, size) in files.items():
+    for kind, path in (
+        ('blob', root / 'blobs' / 'sha256' / digest[:2] / digest),
+        ('view', root / 'revisions' / revision / 'data' / logical),
+    ):
+        if not path.is_file():
+            print(f'{kind}|{logical}|missing')
+            continue
+        body = path.read_bytes()
+        actual = hashlib.sha256(body).hexdigest()
+        print(f'{kind}|{logical}|size={len(body)}|size_ok={len(body)==size}|sha_ok={actual==digest}')
+PYDATA
 printf 'Redacted recent runtime errors:\n'
 python3 - <<'PYLOG'
 import json, subprocess, re
