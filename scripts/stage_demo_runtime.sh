@@ -128,6 +128,14 @@ set -euo pipefail
 revision=a9328056d1727b71f5e42fb10fe285b201898a62
 tag=ghcr.io/flidai/leapview:candidate-$revision
 release=/opt/leapview-demo/releases/$revision
+service=leapview-demo-current.service
+active_pid=$(systemctl show "$service" --property=MainPID --value)
+active_revision=$("/proc/$active_pid/exe" version --json | jq -er .revision)
+while IFS= read -r candidate_tag; do
+  [[ "$candidate_tag" == "$tag" || "$candidate_tag" == "ghcr.io/flidai/leapview:candidate-$active_revision" ]] && continue
+  docker image rm "$candidate_tag"
+done < <(docker image ls ghcr.io/flidai/leapview --format '{{.Repository}}:{{.Tag}}' | grep ':candidate-' || true)
+docker image prune --force
 available_kb=$(df --output=avail /opt | tail -1 | tr -d ' ')
 (( available_kb > 7000000 )) || { echo 'At least 7 GB free space required to stage image'; exit 1; }
 docker pull "$tag"
