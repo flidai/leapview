@@ -12,9 +12,9 @@ import time
 import urllib.parse
 import urllib.request
 
-REVISION = 'f29a0c9a88cb57f5ce0544fa0b5bb3d29c28f883'
-PREDECESSOR_REVISION = '6e32701df11e2de137e7db59025e7ed9c0399078'
-EXPECTED_IMAGE = 'ghcr.io/flidai/leapview@sha256:3551860ad3389f43d0d6e7deec3fbe8afce2e7db78c9809569b00734a893dbb6'
+REVISION = '00ed92dbd77b4e0e3efc6b7620214e6bc7afa95e'
+PREDECESSOR_REVISION = 'f29a0c9a88cb57f5ce0544fa0b5bb3d29c28f883'
+EXPECTED_IMAGE = 'ghcr.io/flidai/leapview@sha256:83ef54b4832144b6c8f01c39ca220bb86c51785ac20e5f590099cede8f83ee9f'
 RELEASE = Path('/opt/leapview-demo/releases') / REVISION
 IMAGE = (RELEASE / 'immutable-image.txt').read_text().strip()
 SERVICE = 'leapview-demo-current.service'
@@ -94,7 +94,7 @@ def main():
     assert original_fragment in (Path('/run/systemd/transient') / SERVICE, UNIT), 'Unexpected unit owner'
     if UNIT.exists():
         assert UNIT.read_text() == original_unit and str(RELEASE) not in original_unit, 'Persistent unit differs from the restored predecessor'
-    assert sql('SELECT max(version_id) FROM public.goose_db_version WHERE is_applied') == '21'
+    assert sql('SELECT max(version_id) FROM public.goose_db_version WHERE is_applied') == '22'
 
     operation_env = runtime_env.copy()
     for line in Path('/tmp/leapview-main/.tmp/postgres-demo-current.env').read_text().splitlines():
@@ -119,7 +119,7 @@ def main():
     database_size = int(sql("SELECT sum(pg_database_size(oid)) FROM pg_database WHERE datname IN ('leapview_control','leapview_ducklake')"))
     required = 2 * (home_size + database_size) + 512 * 1024 * 1024
     assert shutil.disk_usage('/opt').free > required, 'Insufficient room for backup and rollback'
-    print(f'Preflight passed: exact image, healthy predecessor, schema 21, backup space {required} bytes', flush=True)
+    print(f'Preflight passed: exact image, healthy predecessor, schema 22, backup space {required} bytes', flush=True)
     if sys.argv[1] == '--check':
         return
 
