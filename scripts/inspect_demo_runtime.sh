@@ -148,7 +148,7 @@ if [[ -n "${DEMO_RECOVERY_MANAGED_DATA_ARCHIVE:-}" ]]; then
 set -euo pipefail
 archive=/tmp/leapview-managed-data-recovery.tar.gz
 revision="$DEMO_RECOVERY_MANAGED_DATA_REVISION"
-root=/tmp/leapview-demo-host-state/managed-data/objects/revisions
+root=/tmp/leapview-demo-host-state/managed-data/objects
 staging="$(mktemp -d "$root/.recovery-XXXXXX")"
 cleanup_recovery() {
   rm -rf "$staging" "$archive"
@@ -194,12 +194,25 @@ observed = {
 if observed != expected:
     raise SystemExit("managed-data recovery archive contains unexpected files")
 PY
-destination="$root/$revision/data"
-mkdir -p "$(dirname "$destination")"
-rm -rf "$destination"
-mv "$staging/data" "$destination"
-chmod -R u=rwX,go=rX "$destination"
-printf 'restored managed-data revision %s with %s files\n' "$revision" "$(find "$destination" -type f | wc -l)"
+restored=0
+while IFS=$'\t' read -r logical digest; do
+  source="$staging/data/$logical"
+  destination="$root/blobs/sha256/${digest:0:2}/$digest"
+  mkdir -p "$(dirname "$destination")"
+  temporary="$destination.recovery.$$"
+  cp "$source" "$temporary"
+  chmod 0444 "$temporary"
+  mv -f "$temporary" "$destination"
+  restored=$((restored + 1))
+done < <(python3 - "$staging/manifest.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+for item in json.loads(Path(sys.argv[1]).read_text())["files"]:
+    print(f'{item["path"]}\t{item["sha256"]}')
+PY
+)
+printf 'restored %s content-addressed blobs for managed-data revision %s\n' "$restored" "$revision"
 RECOVER_DATA
 fi
 
@@ -327,7 +340,10 @@ SQL
   docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
 SELECT r.revision_id,r.manifest::text
 FROM managed_data.revision r
-WHERE r.digest='sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530';
+WHERE r.digest IN (
+  'sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530',
+  'sha256:caa765c9d72853f7c69ec83b7f95b574b8aa3f74e607a35066001aeeeddd5c88'
+);
 SQL
   printf 'Required demo managed-data file inventory:\n'
   docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
@@ -335,7 +351,10 @@ SELECT f.logical_path,f.size_bytes,f.sha256,f.storage_key
 FROM managed_data.revision_file f
 WHERE f.revision_id IN (
   SELECT r.revision_id FROM managed_data.revision r
-  WHERE r.digest='sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530'
+  WHERE r.digest IN (
+    'sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530',
+    'sha256:caa765c9d72853f7c69ec83b7f95b574b8aa3f74e607a35066001aeeeddd5c88'
+  )
 )
 ORDER BY f.logical_path;
 SQL
