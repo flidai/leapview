@@ -88,7 +88,7 @@ jobs:
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
           DEMO_RUNNER_IP: ${{ steps.runner-ip.outputs.ip }}
           DEMO_RECOVERY_MANAGED_DATA_ARCHIVE: /tmp/olist-managed-data-recovery.tar.gz
-          DEMO_RECOVERY_MANAGED_DATA_REVISION: sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530
+          DEMO_RECOVERY_MANAGED_DATA_REVISION: sha256:caa765c9d72853f7c69ec83b7f95b574b8aa3f74e607a35066001aeeeddd5c88
         run: |
           set -euo pipefail
           go run ./internal/app/tools/bootstrapolist --shared-cache --out .data/olist
@@ -113,7 +113,7 @@ jobs:
           manifest = {'files': files}
           canonical = json.dumps(manifest, separators=(',', ':'), ensure_ascii=False).encode()
           revision = 'sha256:' + hashlib.sha256(canonical).hexdigest()
-          expected = 'sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530'
+          expected = 'sha256:caa765c9d72853f7c69ec83b7f95b574b8aa3f74e607a35066001aeeeddd5c88'
           if revision != expected:
               raise SystemExit(f'unexpected Olist revision: {revision}')
           (staging / 'manifest.json').write_bytes(canonical)
