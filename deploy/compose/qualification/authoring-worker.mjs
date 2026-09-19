@@ -7,6 +7,7 @@ const baseURL = process.env.QUALIFICATION_URL || 'https://localhost'
 const evidenceRoot = process.env.QUALIFICATION_EVIDENCE_ROOT || '/evidence'
 const projectID = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
 const screenshotPath = `${evidenceRoot}/authoring-browser-failure.png`
+const evidenceSecretSelector = 'lv-one-time-secret, code.password-value, input[type="password"]'
 
 async function requireJSON(response, description) {
   if (!response.ok()) {
@@ -298,7 +299,10 @@ try {
         })}\n`,
         { mode: 0o644 },
       ).catch(() => {})
-      await administratorPage.screenshot({ path: screenshotPath }).catch(() => {})
+      await administratorPage.screenshot({
+        path: screenshotPath,
+        mask: [administratorPage.locator(evidenceSecretSelector)],
+      }).catch(() => {})
       process.stdout.write(`${JSON.stringify({
         jsonrpc: '2.0',
         id: request?.id || 0,
