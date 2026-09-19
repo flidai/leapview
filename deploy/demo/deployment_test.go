@@ -92,6 +92,8 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"getDeliveryPublicationEvidence",
 		"getDeliveryGenerationStatus",
 		"getProject",
+		"browser entry did not redirect unauthenticated visitors to /login",
+		"$demo_target/login",
 		"DEMO_PROJECT_ID",
 		"go build -o",
 		"grant_type=client_credentials",
