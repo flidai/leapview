@@ -19,6 +19,7 @@ const (
 	AuthorizationActionEdit    AuthorizationAction = "edit"
 	AuthorizationActionPublish AuthorizationAction = "publish"
 	AuthorizationActionArchive AuthorizationAction = "archive"
+	AuthorizationActionDelete  AuthorizationAction = "delete"
 
 	// maxPlacementUpdates bounds one atomic browser reflow command and keeps
 	// validation and revision hashing work proportional to the page size.
@@ -38,7 +39,7 @@ const (
 )
 
 func (a AuthorizationAction) Valid() bool {
-	return a == AuthorizationActionView || a == AuthorizationActionEdit || a == AuthorizationActionPublish || a == AuthorizationActionArchive
+	return a == AuthorizationActionView || a == AuthorizationActionEdit || a == AuthorizationActionPublish || a == AuthorizationActionArchive || a == AuthorizationActionDelete
 }
 
 func (a AuthorizationAction) Validate() error {
@@ -669,6 +670,16 @@ func (ArchivePayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionArchive, nil
 }
 
+// DeletePayload permanently removes the authored dashboard identity and its
+// retained revisions. It is intentionally separate from ArchivePayload so a
+// destructive catalog action cannot silently become a lifecycle transition.
+type DeletePayload struct{}
+
+func (DeletePayload) authoringPayload() {}
+func (DeletePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionDelete, nil
+}
+
 // ReplaceDocumentPayload replaces one complete canonical draft document. It
 // is reserved for trusted application boundaries such as the agent source
 // editor; browser builder intents remain limited to their narrow payloads.
@@ -732,6 +743,7 @@ type Command struct {
 	ReplaceDocument         *ReplaceDocumentPayload         `json:"replaceDocument,omitempty"`
 	Publish                 *PublishPayload                 `json:"publish,omitempty"`
 	Archive                 *ArchivePayload                 `json:"archive,omitempty"`
+	Delete                  *DeletePayload                  `json:"delete,omitempty"`
 }
 
 func (c Command) payloads() []authoringPayload {
@@ -856,6 +868,9 @@ func (c Command) payloads() []authoringPayload {
 	if c.Archive != nil {
 		payloads = append(payloads, c.Archive)
 	}
+	if c.Delete != nil {
+		payloads = append(payloads, c.Delete)
+	}
 	return payloads
 }
 
@@ -914,7 +929,11 @@ func (c Command) Validate() error {
 	if err := validateDashboardID(c.DashboardID); err != nil {
 		return err
 	}
-	if err := c.ExpectedRevision.ValidateComplete(); err != nil {
+	if c.ExpectedRevision.IsZero() {
+		if c.Delete == nil {
+			return fmt.Errorf("%w: expected revision is required", ErrInvalidIdentifier)
+		}
+	} else if err := c.ExpectedRevision.ValidateComplete(); err != nil {
 		return err
 	}
 	if c.ContentHash != "" && !validSHA256(c.ContentHash) {
@@ -934,7 +953,9 @@ func (c Command) Validate() error {
 	}
 	if c.DraftID == "" {
 		if _, archive := payload.(*ArchivePayload); !archive {
-			return fmt.Errorf("%w: draft id is required for this command", ErrInvalidIdentifier)
+			if _, deletePayload := payload.(*DeletePayload); !deletePayload {
+				return fmt.Errorf("%w: draft id is required for this command", ErrInvalidIdentifier)
+			}
 		}
 	} else if err := c.DraftID.Validate(); err != nil {
 		return err

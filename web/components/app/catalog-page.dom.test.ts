@@ -642,7 +642,7 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
       }
     })
 
-    expect(state.menuLabels).toEqual(['Edit dashboard', 'View details', 'Copy link', 'Archive'])
+    expect(state.menuLabels).toEqual(['Edit dashboard', 'View details', 'Copy link', 'Delete'])
     expect(state.rowHref).toBe('/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone')
     expect(state.editHref).toBe('/dashboards/executive-sales/edit?draft=draft-one')
     expect(state.copiedLink).toBe(`${baseURL}/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone`)
@@ -656,7 +656,49 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
   }
 })
 
-test('managed dashboard menu offers an editable copy without edit or archive actions', async () => {
+test('dashboard delete action requires confirmation before submitting', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const dialogPromise = new Promise<string>((resolve, reject) => {
+      page.once('dialog', async (dialog) => {
+        try {
+          const message = dialog.message()
+          await dialog.dismiss()
+          resolve(message)
+        } catch (error) {
+          reject(error)
+        }
+      })
+    })
+    await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        ...element.page,
+        dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({
+          ...dashboard,
+          catalogScope: index === 0 ? 'mine' : dashboard.catalogScope,
+        })),
+      } })
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const list = root.querySelector('lv-entity-list') as CatalogListElement
+      await list.updateComplete
+      ;(list.querySelector('.entity-list-row-action') as HTMLButtonElement).click()
+      await element.updateComplete
+      const form = root.querySelector('.catalog-action-form') as HTMLFormElement
+      if (!form || form.action.endsWith('/delete') === false) throw new Error('delete form is missing')
+      ;(form.querySelector('button[type="submit"]') as HTMLButtonElement).click()
+    })
+    expect(await dialogPromise).toContain('Delete Executive Sales Dashboard?')
+    expect(new URL(page.url()).pathname).toBe('/')
+  } finally {
+    await page.close()
+  }
+})
+
+test('managed dashboard menu offers an editable copy without edit or delete actions', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)

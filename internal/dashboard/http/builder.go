@@ -360,6 +360,46 @@ func (h Handler) DashboardArchive(w nethttp.ResponseWriter, r *nethttp.Request) 
 	nethttp.Redirect(w, r, "/", nethttp.StatusSeeOther)
 }
 
+// DashboardDelete permanently removes the repository-backed dashboard. The
+// authoring service resolves the current lifecycle revision inside its
+// transaction, so the catalog only needs to submit the dashboard identity and
+// retry key.
+func (h Handler) DashboardDelete(w nethttp.ResponseWriter, r *nethttp.Request) {
+	project, err := h.projectIDForRequest(r.Context())
+	actorID := h.currentActor(r)
+	if err != nil || h.Authoring == nil || actorID == "" {
+		writeBuilderError(w, r, access.ErrForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeBuilderError(w, r, fmt.Errorf("read dashboard delete form: %w", err))
+		return
+	}
+	requestID, err := browserFormRequestID(r)
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	dashboardID := authoring.DashboardID(strings.TrimSpace(chi.URLParam(r, "dashboard")))
+	if err := dashboardID.Validate(); err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	command := authoring.Command{
+		ID: authoring.CommandID(requestID), DashboardID: dashboardID,
+		Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: actorID},
+		Delete:     &authoring.DeletePayload{},
+	}
+	if err := executeAuthoringUIMutation(r, "executeDashboardAuthoringCommand", project.String(), requestID, actorID, command.DashboardID.String(), "", authoring.OriginUI, access.CapabilityResourceManage, nil, func(ctx context.Context) error {
+		_, mutationErr := h.Authoring.Execute(ctx, project, command)
+		return mutationErr
+	}); err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	nethttp.Redirect(w, r, "/", nethttp.StatusSeeOther)
+}
+
 // DashboardBuilderUpdates emits the typed builder projection on the canonical
 // Datastar page stream. It intentionally does not accept a client-selected
 // revision; the application resolves the current authorized draft.

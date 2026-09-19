@@ -180,6 +180,24 @@ func TestDashboardArchiveResolvesTheCurrentDraftAndRedirectsToCatalog(t *testing
 	}
 }
 
+func TestDashboardDeleteUsesThePermanentDeleteCommandAndRedirectsToCatalog(t *testing.T) {
+	fake := &builderAuthoringFake{}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/dashboard-owned/delete", strings.NewReader("idempotencyKey="+browserTestRequestID))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request = withBuilderURLParams(request, "sales", "dashboard-owned")
+	recorder := httptest.NewRecorder()
+
+	handler.DashboardDelete(recorder, request)
+
+	if recorder.Code != nethttp.StatusSeeOther || recorder.Header().Get("Location") != "/" {
+		t.Fatalf("delete redirect = %d %q body=%s", recorder.Code, recorder.Header().Get("Location"), recorder.Body.String())
+	}
+	if fake.executed.ID != authoring.CommandID(browserTestRequestID) || fake.executed.Delete == nil || fake.executed.DraftID != "" || !fake.auditIntentFound || fake.auditIntent.Capability != access.CapabilityResourceManage {
+		t.Fatalf("delete command = %#v", fake.executed)
+	}
+}
+
 func TestDashboardDraftCreateOffersAndPreselectsGovernedModels(t *testing.T) {
 	handler := Handler{
 		Authoring:          &builderAuthoringFake{},
