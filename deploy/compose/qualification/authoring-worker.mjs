@@ -182,7 +182,7 @@ const methods = {
     // into human-friendly bundles. Qualification uses the stable UI command
     // contract directly so its machine credentials retain their exact scopes;
     // the picker interaction itself is covered by the browser DOM suite.
-    const token = await administratorPage.getByRole('status').locator('code').textContent({ timeout: 30_000 })
+    const token = await administratorPage.locator('lv-one-time-secret').evaluate((element) => element.secret)
     if (!token?.trim()) {
       throw new Error(`create administrator API token ${params.name} returned no token`)
     }

@@ -452,6 +452,9 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if !strings.Contains(worker, "new URL('/admin/api-tokens/new', baseURL)") || strings.Contains(worker, "new URL('/admin/api-tokens', baseURL)") || strings.Contains(worker, "#token-expiry") {
 		t.Error("browser worker must open the token creation route and avoid the removed raw-expiry control")
 	}
+	if !strings.Contains(worker, "locator('lv-one-time-secret').evaluate") || strings.Contains(worker, "getByRole('status').locator('code')") {
+		t.Error("browser worker must read the generated token from the current one-time-secret contract")
+	}
 	if strings.Contains(worker, `input[type="checkbox"][value="${capability}"]`) {
 		t.Error("browser worker must not couple exact token scopes to grouped permission-picker checkbox values")
 	}
