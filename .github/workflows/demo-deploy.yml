@@ -5,10 +5,19 @@ on:
     workflows: [Main artifacts]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      action:
+        description: Hosted demo operation
+        type: choice
+        required: true
+        default: publish
+        options: [publish, stage, prepare, deploy]
 
 permissions:
   contents: read
   id-token: write
+  packages: read
+  actions: read
 
 concurrency:
   group: leapview-hosted-demo
@@ -21,7 +30,7 @@ jobs:
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action == 'publish')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: leapview-demo
@@ -80,3 +89,93 @@ jobs:
             echo '- [Executive Sales](https://demo.leapview.dev/dashboards/executive-sales/pages/overview)'
             echo '- [Fulfillment Operations](https://demo.leapview.dev/dashboards/fulfillment-operations/pages/overview)'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  stage:
+    if: inputs.action == 'stage'
+    concurrency:
+      group: leapview-demo-operator
+      cancel-in-progress: false
+    name: Stage qualified demo runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: leapview-demo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Fetch infrastructure credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /hetzner-qualification/infrastructure
+      - name: Fetch demo deployment credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /demo/deployment
+      - name: Stage immutable image with pinned SSH identity
+        env:
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+        run: |
+          set -euo pipefail
+          DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
+          export DEMO_RUNNER_IP
+          bash scripts/stage_demo_runtime.sh
+
+  rollout:
+    if: inputs.action == 'prepare' || inputs.action == 'deploy'
+    concurrency:
+      group: leapview-demo-operator
+      cancel-in-progress: false
+    name: Prepare or deploy qualified demo runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: leapview-demo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Require the exact qualified main image
+        if: inputs.action == 'deploy'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35427474973)"
+          test "$(jq -r .conclusion <<<"$run_json")" = success
+          test "$(jq -r .head_sha <<<"$run_json")" = f29a0c9a88cb57f5ce0544fa0b5bb3d29c28f883
+      - name: Fetch infrastructure credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /hetzner-qualification/infrastructure
+      - name: Fetch demo deployment credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /demo/deployment
+      - name: Run checked rollout with pinned SSH identity
+        env:
+          DEMO_ROLLOUT_ACTION: ${{ inputs.action }}
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+        run: |
+          set -euo pipefail
+          DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
+          export DEMO_RUNNER_IP
+          bash scripts/rollout_demo_runtime.sh
