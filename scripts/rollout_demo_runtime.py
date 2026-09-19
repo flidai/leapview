@@ -137,7 +137,9 @@ def main():
                 escaped = value.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
                 environment_lines.append(name + '="' + escaped + '"')
         write_private(environment_file, '\n'.join(environment_lines) + '\n')
-        unit = original_unit + '\n[Service]\nEnvironmentFile=' + str(environment_file) + '\nExecStart=\nExecStart=' + str(RELEASE / 'leapview') + ' serve --production\nWorkingDirectory=' + str(RELEASE) + '\n\n[Install]\nWantedBy=multi-user.target\n'
+        base_unit = '\n'.join(line for line in original_unit.splitlines()
+                              if not line.startswith(('EnvironmentFile=', 'ExecStart=', 'WorkingDirectory=')))
+        unit = base_unit + '\n\n[Service]\nEnvironmentFile=' + str(environment_file) + '\nExecStart=' + str(RELEASE / 'leapview') + ' serve --production\nWorkingDirectory=' + str(RELEASE) + '\n\n[Install]\nWantedBy=multi-user.target\n'
         write_private(UNIT, unit)
         subprocess.run(['systemctl', 'daemon-reload'], check=True)
         subprocess.run(['systemctl', 'reset-failed', SERVICE], check=False)

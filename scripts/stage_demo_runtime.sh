@@ -130,6 +130,16 @@ tag=ghcr.io/flidai/leapview:candidate-$revision
 release=/opt/leapview-demo/releases/$revision
 service=leapview-demo-current.service
 if ! systemctl is-active --quiet "$service"; then
+  preserved_revision=b89fdcfcf292bd1b6f879be38e31872febcc6c9f
+  preserved_environment=/opt/leapview-demo/releases/$preserved_revision/runtime.env
+  unit=$(systemctl show "$service" --property=FragmentPath --value)
+  [[ -f "$preserved_environment" && -f "$unit" ]]
+  repaired_unit=$(mktemp)
+  awk -v keep="EnvironmentFile=$preserved_environment" \
+    '!/^EnvironmentFile=/ || $0 == keep' "$unit" >"$repaired_unit"
+  cat "$repaired_unit" >"$unit"
+  rm -f "$repaired_unit"
+  systemctl daemon-reload
   systemctl reset-failed "$service"
   if ! systemctl restart "$service"; then
     systemctl status "$service" --no-pager || true
