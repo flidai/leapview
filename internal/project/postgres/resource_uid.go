@@ -131,6 +131,23 @@ func (r *Repository) AuthorizeResourceUIDRestore(ctx context.Context, input Reso
 	return authorizeResourceUIDRestore(ctx, r.db, input)
 }
 
+// AuthorizeApprovedResourceUIDRestoresTx converts one exact, effective
+// publication approval into restore evidence for the tombstoned identities in
+// that generation's sealed inventory. The database capability verifies the
+// approval, publication, target, and inventory while holding the target lock.
+func (r *Repository) AuthorizeApprovedResourceUIDRestoresTx(ctx context.Context, tx Tx, requestID, decisionID string) (int64, error) {
+	if r == nil || tx == nil || !canonicalUUID(requestID) || !canonicalUUID(decisionID) {
+		return 0, project.ErrInvalidResourceUID
+	}
+	count, err := projectdb.New(tx).AuthorizeApprovedResourceUIDRestores(ctx, projectdb.AuthorizeApprovedResourceUIDRestoresParams{
+		RequestID: dbUUID(parseUUID(requestID)), DecisionID: dbUUID(parseUUID(decisionID)),
+	})
+	if err != nil {
+		return 0, mapResourceUIDError(err)
+	}
+	return count, nil
+}
+
 func authorizeResourceUIDRestore(ctx context.Context, db DBTX, input ResourceUIDRestoreInput) (project.ResourceUIDRestoreAuthorization, error) {
 	if db == nil || !validActivationScope(input.InstanceID, input.TargetID, input.ProjectID, input.Environment, input.GenerationID) ||
 		input.ResourceUID.Validate() != nil || !authoredResourceIDValid(input.AuthoredID) || !authoredKindValid(input.Kind) ||

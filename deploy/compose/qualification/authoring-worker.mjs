@@ -7,6 +7,7 @@ const baseURL = process.env.QUALIFICATION_URL || 'https://localhost'
 const evidenceRoot = process.env.QUALIFICATION_EVIDENCE_ROOT || '/evidence'
 const projectID = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
 const screenshotPath = `${evidenceRoot}/authoring-browser-failure.png`
+const evidenceSecretSelector = 'lv-one-time-secret, code.password-value, input[type="password"]'
 
 async function requireJSON(response, description) {
   if (!response.ok()) {
@@ -160,12 +161,11 @@ const methods = {
   },
 
   async createAdministratorAPIToken(params) {
-    await administratorPage.goto(new URL('/admin/api-tokens', baseURL).href, {
+    await administratorPage.goto(new URL('/admin/api-tokens/new', baseURL).href, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
     })
-    await administratorPage.getByRole('link', { name: 'Generate new token', exact: true })
-      .waitFor({ state: 'visible', timeout: 30_000 })
+    await administratorPage.locator('#token-name').fill(params.name)
     const settings = administratorPage.locator('lv-personal-settings')
     await settings.evaluate((element, detail) => {
       element.dispatchEvent(new CustomEvent('lv-personal-token-command', {
@@ -183,7 +183,7 @@ const methods = {
     // into human-friendly bundles. Qualification uses the stable UI command
     // contract directly so its machine credentials retain their exact scopes;
     // the picker interaction itself is covered by the browser DOM suite.
-    const token = await administratorPage.getByRole('status').locator('code').textContent({ timeout: 30_000 })
+    const token = await administratorPage.locator('lv-one-time-secret').evaluate((element) => element.secret)
     if (!token?.trim()) {
       throw new Error(`create administrator API token ${params.name} returned no token`)
     }
@@ -299,7 +299,10 @@ try {
         })}\n`,
         { mode: 0o644 },
       ).catch(() => {})
-      await administratorPage.screenshot({ path: screenshotPath }).catch(() => {})
+      await administratorPage.screenshot({
+        path: screenshotPath,
+        mask: [administratorPage.locator(evidenceSecretSelector)],
+      }).catch(() => {})
       process.stdout.write(`${JSON.stringify({
         jsonrpc: '2.0',
         id: request?.id || 0,

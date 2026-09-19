@@ -449,6 +449,20 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 			t.Errorf("browser worker must create exact-scope API tokens through the stable UI command contract: missing %q", required)
 		}
 	}
+	if !strings.Contains(worker, "new URL('/admin/api-tokens/new', baseURL)") || strings.Contains(worker, "new URL('/admin/api-tokens', baseURL)") || strings.Contains(worker, "#token-expiry") {
+		t.Error("browser worker must open the token creation route and avoid the removed raw-expiry control")
+	}
+	if !strings.Contains(worker, "locator('lv-one-time-secret').evaluate") || strings.Contains(worker, "getByRole('status').locator('code')") {
+		t.Error("browser worker must read the generated token from the current one-time-secret contract")
+	}
+	for _, selector := range []string{"lv-one-time-secret", "code.password-value", `input[type="password"]`} {
+		if !strings.Contains(worker, selector) {
+			t.Errorf("browser failure evidence must mask rendered credentials: missing selector %q", selector)
+		}
+	}
+	if !strings.Contains(worker, "mask: [administratorPage.locator(evidenceSecretSelector)]") {
+		t.Error("browser failure evidence must mask rendered credentials before screenshot capture")
+	}
 	if strings.Contains(worker, `input[type="checkbox"][value="${capability}"]`) {
 		t.Error("browser worker must not couple exact token scopes to grouped permission-picker checkbox values")
 	}
