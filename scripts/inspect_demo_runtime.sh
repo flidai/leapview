@@ -397,37 +397,37 @@ JOIN managed_data.collection c ON c.collection_id=b.collection_id
 JOIN managed_data.revision r ON r.revision_id=b.revision_id
 ORDER BY b.project_id,b.environment,b.generation_id,c.connection_id;
 SQL
-  if [[ "${DEMO_REPAIR_MANAGED_DATA_POINTER:-false}" == true ]]; then
+  if [[ "${DEMO_REPAIR_MANAGED_DATA_POINTER:-false}" == true && "$container" == *-demo-current-postgres-1 ]]; then
     printf 'Repairing the exact corrupted demo Olist planning pointer:\n'
     docker exec -i "$container" sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control' <<'SQL'
 DO $$
 DECLARE
-  project text := 'lvproject_fI7xfxRH2qubXpUe5KcU7o6T5MOt7tHz';
-  collection text := 'collection_01a0a9d76d5e7730812a8fffaf6eb06d';
-  desired_revision text := 'revision_649c4b2551c8e584c6cb44da8a8a3e8854d551c05a378aec7c2b0e7d878dd16c';
-  desired_digest text := 'sha256:caa765c9d72853f7c69ec83b7f95b574b8aa3f74e607a35066001aeeeddd5c88';
-  corrupt_revision text := 'revision_118233becdbef604a90344f15bdd7c3d84ecbaed5ef2d97cefad8ff08482d8e3';
-  corrupt_digest text := 'sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530';
+  v_project text := 'lvproject_fI7xfxRH2qubXpUe5KcU7o6T5MOt7tHz';
+  v_collection text := 'collection_01a0a9d76d5e7730812a8fffaf6eb06d';
+  v_desired_revision text := 'revision_649c4b2551c8e584c6cb44da8a8a3e8854d551c05a378aec7c2b0e7d878dd16c';
+  v_desired_digest text := 'sha256:caa765c9d72853f7c69ec83b7f95b574b8aa3f74e607a35066001aeeeddd5c88';
+  v_corrupt_revision text := 'revision_118233becdbef604a90344f15bdd7c3d84ecbaed5ef2d97cefad8ff08482d8e3';
+  v_corrupt_digest text := 'sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530';
 BEGIN
-  IF (SELECT count(*) FROM managed_data.environment_pointer WHERE collection_id=collection AND environment='demo-current') <> 0 THEN
+  IF (SELECT count(*) FROM managed_data.environment_pointer p WHERE p.collection_id=v_collection AND p.environment='demo-current') <> 0 THEN
     RAISE EXCEPTION 'demo Olist planning pointer already exists';
   END IF;
-  IF (SELECT count(*) FROM managed_data.collection WHERE collection_id=collection AND project_id=project AND connection_id='connection:olist' AND status='active') <> 1 THEN
+  IF (SELECT count(*) FROM managed_data.collection c WHERE c.collection_id=v_collection AND c.project_id=v_project AND c.connection_id='connection:olist' AND c.status='active') <> 1 THEN
     RAISE EXCEPTION 'demo Olist collection identity changed';
   END IF;
-  IF (SELECT count(*) FROM managed_data.revision WHERE revision_id=desired_revision AND collection_id=collection AND sequence=1 AND digest=desired_digest AND status='ready' AND file_count=9 AND size_bytes=126186995) <> 1 THEN
+  IF (SELECT count(*) FROM managed_data.revision r WHERE r.revision_id=v_desired_revision AND r.collection_id=v_collection AND r.sequence=1 AND r.digest=v_desired_digest AND r.status='ready' AND r.file_count=9 AND r.size_bytes=126186995) <> 1 THEN
     RAISE EXCEPTION 'verified Olist revision identity changed';
   END IF;
-  IF (SELECT count(*) FROM managed_data.revision WHERE revision_id=corrupt_revision AND collection_id=collection AND sequence=2 AND digest=corrupt_digest AND status='ready' AND manifest->'files' = '[{"path":"financial-sample.csv","size":75083,"sha256":"131af03496fc84d351bffcf4a170f5da0f25204e51ce33d5d41589b4e0191d14"}]'::jsonb) <> 1 THEN
+  IF (SELECT count(*) FROM managed_data.revision r WHERE r.revision_id=v_corrupt_revision AND r.collection_id=v_collection AND r.sequence=2 AND r.digest=v_corrupt_digest AND r.status='ready' AND r.manifest->'files' = '[{"path":"financial-sample.csv","size":75083,"sha256":"131af03496fc84d351bffcf4a170f5da0f25204e51ce33d5d41589b4e0191d14"}]'::jsonb) <> 1 THEN
     RAISE EXCEPTION 'unexpected later Olist revision; refusing repair';
   END IF;
-  IF (SELECT count(*) FROM delivery.delivery_target WHERE project_id=project AND environment='demo-current') <> 1 THEN
+  IF (SELECT count(*) FROM delivery.delivery_target t WHERE t.project_id=v_project AND t.environment='demo-current') <> 1 THEN
     RAISE EXCEPTION 'demo delivery target identity changed';
   END IF;
   INSERT INTO managed_data.environment_pointer
     (collection_id,environment,revision_id,revision_digest,deployment_id,generation,updated_by)
   VALUES
-    (collection,'demo-current',desired_revision,desired_digest,'demo-recovery-20260919',1,'github-operator-recovery');
+    (v_collection,'demo-current',v_desired_revision,v_desired_digest,'demo-recovery-20260919',1,'github-operator-recovery');
 END $$;
 SQL
   fi
