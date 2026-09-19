@@ -160,13 +160,11 @@ const methods = {
   },
 
   async createAdministratorAPIToken(params) {
-    await administratorPage.goto(new URL('/admin/api-tokens', baseURL).href, {
+    await administratorPage.goto(new URL('/admin/api-tokens/new', baseURL).href, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
     })
     await administratorPage.locator('#token-name').fill(params.name)
-    await administratorPage.locator('#token-expiry-preset').selectOption('custom')
-    await administratorPage.locator('#token-expiry').fill(params.expiresAt.slice(0, 16))
     const settings = administratorPage.locator('lv-personal-settings')
     await settings.evaluate((element, detail) => {
       element.dispatchEvent(new CustomEvent('lv-personal-token-command', {
@@ -184,7 +182,7 @@ const methods = {
     // into human-friendly bundles. Qualification uses the stable UI command
     // contract directly so its machine credentials retain their exact scopes;
     // the picker interaction itself is covered by the browser DOM suite.
-    const token = await administratorPage.getByRole('status').locator('code').textContent({ timeout: 30_000 })
+    const token = await administratorPage.locator('lv-one-time-secret').evaluate((element) => element.secret)
     if (!token?.trim()) {
       throw new Error(`create administrator API token ${params.name} returned no token`)
     }

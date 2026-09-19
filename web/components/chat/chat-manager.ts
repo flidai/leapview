@@ -31,6 +31,14 @@ function isUndoableAction(detail: ChatAction | null | undefined): detail is Chat
   return Boolean(detail && (detail.action === 'archive' || detail.action === 'delete') && detail.conversationId)
 }
 
+function isBulkAction(action: string): boolean {
+  return action === 'archive_all' || action === 'delete_active' || action === 'delete_all'
+}
+
+function isDeleteAction(action: string | undefined): boolean {
+  return action === 'delete' || action === 'delete_active' || action === 'delete_all'
+}
+
 function readStoredUndos(): StoredUndo[] {
   try {
     const raw = window.sessionStorage.getItem(pendingUndoStorageKey)
@@ -193,7 +201,7 @@ export class ChatManager extends DatastarLit(LitElement) {
       this.renameTarget = detail
       this.renameValue = detail.title || ''
       this.open()
-    } else if (detail.action === 'delete' || detail.action.endsWith('_all')) {
+    } else if (isDeleteAction(detail.action) || detail.action === 'archive_all') {
       this.confirmation = detail
       this.open()
     } else if (isUndoableAction(detail)) {
@@ -355,9 +363,9 @@ export class ChatManager extends DatastarLit(LitElement) {
     this.feedback = result.message || ''
     this.confirmation = null
     if (action && !this.archivesOpen) this.close()
-    if (action && ['archive', 'delete', 'archive_all', 'delete_all'].includes(action.action)) {
+    if (action && ['archive', 'delete', 'archive_all', 'delete_active', 'delete_all'].includes(action.action)) {
       const current = window.location.pathname.match(/^\/chats\/([^/]+)$/)?.[1]
-      if (current && current !== 'new' && (action.action.endsWith('_all') || decodeURIComponent(current) === action.conversationId)) window.location.assign('/chats/new')
+      if (current && current !== 'new' && (isBulkAction(action.action) || decodeURIComponent(current) === action.conversationId)) window.location.assign('/chats/new')
     }
     this.flushQueuedRefresh()
   }
@@ -397,8 +405,8 @@ export class ChatManager extends DatastarLit(LitElement) {
 
   render() {
     const action = this.confirmation?.action
-    const deleting = action === 'delete' || action === 'delete_all'
-    const title = this.renameTarget ? 'Rename chat' : this.confirmation ? action === 'delete_all' ? 'Delete all chats?' : action === 'archive_all' ? 'Archive all chats?' : 'Delete chat?' : 'Archived chats'
+    const deleting = isDeleteAction(action)
+    const title = this.renameTarget ? 'Rename chat' : this.confirmation ? action === 'delete_all' || action === 'delete_active' ? 'Delete all chats?' : action === 'archive_all' ? 'Archive all chats?' : 'Delete chat?' : 'Archived chats'
     const archived = this.management.archivedConversations || []
     const matches = archived.filter(chat => chat.title.toLowerCase().includes(this.query.toLowerCase()))
     return html`
@@ -413,7 +421,7 @@ export class ChatManager extends DatastarLit(LitElement) {
               <div class="actions"><button type="button" ?disabled=${Boolean(this.pending)} @click=${this.cancel}>Cancel</button><button class="primary" type="submit" ?disabled=${Boolean(this.pending) || !this.renameValue.trim()}>${this.pending ? 'Saving…' : 'Rename'}</button></div>
             </form>
           ` : this.confirmation ? html`
-            <p>${action === 'delete_all' ? 'This permanently deletes all of your chats, including archived chats. This cannot be undone.' : action === 'archive_all' ? 'All of your chats will move out of the sidebar. You can restore them here in Settings.' : html`Delete <strong>${this.confirmation.title || 'this chat'}</strong>? You can undo this from the notification before the chat is permanently deleted.`}</p>
+            <p>${action === 'delete_all' ? 'This permanently deletes all of your chats, including archived chats. This cannot be undone.' : action === 'delete_active' ? 'This permanently deletes every chat listed here. Archived chats will be kept. This cannot be undone.' : action === 'archive_all' ? 'All of your chats will move out of the sidebar. You can restore them here in Settings.' : html`Delete <strong>${this.confirmation.title || 'this chat'}</strong>? You can undo this from the notification before the chat is permanently deleted.`}</p>
             <div class="actions"><button ?disabled=${Boolean(this.pending)} @click=${this.cancel}>Cancel</button><button class=${deleting ? 'confirm-delete' : ''} ?disabled=${Boolean(this.pending)} @click=${() => this.confirmation && (isUndoableAction(this.confirmation) ? this.beginUndo(this.confirmation) : this.perform(this.confirmation))}>${this.pending ? 'Saving…' : deleting ? 'Delete' : 'Archive all'}</button></div>
           ` : html`
             <p class="muted">Archived chats are hidden from your sidebar. Restore a chat to continue the conversation.</p>

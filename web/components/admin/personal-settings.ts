@@ -1,6 +1,6 @@
-import { LitElement, css, html, nothing } from 'lit'
-import { query, state } from 'lit/decorators.js'
-import { Camera, Check, ChevronDown, Plus, Search, Trash2, X } from 'lucide'
+import { LitElement, html, nothing } from 'lit'
+import { property, query, state } from 'lit/decorators.js'
+import { ArrowLeft, CalendarDays, Camera, Check, ChevronDown, KeyRound, Monitor, Plus, Search, Terminal, Trash2, X } from 'lucide'
 import type {
   PersonalAuthoringSessionSignal,
   PersonalCapabilityOptionSignal,
@@ -10,8 +10,14 @@ import type {
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { browserCommandFailure } from '../shared/command-failure'
+import { emptyStateStyles, renderEmptyState } from '../shared/empty-state'
 import { lucideIcon } from '../shared/lucide-icons'
+import '../shared/one-time-secret'
+import '../shared/select-menu'
+import type { SelectMenu } from '../shared/select-menu'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
+import { personalSettingsStyles } from './personal-settings.styles'
+import '../shared/drawer'
 import '../shared/user-avatar'
 
 const emptySettings: PersonalSettingsSignal = {
@@ -30,10 +36,24 @@ type ThemeOption = {
 
 type TokenPermissionAccess = 'read' | 'write'
 
+type TokenExpirationPreset = '7' | '30' | '60' | '90' | 'custom'
+
 type TokenPermissionAccessOption = {
   value: TokenPermissionAccess
   label: 'Read-only' | 'Read and write'
   capabilities: string[]
+}
+
+type PendingSessionRevocation = {
+  id: string
+  label: string
+  kind: 'browser' | 'authoring'
+  current?: boolean
+}
+
+type SelectedSession = {
+  id: string
+  kind: 'browser' | 'authoring'
 }
 
 type TokenPermissionDefinition = {
@@ -67,18 +87,20 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private currentPassword = ''
   @state() private newPassword = ''
   @state() private tokenName = ''
+  @state() private tokenDescription = ''
   @state() private tokenPermissionSelections: Record<string, TokenPermissionAccess> = {}
-  @state() private tokenExpires = ''
+  @state() private tokenExpirationPreset: TokenExpirationPreset = '30'
+  @state() private tokenCustomExpiration = ''
+  @state() private tokenPendingDeletion: PersonalTokenSignal | null = null
+  @state() private pendingSessionRevocation: PendingSessionRevocation | null = null
+  @state() private selectedSession: SelectedSession | null = null
+  @state() private passwordDialogOpen = false
+  @property({ attribute: 'token-view' }) tokenView: 'list' | 'create' = 'list'
+  @state() private tokenConfirmationOpen = false
   @state() private tokenCreatePending = false
   @state() private tokenPermissionMenuOpen = false
   @state() private tokenPermissionSearch = ''
   @state() private tokenPermissionAccessMenu = ''
-  @state() private sessionsVisible = 10
-  @state() private tokenExpiryPreset = '90'
-  @state() private tokenConfirmOpen = false
-  @state() private tokenConfirmation: { expiresAt: string; label: string } | null = null
-  @state() private tokenSecretCopied = false
-  @state() private tokenSecretDismissed = ''
   @state() private message = ''
   @state() private error = ''
   @state() private avatarMenuOpen = false
@@ -88,147 +110,18 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @query('.avatar-trigger') private avatarTrigger?: HTMLButtonElement
   @query('.avatar-input') private avatarInput?: HTMLInputElement
   @query('.permission-trigger') private permissionTrigger?: HTMLButtonElement
+  @query('#token-expiration-preset') private expirationSelect?: SelectMenu
   @query('.theme-trigger') private themeTrigger?: HTMLButtonElement
-  @query('#token-confirm') private tokenConfirmDialog?: HTMLDialogElement
+  @query('[data-token-confirm-dialog]') private tokenConfirmationDialog?: HTMLDialogElement
+  @query('[data-token-delete-dialog]') private tokenDeleteDialog?: HTMLDialogElement
+  @query('[data-session-revoke-dialog]') private sessionRevokeDialog?: HTMLDialogElement
+  @query('[data-password-dialog]') private passwordDialog?: HTMLDialogElement
   private handledNewToken = ''
   private observedDisplayName = ''
   private observedProfileID = ''
   private observedTheme = ''
 
-  static styles = [settingsFieldStyles, css`
-    :host { display: block; color: var(--lv-fg-default); font: var(--lv-type-body); }
-    .settings { display: grid; gap: var(--base-size-20); width: 100%; min-width: 0; }
-    section { display: grid; gap: var(--base-size-20); }
-    h2, h3, p { margin: 0; }
-    h2 { font: var(--lv-type-section-title); }
-    h3 { font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
-    .card { display: grid; gap: 0; overflow: visible; border: var(--lv-border-muted); border-radius: var(--lv-radius-large); background: var(--lv-bg-panel); }
-    .row { display: grid; min-height: var(--base-size-48); box-sizing: border-box; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-16); padding: var(--base-size-8) var(--base-size-16); border-bottom: var(--lv-border-muted); }
-    .row:first-child { border-radius: var(--lv-radius-large) var(--lv-radius-large) 0 0; }
-    .row:last-child { border-bottom: 0; }
-    .profile-row { min-height: var(--base-size-64); padding: var(--base-size-12) var(--base-size-20); }
-    .profile-email { max-width: 22rem; justify-self: end; text-align: right; }
-    .profile-name-form { min-width: 0; justify-self: end; }
-    .profile-name-control { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: var(--base-size-8); }
-    .profile-name-control input { width: min(13rem, 40vw); min-height: var(--control-medium-size, var(--base-size-32)); text-align: center; font: var(--lv-type-body); }
-    .profile-local-input { width: min(13rem, 40vw); min-height: var(--control-medium-size, var(--base-size-32)); justify-self: end; text-align: center; font: var(--lv-type-body); }
-    .muted { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-    input, select { min-width: 0; min-height: var(--control-small-size); box-sizing: border-box; border: var(--lv-border-default); border-radius: var(--lv-radius-small); padding: 0 var(--control-small-paddingInline-normal); color: var(--lv-fg-default); background: var(--lv-bg-input); font: var(--lv-type-body-compact); }
-    button { min-height: var(--control-small-size); border: var(--lv-border-default); border-radius: var(--lv-radius-small); padding: 0 var(--control-small-paddingInline-normal); color: var(--lv-fg-default); background: var(--lv-button-bg-rest); cursor: pointer; font: var(--lv-type-body-compact); }
-    button.primary { color: var(--lv-fg-on-accent); border-color: var(--lv-bg-accent); background: var(--lv-bg-accent); }
-    button.danger { color: var(--lv-fg-danger); }
-    button:disabled { cursor: not-allowed; opacity: .55; }
-    form { display: grid; gap: var(--base-size-8); }
-    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--base-size-8); }
-    .actions { display: flex; flex-wrap: wrap; gap: var(--base-size-8); align-items: center; }
-    .token-form { width: 100%; gap: var(--base-size-20); }
-    .token-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, .7fr); gap: var(--base-size-16); }
-    .token-field { display: grid; min-width: 0; align-content: start; gap: var(--base-size-6); }
-    .token-field input, .token-field select { width: 100%; }
-    .scope-description { min-height: var(--base-size-16); }
-    .permissions { display: grid; gap: var(--base-size-12); }
-    .permissions-header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--base-size-12); }
-    .permissions-title { display: flex; min-width: 0; align-items: center; gap: var(--base-size-8); }
-    .count { display: inline-grid; min-width: var(--base-size-24); height: var(--base-size-24); box-sizing: border-box; place-items: center; border-radius: var(--lv-radius-full); padding: 0 var(--base-size-8); color: var(--lv-fg-muted); background: var(--lv-bg-control); font: var(--lv-type-caption); }
-    .permission-picker { position: relative; flex: none; }
-    .permission-trigger { display: inline-flex; align-items: center; gap: var(--base-size-8); }
-    .permission-trigger:hover, .permission-trigger:focus-visible, .permission-trigger[aria-expanded="true"] { border-color: var(--lv-border-accent); outline: 0; }
-    .permission-trigger svg, .permission-remove svg, .permission-search svg, .permission-access-trigger svg { width: var(--base-size-16); height: var(--base-size-16); }
-    .permission-backdrop { display: none; }
-    .permission-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: min(28rem, calc(100vw - var(--base-size-32))); max-height: min(32rem, var(--permission-menu-max-height, calc(100svh - var(--base-size-64)))); box-sizing: border-box; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); }
-    .permission-menu-header { display: grid; gap: var(--base-size-12); padding: var(--base-size-16); border-bottom: var(--lv-border-muted); }
-    .permission-menu-title { display: flex; align-items: center; justify-content: space-between; gap: var(--base-size-8); }
-    .permission-menu-heading { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--base-size-8); }
-    .permission-menu-count { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-    .permission-menu-close { display: none; width: var(--control-small-size); min-height: var(--control-small-size); place-items: center; padding: 0; color: var(--lv-fg-muted); background: transparent; }
-    .permission-search { position: relative; display: grid; align-items: center; }
-    .permission-search svg { position: absolute; left: var(--base-size-12); z-index: 1; color: var(--lv-fg-muted); pointer-events: none; }
-    .permission-search input { width: 100%; min-height: var(--control-xlarge-size, var(--base-size-40)); padding-left: var(--base-size-40); font: var(--lv-type-body); }
-    .permission-search input:focus-visible { border-color: var(--lv-border-accent); outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
-    .permission-list { display: grid; min-height: 0; align-content: start; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--lv-scrollbar-thumb) transparent; scrollbar-width: thin; }
-    .permission-group + .permission-group { border-top: var(--lv-border-muted); }
-    .permission-category { display: flex; min-height: var(--base-size-32); box-sizing: border-box; align-items: center; justify-content: space-between; gap: var(--base-size-8); padding: var(--base-size-8) var(--base-size-12) var(--base-size-4); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-semibold); }
-    .permission-category-count { font-weight: var(--base-text-weight-normal); font-variant-numeric: tabular-nums; }
-    .permission-option { display: grid; min-width: 0; min-height: var(--base-size-48); box-sizing: border-box; grid-template-columns: var(--base-size-20) minmax(0, 1fr); align-items: start; gap: var(--base-size-8); padding: var(--base-size-8) var(--base-size-12); cursor: pointer; }
-    .permission-option:hover { background: var(--lv-bg-control-hover); }
-    .permission-option[data-selected="true"] { background: var(--lv-bg-accent-muted, var(--lv-bg-control-hover)); }
-    .permission-option:focus-within { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
-    .permission-option input[type="checkbox"] { width: var(--base-size-16); height: var(--base-size-16); min-height: 0; margin: var(--base-size-2) 0 0; padding: 0; accent-color: var(--lv-bg-accent); }
-    .selected-permissions { display: grid; border: var(--lv-border-muted); border-radius: var(--lv-radius-large); }
-    .selected-permission { position: relative; display: grid; min-height: var(--base-size-64); grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-12); padding: var(--base-size-12) var(--base-size-16); border-bottom: var(--lv-border-muted); }
-    .selected-permission:last-child { border-bottom: 0; }
-    .permission-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--base-size-8); }
-    .permission-access-picker { position: relative; }
-    .permission-access-trigger, .permission-access-fixed { min-width: 10.5rem; box-sizing: border-box; padding-inline: var(--base-size-12); }
-    .permission-access-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: var(--base-size-6); }
-    .permission-access-trigger:hover:not(:disabled), .permission-access-trigger:focus-visible, .permission-access-trigger[aria-expanded="true"] { border-color: var(--lv-border-accent); outline: 0; }
-    .permission-access-fixed { display: inline-flex; min-height: var(--control-small-size); align-items: center; border-radius: var(--lv-radius-small); color: var(--lv-fg-muted); background: var(--lv-bg-control); font: var(--lv-type-body-compact); }
-    .permission-access-prefix { color: var(--lv-fg-muted); font-weight: var(--base-text-weight-normal); }
-    .permission-access-value { color: var(--lv-fg-default); font-weight: var(--base-text-weight-semibold); }
-    .permission-access-fixed .permission-access-value { color: var(--lv-fg-muted); }
-    .permission-access-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: 12rem; overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-4); }
-    button.permission-access-option { display: flex; width: 100%; min-height: var(--control-medium-size); align-items: center; justify-content: space-between; gap: var(--base-size-8); border-color: transparent; background: transparent; padding-inline: var(--base-size-8); text-align: left; }
-    button.permission-access-option:hover, button.permission-access-option:focus-visible, button.permission-access-option[aria-selected="true"] { background: var(--lv-bg-control-hover); outline: 0; }
-    .permission-access-check { display: inline-grid; width: var(--base-size-16); height: var(--base-size-16); place-items: center; color: var(--lv-fg-accent); }
-    .permission-remove { display: grid; width: var(--control-small-size); min-height: var(--control-small-size); place-items: center; padding: 0; color: var(--lv-fg-muted); background: transparent; }
-    .permission-remove:hover, .permission-remove:focus-visible { color: var(--lv-fg-danger); border-color: var(--lv-fg-danger); outline: 0; }
-    .permission-empty { display: grid; min-height: var(--base-size-48); place-items: center start; padding: var(--base-size-8) var(--base-size-12); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-    .theme-picker { position: relative; display: inline-block; max-width: 100%; justify-self: end; }
-    .theme-trigger { display: inline-grid; width: auto; max-width: 100%; min-height: var(--control-medium-size); grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-8); padding-inline: var(--base-size-8); text-align: left; }
-    .theme-trigger:hover, .theme-trigger:focus-visible, .theme-trigger[aria-expanded="true"] { border-color: var(--lv-border-accent); outline: 0; }
-    .theme-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .theme-trigger > svg { width: var(--base-size-16); height: var(--base-size-16); color: var(--lv-fg-muted); }
-    .theme-preview { display: inline-grid; width: var(--base-size-40); height: var(--base-size-24); box-sizing: border-box; grid-template-columns: auto auto; place-content: center; align-items: center; gap: var(--base-size-2); overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-small); padding: 0 var(--base-size-4); font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-semibold); line-height: 1; }
-    .theme-preview[data-tone="light"] { color: var(--fgColor-black); background: var(--bgColor-white); }
-    .theme-preview[data-tone="dark"] { color: var(--fgColor-white); background: var(--bgColor-black); }
-    .theme-preview[data-tone="system"] { color: var(--fgColor-white); background: linear-gradient(135deg, var(--bgColor-white) 0 48%, var(--bgColor-black) 52% 100%); }
-    .theme-preview-dot { width: var(--base-size-6); height: var(--base-size-6); border-radius: var(--lv-radius-full); background: var(--lv-bg-accent); }
-    .theme-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: min(22rem, calc(100vw - var(--base-size-32))); max-height: min(32rem, calc(100svh - var(--base-size-64))); overflow-y: auto; overscroll-behavior: contain; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-6); scrollbar-color: var(--lv-scrollbar-thumb) transparent; scrollbar-width: thin; }
-    .theme-group { display: grid; gap: var(--base-size-2); padding: var(--base-size-4) 0; border-bottom: var(--lv-border-muted); }
-    .theme-group:last-child { border-bottom: 0; }
-    .theme-group-label { padding: var(--base-size-4) var(--base-size-8); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-semibold); }
-    button.theme-option { display: grid; width: 100%; min-height: var(--control-medium-size); grid-template-columns: auto minmax(0, 1fr) var(--base-size-16); align-items: center; gap: var(--base-size-8); border-color: transparent; background: transparent; padding-inline: var(--base-size-8); text-align: left; }
-    button.theme-option:hover, button.theme-option:focus-visible, button.theme-option[aria-selected="true"] { background: var(--lv-bg-control-hover); outline: 0; }
-    .theme-option-label { overflow-wrap: anywhere; }
-    .theme-check { display: inline-grid; width: var(--base-size-16); height: var(--base-size-16); place-items: center; color: var(--lv-fg-accent); }
-    .avatar-control { position: relative; display: inline-grid; justify-items: end; }
-    .avatar-trigger { display: grid; width: var(--base-size-32); height: var(--base-size-32); min-height: var(--base-size-32); place-items: center; border: 0; border-radius: var(--lv-radius-full); padding: 0; background: transparent; }
-    .avatar-trigger:hover { box-shadow: var(--lv-shadow-resting-sm); }
-    .avatar-trigger:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
-    .avatar-trigger lv-user-avatar { --lv-user-avatar-size: var(--base-size-32); pointer-events: none; }
-    .avatar-input { display: none; }
-    .avatar-menu { display: grid; width: var(--overlay-width-xsmall); margin-top: var(--base-size-6); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-4); }
-    .avatar-menu-item { display: grid; min-height: var(--control-medium-size); grid-template-columns: var(--base-size-16) minmax(0, 1fr); align-items: center; gap: var(--base-size-8); border: var(--lv-border-transparent); border-radius: var(--lv-radius-small); background: transparent; padding: 0 var(--base-size-8); text-align: left; }
-    .avatar-menu-item:hover, .avatar-menu-item:focus-visible { background: var(--lv-bg-control-hover); outline: 0; }
-    .avatar-menu-item svg { width: var(--base-size-16); height: var(--base-size-16); color: var(--lv-fg-muted); }
-    .avatar-menu-item.danger, .avatar-menu-item.danger svg { color: var(--lv-fg-danger); }
-    .notice { padding: var(--base-size-8) var(--base-size-12); border-radius: var(--lv-radius-small); background: var(--lv-bg-success-muted); color: var(--lv-fg-success); }
-    .token-success { display: grid; gap: var(--base-size-8); border: var(--lv-border-width) solid var(--lv-line-success-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-success-muted); padding: var(--base-size-12); }
-    .token-secret { overflow-wrap: anywhere; user-select: all; font-family: var(--fontStack-monospace); }
-    dialog { width: min(32rem, calc(100vw - var(--base-size-32))); max-width: none; border: 0; border-radius: var(--lv-radius-large); background: transparent; color: inherit; padding: 0; }
-    dialog::backdrop { background: var(--lv-modal-backdrop); }
-    .error { color: var(--lv-fg-danger); }
-    @media (max-width: 40rem) {
-      .row { grid-template-columns: 1fr; gap: var(--base-size-12); padding: var(--base-size-16); }
-      .profile-email { max-width: none; justify-self: stretch; text-align: left; }
-      .profile-name-form { width: 100%; justify-self: stretch; }
-      .profile-name-control { justify-content: stretch; }
-      .profile-name-control input { width: auto; flex: 1 1 auto; }
-      .profile-local-input { width: 100%; justify-self: stretch; }
-      .theme-picker { width: 100%; min-width: 0; justify-self: stretch; }
-      .theme-trigger { width: 100%; }
-      .theme-menu { right: auto; left: 0; }
-      .avatar-control { justify-self: start; }
-      .token-form-grid { grid-template-columns: 1fr; }
-      .permissions-header { align-items: start; }
-      .permission-backdrop { position: fixed; z-index: var(--z-index-dropdown); inset: 0; display: block; background: var(--lv-modal-backdrop); }
-      .permission-menu { position: fixed; z-index: var(--z-index-modal); top: auto; right: var(--base-size-16); bottom: var(--base-size-16); left: var(--base-size-16); width: auto; max-height: calc(100svh - var(--base-size-32)); }
-      .permission-menu-close { display: grid; }
-      .selected-permission { grid-template-columns: minmax(0, 1fr); }
-      .permission-row-actions { width: 100%; justify-content: space-between; }
-      .permission-access-menu { right: auto; left: 0; }
-    }
-  `]
+  static styles = [settingsFieldStyles, emptyStateStyles, personalSettingsStyles]
 
   override connectedCallback(): void {
     super.connectedCallback()
@@ -271,23 +164,30 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     }
     const newToken = settings.tokens.newToken ?? ''
     if (newToken && newToken !== this.handledNewToken) {
+      const navigateToTokenList = this.tokenView === 'create' && window.location.pathname === '/admin/api-tokens/new'
       this.handledNewToken = newToken
       this.tokenCreatePending = false
-      this.tokenSecretCopied = false
-      this.tokenSecretDismissed = ''
+      this.tokenView = 'list'
+      this.tokenConfirmationOpen = false
       this.tokenName = ''
+      this.tokenDescription = ''
       this.tokenPermissionSelections = {}
-      this.tokenExpires = ''
+      this.tokenExpirationPreset = '30'
+      this.tokenCustomExpiration = ''
+      this.closeExpirationMenu()
       this.closePermissionMenu()
       this.closeTokenPermissionAccessMenu()
+      if (navigateToTokenList) window.history.replaceState(window.history.state, '', '/admin/api-tokens')
     }
-    const dialog = this.tokenConfirmDialog
-    if (this.tokenConfirmOpen && dialog && !dialog.open) {
-      if (typeof dialog.showModal === 'function') dialog.showModal()
-      else dialog.setAttribute('open', '')
-    } else if (!this.tokenConfirmOpen && dialog?.open) {
-      dialog.close()
-    }
+    const confirmation = this.tokenConfirmationDialog
+    if (this.tokenConfirmationOpen && confirmation && !confirmation.open) confirmation.showModal()
+    const deletion = this.tokenDeleteDialog
+    if (this.tokenPendingDeletion && deletion && !deletion.open) deletion.showModal()
+    const sessionRevocation = this.sessionRevokeDialog
+    if (this.pendingSessionRevocation && sessionRevocation && !sessionRevocation.open) sessionRevocation.showModal()
+    const password = this.passwordDialog
+    if (this.passwordDialogOpen && password && !password.open) password.showModal()
+    if (settings.active !== 'security' && this.selectedSession) this.selectedSession = null
   }
 
   render() {
@@ -362,21 +262,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
             </div>
           </div>
         </section>` : nothing}
-        ${settings.active === 'profile' ? html`<section aria-label="Chat history">
-          <h2>Chat history</h2>
-          <div class="card">
-            <div class="row"><div class="settings-field"><h3>Archive all chats</h3><span class="settings-description">Clear your sidebar and keep your conversations.</span></div><button @click=${() => this.requestChatCleanup('archive_all')}>Archive all</button></div>
-            <div class="row"><div class="settings-field"><h3>Delete all chats</h3><span class="settings-description">Permanently delete your conversations, including archived chats.</span></div><button class="danger" @click=${() => this.requestChatCleanup('delete_all')}>Delete all</button></div>
-          </div>
-        </section>` : nothing}
         ${settings.active === 'security' ? this.renderSecurity(settings) : nothing}
         ${settings.active === 'api-tokens' ? this.renderTokens(settings.tokens) : nothing}
       </div>
     `
-  }
-
-  private requestChatCleanup(action: string) {
-    this.dispatchEvent(new CustomEvent('lv-chat-action', { bubbles: true, composed: true, detail: { action, conversationId: '' } }))
   }
 
   private renderThemePicker(theme: string) {
@@ -435,33 +324,149 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 
   private renderNotice(settings: PersonalSettingsSignal) {
-    if (settings.tokens.newToken && settings.tokens.newToken !== this.tokenSecretDismissed) return html`<div class="token-success" role="status"><strong>Token generated successfully.</strong><span>Copy it now. For your security, this token will only be shown once.</span><code class="token-secret">${settings.tokens.newToken}</code><div class="actions"><button type="button" @click=${() => this.copyTokenSecret(settings.tokens.newToken!)}>${this.tokenSecretCopied ? 'Copied' : 'Copy token'}</button><button type="button" @click=${() => this.dismissTokenSecret(settings.tokens.newToken!)}>Done</button></div></div>`
-    if (this.error) return html`<p class="error" role="alert">${this.error}</p>`
+    if (this.error && !this.tokenConfirmationOpen) return html`<p class="error" role="alert">${this.error}</p>`
     if (this.message) return html`<p class="notice" role="status">${this.message}</p>`
     return nothing
   }
 
   private renderSecurity(settings: PersonalSettingsSignal) {
+    const browserSessions = settings.security.sessions.filter((session) => !session.revokedAt)
+    const currentSessions = browserSessions.filter((session) => session.current)
+    const otherSessions = browserSessions.filter((session) => !session.current)
+    const authoringSessions = settings.security.authoringSessions.filter((session) => !session.revokedAt)
+    const activeCount = browserSessions.length + authoringSessions.length
+    const canChangePassword = settings.security.localPasswordEnabled && settings.profile.hasLocalPassword
     return html`
-      <section aria-label="Security and sessions">
-        ${settings.security.localPasswordEnabled && settings.profile.hasLocalPassword ? html`
-          <div class="card"><div class="row"><div class="settings-field"><h3>Change password</h3><span class="settings-description">Use at least 12 characters and do not reuse the password elsewhere. Changing it signs out browser, desktop, CLI, and MCP sessions.</span></div></div><div class="row"><form @submit=${this.changePassword}><div class="form-grid"><input aria-label="Current password" type="password" autocomplete="current-password" maxlength="1024" placeholder="Current password" .value=${this.currentPassword} @input=${this.onCurrentPasswordInput} required><input aria-label="New password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" placeholder="New password" .value=${this.newPassword} @input=${this.onNewPasswordInput} required></div><div class="actions"><button class="primary" type="submit">Change password</button></div></form></div></div>
-        ` : html`<div class="card"><div class="row"><div class="settings-field"><h3>Local password</h3><span class="settings-description">Password changes are managed by your identity provider.</span></div></div></div>`}
-        <div class="card"><div class="row"><div class="settings-field"><h3>Browser &amp; desktop sessions</h3><span class="settings-description">Revoke sessions you no longer recognize. Current session is marked as This device.</span></div></div>${settings.security.sessions.length ? settings.security.sessions.slice(0, this.sessionsVisible).map((session) => this.renderSession(session)) : html`<div class="row"><span class="muted">No active sessions.</span></div>`}${settings.security.sessions.length > this.sessionsVisible ? html`<div class="row"><button type="button" @click=${() => { this.sessionsVisible += 10 }}>Show 10 more sessions</button></div>` : nothing}</div>
-        ${settings.security.authoringSessions.length ? html`<div class="card"><div class="row"><div class="settings-field"><h3>CLI &amp; authoring sessions</h3><span class="settings-description">These sessions grant scoped access to authoring tools.</span></div></div>${settings.security.authoringSessions.map((session) => this.renderAuthoringSession(session))}</div>` : nothing}
+      <section class="security-page" aria-label="Security and sessions">
+        <section class="security-section" aria-label="Password">
+          <div class="security-section-heading-copy"><h2>Password</h2></div>
+          <div class="security-password-row">
+            <div class="security-password-copy">
+              <span class="security-password-state">${canChangePassword ? 'Local password · Configured' : 'Managed by identity provider'}</span>
+              <span class="settings-description">${canChangePassword ? 'Changing your password signs out browser, desktop, CLI, and authoring sessions.' : 'Your identity provider controls password changes for this account.'}</span>
+            </div>
+            ${canChangePassword ? html`<button type="button" @click=${this.openPasswordDialog}>Change password</button>` : nothing}
+          </div>
+        </section>
+        <section class="security-section" aria-label="Active sessions">
+          <div class="security-section-heading">
+            <div class="security-section-heading-copy"><h2>Active sessions</h2><p class="settings-description">Review devices and scoped clients that can access your account.</p></div>
+            <span class="security-session-count">${activeCount} active ${activeCount === 1 ? 'session' : 'sessions'}</span>
+          </div>
+          <div class="security-session-list">
+            <div class="security-session-group" aria-label="Current session">
+              <div class="security-session-group-label">Current</div>
+              ${currentSessions.length ? currentSessions.map((session) => this.renderSession(session)) : html`<div class="security-session security-empty">Current session information is unavailable.</div>`}
+            </div>
+            ${otherSessions.length ? html`<div class="security-session-group" aria-label="Other devices"><div class="security-session-group-label">Other devices</div>${otherSessions.map((session) => this.renderSession(session))}</div>` : nothing}
+            ${authoringSessions.length ? html`<div class="security-session-group" aria-label="CLI and authoring"><div class="security-session-group-label">CLI &amp; authoring</div>${authoringSessions.map((session) => this.renderAuthoringSession(session))}</div>` : nothing}
+          </div>
+        </section>
+        ${this.passwordDialogOpen ? this.renderPasswordDialog() : nothing}
+        ${this.renderSessionDrawer(settings)}
+        ${this.pendingSessionRevocation ? this.renderSessionRevokeConfirmation(this.pendingSessionRevocation) : nothing}
       </section>
     `
   }
 
   private renderSession(session: PersonalSessionSignal) {
-    return html`<div class="row"><div class="settings-field"><span class="settings-label">${session.clientLabel || session.kind}${session.current ? ' · This device' : ''}</span><span class="settings-description">Created ${formatDate(session.createdAt)} · Last seen ${formatDate(session.lastSeenAt)}${session.expiresAt ? ` · Expires ${formatDate(session.expiresAt)}` : ''}</span></div>${session.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.revokeSession(session.id)}>Revoke</button>`}</div>`
+    const label = session.clientLabel || humanizeSessionKind(session.kind)
+    return html`<div class="security-session">
+      <span class="security-session-icon" aria-hidden="true">${lucideIcon(Monitor, { size: 16, strokeWidth: 1.75 })}</span>
+      <button class="security-session-main" type="button" aria-label=${`View details for ${label}`} @click=${() => { this.selectedSession = { id: session.id, kind: 'browser' } }}>
+        <div class="security-session-title"><strong>${label}</strong>${session.current ? html`<span class="security-badge">This device</span>` : nothing}</div>
+        <span class="security-session-meta">${session.current ? 'Active now' : `Last active ${formatRelativeActivity(session.lastSeenAt)}`}</span>
+      </button>
+      <button class="session-action" type="button" @click=${() => this.requestSessionRevocation({ id: session.id, label, kind: 'browser', current: session.current })}>${session.current ? 'Sign out' : 'Revoke'}</button>
+    </div>`
   }
 
   private renderAuthoringSession(session: PersonalAuthoringSessionSignal) {
-    return html`<div class="row"><div class="settings-field"><span class="settings-label">${session.clientId || session.kind}</span><span class="settings-description">${session.projectId || 'No project'} · ${session.capabilities.join(', ') || 'Scoped access'} · Created ${formatDate(session.createdAt)}</span></div>${session.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.revokeAuthoringSession(session.id)}>Revoke</button>`}</div>`
+    const label = session.clientId || humanizeSessionKind(session.kind)
+    return html`<div class="security-session">
+      <span class="security-session-icon" aria-hidden="true">${lucideIcon(Terminal, { size: 16, strokeWidth: 1.75 })}</span>
+      <button class="security-session-main" type="button" aria-label=${`View details for ${label}`} @click=${() => { this.selectedSession = { id: session.id, kind: 'authoring' } }}>
+        <div class="security-session-title"><strong>${label}</strong></div>
+        <span class="security-session-meta">${session.projectId || 'All available projects'} · ${session.capabilities.map(humanizeCapability).join(', ') || 'Scoped access'} · ${session.lastUsedAt ? `Last active ${formatRelativeActivity(session.lastUsedAt)}` : 'Never used'}</span>
+      </button>
+      <button class="session-action" type="button" @click=${() => this.requestSessionRevocation({ id: session.id, label, kind: 'authoring' })}>Revoke</button>
+    </div>`
+  }
+
+  private renderPasswordDialog() {
+    return html`<dialog data-password-dialog aria-labelledby="change-password-title" @cancel=${this.closePasswordDialog} @click=${this.closePasswordDialogOnBackdrop}>
+      <section class="token-confirm">
+        <header class="token-confirm-header"><h2 id="change-password-title">Change password</h2><button class="token-confirm-close" type="button" aria-label="Close" @click=${this.closePasswordDialog}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button></header>
+        <form @submit=${this.changePassword}>
+          <div class="token-confirm-body">
+            <div class="password-fields">
+              <label class="password-field"><span class="settings-label">Current password</span><input name="currentPassword" type="password" autocomplete="current-password" maxlength="1024" .value=${this.currentPassword} @input=${this.onCurrentPasswordInput} required></label>
+              <label class="password-field"><span class="settings-label">New password</span><input name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="1024" .value=${this.newPassword} @input=${this.onNewPasswordInput} required><span class="settings-description">Use at least 12 characters and do not reuse this password elsewhere.</span></label>
+            </div>
+            <p class="settings-description">Saving signs out all browser, desktop, CLI, and authoring sessions.</p>
+          </div>
+          <div class="token-confirm-actions"><button type="button" @click=${this.closePasswordDialog}>Cancel</button><button class="primary" type="submit">Change password</button></div>
+        </form>
+      </section>
+    </dialog>`
+  }
+
+  private renderSessionDrawer(settings: PersonalSettingsSignal) {
+    const selected = this.selectedSession
+    if (!selected) return nothing
+    if (selected.kind === 'browser') {
+      const session = settings.security.sessions.find((candidate) => candidate.id === selected.id && !candidate.revokedAt)
+      if (!session) return nothing
+      const label = session.clientLabel || humanizeSessionKind(session.kind)
+      return html`<lv-drawer open label="Session details" .modal=${false} @lv-drawer-close=${this.closeSessionDrawer}>
+        <div slot="title" class="session-drawer-title"><h2>${label}</h2><p>${session.current ? 'Current browser or desktop session' : 'Browser or desktop session'}</p></div>
+        <div class="session-drawer-body">
+          <section class="session-drawer-section"><h3>Details</h3><dl class="session-drawer-facts">
+            ${sessionFact('Status', session.current ? 'This device' : 'Active')}
+            ${sessionFact('Client type', humanizeSessionKind(session.kind))}
+            ${sessionFact('Last active', formatDate(session.lastSeenAt))}
+            ${sessionFact('Created', formatDate(session.createdAt))}
+            ${sessionFact('Expires', formatDate(session.expiresAt))}
+            ${sessionFact('Absolute expiration', formatDate(session.absoluteExpiresAt))}
+            ${sessionFact('Session ID', session.id, true)}
+          </dl></section>
+          <button type="button" @click=${() => this.requestSessionRevocation({ id: session.id, label, kind: 'browser', current: session.current })}>${session.current ? 'Sign out this session' : 'Revoke this session'}</button>
+        </div>
+      </lv-drawer>`
+    }
+    const session = settings.security.authoringSessions.find((candidate) => candidate.id === selected.id && !candidate.revokedAt)
+    if (!session) return nothing
+    const label = session.clientId || humanizeSessionKind(session.kind)
+    return html`<lv-drawer open label="Session details" .modal=${false} @lv-drawer-close=${this.closeSessionDrawer}>
+      <div slot="title" class="session-drawer-title"><h2>${label}</h2><p>CLI or authoring session</p></div>
+      <div class="session-drawer-body">
+        <section class="session-drawer-section"><h3>Details</h3><dl class="session-drawer-facts">
+          ${sessionFact('Client type', humanizeSessionKind(session.kind))}
+          ${sessionFact('Project', session.projectId || 'All available projects')}
+          ${sessionFact('Capabilities', session.capabilities.map(humanizeCapability).join(', ') || 'Scoped access')}
+          ${sessionFact('Created', formatDate(session.createdAt))}
+          ${sessionFact('Last active', session.lastUsedAt ? formatDate(session.lastUsedAt) : 'Never')}
+          ${sessionFact('Expires', formatDate(session.expiresAt))}
+          ${sessionFact('Target ID', session.targetId, true)}
+          ${sessionFact('Session ID', session.id, true)}
+        </dl></section>
+        <button type="button" @click=${() => this.requestSessionRevocation({ id: session.id, label, kind: 'authoring' })}>Revoke this session</button>
+      </div>
+    </lv-drawer>`
+  }
+
+  private renderSessionRevokeConfirmation(session: PendingSessionRevocation) {
+    return html`<dialog data-session-revoke-dialog aria-labelledby="session-revoke-title" @cancel=${this.cancelSessionRevocation} @click=${this.closeSessionRevocationOnBackdrop}>
+      <section class="token-confirm">
+        <header class="token-confirm-header"><h2 id="session-revoke-title">${session.current ? 'Sign out this session?' : 'Revoke this session?'}</h2><button class="token-confirm-close" type="button" aria-label="Close" @click=${this.cancelSessionRevocation}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button></header>
+        <div class="token-delete-warning"><p>${session.current ? 'You will be signed out on this device and will need to authenticate again.' : `${session.label} will immediately lose access to LeapView.`} You cannot undo this action.</p></div>
+        <div class="token-delete-actions"><button class="danger" type="button" @click=${this.confirmSessionRevocation}>${session.current ? 'I understand, sign me out' : 'I understand, revoke this session'}</button></div>
+      </section>
+    </dialog>`
   }
 
   private renderTokens(tokens: PersonalSettingsSignal['tokens']) {
+    if (this.tokenView === 'list') return this.renderTokenList(tokens)
     const permissions = tokenPermissionDefinitions(tokens.capabilities)
     const selected = permissions.filter((permission) => this.tokenPermissionAccess(permission))
     const categories = groupTokenPermissions(this.filteredTokenPermissions(permissions))
@@ -469,39 +474,56 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
       selected: categoryPermissions.filter((permission) => this.tokenPermissionAccess(permission)).length,
       total: categoryPermissions.length,
     }]))
-    const canCreate = Boolean(this.tokenName.trim() && !this.tokenCreatePending)
+    const expirationOptions = tokenExpirationOptions()
+    const canCreate = Boolean(this.tokenName.trim() && this.tokenExpirationIsValid() && !this.tokenCreatePending)
     return html`
-      <section aria-label="API tokens">
-        <div class="card token-card">
-          <div class="row"><div class="settings-field"><h3>Create a personal API token</h3><span class="settings-description">Create a token for this project with only the permissions your script needs.</span></div></div>
-          <div class="row">
-            <form class="token-form" @submit=${this.createToken}>
-              <div class="token-form-grid">
-                <label class="token-field" for="token-name">
-                  <span class="settings-label">Token name</span>
-                  <input id="token-name" required autocomplete="off" placeholder="For example, Sales reporting" .value=${this.tokenName} @input=${this.onTokenNameInput}>
-                  <span class="settings-description">A recognizable name for this credential.</span>
-                </label>
-                <label class="token-field" for="token-expiry-preset">
-                  <span class="settings-label">Expiration</span>
-                  <select id="token-expiry-preset" .value=${this.tokenExpiryPreset} @change=${this.onTokenExpiryPresetInput}>
-                    <option value="7">7 days</option><option value="30">30 days</option><option value="60">60 days</option><option value="90">90 days</option><option value="custom">Custom</option>
-                  </select>
-                  ${this.tokenExpiryPreset === 'custom' ? html`<input id="token-expiry" type="datetime-local" required .value=${this.tokenExpires} @input=${this.onTokenExpiresInput}>` : nothing}
-                  <span class="settings-description">The exact expiration date is confirmed before generation.</span>
-                </label>
-              </div>
-              <div class="permissions">
-                <div class="permissions-header">
-                  <div class="settings-field">
-                    <div class="permissions-title"><span class="settings-label">Permissions</span><span class="count" aria-label="${selected.length} selected permissions">${selected.length}</span></div>
-                    <span class="settings-description">Choose the minimal permissions necessary for your needs.</span>
-                  </div>
-                  <div class="permission-picker">
-                    <button class="permission-trigger" type="button" aria-haspopup="dialog" aria-controls="token-permission-menu" aria-expanded=${String(this.tokenPermissionMenuOpen)} @click=${this.togglePermissionMenu} @keydown=${this.handlePermissionTriggerKeydown}>
-                      ${lucideIcon(Plus, { size: 16, strokeWidth: 2 })}<span>Add permissions</span>
-                    </button>
-                    ${this.tokenPermissionMenuOpen ? html`
+      <section class="token-page" aria-label="Create personal access token">
+        <div class="token-create-header">
+          <a class="token-back" href="/admin/api-tokens" aria-label="Back to personal access tokens">${lucideIcon(ArrowLeft, { size: 16, strokeWidth: 2 })}</a>
+          <div class="token-page-heading"><h2>New personal access token</h2></div>
+        </div>
+        <form class="token-form" @submit=${this.requestTokenCreation}>
+          <p class="token-page-intro">Create a scoped token suitable for personal API, CLI, and automation access.</p>
+          <div class="token-details">
+            <label class="token-field" for="token-name">
+              <span class="settings-label">Token name *</span>
+              <input id="token-name" required autocomplete="off" placeholder="For example, Sales reporting" .value=${this.tokenName} @input=${this.onTokenNameInput}>
+              <span class="settings-description">A unique name for this token. It may be visible to administrators.</span>
+            </label>
+            <label class="token-field" for="token-description">
+              <span class="settings-label">Description <span class="muted">(optional)</span></span>
+              <textarea id="token-description" maxlength="1024" placeholder="What will this token be used for?" .value=${this.tokenDescription} @input=${this.onTokenDescriptionInput}></textarea>
+              <span class="settings-description">Explain what this token will be used for so you can identify it later.</span>
+            </label>
+            <div class="token-field token-expiration-field">
+              <span class="settings-label" id="token-expiration-label">Expiration</span>
+              <lv-select-menu
+                id="token-expiration-preset"
+                label="Expiration"
+                .options=${expirationOptions}
+                .value=${this.tokenExpirationPreset}
+                @lv-select-change=${this.chooseExpirationPreset}
+                @lv-select-toggle=${this.handleExpirationMenuToggle}
+              >
+                <span slot="leading">${lucideIcon(CalendarDays, { size: 16, strokeWidth: 2 })}</span>
+              </lv-select-menu>
+              ${this.tokenExpirationPreset === 'custom' ? html`<input class="custom-expiration" id="token-custom-expiration" type="date" min=${dateInputValueInDays(1)} max=${dateInputValueInDays(90)} .value=${this.tokenCustomExpiration} @input=${this.onTokenCustomExpirationInput} required>` : nothing}
+              <span class="settings-description">The token will expire on the selected date. Maximum lifetime is 90 days.</span>
+            </div>
+          </div>
+          <div class="permissions">
+            <div class="permissions-heading">
+              <h3>Permissions</h3>
+              <p class="token-page-intro">Choose the minimal permissions necessary for your needs.</p>
+            </div>
+            <div class="permissions-card">
+              <div class="permissions-header">
+                <div class="permissions-title"><span class="settings-label">Token permissions</span><span class="count" aria-label="${selected.length} selected permissions">${selected.length}</span></div>
+                <div class="permission-picker">
+                  <button class="permission-trigger" type="button" aria-haspopup="dialog" aria-controls="token-permission-menu" aria-expanded=${String(this.tokenPermissionMenuOpen)} @click=${this.togglePermissionMenu} @keydown=${this.handlePermissionTriggerKeydown}>
+                    ${lucideIcon(Plus, { size: 16, strokeWidth: 2 })}<span>Add permissions</span>
+                  </button>
+                  ${this.tokenPermissionMenuOpen ? html`
                       <div class="permission-backdrop" aria-hidden="true" @click=${() => this.closePermissionMenu(true)}></div>
                       <div id="token-permission-menu" class="permission-menu" role="dialog" aria-labelledby="token-permission-menu-title">
                         <div class="permission-menu-header">
@@ -538,20 +560,77 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                           `) : html`<div class="permission-empty">No permissions match your search.</div>`}
                         </div>
                       </div>
-                    ` : nothing}
-                  </div>
-                </div>
-                <div class="selected-permissions" aria-live="polite">
-                  ${selected.length ? selected.map((permission) => this.renderSelectedTokenPermission(permission)) : html`<div class="permission-empty">No explicit permissions selected. The token will dynamically follow your current access.</div>`}
+                  ` : nothing}
                 </div>
               </div>
-              <div class="actions"><button class="primary" type="submit" ?disabled=${!canCreate}>${this.tokenCreatePending ? 'Creating…' : 'Generate new token'}</button></div>
-            </form>
+              <div class="selected-permissions" aria-live="polite">
+                ${selected.length ? selected.map((permission) => this.renderSelectedTokenPermission(permission)) : html`
+                  <div class="selected-permissions-empty">
+                    ${lucideIcon(KeyRound, { size: 28, strokeWidth: 1.8 })}
+                    <div class="settings-field"><span class="settings-label">No permissions added yet</span><span class="settings-description">Without explicit permissions, this token follows your current access.</span></div>
+                  </div>
+                `}
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="card"><div class="row"><div class="settings-field"><h3>Personal API tokens</h3><span class="settings-description">Revoke credentials you no longer use.</span></div></div>${tokens.items.length ? tokens.items.map((token) => this.renderToken(token, tokens.capabilities)) : html`<div class="row"><span class="muted">No personal API tokens.</span></div>`}</div>
-        ${this.tokenConfirmOpen && this.tokenConfirmation ? html`<dialog id="token-confirm" aria-labelledby="token-confirm-title" @cancel=${this.cancelTokenConfirmation}><div class="card"><div class="row"><div class="settings-field"><h3 id="token-confirm-title">Generate this token?</h3><span class="settings-description">It will expire ${this.tokenConfirmation.label}. The secret is displayed once and cannot be recovered.</span></div></div><div class="row actions"><button type="button" @click=${this.cancelTokenConfirmation}>Cancel</button><button class="primary" type="button" @click=${this.confirmTokenCreation}>Generate token</button></div></div></dialog>` : nothing}
+          <div class="actions token-actions"><button class="primary" type="submit" ?disabled=${!canCreate}>Generate token</button><a class="button-link" href="/admin/api-tokens">Cancel</a></div>
+        </form>
+        ${this.tokenConfirmationOpen ? this.renderTokenConfirmation() : nothing}
       </section>
+    `
+  }
+
+  private renderTokenList(tokens: PersonalSettingsSignal['tokens']) {
+    return html`
+      <section class="token-page" aria-label="Personal access tokens">
+        <div class="token-page-header">
+          <h2>Personal access tokens</h2>
+          <a class="button-link primary" href="/admin/api-tokens/new">Generate new token</a>
+        </div>
+        <p class="token-page-intro">Tokens are scoped credentials for API, CLI, and automation access. Keep them secret and delete any you no longer use.</p>
+        ${tokens.items.length ? html`<div class="card token-list">${tokens.items.map((token, index) => this.renderToken(token, tokens.capabilities, index === 0 ? tokens.newToken : undefined))}</div>` : renderEmptyState({
+          icon: lucideIcon(KeyRound, { size: 28, strokeWidth: 1.8 }),
+          title: 'No personal access tokens yet',
+          description: 'Generate a token when a tool or script needs to access LeapView.',
+        })}
+        ${this.tokenPendingDeletion ? this.renderTokenDeleteConfirmation(this.tokenPendingDeletion) : nothing}
+      </section>
+    `
+  }
+
+  private renderTokenConfirmation() {
+    return html`
+      <dialog data-token-confirm-dialog aria-labelledby="token-confirm-title" @cancel=${this.cancelTokenConfirmation} @click=${this.closeTokenConfirmationOnBackdrop}>
+        <section class="token-confirm">
+          <header class="token-confirm-header">
+            <h2 id="token-confirm-title">New personal access token</h2>
+            <button class="token-confirm-close" type="button" aria-label="Close token confirmation" @click=${this.cancelTokenConfirmation}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button>
+          </header>
+          <div class="token-confirm-body">
+            <p>Your new personal access token <strong>${this.tokenName.trim()}</strong> will be ready for use immediately.</p>
+            <p>It will expire on <strong>${formatLongDate(this.tokenExpirationDate())}</strong>.</p>
+            ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
+          </div>
+          <div class="token-confirm-actions"><button type="button" @click=${this.cancelTokenConfirmation}>Cancel</button><button class="primary" type="button" ?disabled=${this.tokenCreatePending} @click=${this.createToken}>${this.tokenCreatePending ? 'Generating…' : 'Generate token'}</button></div>
+        </section>
+      </dialog>
+    `
+  }
+
+  private renderTokenDeleteConfirmation(token: PersonalTokenSignal) {
+    return html`
+      <dialog data-token-delete-dialog aria-labelledby="token-delete-title" @cancel=${this.cancelTokenDeletion} @click=${this.closeTokenDeletionOnBackdrop}>
+        <section class="token-confirm">
+          <header class="token-confirm-header">
+            <h2 id="token-delete-title">Are you sure you want to delete this token?</h2>
+            <button class="token-confirm-close" type="button" aria-label="Close token deletion confirmation" @click=${this.cancelTokenDeletion}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button>
+          </header>
+          <div class="token-delete-warning">
+            <p>Any applications or scripts using <strong>${token.name}</strong> will no longer be able to access the LeapView API. You cannot undo this action.</p>
+          </div>
+          <div class="token-delete-actions"><button class="danger" type="button" @click=${this.confirmTokenDeletion}>I understand, delete this token</button></div>
+        </section>
+      </dialog>
     `
   }
 
@@ -609,12 +688,22 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     `
   }
 
-  private renderToken(token: PersonalTokenSignal, capabilities: PersonalCapabilityOptionSignal[]) {
+  private renderToken(token: PersonalTokenSignal, capabilities: PersonalCapabilityOptionSignal[], newToken?: string) {
     const options = new Map(capabilities.map((capability) => [capability.value, capability.label]))
     const labels = token.capabilities.map((capability) => options.get(capability) ?? humanizeCapability(capability))
-    const expired = Boolean(token.expiresAt && Date.parse(token.expiresAt) <= Date.now())
-    const status = token.revokedAt ? 'Revoked' : expired ? 'Expired' : 'Active'
-    return html`<div class="row"><div class="settings-field"><span class="settings-label">${token.name}</span><span class="settings-description">${labels.join(', ') || 'Dynamically follows current access'} · Created ${formatDate(token.createdAt)} · Last used ${token.lastUsedAt ? formatDate(token.lastUsedAt) : 'Never'}${token.expiresAt ? ` · Expires ${formatDate(token.expiresAt)}` : ' · No expiration'}</span></div><span class=${token.revokedAt || expired ? 'muted' : 'status-active'}>${status}</span>${token.revokedAt || expired ? nothing : html`<button class="danger" type="button" @click=${() => this.revokeToken(token.id)}>Revoke</button>`}</div>`
+    const usage = token.lastUsedAt ? `Last used ${formatDateOnly(token.lastUsedAt)}` : 'Never used'
+    return html`
+      <div class="token-row">
+        <span class="token-row-icon" aria-hidden="true">${lucideIcon(KeyRound, { size: 16, strokeWidth: 2 })}</span>
+        <div class="token-row-content">
+          <span class="token-name">${token.name}</span>
+          ${token.description ? html`<span class="token-description">${token.description}</span>` : nothing}
+          <span class="token-meta">${usage}${token.expiresAt ? ` · Expires ${formatDateOnly(token.expiresAt)}` : ''} · ${labels.join(', ') || 'Follows current access'}</span>
+          ${newToken ? html`<lv-one-time-secret secret=${newToken} message="Copy your personal access token now. You won’t be able to see it again." copy-label="Copy personal access token"></lv-one-time-secret>` : nothing}
+        </div>
+        ${token.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.requestTokenDeletion(token)}>Delete</button>`}
+      </div>
+    `
   }
 
   private saveProfile = (event: Event): void => { event.preventDefault(); this.send('lv-personal-profile-command', { action: 'save', displayName: this.profileName.trim() }) }
@@ -629,6 +718,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (!this.themeMenuOpen) return
     this.closeAvatarMenu()
     this.closePermissionMenu()
+    this.closeExpirationMenu()
     void this.focusSelectedThemeOption()
   }
   private handleThemeTriggerKeydown = (event: KeyboardEvent): void => {
@@ -637,6 +727,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.themeMenuOpen = true
     this.closeAvatarMenu()
     this.closePermissionMenu()
+    this.closeExpirationMenu()
     void this.focusSelectedThemeOption()
   }
   private focusSelectedThemeOption = async (): Promise<void> => {
@@ -664,53 +755,98 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
       this.closeThemeMenu()
     }
   }
-  private changePassword = (event: Event): void => { event.preventDefault(); this.send('lv-personal-password-command', { currentPassword: this.currentPassword, newPassword: this.newPassword }); this.currentPassword = ''; this.newPassword = '' }
-  private createToken = (event: Event): void => {
-    event.preventDefault()
-    if (!this.tokenName.trim()) return
-    let expiresAt = ''
-    if (this.tokenExpiryPreset === 'custom') {
-      expiresAt = localDateTimeToRFC3339(this.tokenExpires)
-    } else {
-      const expiryDays = Number(this.tokenExpiryPreset)
-      if (!Number.isFinite(expiryDays) || expiryDays <= 0) return
-      expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString()
-    }
-    if (!expiresAt) return
-    this.tokenConfirmation = { expiresAt, label: formatDate(expiresAt) }
-    this.tokenConfirmOpen = true
+  private openPasswordDialog = (): void => {
+    this.passwordDialogOpen = true
   }
-
-  private confirmTokenCreation = (): void => {
-    if (!this.tokenConfirmation || this.tokenCreatePending) return
-    const command: Record<string, unknown> = { action: 'create', name: this.tokenName.trim(), expiresAt: this.tokenConfirmation.expiresAt }
+  private closePasswordDialog = (event?: Event): void => {
+    event?.preventDefault()
+    this.passwordDialogOpen = false
+    this.currentPassword = ''
+    this.newPassword = ''
+  }
+  private closePasswordDialogOnBackdrop = (event: MouseEvent): void => {
+    if (event.target === event.currentTarget) this.closePasswordDialog(event)
+  }
+  private changePassword = (event: Event): void => {
+    event.preventDefault()
+    this.send('lv-personal-password-command', { currentPassword: this.currentPassword, newPassword: this.newPassword })
+    this.passwordDialogOpen = false
+    this.currentPassword = ''
+    this.newPassword = ''
+  }
+  private requestTokenCreation = (event: Event): void => {
+    event.preventDefault()
+    if (!this.tokenName.trim() || !this.tokenExpirationIsValid()) return
+    this.tokenConfirmationOpen = true
+  }
+  private cancelTokenConfirmation = (event?: Event): void => {
+    event?.preventDefault()
+    if (this.tokenCreatePending) return
+    this.tokenConfirmationOpen = false
+  }
+  private closeTokenConfirmationOnBackdrop = (event: MouseEvent): void => {
+    if (event.target === event.currentTarget) this.cancelTokenConfirmation(event)
+  }
+  private createToken = (): void => {
+    if (!this.tokenName.trim() || !this.tokenExpirationIsValid() || this.tokenCreatePending) return
+    const command: Record<string, unknown> = {
+      action: 'create',
+      name: this.tokenName.trim(),
+      description: this.tokenDescription.trim(),
+      expiresAt: this.tokenExpirationDate().toISOString(),
+    }
     const capabilities = this.selectedTokenCapabilities()
     if (capabilities.length) command.capabilities = capabilities
     this.send('lv-personal-token-command', command)
     this.tokenCreatePending = true
-    this.tokenConfirmOpen = false
   }
-
-  private cancelTokenConfirmation = (event?: Event): void => {
+  private tokenExpirationDate(): Date {
+    if (this.tokenExpirationPreset === 'custom') return dateInputToEndOfDay(this.tokenCustomExpiration)
+    const date = new Date()
+    date.setDate(date.getDate() + Number(this.tokenExpirationPreset))
+    return date
+  }
+  private tokenExpirationIsValid(): boolean {
+    const expiration = this.tokenExpirationDate()
+    return !Number.isNaN(expiration.valueOf()) && expiration.valueOf() > Date.now() && expiration.valueOf() <= endOfDayInDays(90).valueOf()
+  }
+  private requestTokenDeletion(token: PersonalTokenSignal): void {
+    this.tokenPendingDeletion = token
+  }
+  private cancelTokenDeletion = (event?: Event): void => {
     event?.preventDefault()
-    this.tokenConfirmOpen = false
-    this.tokenConfirmation = null
+    this.tokenPendingDeletion = null
   }
-
-  private async copyTokenSecret(secret: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(secret)
-      this.tokenSecretCopied = true
-    } catch {
-      this.error = 'Copy failed. Select the token manually before dismissing this message.'
-    }
+  private closeTokenDeletionOnBackdrop = (event: MouseEvent): void => {
+    if (event.target === event.currentTarget) this.cancelTokenDeletion(event)
   }
-
-  private dismissTokenSecret(secret: string): void {
-    if (!this.tokenSecretCopied && !window.confirm('Dismiss this token without copying? It cannot be viewed again.')) return
-    this.tokenSecretDismissed = secret
+  private confirmTokenDeletion = (): void => {
+    const token = this.tokenPendingDeletion
+    if (!token) return
+    this.tokenPendingDeletion = null
+    this.send('lv-personal-token-command', { action: 'revoke', tokenId: token.id })
   }
-  private revokeToken = (tokenId: string): void => { this.send('lv-personal-token-command', { action: 'revoke', tokenId }) }
+  private requestSessionRevocation(session: PendingSessionRevocation): void {
+    this.pendingSessionRevocation = session
+  }
+  private closeSessionDrawer = (): void => {
+    this.selectedSession = null
+  }
+  private cancelSessionRevocation = (event?: Event): void => {
+    event?.preventDefault()
+    this.pendingSessionRevocation = null
+  }
+  private closeSessionRevocationOnBackdrop = (event: MouseEvent): void => {
+    if (event.target === event.currentTarget) this.cancelSessionRevocation(event)
+  }
+  private confirmSessionRevocation = (): void => {
+    const session = this.pendingSessionRevocation
+    if (!session) return
+    this.pendingSessionRevocation = null
+    this.selectedSession = null
+    if (session.kind === 'authoring') this.revokeAuthoringSession(session.id)
+    else this.revokeSession(session.id)
+  }
   private revokeSession = (sessionId: string): void => { this.send('lv-personal-session-command', { action: 'revoke', sessionId }) }
   private revokeAuthoringSession = (sessionId: string): void => { this.send('lv-personal-authoring-session-command', { action: 'revoke', sessionId }) }
   private toggleAvatarMenu = (): void => {
@@ -718,6 +854,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (this.avatarMenuOpen) {
       this.closeThemeMenu()
       this.closePermissionMenu()
+      this.closeExpirationMenu()
       void this.focusFirstAvatarMenuItem()
     }
   }
@@ -764,10 +901,6 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (!insidePermissionAccessPicker) this.closeTokenPermissionAccessMenu()
   }
   private handleWindowKeydown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape' && this.tokenConfirmOpen) {
-      event.preventDefault()
-      this.cancelTokenConfirmation()
-    }
     if (event.key === 'Escape' && this.avatarMenuOpen) {
       event.preventDefault()
       this.closeAvatarMenu(true)
@@ -827,10 +960,21 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private onCurrentPasswordInput = (event: Event): void => { this.currentPassword = (event.currentTarget as HTMLInputElement).value }
   private onNewPasswordInput = (event: Event): void => { this.newPassword = (event.currentTarget as HTMLInputElement).value }
   private onTokenNameInput = (event: Event): void => { this.tokenName = (event.currentTarget as HTMLInputElement).value }
-  private onTokenExpiresInput = (event: Event): void => { this.tokenExpires = (event.currentTarget as HTMLInputElement).value }
-  private onTokenExpiryPresetInput = (event: Event): void => {
-    this.tokenExpiryPreset = (event.currentTarget as HTMLSelectElement).value
-    if (this.tokenExpiryPreset !== 'custom') this.tokenExpires = ''
+  private onTokenDescriptionInput = (event: Event): void => { this.tokenDescription = (event.currentTarget as HTMLTextAreaElement).value }
+  private onTokenCustomExpirationInput = (event: Event): void => { this.tokenCustomExpiration = (event.currentTarget as HTMLInputElement).value }
+  private chooseExpirationPreset = (event: CustomEvent<{ value: TokenExpirationPreset }>): void => {
+    this.tokenExpirationPreset = event.detail.value
+    if (event.detail.value !== 'custom') this.tokenCustomExpiration = ''
+  }
+  private handleExpirationMenuToggle = (event: CustomEvent<{ open: boolean }>): void => {
+    if (!event.detail.open) return
+    this.closeAvatarMenu()
+    this.closeThemeMenu()
+    this.closePermissionMenu()
+    this.closeTokenPermissionAccessMenu()
+  }
+  private closeExpirationMenu(returnFocus = false): void {
+    this.expirationSelect?.close(returnFocus)
   }
   private filteredTokenPermissions(permissions: TokenPermissionDefinition[]): TokenPermissionDefinition[] {
     const query = this.tokenPermissionSearch.trim().toLocaleLowerCase()
@@ -851,6 +995,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.tokenPermissionMenuOpen = true
     this.closeAvatarMenu()
     this.closeThemeMenu()
+    this.closeExpirationMenu()
     this.closeTokenPermissionAccessMenu()
     void this.updateComplete.then(() => {
       this.fitPermissionMenu()
@@ -916,6 +1061,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.closeAvatarMenu()
     this.closeThemeMenu()
     this.closePermissionMenu()
+    this.closeExpirationMenu()
     void this.focusSelectedTokenPermissionAccess()
   }
   private handleTokenPermissionAccessTriggerKeydown(event: KeyboardEvent, permissionID: string): void {
@@ -1037,16 +1183,87 @@ function humanizeCapability(value: string): string {
   return value.toLocaleLowerCase().split('_').filter(Boolean).map((part, index) => index === 0 ? `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}` : part).join(' ')
 }
 
+function sessionFact(label: string, value: string, code = false) {
+  const display = value || 'Unknown'
+  return html`<div class="session-drawer-fact"><dt>${label}</dt> <dd>${code ? html`<code>${display}</code>` : display}</dd></div>`
+}
+
 function formatDate(value: string): string {
   if (!value) return 'unknown'
   const date = new Date(value)
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString()
 }
 
-function localDateTimeToRFC3339(value: string): string {
-  if (!value) return ''
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.valueOf()) ? '' : parsed.toISOString()
+function formatRelativeActivity(value: string): string {
+  if (!value) return 'unknown'
+  const date = new Date(value)
+  if (Number.isNaN(date.valueOf())) return value
+  const elapsed = Date.now() - date.valueOf()
+  if (elapsed < 0) return formatDate(value)
+  const minute = 60_000
+  const hour = 60 * minute
+  const day = 24 * hour
+  if (elapsed < minute) return 'just now'
+  if (elapsed < hour) {
+    const minutes = Math.max(1, Math.floor(elapsed / minute))
+    return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`
+  }
+  if (elapsed < day) {
+    const hours = Math.max(1, Math.floor(elapsed / hour))
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
+  }
+  if (elapsed < 2 * day) return 'yesterday'
+  if (elapsed < 7 * day) return `${Math.floor(elapsed / day)} days ago`
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' })
+}
+
+function humanizeSessionKind(value: string): string {
+  const normalized = value.trim().replace(/[._-]+/g, ' ')
+  if (!normalized) return 'Session'
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+}
+
+function formatDateOnly(value: string): string {
+  if (!value) return 'unknown'
+  const date = new Date(value)
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function formatLongDate(date: Date): string {
+  return Number.isNaN(date.valueOf()) ? 'the selected date' : date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+}
+
+function tokenExpirationOptions(): Array<{ value: TokenExpirationPreset, label: string }> {
+  return ([7, 30, 60, 90] as const).map((days) => ({
+    value: String(days) as TokenExpirationPreset,
+    label: `${days} days (${dateInDays(days).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })})`,
+  })).concat([{ value: 'custom', label: 'Custom' }])
+}
+
+function dateInDays(days: number): Date {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  return date
+}
+
+function endOfDayInDays(days: number): Date {
+  const date = dateInDays(days)
+  date.setHours(23, 59, 59, 999)
+  return date
+}
+
+function dateInputValueInDays(days: number): string {
+  const date = dateInDays(days)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function dateInputToEndOfDay(value: string): Date {
+  if (!value) return new Date(Number.NaN)
+  const date = new Date(`${value}T23:59:59.999`)
+  return date
 }
 
 customElements.define('lv-personal-settings', LeapViewPersonalSettings)

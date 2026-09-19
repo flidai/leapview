@@ -227,17 +227,26 @@ func TestMainArtifactsAllowsOnlyProtectedOpenPRCandidates(t *testing.T) {
 		"commits/${revision}/pulls",
 		`.base.ref == "main"`,
 		`.head.sha == $revision`,
-		`test "$GITHUB_SHA" = "$revision"`,
 		"ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_revision || github.sha }}",
 		"needs.authorize-candidate.result == 'success'",
 		`channel="candidate"`,
 		"${{ steps.identity.outputs.channel }}-${{ steps.identity.outputs.revision }}",
-		"source-revision: ${{ needs.build-production-image.outputs.revision }}",
+		"source-revision: ${{ github.sha }}",
+		"--arg revision \"${IMAGE_REVISION}\"",
+		".revision == $revision",
 	} {
 		requireContains(t, workflow, fragment)
 	}
 	if strings.Contains(workflow, "pull_request:") {
 		t.Fatal("candidate image publication must require an explicit, environment-protected dispatch")
+	}
+	for _, fragment := range []string{
+		`test "$GITHUB_SHA" = "$revision"`,
+		"source-revision: ${{ needs.build-production-image.outputs.revision }}",
+	} {
+		if strings.Contains(workflow, fragment) {
+			t.Errorf("candidate provenance must keep the trusted workflow SHA separate from the authorized image revision: found %q", fragment)
+		}
 	}
 }
 

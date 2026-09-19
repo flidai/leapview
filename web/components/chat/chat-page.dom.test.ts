@@ -387,6 +387,7 @@ test('chat list page renders searchable conversation history', async () => {
         title: listRoot?.querySelector('h2')?.textContent?.trim(),
         searchPlaceholder: listRoot?.querySelector('.search')?.getAttribute('placeholder'),
         newChatHref: listRoot?.querySelector('a.new-chat-link')?.getAttribute('href'),
+        headerActions: Array.from(listRoot?.querySelectorAll('.header-actions .new-chat-link') ?? []).map((action: any) => action.textContent.trim()),
         headerOrder: Array.from(listRoot?.querySelector('.header')?.children ?? []).map((child: any) => child.className || child.tagName.toLowerCase()),
         metrics: (() => {
           const title = listRoot?.querySelector('h2') as HTMLElement
@@ -415,6 +416,7 @@ test('chat list page renders searchable conversation history', async () => {
           title: row.querySelector('.title')?.textContent?.trim(),
           date: row.querySelector('.date')?.textContent?.trim(),
           optionsLabel: row.querySelector('.options-button')?.getAttribute('aria-label'),
+          quickActions: Array.from(row.querySelectorAll('.quick-action')).map((action: any) => action.getAttribute('aria-label')),
         })),
       }
     })
@@ -427,6 +429,7 @@ test('chat list page renders searchable conversation history', async () => {
     expect(initial.title).toBe('Chats')
     expect(initial.searchPlaceholder).toBe('Search chats...')
     expect(initial.newChatHref).toBe('/chats/new')
+    expect(initial.headerActions).toEqual(['Delete all chats', 'Archived chats', 'New chat'])
     expect(initial.headerOrder).toEqual(['h2', 'header-actions'])
     expect(initial.metrics).toEqual({
       titleFontSize: '20px',
@@ -438,9 +441,8 @@ test('chat list page renders searchable conversation history', async () => {
       dateDistanceFromRowEnd: 58,
     })
     expect(initial.tableHeaders).toEqual(['Conversation'])
-    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', title: 'Revenue check', date: 'Jan 2', optionsLabel: 'More actions for Revenue check' })
-    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', title: 'Inventory status', date: 'Jan 3', optionsLabel: 'More actions for Inventory status' })
-
+    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', title: 'Revenue check', date: 'Jan 2', optionsLabel: 'More actions for Revenue check', quickActions: ['Pin Revenue check', 'Archive Revenue check', 'Delete Revenue check'] })
+    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', title: 'Inventory status', date: 'Jan 3', optionsLabel: 'More actions for Inventory status', quickActions: ['Pin Inventory status', 'Archive Inventory status', 'Delete Inventory status'] })
     await page.locator('lv-chat-page').evaluate((element: any) => {
       const input = ((element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as TestDomElement).shadowRoot!.querySelector('.search') as HTMLInputElement
       input.value = 'inventory'
@@ -469,6 +471,43 @@ test('chat list page renders searchable conversation history', async () => {
       hasVerticalOverflow: document.documentElement.scrollHeight > window.innerHeight,
     }))
     expect(scrollState.hasVerticalOverflow).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('chat list exposes bulk deletion and row actions on hover', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/list`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-list'))
+    await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as any
+      await list.updateComplete
+      ;(window as any).listActions = []
+      list.addEventListener('lv-chat-action', (event: Event) => {
+        event.stopPropagation()
+        ;(window as any).listActions.push((event as CustomEvent).detail)
+      })
+    })
+    const list = page.locator('lv-chat-page').locator('lv-chat-list')
+    const firstRow = list.locator('tbody tr').first()
+    const quickActions = firstRow.locator('.quick-actions')
+    expect(await quickActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('0')
+    await firstRow.hover()
+    await page.waitForFunction(() => {
+      const chatPage = document.querySelector('lv-chat-page') as any
+      const chatList = chatPage?.shadowRoot?.querySelector('lv-chat-list') as any
+      const actions = chatList?.shadowRoot?.querySelector('.quick-actions')
+      return actions && getComputedStyle(actions).opacity === '1'
+    })
+    expect(await quickActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('1')
+    await firstRow.getByRole('button', { name: 'Archive Revenue check', exact: true }).click()
+    await list.getByRole('button', { name: 'Delete all chats', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).listActions.map((action: any) => ({ action: action.action, conversationId: action.conversationId })))).toEqual([
+      { action: 'archive', conversationId: 'c1' },
+      { action: 'delete_active', conversationId: '' },
+    ])
   } finally {
     await page.close()
   }
@@ -554,7 +593,7 @@ test('unconfigured agent uses intentional unavailable states', async () => {
       const root = list.shadowRoot
       let archivedOpened = false
       list.addEventListener('lv-chat-settings-open', () => { archivedOpened = true })
-      ;(root.querySelector('button') as HTMLButtonElement | null)?.click()
+      ;(Array.from(root.querySelectorAll('.header-actions button') as NodeListOf<HTMLButtonElement>).find((button) => button.textContent?.includes('Archived chats')))?.click()
       return {
         title: root.querySelector('.empty-title')?.textContent?.trim(),
         detail: root.querySelector('.empty-detail')?.textContent?.trim(),

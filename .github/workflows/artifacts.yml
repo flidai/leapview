@@ -48,7 +48,9 @@ jobs:
           revision="${SOURCE_REVISION}"
           [[ "${revision}" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "${revision}"
-          test "$GITHUB_SHA" = "$revision"
+          # GITHUB_SHA identifies the protected workflow ref and therefore the
+          # attestation signer. The independently authorized PR head is allowed
+          # to differ and is carried as SOURCE_REVISION into the image identity.
           gh api "repos/${GITHUB_REPOSITORY}/commits/${revision}/pulls" \
             | jq -e --arg revision "${revision}" \
               'map(select(.base.ref == "main" and .state == "open" and .head.sha == $revision)) | length == 1' \
@@ -188,7 +190,10 @@ jobs:
           image: ${{ env.IMAGE_REPOSITORY }}@${{ needs.build-production-image.outputs.digest }}
           repository: ${{ env.IMAGE_REPOSITORY }}
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: ${{ needs.build-production-image.outputs.revision }}
+          # GitHub signs workflow_dispatch attestations with the protected
+          # workflow event SHA. Candidate identity is checked independently
+          # against the image below after the open-PR authorization gate.
+          source-revision: ${{ github.sha }}
 
       - name: Qualify the immutable production image
         env:

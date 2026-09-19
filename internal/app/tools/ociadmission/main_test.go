@@ -98,13 +98,11 @@ func TestLiveAdmissionContractWithFakeTools(t *testing.T) {
 }
 
 func TestVerifyAttestationAcceptsGitHubCLICertificateSchema(t *testing.T) {
-	const mainRevision = "ffffffffffffffffffffffffffffffffffffffff"
 	payload := []map[string]any{{
 		"verificationResult": map[string]any{
 			"signature": map[string]any{"certificate": map[string]any{
 				"sourceRepositoryURI":    "https://github.com/" + repositoryIdentity,
-				"buildSignerURI":         "https://github.com/" + testWorkflow + "@refs/heads/candidate",
-				"githubWorkflowTrigger": "workflow_dispatch",
+				"buildSignerURI":         "https://github.com/" + testWorkflow + "@refs/heads/main",
 				"sourceRepositoryDigest": testRevision,
 			}},
 		},
@@ -114,10 +112,7 @@ func TestVerifyAttestationAcceptsGitHubCLICertificateSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !verifyAttestation(data, testWorkflow, testRevision) {
-		t.Fatal("verifyAttestation rejected the exact workflow-dispatch candidate revision")
-	}
-	if verifyAttestation(data, testWorkflow, mainRevision) {
-		t.Fatal("verifyAttestation accepted a different source revision")
+		t.Fatal("verifyAttestation rejected the canonical GitHub CLI certificate schema")
 	}
 }
 

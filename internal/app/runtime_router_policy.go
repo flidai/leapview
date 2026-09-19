@@ -316,25 +316,44 @@ func deliveryApprovalDecisionOperation(operationID string) bool {
 	}
 }
 
-func deliveryAuthorizationResources(plan deployment.DeliveryPlan) ([]access.ResourceRef, error) {
-	impact := append([]deployment.DeliveryImpactResource{}, plan.Evidence.GraphImpact.Added...)
-	impact = append(impact, plan.Evidence.GraphImpact.Removed...)
+type deliveryAuthorizationImpact struct {
+	Existing     []access.ResourceRef
+	HasAdditions bool
+}
+
+func deliveryAuthorizationResources(plan deployment.DeliveryPlan) (deliveryAuthorizationImpact, error) {
+	added := plan.Evidence.GraphImpact.Added
+	impact := append([]deployment.DeliveryImpactResource{}, plan.Evidence.GraphImpact.Removed...)
 	impact = append(impact, plan.Evidence.GraphImpact.DirectlyModified...)
 	impact = append(impact, plan.Evidence.GraphImpact.IndirectlyAffected...)
 	resources := make([]access.ResourceRef, 0, len(impact))
-	seen := make(map[string]struct{}, len(impact))
-	for _, item := range impact {
+	seen := make(map[string]struct{}, len(added)+len(impact))
+	parse := func(item deployment.DeliveryImpactResource) (access.ResourceRef, error) {
 		id, err := projectgraph.NewResourceID(strings.TrimSpace(item.ID))
 		if err != nil {
-			return nil, err
+			return access.ResourceRef{}, err
 		}
 		kind, err := projectgraph.ParseKind(strings.TrimSpace(item.Kind))
 		if err != nil {
-			return nil, err
+			return access.ResourceRef{}, err
 		}
 		resource, err := access.NewResourceRef(id, kind)
 		if err != nil {
-			return nil, err
+			return access.ResourceRef{}, err
+		}
+		return resource, nil
+	}
+	for _, item := range added {
+		resource, err := parse(item)
+		if err != nil {
+			return deliveryAuthorizationImpact{}, err
+		}
+		seen[resource.ID().String()+"\x00"+string(resource.Kind())] = struct{}{}
+	}
+	for _, item := range impact {
+		resource, err := parse(item)
+		if err != nil {
+			return deliveryAuthorizationImpact{}, err
 		}
 		key := resource.ID().String() + "\x00" + string(resource.Kind())
 		if _, exists := seen[key]; exists {
@@ -343,7 +362,20 @@ func deliveryAuthorizationResources(plan deployment.DeliveryPlan) ([]access.Reso
 		seen[key] = struct{}{}
 		resources = append(resources, resource)
 	}
-	return resources, nil
+	return deliveryAuthorizationImpact{Existing: resources, HasAdditions: len(added) > 0}, nil
+}
+
+func deliveryAuthorizationImpactAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, impact deliveryAuthorizationImpact, capability access.Capability) (bool, error) {
+	if impact.HasAdditions && !accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability) {
+		return false, nil
+	}
+	if len(impact.Existing) == 0 {
+		if impact.HasAdditions {
+			return true, nil
+		}
+		return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
+	}
+	return deliverySnapshotAllows(snapshot, subjects, impact.Existing, capability)
 }
 func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resources []access.ResourceRef, capability access.Capability) (bool, error) {
 	for _, resource := range resources {

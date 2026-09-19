@@ -34,9 +34,58 @@ class AgentPromptEditor extends LitElement {
       background: var(--lv-bg-panel);
     }
 
+    .prompt-header {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: var(--base-size-16);
+      border-bottom: var(--lv-border-muted);
+      padding: var(--base-size-16);
+    }
+
+    .prompt-heading {
+      display: grid;
+      min-width: 0;
+      gap: var(--base-size-4);
+    }
+
+    .prompt-heading h3,
+    .prompt-heading p {
+      margin: 0;
+    }
+
+    .prompt-heading h3 {
+      color: var(--lv-fg-default);
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-semibold);
+    }
+
+    .prompt-heading p {
+      max-width: 48rem;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-body-compact);
+      line-height: var(--base-text-lineHeight-snug);
+    }
+
+    .managed-badge {
+      flex: 0 0 auto;
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-full);
+      background: var(--lv-bg-panel-muted);
+      padding: var(--base-size-2) var(--base-size-8);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      white-space: nowrap;
+    }
+
     .prompt-status {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
+    }
+
+    .prompt-status.is-dirty {
+      color: var(--lv-fg-warning);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .prompt-control-row {
@@ -72,7 +121,8 @@ class AgentPromptEditor extends LitElement {
     }
 
     .mode-toggle button,
-    .save-button {
+    .save-button,
+    .discard-button {
       border: 0;
       border-radius: calc(var(--lv-radius-default) - 2px);
       font: var(--lv-type-body-compact);
@@ -82,11 +132,15 @@ class AgentPromptEditor extends LitElement {
 
     .mode-toggle button {
       display: inline-grid;
-      width: 2rem;
+      min-width: 2rem;
       height: 2rem;
+      grid-auto-flow: column;
+      align-items: center;
+      justify-content: center;
+      gap: var(--base-size-4);
       place-items: center;
       background: transparent;
-      padding: 0;
+      padding: 0 var(--base-size-8);
       color: var(--lv-fg-muted);
     }
 
@@ -97,7 +151,8 @@ class AgentPromptEditor extends LitElement {
     }
 
     .mode-toggle button:focus-visible,
-    .save-button:focus-visible {
+    .save-button:focus-visible,
+    .discard-button:focus-visible {
       outline: 2px solid var(--lv-fg-accent);
       outline-offset: 2px;
     }
@@ -152,7 +207,22 @@ class AgentPromptEditor extends LitElement {
       opacity: 0.6;
     }
 
+    .discard-button {
+      border: var(--lv-border-muted);
+      background: var(--lv-bg-panel);
+      padding: var(--base-size-6) var(--base-size-12);
+      color: var(--lv-fg-default);
+    }
+
+    .discard-button:hover {
+      background: var(--lv-bg-panel-muted);
+    }
+
     @media (max-width: 640px) {
+      .prompt-header {
+        display: grid;
+      }
+
       .prompt-control-row {
         padding-inline: var(--base-size-8);
       }
@@ -163,6 +233,11 @@ class AgentPromptEditor extends LitElement {
 
       .prompt-status {
         margin-right: auto;
+      }
+
+      .mode-toggle,
+      .mode-toggle button {
+        flex: 1 1 0;
       }
     }
   `
@@ -194,10 +269,20 @@ class AgentPromptEditor extends LitElement {
     const showSave = canSave
     return html`
       <div class="prompt-editor">
+        <div class="prompt-header">
+          <div class="prompt-heading">
+            <h3>System instructions</h3>
+            <p>Guide the agent's behavior, context, and response style with Markdown instructions.</p>
+          </div>
+          ${this.disabled ? html`<span class="managed-badge">Deployment managed</span>` : nothing}
+        </div>
         <div class="prompt-control-row">
           <div class="prompt-actions">
             <div class="prompt-primary-actions">
-              ${status ? html`<span class="prompt-status">${status}</span>` : nothing}
+              ${status ? html`<span class=${this.dirty ? 'prompt-status is-dirty' : 'prompt-status'}>${status}</span>` : nothing}
+              ${this.dirty ? html`
+                <button class="discard-button" type="button" @click=${this.discardPrompt}>Discard</button>
+              ` : nothing}
               ${showSave ? html`
                 <button class="save-button" type="button" @click=${this.savePrompt}>
                   ${lucideIcon(Save, { size: 14, strokeWidth: 2 })}
@@ -244,7 +329,7 @@ class AgentPromptEditor extends LitElement {
           if (!this.dirty) this.draft = this.promptSource
           this.mode = mode
         }}
-      >${lucideIcon(mode === 'preview' ? Eye : SquarePen, { size: 15, strokeWidth: 2 })}</button>
+      >${lucideIcon(mode === 'preview' ? Eye : SquarePen, { size: 15, strokeWidth: 2 })}<span>${label}</span></button>
     `
   }
 
@@ -282,6 +367,13 @@ class AgentPromptEditor extends LitElement {
     this.value = systemPrompt
     this.draft = systemPrompt
     this.status = 'saved'
+  }
+
+  private discardPrompt(): void {
+    if (this.disabled || !this.dirty) return
+    this.draft = this.promptSource
+    this.draftInitialized = true
+    this.status = ''
   }
 
   private get statusLabel(): string {
