@@ -136,6 +136,10 @@ while IFS= read -r candidate_tag; do
   docker image rm "$candidate_tag"
 done < <(docker image ls ghcr.io/flidai/leapview --format '{{.Repository}}:{{.Tag}}' | grep ':candidate-' || true)
 docker image prune --force
+while IFS= read -r stale_release; do
+  rm -rf -- "$stale_release"
+done < <(find /opt/leapview-demo/releases -mindepth 1 -maxdepth 1 -type d \
+  ! -name "$active_revision" ! -name "$revision" -print)
 available_kb=$(df --output=avail /opt | tail -1 | tr -d ' ')
 (( available_kb > 7000000 )) || { echo 'At least 7 GB free space required to stage image'; exit 1; }
 docker pull "$tag"
