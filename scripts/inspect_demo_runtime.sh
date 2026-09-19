@@ -128,6 +128,81 @@ ssh_options=(
   -o "UserKnownHostsFile=$pinned_known_hosts"
 )
 
+if [[ -n "${DEMO_RECOVERY_MANAGED_DATA_ARCHIVE:-}" ]]; then
+  command -v scp >/dev/null || {
+    echo "required command is unavailable: scp" >&2
+    exit 69
+  }
+  recovery_archive="$DEMO_RECOVERY_MANAGED_DATA_ARCHIVE"
+  recovery_revision="${DEMO_RECOVERY_MANAGED_DATA_REVISION:?Set DEMO_RECOVERY_MANAGED_DATA_REVISION}"
+  [[ -f "$recovery_archive" ]] || {
+    echo "managed-data recovery archive is unavailable" >&2
+    exit 69
+  }
+  [[ "$recovery_revision" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "managed-data recovery revision is invalid" >&2
+    exit 64
+  }
+  scp "${ssh_options[@]}" "$recovery_archive" "root@$demo_host:/tmp/leapview-managed-data-recovery.tar.gz"
+  ssh "${ssh_options[@]}" "root@$demo_host" "DEMO_RECOVERY_MANAGED_DATA_REVISION='$recovery_revision' bash -se" <<'RECOVER_DATA'
+set -euo pipefail
+archive=/tmp/leapview-managed-data-recovery.tar.gz
+revision="$DEMO_RECOVERY_MANAGED_DATA_REVISION"
+root=/tmp/leapview-demo-host-state/managed-data/objects/revisions
+staging="$(mktemp -d "$root/.recovery-XXXXXX")"
+cleanup_recovery() {
+  rm -rf "$staging" "$archive"
+}
+trap cleanup_recovery EXIT
+tar -xzf "$archive" -C "$staging" --no-same-owner --no-same-permissions
+python3 - "$staging" "$revision" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+revision = sys.argv[2]
+manifest_path = root / "manifest.json"
+data = root / "data"
+manifest = json.loads(manifest_path.read_text())
+files = manifest.get("files")
+if not isinstance(files, list) or not files:
+    raise SystemExit("managed-data recovery manifest is empty")
+canonical = json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode()
+actual_revision = "sha256:" + hashlib.sha256(canonical).hexdigest()
+if actual_revision != revision:
+    raise SystemExit(f"managed-data recovery revision mismatch: {actual_revision}")
+expected = set()
+for item in files:
+    logical = item.get("path", "")
+    if not logical or Path(logical).is_absolute() or ".." in Path(logical).parts:
+        raise SystemExit(f"invalid recovery path: {logical!r}")
+    path = data / logical
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f"recovery file is unavailable: {logical}")
+    body = path.read_bytes()
+    if len(body) != item.get("size") or hashlib.sha256(body).hexdigest() != item.get("sha256"):
+        raise SystemExit(f"recovery file does not match manifest: {logical}")
+    expected.add(logical)
+observed = {
+    str(path.relative_to(data))
+    for path in data.rglob("*")
+    if path.is_file()
+}
+if observed != expected:
+    raise SystemExit("managed-data recovery archive contains unexpected files")
+PY
+destination="$root/$revision/data"
+mkdir -p "$(dirname "$destination")"
+rm -rf "$destination"
+mv "$staging/data" "$destination"
+chmod -R u=rwX,go=rX "$destination"
+printf 'restored managed-data revision %s with %s files\n' "$revision" "$(find "$destination" -type f | wc -l)"
+RECOVER_DATA
+fi
+
 if [[ "${DEMO_RECOVER_CREDENTIALS:-false}" == true ]]; then
   command -v scp >/dev/null || {
     echo "required command is unavailable: scp" >&2
