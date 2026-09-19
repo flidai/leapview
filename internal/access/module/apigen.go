@@ -94,6 +94,11 @@ type APIGenBootstrapDecision struct {
 	// from "an active generation exists, continue with normal snapshot authz".
 	Handled bool
 	Allowed bool
+	// AllowMissingResource permits the managed-data guard to consider the
+	// scoped authoring fallback only after the active snapshot proves that the
+	// exact successor connection does not exist. It never bypasses a denial on
+	// an existing resource.
+	AllowMissingResource bool
 }
 
 // APIGenBootstrapAuthorizer is supplied by application composition. It is a
@@ -590,6 +595,10 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
 			}
+			if isManagedDataBootstrapOperation(operationID) {
+				a.protectManagedDataStaging(operationID, capability, resolver, decision.AllowMissingResource, next).ServeHTTP(w, r)
+				return
+			}
 			a.protectResources(operationID, capability, resolver, next).ServeHTTP(w, r)
 			return
 		}
@@ -600,6 +609,15 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 				return
 			}
 			if authorized && decision.Allowed {
+				if isManagedDataBootstrapOperation(operationID) {
+					connectionID, ok := managedDataConnectionID(r, projectID, a.resourceResolverForContractMust(operationID))
+					if !ok {
+						http.NotFound(w, r)
+						return
+					}
+					next.ServeHTTP(w, r.WithContext(withManagedDataStagingAuthorization(r.Context(), projectID, connectionID, principal.ID, capability)))
+					return
+				}
 				next.ServeHTTP(w, r.WithContext(withBootstrapAuthorization(r.Context(), projectID, principal.ID, capability)))
 				return
 			}
@@ -628,13 +646,34 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
+		if isManagedDataBootstrapOperation(operationID) {
+			connectionID, ok := managedDataConnectionID(r, projectID, a.resourceResolverForContractMust(operationID))
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(withManagedDataStagingAuthorization(r.Context(), projectID, connectionID, principal.ID, capability)))
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(withBootstrapAuthorization(r.Context(), projectID, principal.ID, capability)))
 	}))
+}
+
+func isManagedDataBootstrapOperation(operationID string) bool {
+	switch operationID {
+	case "createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
+		return true
+	default:
+		return false
+	}
 }
 
 func isAuthoringBootstrapOperation(operationID string) bool {
 	switch operationID {
 	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
+		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
 		"listProjectRoleBindings", "createProjectRoleBinding":
 		return true
 	default:
@@ -708,6 +747,86 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 			return
 		}
 		next.ServeHTTP(w, r)
+	}))
+}
+
+func managedDataConnectionID(r *http.Request, projectID projectgraph.ResourceID, resolve APIGenResourceResolver) (projectgraph.ResourceID, bool) {
+	if r == nil || resolve == nil {
+		return "", false
+	}
+	resources := resolve(r, projectID)
+	if len(resources) != 1 || resources[0].Validate() != nil || resources[0].Kind() != projectgraph.KindConnection {
+		return "", false
+	}
+	return resources[0].ID(), true
+}
+
+// protectManagedDataStaging preserves normal snapshot RBAC for every active
+// connection. The scoped authoring fallback is considered only for the exact
+// connection that the active predecessor graph proves is missing.
+func (a *APIGenAuthorizer) protectManagedDataStaging(operationID string, capability access.Capability, resolve APIGenResourceResolver, allowMissingResource bool, next http.Handler) http.Handler {
+	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := a.module.CurrentPrincipal(r)
+		if !ok || strings.TrimSpace(principal.ID) == "" {
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+		projectID := a.runtime.ProjectID()
+		if projectID.Validate() != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		connectionID, ok := managedDataConnectionID(r, projectID, resolve)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		resource, _ := access.NewResourceRef(connectionID, projectgraph.KindConnection)
+		if principal.DevBypass {
+			next.ServeHTTP(w, r)
+			return
+		}
+		allowed, err := a.authorizeResources(r.Context(), principal.ID, projectID, []access.ResourceRef{resource}, capability)
+		if err == nil {
+			if !allowed {
+				a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resource, capability)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			effective, effectiveErr := a.module.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
+			if effectiveErr != nil {
+				if errors.Is(effectiveErr, access.ErrForbidden) {
+					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+					return
+				}
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			if !containsCapability(effective, capability) {
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !errors.Is(err, errAPIGenResourceNotFound) {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if !allowMissingResource {
+			http.NotFound(w, r)
+			return
+		}
+		authorized, authErr := a.module.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), capability)
+		if authErr != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if !authorized {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(withManagedDataStagingAuthorization(r.Context(), projectID, connectionID, principal.ID, capability)))
 	}))
 }
 

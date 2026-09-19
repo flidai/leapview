@@ -815,9 +815,7 @@ func buildApplicationSurfaces(
 			return snapshot, nil
 		}
 		snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, routes.accessModule.AuthorizationSubjects)
-		authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection, func(ctx context.Context) (bool, error) {
-			return hasActiveBootstrapServingState(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, policy.defaultEnvironment, runtimeConfig.DeliveryTargetReader, runtimeConfig.InstanceID, runtimeConfig.ProjectID.String())
-		})
+		authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection)
 		routes.accessModule.SetCurrentEffectiveCapabilities(func(ctx context.Context, principalID string) ([]access.Capability, error) {
 			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
 			if err != nil {

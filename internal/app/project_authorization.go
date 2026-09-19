@@ -69,23 +69,16 @@ func authorizeAuthoringProject(
 }
 
 // bootstrapAwareConnectionAuthorization permits managed-data handlers to
-// consume the opaque request marker emitted by the APIGen bootstrap guard.
-// The marker is accepted only while the durable serving-state repository has
-// no active generation; all active requests continue through the snapshot
-// authorizer, including when snapshot acquisition fails for another reason.
+// consume the opaque request marker emitted by the APIGen staging guard. The
+// guard has already bound the credential to the durable project claim, target,
+// principal, and capability. This also covers a successor connection that is
+// intentionally absent from the active predecessor snapshot.
 func bootstrapAwareConnectionAuthorization(
 	snapshot connectionAuthorization,
-	active func(context.Context) (bool, error),
 ) connectionAuthorization {
 	return func(ctx context.Context, principalID, projectID, connectionID string, capability access.Capability) (bool, error) {
-		if marker, ok := accessmodule.BootstrapAuthorizationFromContext(ctx); ok && marker.PrincipalID == strings.TrimSpace(principalID) && marker.ProjectID.String() == strings.TrimSpace(projectID) && marker.Capability == capability {
-			isActive, err := active(ctx)
-			if err != nil {
-				return false, err
-			}
-			if !isActive {
-				return true, nil
-			}
+		if marker, ok := accessmodule.ManagedDataStagingAuthorizationFromContext(ctx); ok && marker.PrincipalID == strings.TrimSpace(principalID) && marker.ProjectID.String() == strings.TrimSpace(projectID) && marker.ConnectionID.String() == strings.TrimSpace(connectionID) && marker.Capability == capability {
+			return true, nil
 		}
 		if snapshot == nil {
 			return false, fmt.Errorf("active authorization snapshot is unavailable")
@@ -203,6 +196,66 @@ func authorizeProjectResourcesWithCapability(
 		}
 	}
 	return true, nil
+}
+
+// authorizeManagedDataConnection returns found=false only when the active,
+// identity-bound snapshot proves that the exact connection is absent. Every
+// lease, identity, snapshot, and subject failure remains an error so callers
+// cannot mistake infrastructure failure for a staging opportunity.
+func authorizeManagedDataConnection(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	resource access.ResourceRef,
+	capability access.Capability,
+) (found, allowed bool, err error) {
+	if accessModule == nil || runtimeHost == nil {
+		return false, false, fmt.Errorf("authorization modules are required")
+	}
+	lease, err := runtimeHost.Acquire(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	if lease == nil {
+		return false, false, fmt.Errorf("runtime host returned a nil lease")
+	}
+	defer lease.Release()
+	if lease.Identity().ProjectID != projectID {
+		return false, false, fmt.Errorf("runtime project %q does not match requested project %q", lease.Identity().ProjectID, projectID)
+	}
+	authorizedLease, ok := lease.(interface {
+		AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+	})
+	if !ok {
+		return false, false, fmt.Errorf("active runtime lease does not expose authorization snapshot")
+	}
+	snapshot := authorizedLease.AuthorizationSnapshot()
+	if snapshot.Identity() != lease.Identity() {
+		return false, false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
+	}
+	if err := snapshot.ValidateBound(); err != nil {
+		return false, false, err
+	}
+	graphResource, exists := snapshot.Project().Resource(resource.ID())
+	if !exists || graphResource.Kind != resource.Kind() {
+		return false, false, nil
+	}
+	subjects, err := accessModule.AuthorizationSubjects(ctx, principalID)
+	if err != nil {
+		return true, false, err
+	}
+	for _, subject := range subjects {
+		candidate, candidateErr := snapshot.Allows(subject, resource, capability)
+		if candidateErr != nil {
+			return true, false, candidateErr
+		}
+		if candidate {
+			return true, true, nil
+		}
+	}
+	return true, false, nil
 }
 
 // authorizeProjectRole evaluates a project-wide role binding against the
@@ -572,17 +625,29 @@ func protectManagedDataTransportWithBootstrap(
 					http.NotFound(w, r)
 					return
 				}
+				var bootstrapAccess bool
+				if authoringModule, ok := accessModule.(interface {
+					AuthorizeAuthoringBootstrapRequest(context.Context, *http.Request, string, access.Capability) (bool, error)
+				}); ok {
+					bootstrapAccess, err = authoringModule.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), access.CapabilityResourceEdit)
+					if err != nil {
+						http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+						return
+					}
+				}
 				bootstrapModule, bootstrapModuleOK := accessModule.(interface {
 					AuthorizeBootstrapRequest(context.Context, *http.Request, access.Capability) (bool, error)
 				})
-				if !bootstrapModuleOK {
+				if !bootstrapAccess && !bootstrapModuleOK {
 					http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 					return
 				}
-				bootstrapAccess, accessErr := bootstrapModule.AuthorizeBootstrapRequest(r.Context(), r, access.CapabilityResourceEdit)
-				if accessErr != nil {
-					http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-					return
+				if !bootstrapAccess {
+					bootstrapAccess, err = bootstrapModule.AuthorizeBootstrapRequest(r.Context(), r, access.CapabilityResourceEdit)
+					if err != nil {
+						http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+						return
+					}
 				}
 				if !bootstrapAccess {
 					http.NotFound(w, r)
@@ -591,6 +656,50 @@ func protectManagedDataTransportWithBootstrap(
 				next.ServeHTTP(w, r)
 				return
 			}
+			activeProjectID := runtimeHost.ProjectID()
+			if err := activeProjectID.Validate(); err != nil || projectID != activeProjectID {
+				http.NotFound(w, r)
+				return
+			}
+			if principal.DevBypass {
+				next.ServeHTTP(w, r)
+				return
+			}
+			found, allowed, authErr := authorizeManagedDataConnection(r.Context(), accessModule, runtimeHost, principal.ID, activeProjectID, resource, access.CapabilityResourceEdit)
+			if authErr != nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			if found {
+				if !allowed {
+					http.NotFound(w, r)
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !decision.AllowMissingResource {
+				http.NotFound(w, r)
+				return
+			}
+			authoringModule, ok := accessModule.(interface {
+				AuthorizeAuthoringBootstrapRequest(context.Context, *http.Request, string, access.Capability) (bool, error)
+			})
+			if !ok {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			authorized, authoringErr := authoringModule.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), access.CapabilityResourceEdit)
+			if authoringErr != nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			if !authorized {
+				http.NotFound(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
 		}
 		activeProjectID := runtimeHost.ProjectID()
 		if err := activeProjectID.Validate(); err != nil || projectID != activeProjectID {
