@@ -140,6 +140,7 @@ def main():
         unit = original_unit + '\n[Service]\nEnvironmentFile=' + str(environment_file) + '\nExecStart=\nExecStart=' + str(RELEASE / 'leapview') + ' serve --production\nWorkingDirectory=' + str(RELEASE) + '\n\n[Install]\nWantedBy=multi-user.target\n'
         write_private(UNIT, unit)
         subprocess.run(['systemctl', 'daemon-reload'], check=True)
+        subprocess.run(['systemctl', 'reset-failed', SERVICE], check=False)
         subprocess.run(['systemctl', 'start', SERVICE], check=True)
         await_ready()
         new_pid = output('systemctl', 'show', SERVICE, '--property=MainPID', '--value')
@@ -164,6 +165,7 @@ def main():
                 subprocess.run(['tar', '-xpf', str(backup / 'home.tar'), '-C', str(HOME_PATH.parent)], check=True)
             write_private(UNIT, original_unit)
             subprocess.run(['systemctl', 'daemon-reload'], check=True)
+            subprocess.run(['systemctl', 'reset-failed', SERVICE], check=False)
             subprocess.run(['systemctl', 'start', SERVICE], check=True)
             await_ready()
             print('Rollout failed; predecessor and original database state restored', flush=True)

@@ -129,8 +129,24 @@ revision=a9328056d1727b71f5e42fb10fe285b201898a62
 tag=ghcr.io/flidai/leapview:candidate-$revision
 release=/opt/leapview-demo/releases/$revision
 service=leapview-demo-current.service
+if ! systemctl is-active --quiet "$service"; then
+  systemctl reset-failed "$service"
+  systemctl restart "$service"
+  for _ in $(seq 1 60); do
+    curl --fail --silent --show-error http://127.0.0.1:8132/readyz >/dev/null && break
+    sleep 2
+  done
+  curl --fail --silent --show-error http://127.0.0.1:8132/readyz >/dev/null
+fi
 active_pid=$(systemctl show "$service" --property=MainPID --value)
 active_revision=$("/proc/$active_pid/exe" version --json | jq -er .revision)
+if [[ -x "$release/leapview" && -f "$release/immutable-image.txt" && -f "$release/leapview.sha256" ]]; then
+  identity=$("$release/leapview" version --json)
+  jq -e --arg revision "$revision" '.revision == $revision and .dirty == false' <<<"$identity" >/dev/null
+  (cd "$release" && sha256sum --check leapview.sha256)
+  printf 'Exact open-PR candidate already staged at %s; active service unchanged\n' "$release"
+  exit 0
+fi
 while IFS= read -r candidate_tag; do
   [[ "$candidate_tag" == "$tag" || "$candidate_tag" == "ghcr.io/flidai/leapview:candidate-$active_revision" ]] && continue
   docker image rm "$candidate_tag"
