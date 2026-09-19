@@ -135,6 +135,7 @@ if [[ -n "${DEMO_RECOVERY_MANAGED_DATA_ARCHIVE:-}" ]]; then
   }
   recovery_archive="$DEMO_RECOVERY_MANAGED_DATA_ARCHIVE"
   recovery_revision="${DEMO_RECOVERY_MANAGED_DATA_REVISION:?Set DEMO_RECOVERY_MANAGED_DATA_REVISION}"
+  recovery_runtime_revision="${DEMO_RECOVERY_MANAGED_DATA_RUNTIME_REVISION:-}"
   [[ -f "$recovery_archive" ]] || {
     echo "managed-data recovery archive is unavailable" >&2
     exit 69
@@ -143,8 +144,12 @@ if [[ -n "${DEMO_RECOVERY_MANAGED_DATA_ARCHIVE:-}" ]]; then
     echo "managed-data recovery revision is invalid" >&2
     exit 64
   }
+  if [[ -n "$recovery_runtime_revision" && ! "$recovery_runtime_revision" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "managed-data runtime recovery revision is invalid" >&2
+    exit 64
+  fi
   scp "${ssh_options[@]}" "$recovery_archive" "root@$demo_host:/tmp/leapview-managed-data-recovery.tar.gz"
-  ssh "${ssh_options[@]}" "root@$demo_host" "DEMO_RECOVERY_MANAGED_DATA_REVISION='$recovery_revision' bash -se" <<'RECOVER_DATA'
+  ssh "${ssh_options[@]}" "root@$demo_host" "DEMO_RECOVERY_MANAGED_DATA_REVISION='$recovery_revision' DEMO_RECOVERY_MANAGED_DATA_RUNTIME_REVISION='$recovery_runtime_revision' bash -se" <<'RECOVER_DATA'
 set -euo pipefail
 archive=/tmp/leapview-managed-data-recovery.tar.gz
 revision="$DEMO_RECOVERY_MANAGED_DATA_REVISION"
@@ -213,6 +218,17 @@ for item in json.loads(Path(sys.argv[1]).read_text())["files"]:
 PY
 )
 printf 'restored %s content-addressed blobs for managed-data revision %s\n' "$restored" "$revision"
+runtime_revision="${DEMO_RECOVERY_MANAGED_DATA_RUNTIME_REVISION:-}"
+if [[ -n "$runtime_revision" ]]; then
+  destination="$root/revisions/$runtime_revision/data"
+  mkdir -p "$(dirname "$destination")"
+  runtime_staging="$root/revisions/$runtime_revision/.data-recovery.$$"
+  cp -a "$staging/data" "$runtime_staging"
+  chmod -R u=rwX,go=rX "$runtime_staging"
+  rm -rf "$destination"
+  mv "$runtime_staging" "$destination"
+  printf 'restored managed-data runtime view %s with %s files\n' "$runtime_revision" "$(find "$destination" -type f | wc -l)"
+fi
 RECOVER_DATA
 fi
 
