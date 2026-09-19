@@ -124,12 +124,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Resolve exact main image
         id: image
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag=ghcr.io/flidai/leapview:candidate-6e32701df11e2de137e7db59025e7ed9c0399078
           docker pull "$tag"
           image="$(docker image inspect "$tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("ghcr.io/flidai/leapview@sha256:"))' | head -1)"
+          signer_revision="$(gh api repos/flidai/leapview/actions/runs/35416975080 --jq .head_sha)"
+          [[ "$signer_revision" =~ ^[0-9a-f]{40}$ ]]
           echo "reference=$image" >> "$GITHUB_OUTPUT"
+          echo "signer-revision=$signer_revision" >> "$GITHUB_OUTPUT"
       - name: Admit exact image provenance
         id: admission
         uses: ./.github/actions/oci-admission
@@ -137,7 +142,10 @@ jobs:
           image: ${{ steps.image.outputs.reference }}
           repository: ghcr.io/flidai/leapview
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: 6e32701df11e2de137e7db59025e7ed9c0399078
+          # workflow_dispatch attestations are signed with the protected
+          # workflow event SHA. The image identity is checked independently
+          # against the exact candidate revision by qualification below.
+          source-revision: ${{ steps.image.outputs.signer-revision }}
       - name: Run complete image qualification with current token UI contract
         env:
           IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
