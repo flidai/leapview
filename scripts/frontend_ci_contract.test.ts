@@ -60,3 +60,12 @@ test('hosted demo generates build-only packages before publishing', () => {
   expect(generateIndex).toBeGreaterThan(setupIndex)
   expect(publishIndex).toBeGreaterThan(generateIndex)
 })
+
+test('hosted demo publishes the CFO project and its pinned finance data', () => {
+  const script = readFileSync('scripts/deploy_demo.sh', 'utf8')
+  expect(script).toContain('source_root="$repo_root/dashboards/experiments/cfo-demo"')
+  expect(script).toContain('data_link="$repo_root/.data/cfo-demo"')
+  expect(script).toContain('go run ./internal/app/tools/bootstrapfinance --shared-cache --out "$data_link"')
+  expect(script).toContain('--connection finance_files')
+  expect(script).not.toContain('bootstrapolist')
+})

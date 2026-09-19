@@ -1,39 +1,36 @@
 # Hosted product demo
 
 `https://demo.leapview.dev` is the continuously deployed, client-neutral
-LeapView demonstration environment. It runs the same canonical Olist project
-as `task dev`:
+LeapView demonstration environment. It runs the finance project used by
+`task dev:cfo`:
 
-- Executive Sales
-- Fulfillment Operations
-- Visual Showcase
+- CFO Command Center
 
-The project source remains in `dashboards/`. This directory contains only the
-content-publication contract; it must never contain client configuration or
-secret values.
+The project source remains in `dashboards/experiments/cfo-demo/`. This
+directory contains only the content-publication contract; it must never
+contain client configuration or secret values.
 
 ## Delivery
 
 After `Main artifacts` builds and qualifies the `main` revision,
 `.github/workflows/demo-deploy.yml`:
 
-1. downloads the pinned public Olist dataset and synchronizes it as
+1. downloads the pinned Microsoft Financial Sample and synchronizes it as
    managed data;
 2. authenticates to `/api/v1/capabilities` and admits the running runtime only
-   when it reports API v1, native PostgreSQL delivery, a clean production
-   build, and a canonical immutable build revision;
-3. publishes the `dashboards/` source root through the normal candidate,
+   when it reports API v1, native PostgreSQL delivery, a clean hosted-demo
+   build, and the exact qualified immutable build revision;
+3. publishes the `dashboards/experiments/cfo-demo/` source root through the normal candidate,
    approval, and activation APIs; and
-4. verifies the Visual Showcase and public readiness.
+4. verifies the CFO Command Center and public readiness.
 
 This is deliberately a content-only workflow. The `leapview-demo` platform
 operators own runtime image rollout outside this repository workflow, using an
 immutable image that has passed the repository's [release qualification](../../.github/workflows/release.yml)
 and [installed-candidate qualification](../../.github/workflows/installed-candidate.yml).
-The publication records both the selected source revision and the authenticated
-running build revision in its job output; equality is not required, but the
-runtime compatibility contract above is. No SSH host rollout or tracked SSH
-identity is part of the supported path.
+The publication requires the selected source revision to equal the
+authenticated running build revision. No SSH host rollout or tracked SSH
+identity is part of the content-publication path.
 
 The `leapview-demo` GitHub environment authenticates to Infisical through
 GitHub OIDC. The Infisical `prod:/demo/deployment` path supplies the
