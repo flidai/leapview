@@ -95,16 +95,6 @@ jobs:
           from pathlib import Path
           path = Path('scripts/deploy_demo_recovery.sh')
           source = Path('scripts/deploy_demo.sh').read_text()
-          block = '''"$leapview" data sync \\
-            --source-root "$source_root" \\
-            --connection olist \\
-            --from "$data_path" \\
-            --target "$demo_target" \\
-            --project-id "$project_id" \\
-            --token "$publisher_token"
-          '''
-          if source.count(block) != 1:
-              raise SystemExit('managed-data bootstrap block changed unexpectedly')
           exchange = '''publisher_token="$(exchange_workload_token \\
             "$publisher_client_id" \\
             "$publisher_client_secret" \\
@@ -119,7 +109,7 @@ jobs:
           replacement = '''publisher_token="${DEMO_RECOVERY_PUBLISHER_TOKEN:?Set DEMO_RECOVERY_PUBLISHER_TOKEN}"
           release_token="${DEMO_RECOVERY_RELEASE_TOKEN:?Set DEMO_RECOVERY_RELEASE_TOKEN}"
           '''
-          path.write_text(source.replace(block, '').replace(exchange, replacement))
+          path.write_text(source.replace(exchange, replacement))
           path.chmod(0o755)
           PY
           ./scripts/deploy_demo_recovery.sh
