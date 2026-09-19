@@ -452,6 +452,18 @@ WHERE t.environment='demo-current'
 ORDER BY g.created_at DESC
 LIMIT 5;
 SQL
+    printf 'Recent demo activation lineage bindings:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT b.delivery_id,b.generation_id,b.project_id,b.graph_digest,
+       g.compiled_graph_digest,b.created_at
+FROM lineage.bindings b
+LEFT JOIN delivery.delivery_generation g ON g.generation_id::text=b.generation_id
+WHERE b.delivery_id IN (
+  SELECT target_id FROM delivery.delivery_target WHERE environment='demo-current'
+)
+ORDER BY b.created_at DESC
+LIMIT 10;
+SQL
     printf 'Recent demo serving-state admission documents:\n'
     docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
 SELECT b.generation_id,b.project_id,b.environment,
