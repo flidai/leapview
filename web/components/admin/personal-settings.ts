@@ -16,11 +16,11 @@ import '../shared/one-time-secret'
 import '../shared/select-menu'
 import type { SelectMenu } from '../shared/select-menu'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
+import { avatarResponseError } from './avatar-response'
 import { formatDate, formatRelativeActivity, humanizeCapability, humanizeSessionKind, sessionFact } from './personal-settings-format'
 import { personalSettingsStyles } from './personal-settings.styles'
 import '../shared/drawer'
 import '../shared/user-avatar'
-
 const emptySettings: PersonalSettingsSignal = {
   active: 'profile',
   profile: { id: '', email: '', displayName: '', theme: 'system', identitySource: '', canEditDisplayName: false, hasLocalPassword: false },
@@ -978,9 +978,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.error = ''
     try {
       const response = await fetch('/profile/avatar', { method: 'PUT', headers: { ...window.LeapViewCommand.headers('uploadCurrentAvatar'), 'Content-Type': file.type }, body: file })
-      if (!response.ok) throw new Error('Avatar upload failed')
+      if (!response.ok) throw await avatarResponseError(response, 'Avatar upload failed')
       const uploaded = await response.json() as { url?: string }
-      document.dispatchEvent(new CustomEvent('leapview-avatar-change', { detail: { url: uploaded.url ?? '' } }))
+      if (!uploaded.url?.trim()) throw new Error('Avatar upload returned no image URL')
+      document.dispatchEvent(new CustomEvent('leapview-avatar-change', { detail: { url: uploaded.url } }))
       this.send('lv-personal-profile-command', { action: 'refresh', displayName: this.profileName })
       this.message = 'Profile picture updated.'
     } catch (error) { this.error = error instanceof Error ? error.message : 'Avatar upload failed' } finally { this.avatarBusy = false; input.value = '' }
@@ -992,7 +993,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.error = ''
     try {
       const response = await fetch('/profile/avatar', { method: 'DELETE', headers: window.LeapViewCommand.headers('deleteCurrentAvatar') })
-      if (!response.ok) throw new Error('Avatar removal failed')
+      if (!response.ok) throw await avatarResponseError(response, 'Avatar removal failed')
       document.dispatchEvent(new CustomEvent('leapview-avatar-change', { detail: { url: '' } }))
       this.send('lv-personal-profile-command', { action: 'refresh', displayName: this.profileName })
       this.message = 'Profile picture removed.'

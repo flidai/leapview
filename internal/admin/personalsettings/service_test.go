@@ -161,6 +161,47 @@ func TestServiceLoadBuildsPersonalSettingsSignal(t *testing.T) {
 	}
 }
 
+func TestServiceLoadIncludesOnlyUniqueActiveSessions(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	stamp := func(value time.Time) string { return value.Format(time.RFC3339Nano) }
+	repo := &fakeRepository{
+		principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser, Email: "user@example.com"},
+		identity:  access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal},
+		sessions: []access.Session{
+			{ID: "current", Kind: access.SessionKindBrowser, ExpiresAt: stamp(now.Add(time.Hour))},
+			{ID: "current", Kind: access.SessionKindBrowser, ExpiresAt: stamp(now.Add(2 * time.Hour))},
+			{ID: "expired", Kind: access.SessionKindBrowser, ExpiresAt: stamp(now)},
+			{ID: "revoked", Kind: access.SessionKindDesktop, RevokedAt: stamp(now.Add(-time.Minute))},
+			{ID: "desktop", Kind: access.SessionKindDesktop, ClientID: "  Desktop app  ", AbsoluteExpiresAt: stamp(now.Add(time.Hour))},
+		},
+	}
+	service := testService(repo)
+	service.Now = func() time.Time { return now }
+	service.Authoring = &fakeAuthoring{sessions: []access.AuthoringSession{
+		{ID: "cli", Kind: access.AuthoringSessionHumanCLI, ExpiresAt: now.Add(time.Hour)},
+		{ID: "cli", Kind: access.AuthoringSessionHumanCLI, ExpiresAt: now.Add(2 * time.Hour)},
+		{ID: "old-cli", Kind: access.AuthoringSessionHumanCLI, ExpiresAt: now},
+		{ID: "revoked-cli", Kind: access.AuthoringSessionHumanCLI, ExpiresAt: now.Add(time.Hour), RevokedAt: now.Add(-time.Minute)},
+	}}
+
+	state, err := service.Load(context.Background(), repo.principal.ID, "current", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Security.Sessions) != 2 {
+		t.Fatalf("active sessions = %#v, want one browser and one desktop", state.Security.Sessions)
+	}
+	if state.Security.Sessions[0].ID != "current" || !state.Security.Sessions[0].Current {
+		t.Fatalf("current session = %#v", state.Security.Sessions[0])
+	}
+	if state.Security.Sessions[1].ID != "desktop" || state.Security.Sessions[1].ClientLabel != "Desktop app" {
+		t.Fatalf("desktop session = %#v", state.Security.Sessions[1])
+	}
+	if len(state.Security.AuthoringSessions) != 1 || state.Security.AuthoringSessions[0].ID != "cli" {
+		t.Fatalf("active authoring sessions = %#v", state.Security.AuthoringSessions)
+	}
+}
+
 func TestServiceMutationsAuditAndValidateIdentity(t *testing.T) {
 	repo := &fakeRepository{principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser, Email: "user@example.com"}, identity: access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal, HasLocalPassword: true}, effective: []access.Capability{access.CapabilityResourceRead}}
 	service := testService(repo)

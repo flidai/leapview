@@ -258,6 +258,12 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 		if !consumerOK || !providerOK {
 			continue
 		}
+		// Refresh pipelines have their own lineage surface. Keep their
+		// operational dependency out of semantic/dashboard lineage, where
+		// pipelines are already represented as a separate overview fact.
+		if !isPipelineAsset(selected.Type) && (isPipelineAsset(consumer.Type) || isPipelineAsset(provider.Type)) {
+			continue
+		}
 		source, sourceOK := lineageVisibleAnchor(provider, assets)
 		target, targetOK := lineageVisibleAnchor(consumer, assets)
 		if !sourceOK || !targetOK || source.ID == target.ID {
@@ -538,7 +544,9 @@ var lineageProjectionLayers = []lineageProjectionLayerPolicy{
 	{assetType: "source", layer: 1},
 	{assetType: "model", layer: 2},
 	{assetType: "semantic_model", layer: 3},
-	{assetType: "dashboard", layer: 4},
+	{assetType: "pipeline", layer: 4},
+	{assetType: "refresh_pipeline", layer: 4},
+	{assetType: "dashboard", layer: 5},
 }
 
 func lineageVisualLayer(typ string) int {
@@ -577,6 +585,22 @@ var lineageProjectionEdges = []lineageProjectionEdgePolicy{
 		key:  lineageProjectionEdgeKey{sourceType: "semantic_model", targetType: "dashboard"},
 		kind: "lineage_semantic_model_dashboard",
 	},
+	{
+		key:  lineageProjectionEdgeKey{sourceType: "semantic_model", targetType: "pipeline"},
+		kind: "lineage_semantic_model_pipeline",
+	},
+	{
+		key:  lineageProjectionEdgeKey{sourceType: "semantic_model", targetType: "refresh_pipeline"},
+		kind: "lineage_semantic_model_refresh_pipeline",
+	},
+	{
+		key:  lineageProjectionEdgeKey{sourceType: "pipeline", targetType: "dashboard"},
+		kind: "lineage_pipeline_dashboard",
+	},
+	{
+		key:  lineageProjectionEdgeKey{sourceType: "refresh_pipeline", targetType: "dashboard"},
+		kind: "lineage_refresh_pipeline_dashboard",
+	},
 }
 
 func lineageProjectionEdge(sourceType, targetType, fallback string) lineageProjectionEdgePolicy {
@@ -603,6 +627,10 @@ func isRollupLineageAsset(typ string) bool {
 	default:
 		return false
 	}
+}
+
+func isPipelineAsset(typ string) bool {
+	return typ == "pipeline" || typ == "refresh_pipeline"
 }
 
 func addContainsContext(selectedID string, graph *assetLineageGraph, nodeIndex map[string]int, assets map[string]projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, addNode func(projectview.DevelopAssetView, int, bool), addEdge func(projectview.DevelopEdgeView)) {

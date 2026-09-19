@@ -449,6 +449,37 @@ test('chat thread renders tool activity with accessible expandable details', asy
   await page.close()
 })
 
+test('chat thread keeps one tool row per call when durable history replaces live activity', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.transcript = [
+      { id: 'tool-running', toolCallId: 'call-1', kind: 'tool', name: 'catalog_search', status: 'running', inputJson: '{"query":"sales"}' },
+      { id: 'tool-complete', toolCallId: 'call-2', kind: 'tool', name: 'catalog_list', status: 'complete', resultJson: 'items[1]{id}: sales' },
+    ]
+    await thread.updateComplete
+    thread.transcript = [
+      { id: 'tool-running', toolCallId: 'call-1', kind: 'tool', name: 'catalog_search', status: 'complete', inputJson: '{"query":"sales"}', resultJson: 'items[1]{id}: sales' },
+      { id: 'tool-complete', toolCallId: 'call-2', kind: 'tool', name: 'catalog_list', status: 'complete', resultJson: 'items[1]{id}: sales' },
+    ]
+    await thread.updateComplete
+  })
+  const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
+    const root = element.shadowRoot as ShadowRoot
+    return {
+      rows: root.querySelectorAll('.tool-call').length,
+      labels: Array.from(root.querySelectorAll('.tool-trigger')).map((trigger: any) => trigger.textContent.replace(/\s+/g, ' ').trim()),
+      ids: Array.from(root.querySelectorAll('.tool-details')).map((detail: any) => detail.id),
+    }
+  })
+  expect(state.rows).toBe(2)
+  expect(state.labels).toEqual(['Catalog Search Complete', 'Catalog List Complete'])
+  expect(state.ids).toEqual([])
+  await page.close()
+})
+
 test('chat thread renders assistant markdown through shared markdown view', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)

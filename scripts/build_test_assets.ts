@@ -51,7 +51,7 @@ const fixtures = new Map<string, FixtureBuild>([
       label: 'project-page',
       clean: ['.tmp/project-page-test'],
       options: {
-        entrypoints: ['web/components/project/project-page.ts', 'web/components/data/data-explorer.ts'],
+        entrypoints: ['web/components/project/project-page.ts', 'web/components/data/data-explorer.ts', 'web/components/shared/asset-lineage-graph.ts'],
         target: 'browser',
         format: 'esm',
         splitting: true,

@@ -42,7 +42,7 @@ beforeAll(async () => {
     }
     if (url.pathname === '/sidebar-history') {
       response.setHeader('content-type', 'text/html')
-      response.end(testDocument(true, false, true))
+      response.end(testDocument(true, false, true, false, false, url.searchParams.getAll('deleted')))
       return
     }
     if (url.pathname === '/sidebar-active-nav') {

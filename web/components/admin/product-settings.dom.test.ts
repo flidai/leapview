@@ -98,6 +98,7 @@ test('product settings renders redacted sections and emits typed identity comman
       mergePatch({ productSettings: { active: 'system' } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await element.updateComplete
+      const websiteHref = (element.shadowRoot as ShadowRoot).querySelector<HTMLAnchorElement>('a[href="https://leapview.dev"]')?.getAttribute('href')
       return {
         generalText,
         inputValue: input.value,
@@ -108,6 +109,7 @@ test('product settings renders redacted sections and emits typed identity comman
         authStatusTones,
         systemHeadings: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLHeadingElement>('h2')).map((heading) => heading.textContent?.trim()),
         systemPanelLabels: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLElement>('section')).map((section) => section.getAttribute('aria-label')),
+        websiteHref,
         saveCommand,
         resetCommand,
         fieldLabelFontSize,
@@ -127,6 +129,7 @@ test('product settings renders redacted sections and emits typed identity comman
     expect(state.authStatusTones).toContain('neutral')
     expect(state.systemHeadings).toEqual(['Runtime health', 'Build', 'Limits', 'About LeapView'])
     expect(state.systemPanelLabels).toEqual(['Runtime health settings', 'Build settings', 'Limits settings', 'About LeapView'])
+    expect(state.websiteHref).toBe('https://leapview.dev')
     expect(state.saveCommand).toEqual({ action: 'save_display_name', displayName: 'Acme BI', revision: 7 })
     expect(state.resetCommand).toEqual({ action: 'reset_identity', revision: 7 })
     expect(state.fieldLabelFontSize).toBe('14px')

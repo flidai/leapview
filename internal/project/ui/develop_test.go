@@ -732,6 +732,9 @@ func TestAssetVersionsTableKeepsTheListCompactAndBuildsDrawerComparison(t *testi
 			t.Fatalf("version column %d = %q, want %q", index, got, want)
 		}
 	}
+	if table.Columns[0].Align == nil || *table.Columns[0].Align != "center" {
+		t.Fatalf("version alignment = %#v, want centered header and values", table.Columns[0].Align)
+	}
 	if table.RowAction == nil || *table.RowAction != "open-asset-version" {
 		t.Fatalf("version row action = %#v", table.RowAction)
 	}

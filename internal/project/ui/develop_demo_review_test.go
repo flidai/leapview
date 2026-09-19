@@ -106,6 +106,35 @@ func TestAssetLineageCollapsesSameLayerDependenciesAroundSelectedModel(t *testin
 	}
 }
 
+func TestAssetLineageProjectsRefreshPipelinesAsVisibleConsumers(t *testing.T) {
+	semantic := projectview.DevelopAssetView{ID: "semantic:sales", Type: "semantic_model", Key: "sales", Title: "Sales semantic model"}
+	pipeline := projectview.DevelopAssetView{ID: "pipeline:sales", Type: "refresh_pipeline", Key: "sales", Title: "Sales refresh"}
+	dashboard := projectview.DevelopAssetView{ID: "dashboard:sales", Type: "dashboard", Key: "sales", Title: "Sales dashboard"}
+	assets := []projectview.DevelopAssetView{semantic, pipeline, dashboard}
+	edges := []projectview.DevelopEdgeView{
+		{ID: "pipeline-semantic", FromAssetID: pipeline.ID, ToAssetID: semantic.ID, Type: "refreshes"},
+		{ID: "dashboard-semantic", FromAssetID: dashboard.ID, ToAssetID: semantic.ID, Type: "uses"},
+	}
+
+	lineage := assetLineage("project:test", pipeline, assets, edges)
+	seen := map[string]bool{}
+	for _, node := range lineage.Graph.Nodes {
+		seen[node.ID] = true
+	}
+	if !seen[pipeline.ID] || !seen[semantic.ID] {
+		t.Fatalf("refresh pipeline lineage nodes = %#v, want selected pipeline and semantic model", lineage.Graph.Nodes)
+	}
+	if seen[dashboard.ID] {
+		t.Fatalf("refresh pipeline lineage included unrelated dashboard: %#v", lineage.Graph.Nodes)
+	}
+	if len(lineage.Graph.Edges) != 1 || lineage.Graph.Edges[0].Source != semantic.ID || lineage.Graph.Edges[0].Target != pipeline.ID {
+		t.Fatalf("refresh pipeline lineage edges = %#v, want semantic model -> pipeline", lineage.Graph.Edges)
+	}
+	if len(lineage.Uses.Rows) != 1 || lineage.Uses.Rows[0]["asset"] != semantic.Title {
+		t.Fatalf("refresh pipeline uses rows = %#v, want semantic model dependency", lineage.Uses.Rows)
+	}
+}
+
 func TestRefreshHistoryUsesAvailableTimestampsAndReadablePrincipals(t *testing.T) {
 	run := AssetRefreshRun{
 		ID: "run:finance", Status: "succeeded", CreatedAt: "2026-08-24T13:00:00Z", FinishedAt: "2026-08-24T13:00:05Z",

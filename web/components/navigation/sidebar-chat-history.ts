@@ -1,5 +1,5 @@
 import { css, html } from 'lit'
-import { Archive, ChevronRight, MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from 'lucide'
+import { ChevronRight, MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
 
@@ -157,7 +157,6 @@ function renderSidebarChatHistoryItem(
           <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => runChatAction(event, item.pinned ? 'unpin' : 'pin', item, chatAction)}>${lucideIcon(item.pinned ? PinOff : Pin, { size: 16 })}<span>${item.pinned ? 'Unpin chat' : 'Pin chat'}</span></button>
           <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => runChatAction(event, 'rename', item, chatAction)}>${lucideIcon(Pencil, { size: 16 })}<span>Rename</span></button>
           <button class="chat-action unavailable" type="button" role="menuitem" disabled title="Chat projects are not supported yet"> <span aria-hidden="true"></span><span>Add to project</span></button>
-          <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => runChatAction(event, 'archive', item, chatAction)}>${lucideIcon(Archive, { size: 16 })}<span>Archive chat</span></button>
           <button class="chat-action danger" type="button" role="menuitem" @click=${(event: MouseEvent) => runChatAction(event, 'delete', item, chatAction)}>${lucideIcon(Trash2, { size: 16 })}<span>Delete chat</span></button>
         </div>
       </details>
