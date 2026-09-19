@@ -323,6 +323,22 @@ WHERE r.revoked_at IS NULL
 GROUP BY r.project_id,r.environment,r.generation_id
 ORDER BY r.project_id,r.environment,r.generation_id;
 SQL
+  printf 'Required demo managed-data revision manifest:\n'
+  docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT r.revision_id,r.manifest::text
+FROM managed_data.revision r
+WHERE r.digest='sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530';
+SQL
+  printf 'Required demo managed-data file inventory:\n'
+  docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT f.logical_path,f.size_bytes,f.sha256,f.storage_key
+FROM managed_data.revision_file f
+WHERE f.revision_id IN (
+  SELECT r.revision_id FROM managed_data.revision r
+  WHERE r.digest='sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530'
+)
+ORDER BY f.logical_path;
+SQL
 done
 printf 'Operator environment file paths:\n'
 find /tmp/leapview-main/.tmp /etc/leapview /opt/leapview -maxdepth 2 -type f -name '*env*' -print 2>/dev/null || true
