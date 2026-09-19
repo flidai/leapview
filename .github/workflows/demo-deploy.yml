@@ -25,18 +25,59 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy Olist showcase
+  publication-source:
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action == 'publish')
+    name: Resolve demo publication source
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.resolve.outputs.publish }}
+      revision: ${{ steps.resolve.outputs.revision }}
+    steps:
+      - name: Check out the deployment policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+      - name: Resolve the pinned runtime revision
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          extract_revision() {
+            sed -nE "s/^REVISION = '([0-9a-f]{40})'$/\1/p"
+          }
+          revision="$(extract_revision < scripts/rollout_demo_runtime.py)"
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          publish=false
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            publish=true
+          else
+            previous_revision="$(git show HEAD^:scripts/rollout_demo_runtime.py | extract_revision)"
+            [[ "$previous_revision" =~ ^[0-9a-f]{40}$ ]]
+            if [[ "$revision" != "$previous_revision" ]]; then
+              publish=true
+            fi
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          if [[ "$publish" == false ]]; then
+            echo "Skipping content publication because the pinned demo runtime did not change." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  deploy:
+    name: Deploy Olist showcase
+    needs: publication-source
+    if: needs.publication-source.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: leapview-demo
     env:
-      SOURCE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+      SOURCE_REVISION: ${{ needs.publication-source.outputs.revision }}
 
     steps:
       - name: Check out the qualified revision

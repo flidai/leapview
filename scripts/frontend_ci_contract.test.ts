@@ -39,7 +39,19 @@ for (const workflow of ['ci', 'merge-validation', 'nightly']) {
 
 test('hosted demo generates build-only packages before publishing', () => {
   const config = parse(readFileSync('.github/workflows/demo-deploy.yml', 'utf8'))
-  const steps = config.jobs.deploy.steps
+  const publicationSource = config.jobs['publication-source']
+  const resolver = publicationSource.steps.find((step: any) => step.id === 'resolve')
+  expect(publicationSource.outputs).toEqual({
+    publish: '${{ steps.resolve.outputs.publish }}',
+    revision: '${{ steps.resolve.outputs.revision }}',
+  })
+  expect(resolver.run).toContain('git show HEAD^:scripts/rollout_demo_runtime.py')
+
+  const deploy = config.jobs.deploy
+  expect(deploy.needs).toBe('publication-source')
+  expect(deploy.if).toBe("needs.publication-source.outputs.publish == 'true'")
+  expect(deploy.env.SOURCE_REVISION).toBe('${{ needs.publication-source.outputs.revision }}')
+  const steps = deploy.steps
   const setupIndex = steps.findIndex((step: any) => step.uses === './.github/actions/setup-ci')
   const generateIndex = steps.findIndex((step: any) => step.run === 'task generate')
   const publishIndex = steps.findIndex((step: any) => step.run === './scripts/deploy_demo.sh')
