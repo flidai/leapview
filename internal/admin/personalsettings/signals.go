@@ -5,6 +5,7 @@
 package personalsettings
 
 import (
+	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
@@ -44,7 +45,7 @@ func signalFromPrincipal(principal access.Principal, identity access.PrincipalId
 func sessionSignal(value access.Session, currentSessionID string) SessionSignal {
 	label := "Browser"
 	if value.Kind == access.SessionKindDesktop {
-		label = value.ClientID
+		label = strings.TrimSpace(value.ClientID)
 		if label == "" {
 			label = "Desktop app"
 		}

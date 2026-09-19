@@ -116,6 +116,7 @@ class AssetLineageGraph extends LitElement {
     if (!this.root) return
     const graph = this.resolvedGraph
     const layout = createLineageLayout(graph.nodes)
+    const nodeRanks = new Map(graph.nodes.map((node) => [node.id, nodeRank(node)]))
     const fitMinZoom = layout.maxNodeCount >= 8 ? DENSE_FIT_MIN_ZOOM : READABLE_FIT_MIN_ZOOM
     const selectedNode = this.selectionCleared ? undefined : selectedLineageNode(graph.nodes, this.selectedNodeID)
     this.selectedNodeID = selectedNode?.id
@@ -153,7 +154,7 @@ class AssetLineageGraph extends LitElement {
               this.selectionCleared = false
               this.renderFlow()
             })),
-            edges: graph.edges.map((edge) => toFlowEdge(edge, pathState)),
+            edges: graph.edges.map((edge) => toFlowEdge(edge, pathState, nodeRanks)),
             nodeTypes: { lineageNode: LineageNodeComponent },
             fitView: true,
             fitViewOptions: { padding: 0.12, minZoom: fitMinZoom },
@@ -457,7 +458,7 @@ function toFlowNode(node: LineageNode, layout: LineageLayout, pathState: Lineage
   }
 }
 
-function toFlowEdge(edge: LineageEdge, pathState: LineagePathState): Edge {
+function toFlowEdge(edge: LineageEdge, pathState: LineagePathState, nodeRanks: Map<string, number>): Edge {
   const context = edge.kind === 'contains'
   const connected = edge.source === pathState.selectedID || edge.target === pathState.selectedID || pathState.connectedEdges.has(edge.id)
   const muted = pathState.selectedID ? !connected : false
@@ -469,7 +470,7 @@ function toFlowEdge(edge: LineageEdge, pathState: LineagePathState): Edge {
     // Raw backend relationship labels make projected graphs noisy and can
     // describe the inverse data direction (for example, "Feeds model").
     label: '',
-    type: context ? 'smoothstep' : 'default',
+    type: nodeRanks.get(edge.source) === nodeRanks.get(edge.target) ? 'default' : 'smoothstep',
     markerEnd: context ? undefined : { type: MarkerType.ArrowClosed },
     interactionWidth: context ? 8 : 14,
     style: {

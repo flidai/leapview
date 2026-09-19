@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { Copy, Check, Pencil, RotateCcw } from 'lucide'
+import { ChevronRight, Check, Copy, FileText, LayoutDashboard, LayoutPanelTop, Pencil, RotateCcw, Waypoints, Wrench, type IconNode } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import type { ChatArtifactSignal, ChatStatus, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
@@ -8,11 +8,18 @@ import { agentIcon } from './agent-icon'
 import { referenceHierarchy, referenceIcon, referenceKindLabel } from './reference'
 import { chatThreadStyles } from './chat-thread-styles'
 import '../shared/markdown-view'
+import '../shared/code-block'
 import '../shared/visual-artifact'
 
 type ChatRenderUnit =
   | { kind: 'user'; item: ChatTranscriptItemSignal }
   | { kind: 'agent'; items: ChatTranscriptItemSignal[] }
+
+type ToolPreviewLanguage = 'json' | 'toon' | 'text' | 'yaml'
+type ChatTranscriptItemWithFormats = ChatTranscriptItemSignal & {
+  inputFormat?: string
+  resultFormat?: string
+}
 
 const jsonConverter = <T,>(fallback: T) => ({
   fromAttribute(value: string | null): T {
@@ -36,6 +43,7 @@ class ChatThread extends LitElement {
   @property({ attribute: 'status', converter: jsonConverter<ChatStatus>({ enabled: false, running: false }) }) status: ChatStatus = { enabled: false, running: false }
   @property({ attribute: 'conversation-id' }) conversationId = ''
   @property({ reflect: true }) surface: 'page' | 'drawer' = 'page'
+  @state() private expandedToolCalls = new Set<string>()
   @state() private copiedId = ''
   @state() private copyError = ''
   private copyTimer = 0
@@ -48,7 +56,7 @@ class ChatThread extends LitElement {
     const transcript = this.resolvedTranscript
     const unavailable = !this.status.enabled && transcript.length === 0
     const empty = transcript.length === 0 && !this.status.running
-    const showWorking = this.status.running
+    const showWorking = this.status.running && !transcript.some((item) => item.kind === 'tool' && this.toolStatus(item) === 'running')
 
     return html`
       <div class="thread">
@@ -212,7 +220,7 @@ class ChatThread extends LitElement {
   private renderAgentItem(item: ChatTranscriptItemSignal) {
     switch (item.kind) {
       case 'tool':
-        return item.status === 'complete' && item.artifact ? this.renderArtifact(item.artifact) : nothing
+        return this.renderTool(item)
       case 'error':
         return this.renderMessage('error', item.text || item.error || '-', false, true)
       case 'assistant': {
@@ -242,9 +250,78 @@ class ChatThread extends LitElement {
     return html`<lv-markdown-view class="agent-markdown" .value=${content}></lv-markdown-view>`
   }
 
+  private renderTool(item: ChatTranscriptItemSignal) {
+    const status = this.toolStatus(item)
+    const label = toolCallLabel(item)
+    const key = toolCallKey(item)
+    const detailsID = toolDetailsID(key)
+    const expanded = this.expandedToolCalls.has(key)
+    const stateLabel = statusLabel(status)
+    return html`
+      <div
+        class=${['tool-call', item.artifact ? 'has-artifact' : '', status === 'running' ? 'running' : '', status === 'complete' ? 'done' : '', status === 'error' ? 'error' : '', status === 'interrupted' ? 'interrupted' : ''].filter(Boolean).join(' ')}
+        title=${`${label}: ${stateLabel}`}
+      >
+        <button
+          class="tool-trigger"
+          type="button"
+          aria-expanded=${expanded ? 'true' : 'false'}
+          aria-controls=${detailsID}
+          aria-label=${`${label}, ${stateLabel}. ${expanded ? 'Hide' : 'Show'} details`}
+          @click=${() => this.toggleToolCall(key)}
+        >
+          <span class="tool-icon" aria-hidden="true">${toolIcon(item.name)}</span>
+          <span class="activity-text">${label}</span>
+          <span class="tool-status" aria-hidden="true">${stateLabel}</span>
+          <span class="tool-chevron" aria-hidden="true">${chevronRightIcon()}</span>
+        </button>
+        ${status === 'complete' && item.artifact ? this.renderArtifact(item.artifact) : nothing}
+        ${expanded ? this.renderToolDetails(item, detailsID) : nothing}
+      </div>
+    `
+  }
+
   private renderArtifact(artifact: ChatArtifactSignal) {
     const payload = this.resolvedVisuals[artifact.id] || null
     return html`<lv-visual-artifact type=${artifact.type} artifact-id=${artifact.id} .payload=${payload ?? null}></lv-visual-artifact>`
+  }
+
+  private renderToolDetails(item: ChatTranscriptItemSignal, detailsID: string) {
+    const status = this.toolStatus(item)
+    return html`
+      <div class="tool-details" id=${detailsID}>
+        ${item.argumentsJson || item.inputJson ? this.renderToolCode('Input', item.argumentsJson || item.inputJson || '', toolInputLanguage(item)) : nothing}
+        ${item.resultJson ? this.renderToolCode(toolResultLabel(item, status), item.resultJson, toolResultLanguage(item)) : nothing}
+        ${item.error ? html`<div class="tool-error" role="alert">${item.error}</div>` : nothing}
+        ${!item.argumentsJson && !item.inputJson && !item.resultJson && !item.error
+          ? html`<div class="tool-empty">No details available.</div>`
+          : nothing}
+      </div>
+    `
+  }
+
+  private renderToolCode(label: string, value: string, language: ToolPreviewLanguage) {
+    return html`
+      <div class="tool-detail-block">
+        <div class="tool-detail-label">${label}</div>
+        <lv-code-block compact language=${language} .code=${value}></lv-code-block>
+      </div>
+    `
+  }
+
+  private toggleToolCall(key: string) {
+    const next = new Set(this.expandedToolCalls)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    this.expandedToolCalls = next
+  }
+
+  private toolStatus(item: ChatTranscriptItemSignal): string {
+    const status = item.status || 'running'
+    if (status !== 'running' && status !== 'pending') return status
+    if (!this.status.running) return 'interrupted'
+    if (this.status.runId && item.runId && this.status.runId !== item.runId) return 'interrupted'
+    return status
   }
 }
 
@@ -262,7 +339,6 @@ function groupTranscript(transcript: ChatTranscriptItemSignal[]): ChatRenderUnit
   }
 
   for (const item of transcript) {
-    if (!isVisibleTranscriptItem(item)) continue
     if (item.kind === 'user') {
       flushAgent()
       units.push({ kind: 'user', item })
@@ -274,8 +350,88 @@ function groupTranscript(transcript: ChatTranscriptItemSignal[]): ChatRenderUnit
   return units
 }
 
-function isVisibleTranscriptItem(item: ChatTranscriptItemSignal): boolean {
-  return item.kind !== 'tool' || (item.status === 'complete' && Boolean(item.artifact))
+function toolCallLabel(item: ChatTranscriptItemSignal): string {
+  const title = item.title || titleFromToolName(item.name || '')
+  return title || 'Tool'
+}
+
+function titleFromToolName(name: string): string {
+  return name.replace(/_/g, ' ').trim().replace(/\b\w/g, (match) => match.toUpperCase())
+}
+
+const toolIconContent: Record<string, IconNode> = {
+  catalog_search: LayoutDashboard,
+  catalog_list: LayoutDashboard,
+  catalog_get: FileText,
+  docs_search: FileText,
+  docs_read: FileText,
+  query_semantic_model: Waypoints,
+  query_dashboard_visual: LayoutPanelTop,
+  query_visual: LayoutPanelTop,
+  list_dashboards: LayoutDashboard,
+  describe_dashboard: FileText,
+  list_semantic_models: Waypoints,
+  describe_model: Waypoints,
+  query_dashboard_page: LayoutPanelTop,
+}
+
+function toolIcon(name = '') {
+  return lucideIcon(toolIconContent[name] ?? Wrench)
+}
+
+function chevronRightIcon() {
+  return lucideIcon(ChevronRight)
+}
+
+function toolCallKey(item: ChatTranscriptItemSignal): string {
+  return item.toolCallId || item.id || `${item.name || 'tool'}:${item.createdAt || ''}`
+}
+
+function toolDetailsID(key: string): string {
+  return `tool-details-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+}
+
+function toolInputLanguage(item: ChatTranscriptItemSignal): ToolPreviewLanguage {
+  return previewLanguage((item as ChatTranscriptItemWithFormats).inputFormat, item.argumentsJson || item.inputJson || '', 'json')
+}
+
+function toolResultLanguage(item: ChatTranscriptItemSignal): ToolPreviewLanguage {
+  return previewLanguage((item as ChatTranscriptItemWithFormats).resultFormat, item.resultJson || '', 'toon')
+}
+
+function toolResultLabel(item: ChatTranscriptItemSignal, status: string): string {
+  if (status === 'error') return 'Error result'
+  if (item.name === 'export_dashboard_yaml' && toolResultLanguage(item) === 'yaml') return 'Dashboard YAML'
+  return 'Result'
+}
+
+function previewLanguage(format: string | undefined, value: string, fallback: ToolPreviewLanguage): ToolPreviewLanguage {
+  const normalized = (format || '').trim().toLowerCase()
+  if (normalized === 'json' || normalized === 'toon' || normalized === 'text' || normalized === 'yaml') return normalized
+  if (isJSON(value)) return 'json'
+  return fallback
+}
+
+function isJSON(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed || !['{', '['].includes(trimmed[0])) return false
+  try {
+    JSON.parse(trimmed)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'complete': return 'Complete'
+    case 'error': return 'Failed'
+    case 'streaming': return 'Streaming'
+    case 'pending': return 'Queued'
+    case 'interrupted': return 'Interrupted'
+    default: return 'Running'
+  }
 }
 
 if (!customElements.get('lv-chat-thread')) customElements.define('lv-chat-thread', ChatThread)

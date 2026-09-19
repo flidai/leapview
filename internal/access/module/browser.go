@@ -108,3 +108,11 @@ func (m *Module) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	m.auth.Logout(w, r)
 }
+
+func (m *Module) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	if m == nil || m.auth == nil {
+		http.NotFound(w, r)
+		return
+	}
+	m.auth.LogoutAll(w, r)
+}

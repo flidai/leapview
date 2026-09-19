@@ -296,6 +296,22 @@ func (r *Registry) Acquire(ctx context.Context) (Lease, error) {
 	}
 	return r.manager.Acquire(ctx)
 }
+
+func (r *Registry) AcquireCutoverFence(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if r == nil || r.manager == nil {
+		return nil, ErrRegistryClosed
+	}
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return nil, ErrRegistryClosed
+	}
+	return r.manager.AcquireCutoverFence(ctx)
+}
 func (r *Registry) Provider() Provider { return r }
 func (r *Registry) LeasedSnapshots() []int64 {
 	if r == nil || r.manager == nil {

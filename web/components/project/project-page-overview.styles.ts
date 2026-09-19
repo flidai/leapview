@@ -322,7 +322,7 @@ export const projectOverviewStyles = css`
     display: grid;
     min-width: 0;
     align-content: start;
-    gap: var(--base-size-12);
+    gap: var(--base-size-8);
     padding: var(--base-size-16);
   }
 
@@ -332,9 +332,18 @@ export const projectOverviewStyles = css`
     width: min(22rem, 40%);
     min-width: 12rem;
     align-items: center;
+    margin: 0;
   }
 
-  .semantic-object-search-wrap svg {
+  .semantic-object-search-label {
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    align-items: center;
+  }
+
+  .semantic-object-search-label svg {
     position: absolute;
     left: var(--base-size-8);
     color: var(--lv-fg-muted);
@@ -459,7 +468,7 @@ export const projectOverviewStyles = css`
     display: grid;
     min-width: 0;
     align-content: start;
-    gap: var(--base-size-12);
+    gap: var(--base-size-8);
     border-bottom: var(--lv-border-muted);
     padding-bottom: var(--base-size-20);
   }
@@ -517,6 +526,34 @@ export const projectOverviewStyles = css`
     grid-template-columns: minmax(7rem, .42fr) minmax(0, 1fr);
     align-items: start;
     gap: var(--base-size-16);
+  }
+
+  .semantic-overview-version dd,
+  .semantic-overview-version-link {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .version-drawer-title h1 {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .lineage-state {
+    display: flex;
+    min-height: var(--lv-lineage-graph-height);
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    gap: var(--base-size-8);
+    border-bottom: var(--lv-border-muted);
+    background: var(--lv-bg-panel);
+    color: var(--lv-fg-muted);
+    padding: var(--base-size-24);
+    font: var(--lv-type-body-compact);
+    text-align: center;
+  }
+
+  .lineage-state-error {
+    color: var(--lv-fg-danger);
   }
 
   .source-drawer-body .facts .wide {
@@ -607,6 +644,7 @@ export const projectOverviewStyles = css`
 
     .semantic-object-search-wrap {
       width: 100%;
+      min-width: 0;
     }
 
     .semantic-model-graph {

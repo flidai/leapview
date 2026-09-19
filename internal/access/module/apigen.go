@@ -568,6 +568,21 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 			return
 		}
+		if isManagedDataBootstrapOperation(operationID) {
+			fencedRuntime, ok := a.runtime.(interface {
+				AcquireCutoverFence(context.Context) (func(), error)
+			})
+			if !ok {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			release, fenceErr := fencedRuntime.AcquireCutoverFence(r.Context())
+			if fenceErr != nil || release == nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			defer release()
+		}
 		decision, err := a.bootstrap(r.Context(), r, operationID, projectID, capability)
 		if err != nil {
 			a.module.logger.WarnContext(
@@ -786,8 +801,12 @@ func (a *APIGenAuthorizer) protectManagedDataStaging(operationID string, capabil
 			next.ServeHTTP(w, r)
 			return
 		}
-		allowed, err := a.authorizeResources(r.Context(), principal.ID, projectID, []access.ResourceRef{resource}, capability)
-		if err == nil {
+		found, allowed, err := a.authorizeManagedDataConnection(r.Context(), principal.ID, projectID, resource, capability)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if found {
 			if !allowed {
 				a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resource, capability)
 				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
@@ -809,15 +828,16 @@ func (a *APIGenAuthorizer) protectManagedDataStaging(operationID string, capabil
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !errors.Is(err, errAPIGenResourceNotFound) {
-			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-			return
-		}
 		if !allowMissingResource {
 			http.NotFound(w, r)
 			return
 		}
-		authorized, authErr := a.module.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), capability)
+		if !allowed {
+			a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resource, capability)
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		authorized, authErr := a.module.AuthorizeManagedDataStagingRequest(r.Context(), r, projectID.String(), capability)
 		if authErr != nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
@@ -828,6 +848,56 @@ func (a *APIGenAuthorizer) protectManagedDataStaging(operationID string, capabil
 		}
 		next.ServeHTTP(w, r.WithContext(withManagedDataStagingAuthorization(r.Context(), projectID, connectionID, principal.ID, capability)))
 	}))
+}
+
+// authorizeManagedDataConnection returns found=false only when one leased,
+// identity-bound snapshot proves the exact connection is absent. In that case
+// allowed reports whether the same snapshot carries a project role with the
+// requested capability; direct grants on unrelated resources cannot authorize
+// successor staging.
+func (a *APIGenAuthorizer) authorizeManagedDataConnection(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (found, allowed bool, err error) {
+	lease, err := a.runtime.Acquire(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	if lease == nil {
+		return false, false, fmt.Errorf("runtime host returned a nil lease")
+	}
+	defer lease.Release()
+	if lease.Identity().ProjectID != projectID {
+		return false, false, fmt.Errorf("runtime project %q does not match requested project %q", lease.Identity().ProjectID, projectID)
+	}
+	authorizedLease, ok := lease.(interface {
+		AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+	})
+	if !ok {
+		return false, false, fmt.Errorf("active runtime lease does not expose authorization snapshot")
+	}
+	subjects, err := a.module.AuthorizationSubjects(ctx, principalID)
+	if err != nil {
+		return false, false, err
+	}
+	snapshot := authorizedLease.AuthorizationSnapshot()
+	if snapshot.Identity() != lease.Identity() {
+		return false, false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
+	}
+	if err := snapshot.ValidateBound(); err != nil {
+		return false, false, err
+	}
+	graphResource, exists := snapshot.Project().Resource(resource.ID())
+	if !exists || graphResource.Kind != resource.Kind() {
+		return false, accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
+	}
+	for _, subject := range subjects {
+		candidate, candidateErr := snapshot.Allows(subject, resource, capability)
+		if candidateErr != nil {
+			return true, false, candidateErr
+		}
+		if candidate {
+			return true, true, nil
+		}
+	}
+	return true, false, nil
 }
 
 func (a *APIGenAuthorizer) recordResourceAuthorizationDenial(r *http.Request, operationID string, projectID projectgraph.ResourceID, principalID string, resource access.ResourceRef, capability access.Capability) {

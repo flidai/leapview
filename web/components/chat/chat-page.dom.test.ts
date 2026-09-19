@@ -429,7 +429,7 @@ test('chat list page renders searchable conversation history', async () => {
     expect(initial.title).toBe('Chats')
     expect(initial.searchPlaceholder).toBe('Search chats...')
     expect(initial.newChatHref).toBe('/chats/new')
-    expect(initial.headerActions).toEqual(['Delete all chats', 'Archived chats', 'New chat'])
+    expect(initial.headerActions).toEqual(['Delete all chats', 'New chat'])
     expect(initial.headerOrder).toEqual(['h2', 'header-actions'])
     expect(initial.metrics).toEqual({
       titleFontSize: '20px',
@@ -441,8 +441,8 @@ test('chat list page renders searchable conversation history', async () => {
       dateDistanceFromRowEnd: 58,
     })
     expect(initial.tableHeaders).toEqual(['Conversation'])
-    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', title: 'Revenue check', date: 'Jan 2', optionsLabel: 'More actions for Revenue check', quickActions: ['Pin Revenue check', 'Archive Revenue check', 'Delete Revenue check'] })
-    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', title: 'Inventory status', date: 'Jan 3', optionsLabel: 'More actions for Inventory status', quickActions: ['Pin Inventory status', 'Archive Inventory status', 'Delete Inventory status'] })
+    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', title: 'Revenue check', date: 'Jan 2', optionsLabel: 'More actions for Revenue check', quickActions: ['Pin Revenue check', 'Delete Revenue check'] })
+    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', title: 'Inventory status', date: 'Jan 3', optionsLabel: 'More actions for Inventory status', quickActions: ['Pin Inventory status', 'Delete Inventory status'] })
     await page.locator('lv-chat-page').evaluate((element: any) => {
       const input = ((element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as TestDomElement).shadowRoot!.querySelector('.search') as HTMLInputElement
       input.value = 'inventory'
@@ -476,7 +476,7 @@ test('chat list page renders searchable conversation history', async () => {
   }
 })
 
-test('chat list exposes bulk deletion and row actions on hover', async () => {
+test('chat list exposes bulk deletion and delete row action on hover', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(`${baseURL}/list`)
@@ -502,10 +502,10 @@ test('chat list exposes bulk deletion and row actions on hover', async () => {
       return actions && getComputedStyle(actions).opacity === '1'
     })
     expect(await quickActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('1')
-    await firstRow.getByRole('button', { name: 'Archive Revenue check', exact: true }).click()
+    await firstRow.getByRole('button', { name: 'Delete Revenue check', exact: true }).click()
     await list.getByRole('button', { name: 'Delete all chats', exact: true }).click()
     expect(await page.evaluate(() => (window as any).listActions.map((action: any) => ({ action: action.action, conversationId: action.conversationId })))).toEqual([
-      { action: 'archive', conversationId: 'c1' },
+      { action: 'delete', conversationId: 'c1' },
       { action: 'delete_active', conversationId: '' },
     ])
   } finally {
@@ -591,18 +591,15 @@ test('unconfigured agent uses intentional unavailable states', async () => {
       const list = element.shadowRoot.querySelector('lv-chat-list') as any
       await list.updateComplete
       const root = list.shadowRoot
-      let archivedOpened = false
-      list.addEventListener('lv-chat-settings-open', () => { archivedOpened = true })
-      ;(Array.from(root.querySelectorAll('.header-actions button') as NodeListOf<HTMLButtonElement>).find((button) => button.textContent?.includes('Archived chats')))?.click()
       return {
         title: root.querySelector('.empty-title')?.textContent?.trim(),
         detail: root.querySelector('.empty-detail')?.textContent?.trim(),
         hasSearch: Boolean(root.querySelector('.search')),
         newChatDisabled: root.querySelector('button[disabled]')?.hasAttribute('disabled'),
-        archivedOpened,
+        hasArchivedAction: Boolean(Array.from((root as ShadowRoot).querySelectorAll('.header-actions button') as NodeListOf<HTMLButtonElement>).find((button) => button.textContent?.includes('Archive'))),
       }
     })
-    expect(listState).toEqual({ title: 'No chats yet', detail: 'Agent is not configured.', hasSearch: false, newChatDisabled: true, archivedOpened: true })
+    expect(listState).toEqual({ title: 'No chats yet', detail: 'Agent is not configured.', hasSearch: false, newChatDisabled: true, hasArchivedAction: false })
   } finally {
     await page.close()
   }

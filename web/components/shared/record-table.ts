@@ -64,7 +64,7 @@ type RecordColumn = {
   id: string
   header: string
   kind?: 'text' | 'code' | 'expression' | 'badge' | 'status' | 'query' | 'diff' | 'number' | 'link' | 'tags' | 'entity' | 'button' | 'actions'
-  align?: 'left' | 'right'
+  align?: 'left' | 'center' | 'right'
   hrefKey?: string
   width?: string
   sortable?: boolean
@@ -196,7 +196,7 @@ function applyUpdater<T>(updater: unknown, current: T): T {
 
 function columnAlignClass(column: RecordColumn): string {
   return [
-    column.align === 'right' || column.kind === 'number' ? 'is-right' : '',
+    column.align === 'center' ? 'is-center' : column.align === 'right' || column.kind === 'number' ? 'is-right' : '',
     column.mobileHidden ? 'is-mobile-hidden' : '',
   ].filter(Boolean).join(' ')
 }
@@ -1001,6 +1001,9 @@ const recordTableStyles = `
     text-align: right;
   }
 
+  lv-record-table .record-table th.is-center,
+  lv-record-table .record-table td.is-center { text-align: center; }
+  lv-record-table .record-table th.is-center .record-table-sort { justify-content: center; }
   lv-record-table .record-table tbody tr:last-child td {
     border-bottom: 0;
   }

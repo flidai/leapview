@@ -264,6 +264,7 @@ export const semanticModelGraphStyles = `
     font: var(--lv-type-caption);
     line-height: 1;
     pointer-events: none;
+    z-index: 1;
   }
 
   lv-semantic-model-graph .semantic-model-edge-label {

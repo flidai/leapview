@@ -46,7 +46,7 @@ import './dashboard-appearance-editor'
 import './pipelines-page'
 import { projectBaseStyles } from './project-page-base.styles'
 import { projectOverviewStyles } from './project-page-overview.styles'
-
+import { emptyLineageStatus, renderAssetLineage } from './project-lineage'
 const emptyConnectionAdministration: ConnectionAdministrationSignal = {
   command: {
     action: '', assetId: '', authenticationMode: '', confirmationToken: '', connectorKind: '', credentialEnvironment: '', credentialProjectId: '', database: '', expectedRevision: 0,
@@ -58,7 +58,6 @@ const emptyConnectionAdministration: ConnectionAdministrationSignal = {
 const emptyModelFieldDrawer: ModelFieldDrawerSignal = { fieldKey: '', open: false }
 const emptyRefreshRunDrawer: RefreshRunDrawerSignal = { open: false, runId: '' }
 const emptyAssetVersionDrawer: AssetVersionDrawerSignal = { open: false, versionId: '' }
-
 type ModelFieldDrawerRow = Record<string, unknown> & {
   fieldKey?: string
   label?: string
@@ -877,17 +876,20 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
                           <h2>${semanticSectionName(selected.section.title)}</h2>
                           ${selected.section.table?.rows?.length
                             ? html`
-                              <label class="semantic-object-search-wrap">
+                              <form class="semantic-object-search-wrap" role="search" @submit=${this.preventSearchSubmit}>
+                                <label class="semantic-object-search-label">
                                 <span class="visually-hidden">Search ${semanticSectionName(selected.section.title).toLowerCase()}</span>
                                 ${lucideIcon(Search, { size: 16 })}
                                 <input
                                   class="semantic-object-search"
                                   type="search"
+                                  aria-label=${`Search ${semanticSectionName(selected.section.title).toLowerCase()}`}
                                   placeholder="Search ${semanticSectionName(selected.section.title).toLowerCase()}…"
                                   .value=${this.assetDefinitionQuery}
                                   @input=${(event: Event) => { this.assetDefinitionQuery = (event.currentTarget as HTMLInputElement).value }}
                                 />
-                              </label>
+                                </label>
+                              </form>
                             `
                             : nothing}
                         </div>
@@ -947,17 +949,20 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
                     <div class="semantic-object-list">
                       <div class="semantic-object-list-header">
                         <h2>${semanticSectionName(selectedSection.title)}</h2>
-                        <label class="semantic-object-search-wrap">
+                        <form class="semantic-object-search-wrap" role="search" @submit=${this.preventSearchSubmit}>
+                          <label class="semantic-object-search-label">
                           <span class="visually-hidden">Search ${semanticSectionName(selectedSection.title).toLowerCase()}</span>
                           ${lucideIcon(Search, { size: 16 })}
                           <input
                             class="semantic-object-search"
                             type="search"
+                            aria-label=${`Search ${semanticSectionName(selectedSection.title).toLowerCase()}`}
                             placeholder="Search ${semanticSectionName(selectedSection.title).toLowerCase()}…"
                             .value=${this.semanticObjectQuery}
                             @input=${(event: Event) => { this.semanticObjectQuery = (event.currentTarget as HTMLInputElement).value }}
                           />
-                        </label>
+                          </label>
+                        </form>
                       </div>
                       <lv-record-table .table=${table ?? null}></lv-record-table>
                     </div>
@@ -995,16 +1000,10 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   }
 
   private renderLineage(page: ResourceAssetPageSignal) {
-    return html`
-      <section class="lineage" id="lineage" aria-label="Asset lineage">
-        <lv-asset-lineage-graph class="lineage-graph" .graph=${page.lineage?.graph ?? { nodes: [], edges: [] }}></lv-asset-lineage-graph>
-        <div class="lineage-grids">
-          ${renderRecordTableSection('Uses', page.lineage?.usesTable)}
-          ${renderRecordTableSection('Used by', page.lineage?.usedByTable)}
-        </div>
-      </section>
-    `
+    return renderAssetLineage(page.lineage, this.signal('status', emptyLineageStatus))
   }
+
+  private preventSearchSubmit(event: SubmitEvent): void { event.preventDefault() }
 
   private renderRefreshes(page: ResourceAssetPageSignal) {
     const table = page.refresh?.runsTable

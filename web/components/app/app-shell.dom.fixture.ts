@@ -1,4 +1,5 @@
-export function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false, admin = false): string {
+export function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false, admin = false, removedHistoryIDs: readonly string[] = []): string {
+  const removedHistory = new Set(removedHistoryIDs)
   const chromeConfig = compact || history || nav || admin ? {
     sidebar: {
       productName: 'LeapView',
@@ -27,7 +28,7 @@ export function testDocument(includeShellScript: boolean, compact = false, histo
           { id: 'c1', title: 'Revenue check', href: '/chats/c1', active: true, pending: true },
           { id: 'c2', title: 'Inventory status', href: '/chats/c2' },
           { id: 'c3', title: 'Pinned title loading', href: '/chats/c3', pending: true, pinned: true },
-        ],
+        ].filter(item => !removedHistory.has(item.id)),
       } : undefined,
       groups: admin ? [
         {

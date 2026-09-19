@@ -1,6 +1,6 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { Archive, MessageSquareText, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Trash2 } from 'lucide'
+import { MessageSquareText, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Trash2 } from 'lucide'
 import type { ChatConversationSummary } from '../../generated/signals'
 import { jsonAttribute } from '../shared/json-attribute'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -426,7 +426,6 @@ class LeapViewChatList extends LitElement {
           <h2>Chats</h2>
           <div class="header-actions">
             <button class="new-chat-link danger" type="button" @click=${() => this.runBulkAction('delete_active')}>${lucideIcon(Trash2)}<span>Delete all chats</span></button>
-            <button class="new-chat-link" type="button" @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-settings-open', { bubbles: true, composed: true }))}>${lucideIcon(Archive)}<span>Archived chats</span></button>
             ${this.agentEnabled
               ? html`<a class="new-chat-link" href="/chats/new">${lucideIcon(Plus)}<span>New chat</span></a>`
               : html`<button class="new-chat-link" type="button" disabled title="Agent is not configured">${lucideIcon(Plus)}<span>New chat</span></button>`}
@@ -482,7 +481,6 @@ class LeapViewChatList extends LitElement {
               <time class="date" datetime=${conversation.updatedAt}>${conversation.updatedAt ? shortDate(conversation.updatedAt) : ''}</time>
               <div class="quick-actions" aria-label=${`Quick actions for ${title}`}>
                 <button class="quick-action" type="button" aria-label=${`${conversation.pinned ? 'Unpin' : 'Pin'} ${title}`} title=${conversation.pinned ? 'Unpin chat' : 'Pin chat'} @click=${(event: MouseEvent) => this.runChatAction(event, conversation.pinned ? 'unpin' : 'pin', conversation, href)}>${lucideIcon(conversation.pinned ? PinOff : Pin, { size: 16 })}</button>
-                <button class="quick-action" type="button" aria-label=${`Archive ${title}`} title="Archive chat" @click=${(event: MouseEvent) => this.runChatAction(event, 'archive', conversation, href)}>${lucideIcon(Archive, { size: 16 })}</button>
                 <button class="quick-action danger" type="button" aria-label=${`Delete ${title}`} title="Delete chat" @click=${(event: MouseEvent) => this.runChatAction(event, 'delete', conversation, href)}>${lucideIcon(Trash2, { size: 16 })}</button>
               </div>
             </div>
@@ -493,7 +491,6 @@ class LeapViewChatList extends LitElement {
                 <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, conversation.pinned ? 'unpin' : 'pin', conversation, href)}>${lucideIcon(conversation.pinned ? PinOff : Pin, { size: 16 })}<span>${conversation.pinned ? 'Unpin chat' : 'Pin chat'}</span></button>
                 <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'rename', conversation, href)}>${lucideIcon(Pencil, { size: 16 })}<span>Rename</span></button>
                 <button class="chat-action unavailable" type="button" role="menuitem" disabled title="Chat projects are not supported yet"><span aria-hidden="true"></span><span>Add to project</span></button>
-                <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'archive', conversation, href)}>${lucideIcon(Archive, { size: 16 })}<span>Archive chat</span></button>
                 <button class="chat-action danger" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'delete', conversation, href)}>${lucideIcon(Trash2, { size: 16 })}<span>Delete chat</span></button>
               </div>
             </details>

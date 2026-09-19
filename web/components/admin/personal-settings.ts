@@ -16,10 +16,11 @@ import '../shared/one-time-secret'
 import '../shared/select-menu'
 import type { SelectMenu } from '../shared/select-menu'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
+import { avatarResponseError } from './avatar-response'
+import { formatDate, formatRelativeActivity, humanizeCapability, humanizeSessionKind, sessionFact } from './personal-settings-format'
 import { personalSettingsStyles } from './personal-settings.styles'
 import '../shared/drawer'
 import '../shared/user-avatar'
-
 const emptySettings: PersonalSettingsSignal = {
   active: 'profile',
   profile: { id: '', email: '', displayName: '', theme: 'system', identitySource: '', canEditDisplayName: false, hasLocalPassword: false },
@@ -95,6 +96,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private pendingSessionRevocation: PendingSessionRevocation | null = null
   @state() private selectedSession: SelectedSession | null = null
   @state() private passwordDialogOpen = false
+  @state() private logoutAllDialogOpen = false
   @property({ attribute: 'token-view' }) tokenView: 'list' | 'create' = 'list'
   @state() private tokenConfirmationOpen = false
   @state() private tokenCreatePending = false
@@ -116,6 +118,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @query('[data-token-delete-dialog]') private tokenDeleteDialog?: HTMLDialogElement
   @query('[data-session-revoke-dialog]') private sessionRevokeDialog?: HTMLDialogElement
   @query('[data-password-dialog]') private passwordDialog?: HTMLDialogElement
+  @query('[data-logout-all-dialog]') private logoutAllDialog?: HTMLDialogElement
   private handledNewToken = ''
   private observedDisplayName = ''
   private observedProfileID = ''
@@ -187,6 +190,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (this.pendingSessionRevocation && sessionRevocation && !sessionRevocation.open) sessionRevocation.showModal()
     const password = this.passwordDialog
     if (this.passwordDialogOpen && password && !password.open) password.showModal()
+    const logoutAll = this.logoutAllDialog
+    if (this.logoutAllDialogOpen && logoutAll && !logoutAll.open) logoutAll.showModal()
     if (settings.active !== 'security' && this.selectedSession) this.selectedSession = null
   }
 
@@ -261,6 +266,13 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
               ${this.renderThemePicker(this.selectedTheme || settings.profile.theme || 'system')}
             </div>
           </div>
+          <section class="account-section" aria-label="Account">
+            <div class="security-section-heading-copy"><h2>Account</h2><p class="settings-description">Use this ID when support or administration needs to identify your account.</p></div>
+            <div class="card account-card">
+              <div class="row account-row"><div class="settings-field"><span class="settings-label">Account ID</span><span class="settings-description">Your LeapView principal identifier.</span></div><code class="account-id">${settings.profile.id}</code></div>
+              <div class="row account-row"><div class="settings-field"><span class="settings-label">Sign out</span><span class="settings-description">End this browser session and return to sign-in.</span></div><button type="button" class="danger" data-sign-out @click=${this.signOutCurrentSession}>Sign out</button></div>
+            </div>
+          </section>
         </section>` : nothing}
         ${settings.active === 'security' ? this.renderSecurity(settings) : nothing}
         ${settings.active === 'api-tokens' ? this.renderTokens(settings.tokens) : nothing}
@@ -351,7 +363,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
         <section class="security-section" aria-label="Active sessions">
           <div class="security-section-heading">
             <div class="security-section-heading-copy"><h2>Active sessions</h2><p class="settings-description">Review devices and scoped clients that can access your account.</p></div>
-            <span class="security-session-count">${activeCount} active ${activeCount === 1 ? 'session' : 'sessions'}</span>
+            <div class="security-session-actions"><span class="security-session-count">${activeCount} active ${activeCount === 1 ? 'session' : 'sessions'}</span><button type="button" class="danger" data-logout-all @click=${this.openLogoutAllDialog}>Log out all browser and desktop sessions</button></div>
           </div>
           <div class="security-session-list">
             <div class="security-session-group" aria-label="Current session">
@@ -363,6 +375,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
           </div>
         </section>
         ${this.passwordDialogOpen ? this.renderPasswordDialog() : nothing}
+        ${this.logoutAllDialogOpen ? this.renderLogoutAllDialog() : nothing}
         ${this.renderSessionDrawer(settings)}
         ${this.pendingSessionRevocation ? this.renderSessionRevokeConfirmation(this.pendingSessionRevocation) : nothing}
       </section>
@@ -407,6 +420,16 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
           </div>
           <div class="token-confirm-actions"><button type="button" @click=${this.closePasswordDialog}>Cancel</button><button class="primary" type="submit">Change password</button></div>
         </form>
+      </section>
+    </dialog>`
+  }
+
+  private renderLogoutAllDialog() {
+    return html`<dialog data-logout-all-dialog aria-labelledby="logout-all-title" @cancel=${this.closeLogoutAllDialog} @click=${this.closeLogoutAllOnBackdrop}>
+      <section class="token-confirm">
+        <header class="token-confirm-header"><h2 id="logout-all-title">Log out all browser and desktop sessions?</h2><button class="token-confirm-close" type="button" aria-label="Close" @click=${this.closeLogoutAllDialog}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button></header>
+        <div class="token-delete-warning"><p>This ends every active browser and desktop session, including this one. CLI and authoring sessions stay available until you revoke them separately.</p></div>
+        <div class="token-delete-actions"><button class="danger" type="button" @click=${this.confirmLogoutAll}>Log out all browser and desktop sessions</button></div>
       </section>
     </dialog>`
   }
@@ -844,8 +867,30 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (!session) return
     this.pendingSessionRevocation = null
     this.selectedSession = null
-    if (session.kind === 'authoring') this.revokeAuthoringSession(session.id)
+    if (session.current) this.submitAuthForm('/auth/logout')
+    else if (session.kind === 'authoring') this.revokeAuthoringSession(session.id)
     else this.revokeSession(session.id)
+  }
+  private signOutCurrentSession = (): void => { this.submitAuthForm('/auth/logout') }
+  private openLogoutAllDialog = (): void => { this.logoutAllDialogOpen = true }
+  private closeLogoutAllDialog = (event?: Event): void => { event?.preventDefault(); this.logoutAllDialogOpen = false }
+  private closeLogoutAllOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeLogoutAllDialog(event) }
+  private confirmLogoutAll = (): void => { this.logoutAllDialogOpen = false; this.submitAuthForm('/auth/logout-all') }
+  private submitAuthForm = (action: string): void => {
+    const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content.trim() ?? ''
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = action
+    form.style.display = 'none'
+    if (token) {
+      const input = document.createElement('input')
+      input.type = 'hidden'
+      input.name = 'gorilla.csrf.Token'
+      input.value = token
+      form.append(input)
+    }
+    document.body.append(form)
+    form.submit()
   }
   private revokeSession = (sessionId: string): void => { this.send('lv-personal-session-command', { action: 'revoke', sessionId }) }
   private revokeAuthoringSession = (sessionId: string): void => { this.send('lv-personal-authoring-session-command', { action: 'revoke', sessionId }) }
@@ -933,9 +978,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.error = ''
     try {
       const response = await fetch('/profile/avatar', { method: 'PUT', headers: { ...window.LeapViewCommand.headers('uploadCurrentAvatar'), 'Content-Type': file.type }, body: file })
-      if (!response.ok) throw new Error('Avatar upload failed')
+      if (!response.ok) throw await avatarResponseError(response, 'Avatar upload failed')
       const uploaded = await response.json() as { url?: string }
-      document.dispatchEvent(new CustomEvent('leapview-avatar-change', { detail: { url: uploaded.url ?? '' } }))
+      if (!uploaded.url?.trim()) throw new Error('Avatar upload returned no image URL')
+      document.dispatchEvent(new CustomEvent('leapview-avatar-change', { detail: { url: uploaded.url } }))
       this.send('lv-personal-profile-command', { action: 'refresh', displayName: this.profileName })
       this.message = 'Profile picture updated.'
     } catch (error) { this.error = error instanceof Error ? error.message : 'Avatar upload failed' } finally { this.avatarBusy = false; input.value = '' }
@@ -947,7 +993,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.error = ''
     try {
       const response = await fetch('/profile/avatar', { method: 'DELETE', headers: window.LeapViewCommand.headers('deleteCurrentAvatar') })
-      if (!response.ok) throw new Error('Avatar removal failed')
+      if (!response.ok) throw await avatarResponseError(response, 'Avatar removal failed')
       document.dispatchEvent(new CustomEvent('leapview-avatar-change', { detail: { url: '' } }))
       this.send('lv-personal-profile-command', { action: 'refresh', displayName: this.profileName })
       this.message = 'Profile picture removed.'
@@ -1177,50 +1223,6 @@ function themeOption(value: string): ThemeOption {
 function usernameFromEmail(email: string): string {
   const localPart = email.split('@', 1)[0]?.trim().toLocaleLowerCase() ?? ''
   return localPart.replace(/[^a-z0-9._-]+/g, '.').replace(/^[._-]+|[._-]+$/g, '') || 'user'
-}
-
-function humanizeCapability(value: string): string {
-  return value.toLocaleLowerCase().split('_').filter(Boolean).map((part, index) => index === 0 ? `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}` : part).join(' ')
-}
-
-function sessionFact(label: string, value: string, code = false) {
-  const display = value || 'Unknown'
-  return html`<div class="session-drawer-fact"><dt>${label}</dt> <dd>${code ? html`<code>${display}</code>` : display}</dd></div>`
-}
-
-function formatDate(value: string): string {
-  if (!value) return 'unknown'
-  const date = new Date(value)
-  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString()
-}
-
-function formatRelativeActivity(value: string): string {
-  if (!value) return 'unknown'
-  const date = new Date(value)
-  if (Number.isNaN(date.valueOf())) return value
-  const elapsed = Date.now() - date.valueOf()
-  if (elapsed < 0) return formatDate(value)
-  const minute = 60_000
-  const hour = 60 * minute
-  const day = 24 * hour
-  if (elapsed < minute) return 'just now'
-  if (elapsed < hour) {
-    const minutes = Math.max(1, Math.floor(elapsed / minute))
-    return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`
-  }
-  if (elapsed < day) {
-    const hours = Math.max(1, Math.floor(elapsed / hour))
-    return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
-  }
-  if (elapsed < 2 * day) return 'yesterday'
-  if (elapsed < 7 * day) return `${Math.floor(elapsed / day)} days ago`
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' })
-}
-
-function humanizeSessionKind(value: string): string {
-  const normalized = value.trim().replace(/[._-]+/g, ' ')
-  if (!normalized) return 'Session'
-  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
 }
 
 function formatDateOnly(value: string): string {

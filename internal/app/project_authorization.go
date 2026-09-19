@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
@@ -33,6 +34,8 @@ type canonicalAccessModule interface {
 }
 
 type connectionAuthorization func(context.Context, string, string, string, access.Capability) (bool, error)
+
+const managedDataTusMutationTimeout = 5 * time.Minute
 
 func authoringDevelopmentBypass(ctx context.Context, principalID string) bool {
 	principal, ok := accessmodule.PrincipalFromContext(ctx)
@@ -199,9 +202,11 @@ func authorizeProjectResourcesWithCapability(
 }
 
 // authorizeManagedDataConnection returns found=false only when the active,
-// identity-bound snapshot proves that the exact connection is absent. Every
-// lease, identity, snapshot, and subject failure remains an error so callers
-// cannot mistake infrastructure failure for a staging opportunity.
+// identity-bound snapshot proves that the exact connection is absent. In that
+// case allowed reports whether a project role in the same snapshot grants the
+// requested capability. Every lease, identity, snapshot, and subject failure
+// remains an error so callers cannot mistake infrastructure failure for a
+// staging opportunity.
 func authorizeManagedDataConnection(
 	ctx context.Context,
 	accessModule canonicalAccessModule,
@@ -238,13 +243,13 @@ func authorizeManagedDataConnection(
 	if err := snapshot.ValidateBound(); err != nil {
 		return false, false, err
 	}
-	graphResource, exists := snapshot.Project().Resource(resource.ID())
-	if !exists || graphResource.Kind != resource.Kind() {
-		return false, false, nil
-	}
 	subjects, err := accessModule.AuthorizationSubjects(ctx, principalID)
 	if err != nil {
-		return true, false, err
+		return false, false, err
+	}
+	graphResource, exists := snapshot.Project().Resource(resource.ID())
+	if !exists || graphResource.Kind != resource.Kind() {
+		return false, accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
 	}
 	for _, subject := range subjects {
 		candidate, candidateErr := snapshot.Allows(subject, resource, capability)
@@ -576,6 +581,19 @@ func protectManagedDataTransportWithBootstrap(
 	bootstrap accessmodule.APIGenBootstrapAuthorizer,
 	next http.Handler,
 ) http.Handler {
+	return protectManagedDataTransportWithBootstrapTimeout(accessModule, runtimeHost, managedData, bootstrap, managedDataTusMutationTimeout, next)
+}
+
+func protectManagedDataTransportWithBootstrapTimeout(
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	managedData interface {
+		ResolveTusTarget(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error)
+	},
+	bootstrap accessmodule.APIGenBootstrapAuthorizer,
+	mutationTimeout time.Duration,
+	next http.Handler,
+) http.Handler {
 	if accessModule == nil || runtimeHost == nil || managedData == nil || next == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -590,6 +608,33 @@ func protectManagedDataTransportWithBootstrap(
 			next.ServeHTTP(w, r)
 			return
 		}
+		if r.Method == http.MethodPatch {
+			if mutationTimeout <= 0 {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), mutationTimeout)
+			defer cancel()
+			r = r.WithContext(ctx)
+			deadline, _ := ctx.Deadline()
+			if err := http.NewResponseController(w).SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+		}
+		fencedRuntime, ok := runtimeHost.(interface {
+			AcquireCutoverFence(context.Context) (func(), error)
+		})
+		if !ok {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		releaseFence, fenceErr := fencedRuntime.AcquireCutoverFence(r.Context())
+		if fenceErr != nil || releaseFence == nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		defer releaseFence()
 		uploadID := chi.URLParam(r, "*")
 		if !validTusTransportID(uploadID) {
 			http.NotFound(w, r)
@@ -682,14 +727,18 @@ func protectManagedDataTransportWithBootstrap(
 				http.NotFound(w, r)
 				return
 			}
+			if !allowed {
+				http.NotFound(w, r)
+				return
+			}
 			authoringModule, ok := accessModule.(interface {
-				AuthorizeAuthoringBootstrapRequest(context.Context, *http.Request, string, access.Capability) (bool, error)
+				AuthorizeManagedDataStagingRequest(context.Context, *http.Request, string, access.Capability) (bool, error)
 			})
 			if !ok {
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
 			}
-			authorized, authoringErr := authoringModule.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), access.CapabilityResourceEdit)
+			authorized, authoringErr := authoringModule.AuthorizeManagedDataStagingRequest(r.Context(), r, projectID.String(), access.CapabilityResourceEdit)
 			if authoringErr != nil {
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return

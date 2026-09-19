@@ -975,6 +975,21 @@ func (r *Repository) ListSessions(ctx context.Context, pid string) ([]access.Ses
 	}
 	return out, nil
 }
+func (r *Repository) RevokeSessionsForPrincipal(ctx context.Context, pid string) error {
+	db, err := r.requireDB()
+	if err != nil {
+		return err
+	}
+	pid, err = uuidID("principal id", pid)
+	if err != nil {
+		return err
+	}
+	principalID, err := pgUUID(pid)
+	if err != nil {
+		return err
+	}
+	return accessdb.New(db).RevokePrincipalSessions(ctx, principalID)
+}
 func (r *Repository) RevokeSession(ctx context.Context, id string) error {
 	db, err := r.requireDB()
 	if err != nil {

@@ -30,9 +30,10 @@ func (l mutableAPIGenLease) AuthorizationSnapshot() accesssnapshot.Authorization
 }
 
 type apigenRuntimeFake struct {
-	project projectgraph.ResourceID
-	lease   runtimehost.Lease
-	err     error
+	project   projectgraph.ResourceID
+	lease     runtimehost.Lease
+	err       error
+	fenceHeld *bool
 }
 
 func (r apigenRuntimeFake) ProjectID() projectgraph.ResourceID { return r.project }
@@ -41,6 +42,16 @@ func (r apigenRuntimeFake) Acquire(context.Context) (runtimehost.Lease, error) {
 		return nil, r.err
 	}
 	return r.lease, nil
+}
+func (r apigenRuntimeFake) AcquireCutoverFence(context.Context) (func(), error) {
+	if r.fenceHeld == nil {
+		return func() {}, nil
+	}
+	if *r.fenceHeld {
+		return nil, errors.New("cutover fence already held")
+	}
+	*r.fenceHeld = true
+	return func() { *r.fenceHeld = false }, nil
 }
 
 type apigenLeaseFake struct {

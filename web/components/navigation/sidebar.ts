@@ -755,20 +755,19 @@ class LeapViewSidebar extends LitElement {
       text-decoration: none;
     }
 
-    .user-card:hover,
-    .user-card:focus-visible {
-      background: var(--control-bgColor-hover);
-      outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
-    }
-
     .user-settings-icon {
       display: grid;
       width: var(--control-xsmall-size);
       height: var(--control-xsmall-size);
       place-items: center;
+      border-radius: var(--lv-radius-default);
       color: var(--lv-fg-muted);
     }
+
+    .user-card:hover .user-settings-icon,
+    .user-card:focus-visible .user-settings-icon { background: var(--control-bgColor-hover); color: var(--lv-fg-default); }
+    .user-card:focus-visible { outline: none; }
+    .user-card:focus-visible .user-settings-icon { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
 
     .user-text {
       display: grid;
