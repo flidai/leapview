@@ -167,6 +167,7 @@ while IFS= read -r candidate_tag; do
 done < <(docker image ls ghcr.io/flidai/leapview --format '{{.Repository}}:{{.Tag}}' | grep ':candidate-' || true)
 docker image prune --force
 docker builder prune --all --force
+docker container prune --force
 apt-get clean
 journalctl --vacuum-size=256M
 while IFS= read -r stale_release; do
