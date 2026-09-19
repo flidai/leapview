@@ -5,7 +5,7 @@ on:
       action:
         type: choice
         default: inspect
-        options: [inspect, repair-managed-data-pointer, recover-credentials, grant-recovery-admin, revoke-recovery-admin, grant-recovery-generation, revoke-recovery-generation, qualify, stage, prepare, deploy]
+        options: [inspect, remove-invalid-olist-view, repair-managed-data-pointer, recover-credentials, grant-recovery-admin, revoke-recovery-admin, grant-recovery-generation, revoke-recovery-generation, qualify, stage, prepare, deploy]
 permissions:
   contents: read
   id-token: write
@@ -14,7 +14,7 @@ permissions:
   actions: read
 jobs:
   inspect:
-    if: inputs.action == 'inspect' || inputs.action == 'repair-managed-data-pointer' || inputs.action == 'recover-credentials' || inputs.action == 'grant-recovery-admin' || inputs.action == 'revoke-recovery-admin' || inputs.action == 'grant-recovery-generation' || inputs.action == 'revoke-recovery-generation'
+    if: inputs.action == 'inspect' || inputs.action == 'remove-invalid-olist-view' || inputs.action == 'repair-managed-data-pointer' || inputs.action == 'recover-credentials' || inputs.action == 'grant-recovery-admin' || inputs.action == 'revoke-recovery-admin' || inputs.action == 'grant-recovery-generation' || inputs.action == 'revoke-recovery-generation'
     concurrency:
       group: leapview-demo-operator
       cancel-in-progress: false
@@ -59,6 +59,7 @@ jobs:
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
           DEMO_RECOVER_CREDENTIALS: ${{ inputs.action == 'recover-credentials' || inputs.action == 'grant-recovery-admin' || inputs.action == 'revoke-recovery-admin' || inputs.action == 'grant-recovery-generation' || inputs.action == 'revoke-recovery-generation' }}
           DEMO_REPAIR_MANAGED_DATA_POINTER: ${{ inputs.action == 'repair-managed-data-pointer' }}
+          DEMO_REMOVE_INVALID_OLIST_VIEW: ${{ inputs.action == 'remove-invalid-olist-view' }}
           DEMO_PLATFORM_ADMIN_MODE: ${{ inputs.action == 'grant-recovery-admin' && 'grant' || inputs.action == 'revoke-recovery-admin' && 'revoke' || inputs.action == 'grant-recovery-generation' && 'grant-generation' || inputs.action == 'revoke-recovery-generation' && 'revoke-generation' || 'unchanged' }}
           DEMO_RECOVERY_BINARY: /tmp/recover-demo-credentials
           DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
