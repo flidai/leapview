@@ -374,6 +374,28 @@ WHERE f.revision_id IN (
 )
 ORDER BY f.logical_path;
 SQL
+  printf 'Managed-data collections and revisions:\n'
+  docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT c.project_id,c.connection_id,c.collection_id,r.revision_id,r.sequence,r.digest,r.status,r.file_count,r.size_bytes,r.manifest::text
+FROM managed_data.collection c
+LEFT JOIN managed_data.revision r ON r.collection_id=c.collection_id
+ORDER BY c.project_id,c.connection_id,r.sequence;
+SQL
+  printf 'Managed-data environment pointers:\n'
+  docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT c.project_id,c.connection_id,p.collection_id,p.environment,p.revision_id,p.revision_digest,p.deployment_id,p.generation
+FROM managed_data.environment_pointer p
+JOIN managed_data.collection c ON c.collection_id=p.collection_id
+ORDER BY c.project_id,c.connection_id,p.environment;
+SQL
+  printf 'Managed-data immutable generation bindings:\n'
+  docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT b.project_id,b.environment,b.generation_id,c.connection_id,b.collection_id,b.revision_id,r.digest
+FROM managed_data.binding b
+JOIN managed_data.collection c ON c.collection_id=b.collection_id
+JOIN managed_data.revision r ON r.revision_id=b.revision_id
+ORDER BY b.project_id,b.environment,b.generation_id,c.connection_id;
+SQL
 done
 printf 'Operator environment file paths:\n'
 find /tmp/leapview-main/.tmp /etc/leapview /opt/leapview -maxdepth 2 -type f -name '*env*' -print 2>/dev/null || true
