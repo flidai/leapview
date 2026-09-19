@@ -107,7 +107,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 80); do
-            state="$(gh api repos/flidai/leapview/actions/runs/35409527138/jobs --jq '.jobs[] | select(.name == "Build production image") | if .status == "completed" then .conclusion else .status end')"
+            state="$(gh api repos/flidai/leapview/actions/runs/35416975080/jobs --jq '.jobs[] | select(.name == "Build production image") | if .status == "completed" then .conclusion else .status end')"
             case "$state" in
               success) exit 0 ;;
               failure|cancelled|skipped) echo "Canonical image build ended in $state"; exit 1 ;;
@@ -126,7 +126,7 @@ jobs:
         id: image
         run: |
           set -euo pipefail
-          tag=ghcr.io/flidai/leapview:candidate-a9328056d1727b71f5e42fb10fe285b201898a62
+          tag=ghcr.io/flidai/leapview:candidate-6e32701df11e2de137e7db59025e7ed9c0399078
           docker pull "$tag"
           image="$(docker image inspect "$tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("ghcr.io/flidai/leapview@sha256:"))' | head -1)"
           echo "reference=$image" >> "$GITHUB_OUTPUT"
@@ -137,7 +137,7 @@ jobs:
           image: ${{ steps.image.outputs.reference }}
           repository: ghcr.io/flidai/leapview
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: a9328056d1727b71f5e42fb10fe285b201898a62
+          source-revision: 6e32701df11e2de137e7db59025e7ed9c0399078
       - name: Run complete image qualification with current token UI contract
         env:
           IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
@@ -146,7 +146,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: demo-8f1bd9033-qualification
+          name: demo-6e32701df-qualification
           path: .tmp/qualification/production-image
           if-no-files-found: ignore
   stage:
@@ -205,7 +205,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          conclusion="$(gh api repos/flidai/leapview/actions/runs/35409527138 --jq .conclusion)"
+          conclusion="$(gh api repos/flidai/leapview/actions/runs/35416975080 --jq .conclusion)"
           test "$conclusion" = success
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db
