@@ -487,7 +487,7 @@ func TestPostgresResourceUIDAdmissionAndActivationQualification(t *testing.T) {
 			t.Fatalf("rejected restore requests left %d authorization rows", authorizations)
 		}
 	})
-	t.Run("new-generation tombstone restore requires and consumes exact authorization", func(t *testing.T) {
+	t.Run("later approval supersedes pending restore evidence and activates", func(t *testing.T) {
 		if _, err := repository.Activate(t.Context(), third.activation); err == nil || !strings.Contains(strings.ToLower(err.Error()), "restore") {
 			t.Fatalf("unauthorized new-generation restore error = %v, want restore authorization failure", err)
 		}
@@ -507,19 +507,115 @@ func TestPostgresResourceUIDAdmissionAndActivationQualification(t *testing.T) {
 		}
 
 		dashboardUID := firstUIDs["dashboard:sales"]
-		restore, err := projectpostgres.New(db).AuthorizeResourceUIDRestore(t.Context(), projectpostgres.ResourceUIDRestoreInput{
+		if _, err := projectpostgres.New(db).AuthorizeResourceUIDRestore(t.Context(), projectpostgres.ResourceUIDRestoreInput{
 			ResourceUIDActivation: projectpostgres.ResourceUIDActivation{
 				InstanceID: resourceUIDQualificationInstance, TargetID: resourceUIDQualificationInstance,
 				ProjectID: first.projectID, Environment: "prod", GenerationID: third.generationID,
 			},
 			ResourceUID: dashboardUID, AuthoredID: "dashboard:sales", Kind: projectgraph.KindDashboard,
-			ActorID: "restore-operator", RequestDigest: testDigest('a'),
-		})
-		if err != nil {
-			t.Fatalf("authorize dashboard restore: %v", err)
+			ActorID: "legacy-restore-reviewer", RequestDigest: third.activation.RequestDigest,
+		}); err != nil {
+			t.Fatalf("insert legacy pending restore evidence: %v", err)
 		}
-		if restore.Status != "pending" || restore.ResourceUID != dashboardUID || restore.Kind != projectgraph.KindDashboard {
-			t.Fatalf("restore authorization = %#v", restore)
+		requestID := "0198f2c0-7c7a-7f00-8a11-000000008801"
+		decisionID := "0198f2c0-7c7a-7f00-8a11-000000008802"
+		tx, err := db.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(t.Context()) }()
+		if _, err := tx.Exec(t.Context(), `INSERT INTO delivery.delivery_approval_request
+			(request_id,publication_id,target_id,candidate_id,generation_id,request_digest,
+			 expected_target_revision,policy_revision,requested_by,request_credential_class,
+			 request_credential_id,request_credential_expires_at,expires_at,operation_id,event_id,audit_id,evidence)
+			VALUES ($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,$7,1,'publication-operator','api_token',
+			 'request-credential',clock_timestamp()+interval '1 hour',clock_timestamp()+interval '30 minutes',
+			 '0198f2c0-7c7a-7f00-8a11-000000008803'::uuid,
+			 '0198f2c0-7c7a-7f00-8a11-000000008804'::uuid,
+			 '0198f2c0-7c7a-7f00-8a11-000000008805'::uuid,'{}'::jsonb)`,
+			requestID, third.publicationID, resourceUIDQualificationInstance, third.candidateID,
+			third.generationID, third.activation.RequestDigest, third.activation.ExpectedTargetRevision); err != nil {
+			t.Fatalf("insert exact approval request: %v", err)
+		}
+		if _, err := tx.Exec(t.Context(), `INSERT INTO delivery.delivery_approval_decision
+			(decision_id,request_id,decision_revision,decision,decided_by,decision_credential_class,
+			 decision_credential_id,decision_credential_expires_at,operation_id,event_id,audit_id,evidence)
+			VALUES ($1::uuid,$2::uuid,1,'approved','restore-reviewer','human','review-credential',
+			 clock_timestamp()+interval '1 hour',
+			 '0198f2c0-7c7a-7f00-8a11-000000008806'::uuid,
+			 '0198f2c0-7c7a-7f00-8a11-000000008807'::uuid,
+			 '0198f2c0-7c7a-7f00-8a11-000000008808'::uuid,'{}'::jsonb)`, decisionID, requestID); err != nil {
+			t.Fatalf("insert exact approval decision: %v", err)
+		}
+		authorized, err := projectpostgres.New(db).AuthorizeApprovedResourceUIDRestoresTx(t.Context(), tx, requestID, decisionID)
+		if err != nil {
+			t.Fatalf("authorize approved resource UID restores: %v", err)
+		}
+		if authorized != 1 {
+			t.Fatalf("approved restores = %d, want 1", authorized)
+		}
+		if _, err := tx.Exec(t.Context(), `INSERT INTO delivery.delivery_approval_decision
+			(decision_id,request_id,decision_revision,decision,decided_by,decision_credential_class,
+			 decision_credential_id,decision_credential_expires_at,operation_id,event_id,audit_id,evidence)
+			VALUES ('0198f2c0-7c7a-7f00-8a11-000000008809'::uuid,$1::uuid,2,'denied','restore-reviewer','human','review-credential-denied',
+			 clock_timestamp()+interval '1 hour',
+			 '0198f2c0-7c7a-7f00-8a11-000000008810'::uuid,
+			 '0198f2c0-7c7a-7f00-8a11-000000008811'::uuid,
+			 '0198f2c0-7c7a-7f00-8a11-000000008812'::uuid,'{}'::jsonb)`, requestID); err != nil {
+			t.Fatalf("insert superseding denial: %v", err)
+		}
+		latestDecisionID := "0198f2c0-7c7a-7f00-8a11-000000008813"
+		if _, err := tx.Exec(t.Context(), `INSERT INTO delivery.delivery_approval_decision
+			(decision_id,request_id,decision_revision,decision,decided_by,decision_credential_class,
+			 decision_credential_id,decision_credential_expires_at,operation_id,event_id,audit_id,evidence)
+			VALUES ($1::uuid,$2::uuid,3,'approved','restore-reviewer-b','human','review-credential-b',
+			 clock_timestamp()+interval '1 hour',
+			 '0198f2c0-7c7a-7f00-8a11-000000008814'::uuid,
+			 '0198f2c0-7c7a-7f00-8a11-000000008815'::uuid,
+			 '0198f2c0-7c7a-7f00-8a11-000000008816'::uuid,'{}'::jsonb)`, latestDecisionID, requestID); err != nil {
+			t.Fatalf("insert later approval: %v", err)
+		}
+		authorized, err = projectpostgres.New(db).AuthorizeApprovedResourceUIDRestoresTx(t.Context(), tx, requestID, latestDecisionID)
+		if err != nil {
+			t.Fatalf("authorize later approved resource UID restores: %v", err)
+		}
+		if authorized != 1 {
+			t.Fatalf("later approved restores = %d, want 1", authorized)
+		}
+		if err := tx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		var earlierStatus string
+		var earlierSuperseded bool
+		if err := db.QueryRow(t.Context(), `SELECT status,superseded_at IS NOT NULL
+			FROM project.resource_uid_restore_authorization
+			WHERE generation_id=$1::uuid AND resource_uid=$2::uuid AND approval_decision_id=$3::uuid`,
+			third.generationID, dashboardUID, decisionID).Scan(&earlierStatus, &earlierSuperseded); err != nil {
+			t.Fatal(err)
+		}
+		if earlierStatus != "superseded" || !earlierSuperseded {
+			t.Fatalf("earlier approval evidence = status %q superseded_at_set=%v", earlierStatus, earlierSuperseded)
+		}
+		var legacyStatus string
+		var legacySuperseded bool
+		if err := db.QueryRow(t.Context(), `SELECT status,superseded_at IS NOT NULL
+			FROM project.resource_uid_restore_authorization
+			WHERE generation_id=$1::uuid AND resource_uid=$2::uuid AND approval_decision_id IS NULL`,
+			third.generationID, dashboardUID).Scan(&legacyStatus, &legacySuperseded); err != nil {
+			t.Fatal(err)
+		}
+		if legacyStatus != "superseded" || !legacySuperseded {
+			t.Fatalf("legacy restore evidence = status %q superseded_at_set=%v", legacyStatus, legacySuperseded)
+		}
+		var restoreActor, restoreDigest, restoreStatus string
+		if err := db.QueryRow(t.Context(), `SELECT actor_id,request_digest,status
+			FROM project.resource_uid_restore_authorization
+			WHERE generation_id=$1::uuid AND resource_uid=$2::uuid AND approval_decision_id=$3::uuid`, third.generationID, dashboardUID, latestDecisionID).
+			Scan(&restoreActor, &restoreDigest, &restoreStatus); err != nil {
+			t.Fatal(err)
+		}
+		if restoreActor != "restore-reviewer-b" || restoreDigest != third.activation.RequestDigest || restoreStatus != "pending" {
+			t.Fatalf("approved restore evidence = actor %q digest %q status %q", restoreActor, restoreDigest, restoreStatus)
 		}
 		activated, err := repository.Activate(t.Context(), third.activation)
 		if err != nil {
@@ -537,7 +633,7 @@ func TestPostgresResourceUIDAdmissionAndActivationQualification(t *testing.T) {
 		}
 		var status string
 		var consumed bool
-		if err := db.QueryRow(t.Context(), `SELECT status, consumed_at IS NOT NULL FROM project.resource_uid_restore_authorization WHERE generation_id=$1::uuid AND resource_uid=$2::uuid`, third.generationID, dashboardUID).Scan(&status, &consumed); err != nil {
+		if err := db.QueryRow(t.Context(), `SELECT status, consumed_at IS NOT NULL FROM project.resource_uid_restore_authorization WHERE generation_id=$1::uuid AND resource_uid=$2::uuid AND approval_decision_id=$3::uuid`, third.generationID, dashboardUID, latestDecisionID).Scan(&status, &consumed); err != nil {
 			t.Fatal(err)
 		}
 		if status != "consumed" || !consumed {
@@ -714,6 +810,10 @@ func installResourceUIDQualificationDependencies(t *testing.T, db *pgxpool.Pool)
 	if _, err := tx.Exec(t.Context(), projectpostgres.ResourceUIDSchemaSQL()); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatalf("apply resource UID schema after dependencies: %v", err)
+	}
+	if _, err := tx.Exec(t.Context(), projectpostgres.ResourceUIDApprovalSchemaSQL()); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("apply approval resource UID schema after dependencies: %v", err)
 	}
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)

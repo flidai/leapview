@@ -177,7 +177,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
       this.closeExpirationMenu()
       this.closePermissionMenu()
       this.closeTokenPermissionAccessMenu()
-      if (navigateToTokenList) window.location.assign('/admin/api-tokens')
+      if (navigateToTokenList) window.history.replaceState(window.history.state, '', '/admin/api-tokens')
     }
     const confirmation = this.tokenConfirmationDialog
     if (this.tokenConfirmationOpen && confirmation && !confirmation.open) confirmation.showModal()

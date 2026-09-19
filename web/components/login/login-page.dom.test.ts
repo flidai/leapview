@@ -30,6 +30,11 @@ beforeAll(async () => {
       response.end(loaderTestDocument())
       return
     }
+    if (url.pathname === '/runtime-test') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument({ datastarVersion: 'build-hash' }))
+      return
+    }
     if (url.pathname === '/fake-topology-background.js') {
       response.setHeader('content-type', 'text/javascript')
       response.end(`window.__loginBackgroundModuleLoaded = true`)
@@ -111,6 +116,26 @@ test('login page composes branded route UI', async () => {
     expect(state.hostHeight).toBeGreaterThanOrEqual(820)
   } finally {
     await page.close()
+  }
+})
+
+test('login page reuses the page Datastar runtime asset', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 820 } })
+  const page = await context.newPage()
+  const datastarRequests: string[] = []
+  page.on('request', (request) => {
+    const url = new URL(request.url())
+    if (url.pathname === '/static/vendor/datastar-1.0.2.js') datastarRequests.push(request.url())
+  })
+
+  try {
+    await page.goto(`${baseURL}/runtime-test`)
+    await page.waitForFunction(() => customElements.get('lv-login-page'))
+    await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
+
+    expect(datastarRequests).toEqual([`${baseURL}/static/vendor/datastar-1.0.2.js?v=build-hash`])
+  } finally {
+    await context.close()
   }
 })
 
@@ -489,6 +514,7 @@ type TestDocumentOptions = {
   ssoAuth?: boolean
   mustChangePassword?: boolean
   error?: string
+  datastarVersion?: string
 }
 
 function testDocument(options: TestDocumentOptions = {}): string {
@@ -516,7 +542,7 @@ function testDocument(options: TestDocumentOptions = {}): string {
         <main data-signals="${escapeHTML(JSON.stringify({ page, status }))}">
           <lv-login-page></lv-login-page>
         </main>
-        <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
+        <script type="module" src="/static/vendor/datastar-1.0.2.js?v=${options.datastarVersion ?? 'dev'}"></script>
         <script type="module" src="/login-page-under-test.js"></script>
       </body>
     </html>

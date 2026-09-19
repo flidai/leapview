@@ -10,13 +10,19 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
 // Adapter is stateless and safe to share between deployment requests.
 type Adapter struct {
-	jobs     *jobspostgres.Repository
-	delivery *deploymentpostgres.Repository
+	jobs         *jobspostgres.Repository
+	delivery     *deploymentpostgres.Repository
+	resourceUIDs resourceUIDRestoreAuthorizer
+}
+
+type resourceUIDRestoreAuthorizer interface {
+	AuthorizeApprovedResourceUIDRestoresTx(context.Context, projectpostgres.Tx, string, string) (int64, error)
 }
 
 var _ deploymentmodule.NativeDeliveryWorkflowRecorder = (*Adapter)(nil)
@@ -29,8 +35,8 @@ func New(repository *jobspostgres.Repository) *Adapter {
 // NewWithRepository wires the delivery authority needed to resolve the
 // immutable publication actor while enqueuing approval activation. The lookup
 // runs on the caller-owned transaction, preserving one commit boundary.
-func NewWithRepository(delivery *deploymentpostgres.Repository, jobs *jobspostgres.Repository) *Adapter {
-	return &Adapter{delivery: delivery, jobs: jobs}
+func NewWithRepository(delivery *deploymentpostgres.Repository, resourceUIDs resourceUIDRestoreAuthorizer, jobs *jobspostgres.Repository) *Adapter {
+	return &Adapter{delivery: delivery, resourceUIDs: resourceUIDs, jobs: jobs}
 }
 
 // RecordWorkflow forwards the caller-owned transaction unchanged. Neither

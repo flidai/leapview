@@ -470,6 +470,7 @@ test('personal API tokens use capability selectors', async () => {
         createDisabled: (root.querySelector('.token-confirm-actions .primary') as HTMLButtonElement).disabled,
       }
       ;(root.querySelector('.token-confirm-actions .primary') as HTMLButtonElement).click()
+      window.history.replaceState(window.history.state, '', '/admin/api-tokens/new')
       mergePatch({ personalSettings: { tokens: { items: [
         { id: 'token-1', name: 'Sales automation', description: 'Used by the weekly sales reporting job.', capabilities: ['RESOURCE_READ'], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '2026-10-17T06:40:00Z', revokedAt: '' },
       ], newToken: 'lv_created_secret' } } })
@@ -481,6 +482,7 @@ test('personal API tokens use capability selectors', async () => {
         tokenNames: Array.from(root.querySelectorAll('.token-name')).map((element) => element.textContent?.trim()),
         description: root.querySelector('.token-description')?.textContent?.trim(),
         notice: root.querySelector('lv-one-time-secret')?.shadowRoot?.querySelector('[role="status"]')?.textContent?.trim(),
+        pathname: window.location.pathname,
       }
       let deleteCommand: any = null
       personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { deleteCommand = event.detail }, { once: true })
@@ -601,6 +603,7 @@ test('personal API tokens use capability selectors', async () => {
     expect(state.succeeded.tokenNames).toContain('Sales automation')
     expect(state.succeeded.description).toBe('Used by the weekly sales reporting job.')
     expect(state.succeeded.notice).toContain('Copy your personal access token now')
+    expect(state.succeeded.pathname).toBe('/admin/api-tokens')
     expect(state.deletion).toEqual({
       open: true,
       title: 'Are you sure you want to delete this token?',
@@ -1456,8 +1459,7 @@ test('query audit page filters table rows and exposes optional metadata columns'
     expect(state.drawerText).toMatch(/req_1/)
     expect(state.drawerText).toMatch(/corr_1/)
     expect(state.drawerHasCodeBlock).toBe(true)
-    expect(state.drawerCode).toContain('SELECT')
-    expect(state.drawerCode).toMatch(/\nFROM\n\s+orders/)
+    expect(state.drawerCode).toMatch(/select\s+status\s+from\s+orders/i)
     expect(state.drawerText).toMatch(/12 ms/)
     expect(state.drawerText).toMatch(/semantic_aggregate/)
     expect(state.drawerText).toMatch(/semantic_dataset:sales:orders/)

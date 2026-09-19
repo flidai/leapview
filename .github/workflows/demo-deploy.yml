@@ -63,6 +63,9 @@ jobs:
         env:
           DEMO_SOURCE_REVISION: ${{ env.SOURCE_REVISION }}
           DEMO_TARGET: https://demo.leapview.dev
+          DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
+          DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
+          DEMO_RELEASE_CLIENT_ID: ${{ vars.DEMO_RELEASE_PRINCIPAL_ID }}
         run: ./scripts/deploy_demo.sh
 
       - name: Record deployed product routes
@@ -71,6 +74,8 @@ jobs:
           {
             echo '### Hosted demo'
             echo
+            echo '- [Sign in](https://demo.leapview.dev/login)'
+            echo '- Product dashboards (sign-in required):'
             echo '- [Visual Showcase](https://demo.leapview.dev/dashboards/visual-showcase/pages/overview)'
             echo '- [Executive Sales](https://demo.leapview.dev/dashboards/executive-sales/pages/overview)'
             echo '- [Fulfillment Operations](https://demo.leapview.dev/dashboards/fulfillment-operations/pages/overview)'

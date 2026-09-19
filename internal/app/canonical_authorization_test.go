@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	"github.com/flidai/leapview/internal/deployment"
 	manageddatacontrol "github.com/flidai/leapview/internal/manageddata/control"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
@@ -197,6 +198,21 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 	}
 	if !accesssnapshot.RoleAllowsCapability(roleSnapshot, subjects, access.CapabilityResourcePublish) {
 		t.Fatal("explicit deployer role did not authorize publish")
+	}
+	addedImpact, err := deliveryAuthorizationResources(deployment.DeliveryPlan{Evidence: deployment.DeliveryPlanEvidence{
+		GraphImpact: deployment.DeliveryGraphImpact{Added: []deployment.DeliveryImpactResource{{ID: "connection_new", Kind: string(projectgraph.KindConnection), Change: "added"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !addedImpact.HasAdditions || len(addedImpact.Existing) != 0 {
+		t.Fatalf("added impact = %#v, want role-gated addition without current resources", addedImpact)
+	}
+	if allowed, err := deliveryAuthorizationImpactAllows(snapshot, subjects, addedImpact, access.CapabilityResourcePublish); err != nil || allowed {
+		t.Fatalf("resource grant authorized a new resource without project role: allowed=%t err=%v", allowed, err)
+	}
+	if allowed, err := deliveryAuthorizationImpactAllows(roleSnapshot, subjects, addedImpact, access.CapabilityResourcePublish); err != nil || !allowed {
+		t.Fatalf("deployer role did not authorize a new resource: allowed=%t err=%v", allowed, err)
 	}
 	viewerSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{ID: "role_viewer", Subject: subject, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}}, nil, nil)
 	if err != nil {
