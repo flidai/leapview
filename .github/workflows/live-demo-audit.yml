@@ -85,7 +85,7 @@ jobs:
           /tmp/inspect-demo-runtime.sh
       - name: Publish canonical demo content
         env:
-          DEMO_SOURCE_REVISION: 8f1bd9033f97c8d31b2c74cb8f7cdf6011d210a4
+          DEMO_SOURCE_REVISION: a9328056d1727b71f5e42fb10fe285b201898a62
           DEMO_TARGET: https://demo.leapview.dev
           DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
           DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
