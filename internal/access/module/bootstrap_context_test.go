@@ -38,6 +38,19 @@ func TestBootstrapAuthorizationContextRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestManagedDataStagingAuthorizationBindsExactConnection(t *testing.T) {
+	project := projectgraph.ResourceID("project_demo")
+	connection := projectgraph.ResourceID("connection:new")
+	ctx := withManagedDataStagingAuthorization(context.Background(), project, connection, "publisher", access.CapabilityResourceEdit)
+	marker, ok := ManagedDataStagingAuthorizationFromContext(ctx)
+	if !ok || marker.ProjectID != project || marker.ConnectionID != connection || marker.PrincipalID != "publisher" || marker.Capability != access.CapabilityResourceEdit {
+		t.Fatalf("managed-data marker = %#v, ok=%t", marker, ok)
+	}
+	if _, ok := BootstrapAuthorizationFromContext(ctx); ok {
+		t.Fatal("managed-data marker must not satisfy generic bootstrap authorization")
+	}
+}
+
 func TestPublicationApprovalBootstrapAuthorizationContextIsOperationSpecific(t *testing.T) {
 	project, err := projectgraph.NewResourceID("project_demo")
 	if err != nil {

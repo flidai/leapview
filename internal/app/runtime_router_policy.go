@@ -198,7 +198,22 @@ func bootstrapAPIGenDecision(
 	// Candidate-source authoring normally follows the active snapshot too, except
 	// for the canonical-empty legacy generation that must stage its policy-bearing
 	// successor through the durable, exact-claim bootstrap path.
-	if bootstrapCandidateSourceOperation(operationID) {
+	if bootstrapManagedDataOperation(operationID) {
+		active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment, targets, targetID, projectID.String())
+		if err != nil {
+			return accessmodule.APIGenBootstrapDecision{}, err
+		}
+		if active {
+			allowed, claimErr := bootstrapClaimAllows(ctx, claims, environment, operationID, projectID)
+			if claimErr != nil {
+				return accessmodule.APIGenBootstrapDecision{}, claimErr
+			}
+			// Existing resources remain entirely governed by the active snapshot.
+			// This bit is consumed only after that snapshot proves the exact
+			// successor connection is absent.
+			return accessmodule.APIGenBootstrapDecision{Handled: false, AllowMissingResource: allowed}, nil
+		}
+	} else if bootstrapCandidateSourceOperation(operationID) {
 		// A legacy active generation with no authorization content still needs
 		// these authoring operations to stage the policy-bearing successor that
 		// closes bootstrap. During runtime warm-up, keep using the durable exact
@@ -233,26 +248,42 @@ func bootstrapAPIGenDecision(
 			return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
 		}
 	}
+	allowed, err := bootstrapClaimAllows(ctx, claims, environment, operationID, projectID)
+	if err != nil {
+		return accessmodule.APIGenBootstrapDecision{}, err
+	}
+	return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: allowed}, nil
+}
+
+func bootstrapClaimAllows(ctx context.Context, claims deploymentmodule.ProjectClaimReader, environment, operationID string, projectID projectgraph.ResourceID) (bool, error) {
 	if err := projectID.Validate(); err != nil || projectID.String() != strings.TrimSpace(projectID.String()) {
-		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
+		return false, nil
 	}
 	if claims == nil {
-		return accessmodule.APIGenBootstrapDecision{}, errors.New("project claim repository is unavailable")
+		return false, errors.New("project claim repository is unavailable")
 	}
 	claim, err := claims.GetProjectClaim(ctx)
 	if errors.Is(err, deployment.ErrProjectClaimNotFound) {
-		// Only the platform-scoped Project bootstrap may establish a claim.
-		// Project-scoped source and managed-data operations must not create
-		// target state before that separately authorized boundary succeeds.
-		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
+		return false, nil
 	}
 	if err != nil {
-		return accessmodule.APIGenBootstrapDecision{}, fmt.Errorf("read bootstrap project claim: %w", err)
+		return false, fmt.Errorf("read bootstrap project claim: %w", err)
 	}
 	if claim.ProjectID != projectID || claim.Environment != servingstatemodule.Environment(strings.TrimSpace(environment)) {
-		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
+		return false, nil
 	}
-	return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapOperationAllowed(operationID)}, nil
+	return bootstrapOperationAllowed(operationID), nil
+}
+
+func bootstrapManagedDataOperation(operationID string) bool {
+	switch operationID {
+	case "createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
+		"managedDataTusTransport":
+		return true
+	default:
+		return false
+	}
 }
 
 func bootstrapControlPlaneOperation(operationID string) bool {

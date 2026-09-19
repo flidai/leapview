@@ -325,8 +325,8 @@ func bootstrapTokenAllowsCapability(capabilities []access.Capability, required a
 // may race the serving-generation cutover. Unlike API-token bootstrap, this
 // path relies on the immutable authoring scope plus durable platform
 // administration; it never grants a credential authority it does not already
-// carry. The generated API authorizer invokes this method only after its
-// bootstrap policy has proved that no active serving generation exists.
+// carry. The generated API authorizer invokes this method before activation or
+// after the active snapshot proves that an exact successor resource is absent.
 //
 // A fresh PostgreSQL target has no active authorization snapshot yet. The
 // durable authoring-project resolver is therefore consulted first. An empty

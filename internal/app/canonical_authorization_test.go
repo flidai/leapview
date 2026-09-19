@@ -58,12 +58,17 @@ type tusAccess struct {
 
 type bootstrapTusAccess struct {
 	tusAccess
-	allowed bool
-	err     error
+	allowed          bool
+	authoringAllowed bool
+	err              error
 }
 
 func (a bootstrapTusAccess) AuthorizeBootstrapRequest(context.Context, *http.Request, access.Capability) (bool, error) {
 	return a.allowed, a.err
+}
+
+func (a bootstrapTusAccess) AuthorizeAuthoringBootstrapRequest(context.Context, *http.Request, string, access.Capability) (bool, error) {
+	return a.authoringAllowed, a.err
 }
 
 func (a tusAccess) Authenticate(next http.Handler) http.Handler { return next }
@@ -108,6 +113,23 @@ func tusSnapshot(t *testing.T, principalID string, connectionID projectgraph.Res
 		t.Fatal(err)
 	}
 	return snapshot
+}
+
+func tusEmptySnapshot(t *testing.T) (projectgraph.ServingIdentity, accesssnapshot.AuthorizationSnapshot) {
+	t.Helper()
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity, snapshot
 }
 
 func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
@@ -429,6 +451,9 @@ func TestProtectManagedDataTransportBootstrapUsesExactTargetAndActiveFallback(t 
 	activeFallback := func(_ context.Context, _ *http.Request, _ string, _ projectgraph.ResourceID, _ access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
 		return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
 	}
+	missingFallback := func(_ context.Context, _ *http.Request, _ string, _ projectgraph.ResourceID, _ access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
+		return accessmodule.APIGenBootstrapDecision{Handled: false, AllowMissingResource: true}, nil
+	}
 	serve := func(name string, accessValue canonicalAccessModule, runtime canonicalRuntimeHost, bootstrap accessmodule.APIGenBootstrapAuthorizer) {
 		t.Run(name, func(t *testing.T) {
 			handler := protectManagedDataTransportWithBootstrap(accessValue, runtime, resolve, bootstrap, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
@@ -441,8 +466,37 @@ func TestProtectManagedDataTransportBootstrapUsesExactTargetAndActiveFallback(t 
 	}
 	bootstrapAccess := bootstrapTusAccess{tusAccess: tusAccess{principal: accessmodule.Principal{ID: "principal_admin"}, ok: true}, allowed: true}
 	serve("bound but unactivated", bootstrapAccess, tusRuntime{project: projectID}, allowedBootstrap)
+	emptyIdentity, emptySnapshot := tusEmptySnapshot(t)
+	authoringAccess := bootstrapTusAccess{tusAccess: tusAccess{principal: accessmodule.Principal{ID: "publisher"}, ok: true}, authoringAllowed: true}
+	serve("active predecessor permits absent successor upload", authoringAccess, tusRuntime{project: projectID, lease: tusLease{identity: emptyIdentity, snapshot: emptySnapshot}}, missingFallback)
 	activeAccess := tusAccess{principal: accessmodule.Principal{ID: "principal_admin"}, ok: true, subjects: []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: "principal_admin"}}}
 	serve("active generation falls through snapshot", activeAccess, tusRuntime{project: projectID, lease: tusLease{identity: identity, snapshot: tusSnapshot(t, "principal_admin", connectionID, true)}}, activeFallback)
+
+	t.Run("existing connection denial cannot use authoring fallback", func(t *testing.T) {
+		denied := bootstrapTusAccess{
+			tusAccess:        tusAccess{principal: accessmodule.Principal{ID: "publisher"}, ok: true, subjects: []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: "publisher"}}},
+			authoringAllowed: true,
+		}
+		handler := protectManagedDataTransportWithBootstrap(denied, tusRuntime{project: projectID, lease: tusLease{identity: identity, snapshot: tusSnapshot(t, "publisher", connectionID, false)}}, resolve, missingFallback, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("denied existing connection reached handler")
+		}))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, tusRequest(http.MethodPatch, uploadID))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", response.Code, http.StatusNotFound)
+		}
+	})
+
+	t.Run("active lease failure does not use authoring fallback", func(t *testing.T) {
+		handler := protectManagedDataTransportWithBootstrap(authoringAccess, tusRuntime{project: projectID, err: errors.New("lease unavailable")}, resolve, missingFallback, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("lease failure reached handler")
+		}))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, tusRequest(http.MethodPatch, uploadID))
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+		}
+	})
 
 	for _, test := range []struct {
 		name      string
