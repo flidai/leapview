@@ -332,7 +332,13 @@ func pmtilesCommand(ctx context.Context, arguments ...string) *exec.Cmd {
 	// Archive digests cover compressed bytes, not just tile contents. Go 1.27
 	// changed DEFLATE output, so pin the encoder independently of the host Go
 	// version. Changing this toolchain requires regenerating the archive digests.
-	command.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.8")
+	// The pinned source can reset long HTTP/2 range streams. Keep the transport
+	// change local to extraction; verified archive digests still gate the bytes.
+	debug := os.Getenv("GODEBUG")
+	if debug != "" {
+		debug += ","
+	}
+	command.Env = append(os.Environ(), "GOTOOLCHAIN=go1.26.8", "GODEBUG="+debug+"http2client=0")
 	command.Stdout, command.Stderr = os.Stdout, os.Stderr
 	return command
 }

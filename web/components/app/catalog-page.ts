@@ -315,6 +315,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           search-placeholder="Search dashboards"
           empty-text=${this.catalogEmptyText()}
           title-emphasis="normal"
+          sticky-identity
           @lv-entity-list-favorite-toggle=${this.toggleDashboardFavorite}
           @lv-entity-list-item-activate=${this.recordDashboardOpen}
           @lv-entity-list-row-action=${this.handleDashboardRowAction}

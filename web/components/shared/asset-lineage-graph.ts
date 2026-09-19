@@ -49,6 +49,7 @@ type LineageLayout = {
   nodeIndex: Map<string, number>
   rankNodeCount: Map<number, number>
   maxNodeCount: number
+  nodeGapY: number
 }
 
 type LineagePathState = {
@@ -65,9 +66,11 @@ type LineageNodeData = LineageNode & {
 
 const NODE_GAP_X = 260
 const NODE_GAP_Y = 124
+const DENSE_NODE_GAP_Y = 88
 const NODE_OFFSET_X = 96
 const NODE_MIN_Y = 48
 const READABLE_FIT_MIN_ZOOM = 0.55
+const DENSE_FIT_MIN_ZOOM = 0.45
 
 class AssetLineageGraph extends LitElement {
   @property({ type: Object }) graph: LineageGraph | null = null
@@ -113,6 +116,7 @@ class AssetLineageGraph extends LitElement {
     if (!this.root) return
     const graph = this.resolvedGraph
     const layout = createLineageLayout(graph.nodes)
+    const fitMinZoom = layout.maxNodeCount >= 8 ? DENSE_FIT_MIN_ZOOM : READABLE_FIT_MIN_ZOOM
     const selectedNode = this.selectionCleared ? undefined : selectedLineageNode(graph.nodes, this.selectedNodeID)
     this.selectedNodeID = selectedNode?.id
     const pathState = createPathState(graph, this.selectedNodeID)
@@ -152,8 +156,8 @@ class AssetLineageGraph extends LitElement {
             edges: graph.edges.map((edge) => toFlowEdge(edge, pathState)),
             nodeTypes: { lineageNode: LineageNodeComponent },
             fitView: true,
-            fitViewOptions: { padding: 0.12, minZoom: READABLE_FIT_MIN_ZOOM },
-            minZoom: READABLE_FIT_MIN_ZOOM,
+            fitViewOptions: { padding: 0.12, minZoom: fitMinZoom },
+            minZoom: fitMinZoom,
             maxZoom: 1.35,
             nodesDraggable: false,
             nodesConnectable: false,
@@ -461,7 +465,10 @@ function toFlowEdge(edge: LineageEdge, pathState: LineagePathState): Edge {
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    label: context ? '' : edge.label ?? '',
+    // Node titles and the relationship tables carry the useful explanation.
+    // Raw backend relationship labels make projected graphs noisy and can
+    // describe the inverse data direction (for example, "Feeds model").
+    label: '',
     type: context ? 'smoothstep' : 'default',
     markerEnd: context ? undefined : { type: MarkerType.ArrowClosed },
     interactionWidth: context ? 8 : 14,
@@ -550,7 +557,13 @@ function createLineageLayout(nodes: LineageNode[]): LineageLayout {
     })
   }
 
-  return { rankIndex, nodeIndex, rankNodeCount, maxNodeCount }
+  return {
+    rankIndex,
+    nodeIndex,
+    rankNodeCount,
+    maxNodeCount,
+    nodeGapY: maxNodeCount >= 8 ? DENSE_NODE_GAP_Y : NODE_GAP_Y,
+  }
 }
 
 function positionFor(node: LineageNode, layout: LineageLayout): { x: number; y: number } {
@@ -558,10 +571,10 @@ function positionFor(node: LineageNode, layout: LineageLayout): { x: number; y: 
   const rankIndex = layout.rankIndex.get(rank) ?? 0
   const index = layout.nodeIndex.get(node.id) ?? 0
   const rankNodeCount = layout.rankNodeCount.get(rank) ?? 1
-  const rankOffsetY = Math.max(0, layout.maxNodeCount - rankNodeCount) * NODE_GAP_Y / 2
+  const rankOffsetY = Math.max(0, layout.maxNodeCount - rankNodeCount) * layout.nodeGapY / 2
   return {
     x: NODE_OFFSET_X + rankIndex * NODE_GAP_X,
-    y: NODE_MIN_Y + rankOffsetY + index * NODE_GAP_Y,
+    y: NODE_MIN_Y + rankOffsetY + index * layout.nodeGapY,
   }
 }
 

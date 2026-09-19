@@ -161,6 +161,39 @@ test('mobile record tables expose a horizontal-scroll affordance without changin
   }
 })
 
+test('record tables can collapse secondary columns into a focused mobile view', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 620 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-record-table'))
+    await page.locator('lv-record-table').evaluate((element: any) => {
+      element.table = {
+        columns: [
+          { id: 'query', header: 'Query', width: '560px' },
+          { id: 'started', header: 'Started', width: '150px' },
+          { id: 'runtime', header: 'Runtime', width: '150px', mobileHidden: true },
+        ],
+        rows: [{ query: 'select 1', started: 'Sep 17, 10:30 AM', runtime: 'duckdb' }],
+        minWidth: '860px',
+      }
+    })
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+    const state = await page.locator('lv-record-table').evaluate((element) => {
+      const table = element.querySelector('table') as HTMLTableElement
+      const hiddenHeader = element.querySelector('th:nth-child(3)') as HTMLElement
+      const hint = element.querySelector('.record-table-scroll-hint') as HTMLElement
+      return {
+        tableMinWidth: getComputedStyle(table).minWidth,
+        hiddenDisplay: getComputedStyle(hiddenHeader).display,
+        hintDisplay: getComputedStyle(hint).display,
+      }
+    })
+    expect(state).toEqual({ tableMinWidth: '100%', hiddenDisplay: 'none', hintDisplay: 'none' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('narrow record tables keep entity columns usable without pinning them', async () => {
   const page = await browser.newPage({ viewport: { width: 520, height: 620 } })
   try {

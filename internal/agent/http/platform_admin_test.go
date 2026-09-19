@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
 func TestAgentConfigRequiresPlatformAdministrator(t *testing.T) {
@@ -30,5 +32,20 @@ func TestAgentConfigRequiresPlatformAdministrator(t *testing.T) {
 				t.Fatalf("status = %d, want %d", rec.Code, test.wantStatus)
 			}
 		})
+	}
+}
+
+func TestAdminAgentToolsPreserveCanonicalEffectAndTags(t *testing.T) {
+	tools := adminAgentToolDTOs([]agentcore.ToolDefinition{{
+		Name: "edit_dashboard_source", Effect: "write", Tags: []string{"dashboard", "authoring", "source"},
+	}}, nil)
+	if len(tools) != 1 {
+		t.Fatalf("tools = %#v", tools)
+	}
+	if tools[0].Effect != "write" {
+		t.Fatalf("effect = %q, want write", tools[0].Effect)
+	}
+	if len(tools[0].Tags) != 3 || tools[0].Tags[0] != "dashboard" {
+		t.Fatalf("tags = %#v", tools[0].Tags)
 	}
 }

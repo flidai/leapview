@@ -77,7 +77,7 @@ func (f *fakeRepository) ListAPITokens(context.Context, string) ([]access.APITok
 }
 func (f *fakeRepository) CreateAPITokenWithMetadata(_ context.Context, input access.APITokenInput) (string, access.APIToken, error) {
 	f.createdToken = true
-	row := access.APIToken{ID: "token-2", PrincipalID: input.PrincipalID, Name: input.Name, Capabilities: input.Capabilities, CreatedAt: "now"}
+	row := access.APIToken{ID: "token-2", PrincipalID: input.PrincipalID, Name: input.Name, Description: input.Description, Capabilities: input.Capabilities, CreatedAt: "now"}
 	f.tokens = append(f.tokens, row)
 	return "lv_test_secret", row, nil
 }
@@ -173,12 +173,15 @@ func TestServiceMutationsAuditAndValidateIdentity(t *testing.T) {
 	if err := service.ApplyTheme(context.Background(), "principal-1", ThemeCommand{Action: "save", Theme: "dark_colorblind"}); err != nil {
 		t.Fatal(err)
 	}
-	secret, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "CI", Capabilities: []string{string(access.CapabilityResourceRead)}})
+	secret, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "CI", Description: "Reporting automation", Capabilities: []string{string(access.CapabilityResourceRead)}})
 	if err != nil || secret == nil || *secret != "lv_test_secret" {
 		t.Fatalf("create token = %v, %v", secret, err)
 	}
 	if !repo.passwordChanged || !repo.createdToken || !repo.themeChanged || repo.theme != access.ThemeDarkColorblind || len(repo.audits) != 4 {
 		t.Fatalf("mutations changed=%v token=%v audits=%d", repo.passwordChanged, repo.createdToken, len(repo.audits))
+	}
+	if got := repo.tokens[len(repo.tokens)-1].Description; got != "Reporting automation" {
+		t.Fatalf("token description = %q", got)
 	}
 	if _, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "Escalating", Capabilities: []string{string(access.CapabilityResourcePublish)}}); err == nil || !errors.Is(err, access.ErrCapabilityNotAllowed) {
 		t.Fatalf("escalating token capability error = %v", err)

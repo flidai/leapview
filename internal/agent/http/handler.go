@@ -960,10 +960,11 @@ func adminAgentToolDTOs(tools []agentcore.ToolDefinition, contracts map[string]a
 		dto := api.AdminAgentToolResponse{
 			Name:         tool.Name,
 			Description:  tool.Description,
-			Effect:       "read",
+			Effect:       tool.Effect,
 			Defaults:     map[string]any{},
 			InputSchema:  jsonObject(string(tool.InputSchema)),
-			OutputSchema: map[string]any{},
+			OutputSchema: jsonObject(string(tool.OutputSchema)),
+			Tags:         append([]string(nil), tool.Tags...),
 		}
 		if contract, ok := contracts[tool.Name]; ok {
 			dto.Effect = string(contract.Effect)

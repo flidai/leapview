@@ -144,16 +144,19 @@ test('asset lineage keeps dense graphs readable on initial fit', async () => {
       const match = (viewport as HTMLElement).style.transform.match(/scale\(([-\d.]+)\)/)
       const flowRect = flow.getBoundingClientRect()
       const selectedRect = selected.getBoundingClientRect()
+      const nodeRects = Array.from(element.querySelectorAll<HTMLElement>('.react-flow__node')).map((node) => node.getBoundingClientRect())
       return {
         scale: Number(match?.[1]),
         selectedVisible: selectedRect.top >= flowRect.top
           && selectedRect.bottom <= flowRect.bottom
           && selectedRect.left < flowRect.right
           && selectedRect.right > flowRect.left,
+        allNodesVerticallyVisible: nodeRects.every((rect) => rect.top >= flowRect.top && rect.bottom <= flowRect.bottom),
       }
     })
-    expect(state.scale).toBeGreaterThanOrEqual(0.55)
+    expect(state.scale).toBeGreaterThanOrEqual(0.45)
     expect(state.selectedVisible).toBe(true)
+    expect(state.allNodesVerticallyVisible).toBe(true)
   } finally {
     await page.close()
   }
