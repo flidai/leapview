@@ -376,7 +376,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
         <button type="button" role="menuitem" data-action="copy-link" @click=${() => this.copyDashboardLink(dashboard)}>${lucideIcon(lucideIconByCanonicalName('link'), { size: 16, strokeWidth: 2 })}<span>Copy link</span></button>
         ${editable ? html`
           <div class="catalog-action-divider" role="separator"></div>
-          <form class="catalog-action-form" method="post" action=${dashboardDeleteHref(dashboard)} @submit=${(event: SubmitEvent) => this.confirmDashboardDelete(event, dashboard)}>
+          <form class="catalog-action-form" method="post" action=${dashboardDeleteHref(dashboard)} @submit=${(event: SubmitEvent) => { if (!window.confirm(`Delete ${dashboard.title}? This cannot be undone.`)) event.preventDefault() }}>
             <input type="hidden" name="gorilla.csrf.Token" value=${this.mutationCSRFToken || this.createDraftCSRFToken}>
             <input type="hidden" name="idempotencyKey" value=${newRequestID()}>
             <button class="catalog-action-danger" type="submit" role="menuitem">${lucideIcon(lucideIconByCanonicalName('trash-2'), { size: 16, strokeWidth: 2 })}<span>Delete</span></button>
@@ -522,10 +522,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     const trigger = this.actionMenuTrigger
     this.actionMenuTrigger = null
     queueMicrotask(() => trigger?.focus({ preventScroll: true }))
-  }
-
-  private confirmDashboardDelete(event: SubmitEvent, dashboard: CatalogDashboard): void {
-    if (!window.confirm(`Delete ${dashboard.title}? This cannot be undone.`)) event.preventDefault()
   }
 
   private handleGlobalKeydown = (event: KeyboardEvent): void => {
