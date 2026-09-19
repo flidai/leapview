@@ -407,6 +407,21 @@ WHERE t.environment='demo-current'
 ORDER BY p.created_at DESC
 LIMIT 5;
 SQL
+    printf 'Recent demo semantic activation evidence:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT p.plan_id,COALESCE(p.plan_document->'evidence'->'semanticActivation','null'::jsonb)::text
+FROM delivery.delivery_plan p
+JOIN delivery.delivery_target t ON t.target_id=p.target_id
+WHERE t.environment='demo-current'
+ORDER BY p.created_at DESC
+LIMIT 5;
+SELECT 'registry',profile,registry_revision,registry_digest
+FROM access.semantic_attribute_registry
+WHERE singleton;
+SELECT 'control',profile,control_revision,control_digest
+FROM access.semantic_attribute_control_state
+WHERE singleton;
+SQL
     printf 'Recent demo delivery candidates:\n'
     docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
 SELECT c.candidate_id,c.plan_id,c.status,c.candidate_revision,c.created_at,c.qualified_at
