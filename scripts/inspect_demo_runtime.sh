@@ -473,6 +473,17 @@ WHERE t.environment='demo-current'
 ORDER BY p.created_at DESC
 LIMIT 5;
 SQL
+    printf 'Recent demo delivery retention roots:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT r.root_id,r.root_kind,r.state,COALESCE(r.candidate_id::text,''),
+       COALESCE(r.generation_id::text,''),COALESCE(r.snapshot_seal_id::text,''),
+       r.expires_at,r.created_at,r.retired_at,r.expired_at
+FROM delivery.delivery_retention_root r
+JOIN delivery.delivery_target t ON t.target_id=r.target_id
+WHERE t.environment='demo-current'
+ORDER BY r.created_at DESC
+LIMIT 20;
+SQL
     printf 'Recent demo delivery approval evidence:\n'
     docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
 SELECT r.request_id,r.publication_id,r.policy_revision,r.requested_by,
