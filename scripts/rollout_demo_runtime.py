@@ -14,6 +14,7 @@ import urllib.request
 
 REVISION = 'f29a0c9a88cb57f5ce0544fa0b5bb3d29c28f883'
 PREDECESSOR_REVISION = '6e32701df11e2de137e7db59025e7ed9c0399078'
+EXPECTED_IMAGE = 'ghcr.io/flidai/leapview@sha256:3551860ad3389f43d0d6e7deec3fbe8afce2e7db78c9809569b00734a893dbb6'
 RELEASE = Path('/opt/leapview-demo/releases') / REVISION
 IMAGE = (RELEASE / 'immutable-image.txt').read_text().strip()
 SERVICE = 'leapview-demo-current.service'
@@ -67,6 +68,7 @@ def sha256(path):
 def main():
     os.umask(0o077)
     assert sys.argv[1:] in (['--check'], ['--apply']), 'Expected --check or --apply'
+    assert IMAGE == EXPECTED_IMAGE, 'Staged image differs from the admitted image'
     assert output('systemctl', 'is-active', SERVICE) == 'active'
     pid = output('systemctl', 'show', SERVICE, '--property=MainPID', '--value')
     args = [item.decode() for item in Path('/proc', pid, 'cmdline').read_bytes().split(b'\0') if item]

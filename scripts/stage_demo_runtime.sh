@@ -155,6 +155,7 @@ fi
 active_pid=$(systemctl show "$service" --property=MainPID --value)
 active_revision=$("/proc/$active_pid/exe" version --json | jq -er .revision)
 if [[ -x "$release/leapview" && -f "$release/immutable-image.txt" && -f "$release/leapview.sha256" ]]; then
+  [[ "$(<"$release/immutable-image.txt")" == "$image" ]]
   identity=$("$release/leapview" version --json)
   jq -e --arg revision "$revision" '.revision == $revision and .dirty == false' <<<"$identity" >/dev/null
   (cd "$release" && sha256sum --check leapview.sha256)
