@@ -107,16 +107,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          run_json="$(gh api repos/flidai/leapview/actions/runs/35434746583)"
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35454440180)"
           test "$(jq -r .conclusion <<<"$run_json")" = success
-          test "$(jq -r .head_sha <<<"$run_json")" = 00ed92dbd77b4e0e3efc6b7620214e6bc7afa95e
+          test "$(jq -r .head_sha <<<"$run_json")" = d24ad786be8e838d923f6e57cd744eb8623c893b
       - name: Admit exact image provenance
         uses: ./.github/actions/oci-admission
         with:
-          image: ghcr.io/flidai/leapview@sha256:83ef54b4832144b6c8f01c39ca220bb86c51785ac20e5f590099cede8f83ee9f
+          image: ghcr.io/flidai/leapview@sha256:d8b9687c3d79daef05351a310be0ff012b3199b7486a78de297451887e93fe37
           repository: ghcr.io/flidai/leapview
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: 00ed92dbd77b4e0e3efc6b7620214e6bc7afa95e
+          source-revision: d24ad786be8e838d923f6e57cd744eb8623c893b
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
         with:
@@ -165,9 +165,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          run_json="$(gh api repos/flidai/leapview/actions/runs/35434746583)"
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35454440180)"
           test "$(jq -r .conclusion <<<"$run_json")" = success
-          test "$(jq -r .head_sha <<<"$run_json")" = 00ed92dbd77b4e0e3efc6b7620214e6bc7afa95e
+          test "$(jq -r .head_sha <<<"$run_json")" = d24ad786be8e838d923f6e57cd744eb8623c893b
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
         with:
