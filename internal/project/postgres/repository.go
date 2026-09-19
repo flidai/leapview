@@ -81,10 +81,17 @@ var schemaSQL string
 //go:embed resource_uid_schema.sql
 var resourceUIDSchemaSQL string
 
+//go:embed resource_uid_approval_schema.sql
+var resourceUIDApprovalSchemaSQL string
+
 // ResourceUIDSchemaSQL is the additive registry capability schema. It is
 // installed after bootstrap, delivery, and serving-state schemas; the immutable
 // baseline project schema is deliberately unchanged.
 func ResourceUIDSchemaSQL() string { return resourceUIDSchemaSQL }
+
+// ResourceUIDApprovalSchemaSQL translates an exact approved publication into
+// scoped restore evidence for tombstoned identities in its sealed inventory.
+func ResourceUIDApprovalSchemaSQL() string { return resourceUIDApprovalSchemaSQL }
 
 // SchemaSQL returns the capability-owned schema without transaction control.
 func SchemaSQL() string { return schemaSQL }
