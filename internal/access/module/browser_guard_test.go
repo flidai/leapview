@@ -138,6 +138,29 @@ func TestAuthenticateRedirectsUnauthenticatedBrowserNavigationToLogin(t *testing
 	}
 }
 
+func TestAuthenticateKeepsBearerChallengeForAPITokenOnlyNavigation(t *testing.T) {
+	repository := testStore(t).repository
+	auth := mustNewAuth(t, repository, AuthConfig{APITokenOnly: true})
+	module, err := newSurface(surfaceConfig{Repository: func() (access.Repository, error) { return repository, nil }, Auth: auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/dashboards/dashboard:sales", nil)
+	request.Header.Set("Accept", "text/html")
+	module.Authenticate(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("protected handler ran without a bearer credential")
+	})).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized || recorder.Header().Get("Location") != "" {
+		t.Fatalf("response = %d location %q, want bearer challenge", recorder.Code, recorder.Header().Get("Location"))
+	}
+	if got := recorder.Header().Get("WWW-Authenticate"); got != `Bearer realm="leapview"` {
+		t.Fatalf("WWW-Authenticate = %q", got)
+	}
+}
+
 func TestAuthMiddlewareRedirectsAnInvalidSessionToBrandedRecovery(t *testing.T) {
 	repository := testStore(t).repository
 	auth := mustNewAuth(t, repository, AuthConfig{LocalAuth: true})

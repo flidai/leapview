@@ -40,6 +40,10 @@ func (m *Module) Authenticate(next http.Handler) http.Handler {
 			principal, credential, ok = m.auth.Authenticate(r)
 		}
 		if !ok || strings.TrimSpace(principal.ID) == "" {
+			if m.auth != nil && m.auth.apiTokenOnly {
+				writeBearerChallenge(w, r)
+				return
+			}
 			if m.auth != nil && r.Header.Get("Authorization") == "" && uitransport.IsHTMLNavigation(r) && !wantsJSON(r) {
 				hadSession := m.auth.hasSessionCookie(r)
 				if hadSession {

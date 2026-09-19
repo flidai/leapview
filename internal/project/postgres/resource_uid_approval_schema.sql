@@ -280,8 +280,7 @@ BEGIN
                    AND ra.resource_uid = existing.resource_uid
                    AND ra.generation_id = scope.generation_id
                    AND ra.status = 'pending'
-                   AND ra.approval_decision_id IS NOT NULL
-                   AND ra.approval_decision_id <> p_decision_id;
+                   AND ra.approval_decision_id IS DISTINCT FROM p_decision_id;
 
                 INSERT INTO project.resource_uid_restore_authorization(
                     resource_uid, instance_id, project_id, environment, target_id,

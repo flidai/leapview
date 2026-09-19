@@ -507,6 +507,16 @@ func TestPostgresResourceUIDAdmissionAndActivationQualification(t *testing.T) {
 		}
 
 		dashboardUID := firstUIDs["dashboard:sales"]
+		if _, err := projectpostgres.New(db).AuthorizeResourceUIDRestore(t.Context(), projectpostgres.ResourceUIDRestoreInput{
+			ResourceUIDActivation: projectpostgres.ResourceUIDActivation{
+				InstanceID: resourceUIDQualificationInstance, TargetID: resourceUIDQualificationInstance,
+				ProjectID: first.projectID, Environment: "prod", GenerationID: third.generationID,
+			},
+			ResourceUID: dashboardUID, AuthoredID: "dashboard:sales", Kind: projectgraph.KindDashboard,
+			ActorID: "legacy-restore-reviewer", RequestDigest: third.activation.RequestDigest,
+		}); err != nil {
+			t.Fatalf("insert legacy pending restore evidence: %v", err)
+		}
 		requestID := "0198f2c0-7c7a-7f00-8a11-000000008801"
 		decisionID := "0198f2c0-7c7a-7f00-8a11-000000008802"
 		tx, err := db.Begin(t.Context())
@@ -585,6 +595,17 @@ func TestPostgresResourceUIDAdmissionAndActivationQualification(t *testing.T) {
 		}
 		if earlierStatus != "superseded" || !earlierSuperseded {
 			t.Fatalf("earlier approval evidence = status %q superseded_at_set=%v", earlierStatus, earlierSuperseded)
+		}
+		var legacyStatus string
+		var legacySuperseded bool
+		if err := db.QueryRow(t.Context(), `SELECT status,superseded_at IS NOT NULL
+			FROM project.resource_uid_restore_authorization
+			WHERE generation_id=$1::uuid AND resource_uid=$2::uuid AND approval_decision_id IS NULL`,
+			third.generationID, dashboardUID).Scan(&legacyStatus, &legacySuperseded); err != nil {
+			t.Fatal(err)
+		}
+		if legacyStatus != "superseded" || !legacySuperseded {
+			t.Fatalf("legacy restore evidence = status %q superseded_at_set=%v", legacyStatus, legacySuperseded)
 		}
 		var restoreActor, restoreDigest, restoreStatus string
 		if err := db.QueryRow(t.Context(), `SELECT actor_id,request_digest,status
