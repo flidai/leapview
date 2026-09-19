@@ -140,6 +140,7 @@ test('profile settings renders the signed-in identity and editable local fields'
         selectedThemePreviewClipped: selectedThemePreview.scrollWidth > selectedThemePreview.clientWidth || selectedThemePreview.scrollHeight > selectedThemePreview.clientHeight,
         themeListboxClosed: !profileRoot.querySelector('[role="listbox"]'),
         themeTriggerValue: profileRoot.querySelector('.theme-trigger-label')?.textContent?.trim(),
+        account: [profileRoot.querySelector('.account-id')?.textContent?.trim(), profileRoot.querySelector('[data-sign-out]')?.textContent?.trim()],
         keyboardNextTheme,
         themeClosedWithEscape,
         themeTriggerFocusedAfterEscape,
@@ -154,6 +155,9 @@ test('profile settings renders the signed-in identity and editable local fields'
     expect(state.text).toContain('Title')
     expect(state.text).toContain('Username')
     expect(state.text).toContain('Theme')
+    expect(state.text).toContain('Account')
+    expect(state.text).toContain('Account ID')
+    expect(state.account).toEqual(['principal-1', 'Sign out'])
     expect(state.themeOptions).toEqual([
       'System',
       'Light default',
@@ -175,7 +179,7 @@ test('profile settings renders the signed-in identity and editable local fields'
     expect(state.themeTriggerFocusedAfterEscape).toBe(true)
     expect(state.themeCommand).toEqual({ action: 'save', theme: 'dark_colorblind' })
     expect(state.appliedTheme).toBe('dark_colorblind')
-    expect(state.sectionHeadings).toEqual([])
+    expect(state.sectionHeadings).toEqual(['Account'])
     expect(state.text).not.toContain('Archive all chats')
     expect(state.text).not.toContain('Delete all chats')
     expect(state.mainCentered).toBe(true)
@@ -259,7 +263,6 @@ test('security settings use a unified session list, focused password dialog, and
       const passwordDialogOpened = passwordDialog.open
       passwordDialog.querySelector<HTMLFormElement>('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await personal.updateComplete
-
       const otherGroup = root.querySelector<HTMLElement>('.security-session-group[aria-label="Other devices"]')!
       const otherRow = otherGroup.querySelector<HTMLElement>('.security-session')!
       otherRow.querySelector<HTMLButtonElement>('.security-session-main')!.click()
@@ -269,7 +272,6 @@ test('security settings use a unified session list, focused password dialog, and
       const drawerNonModal = drawer.modal === false
       ;(drawer.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.close')!.click()
       await personal.updateComplete
-
       otherRow.querySelector<HTMLButtonElement>('.session-action')!.click()
       await personal.updateComplete
       const revokeDialog = root.querySelector<HTMLDialogElement>('[data-session-revoke-dialog]')!
@@ -286,7 +288,7 @@ test('security settings use a unified session list, focused password dialog, and
         activeCount: sessionsSection.querySelector('.security-session-count')?.textContent?.trim(),
         currentBadge: root.querySelector('.security-badge')?.textContent?.trim(),
         currentAction: root.querySelector('.security-session-group[aria-label="Current session"] .session-action')?.textContent?.trim(),
-        otherAction: otherRow.querySelector('.session-action')?.textContent?.trim(),
+        sessionActions: [root.querySelector('[data-logout-all]')?.textContent?.trim(), otherRow.querySelector('.session-action')?.textContent?.trim()],
         authoringText: root.querySelector('.security-session-group[aria-label="CLI and authoring"]')?.textContent?.replace(/\s+/g, ' ').trim(),
         passwordInputsBeforeOpen,
         passwordDialogOpened,
@@ -300,7 +302,6 @@ test('security settings use a unified session list, focused password dialog, and
         sessionCommand,
       }
     })
-
     expect(state.headings).toEqual(['Password', 'Active sessions'])
     expect(state.mainClass).toContain('main-security')
     expect(state.sessionListCount).toBe(1)
@@ -308,7 +309,7 @@ test('security settings use a unified session list, focused password dialog, and
     expect(state.activeCount).toBe('3 active sessions')
     expect(state.currentBadge).toBe('This device')
     expect(state.currentAction).toBe('Sign out')
-    expect(state.otherAction).toBe('Revoke')
+    expect(state.sessionActions).toEqual(['Log out all browser and desktop sessions', 'Revoke'])
     expect(state.authoringText).toContain('LeapView CLI')
     expect(state.authoringText).toContain('sales')
     expect(state.authoringText).toContain('Resource read')

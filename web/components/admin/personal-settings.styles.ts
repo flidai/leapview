@@ -12,6 +12,9 @@ export const personalSettingsStyles = css`
     .row:first-child { border-radius: var(--lv-radius-large) var(--lv-radius-large) 0 0; }
     .row:last-child { border-bottom: 0; }
     .profile-row { min-height: var(--base-size-64); padding: var(--base-size-12) var(--base-size-20); }
+    .account-section { gap: var(--base-size-12); }
+    .account-row { min-height: var(--base-size-64); padding: var(--base-size-12) var(--base-size-20); }
+    .account-id { max-width: 22rem; overflow: hidden; color: var(--lv-fg-muted); font: var(--lv-type-caption); text-overflow: ellipsis; white-space: nowrap; }
     .profile-email { max-width: 22rem; justify-self: end; text-align: right; }
     .profile-name-form { min-width: 0; justify-self: end; }
     .profile-name-control { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: var(--base-size-8); }
@@ -31,6 +34,7 @@ export const personalSettingsStyles = css`
     .security-page { gap: var(--base-size-32); }
     .security-section { display: grid; gap: var(--base-size-12); }
     .security-section-heading { display: flex; min-width: 0; align-items: end; justify-content: space-between; gap: var(--base-size-16); }
+    .security-session-actions { display: flex; min-width: 0; align-items: end; justify-content: end; gap: var(--base-size-8); }
     .security-section-heading-copy { display: grid; min-width: 0; gap: var(--base-size-4); }
     .security-section-heading h2 { font: var(--lv-type-section-title); }
     .security-session-count { flex: 0 0 auto; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
@@ -205,6 +209,8 @@ export const personalSettingsStyles = css`
       .token-row { grid-template-columns: auto minmax(0, 1fr); }
       .token-row > .danger { grid-column: 2; justify-self: start; }
       .security-section-heading { align-items: stretch; flex-direction: column; }
+      .security-session-actions { align-items: stretch; flex-direction: column; }
+      .security-session-actions > button { align-self: start; }
       .security-password-row { grid-template-columns: minmax(0, 1fr); }
       .security-password-row > button { justify-self: start; }
       .security-session { grid-template-columns: var(--base-size-32) minmax(0, 1fr); }

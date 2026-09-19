@@ -90,7 +90,7 @@ func TestAPIGenManagedDataStagingAllowsBoundAuthoringCredentialWithActivePredece
 			"x-authz":                  map[string]any{"mode": "privilege", "privilege": "RESOURCE_EDIT"},
 		},
 	}
-	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{}, false)
+	module := browserGuardModule(browserGuardRepository{admin: false}, Principal{}, false)
 	module.auth = &Auth{}
 	module.authoringProjectID = func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil }
 	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_1")
@@ -101,12 +101,20 @@ func TestAPIGenManagedDataStagingAllowsBoundAuthoringCredentialWithActivePredece
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, nil, nil)
+	subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "publisher")
 	if err != nil {
 		t.Fatal(err)
 	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{
+		ID: "binding:publisher", Subject: subject, Role: access.ProjectRoleDataDeployer,
+		Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDataDeployer),
+	}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fenceHeld := false
 	authorizer, err := module.APIGenAuthorizer(
-		apigenRuntimeFake{project: projectID, lease: apigenLeaseFake{identity: identity, snapshot: snapshot}},
+		apigenRuntimeFake{project: projectID, lease: apigenLeaseFake{identity: identity, snapshot: snapshot}, fenceHeld: &fenceHeld},
 		map[string]APIGenOperationContract{"createManagedDataUploadSession": contract},
 		APIGenResourceResolvers{Connection: apigenResolver("connection", projectgraph.KindConnection)},
 	)
@@ -131,6 +139,9 @@ func TestAPIGenManagedDataStagingAllowsBoundAuthoringCredentialWithActivePredece
 		},
 	}
 	protected, ok := authorizer.Protect("createManagedDataUploadSession", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !fenceHeld {
+			t.Fatal("managed-data handler ran outside the cutover fence")
+		}
 		marker, marked := ManagedDataStagingAuthorizationFromContext(r.Context())
 		if !marked || marker.ProjectID != projectID || marker.ConnectionID != connectionID || marker.PrincipalID != "publisher" || marker.Capability != access.CapabilityResourceEdit {
 			t.Fatalf("managed-data staging marker = %#v, marked=%t", marker, marked)
@@ -150,6 +161,41 @@ func TestAPIGenManagedDataStagingAllowsBoundAuthoringCredentialWithActivePredece
 	protected.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("managed-data authoring status = %d body=%q, want %d", recorder.Code, recorder.Body.String(), http.StatusNoContent)
+	}
+	if fenceHeld {
+		t.Fatal("managed-data cutover fence was not released after dispatch")
+	}
+
+	bootstrapModule := browserGuardModule(browserGuardRepository{admin: true}, Principal{}, false)
+	bootstrapModule.auth = &Auth{}
+	bootstrapModule.authoringProjectID = func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil }
+	bootstrapAuthorizer, err := bootstrapModule.APIGenAuthorizer(
+		apigenRuntimeFake{project: projectID, fenceHeld: &fenceHeld},
+		map[string]APIGenOperationContract{"createManagedDataUploadSession": contract},
+		APIGenResourceResolvers{Connection: apigenResolver("connection", projectgraph.KindConnection)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapAuthorizer.SetBootstrapAuthorizer(func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (APIGenBootstrapDecision, error) {
+		return APIGenBootstrapDecision{Handled: true, Allowed: true}, nil
+	})
+	bootstrapProtected, ok := bootstrapAuthorizer.Protect("createManagedDataUploadSession", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !fenceHeld {
+			t.Fatal("managed-data bootstrap handler ran outside the cutover fence")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	if !ok || bootstrapProtected == nil {
+		t.Fatal("managed-data bootstrap authorizer was not created")
+	}
+	bootstrapResponse := httptest.NewRecorder()
+	bootstrapProtected.ServeHTTP(bootstrapResponse, request)
+	if bootstrapResponse.Code != http.StatusNoContent {
+		t.Fatalf("managed-data bootstrap status = %d body=%q, want %d", bootstrapResponse.Code, bootstrapResponse.Body.String(), http.StatusNoContent)
+	}
+	if fenceHeld {
+		t.Fatal("managed-data bootstrap cutover fence was not released after dispatch")
 	}
 }
 
@@ -174,6 +220,14 @@ func TestAPIGenManagedDataStagingDoesNotBypassExistingResourceOrLeaseFailures(t 
 	if err != nil {
 		t.Fatal(err)
 	}
+	emptyGraph, err := projectgraph.NewProjectGraph(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingWithoutRole, err := accesssnapshot.NewAuthorizationSnapshot(identity, emptyGraph, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	scope, err := access.NewAuthoringScope("instance-prod", projectID, []access.Capability{access.CapabilityResourceEdit})
 	if err != nil {
 		t.Fatal(err)
@@ -189,6 +243,7 @@ func TestAPIGenManagedDataStagingDoesNotBypassExistingResourceOrLeaseFailures(t 
 		want    int
 	}{
 		{name: "existing connection without snapshot grant", runtime: apigenRuntimeFake{project: projectID, lease: apigenLeaseFake{identity: identity, snapshot: snapshot}}, want: http.StatusForbidden},
+		{name: "missing connection without project role", runtime: apigenRuntimeFake{project: projectID, lease: apigenLeaseFake{identity: identity, snapshot: missingWithoutRole}}, want: http.StatusForbidden},
 		{name: "active lease unavailable", runtime: apigenRuntimeFake{project: projectID, err: errors.New("lease unavailable")}, want: http.StatusServiceUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
@@ -26,9 +28,30 @@ func (f tusTargetResolverFunc) ResolveTusTarget(ctx context.Context, id string) 
 }
 
 type tusRuntime struct {
-	project projectgraph.ResourceID
-	lease   runtimehost.Lease
-	err     error
+	project   projectgraph.ResourceID
+	lease     runtimehost.Lease
+	err       error
+	fenceHeld *bool
+}
+
+type blockingTusRuntime struct {
+	tusRuntime
+	cutover sync.RWMutex
+}
+
+func (r *blockingTusRuntime) AcquireCutoverFence(context.Context) (func(), error) {
+	r.cutover.RLock()
+	return r.cutover.RUnlock, nil
+}
+
+type readDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadline time.Time
+}
+
+func (r *readDeadlineRecorder) SetReadDeadline(deadline time.Time) error {
+	r.deadline = deadline
+	return nil
 }
 
 func (r tusRuntime) ProjectID() projectgraph.ResourceID { return r.project }
@@ -37,6 +60,16 @@ func (r tusRuntime) Acquire(context.Context) (runtimehost.Lease, error) {
 		return nil, r.err
 	}
 	return r.lease, nil
+}
+func (r tusRuntime) AcquireCutoverFence(context.Context) (func(), error) {
+	if r.fenceHeld == nil {
+		return func() {}, nil
+	}
+	if *r.fenceHeld {
+		return nil, errors.New("cutover fence already held")
+	}
+	*r.fenceHeld = true
+	return func() { *r.fenceHeld = false }, nil
 }
 
 type tusLease struct {
@@ -68,6 +101,10 @@ func (a bootstrapTusAccess) AuthorizeBootstrapRequest(context.Context, *http.Req
 }
 
 func (a bootstrapTusAccess) AuthorizeAuthoringBootstrapRequest(context.Context, *http.Request, string, access.Capability) (bool, error) {
+	return a.authoringAllowed, a.err
+}
+
+func (a bootstrapTusAccess) AuthorizeManagedDataStagingRequest(context.Context, *http.Request, string, access.Capability) (bool, error) {
 	return a.authoringAllowed, a.err
 }
 
@@ -115,7 +152,7 @@ func tusSnapshot(t *testing.T, principalID string, connectionID projectgraph.Res
 	return snapshot
 }
 
-func tusEmptySnapshot(t *testing.T) (projectgraph.ServingIdentity, accesssnapshot.AuthorizationSnapshot) {
+func tusEmptySnapshot(t *testing.T, principalID string, withRole bool) (projectgraph.ServingIdentity, accesssnapshot.AuthorizationSnapshot) {
 	t.Helper()
 	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
 	if err != nil {
@@ -125,7 +162,18 @@ func tusEmptySnapshot(t *testing.T) (projectgraph.ServingIdentity, accesssnapsho
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, nil, nil)
+	var bindings []accesssnapshot.RoleBinding
+	if withRole {
+		subject, subjectErr := access.NewSubjectRef(access.SubjectKindPrincipal, principalID)
+		if subjectErr != nil {
+			t.Fatal(subjectErr)
+		}
+		bindings = []accesssnapshot.RoleBinding{{
+			ID: "binding:data-deployer", Subject: subject, Role: access.ProjectRoleDataDeployer,
+			Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDataDeployer),
+		}}
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, bindings, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,19 +504,32 @@ func TestProtectManagedDataTransportBootstrapUsesExactTargetAndActiveFallback(t 
 	}
 	serve := func(name string, accessValue canonicalAccessModule, runtime canonicalRuntimeHost, bootstrap accessmodule.APIGenBootstrapAuthorizer) {
 		t.Run(name, func(t *testing.T) {
-			handler := protectManagedDataTransportWithBootstrap(accessValue, runtime, resolve, bootstrap, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+			handler := protectManagedDataTransportWithBootstrap(accessValue, runtime, resolve, bootstrap, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if fenced, ok := runtime.(tusRuntime); ok && fenced.fenceHeld != nil && !*fenced.fenceHeld {
+					t.Fatal("TUS handler ran outside the cutover fence")
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, tusRequest(http.MethodPatch, uploadID))
 			if response.Code != http.StatusNoContent {
 				t.Fatalf("status = %d, want %d; body %q", response.Code, http.StatusNoContent, response.Body.String())
 			}
+			if fenced, ok := runtime.(tusRuntime); ok && fenced.fenceHeld != nil && *fenced.fenceHeld {
+				t.Fatal("TUS cutover fence was not released after dispatch")
+			}
 		})
 	}
 	bootstrapAccess := bootstrapTusAccess{tusAccess: tusAccess{principal: accessmodule.Principal{ID: "principal_admin"}, ok: true}, allowed: true}
-	serve("bound but unactivated", bootstrapAccess, tusRuntime{project: projectID}, allowedBootstrap)
-	emptyIdentity, emptySnapshot := tusEmptySnapshot(t)
-	authoringAccess := bootstrapTusAccess{tusAccess: tusAccess{principal: accessmodule.Principal{ID: "publisher"}, ok: true}, authoringAllowed: true}
-	serve("active predecessor permits absent successor upload", authoringAccess, tusRuntime{project: projectID, lease: tusLease{identity: emptyIdentity, snapshot: emptySnapshot}}, missingFallback)
+	bootstrapFenceHeld := false
+	serve("bound but unactivated", bootstrapAccess, tusRuntime{project: projectID, fenceHeld: &bootstrapFenceHeld}, allowedBootstrap)
+	emptyIdentity, emptySnapshot := tusEmptySnapshot(t, "publisher", true)
+	fenceHeld := false
+	authoringAccess := bootstrapTusAccess{tusAccess: tusAccess{
+		principal: accessmodule.Principal{ID: "publisher"}, ok: true,
+		subjects: []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: "publisher"}},
+	}, authoringAllowed: true}
+	serve("active predecessor permits absent successor upload", authoringAccess, tusRuntime{project: projectID, lease: tusLease{identity: emptyIdentity, snapshot: emptySnapshot}, fenceHeld: &fenceHeld}, missingFallback)
 	activeAccess := tusAccess{principal: accessmodule.Principal{ID: "principal_admin"}, ok: true, subjects: []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: "principal_admin"}}}
 	serve("active generation falls through snapshot", activeAccess, tusRuntime{project: projectID, lease: tusLease{identity: identity, snapshot: tusSnapshot(t, "principal_admin", connectionID, true)}}, activeFallback)
 
@@ -495,6 +556,18 @@ func TestProtectManagedDataTransportBootstrapUsesExactTargetAndActiveFallback(t 
 		handler.ServeHTTP(response, tusRequest(http.MethodPatch, uploadID))
 		if response.Code != http.StatusServiceUnavailable {
 			t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+		}
+	})
+
+	t.Run("missing connection without project role is denied", func(t *testing.T) {
+		missingIdentity, missingSnapshot := tusEmptySnapshot(t, "publisher", false)
+		handler := protectManagedDataTransportWithBootstrap(authoringAccess, tusRuntime{project: projectID, lease: tusLease{identity: missingIdentity, snapshot: missingSnapshot}}, resolve, missingFallback, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("role-less publisher reached handler")
+		}))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, tusRequest(http.MethodPatch, uploadID))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", response.Code, http.StatusNotFound)
 		}
 	})
 
@@ -534,5 +607,60 @@ func TestProtectManagedDataTransportBootstrapUsesExactTargetAndActiveFallback(t 
 	foreignHandler.ServeHTTP(foreignResponse, tusRequest(http.MethodPatch, uploadID))
 	if foreignResponse.Code != http.StatusNotFound {
 		t.Fatalf("foreign target status = %d, want %d", foreignResponse.Code, http.StatusNotFound)
+	}
+}
+
+func TestProtectManagedDataTransportStalledPatchCannotHoldCutoverFence(t *testing.T) {
+	const uploadID = "tus_" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	projectID := projectgraph.ResourceID("project_demo")
+	connectionID := projectgraph.ResourceID("connection_sales")
+	runtime := &blockingTusRuntime{tusRuntime: tusRuntime{project: projectID}}
+	accessValue := bootstrapTusAccess{tusAccess: tusAccess{principal: accessmodule.Principal{ID: "principal_admin"}, ok: true}, allowed: true}
+	resolve := tusTargetResolverFunc(func(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error) {
+		return projectID, connectionID, nil
+	})
+	bootstrap := func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
+		return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}, nil
+	}
+	handlerStarted := make(chan struct{})
+	handlerDone := make(chan struct{})
+	handler := protectManagedDataTransportWithBootstrapTimeout(accessValue, runtime, resolve, bootstrap, 30*time.Millisecond, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(handlerStarted)
+		<-r.Context().Done()
+		w.WriteHeader(http.StatusRequestTimeout)
+	}))
+	response := &readDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	go func() {
+		handler.ServeHTTP(response, tusRequest(http.MethodPatch, uploadID))
+		close(handlerDone)
+	}()
+	<-handlerStarted
+
+	cutoverStarted := make(chan struct{})
+	cutoverDone := make(chan struct{})
+	go func() {
+		close(cutoverStarted)
+		runtime.cutover.Lock()
+		runtime.cutover.Unlock()
+		close(cutoverDone)
+	}()
+	<-cutoverStarted
+	select {
+	case <-cutoverDone:
+		t.Fatal("cutover proceeded while the TUS mutation was still active")
+	case <-time.After(5 * time.Millisecond):
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("stalled TUS mutation did not stop at its deadline")
+	}
+	if response.deadline.IsZero() {
+		t.Fatal("stalled TUS mutation did not install a connection read deadline")
+	}
+	select {
+	case <-cutoverDone:
+	case <-time.After(time.Second):
+		t.Fatal("cutover remained blocked after the TUS mutation deadline")
 	}
 }

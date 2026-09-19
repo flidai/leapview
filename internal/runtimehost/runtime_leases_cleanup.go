@@ -21,6 +21,28 @@ func (m *Manager) Acquire(context.Context) (Lease, error) {
 	m.current.refs++
 	return &runtimeLease{manager: m, managed: m.current}, nil
 }
+
+// AcquireCutoverFence prevents a serving-generation cutover until the caller
+// releases the returned function. It is available even when no generation is
+// active so bootstrap mutations can remain serialized with first activation.
+func (m *Manager) AcquireCutoverFence(ctx context.Context) (func(), error) {
+	if m == nil {
+		return nil, errors.New("runtime host is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.cutoverMu.RLock()
+	m.mu.RLock()
+	closed := m.closed
+	m.mu.RUnlock()
+	if closed {
+		m.cutoverMu.RUnlock()
+		return nil, errors.New("runtime host is closed")
+	}
+	var once sync.Once
+	return func() { once.Do(m.cutoverMu.RUnlock) }, nil
+}
 func (m *Manager) LeasedSnapshots() []int64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

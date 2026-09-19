@@ -334,47 +334,68 @@ func bootstrapTokenAllowsCapability(capabilities []access.Capability, required a
 // retain, and commit steps that follow before activation. Resolver errors,
 // malformed state, and project disagreement fail closed.
 func (m *Module) AuthorizeAuthoringBootstrapRequest(ctx context.Context, r *http.Request, projectID string, required access.Capability) (bool, error) {
-	if m == nil || r == nil || m.auth == nil {
-		return false, nil
-	}
-	principal, ok := m.CurrentPrincipal(r)
-	if !ok || strings.TrimSpace(principal.ID) == "" {
-		return false, nil
-	}
-	credential, ok := m.auth.APICredential(r)
-	if !ok || credential.Authoring == nil {
-		return false, nil
-	}
-	authoring := credential.Authoring
-	if err := validateAuthoringBootstrapCredential(credential, *authoring, principal, projectID); err != nil {
-		return false, nil
-	}
-	if targetID := m.authoringInstanceID(); targetID != "" && authoring.Scope.TargetID != targetID {
-		return false, nil
-	}
-	if m.authoringProjectID == nil {
-		return false, fmt.Errorf("authoring bootstrap durable project resolver is unavailable")
-	}
-	boundProjectID, err := m.authoringProjectID(ctx)
-	if err != nil {
-		return false, fmt.Errorf("resolve authoring bootstrap project: %w", err)
-	}
-	if boundProjectID != "" {
-		if err := boundProjectID.Validate(); err != nil {
-			return false, fmt.Errorf("resolve authoring bootstrap project: %w", err)
-		}
-		if boundProjectID.String() != strings.TrimSpace(projectID) {
-			return false, nil
-		}
-	}
-	if !bootstrapTokenAllowsCapability(authoring.Scope.Capabilities, required) {
-		return false, nil
+	principal, _, authorized, err := m.validateAuthoringScopedRequest(ctx, r, projectID, required)
+	if err != nil || !authorized {
+		return false, err
 	}
 	// Project authorization snapshots do not exist until activation. Durable
 	// platform administration is therefore the non-project authority for the
 	// complete first-sync sequence, including the claim-only interval between
 	// plan and commit.
 	return m.IsPlatformAdmin(ctx, principal.ID)
+}
+
+// AuthorizeManagedDataStagingRequest admits a scoped authoring credential only
+// when the target already has the exact durable project claim. Callers must
+// prove, from one active predecessor lease, both that the exact successor
+// connection is absent and that a project role grants the required capability.
+// Existing resources remain governed by snapshot RBAC.
+func (m *Module) AuthorizeManagedDataStagingRequest(ctx context.Context, r *http.Request, projectID string, required access.Capability) (bool, error) {
+	_, boundProjectID, authorized, err := m.validateAuthoringScopedRequest(ctx, r, projectID, required)
+	if err != nil || !authorized {
+		return false, err
+	}
+	return boundProjectID != "", nil
+}
+
+func (m *Module) validateAuthoringScopedRequest(ctx context.Context, r *http.Request, projectID string, required access.Capability) (Principal, projectgraph.ResourceID, bool, error) {
+	if m == nil || r == nil || m.auth == nil {
+		return Principal{}, "", false, nil
+	}
+	principal, ok := m.CurrentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return Principal{}, "", false, nil
+	}
+	credential, ok := m.auth.APICredential(r)
+	if !ok || credential.Authoring == nil {
+		return Principal{}, "", false, nil
+	}
+	authoring := credential.Authoring
+	if err := validateAuthoringBootstrapCredential(credential, *authoring, principal, projectID); err != nil {
+		return Principal{}, "", false, nil
+	}
+	if targetID := m.authoringInstanceID(); targetID != "" && authoring.Scope.TargetID != targetID {
+		return Principal{}, "", false, nil
+	}
+	if m.authoringProjectID == nil {
+		return Principal{}, "", false, fmt.Errorf("authoring bootstrap durable project resolver is unavailable")
+	}
+	boundProjectID, err := m.authoringProjectID(ctx)
+	if err != nil {
+		return Principal{}, "", false, fmt.Errorf("resolve authoring bootstrap project: %w", err)
+	}
+	if boundProjectID != "" {
+		if err := boundProjectID.Validate(); err != nil {
+			return Principal{}, "", false, fmt.Errorf("resolve authoring bootstrap project: %w", err)
+		}
+		if boundProjectID.String() != strings.TrimSpace(projectID) {
+			return Principal{}, "", false, nil
+		}
+	}
+	if !bootstrapTokenAllowsCapability(authoring.Scope.Capabilities, required) {
+		return Principal{}, "", false, nil
+	}
+	return principal, boundProjectID, true, nil
 }
 
 func (m *Module) authoringInstanceID() string {
