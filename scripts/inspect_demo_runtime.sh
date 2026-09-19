@@ -264,7 +264,8 @@ RECOVER
   scp "${ssh_options[@]}" "$recovery_wrapper" "root@$demo_host:/tmp/recover-demo-credentials.sh"
 fi
 
-ssh "${ssh_options[@]}" "root@$demo_host" 'bash -se' <<'REMOTE'
+ssh "${ssh_options[@]}" "root@$demo_host" \
+  "DEMO_REPAIR_MANAGED_DATA_POINTER='${DEMO_REPAIR_MANAGED_DATA_POINTER:-false}' DEMO_REMOVE_INVALID_OLIST_VIEW='${DEMO_REMOVE_INVALID_OLIST_VIEW:-false}' bash -se" <<'REMOTE'
 set -euo pipefail
 printf 'Runtime service state: '
 systemctl is-active leapview-demo-current.service || true
