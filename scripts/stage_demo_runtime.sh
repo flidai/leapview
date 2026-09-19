@@ -131,7 +131,11 @@ release=/opt/leapview-demo/releases/$revision
 service=leapview-demo-current.service
 if ! systemctl is-active --quiet "$service"; then
   systemctl reset-failed "$service"
-  systemctl restart "$service"
+  if ! systemctl restart "$service"; then
+    systemctl status "$service" --no-pager || true
+    journalctl -u "$service" --since '-10 minutes' -n 120 --no-pager || true
+    exit 1
+  fi
   for _ in $(seq 1 60); do
     curl --fail --silent --show-error http://127.0.0.1:8132/readyz >/dev/null && break
     sleep 2
