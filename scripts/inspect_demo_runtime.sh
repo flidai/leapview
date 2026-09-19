@@ -478,6 +478,32 @@ WHERE kind IN ('deployment.activate','delivery.approval.activate')
 ORDER BY id DESC
 LIMIT 10;
 SQL
+    printf 'Recent delivery activation product history:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT h.id,h.kind,h.status,h.attempt_count,h.principal_id,h.resource_id,
+       h.created_at,h.started_at,h.finished_at,COALESCE(h.error::text,''),
+       COALESCE(h.river_job_id::text,'')
+FROM jobs.job_history h
+WHERE h.kind IN ('deployment.activate','delivery.approval.activate')
+ORDER BY h.created_at DESC
+LIMIT 10;
+SQL
+    printf 'Recent delivery activation product events:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT e.resource_kind,e.resource_id,e.event_id,e.event_type,e.data::text,e.created_at
+FROM jobs.event e
+WHERE e.resource_kind IN ('delivery_approval','delivery_publication','deployment')
+ORDER BY e.created_at DESC
+LIMIT 20;
+SQL
+    printf 'Recent delivery activation River identities:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT id,kind,state,attempt,attempted_by::text,args::text,metadata::text
+FROM public.river_job
+WHERE kind IN ('deployment.activate','delivery.approval.activate')
+ORDER BY id DESC
+LIMIT 10;
+SQL
   fi
   if [[ "${DEMO_REPAIR_MANAGED_DATA_POINTER:-false}" == true && "$container" == *-demo-current-postgres-1 ]]; then
     printf 'Repairing the exact corrupted demo Olist planning pointer:\n'
