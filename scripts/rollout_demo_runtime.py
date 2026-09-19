@@ -11,7 +11,7 @@ import time
 import urllib.parse
 import urllib.request
 
-REVISION = 'b89fdcfcf292bd1b6f879be38e31872febcc6c9f'
+REVISION = 'a9328056d1727b71f5e42fb10fe285b201898a62'
 RELEASE = Path('/opt/leapview-demo/releases') / REVISION
 IMAGE = (RELEASE / 'immutable-image.txt').read_text().strip()
 SERVICE = 'leapview-demo-current.service'
@@ -66,7 +66,7 @@ def main():
     assert runtime_env['LEAPVIEW_HOME'] == str(HOME_PATH)
     assert ready(), 'Predecessor must be healthy'
     previous = json.loads(output(f'/proc/{pid}/exe', 'version', '--json'))
-    assert previous['revision'] == '67d69c97f26096521fa7633114b145c7c43480b2', 'Predecessor changed'
+    assert previous['revision'] == 'b89fdcfcf292bd1b6f879be38e31872febcc6c9f', 'Predecessor changed'
     identity = json.loads(output(str(RELEASE / 'leapview'), 'version', '--json'))
     assert identity['revision'] == REVISION and identity['dirty'] is False
     assert (RELEASE / 'immutable-image.txt').read_text().strip() == IMAGE
@@ -101,7 +101,7 @@ def main():
     database_size = int(sql("SELECT sum(pg_database_size(oid)) FROM pg_database WHERE datname IN ('leapview_control','leapview_ducklake')"))
     required = 2 * (home_size + database_size) + 512 * 1024 * 1024
     assert shutil.disk_usage('/opt').free > required, 'Insufficient room for backup and rollback'
-    print(f'Preflight passed: exact image, healthy predecessor, schema 19, backup space {required} bytes', flush=True)
+    print(f'Preflight passed: exact image, healthy predecessor, schema 21, backup space {required} bytes', flush=True)
     if sys.argv[1] == '--check':
         return
 
