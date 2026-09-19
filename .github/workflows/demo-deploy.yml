@@ -105,7 +105,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 80); do
-            state="$(gh api repos/flidai/leapview/actions/runs/35405297297/jobs --jq '.jobs[] | select(.name == "Build production image") | if .status == "completed" then .conclusion else .status end')"
+            state="$(gh api repos/flidai/leapview/actions/runs/35409527138/jobs --jq '.jobs[] | select(.name == "Build production image") | if .status == "completed" then .conclusion else .status end')"
             case "$state" in
               success) exit 0 ;;
               failure|cancelled|skipped) echo "Canonical image build ended in $state"; exit 1 ;;
@@ -124,7 +124,7 @@ jobs:
         id: image
         run: |
           set -euo pipefail
-          tag=ghcr.io/flidai/leapview:candidate-b89fdcfcf292bd1b6f879be38e31872febcc6c9f
+          tag=ghcr.io/flidai/leapview:candidate-a9328056d1727b71f5e42fb10fe285b201898a62
           docker pull "$tag"
           image="$(docker image inspect "$tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("ghcr.io/flidai/leapview@sha256:"))' | head -1)"
           echo "reference=$image" >> "$GITHUB_OUTPUT"
@@ -135,7 +135,7 @@ jobs:
           image: ${{ steps.image.outputs.reference }}
           repository: ghcr.io/flidai/leapview
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: b89fdcfcf292bd1b6f879be38e31872febcc6c9f
+          source-revision: a9328056d1727b71f5e42fb10fe285b201898a62
       - name: Run complete image qualification with current token UI contract
         env:
           IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
@@ -203,7 +203,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          conclusion="$(gh api repos/flidai/leapview/actions/runs/35405297297 --jq .conclusion)"
+          conclusion="$(gh api repos/flidai/leapview/actions/runs/35409527138 --jq .conclusion)"
           test "$conclusion" = success
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db
