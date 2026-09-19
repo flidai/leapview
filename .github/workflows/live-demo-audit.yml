@@ -36,7 +36,6 @@ jobs:
         with:
           path: ~/.cache/leapview
           key: olist-v2-967e41e04fc306fe604e2a693f488995a8b41e5047418f8a5c8e4abd6deca784
-      - run: task generate
       - name: Fetch demo deployment credentials
         uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
         with:
@@ -89,6 +88,7 @@ jobs:
           DEMO_RUNNER_IP: ${{ steps.runner-ip.outputs.ip }}
           DEMO_RECOVERY_MANAGED_DATA_ARCHIVE: /tmp/olist-managed-data-recovery.tar.gz
           DEMO_RECOVERY_MANAGED_DATA_REVISION: sha256:caa765c9d72853f7c69ec83b7f95b574b8aa3f74e607a35066001aeeeddd5c88
+          DEMO_RECOVERY_MANAGED_DATA_RUNTIME_REVISION: sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530
         run: |
           set -euo pipefail
           go run ./internal/app/tools/bootstrapolist --shared-cache --out .data/olist
