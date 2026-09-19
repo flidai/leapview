@@ -166,12 +166,20 @@ while IFS= read -r candidate_tag; do
   docker image rm "$candidate_tag"
 done < <(docker image ls ghcr.io/flidai/leapview --format '{{.Repository}}:{{.Tag}}' | grep ':candidate-' || true)
 docker image prune --force
+docker builder prune --all --force
+apt-get clean
+journalctl --vacuum-size=256M
 while IFS= read -r stale_release; do
   rm -rf -- "$stale_release"
 done < <(find /opt/leapview-demo/releases -mindepth 1 -maxdepth 1 -type d \
   ! -name "$active_revision" ! -name "$revision" -print)
 available_kb=$(df --output=avail /opt | tail -1 | tr -d ' ')
-(( available_kb > 7000000 )) || { echo 'At least 7 GB free space required to stage image'; exit 1; }
+if (( available_kb <= 7000000 )); then
+  df -h /opt
+  docker system df
+  echo 'At least 7 GB free space required to stage image'
+  exit 1
+fi
 docker pull "$tag"
 image="$(docker image inspect "$tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("ghcr.io/flidai/leapview@sha256:"))' | head -1)"
 [[ "$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == "$revision" ]]
