@@ -441,7 +441,7 @@ SQL
     docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
 SELECT b.generation_id,b.project_id,b.environment,
        b.dashboard_publications_json::text,b.dashboard_appearances_json::text,
-       jsonb_object_length(b.access_policy_json)
+       left(b.access_policy_json::text,1024)
 FROM serving_state.bundle b
 WHERE b.environment='demo-current'
 ORDER BY b.created_at DESC
