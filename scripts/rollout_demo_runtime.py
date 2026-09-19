@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """One-time rollout of the requested immutable demo build, with local rollback."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import pwd
@@ -12,6 +13,7 @@ import urllib.parse
 import urllib.request
 
 REVISION = 'f29a0c9a88cb57f5ce0544fa0b5bb3d29c28f883'
+PREDECESSOR_REVISION = '6e32701df11e2de137e7db59025e7ed9c0399078'
 RELEASE = Path('/opt/leapview-demo/releases') / REVISION
 IMAGE = (RELEASE / 'immutable-image.txt').read_text().strip()
 SERVICE = 'leapview-demo-current.service'
@@ -54,6 +56,14 @@ def write_private(path, value):
     path.chmod(0o600)
 
 
+def sha256(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def main():
     os.umask(0o077)
     assert sys.argv[1:] in (['--check'], ['--apply']), 'Expected --check or --apply'
@@ -66,7 +76,13 @@ def main():
     assert runtime_env['LEAPVIEW_HOME'] == str(HOME_PATH)
     assert ready(), 'Predecessor must be healthy'
     previous = json.loads(output(f'/proc/{pid}/exe', 'version', '--json'))
-    assert previous['revision'] == '6e32701df11e2de137e7db59025e7ed9c0399078', 'Predecessor changed'
+    assert previous['revision'] == PREDECESSOR_REVISION and previous['dirty'] is False, 'Predecessor changed'
+    predecessor_release = Path('/opt/leapview-demo/releases') / PREDECESSOR_REVISION
+    predecessor_image = (predecessor_release / 'immutable-image.txt').read_text().strip()
+    assert predecessor_image.startswith('ghcr.io/flidai/leapview@sha256:') and len(predecessor_image) == 95
+    predecessor_checksum = (predecessor_release / 'leapview.sha256').read_text().split()[0]
+    assert sha256(Path('/proc', pid, 'exe')) == predecessor_checksum
+    assert sha256(predecessor_release / 'leapview') == predecessor_checksum
     identity = json.loads(output(str(RELEASE / 'leapview'), 'version', '--json'))
     assert identity['revision'] == REVISION and identity['dirty'] is False
     assert (RELEASE / 'immutable-image.txt').read_text().strip() == IMAGE
@@ -155,21 +171,36 @@ def main():
         subprocess.run(['systemctl', 'enable', SERVICE], check=True)
         write_private(backup / 'rollout-success.json', json.dumps({'revision': REVISION, 'image': IMAGE, 'schema': 22}))
         print(f'Deployed {REVISION}; readiness and login passed; rollback backup: {backup}', flush=True)
-    except BaseException:
+    except BaseException as rollout_error:
         if service_stopped:
             subprocess.run(['systemctl', 'stop', SERVICE], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            rollback_errors = []
             if migration_started:
                 for database in ('leapview_control', 'leapview_ducklake'):
-                    with (backup / (database + '.dump')).open('rb') as handle:
-                        subprocess.run(['docker', 'exec', '-i', DATABASE_CONTAINER, 'sh', '-c',
-                                        'exec pg_restore -U "$POSTGRES_USER" --clean --if-exists --create --exit-on-error --dbname=template1'], stdin=handle, check=True)
-                HOME_PATH.rename(backup / 'failed-home')
-                subprocess.run(['tar', '-xpf', str(backup / 'home.tar'), '-C', str(HOME_PATH.parent)], check=True)
-            write_private(UNIT, original_unit)
-            subprocess.run(['systemctl', 'daemon-reload'], check=True)
-            subprocess.run(['systemctl', 'reset-failed', SERVICE], check=False)
-            subprocess.run(['systemctl', 'start', SERVICE], check=True)
-            await_ready()
+                    try:
+                        with (backup / (database + '.dump')).open('rb') as handle:
+                            subprocess.run(['docker', 'exec', '-i', DATABASE_CONTAINER, 'sh', '-c',
+                                            'exec pg_restore -U "$POSTGRES_USER" --clean --if-exists --create --exit-on-error --dbname=template1'], stdin=handle, check=True)
+                    except BaseException as error:
+                        rollback_errors.append(f'{database} restore: {error}')
+                try:
+                    HOME_PATH.rename(backup / 'failed-home')
+                    subprocess.run(['tar', '-xpf', str(backup / 'home.tar'), '-C', str(HOME_PATH.parent)], check=True)
+                except BaseException as error:
+                    rollback_errors.append(f'home restore: {error}')
+            try:
+                write_private(UNIT, original_unit)
+                subprocess.run(['systemctl', 'daemon-reload'], check=True)
+            except BaseException as error:
+                rollback_errors.append(f'unit restore: {error}')
+            try:
+                subprocess.run(['systemctl', 'reset-failed', SERVICE], check=False)
+                subprocess.run(['systemctl', 'start', SERVICE], check=True)
+                await_ready()
+            except BaseException as error:
+                rollback_errors.append(f'predecessor restart: {error}')
+            if rollback_errors:
+                raise RuntimeError('rollout failed and rollback was incomplete: ' + '; '.join(rollback_errors)) from rollout_error
             print('Rollout failed; predecessor and original database state restored', flush=True)
         raise
 

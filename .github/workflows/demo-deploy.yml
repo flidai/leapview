@@ -18,6 +18,7 @@ permissions:
   id-token: write
   packages: read
   actions: read
+  attestations: read
 
 concurrency:
   group: leapview-hosted-demo
@@ -91,7 +92,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   stage:
-    if: inputs.action == 'stage'
+    if: inputs.action == 'stage' && github.ref == 'refs/heads/main'
     concurrency:
       group: leapview-demo-operator
       cancel-in-progress: false
@@ -101,6 +102,21 @@ jobs:
     environment: leapview-demo
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Require the exact qualified main image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35427474973)"
+          test "$(jq -r .conclusion <<<"$run_json")" = success
+          test "$(jq -r .head_sha <<<"$run_json")" = f29a0c9a88cb57f5ce0544fa0b5bb3d29c28f883
+      - name: Admit exact image provenance
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ghcr.io/flidai/leapview@sha256:3551860ad3389f43d0d6e7deec3fbe8afce2e7db78c9809569b00734a893dbb6
+          repository: ghcr.io/flidai/leapview
+          expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
+          source-revision: f29a0c9a88cb57f5ce0544fa0b5bb3d29c28f883
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
         with:
@@ -131,7 +147,9 @@ jobs:
           bash scripts/stage_demo_runtime.sh
 
   rollout:
-    if: inputs.action == 'prepare' || inputs.action == 'deploy'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (inputs.action == 'prepare' || inputs.action == 'deploy')
     concurrency:
       group: leapview-demo-operator
       cancel-in-progress: false

@@ -126,7 +126,7 @@ ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
   "root@$demo_host" 'bash -se' <<'REMOTE'
 set -euo pipefail
 revision=f29a0c9a88cb57f5ce0544fa0b5bb3d29c28f883
-tag=ghcr.io/flidai/leapview:main-$revision
+image=ghcr.io/flidai/leapview@sha256:3551860ad3389f43d0d6e7deec3fbe8afce2e7db78c9809569b00734a893dbb6
 release=/opt/leapview-demo/releases/$revision
 service=leapview-demo-current.service
 if ! systemctl is-active --quiet "$service"; then
@@ -162,7 +162,7 @@ if [[ -x "$release/leapview" && -f "$release/immutable-image.txt" && -f "$releas
   exit 0
 fi
 while IFS= read -r candidate_tag; do
-  [[ "$candidate_tag" == "$tag" || "$candidate_tag" == "ghcr.io/flidai/leapview:main-$active_revision" ]] && continue
+  [[ "$candidate_tag" == "ghcr.io/flidai/leapview:main-$active_revision" ]] && continue
   docker image rm "$candidate_tag"
 done < <(docker image ls ghcr.io/flidai/leapview --format '{{.Repository}}:{{.Tag}}' | grep -E ':(candidate|main)-' || true)
 docker image prune --force
@@ -181,8 +181,9 @@ if (( available_kb <= 7000000 )); then
   echo 'At least 7 GB free space required to stage image'
   exit 1
 fi
-docker pull "$tag"
-image="$(docker image inspect "$tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("ghcr.io/flidai/leapview@sha256:"))' | head -1)"
+docker pull "$image"
+docker image inspect "$image" --format '{{json .RepoDigests}}' |
+  jq -e --arg image "$image" 'index($image) != null' >/dev/null
 [[ "$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == "$revision" ]]
 install -d -m 0755 "$release"
 container=$(docker create "$image")
