@@ -48,6 +48,9 @@ jobs:
           revision="${SOURCE_REVISION}"
           [[ "${revision}" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "${revision}"
+          # GITHUB_SHA identifies the protected workflow ref and therefore the
+          # attestation signer. The independently authorized PR head is allowed
+          # to differ and is carried as SOURCE_REVISION into the image identity.
           gh api "repos/${GITHUB_REPOSITORY}/commits/${revision}/pulls" \
             | jq -e --arg revision "${revision}" \
               'map(select(.base.ref == "main" and .state == "open" and .head.sha == $revision)) | length == 1' \

@@ -240,6 +240,14 @@ func TestMainArtifactsAllowsOnlyProtectedOpenPRCandidates(t *testing.T) {
 	if strings.Contains(workflow, "pull_request:") {
 		t.Fatal("candidate image publication must require an explicit, environment-protected dispatch")
 	}
+	for _, fragment := range []string{
+		`test "$GITHUB_SHA" = "$revision"`,
+		"source-revision: ${{ needs.build-production-image.outputs.revision }}",
+	} {
+		if strings.Contains(workflow, fragment) {
+			t.Errorf("candidate provenance must keep the trusted workflow SHA separate from the authorized image revision: found %q", fragment)
+		}
+	}
 }
 
 func readFile(t *testing.T, path string) string {
