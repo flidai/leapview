@@ -32,7 +32,26 @@ func (m *Manager) AcquireCutoverFence(ctx context.Context) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	m.cutoverMu.RLock()
+	acquired := make(chan struct{})
+	go func() {
+		m.cutoverMu.RLock()
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+	case <-ctx.Done():
+		// The mutex API cannot cancel a queued reader. Return to the caller now
+		// and release the reader as soon as the active cutover finishes.
+		go func() {
+			<-acquired
+			m.cutoverMu.RUnlock()
+		}()
+		return nil, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		m.cutoverMu.RUnlock()
+		return nil, err
+	}
 	m.mu.RLock()
 	closed := m.closed
 	m.mu.RUnlock()

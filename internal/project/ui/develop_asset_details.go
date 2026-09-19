@@ -1390,6 +1390,10 @@ func labelFromKey(key string) string {
 		return "Uses visual"
 	case "refreshes_semantic_model":
 		return "Refreshes semantic model"
+	case "lineage_semantic_model_pipeline", "lineage_semantic_model_refresh_pipeline":
+		return "Refreshes semantic model"
+	case "lineage_pipeline_dashboard", "lineage_refresh_pipeline_dashboard":
+		return "Feeds dashboard"
 	}
 	return strings.Title(strings.ReplaceAll(key, "_", " "))
 }

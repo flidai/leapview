@@ -181,7 +181,7 @@ test('semantic model graph persists dragged node layout and resets it', async ()
     if (!afterSelect) throw new Error('orders node has no bounding box after selection')
     const persisted = await page.evaluate(() => {
       const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? '')
-      const key = keys.find((candidate) => candidate.startsWith('leapview:semantic-model-graph:v4:'))
+      const key = keys.find((candidate) => candidate.startsWith('leapview:semantic-model-graph:v5:'))
       return {
         keyFound: Boolean(key),
         value: key ? localStorage.getItem(key) ?? '' : '',
@@ -194,7 +194,7 @@ test('semantic model graph persists dragged node layout and resets it', async ()
     expect(persisted.value).toContain('orders')
 
     await page.locator('lv-semantic-model-graph .semantic-model-reset-button').click()
-    const remaining = await page.evaluate(() => Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? '').filter((key) => key.startsWith('leapview:semantic-model-graph:v4:')).length)
+    const remaining = await page.evaluate(() => Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? '').filter((key) => key.startsWith('leapview:semantic-model-graph:v5:')).length)
     expect(remaining).toBe(0)
   } finally {
     await page.close()
@@ -307,8 +307,60 @@ test('semantic model graph height-balances a large rank across columns', async (
       const match = transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/)
       return { x: Number(match?.[1]), y: Number(match?.[2]) }
     }))
-    expect(new Set(positions.map(({ x }) => x)).size).toBeGreaterThan(1)
-    expect(new Set(positions.map(({ y }) => y)).size).toBeLessThan(9)
+    const columns = new Map<number, number[]>()
+    for (const position of positions) columns.set(position.x, [...(columns.get(position.x) ?? []), position.y])
+    const columnSpans = [...columns.values()].map((ys) => Math.max(...ys) - Math.min(...ys))
+    expect(columns.size).toBeGreaterThan(1)
+    expect(columnSpans.every((span) => span > 0)).toBe(true)
+    expect(Math.max(...columnSpans) - Math.min(...columnSpans)).toBeLessThan(200)
+  } finally {
+    await page.close()
+  }
+})
+
+test('semantic model graph orders connected layers to avoid crossing relationships', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-semantic-model-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      const node = (id: string) => ({
+        id,
+        title: id,
+        fields: [{ name: 'join_key', label: 'Join key', type: 'VARCHAR', join: true }],
+      })
+      element.graph = {
+        datasets: [],
+        nodes: [node('source-a'), node('source-b'), node('target-a'), node('target-b')],
+        edges: [
+          { id: 'source-a-target-b', source: 'source-a', target: 'target-b', sourceField: 'join_key', targetField: 'join_key', cardinality: 'many_to_one', label: '*:1' },
+          { id: 'source-b-target-a', source: 'source-b', target: 'target-a', sourceField: 'join_key', targetField: 'join_key', cardinality: 'many_to_one', label: '*:1' },
+        ],
+      }
+    })
+    await page.waitForFunction(() => document.querySelectorAll('lv-semantic-model-graph .react-flow__node').length === 4)
+
+    const state = await graph.evaluate((element) => {
+      const positions = Object.fromEntries(Array.from(element.querySelectorAll<HTMLElement>('.react-flow__node')).map((node) => {
+        const transform = node.style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/)
+        return [node.dataset.id ?? '', { x: Number(transform?.[1]), y: Number(transform?.[2]) }]
+      }))
+      return {
+        positions,
+        paths: Array.from(element.querySelectorAll('.semantic-model-relationship-path')).map((path) => path.getAttribute('d') ?? ''),
+        labels: Array.from(element.querySelectorAll<HTMLElement>('.semantic-model-edge-label')).map((label) => ({ text: label.textContent?.trim(), title: label.title })),
+      }
+    })
+
+    expect(state.positions['source-a'].x).toBeLessThan(state.positions['target-a'].x)
+    expect(state.positions['source-b'].x).toBeLessThan(state.positions['target-b'].x)
+    expect(state.positions['target-b'].y).toBeLessThan(state.positions['target-a'].y)
+    expect(state.paths.every((path) => path.includes('L') && !path.includes('C'))).toBe(true)
+    expect(state.labels).toEqual([
+      { text: '*:1', title: 'source-a.join_key → target-b.join_key' },
+      { text: '*:1', title: 'source-b.join_key → target-a.join_key' },
+    ])
   } finally {
     await page.close()
   }
@@ -342,10 +394,40 @@ test('semantic model graph anchors composite endpoints and shows one-to-one mark
     await page.waitForFunction(() => document.querySelector('.semantic-model-edge-label')?.textContent?.trim() === '1:1')
     const state = await page.evaluate(() => ({
       labels: Array.from(document.querySelectorAll('.semantic-model-edge-endpoint')).map((endpoint) => endpoint.textContent?.trim()),
+      labelTitle: document.querySelector<HTMLElement>('.semantic-model-edge-label')?.title,
+      endpointTitles: Array.from(document.querySelectorAll<HTMLElement>('.semantic-model-edge-endpoint')).map((endpoint) => endpoint.title),
       path: document.querySelector('.semantic-model-relationship-path')?.getAttribute('d') ?? '',
     }))
     expect(state.labels).toEqual(['1', '1'])
+    expect(state.labelTitle).toBe('orders.customer_id, customer_region → customers.customer_id, customer_region')
+    expect(state.endpointTitles).toEqual([
+      'orders.customer_id, customer_region',
+      'customers.customer_id, customer_region',
+    ])
     expect(state.path).not.toBe('')
+  } finally {
+    await page.close()
+  }
+})
+
+test('semantic model graph uses curved routes for cyclic same-rank relationships', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-semantic-model-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      const node = (id: string) => ({ id, title: id, fields: [{ name: 'id', label: 'ID', type: 'INTEGER', join: true }] })
+      const edge = (source: string, target: string) => ({ id: `${source}-${target}`, source, target, sourceField: 'id', targetField: 'id', cardinality: 'one_to_one', label: '1:1' })
+      element.graph = {
+        datasets: [],
+        nodes: [node('cycle-a'), node('cycle-b')],
+        edges: [edge('cycle-a', 'cycle-b'), edge('cycle-b', 'cycle-a')],
+      }
+    })
+    await page.waitForFunction(() => document.querySelectorAll('.semantic-model-relationship-path').length === 2)
+    const paths = await graph.locator('.semantic-model-relationship-path').evaluateAll((elements) => elements.map((element) => element.getAttribute('d') ?? ''))
+    expect(paths.every((path) => path.includes('C') && !path.includes('L'))).toBe(true)
   } finally {
     await page.close()
   }

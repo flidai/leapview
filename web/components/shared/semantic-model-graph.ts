@@ -10,6 +10,7 @@ import {
   Controls,
   EdgeLabelRenderer,
   getBezierPath,
+  getSmoothStepPath,
   Handle,
   Panel,
   Position,
@@ -20,6 +21,7 @@ import {
   useNodesState,
 } from '@xyflow/react'
 import { fieldTypeIcon } from './field-type-icon'
+import { orderDatasetRanks, splitDatasetRankNodes } from './semantic-model-graph-layout'
 import { FIELD_HEIGHT, HEADER_HEIGHT, NODE_WIDTH, semanticModelGraphStyles } from './semantic-model-graph.styles'
 import type {
   SemanticModelGraphEdgeSignal,
@@ -38,6 +40,7 @@ type DatasetNodeData = SemanticModelGraphNodeSignal & Record<string, unknown> & 
 
 type DatasetEdgeData = SemanticModelGraphEdgeSignal & Record<string, unknown> & {
   emphasized: boolean
+  sameRank: boolean
   sourceMarker: string
   targetMarker: string
 }
@@ -175,7 +178,10 @@ function SemanticModelGraphFlow({
     })))
   }, [graph.edges, selectedID, selectedEdges, activeEdge, highlightedFields, setNodes])
 
-  const edges = React.useMemo(() => graph.edges.map((edge) => toFlowEdge(edge, selectedID, selectedEdges, activeEdgeID)), [graph.edges, selectedID, selectedEdges, activeEdgeID])
+  const edges = React.useMemo(() => {
+    const ranks = datasetNodeRanks(graph)
+    return graph.edges.map((edge) => toFlowEdge(edge, selectedID, selectedEdges, ranks.get(edge.source) === ranks.get(edge.target), activeEdgeID))
+  }, [graph, selectedID, selectedEdges, activeEdgeID])
 
   const saveDraggedLayout = React.useCallback((_event: unknown, node: DatasetNode) => {
     const next = new Map(nodes.map((current) => [current.id, current.position] as [string, NodePosition]))
@@ -365,40 +371,37 @@ function relationshipFocusedGraph(graph: SemanticModelGraphSignal, showAllFields
 function datasetNodePositions(graph: SemanticModelGraphSignal, fieldCounts: Map<string, number>): Map<string, NodePosition> {
   const ranks = datasetNodeRanks(graph)
   const rankValues = [...new Set(ranks.values())].sort((left, right) => left - right)
+  const orderedRanks = orderDatasetRanks(graph, ranks, rankValues)
   const positions = new Map<string, NodePosition>()
   let columnOffset = 0
 
   for (const rank of rankValues) {
-    const rankNodes = graph.nodes
-      .filter((candidate) => (ranks.get(candidate.id) ?? 0) === rank)
-      .sort((left, right) => left.id.localeCompare(right.id))
+    const rankNodes = orderedRanks.get(rank) ?? []
     const totalHeight = rankNodes.reduce((height, node) => height + nodeHeight(node, fieldCounts.get(node.id) ?? node.fields.length), 0)
       + Math.max(0, rankNodes.length - 1) * NODE_GAP_Y
     const columnCount = Math.max(1, Math.min(rankNodes.length, Math.ceil(totalHeight / TARGET_COLUMN_HEIGHT)))
-    const columnHeights = Array.from({ length: columnCount }, () => 0)
+    const columns = splitDatasetRankNodes(rankNodes, columnCount, (node) => nodeHeight(node, fieldCounts.get(node.id) ?? node.fields.length), NODE_GAP_Y)
+    const columnHeights = columns.map((column) => column.reduce((height, node) => height + nodeHeight(node, fieldCounts.get(node.id) ?? node.fields.length), 0) + Math.max(0, column.length - 1) * NODE_GAP_Y)
+    const maxColumnHeight = Math.max(...columnHeights, 0)
 
-    // Greedy height balancing keeps variable-height schemas compact while the
-    // rank bands still enforce the graph's left-to-right dependency order.
-    for (const node of rankNodes) {
-      const column = shortestColumn(columnHeights)
-      positions.set(node.id, {
-        x: NODE_OFFSET_X + (columnOffset + column) * NODE_GAP_X,
-        y: NODE_OFFSET_Y + columnHeights[column],
-      })
-      columnHeights[column] += nodeHeight(node, fieldCounts.get(node.id) ?? node.fields.length) + NODE_GAP_Y
+    // Keep each rank in a predictable left-to-right order while centering
+    // shorter wrapped columns against the tallest one. Contiguous columns are
+    // important here: a shortest-column assignment can interleave unrelated
+    // datasets and turn a readable rank into a bundle of crossing edges.
+    for (const [column, nodes] of columns.entries()) {
+      let y = NODE_OFFSET_Y + Math.max(0, (maxColumnHeight - columnHeights[column]) / 2)
+      for (const node of nodes) {
+        positions.set(node.id, {
+          x: NODE_OFFSET_X + (columnOffset + column) * NODE_GAP_X,
+          y,
+        })
+        y += nodeHeight(node, fieldCounts.get(node.id) ?? node.fields.length) + NODE_GAP_Y
+      }
     }
     columnOffset += columnCount
   }
 
   return positions
-}
-
-function shortestColumn(heights: number[]): number {
-  let shortest = 0
-  for (let index = 1; index < heights.length; index += 1) {
-    if (heights[index] < heights[shortest]) shortest = index
-  }
-  return shortest
 }
 
 function datasetNodeRanks(graph: SemanticModelGraphSignal): Map<string, number> {
@@ -444,7 +447,7 @@ function nodeHeight(node: SemanticModelGraphNodeSignal, totalFieldCount = node.f
   return HEADER_HEIGHT + (Math.max(1, node.fields.length) + summaryRows) * FIELD_HEIGHT + 12
 }
 
-function toFlowEdge(edge: SemanticModelGraphEdgeSignal, selectedID: string | undefined, selectedEdges: Set<string>, activeEdgeID?: string): DatasetEdge {
+function toFlowEdge(edge: SemanticModelGraphEdgeSignal, selectedID: string | undefined, selectedEdges: Set<string>, sameRank: boolean, activeEdgeID?: string): DatasetEdge {
   const emphasized = edge.id === activeEdgeID || Boolean(selectedID && selectedEdges.has(edge.id))
   const dimmed = activeEdgeID ? edge.id !== activeEdgeID : Boolean(selectedID && !selectedEdges.has(edge.id))
   const [sourceMarker, targetMarker] = relationshipEndpointMarkers(edge.cardinality)
@@ -460,7 +463,7 @@ function toFlowEdge(edge: SemanticModelGraphEdgeSignal, selectedID: string | und
     targetHandle: `${endpointAnchorField(edge.targetField)}:target`,
     interactionWidth: 18,
     ariaLabel: `${edge.source}.${edge.sourceField} to ${edge.target}.${edge.targetField}, ${cardinalityLabel(edge.cardinality)}`,
-    data: { ...edge, emphasized, sourceMarker, targetMarker },
+    data: { ...edge, emphasized, sameRank, sourceMarker, targetMarker },
     style: {
 		stroke: 'var(--lv-fg-muted)',
       strokeWidth: emphasized ? 2.6 : 1.6,
@@ -474,9 +477,22 @@ function endpointAnchorField(fields: string): string {
 }
 
 function RelationshipEdge(props: EdgeProps<DatasetEdge>) {
-  const [path, labelX, labelY] = getBezierPath(props)
+  const pathOptions = {
+    sourceX: props.sourceX,
+    sourceY: props.sourceY,
+    sourcePosition: props.sourcePosition,
+    targetX: props.targetX,
+    targetY: props.targetY,
+    targetPosition: props.targetPosition,
+  }
+  const [path, labelX, labelY] = props.data?.sameRank ? getBezierPath(pathOptions) : getSmoothStepPath({
+    ...pathOptions,
+    borderRadius: 12,
+    offset: 24,
+  })
   const data = props.data
   const style = props.style ?? {}
+  const relationshipLabel = data ? `${data.source}.${data.sourceField} → ${data.target}.${data.targetField}` : 'Relationship'
   return React.createElement(React.Fragment, null,
     React.createElement(BaseEdge, {
       id: props.id,
@@ -488,18 +504,24 @@ function RelationshipEdge(props: EdgeProps<DatasetEdge>) {
     React.createElement(EdgeLabelRenderer, null,
       React.createElement('div', {
         className: `semantic-model-edge-label ${data?.emphasized ? 'selected' : ''}`,
+        title: relationshipLabel,
+        'aria-label': relationshipLabel,
         style: {
           transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
         },
       }, data?.label ?? ''),
       React.createElement('div', {
         className: 'semantic-model-edge-endpoint source',
+        title: data ? `${data.source}.${data.sourceField}` : undefined,
+        'aria-label': data ? `Source ${data.source}.${data.sourceField}` : undefined,
         style: {
           transform: `translate(-50%, -50%) translate(${props.sourceX}px,${props.sourceY}px)`,
         },
       }, data?.sourceMarker ?? ''),
       React.createElement('div', {
         className: 'semantic-model-edge-endpoint target',
+        title: data ? `${data.target}.${data.targetField}` : undefined,
+        'aria-label': data ? `Target ${data.target}.${data.targetField}` : undefined,
         style: {
           transform: `translate(-50%, -50%) translate(${props.targetX}px,${props.targetY}px)`,
         },
@@ -542,7 +564,7 @@ function relationshipEndpointMarkers(cardinality: string): [string, string] {
 function graphLayoutKey(graph: SemanticModelGraphSignal, storageKey: string): string {
   const nodePart = graph.nodes.map((node) => `${node.id}:${node.fields.map((field) => field.name).join(',')}`).join('|')
   const edgePart = graph.edges.map((edge) => `${edge.id}:${edge.source}.${edge.sourceField}->${edge.target}.${edge.targetField}:${edge.cardinality}`).join('|')
-  return `leapview:semantic-model-graph:v4:${storageKey || (graph.datasets ?? []).join(',') || 'model'}:${nodePart}:${edgePart}`
+  return `leapview:semantic-model-graph:v5:${storageKey || (graph.datasets ?? []).join(',') || 'model'}:${nodePart}:${edgePart}`
 }
 
 function loadLayout(key: string): Map<string, NodePosition> {

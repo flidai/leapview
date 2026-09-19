@@ -9,7 +9,7 @@ export const emptyLineageStatus: DashboardStatus = {
 export function renderAssetLineage(lineage: ResourceAssetPageSignal['lineage'], status: DashboardStatus) {
   const hasGraph = Boolean(lineage && ((lineage.graph.nodes?.length ?? 0) > 1 || (lineage.graph.edges?.length ?? 0) > 0))
   const hasTables = Boolean(lineage && ((lineage.usesTable.rows?.length ?? 0) > 0 || (lineage.usedByTable.rows?.length ?? 0) > 0))
-  const state = status.error ? 'error' : !lineage && status.loading ? 'loading' : !lineage ? 'empty' : hasGraph || hasTables ? 'ready' : 'empty'
+  const state = !lineage && status.error ? 'error' : !lineage && status.loading ? 'loading' : !lineage ? 'empty' : hasGraph || hasTables ? 'ready' : 'empty'
   return html`
     <section class="lineage" id="lineage" aria-label="Asset lineage">
       ${state === 'ready'

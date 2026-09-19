@@ -121,6 +121,18 @@ test('pipeline Lineage renders dependency and explicit loading, empty, and error
     })
     expect(ready).toEqual({ graphNodes: 2, graphEdges: 1, usesRows: 1, state: '' })
 
+    await page.goto(`${baseURL}/?root=pipeline-lineage-ready-error`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page') && customElements.get('lv-asset-lineage-graph'))
+    const retained = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot! as ShadowRoot
+      return {
+        graph: Boolean(root.querySelector('lv-asset-lineage-graph')),
+        alert: root.querySelector('[role="alert"]')?.textContent?.trim() ?? '',
+      }
+    })
+    expect(retained).toEqual({ graph: true, alert: '' })
+
     for (const [rootName, expected] of [['pipeline-lineage-loading', 'Loading lineage…'], ['pipeline-lineage-empty', 'No lineage dependencies are available for this asset.'], ['pipeline-lineage-error', 'Lineage could not be loaded. Try again.']]) {
       await page.goto(`${baseURL}/?root=${rootName}`)
       await page.waitForFunction(() => customElements.get('lv-project-asset-page'))

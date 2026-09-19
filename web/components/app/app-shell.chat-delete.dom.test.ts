@@ -61,6 +61,27 @@ test('ordinary chat menus omit Archive', async () => {
   await page.close()
 })
 
+test('account settings hover highlights only the settings icon', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    const card = page.locator('lv-app-shell').locator('lv-sidebar').locator('.footer .user-card')
+    await card.hover()
+    const hovered = await card.evaluate((element) => {
+      const icon = element.querySelector('.user-settings-icon') as HTMLElement
+      return {
+        cardBackground: getComputedStyle(element).backgroundColor,
+        iconBackground: getComputedStyle(icon).backgroundColor,
+      }
+    })
+    expect(hovered.cardBackground).toBe('rgba(0, 0, 0, 0)')
+    expect(hovered.iconBackground).not.toBe('rgba(0, 0, 0, 0)')
+  } finally {
+    await page.close()
+  }
+})
+
 test('chat deletion persists after the undo window, refreshes the list, and stays deleted on reload', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   try {

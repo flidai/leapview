@@ -56,7 +56,7 @@ class ChatThread extends LitElement {
     const transcript = this.resolvedTranscript
     const unavailable = !this.status.enabled && transcript.length === 0
     const empty = transcript.length === 0 && !this.status.running
-    const showWorking = this.status.running && !transcript.some((item) => item.kind === 'tool' && item.status === 'running')
+    const showWorking = this.status.running && !transcript.some((item) => item.kind === 'tool' && this.toolStatus(item) === 'running')
 
     return html`
       <div class="thread">
@@ -251,7 +251,7 @@ class ChatThread extends LitElement {
   }
 
   private renderTool(item: ChatTranscriptItemSignal) {
-    const status = item.status || 'running'
+    const status = this.toolStatus(item)
     const label = toolCallLabel(item)
     const key = toolCallKey(item)
     const detailsID = toolDetailsID(key)
@@ -259,7 +259,7 @@ class ChatThread extends LitElement {
     const stateLabel = statusLabel(status)
     return html`
       <div
-        class=${['tool-call', item.artifact ? 'has-artifact' : '', status === 'running' ? 'running' : '', status === 'complete' ? 'done' : '', status === 'error' ? 'error' : ''].filter(Boolean).join(' ')}
+        class=${['tool-call', item.artifact ? 'has-artifact' : '', status === 'running' ? 'running' : '', status === 'complete' ? 'done' : '', status === 'error' ? 'error' : '', status === 'interrupted' ? 'interrupted' : ''].filter(Boolean).join(' ')}
         title=${`${label}: ${stateLabel}`}
       >
         <button
@@ -287,7 +287,7 @@ class ChatThread extends LitElement {
   }
 
   private renderToolDetails(item: ChatTranscriptItemSignal, detailsID: string) {
-    const status = item.status || 'running'
+    const status = this.toolStatus(item)
     return html`
       <div class="tool-details" id=${detailsID}>
         ${item.argumentsJson || item.inputJson ? this.renderToolCode('Input', item.argumentsJson || item.inputJson || '', toolInputLanguage(item)) : nothing}
@@ -314,6 +314,14 @@ class ChatThread extends LitElement {
     if (next.has(key)) next.delete(key)
     else next.add(key)
     this.expandedToolCalls = next
+  }
+
+  private toolStatus(item: ChatTranscriptItemSignal): string {
+    const status = item.status || 'running'
+    if (status !== 'running' && status !== 'pending') return status
+    if (!this.status.running) return 'interrupted'
+    if (this.status.runId && item.runId && this.status.runId !== item.runId) return 'interrupted'
+    return status
   }
 }
 
@@ -421,6 +429,7 @@ function statusLabel(status: string): string {
     case 'error': return 'Failed'
     case 'streaming': return 'Streaming'
     case 'pending': return 'Queued'
+    case 'interrupted': return 'Interrupted'
     default: return 'Running'
   }
 }

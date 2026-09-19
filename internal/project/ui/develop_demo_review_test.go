@@ -133,6 +133,63 @@ func TestAssetLineageProjectsRefreshPipelinesAsVisibleConsumers(t *testing.T) {
 	if len(lineage.Uses.Rows) != 1 || lineage.Uses.Rows[0]["asset"] != semantic.Title {
 		t.Fatalf("refresh pipeline uses rows = %#v, want semantic model dependency", lineage.Uses.Rows)
 	}
+	if got := lineage.Uses.Rows[0]["relation"]; got != "Refreshes semantic model" {
+		t.Fatalf("refresh pipeline relationship label = %q, want %q", got, "Refreshes semantic model")
+	}
+}
+
+func TestAssetLineageProjectsCompiledPipelineChain(t *testing.T) {
+	connection := projectview.DevelopAssetView{ID: "connection:finance_files", Type: "connection", Title: "Finance files"}
+	source := projectview.DevelopAssetView{ID: "source:finance.financials", Type: "source", Title: "Financials"}
+	model := projectview.DevelopAssetView{ID: "model:financial_performance", Type: "model", Title: "Financial performance"}
+	semantic := projectview.DevelopAssetView{ID: "semantic-model:finance", Type: "semantic_model", Title: "CFO Finance Model"}
+	dashboard := projectview.DevelopAssetView{ID: "dashboard:cfo-command-center", Type: "dashboard", Title: "CFO Command Center"}
+	assets := []projectview.DevelopAssetView{connection, source, model, semantic, dashboard}
+	for _, pipelineType := range []string{"pipeline", "refresh_pipeline"} {
+		t.Run(pipelineType, func(t *testing.T) {
+			pipeline := projectview.DevelopAssetView{ID: "pipeline:finance-refresh", Type: pipelineType, Title: "Finance refresh"}
+			allAssets := append(append([]projectview.DevelopAssetView{}, assets...), pipeline)
+			edges := []projectview.DevelopEdgeView{
+				{ID: "source-connection", FromAssetID: source.ID, ToAssetID: connection.ID, Type: "uses_connection"},
+				{ID: "model-source", FromAssetID: model.ID, ToAssetID: source.ID, Type: "reads_source"},
+				{ID: "semantic-model", FromAssetID: semantic.ID, ToAssetID: model.ID, Type: "uses_model"},
+				{ID: "pipeline-semantic", FromAssetID: pipeline.ID, ToAssetID: semantic.ID, Type: "refreshes"},
+				{ID: "dashboard-semantic", FromAssetID: dashboard.ID, ToAssetID: semantic.ID, Type: "uses_semantic_model"},
+			}
+
+			lineage := assetLineage("project:test", pipeline, allAssets, edges)
+			seen := map[string]bool{}
+			for _, node := range lineage.Graph.Nodes {
+				seen[node.ID] = true
+			}
+			for _, asset := range []projectview.DevelopAssetView{connection, source, model, semantic, pipeline} {
+				if !seen[asset.ID] {
+					t.Fatalf("compiled %s pipeline lineage omitted %q: %#v", pipelineType, asset.ID, lineage.Graph.Nodes)
+				}
+			}
+			wantRanks := map[string]int64{connection.ID: -4, source.ID: -3, model.ID: -2, semantic.ID: -1, pipeline.ID: 0}
+			for _, node := range lineage.Graph.Nodes {
+				if want, ok := wantRanks[node.ID]; ok && node.Rank != want {
+					t.Fatalf("compiled %s pipeline node %q rank = %d, want %d", pipelineType, node.ID, node.Rank, want)
+				}
+			}
+			if seen[dashboard.ID] {
+				t.Fatalf("compiled %s pipeline lineage included downstream dashboard: %#v", pipelineType, lineage.Graph.Nodes)
+			}
+			wantEdges := map[string]bool{
+				connection.ID + "->" + source.ID: true,
+				source.ID + "->" + model.ID:      true,
+				model.ID + "->" + semantic.ID:    true,
+				semantic.ID + "->" + pipeline.ID: true,
+			}
+			for _, edge := range lineage.Graph.Edges {
+				delete(wantEdges, edge.Source+"->"+edge.Target)
+			}
+			if len(wantEdges) != 0 {
+				t.Fatalf("compiled %s pipeline lineage missing edges %v: %#v", pipelineType, wantEdges, lineage.Graph.Edges)
+			}
+		})
+	}
 }
 
 func TestRefreshHistoryUsesAvailableTimestampsAndReadablePrincipals(t *testing.T) {

@@ -480,6 +480,30 @@ test('chat thread keeps one tool row per call when durable history replaces live
   await page.close()
 })
 
+test('chat thread marks orphaned historical tools interrupted without hiding a new run indicator', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: true, runId: 'run-new' }
+    thread.transcript = [
+      { id: 'tool-old', runId: 'run-old', toolCallId: 'call-old', kind: 'tool', name: 'catalog_search', status: 'running' },
+    ]
+    await thread.updateComplete
+  })
+  const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
+    const root = element.shadowRoot as ShadowRoot
+    return {
+      label: root.querySelector('.tool-trigger')?.textContent?.replace(/\s+/g, ' ').trim(),
+      className: root.querySelector('.tool-call')?.className,
+      working: root.querySelector('.working')?.textContent?.replace(/\s+/g, ' ').trim(),
+    }
+  })
+  expect(state).toEqual({ label: 'Catalog Search Interrupted', className: 'tool-call interrupted', working: 'Working' })
+  await page.close()
+})
+
 test('chat thread renders assistant markdown through shared markdown view', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)

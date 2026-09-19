@@ -227,6 +227,7 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 	if !selectedAnchorOK {
 		return assetLineageGraph{}
 	}
+	selectedLayer := lineageVisualLayer(selectedAnchor.Type)
 	out := assetLineageGraph{}
 	nodeIndex := map[string]int{}
 	addNode := func(asset projectview.DevelopAssetView) {
@@ -238,7 +239,7 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 		}
 		selectedNode := selectedAnchorOK && asset.ID == selectedAnchor.ID
 		nodeIndex[asset.ID] = len(out.Nodes)
-		out.Nodes = append(out.Nodes, lineageNode(projectID, asset, lineageVisualLayer(asset.Type), selectedNode, edges))
+		out.Nodes = append(out.Nodes, lineageNode(projectID, asset, lineageVisualLayer(asset.Type)-selectedLayer, selectedNode, edges))
 	}
 	addNode(selectedAnchor)
 
