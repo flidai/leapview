@@ -397,6 +397,88 @@ JOIN managed_data.collection c ON c.collection_id=b.collection_id
 JOIN managed_data.revision r ON r.revision_id=b.revision_id
 ORDER BY b.project_id,b.environment,b.generation_id,c.connection_id;
 SQL
+  if [[ "$container" == *-demo-current-postgres-1 ]]; then
+    printf 'Recent demo delivery plans:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT p.plan_id,p.plan_revision,p.approval_required,p.approval_policy_revision,p.created_at
+FROM delivery.delivery_plan p
+JOIN delivery.delivery_target t ON t.target_id=p.target_id
+WHERE t.environment='demo-current'
+ORDER BY p.created_at DESC
+LIMIT 5;
+SQL
+    printf 'Recent demo delivery candidates:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT c.candidate_id,c.plan_id,c.status,c.candidate_revision,c.created_at,c.qualified_at
+FROM delivery.delivery_candidate c
+JOIN delivery.delivery_target t ON t.target_id=c.target_id
+WHERE t.environment='demo-current'
+ORDER BY c.created_at DESC
+LIMIT 5;
+SQL
+    printf 'Recent demo delivery build attempts:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT a.attempt_id,a.plan_id,COALESCE(a.candidate_id::text,''),a.state,
+       COALESCE(a.snapshot_id::text,''),a.created_at,a.finished_at,
+       COALESCE(a.termination_evidence::text,'')
+FROM delivery.delivery_build_attempt a
+JOIN delivery.delivery_plan p ON p.plan_id=a.plan_id
+JOIN delivery.delivery_target t ON t.target_id=p.target_id
+WHERE t.environment='demo-current'
+ORDER BY a.created_at DESC
+LIMIT 5;
+SQL
+    printf 'Recent demo delivery generations:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT g.generation_id,g.candidate_id,g.plan_id,g.generation_revision,g.created_at
+FROM delivery.delivery_generation g
+JOIN delivery.delivery_target t ON t.target_id=g.target_id
+WHERE t.environment='demo-current'
+ORDER BY g.created_at DESC
+LIMIT 5;
+SQL
+    printf 'Recent demo delivery publications:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT p.publication_id,p.generation_id,p.candidate_id,p.state,
+       p.expected_target_revision,COALESCE(p.result_target_revision::text,''),
+       p.created_at,p.committed_at
+FROM delivery.delivery_publication p
+JOIN delivery.delivery_target t ON t.target_id=p.target_id
+WHERE t.environment='demo-current'
+ORDER BY p.created_at DESC
+LIMIT 5;
+SQL
+    printf 'Recent demo delivery approval evidence:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT r.request_id,r.publication_id,r.policy_revision,r.requested_by,
+       r.request_credential_class,r.requested_at,r.expires_at,
+       COALESCE(d.decision,''),COALESCE(d.decided_by,''),
+       COALESCE(d.decision_credential_class,''),d.decided_at,
+       d.decision_credential_expires_at
+FROM delivery.delivery_approval_request r
+JOIN delivery.delivery_target t ON t.target_id=r.target_id
+LEFT JOIN LATERAL (
+  SELECT d0.decision,d0.decided_by,d0.decision_credential_class,
+         d0.decided_at,d0.decision_credential_expires_at
+  FROM delivery.delivery_approval_decision d0
+  WHERE d0.request_id=r.request_id
+  ORDER BY d0.decision_revision DESC,d0.decision_id DESC
+  LIMIT 1
+) d ON TRUE
+WHERE t.environment='demo-current'
+ORDER BY r.requested_at DESC
+LIMIT 5;
+SQL
+    printf 'Recent delivery activation jobs:\n'
+    docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT id,kind,state,attempt,max_attempts,scheduled_at,attempted_at,finalized_at,
+       COALESCE(errors::text,'')
+FROM public.river_job
+WHERE kind IN ('deployment.activate','delivery.approval.activate')
+ORDER BY id DESC
+LIMIT 10;
+SQL
+  fi
   if [[ "${DEMO_REPAIR_MANAGED_DATA_POINTER:-false}" == true && "$container" == *-demo-current-postgres-1 ]]; then
     printf 'Repairing the exact corrupted demo Olist planning pointer:\n'
     docker exec -i "$container" sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control' <<'SQL'
