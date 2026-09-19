@@ -83,6 +83,43 @@ jobs:
           go build -o /tmp/recover-demo-credentials ./internal/app/tools/recoverdemocredentials
           chmod +x /tmp/inspect-demo-runtime.sh
           /tmp/inspect-demo-runtime.sh
+      - name: Restore verified managed-data objects
+        env:
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+          DEMO_RUNNER_IP: ${{ steps.runner-ip.outputs.ip }}
+          DEMO_RECOVERY_MANAGED_DATA_ARCHIVE: /tmp/olist-managed-data-recovery.tar.gz
+          DEMO_RECOVERY_MANAGED_DATA_REVISION: sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530
+        run: |
+          set -euo pipefail
+          go run ./internal/app/tools/bootstrapolist --shared-cache --out .data/olist
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import shutil
+
+          source = Path('.data/olist').resolve()
+          staging = Path('/tmp/olist-managed-data-recovery')
+          shutil.rmtree(staging, ignore_errors=True)
+          (staging / 'data').mkdir(parents=True)
+          files = []
+          for path in sorted(item for item in source.rglob('*') if item.is_file()):
+              logical = path.relative_to(source).as_posix()
+              body = path.read_bytes()
+              files.append({'path': logical, 'size': len(body), 'sha256': hashlib.sha256(body).hexdigest()})
+              destination = staging / 'data' / logical
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(path, destination)
+          manifest = {'files': files}
+          canonical = json.dumps(manifest, separators=(',', ':'), ensure_ascii=False).encode()
+          revision = 'sha256:' + hashlib.sha256(canonical).hexdigest()
+          expected = 'sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530'
+          if revision != expected:
+              raise SystemExit(f'unexpected Olist revision: {revision}')
+          (staging / 'manifest.json').write_bytes(canonical)
+          PY
+          tar -C /tmp/olist-managed-data-recovery -czf "$DEMO_RECOVERY_MANAGED_DATA_ARCHIVE" manifest.json data
+          /tmp/inspect-demo-runtime.sh
       - name: Publish canonical demo content
         env:
           DEMO_SOURCE_REVISION: a9328056d1727b71f5e42fb10fe285b201898a62
@@ -106,10 +143,20 @@ jobs:
           '''
           if source.count(exchange) != 1:
               raise SystemExit('workload token exchange block changed unexpectedly')
+          data_sync = '''"$leapview" data sync \\
+            --source-root "$source_root" \\
+            --connection olist \\
+            --from "$data_path" \\
+            --target "$demo_target" \\
+            --project-id "$project_id" \\
+            --token "$publisher_token"
+          '''
+          if source.count(data_sync) != 1:
+              raise SystemExit('managed-data synchronization block changed unexpectedly')
           replacement = '''publisher_token="${DEMO_RECOVERY_PUBLISHER_TOKEN:?Set DEMO_RECOVERY_PUBLISHER_TOKEN}"
           release_token="${DEMO_RECOVERY_RELEASE_TOKEN:?Set DEMO_RECOVERY_RELEASE_TOKEN}"
           '''
-          path.write_text(source.replace(exchange, replacement))
+          path.write_text(source.replace(exchange, replacement).replace(data_sync, ''))
           path.chmod(0o755)
           PY
           ./scripts/deploy_demo_recovery.sh
