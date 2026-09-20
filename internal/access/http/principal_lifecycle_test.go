@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -185,10 +187,22 @@ INSERT INTO access.authoring_credential (
 		},
 	}
 
+	disableRequest := principalRequest(stdhttp.MethodPost, "/api/v1/principals/member/disable", target.ID)
+	disableContract, ok := accessgen.GetAPIGenCommandRuntimeContract(accessgen.GenCommandOperationDisablePrincipal().APIGenOperationID())
+	if !ok {
+		t.Fatal("missing generated disable-principal command contract")
+	}
+	disableContext, disableGuard, err := apigencommand.Begin(disableRequest.Context(), disableContract)
+	if err != nil {
+		t.Fatal(err)
+	}
 	disableRecorder := httptest.NewRecorder()
-	handler.DisablePrincipal(disableRecorder, principalRequest(stdhttp.MethodPost, "/api/v1/principals/member/disable", target.ID))
+	handler.DisablePrincipal(disableRecorder, disableRequest.WithContext(disableContext))
 	if disableRecorder.Code != stdhttp.StatusOK {
 		t.Fatalf("disable status=%d body=%s", disableRecorder.Code, disableRecorder.Body.String())
+	}
+	if !disableGuard.Completed() {
+		t.Fatal("principal disable bypassed its generated transactional command")
 	}
 	var disabled map[string]any
 	if err := json.Unmarshal(disableRecorder.Body.Bytes(), &disabled); err != nil {

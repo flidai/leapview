@@ -144,7 +144,7 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, fmt.Errorf("principal deletion is unavailable"), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationDeletePrincipal(), func(tx access.Repository) (access.AuditEventInput, error) {
 		txDeleter, ok := tx.(interface {
 			DeletePrincipal(context.Context, string) error
 		})

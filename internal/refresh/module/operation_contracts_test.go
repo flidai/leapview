@@ -30,23 +30,26 @@ func TestCreateRefreshAuditIntentUsesAccessOutcomeVocabulary(t *testing.T) {
 
 func TestRefreshRunLifecycleOperationContracts(t *testing.T) {
 	contracts := refreshgen.GetAPIGenOperationContracts()
-	commands := map[string]string{
-		"createRefreshRun": refreshQueuedAuditAction,
-		"cancelRefreshRun": refreshCancelledAuditAction,
+	commands := map[string]struct {
+		auditAction string
+		privilege   string
+	}{
+		"createRefreshRun": {auditAction: refreshQueuedAuditAction, privilege: string(access.CapabilityResourceUse)},
+		"cancelRefreshRun": {auditAction: refreshCancelledAuditAction},
 	}
-	for operationID, auditAction := range commands {
+	for operationID, expected := range commands {
 		contract, ok := contracts[operationID]
 		if !ok || contract.Command == nil {
 			t.Fatalf("command contract %q = %#v", operationID, contract)
 		}
 		if refreshGeneratedOperationKind(contract) != "command" ||
 			contract.Command.Owner != "LeapViewAPI.Refresh" ||
-			contract.Command.Audit.SuccessAction != auditAction ||
+			contract.Command.Audit.SuccessAction != expected.auditAction ||
 			!contract.Command.Audit.Required ||
 			contract.Command.Audit.Guarantee != "transactional" ||
 			(contract.Command.Target == nil || contract.Command.Target.Parameter != "project") ||
 			contract.Command.Idempotency != "required" ||
-			contract.Command.Privilege != "" {
+			contract.Command.Privilege != expected.privilege {
 			t.Errorf("command contract %q = %#v", operationID, contract)
 		}
 	}

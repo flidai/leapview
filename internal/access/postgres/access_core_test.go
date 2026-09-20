@@ -243,6 +243,32 @@ func TestCreateScopedAPITokenPersistsExactPermissionPairs(t *testing.T) {
 	}
 }
 
+func TestCreateScopedAPITokenDefaultsOmittedExpiry(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := repo.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "scoped-default-expiry@example.com", DisplayName: "Scoped Default Expiry"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now().UTC()
+	_, token, err := repo.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{
+		PrincipalID: principal.ID, Name: "default-expiry", Permissions: []access.PermissionPair{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, token.ExpiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expiresAt.Before(before.Add(defaultAPITokenTTL)) || expiresAt.After(time.Now().UTC().Add(defaultAPITokenTTL)) {
+		t.Fatalf("scoped token expiry = %s, want default TTL %s", expiresAt, defaultAPITokenTTL)
+	}
+}
+
 func TestAccessCorePostgreSQL18AtomicMembershipAndConcurrentRevoke(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})

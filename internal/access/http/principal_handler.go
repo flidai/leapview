@@ -116,7 +116,7 @@ func (h Handler) UpdateCurrentPrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		if responseErr != nil {
 			return access.AuditEventInput{}, responseErr
 		}
-		if matchErr := checkIfMatch(r.Header.Get("If-Match"), resourceETag(currentResponse)); matchErr != nil {
+		if matchErr := checkAuditedMutationIfMatch(r, resourceETag(currentResponse)); matchErr != nil {
 			return access.AuditEventInput{}, matchErr
 		}
 		var mutationErr error

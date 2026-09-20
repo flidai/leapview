@@ -237,6 +237,52 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 	}
 }
 
+func TestDeliveryProjectTypedAuthorizationUsesReleaseOperatorAndRequiredPairs(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "operator"}
+	approver := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "approver"}
+	legacy := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "legacy-deployer"}
+	binding, err := access.NewTypedRoleBinding("release-operator", "release operator", operator, access.PermissionRoleReleaseOperator, identity.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvalBinding, err := access.NewTypedRoleBinding("release-approver", "release approver", approver, access.PermissionRoleReleaseApprover, identity.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{
+		binding,
+		approvalBinding,
+		{ID: "legacy-deployer", Subject: legacy, Role: access.ProjectRoleDeployer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDeployer)},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		operation string
+		subject   access.SubjectRef
+		allowed   bool
+	}{
+		{operation: "createDeliveryPlan", subject: operator, allowed: true},
+		{operation: "getDeliveryOperatorSnapshot", subject: operator, allowed: true},
+		{operation: "getDeliveryOperatorSnapshot", subject: approver, allowed: true},
+		{operation: "createDeliveryPlan", subject: approver, allowed: false},
+		{operation: "createDeliveryPlan", subject: legacy, allowed: false},
+	} {
+		allowed, err := deliveryProjectAllowsTypedOperation(snapshot, []access.SubjectRef{test.subject}, identity.ProjectID, test.operation, accessAPIGenOperationContracts())
+		if err != nil || allowed != test.allowed {
+			t.Fatalf("%s for %s = %t, %v; want %t", test.operation, test.subject.ID, allowed, err, test.allowed)
+		}
+	}
+}
+
 func TestValidTusTransportIDRequiresCanonicalOpaqueToken(t *testing.T) {
 	valid := "tus_" + strings.Repeat("a", 64)
 	for _, value := range []string{valid, "tus_" + strings.Repeat("A", 64), " tus_" + strings.Repeat("a", 64), "tus_" + strings.Repeat("a", 63)} {

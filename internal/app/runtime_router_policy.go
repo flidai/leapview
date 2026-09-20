@@ -307,6 +307,41 @@ func deliveryProjectAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjec
 	return false, nil
 }
 
+// deliveryProjectAllowsTypedOperation evaluates the generated delivery action
+// and its prerequisite closure against the active generation's typed
+// principal/group assignments. Legacy capabilities cannot stand in for a
+// release-operator assignment on these qualified operations.
+func deliveryProjectAllowsTypedOperation(
+	snapshot accesssnapshot.AuthorizationSnapshot,
+	subjects []access.SubjectRef,
+	projectID projectgraph.ResourceID,
+	operationID string,
+	operations map[string]accessmodule.APIGenOperationContract,
+) (bool, error) {
+	contract, ok := operations[operationID]
+	if !ok || contract.Resolver != string(access.TypedOperationResolverDelivery) {
+		return false, fmt.Errorf("delivery operation %q has no typed delivery requirement", operationID)
+	}
+	requirement, err := access.NewTypedOperationRequirementService().New(access.Action(contract.Action), contract.Resolver)
+	if err != nil {
+		return false, err
+	}
+	required, err := requirement.ResolvePairs(projectID)
+	if err != nil {
+		return false, err
+	}
+	granted, err := snapshot.EffectiveTypedPermissions(subjects)
+	if err != nil {
+		return false, err
+	}
+	for _, pair := range required {
+		if !access.PermissionSetAllows(granted, pair) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func deliveryApprovalDecisionOperation(operationID string) bool {
 	switch operationID {
 	case "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":

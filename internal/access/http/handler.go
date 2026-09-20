@@ -366,6 +366,21 @@ func auditInput(r *stdhttp.Request, action, principalID, resourceKind, resourceI
 	return access.AuditEventInput{PrincipalID: principalID, Action: action, ResourceKind: resourceKind, ResourceID: resourceID, Capability: capability, Status: status, RequestID: requestIDFromRequest(r), CorrelationID: correlationIDFromRequest(r), MetadataJSON: string(encoded)}
 }
 func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation func(access.Repository) (access.AuditEventInput, error)) error {
+	if operationID, generated := apigencommand.OperationID(r.Context()); generated {
+		executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+		if err != nil {
+			return err
+		}
+		return executor.Execute(r.Context(), operationID, apigencommand.Execution{
+			Transactional: func(context.Context, apigencommand.Contract) error {
+				return persistAuditedMutation(r, repo, mutation)
+			},
+		})
+	}
+	return persistAuditedMutation(r, repo, mutation)
+}
+
+func persistAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation func(access.Repository) (access.AuditEventInput, error)) error {
 	transactional, ok := repo.(access.AuditedMutationRepository)
 	if !ok {
 		return errors.New("transactional access repository is required")
@@ -373,11 +388,9 @@ func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation fun
 	return transactional.RunAuditedMutation(r.Context(), mutation)
 }
 
-// executeAuditedMutation keeps the existing repository transaction as the
-// generated command's transactional execution capability. Direct browser
-// handlers still use the repository helper unchanged; generated API/CLI
-// transports additionally need the command executor to mark the invocation
-// complete before the transport guard flushes a successful response.
+// executeAuditedMutation binds a handler's explicit operation identity to its
+// transactional mutation. Handlers that call runAuditedMutation directly use
+// the active generated operation identity when present.
 func executeAuditedMutation(
 	r *stdhttp.Request,
 	repo access.Repository,
@@ -385,7 +398,7 @@ func executeAuditedMutation(
 	mutation func(access.Repository) (access.AuditEventInput, error),
 ) error {
 	if _, generated := apigencommand.OperationID(r.Context()); !generated {
-		return runAuditedMutation(r, repo, mutation)
+		return persistAuditedMutation(r, repo, mutation)
 	}
 	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
 	if err != nil {
@@ -393,7 +406,7 @@ func executeAuditedMutation(
 	}
 	return executor.Execute(r.Context(), operationID.APIGenOperationID(), apigencommand.Execution{
 		Transactional: func(context.Context, apigencommand.Contract) error {
-			return runAuditedMutation(r, repo, mutation)
+			return persistAuditedMutation(r, repo, mutation)
 		},
 	})
 }
@@ -408,20 +421,46 @@ func runAuditedMutationWithRevision(
 	currentRevision func(access.Repository) (string, error),
 	mutation func(access.Repository) (access.AuditEventInput, error),
 ) error {
-	transactional, ok := repo.(access.AuditedMutationRepository)
-	if !ok {
-		return errors.New("transactional access repository is required")
-	}
-	return transactional.RunAuditedMutation(r.Context(), func(tx access.Repository) (access.AuditEventInput, error) {
+	operationID, generated := apigencommand.OperationID(r.Context())
+	mutationWithRevision := func(tx access.Repository) (access.AuditEventInput, error) {
 		current, err := currentRevision(tx)
 		if err != nil {
 			return access.AuditEventInput{}, err
 		}
-		if err := checkIfMatch(r.Header.Get("If-Match"), current); err != nil {
+		if err := checkAuditedMutationIfMatch(r, current); err != nil {
 			return access.AuditEventInput{}, err
 		}
 		return mutation(tx)
-	})
+	}
+	if generated {
+		executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+		if err != nil {
+			return err
+		}
+		return executor.Execute(r.Context(), operationID, apigencommand.Execution{
+			Transactional: func(context.Context, apigencommand.Contract) error {
+				return persistAuditedMutation(r, repo, mutationWithRevision)
+			},
+		})
+	}
+	return persistAuditedMutation(r, repo, mutationWithRevision)
+}
+
+// checkAuditedMutationIfMatch compares the transaction-time revision and marks
+// the generated command's concurrency policy complete when applicable.
+func checkAuditedMutationIfMatch(r *stdhttp.Request, current string) error {
+	if err := checkIfMatch(r.Header.Get("If-Match"), current); err != nil {
+		return err
+	}
+	operationID, generated := apigencommand.OperationID(r.Context())
+	if !generated {
+		return nil
+	}
+	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return err
+	}
+	return executor.CheckConcurrency(r.Context(), operationID, r.Header.Get("If-Match"), current)
 }
 
 var (

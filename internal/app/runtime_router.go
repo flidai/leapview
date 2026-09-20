@@ -1725,7 +1725,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		defaultEnvironment: policy.defaultEnvironment, managedDataTus: policy.managedDataTus,
 		instanceID: storage.instanceID, canonicalOrigin: storage.publicURL, buildIdentity: platform.buildIdentity,
 	}
-	apiGenAuthorizer, err := routes.accessModule.APIGenAuthorizer(runtime.runtimeHostModule, accessAPIGenOperationContracts(), accessmodule.APIGenResourceResolvers{
+	accessOperations := accessAPIGenOperationContracts()
+	apiGenAuthorizer, err := routes.accessModule.APIGenAuthorizer(runtime.runtimeHostModule, accessOperations, accessmodule.APIGenResourceResolvers{
 		Dashboard: func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
 			rawID := chi.URLParam(r, "dashboard")
 			if strings.TrimSpace(rawID) == "" {
@@ -1848,7 +1849,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if err != nil {
 					return false, err
 				}
-				return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
+				return deliveryProjectAllowsTypedOperation(snapshot, subjects, projectID, operationID, accessOperations)
 			}
 			plan, err := nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
 			if err != nil {

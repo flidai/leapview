@@ -32,6 +32,9 @@ func (r *Repository) CreateScopedAPITokenWithMetadata(ctx context.Context, in ac
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
+	if in.ExpiresAt.IsZero() {
+		in.ExpiresAt = time.Now().UTC().Add(defaultAPITokenTTL)
+	}
 	tok, err := tokenSecret("lv_pat_")
 	if err != nil {
 		return "", access.APIToken{}, err
