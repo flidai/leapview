@@ -19,6 +19,11 @@ beforeAll(async () => {
       response.end(testDocument(true, false, true, false, false, url.searchParams.getAll('deleted')))
       return
     }
+    if (url.pathname === '/admin-sidebar') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument(true, true, false, false, true))
+      return
+    }
     if (url.pathname === '/chats/new') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument(true, false, true))
@@ -33,7 +38,7 @@ beforeAll(async () => {
       return
     }
     try {
-      response.setHeader('content-type', 'text/javascript')
+      response.setHeader('content-type', file.endsWith('.css') ? 'text/css' : 'text/javascript')
       response.end(await readFile(file))
     } catch {
       response.writeHead(404)
@@ -161,4 +166,61 @@ test('deleting the open chat returns to a new conversation after persistence com
   } finally {
     await page.close()
   }
+})
+
+test('account menu supports keyboard actions and submits the real CSRF logout flow', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    const trigger = page.locator('.footer .user-card')
+    await trigger.focus()
+    await page.keyboard.press('Enter')
+    const menu = page.getByRole('menu', { name: 'Account' })
+    await menu.waitFor()
+    const settings = menu.getByRole('menuitem', { name: 'Settings', exact: true })
+    expect(await settings.getAttribute('href')).toBe('/admin/profile')
+    expect(await settings.evaluate(el => el === (el.getRootNode() as ShadowRoot).activeElement)).toBe(true)
+    await page.keyboard.press('ArrowUp')
+    const logout = menu.getByRole('menuitem', { name: 'Log out', exact: true })
+    expect(await logout.evaluate(el => el === (el.getRootNode() as ShadowRoot).activeElement)).toBe(true)
+    await page.keyboard.press('Escape')
+    expect(await trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(await trigger.evaluate(el => el === (el.getRootNode() as ShadowRoot).activeElement)).toBe(true)
+    await page.evaluate(() => {
+      const meta = document.createElement('meta'); meta.name = 'csrf-token'; meta.content = 'test-account-csrf'; document.head.append(meta)
+    })
+    await trigger.click()
+    await page.route('**/auth/logout', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<p>Signed out</p>' }))
+    const request = page.waitForRequest(req => req.url().endsWith('/auth/logout'))
+    await logout.click()
+    const submitted = await request
+    expect(submitted.method()).toBe('POST')
+    expect(new URLSearchParams(submitted.postData()!).get('gorilla.csrf.Token')).toBe('test-account-csrf')
+  } finally { await page.close() }
+})
+
+test('mobile account menu fits above the footer and keeps search available after dismissal', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    for (const route of ['/sidebar-history', '/admin-sidebar']) {
+      await page.goto(`${baseURL}${route}`)
+      await page.locator('lv-sidebar .mobile-menu-button').click()
+      const trigger = page.locator('.mobile-footer .user-card')
+      await trigger.click()
+      const menu = page.getByRole('menu', { name: 'Account', exact: true })
+      const bounds = await menu.boundingBox(), anchor = await trigger.boundingBox()
+      expect(bounds!.x).toBeGreaterThanOrEqual(0)
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390)
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(anchor!.y)
+      await page.keyboard.press('Escape')
+      expect(await trigger.getAttribute('aria-expanded')).toBe('false')
+      await page.locator('lv-sidebar .mobile-footer .search-button').click()
+      await page.getByRole('dialog', { name: 'Search LeapView', exact: true }).waitFor()
+      await page.keyboard.press('Escape')
+      await trigger.click()
+      await page.locator('lv-sidebar .mobile-footer').click({ position: { x: 1, y: 1 } })
+      await menu.waitFor({ state: 'hidden' })
+      expect(await trigger.getAttribute('aria-expanded')).toBe('false')
+    }
+  } finally { await page.close() }
 })
