@@ -98,34 +98,34 @@ func (h dashboardAPIGenHandler) GetSemanticModel(w http.ResponseWriter, r *http.
 	h.module.SemanticAPI().GetSemanticModel(w, r)
 }
 func (h dashboardAPIGenHandler) ListSemanticDatasets(w http.ResponseWriter, r *http.Request, model string, params dashboardgen.GenListSemanticDatasetsParams) {
-	h.module.SemanticAPI().ListSemanticDatasets(w, r)
+	h.module.ListSemanticDatasets(w, r, model)
 }
 func (h dashboardAPIGenHandler) GetSemanticDataset(w http.ResponseWriter, r *http.Request, model, dataset string) {
 	h.module.SemanticAPI().GetSemanticDataset(w, r)
 }
 func (h dashboardAPIGenHandler) ListSemanticFields(w http.ResponseWriter, r *http.Request, model, dataset string, params dashboardgen.GenListSemanticFieldsParams) {
-	h.module.SemanticAPI().ListSemanticFields(w, r)
+	h.module.ListSemanticFields(w, r, model, dataset)
 }
 func (h dashboardAPIGenHandler) PreviewSemanticDataset(w http.ResponseWriter, r *http.Request, model, dataset string, headers dashboardgen.GenPreviewSemanticDatasetHeaders) {
 	h.module.PreviewSemanticDataset(w, r, model, dataset)
 }
 func (h dashboardAPIGenHandler) ExplainSemanticPreview(w http.ResponseWriter, r *http.Request, model, dataset string) {
-	h.module.SemanticAPI().ExplainSemanticPreview(w, r)
+	h.module.ExplainSemanticPreview(w, r, model, dataset)
 }
 func (h dashboardAPIGenHandler) ListSemanticModelFields(w http.ResponseWriter, r *http.Request, model string, params dashboardgen.GenListSemanticModelFieldsParams) {
-	h.module.SemanticAPI().ListSemanticModelFields(w, r)
+	h.module.ListSemanticModelFields(w, r, model)
 }
 func (h dashboardAPIGenHandler) QuerySemanticModel(w http.ResponseWriter, r *http.Request, model string, headers dashboardgen.GenQuerySemanticModelHeaders) {
 	h.module.QuerySemanticModel(w, r, model)
 }
 func (h dashboardAPIGenHandler) ExplainSemanticModelQuery(w http.ResponseWriter, r *http.Request, model string) {
-	h.module.SemanticAPI().ExplainSemanticModelQuery(w, r)
+	h.module.ExplainSemanticModelQuery(w, r, model)
 }
 func (h dashboardAPIGenHandler) ListSemanticRelationships(w http.ResponseWriter, r *http.Request, model string, params dashboardgen.GenListSemanticRelationshipsParams) {
-	h.module.SemanticAPI().ListSemanticRelationships(w, r)
+	h.module.ListSemanticRelationships(w, r, model)
 }
 func (h dashboardAPIGenHandler) ListSemanticSources(w http.ResponseWriter, r *http.Request, model string, params dashboardgen.GenListSemanticSourcesParams) {
-	h.module.SemanticAPI().ListSemanticSources(w, r)
+	h.module.ListSemanticSources(w, r, model)
 }
 
 func (m *Module) DispatchAPIGenOperation(operationID string, logger *slog.Logger, w http.ResponseWriter, r *http.Request) bool {

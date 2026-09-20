@@ -1724,6 +1724,7 @@ tasks:
   deploy:check:
     desc: Validate product and public-site deployment contracts
     deps:
+      - db:generate
       - api:generate
     cmds:
       - go test ./cmd/leapviewctl ./internal/app/cli/composectl ./internal/app/cli/hostinstall ./deploy/compose ./deploy/host
