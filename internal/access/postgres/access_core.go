@@ -1143,7 +1143,7 @@ func (r *Repository) apiTokenForSecret(ctx context.Context, secret string) (acce
 	}
 	if _, touchErr := accessdb.New(db).TouchAPIToken(ctx, accessdb.TouchAPITokenParams{ID: row.ID, MinInterval: pgInterval(apiTokenTouchInterval)}); touchErr != nil {
 		slog.Default().WarnContext(ctx, "api token last-used update failed", "credential_class", "api_token", "credential_id", principalUUID(row.ID), "error", touchErr)
-		observeCredentialTouchFailure("api_token")
+		observeCredentialTouchFailure(credentialClassAPIToken)
 	}
 	return r.apiToken(ctx, principalUUID(row.ID))
 }

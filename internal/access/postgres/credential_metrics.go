@@ -16,16 +16,8 @@ var credentialTouchFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
 // collector for registration with the application's telemetry registry.
 func CredentialMetricsCollector() prometheus.Collector { return credentialTouchFailures }
 
-// ObserveCredentialTouchFailure records a best-effort last-used write
-// failure. The class is the only label so credential identities never become
-// metric cardinality.
-func ObserveCredentialTouchFailure(class string) {
-	switch class {
-	case credentialClassAPIToken, credentialClassServicePrincipalSecret:
-		observeCredentialTouchFailure(class)
-	}
-}
-
+// The class is the only label so credential identities never become metric
+// cardinality.
 func observeCredentialTouchFailure(class string) {
 	credentialTouchFailures.WithLabelValues(class).Inc()
 }
