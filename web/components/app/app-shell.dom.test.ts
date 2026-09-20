@@ -568,6 +568,12 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
       const nav = root.querySelector('nav') as HTMLElement
       const brand = root.querySelector('.brand') as HTMLElement
       const brandIdentity = root.querySelector('.brand-identity') as HTMLElement
+      const visibleCollapseControls = Array.from(root.querySelectorAll<HTMLElement>('.collapsed-trigger, .collapse-button'))
+        .filter((control) => {
+          const rect = control.getBoundingClientRect()
+          const style = getComputedStyle(control)
+          return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+        })
       return {
         hostWidth: Math.round(sidebar.getBoundingClientRect().width),
         overlayWidth: Math.round(aside.getBoundingClientRect().width),
@@ -577,6 +583,7 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
         navVisible: getComputedStyle(nav).visibility === 'visible' && nav.getBoundingClientRect().width > 0,
         compactHeader: Math.round(brand.getBoundingClientRect().height) < 80,
         identityHidden: getComputedStyle(brandIdentity).visibility === 'hidden',
+        visibleCollapseControlLabels: visibleCollapseControls.map((control) => control.getAttribute('aria-label')),
         footerActionCount: root.querySelectorAll('.footer-actions').length,
         footerSearchCount: root.querySelectorAll('.footer > .sidebar-search').length,
       }
@@ -590,6 +597,7 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
       navVisible: true,
       compactHeader: true,
       identityHidden: true,
+      visibleCollapseControlLabels: ['Open navigation'],
       footerActionCount: 2,
       footerSearchCount: 0,
     })

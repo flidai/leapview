@@ -15,10 +15,18 @@ export const sidebarAccountStyles = css`
   .user-chevron { display: flex; color: var(--lv-fg-muted); }
   .user-loading { grid-column: 1 / -1; }
   .account-popover { position: fixed; inset: auto; box-sizing: border-box; margin: 0; padding: var(--base-size-4); overflow: auto; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay, var(--lv-bg-panel)); color: var(--lv-fg-default); box-shadow: var(--lv-shadow-floating-lg); }
-  .account-popover:popover-open { display: grid; gap: var(--base-size-2); }
-  .account-role { margin: 0; padding: var(--base-size-8); overflow-wrap: anywhere; color: var(--lv-fg-muted); font: var(--lv-type-caption); border-bottom: var(--lv-border-muted); }
-  .account-popover [role="menuitem"] { display: flex; box-sizing: border-box; width: 100%; min-height: var(--control-medium-size); align-items: center; gap: var(--base-size-8); padding: var(--base-size-8); border: var(--lv-border-transparent); border-radius: var(--lv-radius-default); background: var(--lv-button-invisible-bg-rest); color: var(--lv-fg-default); font: var(--lv-type-body); text-align: left; text-decoration: none; cursor: pointer; }
+  .account-popover:popover-open { display: grid; gap: var(--base-size-4); }
+  .account-summary { display: grid; min-width: 0; grid-template-columns: var(--control-large-size) minmax(0, 1fr); align-items: center; gap: var(--base-size-8); padding: var(--base-size-4) var(--base-size-8) var(--base-size-8); border-bottom: var(--lv-border-muted); }
+  .account-identity { min-width: 0; }
+  .account-name, .account-role { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .account-name { font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-semibold); }
+  .account-role { margin-top: var(--base-size-2); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .account-popover [role="menuitem"] { display: flex; box-sizing: border-box; width: 100%; min-height: var(--control-medium-size); align-items: center; gap: var(--base-size-8); padding: var(--base-size-4) var(--base-size-8); border: var(--lv-border-transparent); border-radius: var(--lv-radius-default); background: var(--lv-button-invisible-bg-rest); color: var(--lv-fg-default); font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-medium); text-align: left; text-decoration: none; cursor: pointer; }
+  .account-popover [role="menuitem"] svg { color: var(--lv-fg-muted); }
   .account-popover [role="menuitem"]:hover, .account-popover [role="menuitem"]:focus-visible { background: var(--lv-button-invisible-bg-hover, var(--control-bgColor-hover)); outline: var(--focus-outline); outline-offset: calc(-1 * var(--borderWidth-thick)); }
+  .account-popover .account-logout { color: var(--lv-fg-danger, var(--lv-fg-default)); }
+  .account-popover .account-logout svg { color: currentColor; }
+  .account-popover .account-logout:hover, .account-popover .account-logout:focus-visible { background: var(--lv-bg-danger-muted, var(--lv-button-invisible-bg-hover, var(--control-bgColor-hover))); }
 `
 
 type Account = { name?: string; avatarUrl?: string; role?: string; settingsHref?: string; id: string; navigate: (event: MouseEvent, href: string) => void }
@@ -34,9 +42,12 @@ export function renderSidebarAccount(account: Account) {
       <span class="user-chevron" aria-hidden="true">${lucideIcon(ChevronDown, { size: 16 })}</span>
     </button>
     <div id=${account.id} class="account-popover" popover="auto" role="menu" aria-label="Account" @beforetoggle=${onToggle} @keydown=${menuKeydown}>
-      ${account.role ? html`<p class="account-role" role="presentation">${account.role}</p>` : null}
+      <div class="account-summary" role="presentation">
+        <lv-user-avatar size="medium" .name=${name} .imageUrl=${account.avatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>
+        <span class="account-identity"><strong class="account-name">${name}</strong>${account.role ? html`<span class="account-role">${account.role}</span>` : null}</span>
+      </div>
       <a role="menuitem" tabindex="-1" href=${href} @click=${(event: MouseEvent) => { closeAccount(event.currentTarget as HTMLElement); account.navigate(event, href) }}>${lucideIcon(Settings, { size: 16 })}<span>Settings</span></a>
-      <button role="menuitem" tabindex="-1" type="button" @click=${() => submitAuthForm('/auth/logout')}>${lucideIcon(LogOut, { size: 16 })}<span>Log out</span></button>
+      <button class="account-logout" role="menuitem" tabindex="-1" type="button" @click=${() => submitAuthForm('/auth/logout')}>${lucideIcon(LogOut, { size: 16 })}<span>Log out</span></button>
     </div>
   </div>`
 }
@@ -47,7 +58,7 @@ function elements(target: HTMLElement) {
 }
 function toggleAccount(event: Event) {
   const { trigger, menu } = elements(event.currentTarget as HTMLElement)
-  const open = toggleAnchoredPopover(trigger, menu, { minWidth: 224, maxWidth: 320, maxHeight: 240 })
+  const open = toggleAnchoredPopover(trigger, menu, { minWidth: 216, maxWidth: 264, maxHeight: 220 })
   trigger.setAttribute('aria-expanded', String(open))
   if (open) {
     // Align the measured menu above a bottom-of-sidebar trigger without an empty gap.

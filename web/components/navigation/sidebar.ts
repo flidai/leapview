@@ -784,6 +784,11 @@ class LeapViewSidebar extends LitElement {
         transition: opacity var(--motion-transition-stateChange);
       }
 
+      :host([data-collapsed][data-peeking]) .collapse-button {
+        visibility: hidden;
+        pointer-events: none;
+      }
+
       :host([data-collapsed][data-peeking]) .brand-row > .brand-identity,
       :host([data-collapsed][data-peeking]) .brand-row > .brand-back {
         visibility: hidden;
