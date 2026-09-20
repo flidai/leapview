@@ -827,6 +827,35 @@ test('dashboard owners render as compact accessible avatars with hover labels', 
   }
 })
 
+test('single-row dashboard owner tooltip stays inside the scrollable table', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { ...element.page, dashboards: [element.page.dashboards[0]] } })
+      await element.updateComplete
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
+      await list.updateComplete
+    })
+    const owner = page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-person-avatar')
+    await owner.hover()
+    const clipped = await owner.locator('.entity-list-hover-tooltip').evaluate((tooltip) => {
+      const box = tooltip.getBoundingClientRect()
+      for (let ancestor = tooltip.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        if (!['hidden', 'auto', 'scroll', 'clip'].includes(getComputedStyle(ancestor).overflowY)) continue
+        const bounds = ancestor.getBoundingClientRect()
+        if (box.top < bounds.top || box.bottom > bounds.bottom) return true
+      }
+      return false
+    })
+    expect(clipped).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard titles use regular emphasis and popularity has a dedicated hoverable column', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

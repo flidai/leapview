@@ -740,7 +740,9 @@ const entityListStyles = `
     transition: opacity var(--motion-transition-stateChange);
   }
 
-  .entity-list-popularity .entity-list-hover-tooltip {
+  .entity-list-person-avatar .entity-list-hover-tooltip,
+  .entity-list-popularity .entity-list-hover-tooltip,
+  .entity-list-datetime .entity-list-hover-tooltip {
     top: auto;
     bottom: calc(100% + var(--base-size-8));
   }
