@@ -131,8 +131,12 @@ func TestPinAndUnpinPreserveHistoryOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := before[2]
-	if _, err := repo.SetConversationPinned(ctx, owner, target.ID, true); err != nil {
+	pinnedResult, err := repo.SetConversationPinned(ctx, owner, target.ID, true)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if pinnedResult.ID != target.ID || !pinnedResult.Pinned || pinnedResult.UpdatedAt != target.UpdatedAt {
+		t.Fatalf("pin result changed identity or activity recency: before=%#v after=%#v", target, pinnedResult)
 	}
 	pinned, err := repo.ListConversations(ctx, owner)
 	if err != nil {
@@ -141,8 +145,12 @@ func TestPinAndUnpinPreserveHistoryOrder(t *testing.T) {
 	if pinned[0].ID != target.ID || pinned[0].UpdatedAt != target.UpdatedAt {
 		t.Fatalf("pin changed activity recency: before=%#v after=%#v", target, pinned[0])
 	}
-	if _, err := repo.SetConversationPinned(ctx, owner, target.ID, false); err != nil {
+	unpinnedResult, err := repo.SetConversationPinned(ctx, owner, target.ID, false)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if unpinnedResult.ID != target.ID || unpinnedResult.Pinned || unpinnedResult.UpdatedAt != target.UpdatedAt {
+		t.Fatalf("unpin result changed identity or activity recency: before=%#v after=%#v", target, unpinnedResult)
 	}
 	after, err := repo.ListConversations(ctx, owner)
 	if err != nil {

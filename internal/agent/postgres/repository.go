@@ -1464,6 +1464,8 @@ func mapConversation(row any) agent.Conversation {
 		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.UpdateAgentConversationMetadataRow:
 		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+	case agentdb.UpdateAgentConversationPinMetadataRow:
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.UpdateAgentConversationTitleRow:
 		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.UpdateAgentConversationTranscriptRow:
