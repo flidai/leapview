@@ -4,7 +4,7 @@ Internal project review; not part of the public documentation catalog.
 
 Date: 2026-09-18; updated 2026-09-20
 
-Status: **Integrated; exact-candidate release qualification pending**
+Status: **Release-qualified at runtime revision `773fafd87`; draft PR pending human review**
 
 ## Current decision — 2026-09-20
 
@@ -27,10 +27,10 @@ A final security pass also found that an explicit `PROJECT_ADMIN` PAT could
 invoke the platform-administrator REST mutation without recent interactive
 authentication. The REST guard now fails closed for bearer credentials and
 missing freshness wiring; generated-command tests cover grant and revoke.
-The release gate remains open until the corrected exact
-candidate passes `task ci:full` and installed-candidate qualification. The
-reopened Linear acceptance criteria are tracked in FAI-934, FAI-939, FAI-935,
-FAI-941, FAI-954, FAI-955, and FAI-943.
+The corrected candidate passed `task ci:full` and installed-candidate
+qualification. The reopened Linear acceptance criteria were tracked in
+FAI-934, FAI-939, FAI-935, FAI-941, FAI-954, FAI-955, and FAI-943; final
+verification evidence is attached to FAI-943.
 
 The final credential audit added FAI-997 and FAI-998 to this gate. Newly
 issued personal API tokens now require an explicit nonempty capability set;
@@ -40,8 +40,7 @@ compatible at authentication time. Last-used writes are coalesced and their
 best-effort failures are observable. Administrators have a separate audited,
 transactional all-credential incident action, distinct from session-only
 revocation, and cannot use it on themselves or the last usable platform
-administrator. The exact integrated candidate still requires final
-qualification before this review can close.
+administrator. The exact integrated candidate passed final qualification.
 
 The final Settings pass also removed unsupported editable Profile Title and
 Username fields, exposed the existing audited service-account rename command,
@@ -49,7 +48,7 @@ and removed the orphaned Projects component and signal. The legacy
 service-principal OAuth fallback now rejects a requested `scope` it cannot
 enforce instead of echoing a misleading claim; unscoped exchange remains
 supported. FAI-999 and FAI-1000 track these final corrections. Their combined
-candidate still requires the same exact-commit qualification.
+candidate passed the same exact-commit qualification.
 
 The `3902efe7` candidate passed local `task ci:full` and hosted PR/security
 checks, but the installed-candidate release gate failed on both architectures
@@ -58,8 +57,22 @@ secondary node's nested shared-volume mounts as root; startup could not
 secure `/var/lib/leapview/home`. A complete local mount-tree reproduction
 also found root ownership at `/var/lib/leapview/home/artifacts`. The
 qualification fixture now gives both private parents uid-owned tmpfs mounts
-while retaining the four shared volume subpaths. The updated candidate must
-still pass exact-commit release qualification before this decision closes.
+while retaining the four shared volume subpaths. The corrected candidate
+passed exact-commit release qualification on both architectures.
+
+### Final integrated acceptance evidence
+
+The tested runtime source is clean commit
+`773fafd870c1f391c212565123fa88dffa8d5ecb`, integrated from main
+predecessor `2e228ec6b42ab5c18bea04ce037695642aaf8019`. Local `task ci`
+and `task ci:full` passed; hosted PR CI and security gates passed on the same
+revision. [Release run 35524553318](https://github.com/flidai/leapview/actions/runs/35524553318)
+qualified `ghcr.io/flidai/leapview@sha256:c9c00605ebf8b02bbd6e8c3382029401d2617a5beb1a7ccf1df4d36972fc0115`
+on amd64 and arm64. Both uploaded reports show all nine phases and all
+assertions successful, including native-PostgreSQL-only, browser journey,
+upgrade/restart persistence, fresh-operator rollback, and two-node abrupt
+loss, data-plane survival, recovery, and rolling restart. This acceptance
+record is documentation-only and does not change the qualified runtime code.
 
 ## Prior candidate decision — 2026-09-18
 

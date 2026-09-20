@@ -4,7 +4,7 @@ Internal execution plan; not part of the public documentation catalog.
 
 Date: 2026-09-18; updated 2026-09-20
 
-Status: **Integrated; exact-candidate release qualification pending**
+Status: **Release-qualified at runtime revision `773fafd87`; draft PR pending human review**
 
 Source review: [Administrator and deployment readiness review](../admin-deployment-readiness.md)
 
@@ -23,8 +23,8 @@ replay/upgrade. A final security pass found an additional REST platform-role
 PAT bypass; its recent-interactive-auth guard now fails closed for PATs and
 missing freshness wiring, with generated REST regression tests. FAI-934,
 FAI-939, FAI-935, FAI-941, FAI-954,
-and FAI-955 need final verification/status updates; FAI-943 remains open until
-the integrated exact candidate passes `task ci:full`, generated checks,
+and FAI-955 received final verification/status updates. FAI-943 closed after
+the integrated exact candidate passed `task ci:full`, generated checks,
 browser/API journeys, and installed-candidate Docker/Compose qualification.
 FAI-997 covers explicit, request-attenuated PAT issuance and atomic rotation;
 FAI-998 covers audited, all-class administrator incident revocation. Session-only
@@ -32,15 +32,20 @@ bulk revocation is now set-based, so its separate Settings action covers more
 than a single inventory page. FAI-999 removes the remaining false Settings
 affordances and exposes service-account rename. FAI-1000 rejects unenforced
 scope claims on the legacy service-principal OAuth fallback. These changes are
-implemented and await the same exact-candidate gate.
+implemented and passed the same exact-candidate gate.
 
 The first integrated release run on `3902efe7` passed recovery but failed its
 two-node drill on amd64 and arm64 because Docker made private parents of
 nested shared-volume mounts root-owned. The secondary app could not secure its
 home directory. The full mount tree was reproduced locally; uid-owned tmpfs
 mounts for `home` and `home/artifacts` now preserve private directory
-ownership, and the focused qualification regression passes. FAI-943 remains
-open until the amended candidate passes the exact-SHA release run.
+ownership, and the focused qualification regression passes. The amended
+candidate `773fafd870c1f391c212565123fa88dffa8d5ecb` passed local
+`task ci` and `task ci:full`, hosted PR/security checks, and
+[two-architecture release qualification](https://github.com/flidai/leapview/actions/runs/35524553318)
+for image digest
+`sha256:c9c00605ebf8b02bbd6e8c3382029401d2617a5beb1a7ccf1df4d36972fc0115`.
+The integrated main predecessor was `2e228ec6b42ab5c18bea04ce037695642aaf8019`.
 
 ## Linear delivery breakdown
 
