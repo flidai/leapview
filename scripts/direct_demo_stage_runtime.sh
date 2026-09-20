@@ -125,6 +125,12 @@ if (( available_kb <= 7000000 )) && command -v go >/dev/null && [[ -d /root/.cac
   GOCACHE=/root/.cache/go-build go clean -cache -testcache
   available_kb="$(df --output=avail /opt | tail -1 | tr -d ' ')"
 fi
+if (( available_kb <= 7000000 )) && command -v go >/dev/null && [[ -d /root/go/pkg/mod && ! -L /root/go/pkg/mod ]]; then
+  echo 'Reclaiming only the regenerable Go dependency cache before staging'
+  du -sh /root/go/pkg/mod
+  GOMODCACHE=/root/go/pkg/mod go clean -modcache
+  available_kb="$(df --output=avail /opt | tail -1 | tr -d ' ')"
+fi
 if (( available_kb <= 7000000 )); then
   df -h /opt
   docker system df
