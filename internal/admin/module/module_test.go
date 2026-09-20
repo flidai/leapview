@@ -9,6 +9,9 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	adminsettings "github.com/flidai/leapview/internal/admin/settings"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
@@ -37,6 +40,65 @@ func TestBuildConstructsOwnedHTTPHandler(t *testing.T) {
 	}
 	if got := module.HTTP().Layout(nil)(webpage.Context{}).Presentation.ProductName; got != "Application" {
 		t.Fatalf("product name = %q", got)
+	}
+}
+
+func TestServiceAccountRenameSettingsCommandPersistsAcrossReload(t *testing.T) {
+	pool := postgrestest.Open(t, accesspostgres.ApplySchema)
+	repository, err := accesspostgres.NewAccess(pool, accesspostgres.FingerprintConfig{Key: []byte(strings.Repeat("admin-module-settings-test-key", 2))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{
+		Kind: access.PrincipalKindUser, Email: "service-account-settings-admin@example.test", DisplayName: "Settings Admin",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := repository.CreateServicePrincipal(t.Context(), access.ServicePrincipalInput{DisplayName: "Before rename"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	module, err := Build(t.Context(), Config{
+		SettingsAccess: repository,
+		CurrentPrincipal: func(*http.Request) (Principal, bool) {
+			return Principal{ID: actor.ID, DisplayName: actor.DisplayName}, true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	passthrough := func(next http.Handler) http.Handler { return next }
+	router := chi.NewRouter()
+	module.MountAuthenticated(router, RouteGuard{Authenticate: passthrough, RequirePlatformAdmin: passthrough})
+
+	request := httptest.NewRequest(http.MethodPost, "/admin/service-accounts/command", strings.NewReader(`{"adminServiceAccountCommand":{"action":"update","accountId":"`+service.ID+`","displayName":"After rename"}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Request-ID", "service-account-rename-settings")
+	request.Header.Set(uicommand.HeaderOperationID, accessgen.GenUIActionUpdateServicePrincipal().OperationID())
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("rename command status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "After rename") {
+		t.Fatalf("rename response did not expose refreshed signal: %s", recorder.Body.String())
+	}
+
+	reloaded, err := adminsettings.LoadServiceAccounts(t.Context(), repository, service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Items) != 1 || reloaded.Items[0].DisplayName != "After rename" {
+		t.Fatalf("reloaded service-account signal = %#v, want After rename", reloaded.Items)
+	}
+	events, err := repository.ListAuditEvents(t.Context(), access.AuditEventFilter{Action: "service_principal.updated", ResourceID: service.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].PrincipalID != actor.ID || events[0].Status != "success" {
+		t.Fatalf("rename audit events = %#v, want one successful event by %s", events, actor.ID)
 	}
 }
 
