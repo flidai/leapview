@@ -4,7 +4,7 @@ Internal project review; not part of the public documentation catalog.
 
 Date: 2026-09-18; updated 2026-09-20
 
-Status: **Integration and release qualification pending**
+Status: **Integrated; exact-candidate release qualification pending**
 
 ## Current decision — 2026-09-20
 
@@ -14,12 +14,23 @@ against `origin/main` at `e2b0ed621` found migration version collisions and
 four correctness gaps. PostgreSQL diagnostic tests reproduced an ownership
 transfer racing recipient offboarding, duplicate Goose migration version 20,
 and a restricted API token receiving an allowed edit decision. Source review
-also found that OIDC session creation is treated as fresh authentication
-without IdP authentication-time evidence, and an offline recovery retry can
-repeat the password reset. The Linear project has been reopened with specific
-acceptance criteria in FAI-934, FAI-939, FAI-935, FAI-941, FAI-954, FAI-955,
-and FAI-943. The release gate remains open until those issues and the final
-installed-candidate qualification are complete.
+also found that OIDC session creation was treated as fresh authentication
+without IdP authentication-time evidence, and an offline recovery retry could
+repeat the password reset. The integrated branch now serializes principal
+lifecycle changes with ownership transfer, validates OIDC `auth_time`, applies
+request-credential attenuation to authorization explanations, binds recovery
+replays to the whole operation, and places the new PostgreSQL migrations after
+the published mainline revisions. Mainline Settings and refresh behavior were
+preserved; obsolete SQLite control-plane fixtures were removed or ported.
+
+A final security pass also found that an explicit `PROJECT_ADMIN` PAT could
+invoke the platform-administrator REST mutation without recent interactive
+authentication. The REST guard now fails closed for bearer credentials and
+missing freshness wiring; generated-command tests cover grant and revoke.
+The release gate remains open until the corrected exact
+candidate passes `task ci:full` and installed-candidate qualification. The
+reopened Linear acceptance criteria are tracked in FAI-934, FAI-939, FAI-935,
+FAI-941, FAI-954, FAI-955, and FAI-943.
 
 ## Prior candidate decision — 2026-09-18
 

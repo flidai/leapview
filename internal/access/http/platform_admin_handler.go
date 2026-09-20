@@ -221,17 +221,21 @@ func (h Handler) RevokePlatformAdministrator(w stdhttp.ResponseWriter, r *stdhtt
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
-// requireRecentInteractiveBrowserAuth gates browser-session mutations while
-// preserving the existing bearer API contract. API/service credentials are
-// not browser sessions and are evaluated by the normal platform-role policy;
-// the Settings command has an additional explicit rejection for them.
+// requireRecentInteractiveBrowserAuth gates browser-session mutations. API
+// and service credentials are never browser sessions, even when their
+// capability set includes PROJECT_ADMIN, so they must not satisfy this
+// second factor. A missing provider also fails closed: production wiring must
+// prove the server-recorded browser-session authentication time.
 func (h Handler) requireRecentInteractiveBrowserAuth(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {
-	if h.InteractiveAuthentication == nil {
-		return true
-	}
 	if credential, ok := h.currentCredential(r); ok && (credential.Authoring != nil || credential.Token.ID != "") {
 		h.recordDeniedPlatformAttempt(r, "platform_admin.denied", "platform_role_binding", platformAdminRequestTarget(r), access.AuditReasonCredentialAttenuated, nil)
-		return true
+		transport.WriteProblem(w, r, stdhttp.StatusUnauthorized, "RECENT_AUTHENTICATION_REQUIRED", "Recent interactive authentication is required before changing platform authority.", nil)
+		return false
+	}
+	if h.InteractiveAuthentication == nil {
+		h.recordDeniedPlatformAttempt(r, "platform_admin.denied", "platform_role_binding", platformAdminRequestTarget(r), access.AuditReasonConfigurationUnavailable, nil)
+		transport.WriteProblem(w, r, stdhttp.StatusUnauthorized, "RECENT_AUTHENTICATION_REQUIRED", "Recent interactive authentication is required before changing platform authority.", nil)
+		return false
 	}
 	authenticatedAt, ok := h.InteractiveAuthentication(r)
 	if !ok || authenticatedAt.IsZero() {

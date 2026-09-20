@@ -231,6 +231,10 @@ func TestPlatformAdministratorMutationsExecuteGeneratedContracts(t *testing.T) {
 			return Principal{ID: admin.ID, Kind: access.PrincipalKindUser}, true
 		},
 		PlatformAdmin: func(context.Context, string) (bool, error) { return true, nil },
+		InteractiveAuthentication: func(*stdhttp.Request) (time.Time, bool) {
+			return time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC), true
+		},
+		Now: func() time.Time { return time.Date(2026, 9, 18, 0, 10, 0, 0, time.UTC) },
 	}
 
 	grantInvocation := beginPlatformAdminGeneratedInvocation(t, stdhttp.MethodPut, "/api/v1/platform-administrators/first", "grantPlatformAdministrator", first.ID, "grant-first", strconv.Quote(repository.state.Revision))
@@ -311,5 +315,111 @@ func TestPlatformAdministratorBrowserMutationRequiresRecentInteractiveAuthentica
 	}
 	if len(repository.state.Administrators) != 1 {
 		t.Fatalf("stale browser mutation changed administrators: %#v", repository.state.Administrators)
+	}
+}
+
+func TestPlatformAdministratorGeneratedRESTRequiresRecentInteractiveBrowserAuth(t *testing.T) {
+	admin := access.Principal{ID: "admin", Kind: access.PrincipalKindUser, Email: "admin@example.test"}
+	target := access.Principal{ID: "target", Kind: access.PrincipalKindUser, Email: "target@example.test"}
+	repository := &platformAdminMutationRepository{
+		principals: map[string]access.Principal{admin.ID: admin, target.ID: target},
+		state:      access.PlatformAdministratorState{Administrators: []access.PlatformAdministrator{{BindingID: "binding-admin", Principal: admin, Role: access.PlatformRoleAdmin, CreatedAt: "2026-09-15T00:00:00Z"}}},
+	}
+	if err := repository.recomputeRevision(); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 9, 18, 0, 10, 0, 0, time.UTC)
+	authenticatedAt := now.Add(-time.Minute)
+	var credential access.APICredential
+	credentialOK := false
+	handler := Handler{
+		Repository: func() (access.Repository, error) { return repository, nil },
+		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+			return Principal{ID: admin.ID, Kind: access.PrincipalKindUser}, true
+		},
+		PlatformAdmin: func(context.Context, string) (bool, error) { return true, nil },
+		CurrentCredential: func(*stdhttp.Request) (access.APICredential, bool) {
+			return credential, credentialOK
+		},
+		InteractiveAuthentication: func(*stdhttp.Request) (time.Time, bool) {
+			return authenticatedAt, !authenticatedAt.IsZero()
+		},
+		Now: func() time.Time { return now },
+	}
+
+	// A generated REST invocation must fail closed if the browser-session
+	// freshness provider is accidentally omitted.
+	handler.InteractiveAuthentication = nil
+	missingProvider := beginPlatformAdminGeneratedInvocation(t, stdhttp.MethodPut, "/api/v1/platform-administrators/target", "grantPlatformAdministrator", target.ID, "grant-missing-provider", strconv.Quote(repository.state.Revision))
+	missingProviderResponse := httptest.NewRecorder()
+	handler.GrantPlatformAdministrator(missingProviderResponse, missingProvider.request)
+	assertRecentAuthenticationRequired(t, missingProviderResponse, "missing provider")
+	if len(repository.state.Administrators) != 1 {
+		t.Fatalf("missing-provider grant changed administrators: %#v", repository.state.Administrators)
+	}
+	handler.InteractiveAuthentication = func(*stdhttp.Request) (time.Time, bool) {
+		return authenticatedAt, !authenticatedAt.IsZero()
+	}
+
+	// A PAT with the otherwise sufficient PROJECT_ADMIN capability is not a
+	// browser session and must be rejected for both mutation methods.
+	credential = access.APICredential{Token: access.APIToken{ID: "project-admin-pat", Capabilities: []access.Capability{access.CapabilityProjectAdmin}}}
+	credentialOK = true
+	patGrant := beginPlatformAdminGeneratedInvocation(t, stdhttp.MethodPut, "/api/v1/platform-administrators/target", "grantPlatformAdministrator", target.ID, "grant-pat", strconv.Quote(repository.state.Revision))
+	patGrantResponse := httptest.NewRecorder()
+	handler.GrantPlatformAdministrator(patGrantResponse, patGrant.request)
+	assertRecentAuthenticationRequired(t, patGrantResponse, "PAT grant")
+	if len(repository.state.Administrators) != 1 {
+		t.Fatalf("PAT grant changed administrators: %#v", repository.state.Administrators)
+	}
+
+	// A fresh server-recorded browser authentication permits the generated
+	// grant and marks its command invocation complete.
+	credential = access.APICredential{}
+	credentialOK = false
+	freshGrant := beginPlatformAdminGeneratedInvocation(t, stdhttp.MethodPut, "/api/v1/platform-administrators/target", "grantPlatformAdministrator", target.ID, "grant-fresh", strconv.Quote(repository.state.Revision))
+	freshGrantResponse := httptest.NewRecorder()
+	handler.GrantPlatformAdministrator(freshGrantResponse, freshGrant.request)
+	if freshGrantResponse.Code != stdhttp.StatusOK || !freshGrant.guard.Completed() {
+		t.Fatalf("fresh grant status=%d completed=%v body=%s", freshGrantResponse.Code, freshGrant.guard.Completed(), freshGrantResponse.Body.String())
+	}
+
+	credential = access.APICredential{Token: access.APIToken{ID: "project-admin-pat", Capabilities: []access.Capability{access.CapabilityProjectAdmin}}}
+	credentialOK = true
+	patRevoke := beginPlatformAdminGeneratedInvocation(t, stdhttp.MethodDelete, "/api/v1/platform-administrators/target", "revokePlatformAdministrator", target.ID, "revoke-pat", strconv.Quote(repository.state.Revision))
+	patRevokeResponse := httptest.NewRecorder()
+	handler.RevokePlatformAdministrator(patRevokeResponse, patRevoke.request)
+	assertRecentAuthenticationRequired(t, patRevokeResponse, "PAT revoke")
+	if len(repository.state.Administrators) != 2 {
+		t.Fatalf("PAT revoke changed administrators: %#v", repository.state.Administrators)
+	}
+
+	// Freshness is evaluated against the server clock, so a stale browser
+	// session is rejected even though it has no API credential.
+	credential = access.APICredential{}
+	credentialOK = false
+	authenticatedAt = now.Add(-(access.RecentInteractiveAuthenticationWindow + time.Second))
+	staleRevoke := beginPlatformAdminGeneratedInvocation(t, stdhttp.MethodDelete, "/api/v1/platform-administrators/target", "revokePlatformAdministrator", target.ID, "revoke-stale", strconv.Quote(repository.state.Revision))
+	staleRevokeResponse := httptest.NewRecorder()
+	handler.RevokePlatformAdministrator(staleRevokeResponse, staleRevoke.request)
+	assertRecentAuthenticationRequired(t, staleRevokeResponse, "stale revoke")
+	if len(repository.state.Administrators) != 2 {
+		t.Fatalf("stale revoke changed administrators: %#v", repository.state.Administrators)
+	}
+
+	authenticatedAt = now.Add(-time.Minute)
+	freshRevoke := beginPlatformAdminGeneratedInvocation(t, stdhttp.MethodDelete, "/api/v1/platform-administrators/target", "revokePlatformAdministrator", target.ID, "revoke-fresh", strconv.Quote(repository.state.Revision))
+	freshRevokeResponse := httptest.NewRecorder()
+	handler.RevokePlatformAdministrator(freshRevokeResponse, freshRevoke.request)
+	if freshRevokeResponse.Code != stdhttp.StatusNoContent || !freshRevoke.guard.Completed() {
+		t.Fatalf("fresh revoke status=%d completed=%v body=%s", freshRevokeResponse.Code, freshRevoke.guard.Completed(), freshRevokeResponse.Body.String())
+	}
+}
+
+func assertRecentAuthenticationRequired(t *testing.T, response *httptest.ResponseRecorder, name string) {
+	t.Helper()
+	if response.Code != stdhttp.StatusUnauthorized || !strings.Contains(response.Body.String(), "RECENT_AUTHENTICATION_REQUIRED") {
+		t.Fatalf("%s status=%d body=%s, want typed recent-authentication failure", name, response.Code, response.Body.String())
 	}
 }

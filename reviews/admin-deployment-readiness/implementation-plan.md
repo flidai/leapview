@@ -4,7 +4,7 @@ Internal execution plan; not part of the public documentation catalog.
 
 Date: 2026-09-18; updated 2026-09-20
 
-Status: **Reopened for current-main integration and release qualification**
+Status: **Integrated; exact-candidate release qualification pending**
 
 Source review: [Administrator and deployment readiness review](../admin-deployment-readiness.md)
 
@@ -13,16 +13,19 @@ Linear project: [LeapView administrator-managed deployment readiness](https://li
 ## Current integration gate — 2026-09-20
 
 The prior closure below records the earlier standalone PR candidate. PR #659
-still needs integration with `origin/main` and a fresh release gate. The
-remaining issues are FAI-934 (ownership race), FAI-939 (OIDC freshness),
-FAI-935 (credential-aware authorization explanation), FAI-941 (recovery
-replay), FAI-954 (migration collision and main-to-candidate upgrade), FAI-955
-(Settings/runtime integration and removal of superseded work), and FAI-943
-(full CI and installed-candidate qualification). Main already contains
-credential expiry defaults, substantial Settings refinements, and refresh
-recovery work; these must be preserved while merging the still-needed
-administrator controls. Completion requires the integrated candidate commit,
-upgrade evidence, browser/API journeys, and Docker/Compose qualification.
+has now been integrated with `origin/main` while preserving main's credential
+expiry defaults, Settings refinements, and partition-fenced refresh recovery.
+The PR migrations follow main's published revisions 020–022 at 023–027, and
+the production control plane and relevant tests use PostgreSQL rather than
+retired SQLite adapters. Focused PostgreSQL tests cover the ownership race,
+OIDC freshness, credential-aware authorization, recovery replay, and migration
+replay/upgrade. A final security pass found an additional REST platform-role
+PAT bypass; its recent-interactive-auth guard now fails closed for PATs and
+missing freshness wiring, with generated REST regression tests. FAI-934,
+FAI-939, FAI-935, FAI-941, FAI-954,
+and FAI-955 need final verification/status updates; FAI-943 remains open until
+the integrated exact candidate passes `task ci:full`, generated checks,
+browser/API journeys, and installed-candidate Docker/Compose qualification.
 
 ## Linear delivery breakdown
 

@@ -6,6 +6,7 @@ import (
 	stdhttp "net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 )
@@ -29,6 +30,9 @@ func TestPlatformAdministratorStaleAttemptPersistsScopedDenialEvidence(t *testin
 			return Principal{ID: admin.ID, Kind: access.PrincipalKindUser}, true
 		},
 		PlatformAdmin: func(context.Context, string) (bool, error) { return true, nil },
+		InteractiveAuthentication: func(*stdhttp.Request) (time.Time, bool) {
+			return time.Now().UTC(), true
+		},
 	}
 	request := requestWithRouteParam(stdhttp.MethodPut, "/api/v1/platform-administrators/"+target.ID, "principal", target.ID)
 	request.Header.Set("If-Match", `"stale"`)
