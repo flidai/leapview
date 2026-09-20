@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/admin/product"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 )
@@ -59,6 +60,40 @@ func TestReadModelMarksControlPlaneUnavailable(t *testing.T) {
 	}
 	if data.Status.System.ControlPlane != "unavailable" || Signal(data).System.Runtime.Health != "degraded" {
 		t.Fatalf("status = %#v signal=%#v", data.Status.System, Signal(data).System.Runtime)
+	}
+}
+
+type platformAuthorityReader struct {
+	state access.PlatformAdministratorState
+}
+
+func (reader platformAuthorityReader) ListPlatformAdminAuthorities(context.Context) (access.PlatformAdministratorState, error) {
+	return reader.state, nil
+}
+
+func TestSignalIncludesCurrentAndRevokedPlatformAuthorityWithoutCredentials(t *testing.T) {
+	service, err := testProductService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedAt := "2026-09-10T00:00:00Z"
+	model := ReadModel{Service: service, PlatformAdministration: platformAuthorityReader{state: access.PlatformAdministratorState{
+		Revision: "revision-1",
+		Administrators: []access.PlatformAdministrator{
+			{BindingID: "binding-current", Principal: access.Principal{ID: "local", Email: "local@example.test", DisplayName: "Local"}, Role: access.PlatformRoleAdmin, CreatedAt: "2026-09-01T00:00:00Z"},
+			{BindingID: "binding-revoked", Principal: access.Principal{ID: "external", Email: "external@example.test", DisplayName: "External"}, Role: access.PlatformRoleAdmin, CreatedAt: "2026-08-01T00:00:00Z", RevokedAt: revokedAt},
+		},
+	}}}
+	data, err := model.Data(t.Context(), "authentication", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signal := Signal(data)
+	if !signal.Authentication.PlatformAdministrationAvailable || signal.Authentication.PlatformAdministrationRevision != "revision-1" {
+		t.Fatalf("authority metadata = %#v", signal.Authentication)
+	}
+	if len(signal.Authentication.PlatformAdministrators) != 2 || signal.Authentication.PlatformAdministrators[1].RevokedAt == nil || *signal.Authentication.PlatformAdministrators[1].RevokedAt != revokedAt {
+		t.Fatalf("authority rows = %#v", signal.Authentication.PlatformAdministrators)
 	}
 }
 

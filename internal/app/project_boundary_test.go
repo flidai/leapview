@@ -25,7 +25,7 @@ func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
 	admin := testPlatformPrincipal(t, ctx, store, "audit-boundary@example.com", "Audit Boundary")
-	token := testAPIToken(t, ctx, store, admin.ID, "audit-boundary")
+	token := testPlatformAPIToken(t, ctx, store, admin.ID, "audit-boundary")
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})}))
 	if err := candidateSourceAuditRecorder(server.routes.accessModule)(ctx, deploymentmodule.CandidateSourceAuditEvent{
 		PrincipalID: admin.ID, ProjectID: testProjectID, Action: "candidate.source.resolved",

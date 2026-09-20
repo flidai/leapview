@@ -47,11 +47,11 @@ Secure cookies must remain enabled for browser auth. With secure cookies enabled
 
 The issuer URL and the token's subject claim form identity. Do not map identity by email alone: email addresses can be renamed or reassigned. Profile changes may update display metadata while privileges remain attached to the same principal.
 
-LeapView intentionally does not treat OIDC group claims as the enterprise group source of truth. Use SCIM for directory users, groups, and membership, then use LeapView grants and role bindings for product authorization.
+LeapView intentionally does not treat OIDC group claims as the enterprise group source of truth. Use SCIM for directory users, groups, and membership, then use LeapView project-authored grants and role bindings for product authorization.
 
 ## Assign access
 
-A successful login can still result in no visible project resource. OIDC proves who the user is; it does not grant product access. Bind a provisioned or known principal/group to an appropriate project role or explicit grant.
+A successful login can still result in no visible project resource. OIDC proves who the user is; it does not grant product access. Bind a provisioned or known principal/group to an appropriate project role, or add an explicit grant to the project access declaration before compiling a new serving generation.
 
 Test with a non-administrator user. An owner account can hide missing group provisioning or role binding because it already has broad access.
 

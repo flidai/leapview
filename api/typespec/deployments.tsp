@@ -443,6 +443,36 @@ model DeliveryPublicationEvidenceResponse {
   completedAt?: utcDateTime;
 }
 
+model DeliveryPublicationListResponse {
+  items: DeliveryPublicationEvidenceResponse[];
+  page: PageInfo;
+}
+
+model DeliveryRetainedGenerationListResponse {
+  items: DeliveryGenerationStatusResponse[];
+  page: PageInfo;
+}
+
+model DeliveryPlanListResponse {
+  items: DeliveryPlanPreviewResponse[];
+  page: PageInfo;
+}
+
+model DeliveryBuildAttemptListResponse {
+  items: DeliveryBuildStatusResponse[];
+  page: PageInfo;
+}
+
+model DeliveryCandidateListResponse {
+  items: DeliveryCandidateStatusResponse[];
+  page: PageInfo;
+}
+
+model DeliveryApprovalRequestListResponse {
+  items: DeploymentApprovalResponse[];
+  page: PageInfo;
+}
+
 model DeliveryPhysicalPoolAdmissionView {
   poolId: string;
   identityDigest: string;
@@ -495,6 +525,10 @@ model DeliveryWriterLeaseView {
 }
 
 model DeliveryOperatorSnapshotResponse {
+  // Native PostgreSQL currently owns only target identity/revision and the
+  // active pointer. Retention, pool, and lease inventories are exposed by
+  // their owning authorities and are intentionally not part of this bounded
+  // snapshot contract.
   projectId: ResourceId;
   environment: string;
   targetId: string;
@@ -502,10 +536,6 @@ model DeliveryOperatorSnapshotResponse {
   activeGeneration?: string;
   degraded: boolean;
   degradedReasons: string[];
-  physicalPools: DeliveryPhysicalPoolAdmissionView[];
-  roots: DeliveryRootView[];
-  queryLeases: DeliveryQueryLeaseView[];
-  writerLeases: DeliveryWriterLeaseView[];
 }
 
 model DeliveryPlanRequest {
@@ -1048,6 +1078,66 @@ interface DeliveryStatus {
   @apigen.failsWith(DeliveryIdempotencyDriftFailure)
   @apigen.failsWith(DeliveryMutationInvalidFailure)
   rollbackDeliveryGeneration(@path @apigen.target project: ResourceId, @path generation: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<DeliveryPublicationEvidenceResponse> | CommonErrors;
+
+  @summary("List native delivery publications for the target")
+  @route("/publications")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-audit-action", "delivery.publication.list")
+  @apigen.failsWith(DeliveryReadUnavailableFailure)
+  @apigen.failsWith(DeliveryReadInvalidFailure)
+  listDeliveryPublications(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeliveryPublicationListResponse> | CommonErrors;
+
+  @summary("List currently retained native delivery generations for the target")
+  @route("/generations")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-audit-action", "delivery.generation.list")
+  @apigen.failsWith(DeliveryReadUnavailableFailure)
+  @apigen.failsWith(DeliveryReadInvalidFailure)
+  listRetainedDeliveryGenerations(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeliveryRetainedGenerationListResponse> | CommonErrors;
+
+  @summary("List native delivery plans for the target")
+  @route("/plans")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-audit-action", "delivery.plan.list")
+  @apigen.failsWith(DeliveryReadUnavailableFailure)
+  @apigen.failsWith(DeliveryReadInvalidFailure)
+  listDeliveryPlans(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeliveryPlanListResponse> | CommonErrors;
+
+  @summary("List native delivery build attempts for the target")
+  @route("/builds")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-audit-action", "delivery.build.list")
+  @apigen.failsWith(DeliveryReadUnavailableFailure)
+  @apigen.failsWith(DeliveryReadInvalidFailure)
+  listDeliveryBuildAttempts(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeliveryBuildAttemptListResponse> | CommonErrors;
+
+  @summary("List native delivery candidates for the target")
+  @route("/candidates")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-audit-action", "delivery.candidate.list")
+  @apigen.failsWith(DeliveryReadUnavailableFailure)
+  @apigen.failsWith(DeliveryReadInvalidFailure)
+  listDeliveryCandidates(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeliveryCandidateListResponse> | CommonErrors;
+
+  @summary("List native delivery approval requests for the target")
+  @route("/approval-requests")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-audit-action", "delivery.approval_request.list")
+  @apigen.failsWith(DeliveryReadUnavailableFailure)
+  @apigen.failsWith(DeliveryReadInvalidFailure)
+  listDeliveryApprovalRequests(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<DeliveryApprovalRequestListResponse> | CommonErrors;
 
   @summary("Preview one immutable delivery plan and its durable evidence")
   @route("/plans/{plan}")

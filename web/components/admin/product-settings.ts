@@ -23,6 +23,7 @@ const emptyProductSettings: ProductSettingsSignal = {
     browserEnabled: false, apiTokenOnly: false,
     local: { available: false, enabled: false }, oidc: { available: false, enabled: false },
     azure: { available: false, enabled: false }, scim: { available: false, enabled: false }, managedBy: 'deployment',
+    platformAdministrators: [], platformAdministrationRevision: '', platformAdministrationAvailable: false,
   },
   api: {
     bearerCredentials: { available: false, enabled: false }, servicePrincipals: { available: false, enabled: false },
@@ -48,10 +49,15 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
   @state() private busy = false
   @state() private commandBusy = false
   @state() private commandError = ''
+  @state() private platformCommandBusy = false
+  @state() private platformCommandError = ''
+  @state() private platformPrincipalDraft = ''
   @state() private message = ''
   private lastRevision = -1
   private pendingRevision = -1
   private pendingError = ''
+  private pendingPlatformRevision = ''
+  private pendingPlatformError = ''
 
   override connectedCallback(): void {
     super.connectedCallback()
@@ -69,6 +75,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     .panel { display: grid; min-width: 0; gap: var(--base-size-16); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); padding: var(--base-size-20); }
     .panel h2, .panel h3, .panel p { margin: 0; }
     .panel h2 { font: var(--lv-type-section-title); }
+    .panel h3.section-title { font: var(--lv-type-section-title); }
     .panel h3 { font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
     .panel-heading { display: grid; min-width: 0; gap: var(--base-size-4); }
     .hint { color: var(--lv-fg-muted); font: var(--lv-type-caption); line-height: var(--base-text-lineHeight-snug); }
@@ -135,6 +142,10 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     if (this.commandBusy && (revision !== this.pendingRevision || (settings.error ?? '') !== this.pendingError)) {
       this.commandBusy = false
     }
+    const platformRevision = settings.authentication.platformAdministrationRevision
+    if (this.platformCommandBusy && (platformRevision !== this.pendingPlatformRevision || (settings.error ?? '') !== this.pendingPlatformError)) {
+      this.platformCommandBusy = false
+    }
     const active = settings.active as ProductSection
     if ((active === 'general' || active === 'authentication' || active === 'system') && active !== this.selectedSection) this.selectedSection = active
   }
@@ -149,6 +160,8 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
         ${this.selectedSection === 'system' ? this.renderSystem(settings.system) : nothing}
         ${this.commandError ? html`<div class="notice" role="alert">${this.commandError}</div>` : nothing}
         ${this.message ? html`<div class="message" role="status">${this.message}</div>` : nothing}
+        ${this.platformCommandError ? html`<div class="notice" role="alert">${this.platformCommandError}</div>` : nothing}
+        ${this.platformCommandBusy ? html`<div class="message" role="status" aria-live="polite">Updating platform authority…</div>` : nothing}
       </div>
     `
   }
@@ -247,6 +260,31 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           ${this.statusCard('External MCP issuer', statusTone(api.externalMcpIssuer), api.externalMcpIssuer ? 'Configured' : 'Not configured')}
         </div>
       </section>
+      <section class="panel" aria-label="Platform authority settings">
+        <div class="panel-heading">
+          <h3 class="section-title">Platform authority</h3>
+          <p class="hint">Grant and revoke platform administrator bindings. Changes require a recent interactive browser sign-in; service credentials cannot perform them.</p>
+        </div>
+        ${!auth.platformAdministrationAvailable
+          ? html`<div class="notice" role="alert">${auth.platformAdministrationError || 'Platform authority history is unavailable.'}</div>`
+          : html`
+            <div class="inline">
+              <input id="platform-administrator-principal" aria-label="Principal ID" type="text" placeholder="Principal ID" .value=${this.platformPrincipalDraft} @input=${this.handlePlatformPrincipalInput} ?disabled=${!this.settings.canManage || this.platformCommandBusy}>
+              <button class="action primary" type="button" ?disabled=${!this.settings.canManage || this.platformCommandBusy || !this.platformPrincipalDraft.trim()} @click=${this.grantPlatformAdministrator}>${this.platformCommandBusy ? 'Granting…' : 'Grant platform administrator'}</button>
+            </div>
+            <div class="status-grid" aria-label="Platform authority bindings">
+              ${auth.platformAdministrators.length === 0
+                ? html`<div class="notice">No platform authority bindings have been recorded.</div>`
+                : auth.platformAdministrators.map((administrator) => html`
+                  <div class="status-card">
+                    <strong>${administrator.displayName || administrator.email || administrator.principalId}</strong>
+                    <span class="settings-value">${administrator.email || administrator.principalId} · ${administrator.role}</span>
+                    <span class=${`status ${administrator.revokedAt ? 'disabled' : 'enabled'}`}>${administrator.revokedAt ? `Revoked ${administrator.revokedAt}` : `Granted ${administrator.grantedAt}`}</span>
+                    ${administrator.revokedAt ? nothing : html`<button class="action danger" type="button" ?disabled=${this.platformCommandBusy} @click=${() => this.revokePlatformAdministrator(administrator.principalId)}>${this.platformCommandBusy ? 'Revoking…' : 'Revoke'}</button>`}
+                  </div>
+                `)}
+            </div>`}
+      </section>
     `
   }
 
@@ -339,6 +377,31 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     this.emitCommand({ action: 'reset_identity', revision: this.settings.general.revision })
   }
 
+  private handlePlatformPrincipalInput = (event: Event): void => {
+    this.platformPrincipalDraft = (event.currentTarget as HTMLInputElement).value
+  }
+
+  private grantPlatformAdministrator = (): void => {
+    this.emitPlatformAdministratorCommand('grant_platform_administrator', this.platformPrincipalDraft.trim())
+  }
+
+  private revokePlatformAdministrator = (principalId: string): void => {
+    this.emitPlatformAdministratorCommand('revoke_platform_administrator', principalId)
+  }
+
+  private emitPlatformAdministratorCommand(action: 'grant_platform_administrator' | 'revoke_platform_administrator', principalId: string): void {
+    this.commandError = ''
+    this.platformCommandError = ''
+    this.message = ''
+    this.platformCommandBusy = true
+    this.pendingPlatformRevision = this.settings.authentication.platformAdministrationRevision
+    this.pendingPlatformError = this.settings.error ?? ''
+    this.dispatchEvent(new CustomEvent<ProductSettingsCommand>('lv-platform-administrator-command', {
+      bubbles: true, composed: true,
+      detail: { action, principalId, expectedRevision: this.settings.authentication.platformAdministrationRevision, revision: 0 },
+    }))
+  }
+
   private emitCommand(command: ProductSettingsCommand): void {
     this.commandError = ''
     if (command.action !== 'refresh') {
@@ -351,11 +414,16 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
   }
 
   private handleDatastarFetch = (event: Event): void => {
-    if (!this.commandBusy) return
-    const failure = browserCommandFailure(event, 'Product settings update')
+    if (!this.commandBusy && !this.platformCommandBusy) return
+    const failure = browserCommandFailure(event, this.platformCommandBusy ? 'Platform authority update' : 'Product settings update')
     if (!failure) return
-    this.commandBusy = false
-    this.commandError = failure.message
+    if (this.platformCommandBusy) {
+      this.platformCommandBusy = false
+      this.platformCommandError = failure.message
+    } else {
+      this.commandBusy = false
+      this.commandError = failure.message
+    }
   }
 
   private handleLogoFile = async (event: Event): Promise<void> => {

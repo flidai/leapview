@@ -28,7 +28,10 @@ func BuildAuditIntent(ctx context.Context, input agenthttp.CommandAuditInput) (*
 	if command.AuthzMode == "authenticated" && strings.TrimSpace(command.Privilege) == "" {
 		capability, ok = access.CapabilityResourceUse, true
 	}
-	if !ok || (command.AuthzMode != "privilege" && command.AuthzMode != "authenticated") || contract.AuthzMode != command.AuthzMode {
+	if command.AuthzMode == "platform_admin" && strings.TrimSpace(command.Privilege) == "" {
+		capability, ok = access.CapabilityProjectAdmin, true
+	}
+	if !ok || (command.AuthzMode != "privilege" && command.AuthzMode != "authenticated" && command.AuthzMode != "platform_admin") || contract.AuthzMode != command.AuthzMode {
 		return nil, fmt.Errorf("generated agent command contract %q has invalid authorization", operationID)
 	}
 	targetType := strings.TrimSpace(input.TargetType)
@@ -78,7 +81,10 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 	if command.AuthzMode == "authenticated" && strings.TrimSpace(command.Privilege) == "" {
 		capability, ok = access.CapabilityResourceUse, true
 	}
-	if !ok || (command.AuthzMode != "privilege" && command.AuthzMode != "authenticated") || contract.AuthzMode != command.AuthzMode {
+	if command.AuthzMode == "platform_admin" && strings.TrimSpace(command.Privilege) == "" {
+		capability, ok = access.CapabilityProjectAdmin, true
+	}
+	if !ok || (command.AuthzMode != "privilege" && command.AuthzMode != "authenticated" && command.AuthzMode != "platform_admin") || contract.AuthzMode != command.AuthzMode {
 		return fmt.Errorf("generated agent command contract %q has invalid authorization", input.OperationID)
 	}
 	if m == nil || m.recordAudit == nil {

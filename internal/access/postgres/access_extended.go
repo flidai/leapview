@@ -51,6 +51,22 @@ func (r *Repository) DeletePrincipal(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if _, err := r.lockPlatformAdminAuthority(ctx, tx, id); err != nil {
+		return err
+	}
+	if _, err := lockPrincipalLifecycle(ctx, tx, id); err != nil {
+		return err
+	}
+	// Ownership is checked after opening the same transaction that will write
+	// the lifecycle tombstone.  A principal or service principal cannot be
+	// deleted while a canonical owning authority still reports live objects.
+	txRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey, ownership: r.ownership}
+	if err := txRepo.EnsureOffboardingSafe(ctx, id); err != nil {
+		return err
+	}
+	if _, err := accessdb.New(tx).RevokePlatformRole(ctx, principalID); err != nil {
+		return err
+	}
 	tag, err := accessdb.New(tx).RevokePrincipal(ctx, principalID)
 	if err != nil {
 		return err
@@ -96,6 +112,18 @@ func (r *Repository) setPrincipalDisabled(ctx context.Context, id string, provis
 	if err != nil {
 		return access.Principal{}, err
 	}
+	if _, err := r.lockPlatformAdminAuthority(ctx, tx, id); err != nil {
+		return access.Principal{}, err
+	}
+	lockedPrincipal, err := lockPrincipalLifecycle(ctx, tx, id)
+	if err != nil {
+		return access.Principal{}, err
+	}
+	if disabled {
+		if err := r.rejectLastUsablePlatformAdministrator(ctx, tx, id); err != nil {
+			return access.Principal{}, err
+		}
+	}
 	if disabled {
 		// Provisioned and administrator disables have separate call sites but
 		// share the same durable state transition. A block is represented by
@@ -113,6 +141,14 @@ func (r *Repository) setPrincipalDisabled(ctx context.Context, id string, provis
 	}
 	if tag.RowsAffected() == 0 {
 		return access.Principal{}, pgx.ErrNoRows
+	}
+	// A lifecycle transition is a durable authority transition too. Revoking
+	// before disabling prevents EnablePrincipal from silently reviving a role
+	// that was granted under the principal's previous lifecycle.
+	if disabled || lockedPrincipal.Status != "active" || lockedPrincipal.DisabledAt.Valid || lockedPrincipal.BlockedAt.Valid {
+		if _, err := accessdb.New(tx).RevokePlatformRole(ctx, principalID); err != nil {
+			return access.Principal{}, err
+		}
 	}
 	if disabled {
 		if err = accessdb.New(tx).RevokePrincipalSessions(ctx, principalID); err != nil {
@@ -179,7 +215,7 @@ func (r *Repository) ListServicePrincipalSecrets(ctx context.Context, principalI
 	out := make([]access.ServicePrincipalSecret, 0, len(rows))
 	for _, row := range rows {
 		value := access.ServicePrincipalSecret{ID: principalUUID(row.ID), ServicePrincipalID: principalUUID(row.ServicePrincipalID), Name: row.Name,
-			ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
+			ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
 		out = append(out, value)
 	}
 	return out, nil
@@ -211,7 +247,7 @@ func (r *Repository) GetServicePrincipalSecret(ctx context.Context, principalID,
 		return access.ServicePrincipalSecret{}, err
 	}
 	return access.ServicePrincipalSecret{ID: principalUUID(row.ID), ServicePrincipalID: principalUUID(row.ServicePrincipalID), Name: row.Name,
-		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), RevokedAt: principalTimestamp(row.RevokedAt)}, nil
+		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}, nil
 }
 
 func (r *Repository) PrincipalPreferences(ctx context.Context, principalID string) (access.PrincipalPreferences, error) {

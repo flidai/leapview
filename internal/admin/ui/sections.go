@@ -1,6 +1,17 @@
 package ui
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
+
+func adminGroupHref(groupID string) string {
+	return "/admin/groups/" + url.PathEscape(groupID)
+}
+
+func adminPrincipalHref(principalID string) string {
+	return "/admin/principals/" + url.PathEscape(principalID)
+}
 
 func adminPageTitle(active string) string {
 	switch active {
@@ -26,6 +37,8 @@ func adminPageTitle(active string) string {
 		return "Group"
 	case "service-accounts":
 		return "Service accounts"
+	case "access":
+		return "Access settings"
 	case "service-accounts-new":
 		return "New service account"
 	case "authentication":
@@ -44,15 +57,18 @@ func adminPageTitle(active string) string {
 		return "System"
 	case "publications":
 		return "Publications"
+	case "delivery":
+		return "Delivery"
 	default:
 		return "Profile"
 	}
 }
 
 func normalizeAdminSection(active string) string {
-	switch strings.TrimSpace(active) {
-	case "profile", "security", "api-tokens", "api-token-new", "archived-chats", "general", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "service-accounts-new", "authentication", "agent", "storage", "storage-detail", "queries", "audit", "system", "publications":
-		return strings.TrimSpace(active)
+	active = strings.TrimSpace(active)
+	switch active {
+	case "profile", "security", "api-tokens", "api-token-new", "archived-chats", "general", "principals", "principal-detail", "groups", "group-detail", "access", "service-accounts", "service-accounts-new", "authentication", "agent", "storage", "storage-detail", "queries", "audit", "system", "publications", "delivery":
+		return active
 	default:
 		return "profile"
 	}

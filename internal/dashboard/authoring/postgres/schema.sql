@@ -189,7 +189,8 @@ AS $$
 BEGIN
     IF OLD.project_id IS DISTINCT FROM NEW.project_id
        OR OLD.dashboard_id IS DISTINCT FROM NEW.dashboard_id
-       OR OLD.owner_principal_id IS DISTINCT FROM NEW.owner_principal_id
+       OR (OLD.owner_principal_id IS DISTINCT FROM NEW.owner_principal_id
+           AND COALESCE(current_setting('dashboard.owner_transfer', true), '') <> 'on')
        OR OLD.created_at IS DISTINCT FROM NEW.created_at THEN
         RAISE EXCEPTION 'authoring dashboard identity is immutable';
     END IF;
@@ -276,6 +277,11 @@ DROP TRIGGER IF EXISTS authoring_dashboards_mutation ON dashboard.authoring_dash
 CREATE TRIGGER authoring_dashboards_mutation
     BEFORE UPDATE ON dashboard.authoring_dashboards
     FOR EACH ROW EXECUTE FUNCTION dashboard.guard_authoring_dashboard_update();
+
+-- Ownership reassignment is a narrow, transaction-local capability used by
+-- the administrator offboarding workflow. The runtime role has no direct
+-- projection UPDATE privilege; the marker is set only on the caller-owned
+-- transaction immediately before the explicit transfer update.
 DROP TRIGGER IF EXISTS authoring_drafts_mutation ON dashboard.authoring_drafts;
 CREATE TRIGGER authoring_drafts_mutation
     BEFORE UPDATE ON dashboard.authoring_drafts

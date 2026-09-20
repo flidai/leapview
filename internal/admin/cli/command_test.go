@@ -24,6 +24,13 @@ type fakeOperations struct {
 	recoveryPrepareResult   RecoveryPrepareResult
 	recoveryValidateResult  RecoveryValidateResult
 	recoveryPublishResult   RecoveryPublishResult
+	platformRecoveryRequest PlatformAdminRecoveryRequest
+}
+
+func (operations *fakeOperations) RecoverPlatformAdministrator(_ context.Context, request PlatformAdminRecoveryRequest, _ io.Writer) error {
+	operations.called = "recover-platform-admin"
+	operations.platformRecoveryRequest = request
+	return nil
 }
 
 func (operations *fakeOperations) Initialize(context.Context, adminoffline.InitializeRequest, io.Writer) error {
@@ -113,6 +120,47 @@ func TestCommandRequiresOperations(t *testing.T) {
 	err := command.Execute()
 	if err == nil || !strings.Contains(err.Error(), "operations are required") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCommandRoutesOfflinePlatformAdministratorRecovery(t *testing.T) {
+	operations := &fakeOperations{}
+	command := Command(context.Background(), operations)
+	command.SetArgs([]string{"access", "recover-platform-admin",
+		"--principal-id", "0198f2c0-7c7a-7f00-8a11-000000000001",
+		"--expected-email", "operator@example.com",
+		"--operation-id", "0198f2c0-7c7a-7f00-8a11-000000000002",
+		"--expected-revision", "sha256:preview",
+		"--local-password-file", "/run/secrets/recovery-password",
+		"--acknowledge-offline-recovery", "--acknowledge-credential-reset", "--apply"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	request := operations.platformRecoveryRequest
+	if operations.called != "recover-platform-admin" || request.PrincipalID != "0198f2c0-7c7a-7f00-8a11-000000000001" ||
+		request.ExpectedEmail != "operator@example.com" || request.OperationID != "0198f2c0-7c7a-7f00-8a11-000000000002" ||
+		request.ExpectedRevision != "sha256:preview" ||
+		request.LocalPasswordFile != "/run/secrets/recovery-password" ||
+		!request.AcknowledgeOfflineRecovery || !request.AcknowledgeCredentialReset || !request.Apply {
+		t.Fatalf("recovery dispatch = called %q request %#v", operations.called, request)
+	}
+}
+
+func TestCommandRejectsIncompleteOfflinePlatformAdministratorRecovery(t *testing.T) {
+	tests := [][]string{
+		{"access", "recover-platform-admin", "--expected-email", "operator@example.com", "--operation-id", "operation", "--acknowledge-offline-recovery"},
+		{"access", "recover-platform-admin", "--principal-id", "principal", "--operation-id", "operation", "--acknowledge-offline-recovery"},
+		{"access", "recover-platform-admin", "--principal-id", "principal", "--expected-email", "operator@example.com", "--acknowledge-offline-recovery"},
+		{"access", "recover-platform-admin", "--principal-id", "principal", "--expected-email", "operator@example.com", "--operation-id", "operation"},
+		{"access", "recover-platform-admin", "--principal-id", "0198f2c0-7c7a-7f00-8a11-000000000001", "--expected-email", "operator@example.com", "--operation-id", "0198f2c0-7c7a-7f00-000000000002", "--acknowledge-offline-recovery", "--apply"},
+		{"access", "recover-platform-admin", "--principal-id", "0198f2c0-7c7a-7f00-8a11-000000000001", "--expected-email", "operator@example.com", "--operation-id", "0198f2c0-7c7a-7f00-8a11-000000000002", "--expected-revision", "sha256:preview", "--local-password-file", "/run/secrets/recovery-password", "--acknowledge-offline-recovery", "--apply"},
+	}
+	for _, args := range tests {
+		command := Command(context.Background(), &fakeOperations{})
+		command.SetArgs(args)
+		if err := command.Execute(); err == nil {
+			t.Fatalf("incomplete recovery accepted: %v", args)
+		}
 	}
 }
 

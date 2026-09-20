@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	accessownership "github.com/flidai/leapview/internal/access/ownership"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	adminproductpostgres "github.com/flidai/leapview/internal/admin/product/postgres"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
@@ -77,6 +78,7 @@ type PostgresAuthorityGraph struct {
 	Project      *projectpostgres.Repository
 	Access       *accesspostgres.Repository
 	AccessAudit  *accesspostgres.AuditRepository
+	Ownership    *accessownership.Inventory
 	Product      *adminproductpostgres.Repository
 	ProductAudit *productaudit.Adapter
 
@@ -306,6 +308,15 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 	if !ok || agentRepository == nil {
 		return nil, errors.New("construct PostgreSQL agent persistence: native repository is unavailable")
 	}
+	ownershipInventory, err := accessownership.New(
+		accesspostgres.NewSemanticAttributeOwnershipAuthority(runtime),
+		dashboardAuthoring,
+		agentRepository,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL ownership inventory: %w", err)
+	}
+	accessRepository.SetOwnershipGuard(ownershipInventory)
 	managedDataAudit := manageddataaudit.NewWithRepository(audit)
 	managedDataRepository := manageddatapostgres.NewWithOptions(runtime, manageddatapostgres.Options{
 		Workflow: manageddataworkflow.New(jobs), Audit: managedDataAudit,
@@ -369,7 +380,7 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 	graph := &PostgresAuthorityGraph{
 		Bootstrap: bootstrap,
 		Operation: operations, Jobs: jobs, Events: events,
-		Project: project, Access: accessRepository, AccessAudit: audit, Product: product, ProductAudit: productAudit,
+		Project: project, Access: accessRepository, AccessAudit: audit, Ownership: ownershipInventory, Product: product, ProductAudit: productAudit,
 		Idempotency:       idempotencypostgres.NewStoreFromRepository(operations),
 		CursorSigning:     cursorsigningpostgres.NewRepository(runtime),
 		ConnectionBinding: binding, ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), Lineage: lineageRepository,
@@ -462,6 +473,7 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		{"operation authority", g.Operation},
 		{"jobs authority", g.Jobs}, {"event authority", g.Events}, {"project authority", g.Project},
 		{"access authority", g.Access}, {"access audit authority", g.AccessAudit}, {"product authority", g.Product}, {"product audit authority", g.ProductAudit},
+		{"ownership inventory", g.Ownership},
 		{"idempotency authority", g.Idempotency}, {"cursor-signing authority", g.CursorSigning},
 		{"connection-binding authority", g.ConnectionBinding}, {"connection-binding audit authority", g.ConnectionBindingAudit}, {"query-audit authority", g.QueryAudit}, {"lineage authority", g.Lineage},
 		{"physical-pool authority", g.PhysicalPool}, {"DuckLake control ledger authority", g.DuckLakeControlLedger}, {"serving-state authority", g.ServingState},

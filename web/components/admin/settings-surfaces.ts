@@ -1,4 +1,4 @@
-import { LitElement, html, nothing } from 'lit'
+import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { Bot, CalendarDays, CircleSlash2, Info, Pencil, Plus, Trash2, UserPlus, X } from 'lucide'
 import { DatastarLit } from '../shared/datastar-lit'
@@ -8,7 +8,9 @@ import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import { settingsSurfaceStyles } from './settings-surfaces.styles'
 import { identitySourceLabel, principalInitials, currentPrincipalAvatarUrl, initialsForValue, memberActionLabel, formatAccessDate, humanizeAccessValue, principalActivityLabel, formValue } from './settings-surfaces.helpers'
-import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditEventSignal, AuditLogFilters, AuditLogSignal, ServiceAccountSecretSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
+import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, ServiceAccountSecretSignal, ServiceAccountSignal, ServiceAccountsSignal } from '../../generated/signals'
+import './access-settings'
+import './settings-audit'
 import '../shared/entity-list'
 import '../shared/user-avatar'
 import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
@@ -16,10 +18,122 @@ import '../shared/entity-multi-select'
 import '../shared/one-time-secret'
 import '../shared/record-table'
 import type { EntityMultiSelectItem } from '../shared/entity-multi-select'
+
+const tableStyles = css`
+  :host { display: block; color: var(--lv-fg-default); font: var(--lv-type-body); font-family: var(--fontStack-system); }
+  .surface { display: grid; gap: 12px; min-width: 0; }
+  h2, h3, p { margin: 0; }
+  h2 { font: var(--lv-type-section-title); }
+  h3 { font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
+  .muted { color: var(--lv-fg-muted); }
+  .error { color: var(--lv-fg-danger); }
+  .table-wrap { overflow-x: auto; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); }
+  table { width: 100%; min-width: 620px; border-collapse: collapse; }
+  th, td { padding: var(--base-size-8) var(--base-size-12); text-align: left; border-bottom: var(--lv-border-muted); vertical-align: top; }
+  th { color: var(--lv-fg-muted); font: var(--lv-type-caption); text-transform: uppercase; letter-spacing: .03em; }
+  tbody tr:last-child td { border-bottom: 0; }
+  a { color: var(--lv-fg-link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  button, input, select { box-sizing: border-box; min-height: var(--lv-control-small); border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-bg-control); color: inherit; padding: var(--base-size-4) var(--base-size-8); font: inherit; }
+  button { cursor: pointer; }
+  button[disabled] { cursor: default; opacity: .55; }
+  .toolbar, .form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+  label { display: grid; gap: var(--base-size-4); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .empty { padding: var(--base-size-20) var(--base-size-12); color: var(--lv-fg-muted); }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .notice { border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); padding: var(--base-size-12); }
+  .state-banner { border: var(--lv-border-attention, var(--lv-border-muted)); border-radius: var(--lv-radius-default); background: var(--lv-bg-attention-muted, var(--lv-bg-panel-muted)); padding: var(--base-size-12); }
+  .state-banner.error { border-color: var(--lv-border-danger, var(--lv-border-muted)); background: var(--lv-bg-danger-muted, var(--lv-bg-panel-muted)); color: var(--lv-fg-danger); }
+  .danger { color: var(--lv-fg-danger); }
+  code { overflow-wrap: anywhere; }
+  .technical-details { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .technical-details summary { cursor: pointer; }
+  dialog { width: min(30rem, calc(100vw - var(--base-size-32))); max-width: none; max-height: calc(100svh - var(--base-size-32)); overflow: auto; border: 0; border-radius: var(--lv-radius-large); background: transparent; color: inherit; padding: 0; }
+  dialog::backdrop { background: var(--lv-modal-backdrop); }
+  .modal { display: grid; overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); }
+  .modal-header { display: flex; align-items: start; justify-content: space-between; gap: var(--base-size-16); border-bottom: var(--lv-border-muted); padding: var(--base-size-16) var(--base-size-20); }
+  .modal-title { display: grid; gap: var(--base-size-4); }
+  .modal-title h2 { font: var(--lv-type-section-title); }
+  .modal-close { display: inline-flex; width: var(--control-medium-size); min-height: var(--control-medium-size); align-items: center; justify-content: center; border-color: transparent; background: transparent; color: var(--lv-fg-muted); padding: 0; }
+  .modal-close:hover { border-color: var(--lv-line-muted); background: var(--lv-bg-control-hover); color: var(--lv-fg-default); }
+  .modal-body { display: grid; gap: var(--base-size-16); padding: var(--base-size-20); }
+  .modal-body .form { display: grid; align-items: stretch; }
+  .modal-body input, .modal-body select { width: 100%; min-height: var(--control-medium-size); }
+  .modal-actions { display: flex; justify-content: flex-end; gap: var(--base-size-8); }
+  .primary { border-color: var(--lv-button-accent-border-rest); background: var(--lv-button-accent-bg-rest); color: var(--lv-button-accent-fg-rest); }
+  .primary:hover { border-color: var(--lv-button-accent-border-hover); background: var(--lv-button-accent-bg-hover); }
+  .password-result { display: grid; gap: var(--base-size-12); }
+  .password-value { display: block; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); padding: var(--base-size-12); font-family: var(--fontStack-monospace); overflow-wrap: anywhere; user-select: all; }
+  .status-active { color: var(--lv-fg-success); }
+  .status-blocked, .status-disabled { color: var(--lv-fg-danger); }
+  .primary-detail-action { display: inline-flex; align-items: center; gap: var(--base-size-6); color: var(--lv-fg-link); }
+  .action-menu { position: relative; }
+  .action-menu summary { display: inline-flex; min-height: var(--lv-control-small); box-sizing: border-box; align-items: center; border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-bg-control); padding: var(--base-size-4) var(--base-size-8); cursor: pointer; list-style: none; }
+  .action-menu summary::-webkit-details-marker { display: none; }
+  .action-menu[open] summary { background: var(--lv-bg-control-hover); }
+  .action-menu-popover { position: absolute; z-index: 2; top: calc(100% + var(--base-size-4)); right: 0; display: grid; width: max-content; min-width: 180px; gap: var(--base-size-4); border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-6); }
+  .action-menu-popover button { width: 100%; border-color: transparent; background: transparent; text-align: left; }
+  .action-menu-popover button:hover { background: var(--lv-bg-control-hover); }
+  .detail-section { display: grid; min-width: 0; align-content: start; gap: var(--base-size-16); border-top: var(--lv-border-muted); padding: var(--base-size-24) 0; }
+  .detail-section .table-wrap { border: 0; border-radius: 0; }
+  .detail-section table { min-width: 540px; }
+  .detail-section th, .detail-section td { padding-inline: 0 var(--base-size-16); }
+  .detail-section table.member-table { min-width: 0; }
+  .member-table th:last-child, .member-table td:last-child { width: 1%; padding-right: 0; text-align: right; white-space: nowrap; }
+  .member-table td:nth-child(2) { overflow-wrap: anywhere; }
+  .card-header { display: flex; align-items: start; justify-content: space-between; gap: var(--base-size-12); }
+  .card-header-copy { display: grid; gap: var(--base-size-4); }
+  .section-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--base-size-12); }
+  .section-action { display: inline-flex; align-items: center; gap: var(--base-size-6); }
+  .inline-value { display: flex; min-width: 0; align-items: center; gap: var(--base-size-6); }
+  .inline-value code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .text-button { min-height: auto; flex: 0 0 auto; border-color: transparent; background: transparent; color: var(--lv-fg-link); padding: var(--base-size-2); }
+  .role-source { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .detail-subsection { display: grid; gap: var(--base-size-12); }
+  .detail-empty-row { display: grid; grid-template-columns: minmax(10rem, 0.45fr) minmax(0, 1fr); gap: var(--base-size-16); color: var(--lv-fg-muted); }
+  .detail-empty-row strong { color: var(--lv-fg-muted); font-weight: var(--base-text-weight-normal); }
+  .detail-form { width: fit-content; }
+  .activity-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+  .activity-item { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: start; gap: var(--base-size-8); border-bottom: var(--lv-border-muted); padding: var(--base-size-8) 0; }
+  .activity-item:last-child { border-bottom: 0; }
+  .activity-dot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--lv-fg-muted); }
+  .activity-copy { display: grid; gap: var(--base-size-2); }
+  .detail-user-avatar { --lv-user-avatar-size: 100%; width: 100%; height: 100%; }
+  @media (max-width: 760px) {
+    .detail-section { padding-block: var(--base-size-20); }
+    .detail-empty-row { grid-template-columns: minmax(6.5rem, 0.7fr) minmax(0, 1.3fr); }
+    .activity-item { grid-template-columns: 10px minmax(0, 1fr); }
+    .activity-item > time { grid-column: 2; }
+  }
+  @media (max-width: 480px) {
+    .detail-empty-row { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
+  }
+`
 import '../shared/select-menu'
 import '../shared/drawer'
 
 type DatastarFetchOwnerDetail = { type?: string; el?: Element }
+
+const serviceAccountSecretLifetimeOptions = [
+  { value: 30, label: '30 days' },
+  { value: 90, label: '90 days' },
+  { value: 180, label: '180 days (recommended)' },
+  { value: 365, label: '1 year (maximum)' },
+] as const
+// Keep the Settings default aligned with access.ServicePrincipalSecretDefaultLifetime.
+const serviceAccountSecretDefaultLifetimeDays = 180
+
+function auditDateTimeLocal(value: string | undefined): string {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.valueOf()) ? '' : date.toISOString().slice(0, 16)
+}
+
+function auditTimestamp(value: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.valueOf()) ? '' : date.toISOString()
+}
 
 // Datastar's fetch lifecycle is document-global. Settings controls may only
 // consume a successful completion from the lv-admin-page host whose data-on
@@ -146,12 +260,15 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
     const actions = html`
       ${principal.capabilities.canBlock ? html`<button class="primary-detail-action" @click=${() => this.blockPrincipal(principal)}>${lucideIcon(CircleSlash2, { size: 16, strokeWidth: 2 })}<span>Block access</span></button>` : nothing}
       ${principal.capabilities.canUnblock ? html`<button class="primary-detail-action" @click=${() => this.emit({ action: 'unblock_principal', principalId: principal.id })}>Unblock access</button>` : nothing}
-      ${principal.capabilities.canResetPassword || (principal.capabilities.canManageSessions && signal.sessions.length) || principal.capabilities.canDelete ? html`
+      ${principal.capabilities.canResetPassword || principal.capabilities.canManageSessions || principal.capabilities.canDelete ? html`
         <details class="action-menu">
           <summary>More actions</summary>
           <div class="action-menu-popover">
             ${principal.capabilities.canResetPassword ? html`<button @click=${() => this.resetPassword(principal)}>Reset password</button>` : nothing}
-            ${principal.capabilities.canManageSessions && signal.sessions.length ? html`<button @click=${() => this.revokeAllSessions(principal)}>Revoke all sessions</button>` : nothing}
+            ${principal.capabilities.canManageSessions ? html`
+              <button @click=${() => this.revokeAllSessions(principal)}>Revoke all sessions</button>
+              ${principal.capabilities.canRevokeAllCredentials !== false ? html`<button class="danger" @click=${() => this.revokeAllCredentials(principal)}>Revoke all credentials</button>` : nothing}
+            ` : nothing}
             ${principal.capabilities.canDelete ? html`<button class="danger" @click=${() => this.deletePrincipal(principal)}>Delete user</button>` : nothing}
           </div>
         </details>` : nothing}`
@@ -219,6 +336,10 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
   }
   private revokeAllSessions(principal: AccessPrincipalSignal): void {
     if (window.confirm(`Revoke all active sessions for ${principal.displayName || principal.email}?`)) this.emit({ action: 'revoke_all_sessions', principalId: principal.id })
+  }
+  private revokeAllCredentials(principal: AccessPrincipalSignal): void {
+    const label = principal.displayName || principal.email
+    if (window.confirm(`Revoke every active credential for ${label}? This invalidates sessions, API tokens, service secrets, authoring sessions, and OAuth sessions. The principal remains enabled and can sign in again; block access first if re-authentication must stop. This action cannot be undone.`)) this.emit({ action: 'revoke_all_credentials', principalId: principal.id })
   }
   private deletePrincipal(principal: AccessPrincipalSignal): void {
     if (window.confirm(`Delete ${principal.displayName || principal.email}? This cannot be undone.`)) this.emit({ action: 'delete_principal', principalId: principal.id })
@@ -385,246 +506,6 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
   private deleteGroup(group: AccessGroupSignal): void { if (window.confirm(`Delete ${group.name}? Access granted through this group will be removed.`)) this.emit({ action: 'delete_group', groupId: group.id }) }
 }
 
-function auditFilterOptions(items: AuditEventSignal[], key: 'action' | 'resourceKind', allLabel: string, currentValue = '') {
-  const values = Array.from(new Set([...items.map((item) => item[key]), currentValue].filter(Boolean))).sort((left, right) => left.localeCompare(right))
-  return [{ value: '', label: allLabel }, ...values.map((value) => ({ value, label: humanizeAuditValue(value) }))]
-}
-
-function humanizeAuditValue(value?: string): string {
-  const normalized = (value || '')
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[._-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase()
-  return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : '—'
-}
-
-function formatAuditTimestamp(value: string): string {
-  if (!value) return 'Unknown time'
-  const timestamp = new Date(value)
-  if (Number.isNaN(timestamp.valueOf())) return value
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp)
-}
-
-function formatAuditTableTimestamp(value: string): string {
-  if (!value) return 'Unknown time'
-  const timestamp = new Date(value)
-  if (Number.isNaN(timestamp.valueOf())) return value
-  const now = new Date()
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  const sameDay = (left: Date, right: Date) => left.getFullYear() === right.getFullYear()
-    && left.getMonth() === right.getMonth()
-    && left.getDate() === right.getDate()
-  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(timestamp)
-  if (sameDay(timestamp, now)) return `Today, ${time}`
-  if (sameDay(timestamp, yesterday)) return `Yesterday, ${time}`
-  const date = new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(timestamp.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' as const }),
-  }).format(timestamp)
-  return `${date}, ${time}`
-}
-
-function auditActorLabel(event: AuditEventSignal): string {
-  return event.principalName?.trim() || event.principalEmail?.trim() || (event.principalId ? 'Unknown user' : 'System')
-}
-
-function auditActorDescription(event: AuditEventSignal): string {
-  const email = event.principalEmail?.trim() || ''
-  return email && email !== auditActorLabel(event) ? email : ''
-}
-
-function auditResourceDescription(event: AuditEventSignal): string {
-  if (!event.resourceId?.trim()) return ''
-  switch ((event.resourceKind || '').trim().toLowerCase()) {
-    case 'agent_tool':
-    case 'tool':
-    case 'dashboard':
-    case 'model':
-    case 'semantic_model':
-    case 'project':
-    case 'publication':
-      return humanizeAuditValue(event.resourceId)
-    default:
-      return ''
-  }
-}
-
-function auditStatusCell(status?: string) {
-  const normalized = (status || '').toLowerCase()
-  if (!normalized) return { label: '—', tone: 'muted' as const, icon: 'dot' as const }
-  if (normalized === 'success' || normalized === 'succeeded' || normalized === 'ok') return { label: 'Succeeded', tone: 'success' as const, icon: 'check' as const }
-  if (normalized === 'failure' || normalized === 'failed' || normalized === 'error') return { label: 'Failed', tone: 'danger' as const, icon: 'x' as const }
-  if (normalized === 'pending' || normalized === 'queued' || normalized === 'running') return { label: humanizeAuditValue(status), tone: 'attention' as const, icon: 'clock' as const }
-  return { label: humanizeAuditValue(status), tone: 'muted' as const, icon: 'dot' as const }
-}
-
-type AuditPresetID = 'security' | 'access' | 'credentials' | 'failed'
-
-type AuditPreset = {
-  id: AuditPresetID
-  label: string
-  description: string
-  filters: AuditLogFilters
-}
-
-const auditPresets: AuditPreset[] = [
-  { id: 'security', label: 'Security', description: 'Principal and account security events', filters: { resourceKind: 'principal' } },
-  { id: 'access', label: 'Role changes', description: 'Recorded role-binding changes', filters: { resourceKind: 'role_binding' } },
-  { id: 'credentials', label: 'Service accounts', description: 'Service-account and credential events', filters: { resourceKind: 'service_principal' } },
-  // AuditLogFilters deliberately has no status field. Failed events are therefore
-  // narrowed in the already-loaded rows while the command remains contract-valid.
-  { id: 'failed', label: 'Failed events', description: 'Failed events in the loaded result set', filters: {} },
-]
-
-function auditPresetItems(signal: AuditLogSignal, preset: AuditPresetID | ''): AuditEventSignal[] {
-  if (preset !== 'failed') return signal.items
-  return signal.items.filter((event) => {
-    const status = (event.status || '').toLowerCase()
-    return status === 'failure' || status === 'failed' || status === 'error'
-  })
-}
-
-function auditPrincipalHref(principalID?: string): string {
-  return principalID ? `/admin/principals/${encodeURIComponent(principalID)}` : ''
-}
-
-function auditResourceHref(event: AuditEventSignal): string {
-  if (!event.resourceId) return ''
-  switch ((event.resourceKind || '').toLowerCase()) {
-    case 'principal':
-    case 'user':
-      return `/admin/principals/${encodeURIComponent(event.resourceId)}`
-    case 'group':
-      return `/admin/groups/${encodeURIComponent(event.resourceId)}`
-    default:
-      return ''
-  }
-}
-
-function auditEventSummary(event: AuditEventSignal): string {
-  const actor = auditActorLabel(event)
-  const action = humanizeAuditValue(event.action).toLowerCase()
-  const resourceDescription = auditResourceDescription(event)
-  const resource = event.resourceKind
-    ? ` on ${humanizeAuditValue(event.resourceKind)}${resourceDescription ? ` ${resourceDescription}` : ''}`
-    : ''
-  return `${actor} ${action}${resource}`
-}
-
-function auditMetadataText(event: AuditEventSignal): string {
-  if (!event.metadata || Object.keys(event.metadata).length === 0) return '{}'
-  try {
-    return JSON.stringify(event.metadata, null, 2)
-  } catch {
-    return String(event.metadata)
-  }
-}
-
-function auditTable(signal: AuditLogSignal, items = signal.items) {
-  return {
-    columns: [
-      { id: 'time', header: 'Time', kind: 'entity' as const, width: '180px' },
-      { id: 'action', header: 'Action', kind: 'badge' as const, width: '190px' },
-      { id: 'actor', header: 'Actor', kind: 'entity' as const, width: '180px', mobileHidden: true },
-      { id: 'resource', header: 'Resource', kind: 'entity' as const, width: '220px', mobileHidden: true },
-      { id: 'capability', header: 'Capability', width: '150px', mobileHidden: true },
-      { id: 'status', header: 'Status', kind: 'status' as const, width: '120px', mobileHidden: true },
-    ],
-    rows: items.map((event) => ({
-      id: event.id,
-      time: { label: formatAuditTableTimestamp(event.createdAt) },
-      action: { label: humanizeAuditValue(event.action), tone: 'accent' as const },
-      actor: event.principalId
-        ? { label: auditActorLabel(event), description: auditActorDescription(event), href: event.principalName || event.principalEmail ? auditPrincipalHref(event.principalId) : '' }
-        : { label: 'System', description: 'Automated operation' },
-      resource: { label: humanizeAuditValue(event.resourceKind), description: auditResourceDescription(event), href: auditResourceHref(event) },
-      capability: humanizeAuditValue(event.capability),
-      status: auditStatusCell(event.status),
-    })),
-    empty: signal.loading && !signal.items.length ? 'Loading audit events…' : 'No audit events match these filters.',
-    minWidth: '720px',
-    density: 'tight' as const,
-    rowAction: 'open',
-  }
-}
-
-class LeapViewProjectRegistry extends DatastarLit(LitElement) {
-  static styles = settingsSurfaceStyles
-  get registry(): ProjectRegistrySignal { return this.signal('adminProjects', { items: [], loading: false, hasMore: false }) }
-  render() {
-    const signal = this.registry
-    return html`<section class="surface" aria-label="Projects">
-      ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
-      ${signal.loading ? html`<p class="muted" aria-live="polite">Loading projects…</p>` : nothing}
-      <lv-entity-list
-        .items=${projectListItems(signal)}
-        .columns=${projectListColumns()}
-        client-filter
-        search-placeholder="Search projects by name, owner, or environment"
-        list-label="Projects"
-        empty-text=${signal.empty || 'No projects are available.'}
-      ></lv-entity-list>
-    </section>`
-  }
-}
-
-function projectListItems(signal: ProjectRegistrySignal): EntityListItem[] {
-  return (signal.items ?? []).map((item) => {
-    const administrators = (item.administrators ?? []).map((administrator) => administrator.displayName).filter(Boolean)
-    const deployment = item.deploymentStatus || item.servingStateStatus || 'Not deployed'
-    return {
-      id: item.id,
-      title: item.title || item.id,
-      description: item.description,
-      href: item.href || item.links.project,
-      icon: 'database',
-      iconTreatment: 'plain',
-      columns: {
-        owner: item.owner?.displayName || 'Unassigned',
-        administrators: administrators.length ? administrators.join(', ') : 'None',
-        environment: item.environment || '—',
-        deployment,
-        updated: formatProjectDate(item.updatedAt),
-      },
-      columnTitles: {
-        owner: item.owner?.email || item.owner?.displayName || '',
-        administrators: administrators.join(', '),
-        deployment: item.currentDeploymentId || deployment,
-        updated: item.updatedAt || '',
-      },
-      sortValues: {
-        updated: projectTimestamp(item.updatedAt),
-      },
-    }
-  })
-}
-
-function projectListColumns(): EntityListColumn[] {
-  return [
-    { id: 'name', label: 'Name', width: '27%' },
-    { id: 'owner', label: 'Owner', width: '18%' },
-    { id: 'administrators', label: 'Administrators', width: '18%' },
-    { id: 'environment', label: 'Environment', width: '13%' },
-    { id: 'deployment', label: 'Deployment', width: '13%' },
-    { id: 'updated', label: 'Updated', width: '11%' },
-  ]
-}
-
-function formatProjectDate(value = ''): string {
-  const timestamp = projectTimestamp(value)
-  if (!timestamp) return '—'
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(timestamp)
-}
-
-function projectTimestamp(value = ''): number {
-  const timestamp = Date.parse(value)
-  return Number.isNaN(timestamp) ? 0 : timestamp
-}
-
 type ServiceSecretExpirationPreset = '30' | '60' | '90' | 'custom'
 
 function serviceAccountListItems(accounts: ServiceAccountSignal[], busy: boolean): EntityListItem[] {
@@ -686,7 +567,10 @@ function serviceSecretListItems(secrets: ServiceAccountSecretSignal[], busy: boo
         created: secret.createdAt || '',
         expires: secret.expiresAt || '',
       },
-      actions: [{ label: secret.revokedAt ? 'Credential revoked' : 'Revoke credential', action: 'revoke', icon: 'cancel', disabled: busy || Boolean(secret.revokedAt) }],
+      actions: [
+        { label: secret.revokedAt ? 'Credential revoked' : 'Revoke credential', action: 'revoke', icon: 'cancel', disabled: busy || Boolean(secret.revokedAt) },
+        { label: 'Rotate credential', action: 'rotate', icon: 'refresh', disabled: busy || Boolean(secret.revokedAt) },
+      ],
     }
   })
 }
@@ -738,6 +622,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   @state() private busy = false
   @state() private commandError = ''
   @state() private createSecretOpen = false
+  @state() private renameAccountOpen = false
   @state() private deleteAccountOpen = false
   @state() private pendingSecretRevocation: ServiceAccountSecretSignal | null = null
   @state() private secretExpirationPreset: ServiceSecretExpirationPreset = '90'
@@ -764,6 +649,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
     this.pendingSignalKey = key
     this.openDialog('[data-service-account-dialog="create"]', this.createAccountOpen)
     this.openDialog('[data-service-account-dialog="secret"]', this.createSecretOpen)
+    this.openDialog('[data-service-account-dialog="rename"]', this.renameAccountOpen)
     this.openDialog('[data-service-account-dialog="delete"]', this.deleteAccountOpen)
     this.openDialog('[data-service-account-dialog="revoke"]', Boolean(this.pendingSecretRevocation))
   }
@@ -807,7 +693,14 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
       title: account.displayName || account.id,
       subtitle: account.id,
       badges: html`<span class="badge" data-service-account-status>${account.disabledAt ? 'Disabled' : 'Active'}</span>`,
-      actions: html`<button class="service-detail-action danger" type="button" ?disabled=${this.busy} @click=${() => { this.deleteAccountOpen = true }}>${lucideIcon(Trash2, { size: 15, strokeWidth: 2 })}<span>Delete service account</span></button>`,
+      actions: html`
+        <button class="service-detail-action" type="button" ?disabled=${this.busy} @click=${() => { this.renameAccountOpen = true }}>${lucideIcon(Pencil, { size: 15, strokeWidth: 2 })}<span>Rename</span></button>
+        ${account.disabledAt
+          ? html`<button class="service-detail-action" type="button" ?disabled=${this.busy} @click=${() => this.toggleAccount(account)}>${lucideIcon(Info, { size: 15, strokeWidth: 2 })}<span>Enable access</span></button>`
+          : html`<button class="service-detail-action" type="button" ?disabled=${this.busy} @click=${() => this.toggleAccount(account)}>${lucideIcon(CircleSlash2, { size: 15, strokeWidth: 2 })}<span>Disable access</span></button>`}
+        <button class="service-detail-action" type="button" ?disabled=${this.busy} @click=${() => this.revokeAll(account)}>Revoke all credentials</button>
+        <button class="service-detail-action danger" type="button" ?disabled=${this.busy} @click=${() => { this.deleteAccountOpen = true }}>${lucideIcon(Trash2, { size: 15, strokeWidth: 2 })}<span>Delete service account</span></button>
+      `,
       notice: signal.createdSecret ? this.renderCreatedSecret(signal.createdSecret) : nothing,
       sections: html`
         <section class="detail-section" aria-label="Overview">
@@ -838,6 +731,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
       `,
     })}
     ${this.renderCreateSecretDialog(account)}
+    ${this.renderRenameAccountDialog(account)}
     ${this.renderDeleteAccountDialog(account)}
     ${this.renderRevokeSecretDialog(account)}
     `
@@ -894,6 +788,23 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
     </dialog>`
   }
 
+  private renderRenameAccountDialog(account: ServiceAccountSignal) {
+    if (!this.renameAccountOpen) return nothing
+    return html`<dialog data-service-account-dialog="rename" aria-labelledby="rename-service-account-title" @cancel=${this.closeRenameAccount} @click=${this.closeRenameAccountOnBackdrop}>
+      <section class="modal">
+        <header class="modal-header">
+          <div class="modal-title"><h2 id="rename-service-account-title">Rename service account</h2><p class="muted">Change the display name shown throughout LeapView.</p></div>
+          <button class="modal-close" type="button" aria-label="Close" @click=${this.closeRenameAccount}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button>
+        </header>
+        <form class="modal-body" @submit=${(event: SubmitEvent) => this.renameAccount(event, account)}>
+          <label class="service-dialog-field"><span>Display name</span><input id="rename-service-account-display-name" aria-label="Display name" name="displayName" required autocomplete="off" .value=${account.displayName} ?disabled=${this.busy}></label>
+          <p class="muted">Only platform administrators can rename service accounts.</p>
+          <div class="modal-actions"><button type="button" @click=${this.closeRenameAccount}>Cancel</button><button class="primary" type="submit" ?disabled=${this.busy}>${this.busy && this.pendingAction === 'update' ? 'Renaming…' : 'Rename service account'}</button></div>
+        </form>
+      </section>
+    </dialog>`
+  }
+
   private renderDeleteAccountDialog(account: ServiceAccountSignal) {
     if (!this.deleteAccountOpen) return nothing
     return html`<dialog data-service-account-dialog="delete" aria-labelledby="delete-service-account-title" @cancel=${this.closeDeleteAccount} @click=${this.closeDeleteAccountOnBackdrop}>
@@ -935,9 +846,24 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   }
 
   private handleSecretRowAction = (event: CustomEvent<{ action: string, item: EntityListItem }>): void => {
-    if (event.detail.action !== 'revoke') return
     const secret = this.accounts.secrets?.find((candidate) => candidate.id === event.detail.item.id)
-    if (secret && !secret.revokedAt) this.pendingSecretRevocation = secret
+    if (!secret || secret.revokedAt) return
+    if (event.detail.action === 'revoke') this.pendingSecretRevocation = secret
+    if (event.detail.action === 'rotate') this.rotateSecret(secret)
+  }
+
+  private toggleAccount(account: ServiceAccountSignal): void {
+    const action = account.disabledAt ? 'enable' : 'disable'
+    if (window.confirm(`${action === 'disable' ? 'Disable' : 'Enable'} ${account.displayName || account.id}?`)) this.emit({ action, accountId: account.id })
+  }
+
+  private revokeAll(account: ServiceAccountSignal): void {
+    if (window.confirm(`Revoke every credential for ${account.displayName || 'this service account'}? Every credential stops working immediately and cannot be restored.`)) this.emit({ action: 'revoke_all', accountId: account.id, reason: 'Settings operator action' })
+  }
+
+  private rotateSecret(secret: ServiceAccountSecretSignal): void {
+    const accountID = this.accounts.selectedId || secret.servicePrincipalId
+    if (window.confirm(`Rotate ${secret.name}? A replacement credential will be issued.`)) this.emit({ action: 'rotate_secret', accountId: accountID, secretId: secret.id, secretName: `${secret.name}-rotated`, revokePrevious: false })
   }
 
   private createAccount = (event: SubmitEvent): void => {
@@ -954,6 +880,13 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
     const expiresAt = this.secretExpiration()
     if (!secretName || expiresAt === null) return
     this.emit({ action: 'create_secret', accountId: account.id, secretName, expiresAt })
+  }
+
+  private renameAccount(event: SubmitEvent, account: ServiceAccountSignal): void {
+    event.preventDefault()
+    const form = event.currentTarget as HTMLFormElement
+    const displayName = (form.elements.namedItem('displayName') as HTMLInputElement).value.trim()
+    if (displayName && displayName !== account.displayName) this.emit({ action: 'update', accountId: account.id, displayName })
   }
 
   private chooseSecretExpiration = (event: CustomEvent<{ value: ServiceSecretExpirationPreset }>): void => {
@@ -986,6 +919,8 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   private closeCreateAccountOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeCreateAccount(event) }
   private closeCreateSecret = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.createSecretOpen = false }
   private closeCreateSecretOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeCreateSecret(event) }
+  private closeRenameAccount = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.renameAccountOpen = false }
+  private closeRenameAccountOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeRenameAccount(event) }
   private closeDeleteAccount = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.deleteAccountOpen = false }
   private closeDeleteAccountOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeDeleteAccount(event) }
   private closeRevokeSecret = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.pendingSecretRevocation = null }
@@ -1008,6 +943,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
       this.secretExpirationPreset = '90'
       this.secretCustomExpiration = ''
     }
+    if (action === 'update') this.renameAccountOpen = false
     if (action === 'delete') this.deleteAccountOpen = false
     if (action === 'revoke_secret') this.pendingSecretRevocation = null
   }
@@ -1027,216 +963,9 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   }
 }
 
-class LeapViewAuditLog extends DatastarLit(LitElement) {
-  static styles = settingsSurfaceStyles
-  @state() private busy = false
-  @state() private commandError = ''
-  @state() private selectedEventID = ''
-  @state() private activePreset: AuditPresetID | '' = ''
-  @state() private copiedAuditValue = ''
-  private pendingSignalKey = ''
-
-  override connectedCallback(): void {
-    super.connectedCallback()
-    document.addEventListener('datastar-fetch', this.handleDatastarFetch)
-  }
-
-  override disconnectedCallback(): void {
-    document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
-    super.disconnectedCallback()
-  }
-
-  get audit(): AuditLogSignal { return this.signal('adminAuditLog', { items: [], filters: {}, loadedCount: 0, loading: false, hasMore: false }) }
-  override updated(): void {
-    const key = JSON.stringify(this.audit)
-    if (this.busy && key !== this.pendingSignalKey) this.busy = false
-    this.pendingSignalKey = key
-  }
-
-  private emit(detail: Record<string, unknown>) {
-    this.commandError = ''
-    this.busy = true
-    this.pendingSignalKey = JSON.stringify(this.audit)
-    this.dispatchEvent(new CustomEvent('lv-audit-log-command', { bubbles: true, composed: true, detail }))
-  }
-
-  private handleDatastarFetch = (event: Event): void => {
-    if (!this.busy) return
-    const detail = (event as CustomEvent<DatastarFetchOwnerDetail>).detail
-    if (!ownsAdminActionFetch(this, event)) return
-    if (detail?.type === 'finished') {
-      // Filtering or loading an empty page can legitimately return the same
-      // signal payload. Transport completion still marks the command done.
-      this.busy = false
-      return
-    }
-    const failure = browserCommandFailure(event, 'Audit log update')
-    if (!failure) return
-    this.busy = false
-    this.commandError = failure.message
-  }
-
-  private filterSelect(key: 'action' | 'resourceKind', value: string): void {
-    if (this.busy) return
-    this.activePreset = ''
-    this.emit({ action: 'filter', filters: { ...this.audit.filters, [key]: value } })
-  }
-
-  private applyPreset(preset: AuditPreset): void {
-    if (this.busy) return
-    this.activePreset = preset.id
-    this.emit({ action: 'filter', filters: { ...preset.filters } })
-  }
-
-  private submitFilter(event: SubmitEvent): void {
-    event.preventDefault()
-    const form = event.currentTarget as HTMLFormElement
-    const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value.trim() || ''
-    this.activePreset = ''
-    this.emit({
-      action: 'filter',
-      filters: {
-        projectId: value('projectId'),
-        principalId: value('principalId'),
-        action: this.audit.filters?.action || '',
-        resourceKind: this.audit.filters?.resourceKind || '',
-        resourceId: value('resourceId'),
-        from: value('from'),
-        to: value('to'),
-      },
-    })
-  }
-
-  private handleRecordTableAction = (event: CustomEvent<{ action?: string; row?: { id?: string } }>): void => {
-    if (event.detail?.action !== 'open' || !event.detail.row?.id) return
-    this.selectedEventID = String(event.detail.row.id)
-    this.copiedAuditValue = ''
-  }
-
-  private closeEventDrawer = (): void => {
-    this.selectedEventID = ''
-    this.copiedAuditValue = ''
-  }
-
-  private async copyAuditValue(value: string): Promise<void> {
-    if (!value) return
-    try {
-      await navigator.clipboard?.writeText(value)
-      this.copiedAuditValue = value
-    } catch {
-      this.copiedAuditValue = ''
-    }
-  }
-
-  private renderCopyButton(value: string): unknown {
-    if (!value) return nothing
-    return html`<button class="audit-drawer-copy" type="button" @click=${() => this.copyAuditValue(value)}>${this.copiedAuditValue === value ? 'Copied' : 'Copy'}</button>`
-  }
-
-  private renderAuditIdentifier(label: string, value: string, href = '') {
-    if (!value) return html`<span class="muted">—</span>`
-    return html`${href ? html`<a href=${href}>${value}</a>` : html`<code>${value}</code>`}${this.renderCopyButton(value)}`
-  }
-
-  private renderAuditDrawer(event: AuditEventSignal) {
-    const status = auditStatusCell(event.status)
-    return html`<lv-drawer
-      open
-      size="wide"
-      label="Audit event details"
-      .modal=${false}
-      @lv-drawer-close=${this.closeEventDrawer}
-    >
-      <div slot="title" class="audit-drawer-title">
-        <h2>${humanizeAuditValue(event.action)}</h2>
-        <p>${auditEventSummary(event)}</p>
-      </div>
-      <div class="audit-drawer-body">
-        <section class="audit-drawer-section" aria-label="Event summary">
-          <h3>Event summary</h3>
-          <dl class="audit-drawer-facts">
-            <div class="audit-drawer-fact"><dt>Time</dt><dd><time datetime=${event.createdAt || nothing}>${formatAuditTimestamp(event.createdAt)}</time></dd></div>
-            <div class="audit-drawer-fact"><dt>Exact timestamp</dt><dd><code data-audit-exact-timestamp>${event.createdAt || '—'}</code>${this.renderCopyButton(event.createdAt)}</dd></div>
-            <div class="audit-drawer-fact"><dt>Event ID</dt><dd>${this.renderAuditIdentifier('Event ID', event.id)}</dd></div>
-            <div class="audit-drawer-fact"><dt>Actor</dt><dd>${event.principalId ? html`<a href=${auditPrincipalHref(event.principalId)}>${auditActorLabel(event)}</a>${event.principalEmail ? html`<span class="muted">${event.principalEmail}</span>` : nothing}` : html`<span>System</span>`}</dd></div>
-            ${event.principalId ? html`<div class="audit-drawer-fact"><dt>Actor ID</dt><dd>${this.renderAuditIdentifier('Actor ID', event.principalId)}</dd></div>` : nothing}
-            <div class="audit-drawer-fact"><dt>Capability</dt><dd>${humanizeAuditValue(event.capability)}</dd></div>
-            <div class="audit-drawer-fact"><dt>Status</dt><dd><span class=${`audit-drawer-status audit-drawer-status-${status.tone}`}>${status.label}</span></dd></div>
-          </dl>
-        </section>
-        <section class="audit-drawer-section" aria-label="Resource details">
-          <h3>Resource</h3>
-          <dl class="audit-drawer-facts">
-            <div class="audit-drawer-fact"><dt>Resource type</dt><dd>${humanizeAuditValue(event.resourceKind)}</dd></div>
-            <div class="audit-drawer-fact"><dt>Resource ID</dt><dd>${this.renderAuditIdentifier('Resource ID', event.resourceId, auditResourceHref(event))}</dd></div>
-            ${event.projectId ? html`<div class="audit-drawer-fact"><dt>Project ID</dt><dd>${this.renderAuditIdentifier('Project ID', event.projectId)}</dd></div>` : nothing}
-            ${event.requestId ? html`<div class="audit-drawer-fact"><dt>Request ID</dt><dd>${this.renderAuditIdentifier('Request ID', event.requestId)}</dd></div>` : nothing}
-            ${event.correlationId ? html`<div class="audit-drawer-fact"><dt>Correlation ID</dt><dd>${this.renderAuditIdentifier('Correlation ID', event.correlationId)}</dd></div>` : nothing}
-          </dl>
-        </section>
-        <details class="audit-drawer-metadata">
-          <summary>Raw metadata</summary>
-          <pre><code>${auditMetadataText(event)}</code></pre>
-        </details>
-      </div>
-    </lv-drawer>`
-  }
-
-  render() {
-    const signal = this.audit
-    const filters = signal.filters || {}
-    const disabled = this.busy || signal.loading
-    const actionOptions = auditFilterOptions(signal.items, 'action', 'All actions', filters.action)
-    const resourceKindOptions = auditFilterOptions(signal.items, 'resourceKind', 'All resource kinds', filters.resourceKind)
-    const selectedEvent = signal.items.find((event) => event.id === this.selectedEventID)
-    const visibleItems = auditPresetItems(signal, this.activePreset)
-    const loadedLabel = signal.loading
-      ? 'Loading audit events…'
-      : this.activePreset === 'failed'
-        ? `${visibleItems.length} failed events in ${signal.loadedCount || signal.items.length} loaded`
-        : signal.items.length ? `${signal.loadedCount || signal.items.length} events loaded` : 'No audit events'
-    return html`<section class="surface audit-surface" aria-label="Audit log">
-      ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
-      ${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
-      <div class="audit-presets" aria-label="Audit log quick filters">
-        <span class="audit-presets-label">Quick filters</span>
-        ${auditPresets.map((preset) => html`<button
-          class="audit-preset"
-          type="button"
-          title=${preset.description}
-          aria-pressed=${this.activePreset === preset.id ? 'true' : 'false'}
-          data-audit-preset=${preset.id}
-          ?disabled=${disabled}
-          @click=${() => this.applyPreset(preset)}
-        >${preset.label}</button>`)}
-      </div>
-      <form class="audit-toolbar" aria-label="Audit log filters" @submit=${this.submitFilter}>
-        <label class="audit-filter">Project<input id="audit-project-id" type="search" aria-label="Project" name="projectId" .value=${filters.projectId || ''} ?disabled=${disabled} placeholder="Project ID"></label>
-        <label class="audit-filter">Actor<input id="audit-principal-id" type="search" aria-label="Actor" name="principalId" .value=${filters.principalId || ''} ?disabled=${disabled} placeholder="Principal ID"></label>
-        <div class="audit-filter"><span>Action</span><lv-select-menu label="Action" .options=${actionOptions} .value=${filters.action || ''} ?disabled=${disabled} @lv-select-change=${(event: CustomEvent<{ value: string }>) => this.filterSelect('action', event.detail.value)}></lv-select-menu></div>
-        <div class="audit-filter"><span>Resource kind</span><lv-select-menu label="Resource kind" .options=${resourceKindOptions} .value=${filters.resourceKind || ''} ?disabled=${disabled} @lv-select-change=${(event: CustomEvent<{ value: string }>) => this.filterSelect('resourceKind', event.detail.value)}></lv-select-menu></div>
-        <label class="audit-filter">Resource ID<input id="audit-resource-id" type="search" aria-label="Resource ID" name="resourceId" .value=${filters.resourceId || ''} ?disabled=${disabled} placeholder="Resource ID"></label>
-        <label class="audit-filter">From<input id="audit-from" type="date" aria-label="From" name="from" .value=${filters.from || ''} ?disabled=${disabled}></label>
-        <label class="audit-filter">To<input id="audit-to" type="date" aria-label="To" name="to" .value=${filters.to || ''} ?disabled=${disabled}></label>
-        <div class="audit-actions"><button class="primary" type="submit" ?disabled=${disabled}>Filter</button><button type="button" ?disabled=${disabled} @click=${() => { this.activePreset = ''; this.emit({ action: 'clear', filters: {} }) }}>Clear</button></div>
-      </form>
-      <div class="audit-results">
-        <lv-record-table variant="compact" .table=${auditTable(signal, visibleItems)} @lv-record-table-action=${this.handleRecordTableAction}></lv-record-table>
-        <div class="audit-footer" aria-live="polite">
-          <span>${loadedLabel}</span>
-          ${signal.hasMore ? html`<button class="audit-load-more" type="button" ?disabled=${disabled} @click=${() => this.emit({ action: 'load_more', filters, pageToken: signal.nextCursor })}>${signal.loading ? 'Loading…' : 'Load more'}</button>` : nothing}
-        </div>
-      </div>
-      ${selectedEvent ? this.renderAuditDrawer(selectedEvent) : nothing}
-    </section>`
-  }
-}
-
-if (!customElements.get('lv-project-registry')) customElements.define('lv-project-registry', LeapViewProjectRegistry)
 if (!customElements.get('lv-service-accounts')) customElements.define('lv-service-accounts', LeapViewServiceAccounts)
-if (!customElements.get('lv-audit-log')) customElements.define('lv-audit-log', LeapViewAuditLog)
 if (!customElements.get('lv-principal-administration')) customElements.define('lv-principal-administration', LeapViewPrincipalAdministration)
 if (!customElements.get('lv-group-administration')) customElements.define('lv-group-administration', LeapViewGroupAdministration)
 
-export { LeapViewProjectRegistry, LeapViewServiceAccounts, LeapViewAuditLog, LeapViewPrincipalAdministration, LeapViewGroupAdministration }
+export { LeapViewServiceAccounts, LeapViewPrincipalAdministration, LeapViewGroupAdministration }
 export { setDatastarLitRuntimeForTests } from '../shared/datastar-lit'

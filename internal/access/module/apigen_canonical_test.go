@@ -643,7 +643,7 @@ func TestAPIGenPlatformScopeUsesPlatformRoleEvenWhenAuthenticated(t *testing.T) 
 	authorizer := &APIGenAuthorizer{
 		module: module,
 		operations: map[string]APIGenOperationContract{
-			"platformStatus": {OperationID: "platformStatus", Protected: true, AuthzMode: "authenticated", Extensions: map[string]any{apiGenObjectScopeExtension: "platform"}},
+			"platformStatus": {OperationID: "platformStatus", Protected: true, AuthzMode: "platform_admin", Extensions: map[string]any{apiGenObjectScopeExtension: "platform"}},
 		},
 	}
 	protected, ok := authorizer.Protect("platformStatus", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
@@ -661,7 +661,7 @@ func TestAPIGenPlatformScopeDoesNotRequireActiveRuntime(t *testing.T) {
 	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{ID: "platform-admin"}, true)
 	contract := APIGenOperationContract{
 		OperationID: "platformStatus", Method: http.MethodGet, Path: "/api/v1/platform/status",
-		Protected: true, AuthzMode: "authenticated",
+		Protected: true, AuthzMode: "platform_admin",
 		Extensions: map[string]any{apiGenObjectScopeExtension: "platform"},
 	}
 	authorizer, err := module.APIGenAuthorizer(nil, map[string]APIGenOperationContract{"platformStatus": contract}, APIGenResourceResolvers{})

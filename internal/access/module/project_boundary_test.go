@@ -15,12 +15,16 @@ func TestAPIGenProjectBoundaryPrincipalAndPlatformLocators(t *testing.T) {
 	for _, scope := range []string{"principal", "platform"} {
 		t.Run(scope, func(t *testing.T) {
 			module := browserGuardModule(browserGuardRepository{admin: true}, Principal{ID: "admin"}, true)
+			authzMode := "authenticated"
+			if scope == "platform" {
+				authzMode = "platform_admin"
+			}
 			contract := APIGenOperationContract{
 				OperationID: "boundMetadata",
 				Method:      http.MethodGet,
 				Path:        "/api/v1/projects/{project}/metadata",
 				Protected:   true,
-				AuthzMode:   "authenticated",
+				AuthzMode:   authzMode,
 				Extensions:  map[string]any{apiGenObjectScopeExtension: scope},
 			}
 			for _, bound := range []projectgraph.ResourceID{"project_demo", "", "invalid project"} {

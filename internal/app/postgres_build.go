@@ -363,7 +363,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(err)
 	}
-	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{Persistence: &accessPersistence, Production: production, Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs, PublicURL: publicURL, InstanceID: instanceID, Environment: string(environment), MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProject, AuthoringProject: authoringProject})
+	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{Persistence: &accessPersistence, Production: production, Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs, PublicURL: publicURL, InstanceID: instanceID, Environment: string(environment), MCPIssuerURL: cfg.MCPOAuthIssuerURL, RequirePlatformRoleApproval: cfg.RequirePlatformRoleApproval, CurrentProject: currentProject, AuthoringProject: authoringProject})
 	if err != nil {
 		return fail(err)
 	}
@@ -974,6 +974,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		}
 	})
 	platform.telemetry.Register(platformpostgres.NewPoolMetricsCollector(bootstrap.NamedPools()...))
+	platform.telemetry.Register(appaccesspostgres.CredentialMetricsCollector())
 	handler := Routes(routes, runtimeServices, platform, policy)
 
 	// Start/stop ordering is explicit: the bootstrap wrapper starts first and

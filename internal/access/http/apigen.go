@@ -8,10 +8,8 @@ import (
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 )
 
-// APIGenDispatcher contains identity, credential, group, audit, avatar,
+// APIGenDispatcher contains identity, credential, role-catalog, audit, avatar,
 // authoring, and platform semantic-attribute administration operations.
-// Project authorization endpoints are owned by the immutable serving-state
-// authorization surface.
 type APIGenDispatcher struct{ handler Handler }
 
 // APIGenTransportErrorResponder adapts generated transport failures to the
@@ -58,6 +56,9 @@ func (d *APIGenDispatcher) ListCurrentAPITokens(w stdhttp.ResponseWriter, r *std
 func (d *APIGenDispatcher) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenCreateCurrentAPITokenHeaders) {
 	d.handler.CreateCurrentAPIToken(w, r)
 }
+func (d *APIGenDispatcher) RotateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenRotateCurrentAPITokenHeaders) {
+	d.handler.RotateCurrentAPIToken(w, r)
+}
 func (d *APIGenDispatcher) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
 	d.handler.RevokeCurrentAPIToken(w, r)
 }
@@ -94,11 +95,59 @@ func (d *APIGenDispatcher) DisablePrincipal(w stdhttp.ResponseWriter, r *stdhttp
 func (d *APIGenDispatcher) EnablePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenEnablePrincipalHeaders) {
 	d.handler.EnablePrincipal(w, r)
 }
+func (d *APIGenDispatcher) ResolvePrincipalOwnership(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenResolvePrincipalOwnershipHeaders) {
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.ResolvePrincipalOwnership(w, r)
+}
 func (d *APIGenDispatcher) ListPrincipalSessions(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListPrincipalSessionsParams) {
 	d.handler.ListPrincipalSessions(w, r)
 }
 func (d *APIGenDispatcher) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
 	d.handler.RevokePrincipalSession(w, r)
+}
+func (d *APIGenDispatcher) RevokeAllPrincipalCredentials(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
+	d.handler.RevokeAllPrincipalCredentials(w, r)
+}
+func (d *APIGenDispatcher) ListPlatformAdministrators(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListPlatformAdministratorsParams) {
+	d.handler.ListPlatformAdministrators(w, r)
+}
+func (d *APIGenDispatcher) RevokePlatformAdministrator(w stdhttp.ResponseWriter, r *stdhttp.Request, _, headers accessgen.GenRevokePlatformAdministratorHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	r.Header.Set("If-Match", headers.IfMatch)
+	d.handler.RevokePlatformAdministrator(w, r)
+}
+func (d *APIGenDispatcher) GrantPlatformAdministrator(w stdhttp.ResponseWriter, r *stdhttp.Request, _, headers accessgen.GenGrantPlatformAdministratorHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	r.Header.Set("If-Match", headers.IfMatch)
+	d.handler.GrantPlatformAdministrator(w, r)
+}
+func (d *APIGenDispatcher) ListPlatformRoleApprovals(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	d.handler.ListPlatformRoleApprovals(w, r)
+}
+func (d *APIGenDispatcher) RequestPlatformRoleApproval(w stdhttp.ResponseWriter, r *stdhttp.Request, headers accessgen.GenRequestPlatformRoleApprovalHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	d.handler.RequestPlatformRoleApproval(w, r)
+}
+func (d *APIGenDispatcher) GetPlatformRoleApproval(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
+	d.handler.GetPlatformRoleApproval(w, r)
+}
+func (d *APIGenDispatcher) ApprovePlatformRoleApproval(w stdhttp.ResponseWriter, r *stdhttp.Request, _, headers accessgen.GenApprovePlatformRoleApprovalHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	d.handler.ApprovePlatformRoleApproval(w, r)
+}
+func (d *APIGenDispatcher) CancelPlatformRoleApproval(w stdhttp.ResponseWriter, r *stdhttp.Request, _, headers accessgen.GenCancelPlatformRoleApprovalHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	d.handler.CancelPlatformRoleApproval(w, r)
+}
+func (d *APIGenDispatcher) ExecutePlatformRoleApproval(w stdhttp.ResponseWriter, r *stdhttp.Request, _, headers accessgen.GenExecutePlatformRoleApprovalHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	d.handler.ExecutePlatformRoleApproval(w, r)
+}
+func (d *APIGenDispatcher) ExpirePlatformRoleApproval(w stdhttp.ResponseWriter, r *stdhttp.Request, _, headers accessgen.GenExpirePlatformRoleApprovalHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	d.handler.ExpirePlatformRoleApproval(w, r)
 }
 func (d *APIGenDispatcher) ListServicePrincipals(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListServicePrincipalsParams) {
 	d.handler.ListServicePrincipals(w, r)
@@ -115,6 +164,15 @@ func (d *APIGenDispatcher) UpdateServicePrincipal(w stdhttp.ResponseWriter, r *s
 func (d *APIGenDispatcher) DeleteServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
 	d.handler.DeleteServicePrincipal(w, r)
 }
+func (d *APIGenDispatcher) RevokeAllServicePrincipalCredentials(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenRevokeAllServicePrincipalCredentialsHeaders) {
+	d.handler.RevokeAllServicePrincipalCredentials(w, r)
+}
+func (d *APIGenDispatcher) DisableServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenDisableServicePrincipalHeaders) {
+	d.handler.DisableServicePrincipal(w, r)
+}
+func (d *APIGenDispatcher) EnableServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenEnableServicePrincipalHeaders) {
+	d.handler.EnableServicePrincipal(w, r)
+}
 func (d *APIGenDispatcher) CreateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenCreateServicePrincipalSecretHeaders) {
 	d.handler.CreateServicePrincipalSecret(w, r)
 }
@@ -126,6 +184,9 @@ func (d *APIGenDispatcher) GetServicePrincipalSecret(w stdhttp.ResponseWriter, r
 }
 func (d *APIGenDispatcher) RevokeServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
 	d.handler.RevokeServicePrincipalSecret(w, r)
+}
+func (d *APIGenDispatcher) RotateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, _ accessgen.GenRotateServicePrincipalSecretHeaders) {
+	d.handler.RotateServicePrincipalSecret(w, r)
 }
 func (d *APIGenDispatcher) ListGroups(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListGroupsParams) {
 	d.handler.ListGroups(w, r)
@@ -159,6 +220,21 @@ func (d *APIGenDispatcher) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r 
 		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
 	}
 	d.handler.CreateProjectRoleBinding(w, r)
+}
+func (d *APIGenDispatcher) DeleteProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, headers accessgen.GenDeleteProjectRoleBindingHeaders) {
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.DeleteProjectRoleBinding(w, r)
+}
+func (d *APIGenDispatcher) ListProjectRoles(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListProjectRolesParams) {
+	d.handler.ListProjectRoles(w, r)
+}
+func (d *APIGenDispatcher) CheckAuthorizationBatch(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
+	d.handler.CheckAuthorizationBatch(w, r)
+}
+func (d *APIGenDispatcher) ListEffectiveCapabilities(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListEffectiveCapabilitiesParams) {
+	d.handler.ListEffectiveCapabilities(w, r)
 }
 func (d *APIGenDispatcher) ListGroupSemanticAttributeAssignments(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListGroupSemanticAttributeAssignmentsParams) {
 	d.handler.ListGroupSemanticAttributeAssignments(w, r)

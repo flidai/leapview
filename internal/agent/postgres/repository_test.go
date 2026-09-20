@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/agent"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
@@ -32,6 +33,79 @@ func agentPostgresTestRepo(t *testing.T, suffix string) (*pgxpool.Pool, *Reposit
 		t.Fatalf("apply agent schema: %v", err)
 	}
 	return pool, NewRepository(pool)
+}
+
+func agentPostgresAccessTestRepo(t *testing.T, suffix string) (*pgxpool.Pool, *Repository) {
+	t.Helper()
+	h := postgrestest.Start(t)
+	database := h.NewDatabase(t, "agent_access_"+suffix)
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return pool, NewRepository(pool)
+}
+
+func TestCreateConversationSerializesWithPrincipalOffboardingPostgreSQL18(t *testing.T) {
+	db, repo := agentPostgresAccessTestRepo(t, "create_offboarding_race")
+	ctx := t.Context()
+	const principal = "018f4f2e-0000-7000-0000-000000000701"
+	if _, err := db.Exec(ctx, `INSERT INTO access.principal(id,principal_type,status) VALUES ($1::uuid,'user','active')`, principal); err != nil {
+		t.Fatal(err)
+	}
+	deletionTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deletionTx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('leapview.platform-role-authority', 0))`); err != nil {
+		_ = deletionTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := deletionTx.Exec(ctx, `SELECT id FROM access.principal WHERE id=$1::uuid FOR UPDATE`, principal); err != nil {
+		_ = deletionTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := deletionTx.Exec(ctx, `UPDATE access.principal SET status='disabled', disabled_at=clock_timestamp() WHERE id=$1::uuid`, principal); err != nil {
+		_ = deletionTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+
+	blockedCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	_, createErr := repo.CreateConversation(blockedCtx, agent.ConversationInput{PrincipalID: principal, Title: "blocked"})
+	cancel()
+	if !errors.Is(createErr, context.DeadlineExceeded) {
+		_ = deletionTx.Rollback(ctx)
+		t.Fatalf("create during uncommitted offboarding = %v, want context deadline", createErr)
+	}
+	if err := deletionTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: principal, Title: "after"}); err == nil {
+		t.Fatal("conversation creation succeeded after principal offboarding")
+	}
+	var count int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM agent.conversations WHERE principal_id=$1`, principal).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("conversations created for offboarded principal = %d, want 0", count)
+	}
 }
 
 func TestPostgreSQL18TranscriptCASIncrementsAndRejectsStaleWriter(t *testing.T) {

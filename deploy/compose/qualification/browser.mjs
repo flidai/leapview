@@ -15,8 +15,67 @@ const browser = await chromium.launch({ headless: true })
 const context = await browser.newContext({ ignoreHTTPSErrors: true })
 const page = await context.newPage()
 
+async function gotoWithNetworkRetry(url) {
+  let lastError
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+      if (!page.url().startsWith('chrome-error://')) return response
+      lastError = new Error(`navigation reached ${page.url()}`)
+    } catch (error) {
+      lastError = error
+    }
+    await page.waitForTimeout(attempt * 500)
+  }
+  throw lastError || new Error(`navigation failed: ${url}`)
+}
+
+async function waitForDashboardStatus(predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const status = await page.locator('lv-dashboard-page').evaluate((element) => ({
+      generation: Number(element.status?.generation || 0),
+      loading: Boolean(element.status?.loading),
+    }))
+    if (predicate(status)) return status
+    await page.waitForTimeout(25)
+  }
+  throw new Error(`timed out after ${timeoutMs}ms waiting for dashboard status`)
+}
+
+async function applyStateFilterWithGenerationRetry(dashboardURL) {
+  let lastError
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      if (attempt > 1) {
+        await gotoWithNetworkRetry(dashboardURL)
+        await page.getByText('Governed order rows', { exact: true }).waitFor({ state: 'visible', timeout: 60_000 })
+        await waitForDashboardStatus((status) => status.generation > 0 && !status.loading, 60_000)
+      }
+      const generation = await page.locator('lv-dashboard-page').evaluate(
+        (element) => Number(element.status?.generation || 0),
+      )
+      await page.getByRole('button', { name: /^State:/ }).click({ force: true })
+      const options = page.getByRole('dialog', { name: 'State filter options', exact: true })
+      await options.waitFor({ state: 'visible', timeout: 30_000 })
+      await options.getByRole('checkbox', { name: 'SP', exact: true }).check()
+      await page.keyboard.press('Escape')
+      await options.waitFor({ state: 'hidden', timeout: 30_000 })
+      await waitForDashboardStatus(
+        (status) => status.generation > generation && !status.loading,
+        15_000,
+      )
+      return
+    } catch (error) {
+      lastError = error
+      await page.waitForTimeout(attempt * 500)
+    }
+  }
+  throw lastError || new Error('state filter did not publish a new dashboard generation')
+}
+
 try {
-  await page.goto(new URL('/login', baseURL).href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await gotoWithNetworkRetry(new URL('/login', baseURL).href)
   await page.getByLabel('Email').fill(credentials.email)
   // Prove an invalid local credential remains on the branded, accessible
   // login surface before continuing with the valid qualification login.
@@ -36,18 +95,12 @@ try {
   if (!dashboardHref) {
     throw new Error('evaluation dashboard has no navigation target')
   }
-  await page.goto(new URL(dashboardHref, baseURL).href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await gotoWithNetworkRetry(new URL(dashboardHref, baseURL).href)
 
   await page.getByText('Governed order rows', { exact: true }).waitFor({ state: 'visible', timeout: 60_000 })
   await page.getByText('24', { exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
 
-  const state = page.getByRole('button', { name: /^State:/ })
-  await state.click({ force: true })
-  const stateOptions = page.getByRole('dialog', { name: 'State filter options', exact: true })
-  await stateOptions.waitFor({ state: 'visible', timeout: 30_000 })
-  await stateOptions.getByRole('checkbox', { name: 'SP', exact: true }).check()
-  await page.keyboard.press('Escape')
-  await stateOptions.waitFor({ state: 'hidden', timeout: 30_000 })
+  await applyStateFilterWithGenerationRetry(new URL(dashboardHref, baseURL).href)
   await page.getByText('6', { exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
 
   const table = page.locator('lv-report-table')
@@ -59,7 +112,7 @@ try {
 
   const denialRequestID = `qualification-denial-${Date.now()}`
   const projectPath = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
-  const denial = await context.request.get(new URL(`/api/v1/projects/${projectPath}/grants`, baseURL).href, {
+  const denial = await context.request.get(new URL(`/api/v1/projects/${projectPath}/role-bindings`, baseURL).href, {
     headers: {
       Authorization: `Bearer ${credentials.workloadToken}`,
       'X-Request-ID': denialRequestID,

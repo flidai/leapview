@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
@@ -25,6 +26,39 @@ type SettingsAdministration interface {
 	access.AuditedPrincipalPreferences
 	ListServicePrincipalSecrets(context.Context, string) ([]access.ServicePrincipalSecret, error)
 	PrincipalIdentityManagement(context.Context, string) (access.PrincipalIdentityManagement, error)
+}
+
+func (m *Module) PlatformAdminAuthority() access.PlatformAdminAuthorityLister {
+	if m == nil {
+		return nil
+	}
+	lister, _ := m.repositoryValue().(access.PlatformAdminAuthorityLister)
+	return lister
+}
+
+func (m *Module) PlatformAdminWriter() access.PlatformAdminWriter {
+	if m == nil {
+		return nil
+	}
+	writer, _ := m.repositoryValue().(access.PlatformAdminWriter)
+	return writer
+}
+
+// CurrentInteractiveAuthentication reports the server-recorded login time for
+// the browser session on the request. It deliberately does not inspect client
+// supplied timestamps or bearer credentials.
+func (m *Module) CurrentInteractiveAuthentication(r *http.Request) (time.Time, bool) {
+	if m == nil || m.handler.InteractiveAuthentication == nil {
+		return time.Time{}, false
+	}
+	return m.handler.InteractiveAuthentication(r)
+}
+
+// RequirePlatformRoleApproval reports the deployment policy applied to
+// platform-role mutations. Admin/product settings consumes this same
+// access-owned policy so direct Settings commands cannot bypass API policy.
+func (m *Module) RequirePlatformRoleApproval() bool {
+	return m != nil && m.handler.RequirePlatformRoleApproval
 }
 
 func (m *Module) PersonalAvatar() PersonalAvatar {

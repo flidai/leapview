@@ -129,6 +129,8 @@ type SnapshotSealEvidence struct {
 	RequestDigest, PlanDigest, CompatibilityDigest, ServingArtifactID, ServingArtifactDigest                         string
 	DuckDBVersion, RuntimeVersion, DuckLakeExtensionVersion, DuckLakeSpecVersion, CatalogSchemaVersion               string
 	QualificationEvidence                                                                                            json.RawMessage
+	ResolvedInputs                                                                                                   json.RawMessage
+	ResolvedInputsDigest                                                                                             string
 }
 
 // GenerationEvidence is the immutable serving-generation identity. A caller
@@ -549,27 +551,15 @@ func verifyCompletedBuild(got deploymentnative.CompleteBuildResult, input Genera
 		candidate.CreatedAt.IsZero() || candidate.QualifiedAt.IsZero() || !candidate.RetiredAt.IsZero() {
 		return admissionEvidenceConflict("delivery candidate")
 	}
+	if len(input.Seal.ResolvedInputs) > 0 && (!sameJSON(candidate.ResolvedInputs, input.Seal.ResolvedInputs) || candidate.ResolvedInputsDigest != input.Seal.ResolvedInputsDigest) {
+		return admissionEvidenceConflict("delivery candidate resolved-input evidence")
+	}
 	lease := got.Lease
 	if lease.LeaseID != input.Fence.LeaseID || lease.TargetID != input.Fence.TargetID || lease.OwnerID != input.Fence.OwnerID ||
 		lease.FencingEpoch != input.Fence.FencingEpoch || lease.State != "released" || lease.ExpiresAt.IsZero() || lease.AcquiredAt.IsZero() || lease.ReleasedAt.IsZero() {
 		return admissionEvidenceConflict("delivery lease")
 	}
 	return nil
-}
-
-func sameSnapshotSeal(got deploymentnative.SnapshotSeal, want SnapshotSealEvidence) bool {
-	return got.SealID == want.SealID && got.AttemptID == want.AttemptID && got.CandidateID == want.CandidateID &&
-		got.PhysicalPoolID == want.PhysicalPoolID && got.TenantDomain == want.TenantDomain && got.Region == want.Region && got.EncryptionDomain == want.EncryptionDomain &&
-		got.ObjectNamespace == want.ObjectNamespace && got.CatalogDatabase == want.CatalogDatabase && got.CatalogID == want.CatalogID && got.CatalogUUID == want.CatalogUUID &&
-		got.CatalogVersion == want.CatalogVersion && got.DuckLakeSnapshotID == want.DuckLakeSnapshotID && got.RelationNamespace == want.RelationNamespace &&
-		got.ObjectRoot == want.ObjectRoot && got.ObjectRootDigest == want.ObjectRootDigest && got.ArtifactRoot == want.ArtifactRoot && got.ArtifactRootDigest == want.ArtifactRootDigest &&
-		got.RelationManifestDigest == want.RelationManifestDigest && got.ClosureDigest == want.ClosureDigest && got.CompiledGraphDigest == want.CompiledGraphDigest &&
-		got.CompiledConfigDigest == want.CompiledConfigDigest && got.SecurityDomainFingerprint == want.SecurityDomainFingerprint &&
-		got.AuthorizationPolicyRevision == want.AuthorizationPolicyRevision && got.AuthorizationPolicyDigest == want.AuthorizationPolicyDigest && got.RequestDigest == want.RequestDigest &&
-		got.PlanDigest == want.PlanDigest && got.CompatibilityDigest == want.CompatibilityDigest && got.ServingArtifactID == want.ServingArtifactID &&
-		got.ServingArtifactDigest == want.ServingArtifactDigest && got.DuckDBVersion == want.DuckDBVersion && got.RuntimeVersion == want.RuntimeVersion &&
-		got.DuckLakeExtensionVersion == want.DuckLakeExtensionVersion && got.DuckLakeSpecVersion == want.DuckLakeSpecVersion && got.CatalogSchemaVersion == want.CatalogSchemaVersion &&
-		!got.QualifiedAt.IsZero() && sameJSON(got.QualificationEvidence, want.QualificationEvidence)
 }
 
 func verifyGeneration(got deploymentnative.DeliveryGeneration, want GenerationEvidence) error {
@@ -868,6 +858,9 @@ func normalizeInput(input GenerationAdmissionInput) (GenerationAdmissionInput, e
 	if err := validateRequiredObject(ctx.Seal.QualificationEvidence, "qualification evidence"); err != nil {
 		return GenerationAdmissionInput{}, err
 	}
+	if err := validateResolvedInputEvidence(ctx.Seal); err != nil {
+		return GenerationAdmissionInput{}, err
+	}
 	marker, canonical, err := decodeCanonicalMarker(ctx.Commit.CommitMarker)
 	if err != nil {
 		return GenerationAdmissionInput{}, fmt.Errorf("%w: invalid commit marker: %v", deploymentnative.ErrInvalid, err)
@@ -1029,7 +1022,7 @@ func toNativeFence(f LeaseFenceEvidence) deploymentnative.LeaseFence {
 
 func toNativeSeal(input GenerationAdmissionInput) deploymentnative.SnapshotSealInput {
 	s := input.Seal
-	return deploymentnative.SnapshotSealInput{SealID: s.SealID, AttemptID: s.AttemptID, CandidateID: s.CandidateID, PhysicalPoolID: s.PhysicalPoolID, TenantDomain: s.TenantDomain, Region: s.Region, EncryptionDomain: s.EncryptionDomain, ObjectNamespace: s.ObjectNamespace, CatalogDatabase: s.CatalogDatabase, CatalogID: s.CatalogID, CatalogUUID: s.CatalogUUID, CatalogVersion: s.CatalogVersion, DuckLakeSnapshotID: s.DuckLakeSnapshotID, RelationNamespace: s.RelationNamespace, ObjectRoot: s.ObjectRoot, ObjectRootDigest: s.ObjectRootDigest, ArtifactRoot: s.ArtifactRoot, ArtifactRootDigest: s.ArtifactRootDigest, RelationManifestDigest: s.RelationManifestDigest, ClosureDigest: s.ClosureDigest, CompiledGraphDigest: s.CompiledGraphDigest, CompiledConfigDigest: s.CompiledConfigDigest, SecurityDomainFingerprint: s.SecurityDomainFingerprint, AuthorizationPolicyRevision: s.AuthorizationPolicyRevision, AuthorizationPolicyDigest: s.AuthorizationPolicyDigest, LegacyAuthorizationPolicy: input.legacyAuthorizationPolicy, RequestDigest: s.RequestDigest, PlanDigest: s.PlanDigest, CompatibilityDigest: s.CompatibilityDigest, ServingArtifactID: s.ServingArtifactID, ServingArtifactDigest: s.ServingArtifactDigest, DuckDBVersion: s.DuckDBVersion, RuntimeVersion: s.RuntimeVersion, DuckLakeExtensionVersion: s.DuckLakeExtensionVersion, DuckLakeSpecVersion: s.DuckLakeSpecVersion, CatalogSchemaVersion: s.CatalogSchemaVersion, QualificationEvidence: append(json.RawMessage(nil), s.QualificationEvidence...)}
+	return deploymentnative.SnapshotSealInput{SealID: s.SealID, AttemptID: s.AttemptID, CandidateID: s.CandidateID, PhysicalPoolID: s.PhysicalPoolID, TenantDomain: s.TenantDomain, Region: s.Region, EncryptionDomain: s.EncryptionDomain, ObjectNamespace: s.ObjectNamespace, CatalogDatabase: s.CatalogDatabase, CatalogID: s.CatalogID, CatalogUUID: s.CatalogUUID, CatalogVersion: s.CatalogVersion, DuckLakeSnapshotID: s.DuckLakeSnapshotID, RelationNamespace: s.RelationNamespace, ObjectRoot: s.ObjectRoot, ObjectRootDigest: s.ObjectRootDigest, ArtifactRoot: s.ArtifactRoot, ArtifactRootDigest: s.ArtifactRootDigest, RelationManifestDigest: s.RelationManifestDigest, ClosureDigest: s.ClosureDigest, CompiledGraphDigest: s.CompiledGraphDigest, CompiledConfigDigest: s.CompiledConfigDigest, SecurityDomainFingerprint: s.SecurityDomainFingerprint, AuthorizationPolicyRevision: s.AuthorizationPolicyRevision, AuthorizationPolicyDigest: s.AuthorizationPolicyDigest, LegacyAuthorizationPolicy: input.legacyAuthorizationPolicy, RequestDigest: s.RequestDigest, PlanDigest: s.PlanDigest, CompatibilityDigest: s.CompatibilityDigest, ServingArtifactID: s.ServingArtifactID, ServingArtifactDigest: s.ServingArtifactDigest, DuckDBVersion: s.DuckDBVersion, RuntimeVersion: s.RuntimeVersion, DuckLakeExtensionVersion: s.DuckLakeExtensionVersion, DuckLakeSpecVersion: s.DuckLakeSpecVersion, CatalogSchemaVersion: s.CatalogSchemaVersion, QualificationEvidence: append(json.RawMessage(nil), s.QualificationEvidence...), ResolvedInputs: append(json.RawMessage(nil), s.ResolvedInputs...), ResolvedInputsDigest: s.ResolvedInputsDigest}
 }
 
 func toNativeGeneration(g GenerationEvidence) deploymentnative.GenerationInput {

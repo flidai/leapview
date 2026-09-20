@@ -850,7 +850,7 @@ func nativePublicationActivationWorkflow(projectID, environment, actor string, r
 		activationID := "deployment:" + publicationID + ":activate"
 		payload, err := json.Marshal(ActivateJob{
 			Project: projectID, Deployment: publicationID, Actor: actor,
-			IdempotencyKey: activationID, Rollback: rollback,
+			IdempotencyKey: activationID, NativePublication: true, Rollback: rollback,
 		})
 		if err != nil {
 			return jobs.WorkflowIntent{}, err

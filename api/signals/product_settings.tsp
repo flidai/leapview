@@ -58,6 +58,21 @@ model ProductAuthenticationSignal {
   `azure`: ProductAvailabilitySignal;
   `scim`: ProductAvailabilitySignal;
   `managedBy`: "deployment";
+  `platformAdministrators`: ProductPlatformAdministratorSignal[];
+  `platformAdministrationRevision`: string;
+  `platformAdministrationAvailable`: boolean;
+  `platformAdministrationError`?: string;
+}
+
+/** Redacted durable platform-role authority; credential material is never exposed. */
+model ProductPlatformAdministratorSignal {
+  `bindingId`: string;
+  `principalId`: string;
+  `email`: string;
+  `displayName`: string;
+  `role`: string;
+  `grantedAt`: utcDateTime;
+  `revokedAt`?: utcDateTime;
 }
 
 model ProductAPIStatusSignal {
@@ -114,4 +129,6 @@ model ProductSettingsCommand {
   `action`: string;
   `displayName`?: string;
   `revision`: int64;
+  `principalId`?: string;
+  `expectedRevision`?: string;
 }

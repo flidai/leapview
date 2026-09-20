@@ -1,5 +1,16 @@
 package api
 
+import deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+
+// AdminDeliveryData is the bounded, target-scoped delivery projection used by
+// operator administration surfaces. It is composed from the same native read
+// authorities as the public API.
+type AdminDeliveryData struct {
+	Operator            deploymentgen.DeliveryOperatorSnapshotResponse
+	Publications        []deploymentgen.DeliveryPublicationEvidenceResponse
+	RetainedGenerations []deploymentgen.DeliveryGenerationStatusResponse
+}
+
 type PageInfo struct {
 	NextCursor *string `json:"nextCursor,omitempty"`
 }

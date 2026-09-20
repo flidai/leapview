@@ -14,11 +14,12 @@ import (
 )
 
 var (
-	ErrPrincipalRequired        = errors.New("authenticated principal is required")
-	ErrCommandInvalid           = errors.New("personal settings command is invalid")
-	ErrDisplayNameManaged       = errors.New("display name is managed by the identity provider")
-	ErrLocalPasswordUnavailable = errors.New("local password changes are unavailable for this principal")
-	ErrTokenPrincipal           = errors.New("personal API tokens are only available to user principals")
+	ErrPrincipalRequired         = errors.New("authenticated principal is required")
+	ErrCommandInvalid            = errors.New("personal settings command is invalid")
+	ErrDisplayNameManaged        = errors.New("display name is managed by the identity provider")
+	ErrLocalPasswordUnavailable  = errors.New("local password changes are unavailable for this principal")
+	ErrTokenPrincipal            = errors.New("personal API tokens are only available to user principals")
+	ErrTokenCapabilitiesRequired = errors.New("at least one explicit API token capability is required")
 )
 
 // Repository is intentionally narrower than access.Repository.  It keeps the
@@ -59,6 +60,7 @@ type Service struct {
 	IdentityManagement           IdentityManagementReader
 	Avatar                       AvatarReader
 	Authoring                    AuthoringReader
+	CurrentCredential            func(context.Context) (access.APICredential, bool)
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
 	LocalPasswordEnabled         bool
 	Now                          func() time.Time
@@ -299,26 +301,30 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 		if len(description) > 1024 {
 			return nil, fmt.Errorf("token description must not exceed 1024 bytes")
 		}
-		var capabilities []access.Capability
-		if command.Capabilities != nil {
-			capabilities = make([]access.Capability, 0, len(command.Capabilities))
-			for _, raw := range command.Capabilities {
-				capability, parseErr := access.ParseCapability(strings.TrimSpace(raw))
-				if parseErr != nil {
-					return nil, fmt.Errorf("unsupported API token capability %q: %w", raw, parseErr)
-				}
-				capabilities = append(capabilities, capability)
+		if len(command.Capabilities) == 0 {
+			return nil, ErrTokenCapabilitiesRequired
+		}
+		capabilities := make([]access.Capability, 0, len(command.Capabilities))
+		for _, raw := range command.Capabilities {
+			capability, parseErr := access.ParseCapability(strings.TrimSpace(raw))
+			if parseErr != nil {
+				return nil, fmt.Errorf("unsupported API token capability %q: %w", raw, parseErr)
 			}
-			if s.CurrentEffectiveCapabilities == nil {
-				return nil, fmt.Errorf("effective project capabilities are unavailable")
-			}
-			effective, effectiveErr := s.CurrentEffectiveCapabilities(ctx, principalID)
-			if effectiveErr != nil {
-				return nil, effectiveErr
-			}
-			if validateErr := access.ValidateTokenCapabilities(capabilities, effective); validateErr != nil {
-				return nil, validateErr
-			}
+			capabilities = append(capabilities, capability)
+		}
+		if s.CurrentEffectiveCapabilities == nil {
+			return nil, fmt.Errorf("effective project capabilities are unavailable")
+		}
+		effective, effectiveErr := s.CurrentEffectiveCapabilities(ctx, principalID)
+		if effectiveErr != nil {
+			return nil, effectiveErr
+		}
+		effective, effectiveErr = s.effectiveCapabilitiesForCredential(ctx, principalID, effective)
+		if effectiveErr != nil {
+			return nil, effectiveErr
+		}
+		if validateErr := access.ValidateTokenCapabilities(capabilities, effective); validateErr != nil {
+			return nil, validateErr
 		}
 		var expiresAt time.Time
 		if strings.TrimSpace(command.ExpiresAt) != "" {
@@ -345,6 +351,37 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 	default:
 		return nil, fmt.Errorf("%w: token action %q", ErrCommandInvalid, command.Action)
 	}
+}
+
+// effectiveCapabilitiesForCredential applies the request credential's
+// least-privilege boundary to the principal's active authorization snapshot.
+// The browser session has no API credential and therefore leaves the snapshot
+// unchanged. A nil token scope remains dynamic, while an explicit empty scope
+// denies every operation and must not be used to mint another token.
+func (s *Service) effectiveCapabilitiesForCredential(ctx context.Context, principalID string, effective []access.Capability) ([]access.Capability, error) {
+	if s == nil || s.CurrentCredential == nil {
+		return effective, nil
+	}
+	credential, ok := s.CurrentCredential(ctx)
+	if !ok {
+		return effective, nil
+	}
+	// Authoring credentials are intentionally not accepted by personal
+	// settings; the HTTP adapter rejects them before dispatch, and this keeps
+	// direct service callers fail-closed as well.
+	if credential.Authoring != nil {
+		return nil, access.ErrForbidden
+	}
+	if credential.Token.ID == "" {
+		return effective, nil
+	}
+	if credential.Principal.ID != "" && strings.TrimSpace(credential.Principal.ID) != strings.TrimSpace(principalID) {
+		return nil, access.ErrForbidden
+	}
+	if credential.Token.Capabilities != nil && len(credential.Token.Capabilities) == 0 {
+		return nil, access.ErrForbidden
+	}
+	return access.IntersectTokenCapabilities(credential.Token.Capabilities, effective), nil
 }
 
 func (s *Service) principalAndIdentity(ctx context.Context, principalID string) (access.Principal, access.PrincipalIdentityManagement, error) {

@@ -577,32 +577,6 @@ func waitForExpiredRefreshLease(t *testing.T, ctx context.Context, pool *pgxpool
 	}
 }
 
-func markRiverMultiNodeOrphan(t *testing.T, ctx context.Context, pool *pgxpool.Pool, productID string) int64 {
-	t.Helper()
-	var riverID int64
-	if err := pool.QueryRow(ctx, `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, productID).Scan(&riverID); err != nil {
-		t.Fatal(err)
-	}
-	// Model the exact durable state left by SIGKILL: River and product history
-	// both record attempt one as running, but no live client owns the claim and
-	// no retryable result was returned.
-	if _, err := pool.Exec(ctx, `
-		UPDATE public.river_job
-		SET state='running', attempt=1, attempted_by=ARRAY[$2],
-		    attempted_at=clock_timestamp()-interval '3 minutes'
-		WHERE id=$1`, riverID, riverMultiNodeOwnerA); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE jobs.job_history
-		SET status='running', attempt_count=1,
-		    started_at=clock_timestamp()-interval '3 minutes'
-		WHERE id=$1`, productID); err != nil {
-		t.Fatal(err)
-	}
-	return riverID
-}
-
 func buildRiverMultiNodeModule(t *testing.T, repository *jobpostgres.Repository, owner string) *Module {
 	t.Helper()
 	persistence, err := NewPostgresPersistence(repository)
@@ -713,4 +687,30 @@ func assertRiverMultiNodeEvidence(t *testing.T, ctx context.Context, pool *pgxpo
 	if wantAttempt > 1 && len(attemptedBy) < 2 {
 		t.Fatalf("River attempted_by for takeover %s = %#v, want both node owners", productID, attemptedBy)
 	}
+}
+
+func markRiverMultiNodeOrphan(t *testing.T, ctx context.Context, pool *pgxpool.Pool, productID string) int64 {
+	t.Helper()
+	var riverID int64
+	if err := pool.QueryRow(ctx, `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, productID).Scan(&riverID); err != nil {
+		t.Fatal(err)
+	}
+	// Model the exact durable state left by SIGKILL: River and product history
+	// both record attempt one as running, but no live client owns the claim and
+	// no retryable result was returned.
+	if _, err := pool.Exec(ctx, `
+		UPDATE public.river_job
+		SET state='running', attempt=1, attempted_by=ARRAY[$2],
+		    attempted_at=clock_timestamp()-interval '3 minutes'
+		WHERE id=$1`, riverID, riverMultiNodeOwnerA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE jobs.job_history
+		SET status='running', attempt_count=1,
+		    started_at=clock_timestamp()-interval '3 minutes'
+		WHERE id=$1`, productID); err != nil {
+		t.Fatal(err)
+	}
+	return riverID
 }

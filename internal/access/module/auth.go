@@ -78,6 +78,14 @@ type sessionManager interface {
 	DeleteSession(ctx context.Context, token string) error
 }
 
+// sessionAuthenticatedAtManager is an optional PostgreSQL capability. OIDC
+// callbacks use it to preserve the verified IdP auth_time in the durable
+// browser session without widening the access.Repository contract used by
+// lightweight adapters and tests.
+type sessionAuthenticatedAtManager interface {
+	CreateSessionAt(ctx context.Context, principalID string, ttl time.Duration, authenticatedAt time.Time) (string, error)
+}
+
 type principalSessionRevoker interface {
 	RevokeSessionsForPrincipal(ctx context.Context, principalID string) error
 }
@@ -329,7 +337,11 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 			Provider: "oidc", TenantID: issuer, Subject: stableSubject(claims.Subject, email), Email: email, DisplayName: oidcDisplayName(claims),
 		})
 		if mutationErr == nil {
-			token, mutationErr = txRepo.CreateSession(r.Context(), principal.ID, 8*time.Hour)
+			sessionAt, ok := txRepo.(sessionAuthenticatedAtManager)
+			if !ok {
+				return authAuditInput(r, "session.created", principal.ID, "session", "", "", "denied", map[string]any{"provider": provider, "reason": "auth_time session anchoring unavailable"}), errors.New("OIDC session auth_time anchoring is unavailable")
+			}
+			token, mutationErr = sessionAt.CreateSessionAt(r.Context(), principal.ID, 8*time.Hour, claims.AuthTime)
 		}
 		return authAuditInput(r, "session.created", principal.ID, "session", "", "", "success", map[string]any{"provider": provider}), mutationErr
 	})

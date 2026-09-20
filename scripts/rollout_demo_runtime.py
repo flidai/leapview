@@ -119,7 +119,7 @@ def main():
     database_size = int(sql("SELECT sum(pg_database_size(oid)) FROM pg_database WHERE datname IN ('leapview_control','leapview_ducklake')"))
     required = 2 * (home_size + database_size) + 512 * 1024 * 1024
     assert shutil.disk_usage('/opt').free > required, 'Insufficient room for backup and rollback'
-    print(f'Preflight passed: exact image, healthy predecessor, schema 22, backup space {required} bytes', flush=True)
+    print(f'Preflight passed: exact image, healthy predecessor, schema 27, backup space {required} bytes', flush=True)
     if sys.argv[1] == '--check':
         return
 
@@ -171,7 +171,7 @@ def main():
         with urllib.request.urlopen('https://demo.leapview.dev/login', timeout=15) as response:
             assert response.status == 200
         subprocess.run(['systemctl', 'enable', SERVICE], check=True)
-        write_private(backup / 'rollout-success.json', json.dumps({'revision': REVISION, 'image': IMAGE, 'schema': 22}))
+        write_private(backup / 'rollout-success.json', json.dumps({'revision': REVISION, 'image': IMAGE, 'schema': 27}))
         print(f'Deployed {REVISION}; readiness and login passed; rollback backup: {backup}', flush=True)
     except BaseException as rollout_error:
         if service_stopped:

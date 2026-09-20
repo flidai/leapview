@@ -100,6 +100,59 @@ type NativeRecoveredSealEvidenceAssemblerInput NativeSealEvidenceAssemblerInput
 type NativeRecoveredSealAssemblerInput = NativeRecoveredSealEvidenceAssemblerInput
 type NativeRecoveredPhysicalSealAssemblyInput = NativeRecoveredSealEvidenceAssemblerInput
 
+// nativeResolvedInputsRecord is the compact persisted projection of
+// DeliveryResolvedBuildInputs. GateEvidence is already retained in the seal's
+// qualification envelope, so duplicating it here would consume the bounded
+// evidence budget without adding authority.
+type nativeResolvedInputsRecord struct {
+	Inputs         []deployment.DeliveryResolvedDataInput `json:"inputs"`
+	PolicyDigest   string                                 `json:"policyDigest"`
+	EvidenceDigest string                                 `json:"evidenceDigest"`
+}
+
+func nativeResolvedInputsEvidence(plan deployment.DeliveryPlan, gate release.GateEvidence) (json.RawMessage, string, error) {
+	inputs := make([]deployment.DeliveryResolvedDataInput, 0, len(plan.Execution.DataInputs))
+	for _, declaration := range plan.Execution.DataInputs {
+		if declaration.Mode == deployment.DeliveryDataBounded {
+			return nil, "", fmt.Errorf("%w: native build has no durable bounded-input enforcement evidence", deploymentnative.ErrInvalid)
+		}
+		explanation := strings.TrimSpace(declaration.Explanation)
+		if explanation == "" {
+			switch declaration.Mode {
+			case deployment.DeliveryDataPinned:
+				explanation = "reads the immutable revision declared by the plan"
+			case deployment.DeliveryDataBounded:
+				explanation = "enforces the interval or watermark declared by the plan"
+			case deployment.DeliveryDataObserved:
+				explanation = "records the exact build-time observation; reproducibility is weaker"
+			}
+		}
+		resolved := deployment.DeliveryResolvedDataInput{ID: declaration.ID, Mode: declaration.Mode, PlannedRevision: declaration.Revision, PlannedBound: declaration.Bound, ActualRevision: declaration.Revision, ActualBound: declaration.Bound, Explanation: explanation}
+		if declaration.Mode == deployment.DeliveryDataObserved {
+			// Observed inputs require an observation digest produced by the
+			// gate. A native build cannot claim one from the plan declaration.
+			for _, source := range gate.Sources {
+				if source.ID == declaration.ID {
+					resolved.ActualRevision = ""
+					resolved.ActualBound = ""
+					resolved.ObservationDigest = source.ObservationDigest
+					break
+				}
+			}
+		}
+		inputs = append(inputs, resolved)
+	}
+	resolved, err := deployment.ValidateDeliveryResolvedBuildInputs(plan, deployment.DeliveryResolvedBuildInputs{Inputs: inputs, PolicyDigest: plan.Governance.PolicyDigest, GateEvidence: &gate})
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: resolved native data inputs: %v", deploymentnative.ErrInvalid, err)
+	}
+	record, err := json.Marshal(nativeResolvedInputsRecord{Inputs: resolved.Inputs, PolicyDigest: resolved.PolicyDigest, EvidenceDigest: resolved.EvidenceDigest})
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: encode resolved native data inputs: %v", deploymentnative.ErrInvalid, err)
+	}
+	return record, resolved.EvidenceDigest, nil
+}
+
 // AssembleNativeGenerationAdmissionInput validates and assembles a complete
 // GenerationAdmissionInput from exact native build evidence.  The returned
 // value has already passed the same normalization used by CompleteBuildAndAdmit.
@@ -160,6 +213,10 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 	if err != nil {
 		return GenerationAdmissionInput{}, fmt.Errorf("%w: canonical qualification evidence: %v", deploymentnative.ErrInvalid, err)
 	}
+	resolvedInputs, resolvedInputsDigest, err := nativeResolvedInputsEvidence(input.Plan, input.Qualification.Gates)
+	if err != nil {
+		return GenerationAdmissionInput{}, err
+	}
 	artifact := input.Artifacts.Generation
 	artifactRoot := artifact.NativeArtifact.Locator
 	artifactRootDigest := artifact.ArtifactDigest
@@ -194,6 +251,7 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 			DuckDBVersion: input.Compatibility.DuckDBRuntime, RuntimeVersion: input.RuntimeVersion,
 			DuckLakeExtensionVersion: input.Compatibility.DuckLakeExtension, DuckLakeSpecVersion: duckLakeSpecVersion,
 			CatalogSchemaVersion: input.Compatibility.CatalogSchemaVersion, QualificationEvidence: qualification,
+			ResolvedInputs: resolvedInputs, ResolvedInputsDigest: resolvedInputsDigest,
 		},
 		QualificationDigest: qualificationDigest,
 		CandidateExpiresAt:  input.Plan.Governance.ExpiresAt.UTC().Truncate(time.Microsecond),

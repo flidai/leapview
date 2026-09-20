@@ -15,7 +15,7 @@ func TestNativeActivationWorkflowPreservesRollbackIdentity(t *testing.T) {
 		if err := json.Unmarshal(intent.Job.Payload, &payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload.Rollback != rollback {
+		if !payload.NativePublication || payload.Rollback != rollback {
 			t.Fatalf("rollback=%t workflow payload = %#v", rollback, payload)
 		}
 	}

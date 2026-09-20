@@ -91,6 +91,49 @@ func TestPrincipalAdministrationResponsesExposeSourceAwareCapabilities(t *testin
 	}
 }
 
+func TestLegacyServicePrincipalOAuthDoesNotClaimUnenforcedScope(t *testing.T) {
+	store := openAccessHTTPTestStore(t)
+	repository := store.repository
+	service, err := repository.CreateServicePrincipal(t.Context(), access.ServicePrincipalInput{DisplayName: "Legacy OAuth service"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, _, err := repository.CreateServicePrincipalSecret(t.Context(), service.ID, access.ServicePrincipalSecretInput{Name: "legacy-oauth", ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }}
+	request := httptest.NewRequest(stdhttp.MethodPost, "/oauth/token", strings.NewReader(`{"grant_type":"client_credentials","client_id":"`+service.ID+`","client_secret":"`+secret+`","scope":"RESOURCE_USE"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.OAuthToken(recorder, request)
+	if recorder.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("unsupported scope status=%d, want %d", recorder.Code, stdhttp.StatusBadRequest)
+	}
+	request = httptest.NewRequest(stdhttp.MethodPost, "/oauth/token", strings.NewReader(`{"grant_type":"client_credentials","client_id":"`+service.ID+`","client_secret":"`+secret+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	handler.OAuthToken(recorder, request)
+	if recorder.Code != stdhttp.StatusOK {
+		t.Fatalf("unscoped exchange status=%d, want %d", recorder.Code, stdhttp.StatusOK)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if _, claimsScope := response["scope"]; claimsScope {
+		t.Fatalf("unscoped exchange claimed a scope: %v", response["scope"])
+	}
+	token, ok := response["access_token"].(string)
+	if !ok || token == "" {
+		t.Fatal("unscoped exchange did not issue a token")
+	}
+	authenticated, err := repository.PrincipalForAPIToken(t.Context(), token)
+	if err != nil || authenticated.ID != service.ID {
+		t.Fatalf("issued token did not authenticate service principal: principal=%#v err=%v", authenticated, err)
+	}
+}
+
 func TestExternalPrincipalProfileAndDeletionAreManagedByProvider(t *testing.T) {
 	store := openAccessHTTPTestStore(t)
 	repository := store.repository

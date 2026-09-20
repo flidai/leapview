@@ -39,11 +39,17 @@ LEAPVIEW_WORKLOAD_PROJECT=analytics
 
 `LEAPVIEW_API_TOKEN` and `--token` remain a discouraged compatibility path. Avoid command-line secrets where process listings or shell history may expose them.
 
+The legacy service-principal `client_credentials` fallback at `/oauth/token` is an identity-only exchange. It does not enforce OAuth scopes, so it rejects a nonempty `scope` instead of claiming that a requested scope narrowed the returned token. Use the dedicated workload or MCP exchange when a bounded action or OAuth scope is required.
+
 For a person, `leapview login <target>` uses browser/device authorization and the person's existing SSO or local browser session. It stores rotating CLI credentials in the OS keychain, never in the target profile. Browser sessions, CLI sessions, Desktop sessions, and workload credentials have independent client IDs and revocation lifecycles.
 
 ## User API tokens
 
-An authenticated user can list, create, and revoke their tokens through `/api/v1/me/api-tokens`. Token access is the intersection of the principal's effective privileges, any token project scope, and token privilege allowlist. A token can narrow the principal; it cannot elevate it.
+An authenticated user can list, create, rotate, and revoke their tokens through `/api/v1/me/api-tokens`. New personal API-token issuance and rotation require at least one explicit capability; the requested list must be a subset of the request credential's effective privileges, so a narrow PAT cannot mint a broader PAT. `POST /api/v1/me/api-tokens/{token}/rotate` returns replacement material once. Set `revokePrevious: true` to invalidate the old token in the same transaction, or leave it false for a deliberate overlap window. A token can narrow the principal; it cannot elevate it.
+
+Older tokens with no stored capability allowlist remain supported for compatibility and continue to follow the principal's effective capabilities dynamically at request time. This is a legacy authentication behavior, not an option for newly issued direct API tokens; use an explicit capability list for predictable scope.
+
+The browser Settings surface currently covers personal-token creation and revocation; use the documented API rotation endpoint when an atomic replacement or deliberate overlap window is required.
 
 The same user can inspect browser sessions, API tokens, and authoring sessions through the Current User API. Revoke unused CLI sessions during credential or device incidents. Reuse of a rotated refresh credential revokes the entire CLI session family.
 
@@ -65,6 +71,10 @@ Do not extend overlap indefinitely. Record owner, purpose, creation, last rotati
 ## Respond to exposure
 
 Revoke the credential immediately, then inspect audit and query events for the principal, the affected target's server-bound Project and resources, operations, and time window. Rotate downstream secrets that the workload could access, correct excessive grants, and issue a replacement only after the cause is contained.
+
+Platform administrators can use a user's Settings page to **Revoke all credentials** during an incident. This is one audited transaction covering browser and desktop sessions, personal API tokens, service-principal secrets, desktop authorization codes, approved CLI device authorizations, authoring sessions, and OAuth sessions; the user remains enabled so a replacement login can be issued after containment. Pending CLI device authorizations are unbound until approval and cannot be attributed to a user for per-user revocation, so block the target principal first when the incident requires preventing a pending request from being approved later. The existing **Revoke all sessions** action remains session-only. For safety, an administrator cannot revoke their own credentials through this control, and the last usable platform administrator cannot be stripped of every credential.
+
+Because this is a point-in-time reset, block the user first when the incident requires preventing re-authentication or newly issued credentials.
 
 Deleting or disabling a service principal is appropriate when the workload is retired. Remove role bindings and ownership references as part of the same change.
 

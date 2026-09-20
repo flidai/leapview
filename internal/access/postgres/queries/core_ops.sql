@@ -40,6 +40,249 @@ SELECT EXISTS (
       AND b.role = 'platform_admin' AND b.revoked_at IS NULL
 );
 
+-- name: LockPlatformRoleAuthority :exec
+SELECT pg_advisory_xact_lock(hashtextextended('leapview.platform-role-authority', 0));
+
+-- name: CountUsablePlatformAdministrators :one
+SELECT count(DISTINCT p.id)
+FROM access.platform_role_binding b
+JOIN access.principal p ON p.id = b.principal_id
+WHERE b.role = 'platform_admin'
+  AND b.revoked_at IS NULL
+  AND p.status = 'active'
+  AND p.revoked_at IS NULL
+  AND p.disabled_at IS NULL
+  AND p.blocked_at IS NULL;
+
+-- name: ListPlatformAdministrators :many
+SELECT b.id AS binding_id,
+       b.role,
+       b.created_at AS role_created_at,
+       p.id,
+       p.principal_type,
+       p.status,
+       COALESCE(p.email, '') AS email,
+       p.display_name,
+       p.disabled_at,
+       p.blocked_at,
+       p.last_seen_at,
+       p.created_at,
+       p.updated_at
+FROM access.platform_role_binding b
+JOIN access.principal p ON p.id = b.principal_id
+WHERE b.role = 'platform_admin'
+  AND b.revoked_at IS NULL
+  AND p.status = 'active'
+  AND p.revoked_at IS NULL
+  AND p.disabled_at IS NULL
+  AND p.blocked_at IS NULL
+ORDER BY lower(p.email), p.id
+LIMIT sqlc.arg(page_size)::int;
+
+-- name: ListAllPlatformAdministrators :many
+SELECT b.id AS binding_id,
+       b.role,
+       b.created_at AS role_created_at,
+       b.revoked_at,
+       p.id,
+       p.principal_type,
+       p.status,
+       COALESCE(p.email, '') AS email,
+       p.display_name,
+       p.disabled_at,
+       p.blocked_at,
+       p.last_seen_at,
+       p.created_at,
+       p.updated_at
+FROM access.platform_role_binding b
+JOIN access.principal p ON p.id = b.principal_id
+WHERE b.role = 'platform_admin'
+ORDER BY lower(p.email), p.id;
+
+-- name: ListActivePlatformRoleBindings :many
+SELECT b.id AS binding_id,
+       b.principal_id,
+       b.created_at AS role_created_at,
+       p.status,
+       p.revoked_at AS principal_revoked_at,
+       p.disabled_at,
+       p.blocked_at
+FROM access.platform_role_binding b
+JOIN access.principal p ON p.id = b.principal_id
+WHERE b.role = 'platform_admin' AND b.revoked_at IS NULL
+ORDER BY b.id
+FOR UPDATE OF b, p;
+
+-- name: GetPlatformRoleBinding :one
+SELECT b.id AS binding_id,
+       b.principal_id,
+       b.role,
+       b.created_at AS role_created_at,
+       b.revoked_at
+FROM access.platform_role_binding b
+WHERE b.principal_id = sqlc.arg(principal_id)::uuid
+  AND b.role = 'platform_admin' AND b.revoked_at IS NULL
+FOR UPDATE;
+
+-- name: GetPlatformRoleBindingByID :one
+SELECT b.id AS binding_id,
+       b.principal_id,
+       b.role,
+       b.created_at AS role_created_at,
+       b.revoked_at
+FROM access.platform_role_binding b
+WHERE b.id = sqlc.arg(binding_id)::uuid;
+
+-- name: LockEnabledPrincipalForPlatformRole :one
+SELECT id,
+       principal_type,
+       status,
+       COALESCE(email, '') AS email,
+       display_name,
+       disabled_at,
+       blocked_at,
+       last_seen_at,
+       created_at,
+       updated_at
+FROM access.principal
+WHERE id = sqlc.arg(principal_id)::uuid
+  AND principal_type = 'user'
+  AND status = 'active'
+  AND revoked_at IS NULL
+  AND disabled_at IS NULL
+  AND blocked_at IS NULL
+FOR UPDATE;
+
+-- name: LockPrincipalForPlatformRole :one
+SELECT id,
+       principal_type,
+       status,
+       COALESCE(email, '') AS email,
+       display_name,
+       disabled_at,
+       blocked_at,
+       last_seen_at,
+       created_at,
+       updated_at
+FROM access.principal
+WHERE id = sqlc.arg(principal_id)::uuid
+  AND principal_type = 'user'
+  AND revoked_at IS NULL
+FOR UPDATE;
+
+-- name: LockPrincipalLifecycle :one
+SELECT status, disabled_at, blocked_at
+FROM access.principal
+WHERE id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL
+FOR UPDATE;
+
+-- name: RevokePlatformRole :execresult
+UPDATE access.platform_role_binding
+SET revoked_at = clock_timestamp()
+WHERE principal_id = sqlc.arg(principal_id)::uuid
+  AND role = 'platform_admin' AND revoked_at IS NULL;
+
+-- name: GetPlatformRoleOperation :one
+SELECT idempotency_key,
+       request_digest,
+       action,
+       principal_id,
+       binding_id,
+       result_revision,
+       created_at
+FROM access.platform_role_operation
+WHERE idempotency_key = sqlc.arg(idempotency_key)::text;
+
+-- name: InsertPlatformRoleOperation :exec
+INSERT INTO access.platform_role_operation(idempotency_key, request_digest, action, principal_id, binding_id, result_revision)
+VALUES (sqlc.arg(idempotency_key), sqlc.arg(request_digest), sqlc.arg(action), sqlc.arg(principal_id)::uuid, sqlc.arg(binding_id)::uuid, sqlc.arg(result_revision));
+
+-- name: GetPlatformRoleApprovalByID :one
+SELECT id::text, action, principal_id::text, requester_id::text,
+       COALESCE(approver_id::text, '') AS approver_id,
+       COALESCE(canceled_by::text, '') AS canceled_by,
+       COALESCE(expired_by::text, '') AS expired_by,
+       status, expected_revision, request_digest, idempotency_key, revision,
+       expires_at, created_at, approved_at, canceled_at, expired_at,
+       executed_at, COALESCE(binding_id::text, '') AS binding_id,
+       COALESCE(result_revision, '') AS result_revision
+FROM access.platform_role_approval
+WHERE id = sqlc.arg(id)::uuid;
+
+-- name: ListPlatformRoleApprovals :many
+SELECT id::text, action, principal_id::text, requester_id::text,
+       COALESCE(approver_id::text, '') AS approver_id,
+       COALESCE(canceled_by::text, '') AS canceled_by,
+       COALESCE(expired_by::text, '') AS expired_by,
+       status, expected_revision, request_digest, idempotency_key, revision,
+       expires_at, created_at, approved_at, canceled_at, expired_at,
+       executed_at, COALESCE(binding_id::text, '') AS binding_id,
+       COALESCE(result_revision, '') AS result_revision
+FROM access.platform_role_approval
+WHERE sqlc.arg(requester_id)::text = '' OR requester_id = sqlc.arg(requester_id)::uuid
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_size)::int;
+
+-- name: GetPlatformRoleApprovalByIdempotencyKey :one
+SELECT id::text, action, principal_id::text, requester_id::text,
+       COALESCE(approver_id::text, '') AS approver_id,
+       COALESCE(canceled_by::text, '') AS canceled_by,
+       COALESCE(expired_by::text, '') AS expired_by,
+       status, expected_revision, request_digest, idempotency_key, revision,
+       expires_at, created_at, approved_at, canceled_at, expired_at,
+       executed_at, COALESCE(binding_id::text, '') AS binding_id,
+       COALESCE(result_revision, '') AS result_revision
+FROM access.platform_role_approval
+WHERE idempotency_key = sqlc.arg(idempotency_key)::text;
+
+-- name: LockPlatformRoleApproval :one
+SELECT id::text
+FROM access.platform_role_approval
+WHERE id = sqlc.arg(id)::uuid
+FOR UPDATE;
+
+-- name: GetPlatformRoleApprovalOperation :one
+SELECT idempotency_key, approval_id::text, request_digest, action, result_revision, created_at
+FROM access.platform_role_approval_operation
+WHERE idempotency_key = sqlc.arg(idempotency_key)::text;
+
+-- name: InsertPlatformRoleApproval :exec
+INSERT INTO access.platform_role_approval
+ (id, action, principal_id, requester_id, status, expected_revision, request_digest, idempotency_key, expires_at)
+VALUES (sqlc.arg(id)::uuid, sqlc.arg(action), sqlc.arg(principal_id)::uuid, sqlc.arg(requester_id)::uuid,
+        'pending', sqlc.arg(expected_revision), sqlc.arg(request_digest), sqlc.arg(idempotency_key), sqlc.arg(expires_at));
+
+-- name: ApprovePlatformRoleApproval :execresult
+UPDATE access.platform_role_approval
+SET status = 'approved', approver_id = sqlc.arg(actor_id)::uuid,
+    approved_at = clock_timestamp(), revision = revision + 1
+WHERE id = sqlc.arg(id)::uuid AND status = 'pending' AND revision = sqlc.arg(expected_revision)
+  AND expires_at > clock_timestamp();
+
+-- name: CancelPlatformRoleApproval :execresult
+UPDATE access.platform_role_approval
+SET status = 'canceled', canceled_by = sqlc.arg(actor_id)::uuid,
+    canceled_at = clock_timestamp(), revision = revision + 1
+WHERE id = sqlc.arg(id)::uuid AND status = 'pending' AND revision = sqlc.arg(expected_revision);
+
+-- name: ExpirePlatformRoleApproval :execresult
+UPDATE access.platform_role_approval
+SET status = 'expired', expired_by = NULLIF(sqlc.arg(actor_id)::text, '')::uuid,
+    expired_at = clock_timestamp(), revision = revision + 1
+WHERE id = sqlc.arg(id)::uuid AND status = 'pending' AND revision = sqlc.arg(expected_revision)
+  AND expires_at <= clock_timestamp();
+
+-- name: ExecutePlatformRoleApproval :execresult
+UPDATE access.platform_role_approval
+SET status = 'executed', binding_id = sqlc.arg(binding_id)::uuid,
+    result_revision = sqlc.arg(result_revision), executed_at = clock_timestamp(), revision = revision + 1
+WHERE id = sqlc.arg(id)::uuid AND status = 'approved';
+
+-- name: InsertPlatformRoleApprovalOperation :exec
+INSERT INTO access.platform_role_approval_operation
+ (idempotency_key, approval_id, request_digest, action, result_revision)
+VALUES (sqlc.arg(idempotency_key), sqlc.arg(approval_id)::uuid, sqlc.arg(request_digest), sqlc.arg(action), sqlc.arg(result_revision));
+
 -- name: ListServicePrincipals :many
 SELECT id, principal_type, status, COALESCE(email, '') AS email, display_name,
        disabled_at, blocked_at, last_seen_at, created_at, updated_at
@@ -52,6 +295,18 @@ LIMIT sqlc.arg(page_size)::int;
 UPDATE access.principal
 SET status = 'disabled', disabled_at = COALESCE(disabled_at, clock_timestamp()),
     revoked_at = COALESCE(revoked_at, clock_timestamp()), updated_at = clock_timestamp()
+WHERE id = sqlc.arg(id)::uuid AND principal_type = 'service' AND revoked_at IS NULL;
+
+-- name: SuspendServicePrincipal :execresult
+UPDATE access.principal
+SET status = 'disabled', disabled_at = COALESCE(disabled_at, clock_timestamp()),
+    updated_at = clock_timestamp()
+WHERE id = sqlc.arg(id)::uuid AND principal_type = 'service' AND revoked_at IS NULL;
+
+-- name: EnableServicePrincipal :execresult
+UPDATE access.principal
+SET status = 'active', disabled_at = NULL, blocked_at = NULL,
+    updated_at = clock_timestamp()
 WHERE id = sqlc.arg(id)::uuid AND principal_type = 'service' AND revoked_at IS NULL;
 
 -- name: DisablePrincipal :execresult
@@ -68,7 +323,8 @@ WHERE id = sqlc.arg(id)::uuid AND revoked_at IS NULL;
 
 -- name: BlockPrincipal :execresult
 UPDATE access.principal
-SET blocked_at = COALESCE(blocked_at, clock_timestamp()),
+SET status = 'disabled', disabled_at = COALESCE(disabled_at, clock_timestamp()),
+    blocked_at = COALESCE(blocked_at, clock_timestamp()),
     updated_at = clock_timestamp()
 WHERE id = sqlc.arg(id)::uuid AND revoked_at IS NULL;
 
@@ -89,6 +345,22 @@ WHERE principal_id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL;
 -- name: RevokePrincipalSecrets :exec
 UPDATE access.service_principal_secret SET revoked_at = clock_timestamp()
 WHERE service_principal_id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL;
+
+-- Desktop authorization codes are bearer grants, not durable sessions. Mark
+-- every outstanding code consumed so a code issued before incident response
+-- cannot mint a new desktop session afterwards.
+-- name: RevokePrincipalDesktopAuthorizationCodes :exec
+UPDATE access.desktop_authorization_code
+SET consumed_at = clock_timestamp()
+WHERE principal_id = sqlc.arg(principal_id)::uuid AND consumed_at IS NULL;
+
+-- An approved device authorization is an outstanding bearer grant until it is
+-- exchanged. Move it to the terminal consumed state so it cannot mint an
+-- authoring credential after revoke-all.
+-- name: RevokePrincipalApprovedDeviceAuthorizations :exec
+UPDATE access.device_authorization
+SET status = 'consumed', consumed_at = clock_timestamp()
+WHERE principal_id = sqlc.arg(principal_id)::uuid AND status = 'approved';
 
 -- name: RevokePrincipalGroups :exec
 UPDATE access.principal_group SET revoked_at = clock_timestamp()
@@ -205,8 +477,31 @@ WHERE EXISTS (
       AND disabled_at IS NULL AND blocked_at IS NULL
 );
 
+-- name: CreateBrowserSessionAt :execresult
+INSERT INTO access.session(id, principal_id, token_fingerprint, verifier, expires_at, created_at, kind)
+SELECT sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, sqlc.arg(token_fingerprint),
+       sqlc.arg(verifier), clock_timestamp() + sqlc.arg(ttl)::interval,
+       sqlc.arg(created_at)::timestamptz, 'browser'
+WHERE EXISTS (
+    SELECT 1 FROM access.principal
+    WHERE id = sqlc.arg(principal_id)::uuid AND status = 'active'
+      AND disabled_at IS NULL AND blocked_at IS NULL
+);
+
 -- name: FindBrowserSession :one
 SELECT p.id, s.token_fingerprint, s.verifier
+FROM access.session s
+JOIN access.principal p ON p.id = s.principal_id
+WHERE s.token_fingerprint = sqlc.arg(token_fingerprint)
+  AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
+  AND p.status = 'active' AND p.revoked_at IS NULL
+  AND p.disabled_at IS NULL AND p.blocked_at IS NULL;
+
+-- name: FindBrowserSessionCredential :one
+SELECT s.id, s.principal_id, s.token_fingerprint, s.verifier,
+       s.expires_at, s.created_at, s.last_seen_at, s.revoked_at,
+       s.kind, s.instance_id, s.profile_id, s.client_id,
+       s.absolute_expires_at
 FROM access.session s
 JOIN access.principal p ON p.id = s.principal_id
 WHERE s.token_fingerprint = sqlc.arg(token_fingerprint)
@@ -261,6 +556,13 @@ SELECT id, principal_id, name, description, capabilities, expires_at, created_at
 FROM access.api_token
 WHERE id = sqlc.arg(id)::uuid;
 
+-- name: LockAPITokenForRotation :one
+SELECT id, principal_id, name, description, capabilities, expires_at, created_at, last_used_at, revoked_at
+FROM access.api_token
+WHERE id = sqlc.arg(id)::uuid
+  AND principal_id = sqlc.arg(principal_id)::uuid
+FOR UPDATE;
+
 -- name: FindAPITokenByFingerprint :one
 SELECT t.id, t.verifier
 FROM access.api_token t
@@ -270,9 +572,12 @@ WHERE t.token_fingerprint = sqlc.arg(token_fingerprint)
   AND p.status = 'active' AND p.revoked_at IS NULL
   AND p.disabled_at IS NULL AND p.blocked_at IS NULL;
 
--- name: TouchAPIToken :exec
+-- Last-used evidence is best effort and coalesced. Successful authentication
+-- never waits on a write more frequently than once per minute per token.
+-- name: TouchAPIToken :execresult
 UPDATE access.api_token SET last_used_at = clock_timestamp()
-WHERE id = sqlc.arg(id)::uuid;
+WHERE id = sqlc.arg(id)::uuid
+  AND (last_used_at IS NULL OR last_used_at < clock_timestamp() - sqlc.arg(min_interval)::interval);
 
 -- name: ListAPITokenIDs :many
 SELECT id FROM access.api_token
@@ -303,7 +608,7 @@ WHERE sqlc.arg(expires_at)::timestamptz > clock_timestamp()
   );
 
 -- name: GetServiceSecret :one
-SELECT id, service_principal_id, name, expires_at, created_at, revoked_at
+SELECT id, service_principal_id, name, expires_at, created_at, last_used_at, revoked_at
 FROM access.service_principal_secret
 WHERE id = sqlc.arg(id)::uuid;
 
@@ -313,14 +618,22 @@ WHERE id = sqlc.arg(id)::uuid AND service_principal_id = sqlc.arg(principal_id):
   AND revoked_at IS NULL;
 
 -- name: FindServiceSecretByFingerprint :one
-SELECT s.service_principal_id, s.verifier
+SELECT s.id, s.service_principal_id, s.verifier
 FROM access.service_principal_secret s
 JOIN access.principal p ON p.id = s.service_principal_id
 WHERE s.service_principal_id = sqlc.arg(principal_id)::uuid
   AND s.secret_fingerprint = sqlc.arg(secret_fingerprint)
   AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
-  AND p.status = 'active' AND p.revoked_at IS NULL
+  AND p.principal_type = 'service' AND p.status = 'active' AND p.revoked_at IS NULL
   AND p.disabled_at IS NULL AND p.blocked_at IS NULL;
+
+-- Last-used evidence is best effort and coalesced. Successful authentication
+-- never waits on a write more frequently than once per minute per secret.
+-- name: TouchServiceSecret :execresult
+UPDATE access.service_principal_secret
+SET last_used_at = clock_timestamp()
+WHERE id = sqlc.arg(id)::uuid
+  AND (last_used_at IS NULL OR last_used_at < clock_timestamp() - sqlc.arg(min_interval)::interval);
 
 -- name: FindPrincipalByEmail :one
 SELECT id FROM access.principal

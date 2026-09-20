@@ -184,6 +184,7 @@ func queries(db DBTX) *jobdb.Queries { return jobdb.New(db) }
 func NewRepository(db DBTX) *Repository              { return &Repository{db: db} }
 func New(db DBTX) *Repository                        { return NewRepository(db) }
 func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
+
 func (r *Repository) DB() DBTX {
 	if r == nil {
 		return nil

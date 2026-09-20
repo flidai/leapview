@@ -11,7 +11,7 @@ afterAll(async () => {
   if (fixture) await stopAdminPageTestFixture(fixture)
 }, 15_000)
 
-test('profile settings renders the signed-in identity and editable local fields', async () => {
+test('profile settings renders the signed-in identity without unsupported editable fields', async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1440, height: 760 } })
   try {
     await page.goto(fixture.baseURL)
@@ -45,10 +45,6 @@ test('profile settings renders the signed-in identity and editable local fields'
       const displayNameInputStyle = getComputedStyle(displayNameInput)
       const displayNameInputWidth = Math.round(displayNameInput.getBoundingClientRect().width)
       const displayNameInputHeight = Math.round(displayNameInput.getBoundingClientRect().height)
-      const titleInput = profileRoot.querySelector('#personal-title') as HTMLInputElement
-      const usernameInput = profileRoot.querySelector('#personal-username') as HTMLInputElement
-      const titlePlaceholder = titleInput.placeholder
-      const initialUsername = usernameInput.value
       const displayNameSaveInitiallyHidden = !profileRoot.querySelector('[data-profile-save]')
       let profileCommand: unknown = null
       profile.addEventListener('lv-personal-profile-command', (event: CustomEvent) => { profileCommand = event.detail }, { once: true })
@@ -59,12 +55,7 @@ test('profile settings renders the signed-in identity and editable local fields'
       const displayNameSaveVisibleWhenDirty = Boolean(displayNameSave)
       displayNameSave?.click()
       await profile.updateComplete
-      titleInput.value = 'Software engineer'
-      titleInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-      usernameInput.value = 'jacob.n'
-      usernameInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-      await profile.updateComplete
-      const profileControlSelectors = ['.avatar-control', '.profile-email', '.profile-name-form', '.profile-title-input', '.profile-username-input', '.theme-picker']
+      const profileControlSelectors = ['.avatar-control', '.profile-email', '.profile-name-form', '.theme-picker']
       const profileControlRightEdges = profileControlSelectors.map((selector) => Math.round((profileRoot.querySelector(selector) as HTMLElement | null)?.getBoundingClientRect().right ?? 0))
       const profileControlsRightAligned = profileControlRightEdges.every((edge) => edge > 0 && Math.abs(edge - profileControlRightEdges[0]) <= 1)
       avatarTrigger.click()
@@ -120,10 +111,8 @@ test('profile settings renders the signed-in identity and editable local fields'
         displayNameInputHeight,
         displayNameSaveInitiallyHidden,
         displayNameSaveVisibleWhenDirty,
-        titlePlaceholder,
-        titleValue: (profileRoot.querySelector('#personal-title') as HTMLInputElement).value,
-        initialUsername,
-        usernameValue: (profileRoot.querySelector('#personal-username') as HTMLInputElement).value,
+        titleControlPresent: Boolean(profileRoot.querySelector('#personal-title, [for="personal-title"]')),
+        usernameControlPresent: Boolean(profileRoot.querySelector('#personal-username, [for="personal-username"]')),
         profileCommand,
         profileControlsRightAligned,
         emailIsReadOnlyText: profileRoot.querySelector('.profile-email')?.tagName === 'SPAN',
@@ -152,8 +141,8 @@ test('profile settings renders the signed-in identity and editable local fields'
     expect(state.text).toContain('Profile picture')
     expect(state.text).toContain('jacob@example.com')
     expect(state.text).toContain('Display name')
-    expect(state.text).toContain('Title')
-    expect(state.text).toContain('Username')
+    expect(state.titleControlPresent).toBe(false)
+    expect(state.usernameControlPresent).toBe(false)
     expect(state.text).toContain('Theme')
     expect(state.text).toContain('Account')
     expect(state.text).toContain('Account ID')
@@ -186,7 +175,7 @@ test('profile settings renders the signed-in identity and editable local fields'
     expect(state.mainWidth).toBe(640)
     expect(state.headerGap).toBeGreaterThanOrEqual(16)
     expect(state.fieldLabelFontSize).toBe('14px')
-    expect(state.profileRowCount).toBe(6)
+    expect(state.profileRowCount).toBe(4)
     expect(state.profileRowsLargeEnough).toBe(true)
     expect(state.avatarSize).toBeGreaterThanOrEqual(32)
     expect(state.displayNameTextAlign).toBe('center')
@@ -194,10 +183,6 @@ test('profile settings renders the signed-in identity and editable local fields'
     expect(state.displayNameInputHeight).toBeGreaterThanOrEqual(32)
     expect(state.displayNameSaveInitiallyHidden).toBe(true)
     expect(state.displayNameSaveVisibleWhenDirty).toBe(true)
-    expect(state.titlePlaceholder).toBe('Software engineer')
-    expect(state.titleValue).toBe('Software engineer')
-    expect(state.initialUsername).toBe('jacob')
-    expect(state.usernameValue).toBe('jacob.n')
     expect(state.profileCommand).toEqual({ action: 'save', displayName: 'Jacob N.' })
     expect(state.profileControlsRightAligned).toBe(true)
     expect(state.emailIsReadOnlyText).toBe(true)

@@ -144,7 +144,7 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, fmt.Errorf("principal deletion is unavailable"), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationDeletePrincipal(), func(tx access.Repository) (access.AuditEventInput, error) {
 		txDeleter, ok := tx.(interface {
 			DeletePrincipal(context.Context, string) error
 		})
@@ -155,6 +155,9 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return auditInput(r, "principal.deleted", h.currentPrincipalID(r), "principal", id, "", "success", map[string]any{"email": existing.Email, "kind": string(existing.Kind), "displayName": existing.DisplayName}), mutationErr
 	})
 	if err != nil {
+		if writeOffboardingError(w, err, "PRINCIPAL_OWNS_OBJECTS") {
+			return
+		}
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeletePrincipal(), err, statusForNotFound(err))
 		return
 	}
@@ -209,7 +212,7 @@ func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	if !disabled {
 		action = "principal.unblocked"
 	}
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, operationID, func(tx access.Repository) (access.AuditEventInput, error) {
 		writer, ok := tx.(principalStatusWriter)
 		if !ok {
 			return access.AuditEventInput{}, fmt.Errorf("principal status changes are unavailable")
@@ -223,6 +226,9 @@ func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		return auditInput(r, action, h.currentPrincipalID(r), "principal", id, "", "success", map[string]any{"email": existing.Email, "kind": string(existing.Kind), "displayName": existing.DisplayName}), mutationErr
 	})
 	if err != nil {
+		if writeOffboardingError(w, err, "PRINCIPAL_OWNS_OBJECTS") {
+			return
+		}
 		writeAuditedMutationError(w, r, operationID, err, statusForNotFound(err))
 		return
 	}
@@ -290,6 +296,69 @@ func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Req
 	}
 	writeSecretJSON(w, stdhttp.StatusOK, localPasswordResetDTO(reset))
 }
+
+// RevokeAllPrincipalCredentials is the platform-admin incident-response
+// endpoint. The repository operation is deliberately kept behind a narrow
+// capability interface so credential lifecycle ownership remains in access's
+// PostgreSQL implementation while this handler supplies authorization and
+// the durable audit envelope.
+func (h Handler) RevokeAllPrincipalCredentials(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
+	target := strings.TrimSpace(chi.URLParam(r, "principal"))
+	actor := h.currentPrincipalID(r)
+	operation := accessgen.GenCommandOperationRevokeAllPrincipalCredentials()
+	if target == "" {
+		writeCommandFailure(w, r, operation, errors.New("principal is required"))
+		return
+	}
+	if target == actor {
+		writeCommandFailure(w, r, operation, errors.New("you cannot revoke your own credentials"))
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	_, ok := repo.(interface {
+		RevokeAllUserCredentials(context.Context, string) error
+	})
+	if !ok {
+		writeCommandFailure(w, r, operation, errors.New("credential revocation is unavailable"))
+		return
+	}
+	err = executeAuditedMutation(r, repo, operation, func(tx access.Repository) (access.AuditEventInput, error) {
+		txRevoker, ok := tx.(interface {
+			RevokeAllUserCredentials(context.Context, string) error
+		})
+		if !ok {
+			return access.AuditEventInput{}, errors.New("transactional credential revocation is unavailable")
+		}
+		mutationErr := txRevoker.RevokeAllUserCredentials(r.Context(), target)
+		metadata, metadataErr := accessgen.EncodeGenRevokeAllPrincipalCredentialsAuditPayload(accessgen.GenSchemaPrincipalCredentialsRevokedAuditPayload{
+			ActorPrincipalId:  actor,
+			TargetPrincipalId: target,
+			CredentialClasses: []string{"sessions", "api_tokens", "service_secrets", "desktop_authorization_codes", "device_authorizations", "authoring_sessions", "oauth_sessions"},
+		})
+		if metadataErr != nil {
+			return access.AuditEventInput{}, metadataErr
+		}
+		audit := auditInput(r, "principal.credentials.revoked_all", actor, "principal", target, "", "success", nil)
+		audit.MetadataJSON = metadata
+		return audit, mutationErr
+	})
+	if err != nil {
+		status := statusForNotFound(err)
+		if errors.Is(err, access.ErrPlatformAdminLastAdmin) {
+			status = stdhttp.StatusConflict
+		}
+		writeAuditedMutationError(w, r, operation, err, status)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
+}
 func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !h.requirePlatformAdmin(w, r) {
 		return
@@ -330,7 +399,7 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		w.Header().Set("ETag", revision)
 	}
 	var updated access.Principal
-	err = runAuditedMutationWithRevision(r, repo, func(tx access.Repository) (string, error) {
+	err = executeAuditedMutationWithRevision(r, repo, accessgen.GenCommandOperationUpdatePrincipal(), func(tx access.Repository) (string, error) {
 		current, err := tx.PrincipalByID(r.Context(), id)
 		if err != nil {
 			return "", err
@@ -400,6 +469,10 @@ func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, fmt.Errorf("unsupported grant_type %q", input.GrantType), stdhttp.StatusBadRequest)
 		return
 	}
+	if strings.TrimSpace(input.Scope) != "" {
+		writeJSONError(w, fmt.Errorf("scopes are not supported by the legacy service-principal token exchange"), stdhttp.StatusBadRequest)
+		return
+	}
 	principal, err := repo.PrincipalForServicePrincipalSecret(r.Context(), input.ClientID, input.ClientSecret)
 	if err != nil {
 		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
@@ -424,6 +497,5 @@ func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		"access_token": token,
 		"token_type":   "Bearer",
 		"expires_in":   int(ttl.Seconds()),
-		"scope":        input.Scope,
 	})
 }

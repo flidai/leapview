@@ -13,7 +13,7 @@ Interactive browser authentication has two entry paths:
 - OIDC verifies the authorization response, issuer, signature, state, and nonce, resolves the stable issuer-subject identity, and creates a browser session.
 - Local authentication verifies the stored password credential and creates the same kind of browser session.
 
-The durable browser-session record binds a token to a principal and expiration. It does not record authentication method, authenticator identity, assurance level, authentication time, or a step-up deadline. Desktop sessions add instance, profile, client, idle, and absolute-lifetime boundaries, but do not add authentication assurance. CLI authorization sessions and API tokens are separate credential classes.
+The durable browser-session record binds a token to a principal, expiration, and server-verified authentication time for the platform-role recent-authentication guard. It does not record authentication method, authenticator identity, assurance level, or an MFA step-up deadline. Desktop sessions add instance, profile, client, idle, and absolute-lifetime boundaries, but do not add authentication assurance. CLI authorization sessions and API tokens are separate credential classes.
 
 Authorization therefore receives an authenticated principal, not evidence that a particular factor combination was completed. Adding a TOTP prompt only to local login would leave OIDC callbacks, desktop completion, session restoration, recovery, and sensitive-operation step-up outside a coherent assurance model.
 

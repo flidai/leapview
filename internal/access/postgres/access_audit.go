@@ -134,7 +134,7 @@ func (r *Repository) RunAuditedMutationBatch(ctx context.Context, mutation func(
 		return fmt.Errorf("%w: begin: %v", access.ErrAuditTransaction, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	transactional := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
+	transactional := &Repository{db: tx, fingerprintKey: r.fingerprintKey, ownership: r.ownership}
 	// Preserve the target-owned policy fence when composing a policy mutation
 	// into this transaction. The transactional repository must not broaden a
 	// configured authority merely because its DB handle changed from a pool to

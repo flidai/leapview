@@ -879,9 +879,9 @@ func TestQualificationComposeBuildsExactDockerArguments(t *testing.T) {
 	}
 }
 
-func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
+func TestQualificationDiskUsageExcludesTransientDatabaseSidecars(t *testing.T) {
 	root := t.TempDir()
-	executor := &recordingQualificationExecutor{output: []byte("39996109\t/var/lib/leapview\n")}
+	executor := &recordingQualificationExecutor{output: []byte("39996000\n109\n")}
 	controller, err := New(Options{
 		Root: root, DockerBin: "docker",
 		qualificationExecutor: executor,

@@ -49,7 +49,6 @@ export function testDocument(includeShellScript: boolean, compact = false, histo
           label: 'Product',
           items: [
             { id: 'general', label: 'General', href: '/admin/general', icon: 'settings' },
-            { id: 'projects-admin', label: 'Projects', href: '/admin/projects', icon: 'catalog' },
           ],
         },
         {

@@ -172,6 +172,66 @@ func TestAccessCorePostgreSQL18PrincipalCredentialsAndRevocation(t *testing.T) {
 	}
 }
 
+func TestAccessCorePostgreSQL18CredentialForSessionTokenBindsSessionAndActor(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := repo.CreateLocalUser(t.Context(), access.LocalUserInput{Email: "session-credential@example.com", DisplayName: "Session Credential", Password: "session credential password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := repo.CreateSession(t.Context(), principal.Principal.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := repo.CredentialForSessionToken(t.Context(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ID == "" || session.PrincipalID != principal.Principal.ID || session.Kind != access.SessionKindBrowser || session.CreatedAt == "" || session.ExpiresAt == "" {
+		t.Fatalf("session credential = %#v", session)
+	}
+	if _, err := repo.CredentialForSessionToken(t.Context(), token+"-tampered"); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("tampered session token error = %v, want no rows", err)
+	}
+	if err := repo.DeleteSession(t.Context(), token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CredentialForSessionToken(t.Context(), token); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("revoked session credential error = %v, want no rows", err)
+	}
+}
+
+func TestCreateSessionAtPreservesVerifiedOIDCAuthTimePostgreSQL18(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := repo.CreateLocalUser(t.Context(), access.LocalUserInput{Email: "oidc-auth-time@example.com", DisplayName: "OIDC Auth Time", Password: "oidc auth time password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticatedAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+	token, err := repo.CreateSessionAt(t.Context(), principal.Principal.ID, 8*time.Hour, authenticatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := repo.CredentialForSessionToken(t.Context(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, session.CreatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !createdAt.Equal(authenticatedAt) {
+		t.Fatalf("session created_at = %s, want verified auth_time %s", createdAt, authenticatedAt)
+	}
+}
+
 func TestAccessCorePostgreSQL18AtomicMembershipAndConcurrentRevoke(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
@@ -507,6 +567,41 @@ func TestAccessCoreConcurrentPasswordChangeUsesLockedVerifier(t *testing.T) {
 	}
 }
 
+func TestAccessCoreOfflinePasswordRecoveryRevokesSessionsAndRequiresChange(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := repo.CreateLocalUser(t.Context(), access.LocalUserInput{
+		Email: "offline-recovery@example.com", Password: "original password that is long enough",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := repo.CreateSession(t.Context(), created.Principal.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset, err := repo.RecoverLocalPassword(t.Context(), created.Principal.ID, "replacement password from secure operator file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reset.Password != "replacement password from secure operator file" || reset.Principal.ID != created.Principal.ID {
+		t.Fatalf("reset = %#v", reset)
+	}
+	if _, err := repo.PrincipalForToken(t.Context(), session); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("pre-recovery session remains valid: %v", err)
+	}
+	principal, credential, err := repo.VerifyLocalPassword(t.Context(), created.Principal.Email, reset.Password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if principal.ID != created.Principal.ID || !credential.MustChangePassword {
+		t.Fatalf("recovered credential = %#v %#v", principal, credential)
+	}
+}
+
 func TestAccessCoreDatabaseClockExpiryBoundary(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
@@ -539,7 +634,7 @@ func TestAccessCoreDatabaseClockExpiryBoundary(t *testing.T) {
 	if err := db.runtime.QueryRow(t.Context(), `SELECT clock_timestamp()-interval '1 second'`).Scan(&expired); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := repo.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: p.Principal.ID, Name: "expired-api", ExpiresAt: expired}); err == nil || !strings.Contains(err.Error(), "expiry is invalid") {
+	if _, _, err := repo.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: p.Principal.ID, Name: "expired-api", ExpiresAt: expired}); !errors.Is(err, access.ErrCredentialExpiryInPast) {
 		t.Fatalf("expired API expiry error = %v", err)
 	}
 }

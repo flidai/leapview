@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
@@ -16,6 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -67,6 +69,11 @@ type AuthoringSessions interface {
 
 type QueryAuditReaderProvider func() (queryaudit.Reader, error)
 
+// DeliveryProvider is the capability contract for the bounded delivery
+// projection consumed by the administration module. The HTTP adapter remains
+// private to Build.
+type DeliveryProvider func(context.Context, string) (deploymentapi.AdminDeliveryData, error)
+
 type StorageConfig struct {
 	// Runtime is the active serving-generation provider. Production callers
 	// supply this so storage reads use the sealed PostgreSQL DuckLake catalog,
@@ -76,34 +83,46 @@ type StorageConfig struct {
 }
 
 type Config struct {
-	Access                       AccessReader
-	AgentDetails                 func(context.Context) (api.AdminAgentResponse, error)
-	QueryAuditReader             QueryAuditReaderProvider
-	CSRFToken                    func(*http.Request) string
-	CurrentPrincipal             func(*http.Request) (Principal, bool)
-	CurrentCredential            func(*http.Request) (access.APICredential, bool)
-	Publications                 PublicationService
-	AgentConfigCommand           uicommand.Binding
-	PublicationCommands          map[string]uicommand.Binding
-	AuthConfigured               bool
-	LocalPasswordEnabled         bool
-	AccessConfigured             bool
-	Storage                      StorageConfig
-	Layout                       func(*http.Request) webpage.Provider
-	EnsureClientID               func(http.ResponseWriter, *http.Request) bool
-	Broker                       *pagestream.Broker
-	Product                      *product.Service
-	ProductCommands              product.CommandExecutor
-	ProductUICommands            productsettings.CommandContract
-	ProductCommandFailure        product.CommandFailureWriter
-	ProductStatus                product.Status
-	SettingsAccess               SettingsAccess
-	AuthorizationProjection      adminsettings.AuthorizationProjectionReader
-	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
-	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
-	PersonalAvatar               PersonalAvatar
-	AuthoringSessions            AuthoringSessions
-	CurrentSession               func(*http.Request) (string, bool)
+	Access                           AccessReader
+	AgentDetails                     func(context.Context) (api.AdminAgentResponse, error)
+	QueryAuditReader                 QueryAuditReaderProvider
+	CSRFToken                        func(*http.Request) string
+	CurrentPrincipal                 func(*http.Request) (Principal, bool)
+	CurrentCredential                func(*http.Request) (access.APICredential, bool)
+	CurrentCredentialContext         func(context.Context) (access.APICredential, bool)
+	CurrentInteractiveAuthentication func(*http.Request) (time.Time, bool)
+	Publications                     PublicationService
+	AgentConfigCommand               uicommand.Binding
+	PublicationCommands              map[string]uicommand.Binding
+	AuthConfigured                   bool
+	LocalPasswordEnabled             bool
+	AccessConfigured                 bool
+	Storage                          StorageConfig
+	Layout                           func(*http.Request) webpage.Provider
+	EnsureClientID                   func(http.ResponseWriter, *http.Request) bool
+	Broker                           *pagestream.Broker
+	Product                          *product.Service
+	ProductCommands                  product.CommandExecutor
+	ProductUICommands                productsettings.CommandContract
+	PlatformCommands                 map[string]uicommand.Binding
+	PlatformAdministration           access.PlatformAdminAuthorityLister
+	PlatformWriter                   access.PlatformAdminWriter
+	RequirePlatformRoleApproval      bool
+	ProductCommandFailure            product.CommandFailureWriter
+	ProductStatus                    product.Status
+	SettingsAccess                   SettingsAccess
+	AuthorizationPolicyTargetID      string
+	AuthorizationPolicyEnvironment   string
+	AuthorizationProjection          adminsettings.AuthorizationProjectionReader
+	CurrentEffectiveCapabilities     func(context.Context, string) ([]access.Capability, error)
+	EffectiveAccess                  adminsettings.EffectiveAccessProvider
+	CurrentProjectID                 func(context.Context) (projectgraph.ResourceID, error)
+	PersonalAvatar                   PersonalAvatar
+	AuthoringSessions                AuthoringSessions
+	CurrentSession                   func(*http.Request) (string, bool)
+	Delivery                         DeliveryProvider
+	DeliveryRollback                 func(context.Context, string, string, string, string) error
+	DeliveryRollbackOperation        string
 }
 
 type Module struct {
@@ -141,8 +160,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			}, ok
 		},
 		CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+		EffectiveAccess:              config.EffectiveAccess,
 		CurrentProjectID:             config.CurrentProjectID,
 		Publications:                 m.adminPublications,
+		Delivery:                     adminhttp.DeliveryProvider(config.Delivery),
+		DeliveryRollbackOperation:    config.DeliveryRollbackOperation,
 		AgentConfigCommand:           config.AgentConfigCommand,
 		PublicationCommands:          config.PublicationCommands,
 		ProductCommands:              config.ProductUICommands.Bindings,
@@ -152,16 +174,20 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	m.handler = adminhttp.Handler{
 		ReadModel: readModel, Layout: config.Layout,
 		EnsureClientID: config.EnsureClientID, Broker: config.Broker,
-		PublicationMutation:     m.mutatePublication,
-		SettingsRepository:      config.SettingsAccess,
-		AuthorizationProjection: config.AuthorizationProjection,
-		CurrentCredential:       config.CurrentCredential,
+		PublicationMutation:            m.mutatePublication,
+		DeliveryRollback:               config.DeliveryRollback,
+		SettingsRepository:             config.SettingsAccess,
+		AuthorizationPolicyTargetID:    config.AuthorizationPolicyTargetID,
+		AuthorizationPolicyEnvironment: config.AuthorizationPolicyEnvironment,
+		AuthorizationProjection:        config.AuthorizationProjection,
+		CurrentCredential:              config.CurrentCredential,
 	}
 	if config.SettingsAccess != nil {
 		personalService := &personalsettings.Service{
 			Repository: config.SettingsAccess, IdentityManagement: config.SettingsAccess,
 			Preferences: config.SettingsAccess,
 			Avatar:      config.PersonalAvatar, Authoring: config.AuthoringSessions,
+			CurrentCredential:            config.CurrentCredentialContext,
 			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 			LocalPasswordEnabled:         config.LocalPasswordEnabled,
 		}
@@ -178,8 +204,15 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	if config.Product != nil {
 		config.Product.ConfigureCommandExecutor(config.ProductCommands)
+		auditRepository, _ := config.PlatformAdministration.(access.AuditedMutationRepository)
+		if auditRepository == nil {
+			auditRepository, _ = config.PlatformWriter.(access.AuditedMutationRepository)
+		}
 		settingsHandler, err := productsettings.NewHandler(productsettings.HTTPConfig{
-			ReadModel: productsettings.ReadModel{Service: config.Product, Status: config.ProductStatus, ControlPlane: config.Storage.ControlPlane},
+			ReadModel:              productsettings.ReadModel{Service: config.Product, Status: config.ProductStatus, ControlPlane: config.Storage.ControlPlane, PlatformAdministration: config.PlatformAdministration},
+			PlatformAdministration: config.PlatformAdministration, PlatformWriter: config.PlatformWriter,
+			AuditRepository: auditRepository, RequirePlatformRoleApproval: config.RequirePlatformRoleApproval, CurrentCredential: config.CurrentCredential,
+			InteractiveAuthentication: config.CurrentInteractiveAuthentication,
 			CurrentPrincipal: func(r *http.Request) (product.Principal, bool) {
 				if config.CurrentPrincipal == nil {
 					return product.Principal{}, false
@@ -187,7 +220,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 				principal, ok := config.CurrentPrincipal(r)
 				return product.Principal{ID: principal.ID}, ok
 			},
-			Commands: config.ProductUICommands,
+			Commands:         config.ProductUICommands,
+			PlatformCommands: config.PlatformCommands,
 		})
 		if err != nil {
 			return nil, err

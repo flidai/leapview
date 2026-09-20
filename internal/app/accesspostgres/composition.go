@@ -11,7 +11,14 @@ import (
 	accesshttpoauth "github.com/flidai/leapview/internal/access/http/mcpoauth"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesspg "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+// CredentialMetricsCollector exposes the access persistence collector through
+// the application-owned composition boundary.
+func CredentialMetricsCollector() prometheus.Collector {
+	return accesspg.CredentialMetricsCollector()
+}
 
 // InternalOAuthConfig contains the values required to run LeapView's own MCP
 // OAuth authorization server. A nil config explicitly selects the external

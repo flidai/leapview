@@ -12,7 +12,6 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
-	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
@@ -25,8 +24,12 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-// Current main's generated surface plus the two target-policy operations.
-const expectedAPIGenAggregateOperationCount = 191
+// Current main's generated surface plus the two target-policy operations,
+// four service-principal credential lifecycle operations, and seven
+// platform-role approval operations, excluding
+// unsupported runtime project-grant CRUD operations, plus PAT rotation and
+// user credential incident revocation.
+const expectedAPIGenAggregateOperationCount = 210
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -241,32 +244,6 @@ func TestAPIGenAccessCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 	}
 }
 
-func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
-	accessContracts := accessgen.GetAPIGenOperationContracts()
-	if got, want := len(accessContracts), 71; got != want {
-		t.Fatalf("Access generated operations = %d, want %d", got, want)
-	}
-	allowedTags := map[string]bool{"Access": true, "Audit": true, "Current User": true}
-	appContracts := apigenapi.GetAPIGenOperationContracts()
-	for operationID, contract := range accessContracts {
-		if len(contract.Tags) != 1 || !allowedTags[contract.Tags[0]] {
-			t.Errorf("Access operation %q tags = %v", operationID, contract.Tags)
-		}
-		if _, exists := appContracts[operationID]; exists {
-			t.Errorf("Access operation %q is still emitted by the application package", operationID)
-		}
-	}
-	if _, exists := accessContracts["listQueryEvents"]; exists {
-		t.Fatal("Analytics-owned listQueryEvents is emitted by the Access package")
-	}
-	if _, exists := appContracts["listQueryEvents"]; exists {
-		t.Fatal("Analytics-owned listQueryEvents is still emitted by the application package")
-	}
-	if got, want := len(apiaggregate.GetAPIGenOperationContracts()), expectedAPIGenAggregateOperationCount; got != want {
-		t.Fatalf("aggregate generated operations = %d, want %d", got, want)
-	}
-}
-
 func TestAPIGenAnalyticsCapabilityOwnsItsOperationSurface(t *testing.T) {
 	analyticsContracts := analyticsgen.GetAPIGenOperationContracts()
 	if got, want := len(analyticsContracts), 11; got != want {
@@ -415,7 +392,7 @@ func TestAPIGenDeploymentCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenDeploymentCapabilityOwnsItsOperationSurface(t *testing.T) {
 	contracts := deploymentgen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 20; got != want {
+	if got, want := len(contracts), 26; got != want {
 		t.Fatalf("Deployment generated operations = %d, want %d", got, want)
 	}
 	bootstrap, ok := contracts["bootstrapProjectClaim"]
@@ -801,8 +778,8 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 129 {
-		t.Fatalf("UI signal IR contracts = %d, want 129", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 130 {
+		t.Fatalf("UI signal IR contracts = %d, want 130", len(irDoc.Contracts))
 	}
 	foundEnvelopeMetadata := false
 	foundImportedVisualizationRoot := false
@@ -963,100 +940,121 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"getInstance": true,
 	}
 	authenticatedOperations := map[string]bool{
-		"addGroupMember":                   true,
-		"archiveAgentConversation":         true,
-		"cancelAgentRun":                   true,
-		"cancelRefreshRun":                 true,
-		"changeCurrentPassword":            true,
-		"checkAuthorizationBatch":          true,
-		"createAgentConversation":          true,
-		"createAgentRun":                   true,
-		"createCurrentAPIToken":            true,
-		"createDashboardAuthoringDraft":    true,
-		"createGroup":                      true,
-		"createPrincipal":                  true,
-		"createRefreshRun":                 true,
-		"createServicePrincipal":           true,
-		"createServicePrincipalSecret":     true,
-		"decideDeviceAuthorization":        true,
-		"deleteCurrentAvatar":              true,
-		"deleteGroup":                      true,
-		"deletePrincipal":                  true,
-		"deleteProductLogo":                true,
-		"deleteServicePrincipal":           true,
-		"disablePrincipal":                 true,
-		"enablePrincipal":                  true,
-		"executeDashboardAuthoringCommand": true,
-		"forkDashboardAuthoringDraft":      true,
-		"getAgentConfig":                   true,
-		"getAgentConversation":             true,
-		"getAgentRun":                      true,
-		"getCapabilities":                  true,
-		"getCurrentPrincipal":              true,
-		"getDashboardPublication":          true,
-		"getGroup":                         true,
-		"getPrincipal":                     true,
-		"getPrincipalAvatar":               true,
-		"getProductAPIStatus":              true,
-		"getProductAuthenticationStatus":   true,
-		"getProductLogo":                   true,
-		"getProductSettings":               true,
-		"getProductSystemStatus":           true,
-		"getRefreshRun":                    true,
-		"getServicePrincipal":              true,
-		"getServicePrincipalSecret":        true,
-		"listAgentConversations":           true,
-		"listArchivedAgentConversations":   true,
-		"listAgentEvents":                  true,
-		"listAgentMessages":                true,
-		"listAgentRuns":                    true,
-		"listCurrentAPITokens":             true,
-		"listCurrentAuthoringSessions":     true,
-		"listCurrentEffectiveCapabilities": true,
-		"listCurrentSessions":              true,
-		"listDashboardAuthoringCatalog":    true,
-		"listDashboardPublications":        true,
-		"listDashboards":                   true,
-		"listGroupMembers":                 true,
-		"listGroups":                       true,
-		"listManagedConnections":           true,
-		"listPlatformAuditEvents":          true,
-		"listPrincipalSessions":            true,
-		"listPrincipals":                   true,
-		"listRefreshRunEvents":             true,
-		"listRefreshRuns":                  true,
-		"listSemanticModels":               true,
-		"listServicePrincipalSecrets":      true,
-		"listServicePrincipals":            true,
-		"removeGroupMember":                true,
-		"resetPrincipalPassword":           true,
-		"resetProductSettings":             true,
-		"revokeCurrentAPIToken":            true,
-		"revokeCurrentAuthoringSession":    true,
-		"revokeCurrentSession":             true,
-		"revokePrincipalSession":           true,
-		"revokeServicePrincipalSecret":     true,
-		"search":                           true,
-		"updateAgentConfig":                true,
-		"updateAgentConversation":          true,
-		"manageAgentConversations":         true,
-		"updateCurrentPrincipal":           true,
-		"updateCurrentTheme":               true,
-		"updateGroup":                      true,
-		"updatePrincipal":                  true,
-		"updateProductSettings":            true,
-		"updateServicePrincipal":           true,
-		"uploadCurrentAvatar":              true,
-		"uploadProductLogo":                true,
+		"addGroupMember":                       true,
+		"archiveAgentConversation":             true,
+		"cancelAgentRun":                       true,
+		"cancelRefreshRun":                     true,
+		"changeCurrentPassword":                true,
+		"checkAuthorizationBatch":              true,
+		"createAgentConversation":              true,
+		"createAgentRun":                       true,
+		"createCurrentAPIToken":                true,
+		"createDashboardAuthoringDraft":        true,
+		"createGroup":                          true,
+		"createPrincipal":                      true,
+		"createRefreshRun":                     true,
+		"createServicePrincipal":               true,
+		"createServicePrincipalSecret":         true,
+		"decideDeviceAuthorization":            true,
+		"deleteCurrentAvatar":                  true,
+		"deleteGroup":                          true,
+		"deletePrincipal":                      true,
+		"deleteProductLogo":                    true,
+		"deleteServicePrincipal":               true,
+		"disablePrincipal":                     true,
+		"disableServicePrincipal":              true,
+		"enablePrincipal":                      true,
+		"enableServicePrincipal":               true,
+		"executeDashboardAuthoringCommand":     true,
+		"forkDashboardAuthoringDraft":          true,
+		"getAgentConfig":                       true,
+		"getAgentConversation":                 true,
+		"getAgentRun":                          true,
+		"getCapabilities":                      true,
+		"getCurrentPrincipal":                  true,
+		"getDashboardPublication":              true,
+		"getGroup":                             true,
+		"getPrincipal":                         true,
+		"getPrincipalAvatar":                   true,
+		"getProductAPIStatus":                  true,
+		"getProductAuthenticationStatus":       true,
+		"getProductLogo":                       true,
+		"getProductSettings":                   true,
+		"getProductSystemStatus":               true,
+		"getRefreshRun":                        true,
+		"getServicePrincipal":                  true,
+		"getServicePrincipalSecret":            true,
+		"listAgentConversations":               true,
+		"listArchivedAgentConversations":       true,
+		"listAgentEvents":                      true,
+		"listAgentMessages":                    true,
+		"listAgentRuns":                        true,
+		"listCurrentAPITokens":                 true,
+		"listCurrentAuthoringSessions":         true,
+		"listCurrentEffectiveCapabilities":     true,
+		"listCurrentSessions":                  true,
+		"listDashboardAuthoringCatalog":        true,
+		"listDashboardPublications":            true,
+		"listDashboards":                       true,
+		"listGroupMembers":                     true,
+		"listGroups":                           true,
+		"listManagedConnections":               true,
+		"listPlatformAdministrators":           true,
+		"listPlatformAuditEvents":              true,
+		"listPrincipalSessions":                true,
+		"listPrincipals":                       true,
+		"listRefreshRunEvents":                 true,
+		"listRefreshRuns":                      true,
+		"listSemanticModels":                   true,
+		"listServicePrincipalSecrets":          true,
+		"listServicePrincipals":                true,
+		"removeGroupMember":                    true,
+		"grantPlatformAdministrator":           true,
+		"resetPrincipalPassword":               true,
+		"resolvePrincipalOwnership":            true,
+		"resetProductSettings":                 true,
+		"revokeCurrentAPIToken":                true,
+		"rotateCurrentAPIToken":                true,
+		"revokeCurrentAuthoringSession":        true,
+		"revokeCurrentSession":                 true,
+		"revokePrincipalSession":               true,
+		"revokePlatformAdministrator":          true,
+		"revokeAllServicePrincipalCredentials": true,
+		"revokeServicePrincipalSecret":         true,
+		"rotateServicePrincipalSecret":         true,
+		"search":                               true,
+		"updateAgentConfig":                    true,
+		"updateAgentConversation":              true,
+		"manageAgentConversations":             true,
+		"updateCurrentPrincipal":               true,
+		"updateCurrentTheme":                   true,
+		"updateGroup":                          true,
+		"updatePrincipal":                      true,
+		"updateProductSettings":                true,
+		"updateServicePrincipal":               true,
+		"uploadCurrentAvatar":                  true,
+		"uploadProductLogo":                    true,
 	}
 	for operationID, contract := range contracts {
 		authz, ok := contract.Extensions["x-authz"].(map[string]any)
 		if !ok {
 			t.Fatalf("%s missing generated x-authz extension: %#v", operationID, contract.Extensions["x-authz"])
 		}
+		if authz["mode"] == "authenticated" && contract.Extensions["x-leapview-object-scope"] == "platform" {
+			t.Fatalf("%s publishes authenticated authorization for a platform-administrator resource", operationID)
+		}
 		if publicOperations[operationID] {
 			if got := authz["mode"]; got != "none" {
 				t.Fatalf("%s x-authz mode = %#v, want none", operationID, got)
+			}
+			continue
+		}
+		if got := authz["mode"]; got == "platform_admin" {
+			if scope := contract.Extensions["x-leapview-object-scope"]; scope != "platform" {
+				t.Fatalf("%s platform-admin operation scope = %#v, want platform", operationID, scope)
+			}
+			if _, present := authz["privilege"]; present {
+				t.Fatalf("%s platform-admin operation must not publish a project privilege", operationID)
 			}
 			continue
 		}

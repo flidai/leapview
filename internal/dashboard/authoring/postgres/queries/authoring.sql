@@ -5,6 +5,29 @@ SELECT project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visi
 SELECT dashboard.lock_authoring_dashboard(sqlc.arg(project_id),sqlc.arg(dashboard_id)) AS locked;
 -- name: ListDashboards :many
 SELECT project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visibility,status,created_at,updated_at FROM dashboard.authoring_dashboards WHERE project_id=sqlc.arg(project_id) ORDER BY dashboard_id;
+-- name: ListOwnedDashboards :many
+SELECT project_id,dashboard_id,owner_principal_id::text AS owner_principal_id,slug,title,status
+FROM dashboard.authoring_dashboards
+WHERE owner_principal_id = sqlc.arg(owner_principal_id)::uuid
+  AND status <> 'archived'
+ORDER BY project_id, dashboard_id;
+-- name: TransferOwnedDashboards :many
+WITH transfer_marker AS (
+    SELECT set_config('dashboard.owner_transfer', 'on', true)
+)
+UPDATE dashboard.authoring_dashboards AS dashboards
+SET owner_principal_id = sqlc.arg(target_principal_id)::uuid,
+    updated_at = GREATEST(clock_timestamp(), dashboards.updated_at)
+FROM transfer_marker
+WHERE dashboards.owner_principal_id = sqlc.arg(owner_principal_id)::uuid
+  AND dashboards.status <> 'archived'
+RETURNING project_id,dashboard_id,owner_principal_id::text AS owner_principal_id,slug,title,status;
+-- name: TombstoneOwnedDashboards :many
+UPDATE dashboard.authoring_dashboards
+SET status = 'archived', updated_at = GREATEST(clock_timestamp(), updated_at)
+WHERE owner_principal_id = sqlc.arg(owner_principal_id)::uuid
+  AND status <> 'archived'
+RETURNING project_id,dashboard_id,owner_principal_id::text AS owner_principal_id,slug,title,status;
 -- name: GetDraft :one
 SELECT project_id,dashboard_id,draft_id::text,revision_id::text,revision_number,content_hash,provenance_json::text,updated_at FROM dashboard.authoring_drafts WHERE project_id=sqlc.arg(project_id) AND dashboard_id=sqlc.arg(dashboard_id);
 -- name: GetPublished :one

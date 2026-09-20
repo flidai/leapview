@@ -180,6 +180,7 @@ type nativePGFixture struct {
 	audit       *nativePGAuditPort
 	workflow    *nativePGWorkflowPort
 	operations  *nativePGOperationPort
+	lineage     *nativePGActivationLineage
 	targetID    string
 	candidate   string
 	plan        string
@@ -188,6 +189,10 @@ type nativePGFixture struct {
 }
 
 func newNativePGFixture(t *testing.T) *nativePGFixture {
+	return newNativePGFixtureWithApproval(t, false)
+}
+
+func newNativePGFixtureWithApproval(t *testing.T, approvalRequired bool) *nativePGFixture {
 	t.Helper()
 	h := postgrestest.Start(t)
 	database := h.NewDatabase(t, "deployment_native_coordinator_test")
@@ -232,8 +237,8 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: digest('e'), ServingArtifactDigest: digest('e'),
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: digest('e'), CompilerDigest: digest('b'), ExecutableDigest: digest('4'), DependencyDigest: digest('5'), ConfigDigest: digest('c'), BindingDigest: digest('d'), RuntimeDigest: digest('0'), CapabilityDigest: digest('9')},
 		Provenance: deployment.DeliveryProvenance{Builder: "native-coordinator-test"},
-		Governance: deployment.DeliveryGovernance{PolicyDigest: digest('2'), AuthorizationDigest: digest('d'), QualificationDigest: digest('3'), ApprovalPolicyRevision: 1, ExpiresAt: createdAt.Add(time.Hour)},
-		Evidence:   deployment.DeliveryPlanEvidence{ImpactStatement: "native coordinator fixture", PhysicalWorkStatement: "seal fixture snapshot", ReuseStatement: "no fixture reuse", Qualification: deployment.DeliveryQualificationEvidence{Policy: "exact native snapshot", Steps: []deployment.DeliveryQualificationStep{{ID: "snapshot", Kind: "contract", Description: "verify native snapshot", Required: true, Blocking: true}}}, StalePolicy: deployment.DeliveryStalePolicy{Mode: "reject"}, Rollback: deployment.DeliveryRollbackEvidence{Class: deployment.DeliveryServingSafe}},
+		Governance: deployment.DeliveryGovernance{PolicyDigest: digest('2'), AuthorizationDigest: digest('d'), QualificationDigest: digest('3'), RequiresApproval: approvalRequired, ApprovalPolicyRevision: 1, ExpiresAt: createdAt.Add(time.Hour)},
+		Evidence:   deployment.DeliveryPlanEvidence{ImpactStatement: "native coordinator fixture", PhysicalWorkStatement: "seal fixture snapshot", ReuseStatement: "no fixture reuse", Qualification: deployment.DeliveryQualificationEvidence{Policy: "exact native snapshot", Steps: []deployment.DeliveryQualificationStep{{ID: "snapshot", Kind: "contract", Description: "verify native snapshot", Required: true, Blocking: true}}}, StalePolicy: deployment.DeliveryStalePolicy{Mode: "reject"}, Rollback: deployment.DeliveryRollbackEvidence{Class: deployment.DeliveryServingSafe, RetentionWindow: "1h"}},
 		CreatedAt:  createdAt,
 	})
 	if err != nil {
@@ -244,7 +249,7 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 		t.Fatal(err)
 	}
 	planDigest := richPlan.Digest
-	if _, err := repo.CreatePlan(ctx, deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), ArtifactDigest: digest('e'), QualificationDigest: digest('3'), QualificationRequired: false, ApprovalRequired: false, ApprovalPolicyRevision: 1, PlanDocument: planDocument, Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
+	if _, err := repo.CreatePlan(ctx, deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), ArtifactDigest: digest('e'), QualificationDigest: digest('3'), QualificationRequired: false, ApprovalRequired: approvalRequired, ApprovalPolicyRevision: 1, PlanDocument: planDocument, Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.CreateCandidate(ctx, deploymentpostgres.CandidateInput{CandidateID: candidateID, TargetID: targetID, PlanID: planID, CandidateRevision: 1, ArtifactDigest: digest('e')}); err != nil {
@@ -288,7 +293,7 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &nativePGFixture{db: db, repo: repo, coordinator: coordinator.(*nativeCoordinator), events: events, audit: audit, workflow: workflow, operations: operations, targetID: targetID, candidate: candidateID, plan: planID, seal: sealID, generation: generationID}
+	return &nativePGFixture{db: db, repo: repo, coordinator: coordinator.(*nativeCoordinator), events: events, audit: audit, workflow: workflow, operations: operations, lineage: lineage, targetID: targetID, candidate: candidateID, plan: planID, seal: sealID, generation: generationID}
 }
 
 func nativePublishRequest(f *nativePGFixture, key string) NativeDeliveryPublishRequest {
@@ -335,7 +340,7 @@ func TestNativeCoordinatorPostgresPublishCandidatePersistsEvidenceAndReplays(t *
 	if err := json.Unmarshal(activationPayload, &activationPayloadValue); err != nil {
 		t.Fatalf("decode activation job payload: %v", err)
 	}
-	if activationPayloadValue.Project != "project_sales" || activationPayloadValue.Deployment != first.ID.String() || activationPayloadValue.Actor != request.PrincipalID || activationPayloadValue.IdempotencyKey == "" {
+	if activationPayloadValue.Project != "project_sales" || activationPayloadValue.Deployment != first.ID.String() || activationPayloadValue.Actor != request.PrincipalID || activationPayloadValue.IdempotencyKey == "" || !activationPayloadValue.NativePublication {
 		t.Fatalf("activation job payload = %#v", activationPayloadValue)
 	}
 	var activationEventType, activationEventKey string
@@ -444,6 +449,34 @@ func TestNativeCoordinatorPostgresPublishedCandidateActivates(t *testing.T) {
 	})
 	if err != nil || active.Status != apiadapter.StatusActive {
 		t.Fatalf("activate published candidate = %#v, %v", active, err)
+	}
+}
+
+func TestProtectedNativeActivationCannotBypassPlanApproval(t *testing.T) {
+	f := newNativePGFixtureWithApproval(t, true)
+	ctx := t.Context()
+	pending, err := f.coordinator.Create(ctx, nativeCreateRequest(f, "protected-native-approval"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	protectedModule := &Module{
+		protected:   true,
+		persistence: &Persistence{Repository: f.repo},
+		jobs:        JobConfig{Coordinator: f.coordinator},
+	}
+	payload, err := json.Marshal(ActivateJob{Project: "project_sales", Deployment: pending.ID, Actor: "operator", IdempotencyKey: "protected-native-approval-activate", NativePublication: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protectedModule.activate(ctx, jobs.Job{Payload: payload}); !errors.Is(err, deployment.ErrApprovalRequired) {
+		t.Fatalf("protected native activation error = %v, want approval required", err)
+	}
+	unchanged, err := f.coordinator.Get(ctx, apiadapter.Scope{Project: "project_sales", DeploymentID: pending.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Status != apiadapter.StatusPending {
+		t.Fatalf("approval bypass changed publication status to %q", unchanged.Status)
 	}
 }
 
@@ -577,6 +610,88 @@ func assertRetiringRollbackRoot(t *testing.T, f *nativePGFixture, rootID string)
 	if state != "retiring" || retiredAt == nil || expiredAt != nil {
 		t.Fatalf("rollback root lifecycle = state=%q retired_at=%v expired_at=%v", state, retiredAt, expiredAt)
 	}
+}
+
+func TestNativeCoordinatorPostgresRollbackCutoverRotatesRetentionRoots(t *testing.T) {
+	f := newNativePGFixture(t)
+	ctx := t.Context()
+	first, err := f.coordinator.Create(ctx, nativeCreateRequest(f, "rollback-cutover-first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.coordinator.Activate(ctx, apiadapter.ActivateRequest{Scope: apiadapter.Scope{Project: "project_sales", DeploymentID: first.ID}, Actor: "operator", IdempotencyKey: "rollback-cutover-first-activate"}); err != nil {
+		t.Fatal(err)
+	}
+
+	secondGenerationID := uuid.New().String()
+	secondPublicationID := uuid.New().String()
+	secondRootID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("native-coordinator-second-root:"+secondPublicationID)).String()
+	tx, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO delivery.delivery_generation(
+			generation_id,target_id,candidate_id,snapshot_seal_id,plan_id,plan_digest,artifact_root,artifact_root_digest,
+			serving_artifact_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,generation_revision)
+		SELECT $1::uuid,target_id,candidate_id,snapshot_seal_id,plan_id,plan_digest,artifact_root,artifact_root_digest,
+			serving_artifact_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,2
+		FROM delivery.delivery_generation WHERE generation_id=$2::uuid`, secondGenerationID, f.generation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO delivery.delivery_publication(
+			publication_id,target_id,generation_id,expected_base_generation_id,candidate_id,snapshot_seal_id,
+			expected_target_revision,result_target_revision,actor_id,state,request_digest,committed_at)
+		SELECT $1::uuid,target_id,$2::uuid,$3::uuid,candidate_id,snapshot_seal_id,2,3,actor_id,'committed',$4,clock_timestamp()
+		FROM delivery.delivery_publication WHERE publication_id=$5::uuid`, secondPublicationID, secondGenerationID, f.generation, "sha256:"+strings.Repeat("6", 64), first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.repo.CreateRetentionRootTx(ctx, tx, deploymentpostgres.DeliveryRetentionRoot{RootID: secondRootID, TargetID: f.targetID, CandidateID: f.candidate, GenerationID: secondGenerationID, SnapshotSealID: f.seal, RootKind: "generation", State: "live"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.repo.CreateRetentionRootTx(ctx, tx, deploymentpostgres.DeliveryRetentionRoot{RootID: uuid.New().String(), TargetID: f.targetID, CandidateID: f.candidate, GenerationID: f.generation, SnapshotSealID: f.seal, RootKind: "rollback", State: "live", ExpiresAt: time.Now().UTC().Add(time.Hour), Evidence: json.RawMessage(`{"purpose":"test rollback window"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE delivery.delivery_target SET target_revision=3 WHERE target_id=$1`, f.targetID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE delivery.delivery_active_pointer SET generation_id=$1::uuid,publication_id=$2::uuid WHERE target_id=$3`, secondGenerationID, secondPublicationID, f.targetID); err != nil {
+		t.Fatal(err)
+	}
+	firstRootID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview:delivery:generation-root:"+first.ID)).String()
+	if _, err := f.repo.RetireRetentionRootTx(ctx, tx, firstRootID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := f.coordinator.RollbackGeneration(ctx, nativeRollbackRequest(f, "rollback-cutover-request"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	protectedModule := &Module{
+		protected:   true,
+		persistence: &Persistence{Repository: f.repo},
+		jobs:        JobConfig{Coordinator: f.coordinator},
+	}
+	payload, err := json.Marshal(ActivateJob{Project: "project_sales", Deployment: pending.ID.String(), Actor: "operator", IdempotencyKey: "rollback-cutover-activate", NativePublication: true, Rollback: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protectedModule.activate(ctx, jobs.Job{Payload: payload}); err != nil {
+		t.Fatalf("activate protected native rollback cutover: %v", err)
+	}
+	active, err := f.coordinator.Get(ctx, apiadapter.Scope{Project: "project_sales", DeploymentID: pending.ID.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Status != apiadapter.StatusActive || active.GenerationID != f.generation {
+		t.Fatalf("rollback activation = %#v", active)
+	}
+	assertRetiringRollbackRoot(t, f, pending.ID.String())
 }
 
 func nativeCreateRequest(f *nativePGFixture, key string) apiadapter.CreateRequest {

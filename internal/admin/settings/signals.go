@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -45,16 +46,20 @@ type ServiceAccountSecretSignal struct {
 	Name               string `json:"name"`
 	ExpiresAt          string `json:"expiresAt,omitempty"`
 	CreatedAt          string `json:"createdAt,omitempty"`
+	LastUsedAt         string `json:"lastUsedAt,omitempty"`
 	RevokedAt          string `json:"revokedAt,omitempty"`
 }
 
 type ServiceAccountCommand struct {
-	Action      string `json:"action"`
-	AccountID   string `json:"accountId,omitempty"`
-	SecretID    string `json:"secretId,omitempty"`
-	DisplayName string `json:"displayName,omitempty"`
-	SecretName  string `json:"secretName,omitempty"`
-	ExpiresAt   string `json:"expiresAt,omitempty"`
+	Action             string `json:"action"`
+	AccountID          string `json:"accountId,omitempty"`
+	SecretID           string `json:"secretId,omitempty"`
+	DisplayName        string `json:"displayName,omitempty"`
+	SecretName         string `json:"secretName,omitempty"`
+	SecretLifetimeDays int    `json:"secretLifetimeDays,omitempty"`
+	ExpiresAt          string `json:"expiresAt,omitempty"`
+	RevokePrevious     bool   `json:"revokePrevious,omitempty"`
+	Reason             string `json:"reason,omitempty"`
 }
 
 // AuditLogSignal is a product-level, read-only audit table. Filters and page
@@ -86,11 +91,6 @@ type AuditEventSignal struct {
 	CorrelationID  string         `json:"correlationId,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
 	CreatedAt      string         `json:"createdAt"`
-}
-
-type AuditLogReader interface {
-	ListAuditEvents(context.Context, access.AuditEventFilter) ([]access.AuditEvent, error)
-	ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error)
 }
 
 type auditLogResourceReader interface {
@@ -171,7 +171,7 @@ func ServiceAccountSignalFromPrincipal(principal access.Principal) ServiceAccoun
 
 func ServiceAccountSecretSignalFromDomain(secret access.ServicePrincipalSecret) ServiceAccountSecretSignal {
 	return ServiceAccountSecretSignal{ID: secret.ID, ServicePrincipalID: secret.ServicePrincipalID, Name: secret.Name,
-		ExpiresAt: secret.ExpiresAt, CreatedAt: secret.CreatedAt, RevokedAt: secret.RevokedAt}
+		ExpiresAt: secret.ExpiresAt, CreatedAt: secret.CreatedAt, LastUsedAt: secret.LastUsedAt, RevokedAt: secret.RevokedAt}
 }
 
 func AuditEventSignalFromDomain(event access.AuditEvent) AuditEventSignal {
@@ -184,27 +184,26 @@ func AuditEventSignalFromDomain(event access.AuditEvent) AuditEventSignal {
 		Status: event.Status, RequestID: event.RequestID, CorrelationID: event.CorrelationID, Metadata: metadata, CreatedAt: event.CreatedAt}
 }
 
-func auditDisplayName(primary, fallback string) string {
-	if value := strings.TrimSpace(primary); value != "" {
-		return value
+// LoadAuditLog reads the canonical access audit stream for the active serving
+// project. The repository also returns unscoped platform events, but a bound
+// project is always required so a UI command cannot broaden the read to a
+// different project's events.
+func LoadAuditLog(ctx context.Context, repository access.Repository, boundProjectID string, filters AuditLogFilters, pageToken string, limit int) (AuditLogSignal, error) {
+	state := AuditLogSignal{Items: []AuditEventSignal{}, Filters: NormalizeAuditLogFilters(filters), NextCursor: "", LoadedCount: 0, Loading: false}
+	boundProjectID = strings.TrimSpace(boundProjectID)
+	if boundProjectID == "" {
+		return state, errors.New("active Project identity is unavailable")
 	}
-	return strings.TrimSpace(fallback)
-}
-
-// LoadAuditLog reads the canonical access audit stream. ProjectID is retained
-// in the UI filter contract for future graph-scoped events; current identity
-// audit records are globally keyed by resource kind/id.
-func LoadAuditLog(ctx context.Context, repository AuditLogReader, filters AuditLogFilters, pageToken string, limit int) (AuditLogSignal, error) {
-	filters = NormalizeAuditLogFilters(filters)
-	state := AuditLogSignal{Items: []AuditEventSignal{}, Filters: filters, NextCursor: "", LoadedCount: 0, Loading: false}
+	state.Filters.ProjectID = boundProjectID
 	if repository == nil {
 		return state, nil
 	}
 	limit = normalizeLimit(limit)
 	rows, err := repository.ListAuditEvents(ctx, access.AuditEventFilter{
-		PrincipalID: strings.TrimSpace(filters.PrincipalID), Action: strings.TrimSpace(filters.Action),
-		ResourceKind: strings.TrimSpace(filters.ResourceKind), ResourceID: strings.TrimSpace(filters.ResourceID),
-		From: auditDateBoundary(filters.From, false), To: auditDateBoundary(filters.To, true),
+		ProjectID: boundProjectID, IncludeUnscoped: true,
+		PrincipalID: strings.TrimSpace(state.Filters.PrincipalID), Action: strings.TrimSpace(state.Filters.Action),
+		ResourceKind: strings.TrimSpace(state.Filters.ResourceKind), ResourceID: strings.TrimSpace(state.Filters.ResourceID),
+		From: auditDateBoundary(state.Filters.From, false), To: auditDateBoundary(state.Filters.To, true),
 		PageToken: strings.TrimSpace(pageToken), Limit: limit + 1,
 	})
 	if err != nil {
@@ -264,6 +263,13 @@ func LoadAuditLog(ctx context.Context, repository AuditLogReader, filters AuditL
 	}
 	state.LoadedCount = len(state.Items)
 	return state, nil
+}
+
+func auditDisplayName(primary, fallback string) string {
+	if value := strings.TrimSpace(primary); value != "" {
+		return value
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func auditDateBoundary(value string, exclusiveEnd bool) string {

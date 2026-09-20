@@ -68,3 +68,55 @@ func TestAPIGenDispatcherPreservesAuditProjectPath(t *testing.T) {
 		t.Fatal("generated foreign Project path reached the audit repository")
 	}
 }
+
+func TestAPIGenDispatcherDispatchesProjectRoleCatalog(t *testing.T) {
+	dispatcher := NewAPIGenDispatcher(Handler{
+		AuthorizationPolicyTargetID:    "target-1",
+		AuthorizationPolicyEnvironment: "prod",
+	})
+	request := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/projects/project-1/roles", nil)
+	request = withProjectRoute(request, "project-1")
+	response := httptest.NewRecorder()
+
+	dispatcher.ListProjectRoles(response, request, "project-1", accessgen.GenListProjectRolesParams{})
+
+	if response.Code != stdhttp.StatusOK {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestAPIGenDispatcherPreservesProjectRoleBindingDeleteIdempotency(t *testing.T) {
+	request := httptest.NewRequest(stdhttp.MethodDelete, "/api/v1/projects/project-1/role-bindings/binding-1", strings.NewReader(`{"expectedRevision":1}`))
+	dispatcher := NewAPIGenDispatcher(Handler{
+		Repository: func() (access.Repository, error) {
+			return nil, errors.New("stop after generated header adaptation")
+		},
+	})
+
+	dispatcher.DeleteProjectRoleBinding(
+		httptest.NewRecorder(), request, "project-1", "binding-1",
+		accessgen.GenDeleteProjectRoleBindingHeaders{IdempotencyKey: "delete-1"},
+	)
+
+	if got, want := request.Header.Get("Idempotency-Key"), "delete-1"; got != want {
+		t.Fatalf("Idempotency-Key = %q, want %q", got, want)
+	}
+}
+
+func TestAPIGenDispatcherPreservesOwnershipResolutionIdempotency(t *testing.T) {
+	request := ownershipResolutionRequest(`{"action":"tombstone","targetPrincipalId":""}`)
+	dispatcher := NewAPIGenDispatcher(Handler{
+		Repository: func() (access.Repository, error) {
+			return nil, errors.New("stop after generated header adaptation")
+		},
+	})
+
+	dispatcher.ResolvePrincipalOwnership(
+		httptest.NewRecorder(), request, "principal_owner",
+		accessgen.GenResolvePrincipalOwnershipHeaders{IdempotencyKey: "ownership-key"},
+	)
+
+	if got, want := request.Header.Get("Idempotency-Key"), "ownership-key"; got != want {
+		t.Fatalf("Idempotency-Key = %q, want %q", got, want)
+	}
+}

@@ -29,6 +29,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   @state() private copiedQueryDetailValue = ''
   @state() private publicationBusy = ''
   @state() private publicationMessage = ''
+  @state() private deliveryBusy = false
+  @state() private deliveryMessage = ''
   @state() private selectedPublicationKey = ''
   @state() private accessCreateDialog: 'principal' | 'group' | '' = ''
   private queryFilterTimer: ReturnType<typeof setTimeout> | null = null
@@ -85,7 +87,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     if (!page) return html`<slot></slot>`
     const mainClass = [
       'main',
-      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'projects-admin' || page.active === 'service-accounts' || page.active === 'service-accounts-new' || page.active === 'storage' || page.active === 'storage-detail' || page.active === 'publications' ? 'main-directory' : '',
+      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'access' || page.active === 'service-accounts' || page.active === 'service-accounts-new' || page.active === 'storage' || page.active === 'storage-detail' || page.active === 'publications' || page.active === 'delivery' ? 'main-directory' : '',
       isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
       page.active === 'profile' ? 'main-profile' : '',
       page.active === 'security' ? 'main-security' : '',
@@ -125,10 +127,11 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
               ? html`<lv-entity-list .items=${adminGroupListItems(page)} .columns=${adminGroupListColumns()} .filters=${adminGroupListFilters(page)} .actions=${[{ id: 'create-group', label: 'Create group', emphasis: 'primary' }]} initial-query=${page.listQuery ?? ''} active-filter=${page.listFilter ?? 'all'} search-placeholder="Search groups by name or ID" empty-text="No groups found." export-filename="groups.csv" @lv-entity-list-action=${this.handleEntityListAction}></lv-entity-list>`
             : page.active === 'archived-chats' ? html`<lv-archived-chats></lv-archived-chats>`
               : isPersonalSettings(page.active) ? html`<lv-personal-settings token-view=${page.active === 'api-token-new' ? 'create' : 'list'}></lv-personal-settings>`
-                : isProductSettings(page.active) ? html`<lv-product-settings></lv-product-settings>`
-                : page.active === 'projects-admin' ? html`<lv-project-registry></lv-project-registry>`
-                  : page.active === 'service-accounts' || page.active === 'service-accounts-new' ? html`<lv-service-accounts .createAccountOpen=${page.active === 'service-accounts-new'}></lv-service-accounts>`
+              : isProductSettings(page.active) ? html`<lv-product-settings></lv-product-settings>`
+                : page.active === 'service-accounts' || page.active === 'service-accounts-new' ? html`<lv-service-accounts .createAccountOpen=${page.active === 'service-accounts-new'}></lv-service-accounts>`
                     : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
+                      : page.active === 'access' ? html`<lv-access-settings></lv-access-settings>`
+                        : page.active === 'delivery' ? html`<section class="delivery-surface" aria-label="Delivery" aria-busy=${this.deliveryBusy ? 'true' : 'false'} @lv-record-table-action=${this.handleDeliveryTableAction}>${this.deliveryMessage ? html`<p class="local-user-result" role="status" aria-live="polite">${this.deliveryMessage}</p>` : nothing}${this.renderDeliverySections(page)}</section>`
                       : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-detail' ? this.renderStorageDetail(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map((section) => renderSection(section))}
         </section>
       </div>
@@ -139,6 +142,19 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     if (page.active === 'principals' || page.active === 'principal-detail') return html`<lv-principal-administration .createOpen=${this.accessCreateDialog === 'principal'} @lv-access-create-close=${this.closeAccessCreateDialog}></lv-principal-administration>`
     if (page.active === 'groups' || page.active === 'group-detail') return html`<lv-group-administration .createOpen=${this.accessCreateDialog === 'group'} @lv-access-create-close=${this.closeAccessCreateDialog}></lv-group-administration>`
     return nothing
+  }
+
+  private renderDeliverySections(page: AdminPageSignal) {
+    return page.sections?.map((section) => {
+      if (!this.deliveryBusy || !section.table) return renderSection(section)
+      const rows = (section.table.rows ?? []).map((row) => {
+        const actions = Array.isArray(row.actions)
+          ? row.actions.map((action) => ({ ...(action as Record<string, unknown>), disabled: true }))
+          : row.actions
+        return actions === row.actions ? row : { ...row, actions }
+      })
+      return renderSection({ ...section, table: { ...section.table, rows } })
+    })
   }
 
   private handleEntityListAction(event: CustomEvent<{ id: string }>): void {
@@ -392,11 +408,36 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     // Datastar emits this event for every command on the page. Only consume
     // terminal failures while a publication mutation is waiting; unrelated
     // admin surfaces must keep their own state and feedback.
-    if (!this.publicationBusy) return
-    const failure = browserCommandFailure(event, 'Publication update')
-    if (!failure) return
-    this.publicationBusy = ''
-    this.publicationMessage = failure.message
+    if (this.publicationBusy) {
+      const failure = browserCommandFailure(event, 'Publication update')
+      if (failure) {
+        this.publicationBusy = ''
+        this.publicationMessage = failure.message
+      } else if ((event as CustomEvent<{ type?: string }>).detail?.type === 'finished') {
+        this.publicationBusy = ''
+      }
+    }
+    if (this.deliveryBusy) {
+      const failure = browserCommandFailure(event, 'Delivery rollback')
+      if (failure) {
+        this.deliveryBusy = false
+        this.deliveryMessage = failure.kind === 'conflict' ? 'Rollback target is stale. Reload delivery state before choosing a retained generation.' : failure.message
+      } else if ((event as CustomEvent<{ type?: string }>).detail?.type === 'finished') {
+        this.deliveryBusy = false
+        this.deliveryMessage = 'Rollback request completed. Delivery state has been refreshed.'
+      }
+    }
+  }
+
+  private handleDeliveryTableAction = (event: CustomEvent): void => {
+    if (event.detail?.action !== 'rollback' || this.deliveryBusy) return
+    const generation = String(event.detail.row?.generationId ?? event.detail.row?.generation ?? '')
+    if (!generation) return
+    const label = String(event.detail.row?.generation ?? 'this retained generation')
+    if (!window.confirm(`Roll back to ${label}? Traffic will switch to this retained serving state.`)) return
+    this.deliveryBusy = true
+    this.deliveryMessage = ''
+    this.dispatchEvent(new CustomEvent('lv-delivery-rollback', { bubbles: true, composed: true, detail: { generation } }))
   }
 
   private renderTextFilter(key: keyof AdminQueryHistoryFilters, label: string) {

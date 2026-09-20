@@ -91,8 +91,7 @@ Signals are product API contracts.
 - Lit imports generated types for route, chrome, status, and domain signals.
 - `internal/app/tools/signalcontracts` verifies the IR's declared roots have
   source-anchored producer/reader evidence and rejects undeclared live roots.
-- `agentTurnPending` is explicitly browser-owned, while `adminProjects` is a
-  consumer-only surface root with no server producer. The nested
+- `agentTurnPending` is explicitly browser-owned. The nested
   `adminAgentCommand.systemPrompt` path remains a child of the declared
   `adminAgentCommand` root.
 - Signal roots should be stable, route-owned, and shaped for rendering rather than backend convenience.

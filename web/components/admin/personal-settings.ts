@@ -83,8 +83,6 @@ const themeGroups: readonly ThemeOption['group'][] = ['Automatic', 'Standard', '
 
 class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private profileName = ''
-  @state() private profileTitle = ''
-  @state() private profileUsername = ''
   @state() private currentPassword = ''
   @state() private newPassword = ''
   @state() private tokenName = ''
@@ -152,8 +150,6 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     const settings = this.settings
     if (settings.profile.id && settings.profile.id !== this.observedProfileID) {
       this.observedProfileID = settings.profile.id
-      this.profileTitle = ''
-      this.profileUsername = usernameFromEmail(settings.profile.email)
     }
     const displayName = settings.profile.displayName
     if (displayName !== this.observedDisplayName) {
@@ -252,14 +248,6 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                   ${profileNameDirty ? html`<button class="primary" data-profile-save type="submit" ?disabled=${!settings.profile.canEditDisplayName || !profileNameValid}>Save</button>` : nothing}
                 </div>
               </form>
-            </div>
-            <div class="row profile-row">
-              <div class="settings-field"><label class="settings-label" for="personal-title">Title</label><span class="settings-description">Your job title or role.</span></div>
-              <input id="personal-title" class="profile-local-input profile-title-input" maxlength="120" placeholder="Software engineer" .value=${this.profileTitle} @input=${this.onProfileTitleInput}>
-            </div>
-            <div class="row profile-row">
-              <div class="settings-field"><label class="settings-label" for="personal-username">Username</label><span class="settings-description">One word, like a nickname or first name.</span></div>
-              <input id="personal-username" class="profile-local-input profile-username-input" maxlength="64" autocomplete="off" .value=${this.profileUsername} @input=${this.onProfileUsernameInput}>
             </div>
             <div class="row profile-row">
               <div class="settings-field"><span class="settings-label" id="personal-theme-label">Theme</span><span class="settings-description">Choose how LeapView appears on your devices.</span></div>
@@ -497,8 +485,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
       selected: categoryPermissions.filter((permission) => this.tokenPermissionAccess(permission)).length,
       total: categoryPermissions.length,
     }]))
-    const expirationOptions = tokenExpirationOptions()
-    const canCreate = Boolean(this.tokenName.trim() && this.tokenExpirationIsValid() && !this.tokenCreatePending)
+	const expirationOptions = tokenExpirationOptions()
+	const canCreate = Boolean(this.tokenName.trim() && selected.length && this.tokenExpirationIsValid() && !this.tokenCreatePending)
     return html`
       <section class="token-page" aria-label="Create personal access token">
         <div class="token-create-header">
@@ -583,14 +571,14 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                           `) : html`<div class="permission-empty">No permissions match your search.</div>`}
                         </div>
                       </div>
-                  ` : nothing}
-                </div>
+	                  ` : nothing}
+	                </div>
               </div>
               <div class="selected-permissions" aria-live="polite">
                 ${selected.length ? selected.map((permission) => this.renderSelectedTokenPermission(permission)) : html`
                   <div class="selected-permissions-empty">
                     ${lucideIcon(KeyRound, { size: 28, strokeWidth: 1.8 })}
-                    <div class="settings-field"><span class="settings-label">No permissions added yet</span><span class="settings-description">Without explicit permissions, this token follows your current access.</span></div>
+	                    <div class="settings-field"><span class="settings-label">No permissions added yet</span><span class="settings-description">Add at least one explicit permission. Tokens created in Settings never follow dynamic authority.</span></div>
                   </div>
                 `}
               </div>
@@ -819,7 +807,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
       expiresAt: this.tokenExpirationDate().toISOString(),
     }
     const capabilities = this.selectedTokenCapabilities()
-    if (capabilities.length) command.capabilities = capabilities
+    if (!capabilities.length) return
+    command.capabilities = capabilities
     this.send('lv-personal-token-command', command)
     this.tokenCreatePending = true
   }
@@ -1001,8 +990,6 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
   private send(name: string, detail: Record<string, unknown>): void { this.error = ''; this.message = ''; this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true, detail })) }
   private onProfileNameInput = (event: Event): void => { this.profileName = (event.currentTarget as HTMLInputElement).value }
-  private onProfileTitleInput = (event: Event): void => { this.profileTitle = (event.currentTarget as HTMLInputElement).value }
-  private onProfileUsernameInput = (event: Event): void => { this.profileUsername = (event.currentTarget as HTMLInputElement).value }
   private onCurrentPasswordInput = (event: Event): void => { this.currentPassword = (event.currentTarget as HTMLInputElement).value }
   private onNewPasswordInput = (event: Event): void => { this.newPassword = (event.currentTarget as HTMLInputElement).value }
   private onTokenNameInput = (event: Event): void => { this.tokenName = (event.currentTarget as HTMLInputElement).value }
@@ -1218,11 +1205,6 @@ function uniqueCapabilities(capabilities: string[]): string[] {
 
 function themeOption(value: string): ThemeOption {
   return themeOptions.find((option) => option.value === value) ?? systemThemeOption
-}
-
-function usernameFromEmail(email: string): string {
-  const localPart = email.split('@', 1)[0]?.trim().toLocaleLowerCase() ?? ''
-  return localPart.replace(/[^a-z0-9._-]+/g, '.').replace(/^[._-]+|[._-]+$/g, '') || 'user'
 }
 
 function formatDateOnly(value: string): string {

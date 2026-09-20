@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "cbf29cf113a459baac963a4aa61eb9145849efc1361f4ec1ac01dd772ee6c1ac"
+	const expectedRouteContractDigest = "f84f2def279d804375a41db9fa662834187b417495ad1f8eca5f010a18158d78"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -252,12 +252,14 @@ GET /.well-known/oauth-authorization-server
 GET /.well-known/oauth-protected-resource
 GET /.well-known/oauth-protected-resource/mcp
 GET /admin
+GET /admin/access
 GET /admin/api-tokens
 GET /admin/archived-chats
 GET /admin/api-tokens/new
 GET /admin/agent
 GET /admin/audit
 GET /admin/authentication
+GET /admin/delivery
 GET /admin/general
 GET /admin/groups
 GET /admin/groups/{group}
@@ -344,6 +346,7 @@ PATCH /metrics
 PATCH /static/*
 POST /admin/audit/command
 POST /admin/access/command
+POST /admin/delivery/command
 POST /admin/personal-settings/command
 POST /admin/product-settings/command
 POST /admin/publications/command

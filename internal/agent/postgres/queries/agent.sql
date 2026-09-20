@@ -30,6 +30,53 @@ WHERE principal_id = sqlc.arg(principal_id) AND status = 'active'
 ORDER BY CASE WHEN metadata_json #>> '{_leapview_chat,pinned}' = 'true' THEN 0 ELSE 1 END,
          updated_at DESC, created_at DESC, id;
 
+-- name: ListOwnedLiveAgentConversations :many
+SELECT id, principal_id, title, status, metadata_json::text, transcript_json::text,
+       transcript_revision, created_at, updated_at, archived_at
+FROM agent.conversations
+WHERE principal_id = sqlc.arg(principal_id)
+  AND status = 'active'
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+ORDER BY id;
+
+-- name: TransferOwnedAgentConversations :many
+UPDATE agent.conversations AS c
+SET principal_id = sqlc.arg(target_principal_id),
+    updated_at = GREATEST(clock_timestamp(), c.updated_at)
+WHERE c.principal_id = sqlc.arg(principal_id)
+  AND c.status = 'active'
+  AND COALESCE(c.metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+  AND NOT EXISTS (
+      SELECT 1 FROM agent.runs AS r
+      WHERE r.conversation_id = c.id
+        AND r.status IN ('preparing', 'running')
+  )
+RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
+          transcript_revision, created_at, updated_at, archived_at;
+
+-- name: TombstoneOwnedAgentConversations :many
+UPDATE agent.conversations AS c
+SET status = 'archived',
+    archived_at = COALESCE(c.archived_at, clock_timestamp()),
+    metadata_json = jsonb_set(
+        COALESCE(c.metadata_json, '{}'::jsonb),
+        '{_leapview_chat}',
+        COALESCE(c.metadata_json -> '_leapview_chat', '{}'::jsonb)
+            || jsonb_build_object('deletedAt', clock_timestamp()::text),
+        true
+    ),
+    updated_at = GREATEST(clock_timestamp(), c.updated_at)
+WHERE c.principal_id = sqlc.arg(principal_id)
+  AND c.status = 'active'
+  AND COALESCE(c.metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+  AND NOT EXISTS (
+      SELECT 1 FROM agent.runs AS r
+      WHERE r.conversation_id = c.id
+        AND r.status IN ('preparing', 'running')
+  )
+RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
+          transcript_revision, created_at, updated_at, archived_at;
+
 -- name: ListArchivedAgentConversations :many
 SELECT id, principal_id, title, status, metadata_json::text, transcript_json::text,
        transcript_revision, created_at, updated_at, archived_at

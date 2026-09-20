@@ -18,7 +18,7 @@ beforeAll(async () => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
-      response.end('<!doctype html><main><lv-admin-page data-on:lv-service-account-command="service-account-command" data-on:lv-audit-log-command="audit-log-command"><lv-project-registry></lv-project-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration></lv-admin-page><script type="module" src="/settings-surfaces.js"></script></main>')
+      response.end('<!doctype html><main><lv-admin-page data-on:lv-service-account-command="service-account-command" data-on:lv-audit-log-command="audit-log-command"><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration></lv-admin-page><script type="module" src="/settings-surfaces.js"></script></main>')
       return
     }
     const file = normalize(join(root, url.pathname))
@@ -171,6 +171,79 @@ test('service account detail uses shared lists and focused credential confirmati
   } finally { await page.close() }
 })
 
+test('service account rename has a durable signal effect and clear permission feedback', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-service-accounts'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state = {
+        items: [{ id: 'svc-1', displayName: 'Production deploy', kind: 'service_principal', updatedAt: '2026-08-02T11:00:00Z' }],
+        selectedId: 'svc-1', secrets: [], loading: false, hasMore: false,
+      }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminServiceAccounts: state }, getPath: (path: string) => path === 'adminServiceAccounts' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-service-accounts') as any
+      const commands: unknown[] = []
+      element.addEventListener('lv-service-account-command', (event: CustomEvent) => { commands.push(event.detail) })
+      element.requestUpdate(); await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Rename')) as HTMLButtonElement).click()
+      await element.updateComplete
+      const renameDialog = root.querySelector('[data-service-account-dialog="rename"]') as HTMLDialogElement
+      const renameInput = renameDialog.querySelector<HTMLInputElement>('input[name="displayName"]') as HTMLInputElement
+      renameInput.value = 'Renamed worker'
+      renameDialog.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await element.updateComplete
+      const pending = {
+        command: commands[0],
+        dialogOpen: renameDialog.open,
+        submitDisabled: (renameDialog.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
+        submitLabel: (renameDialog.querySelector('button[type="submit"]') as HTMLButtonElement).textContent?.trim(),
+      }
+
+      state.items[0].displayName = 'Renamed worker'
+      state.items[0].updatedAt = '2026-08-03T12:00:00Z'
+      element.requestUpdate(); await element.updateComplete; await element.updateComplete
+      const afterSuccess = {
+        title: root.querySelector('.detail-header h1')?.textContent?.trim(),
+        dialogPresent: Boolean(root.querySelector('[data-service-account-dialog="rename"]')),
+      }
+
+      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Rename')) as HTMLButtonElement).click()
+      await element.updateComplete; await element.updateComplete
+      const retryDialog = root.querySelector('[data-service-account-dialog="rename"]') as HTMLDialogElement
+      const retryInput = retryDialog.querySelector<HTMLInputElement>('input[name="displayName"]') as HTMLInputElement
+      retryInput.value = 'Denied worker'
+      retryDialog.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await element.updateComplete
+      const owner = document.querySelector('lv-admin-page') as Element
+      const deniedWhileBusy = (retryDialog.querySelector('button[type="submit"]') as HTMLButtonElement).disabled
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: 403 }, el: owner } }))
+      await element.updateComplete
+      return {
+        pending,
+        afterSuccess,
+        deniedWhileBusy,
+        deniedFeedback: root.querySelector('[role="alert"]')?.textContent?.trim(),
+        retryDialogPresent: Boolean(root.querySelector('[data-service-account-dialog="rename"]')),
+        retryEnabled: !(root.querySelector('[data-service-account-dialog="rename"] button[type="submit"]') as HTMLButtonElement).disabled,
+      }
+    })
+    expect(result.pending).toEqual({
+      command: { action: 'update', accountId: 'svc-1', displayName: 'Renamed worker' },
+      dialogOpen: true,
+      submitDisabled: true,
+      submitLabel: 'Renaming…',
+    })
+    expect(result.afterSuccess).toEqual({ title: 'Renamed worker', dialogPresent: false })
+    expect(result.deniedWhileBusy).toBe(true)
+    expect(result.deniedFeedback).toBe('Service account update is not permitted for your account.')
+    expect(result.retryDialogPresent).toBe(true)
+    expect(result.retryEnabled).toBe(true)
+  } finally { await page.close() }
+})
+
 test('service account and audit controls unlock when a no-op command finishes', async () => {
   const page = await browser.newPage()
   try {
@@ -195,6 +268,7 @@ test('service account and audit controls unlock when a no-op command finishes', 
       ;((audit.shadowRoot as ShadowRoot).querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await audit.updateComplete
       const auditDisabled = ((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled
+      const projectInput = (audit.shadowRoot as ShadowRoot).querySelector<HTMLInputElement>('#audit-project-id')
       const auditLabels = Array.from((audit.shadowRoot as ShadowRoot).querySelectorAll('input')).map((input) => input.getAttribute('aria-label'))
       const unrelatedOwner = document.createElement('lv-other-page')
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: unrelatedOwner } }))
@@ -210,11 +284,13 @@ test('service account and audit controls unlock when a no-op command finishes', 
         accountStillDisabled,
         auditStillDisabled,
         auditLabels,
+        projectReadOnly: projectInput?.readOnly,
+        projectHelp: audit.shadowRoot?.querySelector('#audit-project-help')?.textContent?.trim(),
         accountUnlocked: !((accounts.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).disabled,
         auditUnlocked: !((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
     })
-    expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, auditLabels: ['Project', 'Actor', 'Resource ID', 'From', 'To'], accountUnlocked: true, auditUnlocked: true })
+    expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, auditLabels: ['Project', 'Actor', 'Resource ID', 'From', 'To'], projectReadOnly: true, projectHelp: 'The active project is selected by the server and cannot be changed here.', accountUnlocked: true, auditUnlocked: true })
   } finally { await page.close() }
 })
 
@@ -368,79 +444,6 @@ test('audit rows open a non-modal detail drawer and quick presets keep the comma
   } finally { await page.close() }
 })
 
-test('project registry uses the shared searchable entity list', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-project-registry') && customElements.get('lv-entity-list'))
-    const result = await page.evaluate(async () => {
-      const runtime = await import('/settings-surfaces.js') as any
-      const registry = {
-        items: [
-          {
-            id: 'sales', title: 'Sales', description: 'Revenue reporting', href: '/projects/sales',
-            owner: { subjectType: 'principal', subjectId: 'owner-1', displayName: 'Ada Lovelace', email: 'ada@example.com' },
-            administrators: [{ subjectType: 'principal', subjectId: 'admin-1', displayName: 'Grace Hopper', role: 'admin' }],
-            environment: 'production', deploymentStatus: 'Active', updatedAt: '2026-08-11T08:00:00Z', links: { self: '/api/v1/projects/sales', project: '/projects/sales' },
-          },
-          {
-            id: 'retail', title: 'Retail', description: 'Store operations', href: '/projects/retail',
-            administrators: [], environment: 'development', servingStateStatus: 'Not deployed', updatedAt: '2026-08-10T08:00:00Z',
-            links: { self: '/api/v1/projects/retail', project: '/projects/retail' },
-          },
-        ],
-        loading: false,
-        hasMore: false,
-      }
-      runtime.setDatastarLitRuntimeForTests?.({
-        root: { adminProjects: registry },
-        getPath: (path: string) => path === 'adminProjects' ? registry : undefined,
-        effect: (fn: () => void) => { fn(); return () => {} },
-      })
-      const element = document.querySelector('lv-project-registry') as any
-      element.requestUpdate()
-      await element.updateComplete
-      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as any
-      await list.updateComplete
-      const rows = () => Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.entity-list-table-row')).map((row: Element) => row.textContent?.replace(/\s+/g, ' ').trim())
-      const initialRows = rows()
-      const input = (element.shadowRoot as ShadowRoot).querySelector('.entity-search input') as HTMLInputElement
-      input.value = 'retail'
-      input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-      await list.updateComplete
-      return {
-        hasSharedList: Boolean(list),
-        ownTableCount: (element.shadowRoot as ShadowRoot).querySelectorAll(':scope > section > .table-wrap').length,
-        headings: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('h2')).map((heading) => heading.textContent?.trim()),
-        headers: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.entity-list-sort-button > span:first-child')).map((header) => header.textContent?.trim()),
-        initialRows,
-        filteredRows: rows(),
-        firstHref: (element.shadowRoot as ShadowRoot).querySelector('.entity-list-identity')?.getAttribute('href'),
-        projectIconsArePlain: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.entity-list-icon')).every((icon) => icon.classList.contains('is-plain')),
-        projectIconBorderWidth: getComputedStyle((element.shadowRoot as ShadowRoot).querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
-        projectIconBackground: getComputedStyle((element.shadowRoot as ShadowRoot).querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
-      }
-    })
-
-    expect(result.hasSharedList).toBe(true)
-    expect(result.ownTableCount).toBe(0)
-    expect(result.headings).toEqual([])
-    expect(result.headers).toEqual(['Name', 'Owner', 'Administrators', 'Environment', 'Deployment', 'Updated'])
-    expect(result.initialRows).toHaveLength(2)
-    expect(result.initialRows[0]).toContain('Sales Revenue reporting')
-    expect(result.initialRows[0]).toContain('Ada Lovelace')
-    expect(result.initialRows[0]).toContain('Grace Hopper')
-    expect(result.initialRows[0]).toContain('production')
-    expect(result.initialRows[0]).toContain('Active')
-    expect(result.filteredRows).toHaveLength(1)
-    expect(result.filteredRows[0]).toContain('Retail Store operations')
-    expect(result.firstHref).toBe('/projects/retail')
-    expect(result.projectIconsArePlain).toBe(true)
-    expect(result.projectIconBorderWidth).toBe('0px')
-    expect(result.projectIconBackground).toBe('rgba(0, 0, 0, 0)')
-  } finally { await page.close() }
-})
-
 test('principal administration exposes local controls and keeps external profiles read-only', async () => {
   const page = await browser.newPage()
   try {
@@ -491,6 +494,7 @@ test('principal administration exposes local controls and keeps external profile
       { action: 'revoke_all_sessions', principalId: 'local-1' },
     ])
     expect(result.localText).toContain('Reset password')
+    expect(result.localText).toContain('Revoke all credentials')
     expect(result.localText).toContain('Principal ID')
     expect(result.localText).toContain('Sales')
     expect(result.localText).toContain('Via Analysts')

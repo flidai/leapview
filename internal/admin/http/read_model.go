@@ -11,11 +11,13 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
+	adminsettings "github.com/flidai/leapview/internal/admin/settings"
 	"github.com/flidai/leapview/internal/admin/storage"
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/agent/api"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
+	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -32,6 +34,7 @@ type CSRFTokenProvider func(*http.Request) string
 type CurrentPrincipalProvider func(*http.Request) (Principal, bool)
 type PublicationProvider func(*http.Request) ([]ui.AdminPublication, bool, error)
 type ProjectIDProvider func(context.Context) (projectgraph.ResourceID, error)
+type DeliveryProvider func(context.Context, string) (deploymentapi.AdminDeliveryData, error)
 
 type AccessReader interface {
 	ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error)
@@ -52,8 +55,11 @@ type ReadModel struct {
 	CSRFToken                    CSRFTokenProvider
 	CurrentPrincipal             CurrentPrincipalProvider
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	EffectiveAccess              adminsettings.EffectiveAccessProvider
 	CurrentProjectID             ProjectIDProvider
 	Publications                 PublicationProvider
+	Delivery                     DeliveryProvider
+	DeliveryRollbackOperation    string
 	AgentConfigCommand           uicommand.Binding
 	PublicationCommands          map[string]uicommand.Binding
 	ProductCommands              map[string]uicommand.Binding
@@ -116,15 +122,16 @@ func (m ReadModel) GroupsListData(r *http.Request) (ui.AdminData, error) {
 
 func (m ReadModel) baseData(r *http.Request) ui.AdminData {
 	data := ui.AdminData{
-		ListFilter:          strings.TrimSpace(r.URL.Query().Get("filter")),
-		ListQuery:           strings.TrimSpace(r.URL.Query().Get("q")),
-		CSRFToken:           m.csrfToken(r),
-		AuthConfigured:      m.AuthConfigured,
-		AccessConfigured:    m.AccessConfigured,
-		AccessStatusLabel:   "Configured",
-		AgentConfigCommand:  m.AgentConfigCommand,
-		PublicationCommands: m.PublicationCommands,
-		ProductCommands:     m.ProductCommands,
+		ListFilter:                strings.TrimSpace(r.URL.Query().Get("filter")),
+		ListQuery:                 strings.TrimSpace(r.URL.Query().Get("q")),
+		CSRFToken:                 m.csrfToken(r),
+		AuthConfigured:            m.AuthConfigured,
+		AccessConfigured:          m.AccessConfigured,
+		AccessStatusLabel:         "Configured",
+		AgentConfigCommand:        m.AgentConfigCommand,
+		PublicationCommands:       m.PublicationCommands,
+		ProductCommands:           m.ProductCommands,
+		DeliveryRollbackOperation: m.DeliveryRollbackOperation,
 	}
 	return data
 }
@@ -186,6 +193,26 @@ func (m ReadModel) PublicationData(r *http.Request) (ui.AdminData, error) {
 	data.Publications = rows
 	data.CanManagePublications = allowed
 	return data, err
+}
+
+func (m ReadModel) DeliveryData(r *http.Request) (ui.AdminData, error) {
+	data := m.baseData(r)
+	if m.Delivery == nil {
+		data.DeliveryError = "Delivery status is unavailable."
+		return data, nil
+	}
+	projectID, err := m.projectID(r.Context())
+	if err != nil {
+		data.DeliveryError = "Delivery status is unavailable."
+		return data, nil
+	}
+	delivery, err := m.Delivery(r.Context(), projectID.String())
+	if err != nil {
+		data.DeliveryError = "Delivery status is unavailable."
+		return data, nil
+	}
+	data.Delivery = &delivery
+	return data, nil
 }
 
 func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {

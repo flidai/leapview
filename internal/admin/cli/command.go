@@ -74,6 +74,22 @@ type Options struct {
 	AuthStateDays     int
 }
 
+// PlatformAdminRecoveryRequest is the explicit offline contract for restoring
+// platform authority to one already-enabled principal. The operation ID makes
+// retries stable and the expected email prevents an operator from granting the
+// role to a mistyped opaque identifier. Apply requires the exact revision
+// returned by preview so a concurrent delegation change fails closed.
+type PlatformAdminRecoveryRequest struct {
+	PrincipalID                string
+	ExpectedEmail              string
+	OperationID                string
+	ExpectedRevision           string
+	LocalPasswordFile          string
+	AcknowledgeOfflineRecovery bool
+	AcknowledgeCredentialReset bool
+	Apply                      bool
+}
+
 // Operations are the administrative use cases exposed by the CLI.
 // Application composition implements this contract because it owns process
 // configuration and construction of cross-capability resources.
@@ -84,6 +100,7 @@ type Operations interface {
 	BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error
 	UpgradePhysicalPoolCatalog(context.Context, CatalogUpgradeRequest, io.Writer) error
 	QualificationPoolArtifacts(context.Context) (adminoffline.QualificationPoolArtifacts, error)
+	RecoverPlatformAdministrator(context.Context, PlatformAdminRecoveryRequest, io.Writer) error
 	RecoveryOperations
 }
 
@@ -126,10 +143,57 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	maintenance.Flags().IntVar(&values.AuthStateDays, "auth-state-days", defaultAuthStateRetentionDays, "expired or revoked auth state retention in days; 0 disables auth-state pruning")
 
 	parent.AddCommand(initialize, maintenance)
+	parent.AddCommand(accessRecoveryCommand(ctx, operations))
 	delivery := deliveryPoolCommand(ctx, operations)
 	parent.AddCommand(delivery)
 	parent.AddCommand(recoveryCommand(ctx, operations))
 	return parent
+}
+
+func accessRecoveryCommand(ctx context.Context, operations Operations) *cobra.Command {
+	var request PlatformAdminRecoveryRequest
+	recoverAdmin := &cobra.Command{
+		Use:   "recover-platform-admin",
+		Short: "Restore platform administration through an offline PostgreSQL operator path",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			if operations == nil {
+				return fmt.Errorf("Admin CLI operations are required")
+			}
+			request.PrincipalID = strings.TrimSpace(request.PrincipalID)
+			request.ExpectedEmail = strings.TrimSpace(request.ExpectedEmail)
+			request.OperationID = strings.TrimSpace(request.OperationID)
+			request.ExpectedRevision = strings.TrimSpace(request.ExpectedRevision)
+			request.LocalPasswordFile = strings.TrimSpace(request.LocalPasswordFile)
+			if request.PrincipalID == "" || request.ExpectedEmail == "" || request.OperationID == "" {
+				return fmt.Errorf("--principal-id, --expected-email, and --operation-id are required")
+			}
+			if !request.AcknowledgeOfflineRecovery {
+				return fmt.Errorf("--acknowledge-offline-recovery is required")
+			}
+			if request.Apply && request.ExpectedRevision == "" {
+				return fmt.Errorf("--expected-revision is required with --apply")
+			}
+			if request.LocalPasswordFile != "" && !request.Apply {
+				return fmt.Errorf("--local-password-file requires --apply")
+			}
+			if request.LocalPasswordFile != "" && !request.AcknowledgeCredentialReset {
+				return fmt.Errorf("--acknowledge-credential-reset is required with --local-password-file")
+			}
+			return operations.RecoverPlatformAdministrator(ctx, request, command.OutOrStdout())
+		},
+	}
+	recoverAdmin.Flags().StringVar(&request.PrincipalID, "principal-id", "", "existing enabled principal UUID to recover")
+	recoverAdmin.Flags().StringVar(&request.ExpectedEmail, "expected-email", "", "exact expected email for the target principal")
+	recoverAdmin.Flags().StringVar(&request.OperationID, "operation-id", "", "stable UUID identifying this recovery attempt")
+	recoverAdmin.Flags().StringVar(&request.ExpectedRevision, "expected-revision", "", "revision returned by preview; required with --apply")
+	recoverAdmin.Flags().StringVar(&request.LocalPasswordFile, "local-password-file", "", "owner-only regular file containing a replacement local password")
+	recoverAdmin.Flags().BoolVar(&request.AcknowledgeOfflineRecovery, "acknowledge-offline-recovery", false, "confirm use of the deployment-authorized emergency path")
+	recoverAdmin.Flags().BoolVar(&request.AcknowledgeCredentialReset, "acknowledge-credential-reset", false, "confirm revocation of existing local sessions and replacement of the local password")
+	recoverAdmin.Flags().BoolVar(&request.Apply, "apply", false, "commit the recovery; without this flag only inspect the target and current authority")
+	access := adminGroupCommand("access", "Recover instance access through offline operator authority")
+	access.AddCommand(recoverAdmin)
+	return access
 }
 
 func deliveryPoolCommand(ctx context.Context, operations Operations) *cobra.Command {

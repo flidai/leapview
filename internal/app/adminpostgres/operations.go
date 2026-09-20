@@ -74,6 +74,15 @@ type AccessInitializer interface {
 	InitializeInstance(context.Context, access.InstanceInitializationInput, func(access.InitialInstanceCredentials) error) (access.InitialInstanceCredentials, error)
 }
 
+// PlatformAdminRecoveryAuthority is the narrow PostgreSQL authority needed by
+// the offline recovery command. Mutations still execute through the same
+// transaction and audit boundary as the public API.
+type PlatformAdminRecoveryAuthority interface {
+	PrincipalByID(context.Context, string) (access.Principal, error)
+	access.PlatformAdminLister
+	access.AuditedMutationRepository
+}
+
 // Bootstrap is the native platform authority used to check the initialization
 // marker and permanently bind the instance environment.
 type Bootstrap interface {
@@ -85,18 +94,19 @@ type Bootstrap interface {
 // value uses the real config loader, native PostgreSQL opener, baseline
 // verifier, and Native constructor.
 type Dependencies struct {
-	LoadConfig      func() (config.Config, error)
-	OpenMaintenance func(context.Context, platformpostgres.Config) (MaintenancePool, error)
-	OpenAccess      func(context.Context, platformpostgres.Config) (AccessPool, error)
-	PrepareBaseline func(context.Context, config.Config) error
-	VerifyBaseline  func(context.Context, postgresbaseline.SQLDBProvider) error
-	NewNative       func(postgresmaintenance.NativeDB) (Native, error)
-	NewAccess       func(AccessPool, []byte) (AccessInitializer, error)
-	NewBootstrap    func(AccessPool) Bootstrap
-	BootstrapPool   func(context.Context, config.Config, adminoffline.PhysicalPoolBootstrapRequest) (adminoffline.PhysicalPoolBootstrapResult, error)
-	UpgradePool     func(context.Context, config.Config, admincli.CatalogUpgradeRequest) (admincli.CatalogUpgradeResult, error)
-	AcquireLock     func(string) (adminoffline.Lock, error)
-	Now             func() time.Time
+	LoadConfig        func() (config.Config, error)
+	OpenMaintenance   func(context.Context, platformpostgres.Config) (MaintenancePool, error)
+	OpenAccess        func(context.Context, platformpostgres.Config) (AccessPool, error)
+	PrepareBaseline   func(context.Context, config.Config) error
+	VerifyBaseline    func(context.Context, postgresbaseline.SQLDBProvider) error
+	NewNative         func(postgresmaintenance.NativeDB) (Native, error)
+	NewAccess         func(AccessPool, []byte) (AccessInitializer, error)
+	NewRecoveryAccess func(AccessPool, []byte) (PlatformAdminRecoveryAuthority, error)
+	NewBootstrap      func(AccessPool) Bootstrap
+	BootstrapPool     func(context.Context, config.Config, adminoffline.PhysicalPoolBootstrapRequest) (adminoffline.PhysicalPoolBootstrapResult, error)
+	UpgradePool       func(context.Context, config.Config, admincli.CatalogUpgradeRequest) (admincli.CatalogUpgradeResult, error)
+	AcquireLock       func(string) (adminoffline.Lock, error)
+	Now               func() time.Time
 }
 
 // Operations owns the PostgreSQL-native Admin command operations.
@@ -131,6 +141,11 @@ func (d Dependencies) withDefaults() Dependencies {
 	}
 	if d.NewAccess == nil {
 		d.NewAccess = func(pool AccessPool, key []byte) (AccessInitializer, error) {
+			return accesspostgres.NewAccess(pool, accesspostgres.FingerprintConfig{Key: key})
+		}
+	}
+	if d.NewRecoveryAccess == nil {
+		d.NewRecoveryAccess = func(pool AccessPool, key []byte) (PlatformAdminRecoveryAuthority, error) {
 			return accesspostgres.NewAccess(pool, accesspostgres.FingerprintConfig{Key: key})
 		}
 	}

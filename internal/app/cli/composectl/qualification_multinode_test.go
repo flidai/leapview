@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -35,6 +36,8 @@ func TestQualificationMultiNodeEnvironmentRewritesPostgresURLs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ":8080", values["LEAPVIEW_ADDR"])
 	require.Equal(t, "/var/lib/leapview/home", values["LEAPVIEW_HOME"])
+	require.Equal(t, qualificationMultiNodeExtensionCache, values["LEAPVIEW_DUCKDB_EXTENSION_CACHE_DIR"])
+	require.Equal(t, qualificationMultiNodeObjectStore, values["LEAPVIEW_OBJECT_STORE_FILESYSTEM_ROOT"])
 	for _, key := range []string{"LEAPVIEW_POSTGRES_CONTROL_URL", "LEAPVIEW_POSTGRES_DUCKLAKE_URL"} {
 		require.Equal(t, qualificationMultiNodeRootCertificate, mustQualificationURLQuery(t, values[key], "sslrootcert"))
 	}
@@ -62,6 +65,7 @@ func TestQualificationMultiNodeProcessExercisesLossAndRollingRestart(t *testing.
 	), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, appEnvName), []byte(
 		"LEAPVIEW_ADDR=:8080\nLEAPVIEW_HOME=/var/lib/leapview/home\nLEAPVIEW_PUBLIC_URL=https://localhost\n"+
+			"LEAPVIEW_MANAGED_DATA_BACKEND=local\nLEAPVIEW_MANAGED_DATA_DIR=/var/lib/leapview/home/managed-data\n"+
 			"LEAPVIEW_POSTGRES_CONTROL_URL=postgres://runtime:secret@postgres/leapview_control?sslmode=verify-full\n",
 	), 0o600))
 	secretDir := filepath.Join(root, "secrets")
@@ -90,20 +94,43 @@ func TestQualificationMultiNodeProcessExercisesLossAndRollingRestart(t *testing.
 	report, err := controller.runQualificationMultiNode(t.Context(), qualificationMultiNodeOptions{
 		Image: "leapview:test@sha256:" + strings.Repeat("a", 64), ComposeProject: "multi-node-qualification",
 		ComposeNetwork: "multi-node-qualification_default", TargetID: "instance_abc", GenerationID: "generation_abc",
-		Topology: topology, Primary: primary,
+		WorkloadToken: "workload-token", Topology: topology, Primary: primary,
 	})
 	require.NoError(t, err)
 	require.Equal(t, qualificationMultiNodeReport{
-		NodeCount: 2, AbruptNodeLoss: true, Recovery: true, RollingRestart: true, DurableConvergence: true,
+		NodeCount: 2, AbruptNodeLoss: true, Recovery: true, RollingRestart: true, DurableConvergence: true, DataPlaneQueries: true,
 	}, report)
-	require.NotEmpty(t, runtime.request.Volumes)
+	require.Len(t, runtime.request.Volumes, 5)
 	require.True(t, runtime.request.ReadOnly)
 	require.Equal(t, "/var/lib/leapview/home", runtime.request.Environment["LEAPVIEW_HOME"])
-	require.Equal(t, qualificationMultiNodeRootCertificate, runtime.request.Volumes[1].Target)
+	require.Equal(t, qualificationMultiNodeRootCertificate, runtime.request.Volumes[0].Target)
+	require.Equal(t, qualificationContainerVolume{
+		Source: "multi-node-qualification_leapview-state", Target: qualificationMultiNodePoolDirectory,
+		Subpath: "home/data",
+	}, runtime.request.Volumes[1])
+	require.Equal(t, qualificationContainerVolume{
+		Source: "multi-node-qualification_leapview-state", Target: qualificationMultiNodeExtensionCache,
+		Subpath: "home/duckdb-extension-cache",
+	}, runtime.request.Volumes[2])
+	require.Equal(t, qualificationContainerVolume{
+		Source: "multi-node-qualification_leapview-state", Target: qualificationMultiNodeObjectStore,
+		Subpath: "home/artifacts/object-store",
+	}, runtime.request.Volumes[3])
+	require.Equal(t, qualificationContainerVolume{
+		Source: "multi-node-qualification_leapview-state", Target: "/var/lib/leapview/home/managed-data",
+		Subpath: "home/managed-data",
+	}, runtime.request.Volumes[4])
+	require.Contains(t, runtime.request.Tmpfs, qualificationMultiNodeStateTmpfs)
+	require.Contains(t, runtime.request.Tmpfs, qualificationMultiNodeHomeTmpfs)
+	require.Contains(t, runtime.request.Tmpfs, qualificationMultiNodeArtifactsTmpfs)
 	require.Equal(t, 1, secondary.removed)
 	require.Equal(t, 1, primary.kills)
 	require.GreaterOrEqual(t, primary.restarts, 1)
 	require.GreaterOrEqual(t, secondary.restarts, 1)
+	require.GreaterOrEqual(t, primary.queries, 1)
+	require.GreaterOrEqual(t, secondary.queries, 3)
+	require.GreaterOrEqual(t, primary.identityTokens, 1)
+	require.GreaterOrEqual(t, secondary.identityTokens, 1)
 }
 
 type multiNodeRuntimeFixture struct {
@@ -124,20 +151,29 @@ func (runtime *multiNodeRuntimeFixture) Existing(name string) qualificationConta
 }
 
 type multiNodeContainerFixture struct {
-	name       string
-	identity   string
-	execOutput []byte
-	kills      int
-	restarts   int
-	removed    int
-	status     string
+	name           string
+	identity       string
+	execOutput     []byte
+	kills          int
+	restarts       int
+	queries        int
+	identityTokens int
+	removed        int
+	status         string
 }
 
 func (container *multiNodeContainerFixture) Name() string { return container.name }
 
 func (container *multiNodeContainerFixture) Exec(_ context.Context, _ io.Reader, command ...string) ([]byte, error) {
 	if strings.Contains(strings.Join(command, " "), "getInstance") {
+		if slices.Contains(command, "LEAPVIEW_API_TOKEN=workload-token") {
+			container.identityTokens++
+		}
 		return []byte(container.identity), nil
+	}
+	if strings.Contains(strings.Join(command, " "), "querySemanticModel") {
+		container.queries++
+		return []byte(`{"rows":[{},{},{},{}]}`), nil
 	}
 	if strings.Contains(strings.Join(command, " "), "healthcheck") {
 		return nil, nil

@@ -542,6 +542,60 @@ CREATE TABLE access.platform_role_binding (
 );
 CREATE UNIQUE INDEX platform_role_binding_active_key ON access.platform_role_binding(principal_id, role) WHERE revoked_at IS NULL;
 
+-- Platform delegation mutations are retried over unreliable transports. Keep
+-- their replay identity in the access authority, alongside the role binding,
+-- so a reused key cannot silently target another principal or action.
+CREATE TABLE access.platform_role_operation (
+    idempotency_key text PRIMARY KEY CHECK (idempotency_key = btrim(idempotency_key) AND length(idempotency_key) BETWEEN 1 AND 256),
+    request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    action text NOT NULL CHECK (action IN ('grant','revoke')),
+    principal_id uuid NOT NULL REFERENCES access.principal(id),
+    binding_id uuid NOT NULL REFERENCES access.platform_role_binding(id),
+    result_revision text NOT NULL CHECK (result_revision ~ '^sha256:[0-9a-f]{64}$'),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+-- Optional two-person approval for platform-role changes. Request identity is
+-- immutable; the lifecycle projection is advanced with a row lock and a
+-- monotonic revision so an approval can safely survive process restarts.
+CREATE TABLE access.platform_role_approval (
+    id uuid PRIMARY KEY,
+    action text NOT NULL CHECK (action IN ('grant','revoke')),
+    principal_id uuid NOT NULL REFERENCES access.principal(id),
+    requester_id uuid NOT NULL REFERENCES access.principal(id),
+    approver_id uuid REFERENCES access.principal(id),
+    canceled_by uuid REFERENCES access.principal(id),
+    expired_by uuid REFERENCES access.principal(id),
+    status text NOT NULL CHECK (status IN ('pending','approved','canceled','expired','executed')),
+    expected_revision text NOT NULL CHECK (expected_revision = btrim(expected_revision) AND length(expected_revision) BETWEEN 1 AND 255),
+    request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    idempotency_key text NOT NULL UNIQUE CHECK (idempotency_key = btrim(idempotency_key) AND length(idempotency_key) BETWEEN 1 AND 256),
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    approved_at timestamptz,
+    canceled_at timestamptz,
+    expired_at timestamptz,
+    executed_at timestamptz,
+    binding_id uuid REFERENCES access.platform_role_binding(id),
+    result_revision text CHECK (result_revision IS NULL OR result_revision ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK ((status = 'pending' AND approver_id IS NULL AND approved_at IS NULL AND canceled_by IS NULL AND canceled_at IS NULL AND expired_by IS NULL AND expired_at IS NULL AND executed_at IS NULL AND binding_id IS NULL AND result_revision IS NULL)
+        OR (status = 'approved' AND approver_id IS NOT NULL AND approved_at IS NOT NULL AND canceled_by IS NULL AND canceled_at IS NULL AND expired_by IS NULL AND expired_at IS NULL AND executed_at IS NULL AND binding_id IS NULL AND result_revision IS NULL)
+        OR (status = 'canceled' AND canceled_by IS NOT NULL AND canceled_at IS NOT NULL AND executed_at IS NULL AND binding_id IS NULL AND result_revision IS NULL)
+        OR (status = 'expired' AND expired_at IS NOT NULL AND executed_at IS NULL AND binding_id IS NULL AND result_revision IS NULL)
+        OR (status = 'executed' AND approver_id IS NOT NULL AND approved_at IS NOT NULL AND executed_at IS NOT NULL AND binding_id IS NOT NULL AND result_revision IS NOT NULL))
+);
+CREATE INDEX platform_role_approval_lifecycle_idx ON access.platform_role_approval(status, expires_at, created_at DESC);
+
+CREATE TABLE access.platform_role_approval_operation (
+    idempotency_key text PRIMARY KEY CHECK (idempotency_key = btrim(idempotency_key) AND length(idempotency_key) BETWEEN 1 AND 256),
+    approval_id uuid NOT NULL REFERENCES access.platform_role_approval(id),
+    request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    action text NOT NULL CHECK (action IN ('request','approve','cancel','expire','execute')),
+    result_revision bigint NOT NULL CHECK (result_revision > 0),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
 CREATE TABLE access.access_group (
     id uuid PRIMARY KEY,
     name text NOT NULL CHECK (name = btrim(name) AND length(name) BETWEEN 1 AND 255),
@@ -638,6 +692,7 @@ CREATE TABLE access.service_principal_secret (
     verifier bytea NOT NULL,
     expires_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    last_used_at timestamptz,
     revoked_at timestamptz,
     CHECK (octet_length(secret_fingerprint)=32),
     CHECK (octet_length(verifier) BETWEEN 32 AND 512),
@@ -758,6 +813,33 @@ CREATE TRIGGER membership_revocation_monotonic BEFORE UPDATE ON access.principal
 CREATE TRIGGER role_no_delete BEFORE DELETE ON access.platform_role_binding FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 CREATE TRIGGER role_identity_immutable BEFORE UPDATE ON access.platform_role_binding FOR EACH ROW EXECUTE FUNCTION access.reject_role_identity_rewrite();
 CREATE TRIGGER role_revocation_monotonic BEFORE UPDATE ON access.platform_role_binding FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
+CREATE TRIGGER platform_role_operation_no_delete BEFORE DELETE ON access.platform_role_operation FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER platform_role_operation_immutable BEFORE UPDATE ON access.platform_role_operation FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE OR REPLACE FUNCTION access.reject_platform_role_approval_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'platform role approval history is append-only'; END; $$;
+CREATE OR REPLACE FUNCTION access.guard_platform_role_approval_transition() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.id <> NEW.id OR OLD.action <> NEW.action OR OLD.principal_id <> NEW.principal_id OR OLD.requester_id <> NEW.requester_id
+       OR OLD.expected_revision <> NEW.expected_revision OR OLD.request_digest <> NEW.request_digest
+       OR OLD.idempotency_key <> NEW.idempotency_key OR OLD.created_at <> NEW.created_at THEN
+        RAISE EXCEPTION 'platform role approval identity is immutable';
+    END IF;
+    IF OLD.status = 'pending' AND NEW.status NOT IN ('pending','approved','canceled','expired') THEN
+        RAISE EXCEPTION 'invalid platform role approval transition';
+    ELSIF OLD.status = 'approved' AND NEW.status NOT IN ('approved','executed') THEN
+        RAISE EXCEPTION 'invalid platform role approval transition';
+    ELSIF OLD.status IN ('canceled','expired','executed') AND NEW.status <> OLD.status THEN
+        RAISE EXCEPTION 'invalid platform role approval transition';
+    END IF;
+    IF NEW.revision <> OLD.revision + (CASE WHEN NEW.status = OLD.status THEN 0 ELSE 1 END) THEN
+        RAISE EXCEPTION 'platform role approval revision is not monotonic';
+    END IF;
+    RETURN NEW;
+END; $$;
+CREATE TRIGGER platform_role_approval_no_delete BEFORE DELETE ON access.platform_role_approval FOR EACH ROW EXECUTE FUNCTION access.reject_platform_role_approval_delete();
+CREATE TRIGGER platform_role_approval_transition BEFORE UPDATE ON access.platform_role_approval FOR EACH ROW EXECUTE FUNCTION access.guard_platform_role_approval_transition();
+CREATE TRIGGER platform_role_approval_operation_no_delete BEFORE DELETE ON access.platform_role_approval_operation FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER platform_role_approval_operation_immutable BEFORE UPDATE ON access.platform_role_approval_operation FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 CREATE TRIGGER session_no_delete BEFORE DELETE ON access.session FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
 CREATE TRIGGER session_identity_immutable BEFORE UPDATE ON access.session FOR EACH ROW EXECUTE FUNCTION access.reject_session_identity_rewrite();
 CREATE TRIGGER session_revocation_monotonic BEFORE UPDATE ON access.session FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();

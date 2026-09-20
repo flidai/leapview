@@ -93,17 +93,18 @@ func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig
 }
 
 type accessCapabilityConfig struct {
-	Persistence      *accessmodule.Persistence
-	Production       bool
-	Auth             accessmodule.AuthConfig
-	Assets           staticasset.Resolver
-	AvatarBlobs      accessmodule.AvatarBlobStore
-	PublicURL        string
-	InstanceID       string
-	Environment      string
-	MCPIssuerURL     string
-	CurrentProject   func(context.Context) (projectgraph.ResourceID, error)
-	AuthoringProject func(context.Context) (projectgraph.ResourceID, error)
+	Persistence                 *accessmodule.Persistence
+	Production                  bool
+	Auth                        accessmodule.AuthConfig
+	Assets                      staticasset.Resolver
+	AvatarBlobs                 accessmodule.AvatarBlobStore
+	PublicURL                   string
+	InstanceID                  string
+	Environment                 string
+	MCPIssuerURL                string
+	RequirePlatformRoleApproval bool
+	CurrentProject              func(context.Context) (projectgraph.ResourceID, error)
+	AuthoringProject            func(context.Context) (projectgraph.ResourceID, error)
 }
 
 func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (accessCapabilityBundle, error) {
@@ -119,9 +120,10 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 		Auth:        cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
 		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, AuthorizationPolicyTargetID: cfg.InstanceID,
 		AuthorizationPolicyEnvironment: cfg.Environment, MCPIssuerURL: cfg.MCPIssuerURL,
-		CurrentProjectID:   cfg.CurrentProject,
-		AuthoringProjectID: cfg.AuthoringProject,
-		Presentation:       page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
+		RequirePlatformRoleApproval: cfg.RequirePlatformRoleApproval,
+		CurrentProjectID:            cfg.CurrentProject,
+		AuthoringProjectID:          cfg.AuthoringProject,
+		Presentation:                page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
 	})
 	if err != nil {
 		return accessCapabilityBundle{}, fmt.Errorf("build access capability: %w", err)

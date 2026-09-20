@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -22,10 +23,11 @@ import (
 )
 
 const (
-	defaultAPITokenTTL               = 90 * 24 * time.Hour
-	defaultServicePrincipalSecretTTL = 180 * 24 * time.Hour
-	maxSessionTTL                    = 30 * 24 * time.Hour
-	maxPageSize                      = 1000
+	defaultServicePrincipalSecretTTL  = 180 * 24 * time.Hour
+	maxSessionTTL                     = 30 * 24 * time.Hour
+	maxRecentSessionAuthenticationAge = 15 * time.Minute
+	apiTokenTouchInterval             = time.Minute
+	maxPageSize                       = 1000
 )
 
 var verifierParams = &argon2id.Params{Memory: 19 * 1024, Iterations: 2, Parallelism: 1, SaltLength: 16, KeyLength: 32}
@@ -344,6 +346,12 @@ func (r *Repository) SetPlatformRole(ctx context.Context, input access.PlatformR
 	if err != nil {
 		return access.Principal{}, err
 	}
+	if strings.TrimSpace(input.PrincipalID) == "" {
+		input.PrincipalID, err = newUUID()
+		if err != nil {
+			return access.Principal{}, err
+		}
+	}
 	tx, ownTx, err := r.txOrBegin(ctx)
 	if err != nil {
 		return access.Principal{}, err
@@ -354,6 +362,9 @@ func (r *Repository) SetPlatformRole(ctx context.Context, input access.PlatformR
 		}
 	}()
 	txRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
+	if _, err := r.lockPlatformAdminAuthority(ctx, tx, input.PrincipalID); err != nil {
+		return access.Principal{}, err
+	}
 	p, err := txRepo.UpsertPrincipal(ctx, access.PrincipalInput{ID: input.PrincipalID, Email: input.Email, DisplayName: input.DisplayName, Kind: access.PrincipalKindUser})
 	if err != nil {
 		return access.Principal{}, err
@@ -445,6 +456,16 @@ func (r *Repository) DeleteServicePrincipal(ctx context.Context, id string) erro
 	}()
 	parsedID, err := pgUUID(id)
 	if err != nil {
+		return err
+	}
+	// Check ownership in the deletion transaction before revoking this service
+	// principal.  The owning authority is intentionally queried through the
+	// same tx so a concurrent transfer cannot race the offboarding decision.
+	txRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey, ownership: r.ownership}
+	if err := txRepo.EnsureOffboardingSafe(ctx, id); err != nil {
+		return err
+	}
+	if _, err := accessdb.New(tx).RevokePlatformRole(ctx, parsedID); err != nil {
 		return err
 	}
 	tag, err := accessdb.New(tx).DisableServicePrincipal(ctx, parsedID)
@@ -805,6 +826,16 @@ func (r *Repository) ResetLocalPassword(ctx context.Context, pid string) (access
 	}
 	return r.setPassword(ctx, pid, password, true)
 }
+
+// RecoverLocalPassword installs an operator-supplied emergency password for
+// an existing local principal. It is intentionally absent from the public
+// access.Repository contract: only the offline, production-only recovery
+// adapter may discover this narrow capability. The normal password policy,
+// transaction ownership, and session revocation rules still apply.
+func (r *Repository) RecoverLocalPassword(ctx context.Context, pid, password string) (access.LocalPasswordReset, error) {
+	return r.setPassword(ctx, pid, password, true)
+}
+
 func (r *Repository) ChangeLocalPassword(ctx context.Context, pid, current, newPassword string) (access.LocalCredential, error) {
 	return r.setPasswordCredential(ctx, pid, current, newPassword, false)
 }
@@ -881,6 +912,31 @@ func (r *Repository) setPasswordCredential(ctx context.Context, pid, current, ne
 }
 
 func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Duration) (string, error) {
+	return r.createSession(ctx, pid, ttl, time.Time{})
+}
+
+// CreateSessionAt is the OIDC-aware browser-session constructor. The
+// authenticated-at timestamp was verified in the signed ID token; preserving
+// it as the session's server-owned creation time keeps recent-auth checks
+// anchored to the identity-provider event rather than the callback arrival.
+// It is intentionally an optional concrete capability and is not part of the
+// broad access.Repository interface.
+func (r *Repository) CreateSessionAt(ctx context.Context, pid string, ttl time.Duration, authenticatedAt time.Time) (string, error) {
+	if authenticatedAt.IsZero() {
+		return "", errors.New("authenticated-at time is required")
+	}
+	authenticatedAt = authenticatedAt.UTC()
+	now := time.Now().UTC()
+	if authenticatedAt.After(now) {
+		return "", errors.New("authenticated-at time is in the future")
+	}
+	if now.Sub(authenticatedAt) > maxRecentSessionAuthenticationAge {
+		return "", errors.New("authenticated-at time is stale")
+	}
+	return r.createSession(ctx, pid, ttl, authenticatedAt)
+}
+
+func (r *Repository) createSession(ctx context.Context, pid string, ttl time.Duration, authenticatedAt time.Time) (string, error) {
 	db, err := r.requireDB()
 	if err != nil {
 		return "", err
@@ -912,8 +968,19 @@ func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Dur
 	if err != nil {
 		return "", err
 	}
-	tag, err := accessdb.New(db).CreateBrowserSession(ctx, accessdb.CreateBrowserSessionParams{ID: parsedID, PrincipalID: principalID,
-		TokenFingerprint: r.secretFingerprint(token), Verifier: ver, Ttl: pgInterval(ttl)})
+	var tag pgconn.CommandTag
+	if authenticatedAt.IsZero() {
+		tag, err = accessdb.New(db).CreateBrowserSession(ctx, accessdb.CreateBrowserSessionParams{ID: parsedID, PrincipalID: principalID,
+			TokenFingerprint: r.secretFingerprint(token), Verifier: ver, Ttl: pgInterval(ttl)})
+	} else {
+		// The session identity trigger intentionally rejects post-insert
+		// created_at changes. Insert the verified IdP authentication time in
+		// the same statement instead, while retaining callback-time expiry.
+		tag, err = accessdb.New(db).CreateBrowserSessionAt(ctx, accessdb.CreateBrowserSessionAtParams{
+			ID: parsedID, PrincipalID: principalID, TokenFingerprint: r.secretFingerprint(token),
+			Verifier: ver, Ttl: pgInterval(ttl), CreatedAt: pgTimestamp(authenticatedAt),
+		})
+	}
 	if err != nil {
 		return "", err
 	}
@@ -921,21 +988,6 @@ func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Dur
 		return "", pgx.ErrNoRows
 	}
 	return token, nil
-}
-func (r *Repository) PrincipalForToken(ctx context.Context, token string) (access.Principal, error) {
-	db, err := r.requireDB()
-	if err != nil {
-		return access.Principal{}, err
-	}
-	row, err := accessdb.New(db).FindBrowserSession(ctx, r.secretFingerprint(token))
-	if err != nil {
-		return access.Principal{}, err
-	}
-	if !hmac.Equal(row.TokenFingerprint, r.secretFingerprint(token)) || !verifySecret(token, row.Verifier) {
-		return access.Principal{}, pgx.ErrNoRows
-	}
-	_ = accessdb.New(db).TouchBrowserSession(ctx, row.TokenFingerprint)
-	return r.PrincipalByID(ctx, principalUUID(row.ID))
 }
 func (r *Repository) DeleteSession(ctx context.Context, token string) error {
 	db, err := r.requireDB()
@@ -1059,68 +1111,6 @@ func (r *Repository) CreateAPIToken(ctx context.Context, pid, name string) (stri
 	t, _, e := r.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: pid, Name: name})
 	return t, e
 }
-func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.APITokenInput) (string, access.APIToken, error) {
-	db, err := r.requireDB()
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	pid, err := uuidID("principal id", in.PrincipalID)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	name, err := bounded(strings.TrimSpace(in.Name), "token name", 255)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	description := strings.TrimSpace(in.Description)
-	if len(description) > 1024 {
-		return "", access.APIToken{}, fmt.Errorf("token description must not exceed 1024 bytes")
-	}
-	caps, err := capabilitiesJSON(in.Capabilities)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	if in.ExpiresAt.IsZero() {
-		in.ExpiresAt = time.Now().Add(defaultAPITokenTTL)
-	}
-	tok, err := tokenSecret("lv_pat_")
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	ver, err := secretVerifier(tok)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	id, err := newUUID()
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	tokenID, err := pgUUID(id)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	principalID, err := pgUUID(pid)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	tag, err := accessdb.New(db).CreateAPIToken(ctx, accessdb.CreateAPITokenParams{ID: tokenID, PrincipalID: principalID, Name: name, Description: description,
-		TokenFingerprint: r.secretFingerprint(tok), Verifier: ver, Capabilities: caps, ExpiresAt: pgTimestamp(in.ExpiresAt)})
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	if tag.RowsAffected() == 0 {
-		valid, checkErr := databaseExpiryValid(ctx, db, in.ExpiresAt)
-		if checkErr != nil {
-			return "", access.APIToken{}, checkErr
-		}
-		if !valid {
-			return "", access.APIToken{}, fmt.Errorf("api token expiry is invalid")
-		}
-		return "", access.APIToken{}, pgx.ErrNoRows
-	}
-	row, e := r.apiToken(ctx, id)
-	return tok, row, e
-}
 func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, error) {
 	db, _ := r.requireDB()
 	parsedID, err := pgUUID(id)
@@ -1151,7 +1141,10 @@ func (r *Repository) apiTokenForSecret(ctx context.Context, secret string) (acce
 	if !verifySecret(secret, row.Verifier) {
 		return access.APIToken{}, pgx.ErrNoRows
 	}
-	_ = accessdb.New(db).TouchAPIToken(ctx, row.ID)
+	if _, touchErr := accessdb.New(db).TouchAPIToken(ctx, accessdb.TouchAPITokenParams{ID: row.ID, MinInterval: pgInterval(apiTokenTouchInterval)}); touchErr != nil {
+		slog.Default().WarnContext(ctx, "api token last-used update failed", "credential_class", "api_token", "credential_id", principalUUID(row.ID), "error", touchErr)
+		observeCredentialTouchFailure(credentialClassAPIToken)
+	}
 	return r.apiToken(ctx, principalUUID(row.ID))
 }
 func (r *Repository) PrincipalForAPIToken(ctx context.Context, tok string) (access.Principal, error) {
@@ -1244,6 +1237,11 @@ func (r *Repository) RevokeAPITokenForPrincipal(ctx context.Context, pid, id str
 }
 
 func (r *Repository) CreateServicePrincipalSecret(ctx context.Context, pid string, in access.ServicePrincipalSecretInput) (string, access.ServicePrincipalSecret, error) {
+	resolvedExpiry, e := access.ResolveServicePrincipalSecretExpiry(in.ExpiresAt, time.Now().UTC())
+	if e != nil {
+		return "", access.ServicePrincipalSecret{}, e
+	}
+	in.ExpiresAt = resolvedExpiry
 	db, e := r.requireDB()
 	if e != nil {
 		return "", access.ServicePrincipalSecret{}, e
@@ -1308,7 +1306,7 @@ func (r *Repository) serviceSecret(ctx context.Context, id string) (access.Servi
 		return access.ServicePrincipalSecret{}, err
 	}
 	return access.ServicePrincipalSecret{ID: principalUUID(row.ID), ServicePrincipalID: principalUUID(row.ServicePrincipalID), Name: row.Name,
-		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), RevokedAt: principalTimestamp(row.RevokedAt)}, nil
+		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}, nil
 }
 func (r *Repository) RevokeServicePrincipalSecret(ctx context.Context, pid, sid string) error {
 	db, e := r.requireDB()
@@ -1357,6 +1355,10 @@ func (r *Repository) PrincipalForServicePrincipalSecret(ctx context.Context, pid
 	if !verifySecret(secret, row.Verifier) {
 		return access.Principal{}, pgx.ErrNoRows
 	}
+	// Authentication is latency-sensitive; evidence is best effort and
+	// coalesced by the SQL predicate. A failed telemetry write must not turn a
+	// valid credential into an authentication failure.
+	r.touchServicePrincipalSecret(ctx, row.ID)
 	p, e := r.PrincipalByID(ctx, principalUUID(row.ServicePrincipalID))
 	if e != nil || p.AccessDisabled() {
 		return access.Principal{}, pgx.ErrNoRows

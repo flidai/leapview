@@ -53,7 +53,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 			switch strings.TrimSpace(section) {
 			case "", "profile", "security", "api-tokens", "api-token-new", "archived-chats":
 				return routes.accessModule.Authenticate(next), true
-			case "general", "service-accounts", "service-accounts-new", "authentication", "storage", "storage-detail", "agent", "system", "principals", "principal-detail", "groups", "group-detail", "queries", "audit", "publications":
+			case "general", "service-accounts", "service-accounts-new", "authentication", "storage", "storage-detail", "agent", "system", "principals", "principal-detail", "groups", "group-detail", "access", "queries", "audit", "publications", "delivery":
 				return routes.accessModule.RequirePlatformAdmin(next), true
 			default:
 				return nil, false

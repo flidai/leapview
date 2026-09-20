@@ -67,7 +67,7 @@ func (h Handler) CreateServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return
 	}
 	var row access.Principal
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationCreateServicePrincipal(), func(tx access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
 		row, mutationErr = tx.CreateServicePrincipal(r.Context(), input)
 		return auditInput(r, "service_principal.created", h.currentPrincipalID(r), "service_principal", row.ID, "", "success", nil), mutationErr
@@ -138,16 +138,80 @@ func (h Handler) DeleteServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return
 	}
 	id := chi.URLParam(r, "servicePrincipal")
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationDeleteServicePrincipal(), func(tx access.Repository) (access.AuditEventInput, error) {
 		mutationErr := tx.DeleteServicePrincipal(r.Context(), id)
 		return auditInput(r, "service_principal.deleted", h.currentPrincipalID(r), "service_principal", id, "", "success", nil), mutationErr
 	})
 	if err != nil {
+		if writeOffboardingError(w, err, "SERVICE_PRINCIPAL_OWNS_OBJECTS") {
+			return
+		}
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeleteServicePrincipal(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
+
+func (h Handler) DisableServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	id := chi.URLParam(r, "servicePrincipal")
+	var row access.Principal
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationDisableServicePrincipal(), func(tx access.Repository) (access.AuditEventInput, error) {
+		lifecycle, ok := tx.(access.ServicePrincipalCredentialRepository)
+		if !ok {
+			return access.AuditEventInput{}, fmt.Errorf("service principal lifecycle is unavailable")
+		}
+		var mutationErr error
+		row, mutationErr = lifecycle.DisableServicePrincipal(r.Context(), id)
+		return auditInput(r, "service_principal.disabled", h.currentPrincipalID(r), "service_principal", id, "", "success", nil), mutationErr
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDisableServicePrincipal(), err, statusForNotFound(err))
+		return
+	}
+	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
+	writeJSON(w, stdhttp.StatusOK, principalDTO(row))
+}
+
+func (h Handler) EnableServicePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	id := chi.URLParam(r, "servicePrincipal")
+	var row access.Principal
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationEnableServicePrincipal(), func(tx access.Repository) (access.AuditEventInput, error) {
+		lifecycle, ok := tx.(access.ServicePrincipalCredentialRepository)
+		if !ok {
+			return access.AuditEventInput{}, fmt.Errorf("service principal lifecycle is unavailable")
+		}
+		var mutationErr error
+		row, mutationErr = lifecycle.EnableServicePrincipal(r.Context(), id)
+		return auditInput(r, "service_principal.enabled", h.currentPrincipalID(r), "service_principal", id, "", "success", nil), mutationErr
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationEnableServicePrincipal(), err, statusForNotFound(err))
+		return
+	}
+	if revision, revisionErr := access.PrincipalRevision(row); revisionErr == nil {
+		w.Header().Set("ETag", revision)
+	}
+	writeJSON(w, stdhttp.StatusOK, principalDTO(row))
+}
+
 func (h Handler) CreateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !h.requirePlatformAdmin(w, r) {
 		return
@@ -168,6 +232,12 @@ func (h Handler) CreateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 			return
 		}
 		expiresAt = parsed
+	}
+	var err error
+	expiresAt, err = access.ResolveServicePrincipalSecretExpiry(expiresAt, time.Now().UTC())
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
 	}
 	repo, err := h.repository()
 	if err != nil {
@@ -248,12 +318,107 @@ func (h Handler) RevokeServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdht
 	}
 	servicePrincipalID := chi.URLParam(r, "servicePrincipal")
 	secretID := chi.URLParam(r, "secret")
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationRevokeServicePrincipalSecret(), func(tx access.Repository) (access.AuditEventInput, error) {
 		mutationErr := tx.RevokeServicePrincipalSecret(r.Context(), servicePrincipalID, secretID)
 		return auditInput(r, "service_principal_secret.revoked", h.currentPrincipalID(r), "service_principal", servicePrincipalID, "", "success", map[string]any{"secretId": secretID}), mutationErr
 	})
 	if err != nil {
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationRevokeServicePrincipalSecret(), err, statusForNotFound(err))
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
+}
+
+func (h Handler) RotateServicePrincipalSecret(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
+	var request struct {
+		Name           string `json:"name"`
+		ExpiresAt      string `json:"expiresAt"`
+		RevokePrevious bool   `json:"revokePrevious"`
+	}
+	if err := decodeStrictJSON(r, &request); err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	var expiresAt time.Time
+	if strings.TrimSpace(request.ExpiresAt) != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, request.ExpiresAt)
+		if parseErr != nil {
+			writeJSONError(w, parseErr, stdhttp.StatusBadRequest)
+			return
+		}
+		expiresAt = parsed
+	}
+	var err error
+	expiresAt, err = access.ResolveServicePrincipalSecretExpiry(expiresAt, time.Now().UTC())
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	principalID := chi.URLParam(r, "servicePrincipal")
+	previousID := chi.URLParam(r, "secret")
+	var rotation access.ServicePrincipalSecretRotation
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationRotateServicePrincipalSecret(), func(tx access.Repository) (access.AuditEventInput, error) {
+		lifecycle, ok := tx.(interface {
+			RotateServicePrincipalSecret(context.Context, access.ServicePrincipalSecretRotationInput) (access.ServicePrincipalSecretRotation, error)
+		})
+		if !ok {
+			return access.AuditEventInput{}, fmt.Errorf("service principal secret rotation is unavailable")
+		}
+		var mutationErr error
+		rotation, mutationErr = lifecycle.RotateServicePrincipalSecret(r.Context(), access.ServicePrincipalSecretRotationInput{
+			ServicePrincipalID: principalID,
+			PreviousSecretID:   previousID,
+			Secret:             access.ServicePrincipalSecretInput{Name: request.Name, ExpiresAt: expiresAt},
+			RevokePrevious:     request.RevokePrevious,
+		})
+		return auditInput(r, "service_principal_secret.rotated", h.currentPrincipalID(r), "service_principal", principalID, "", "success", map[string]any{"secretId": rotation.Created.ID, "previousSecretId": previousID, "revokePrevious": request.RevokePrevious}), mutationErr
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationRotateServicePrincipalSecret(), err, statusForNotFound(err))
+		return
+	}
+	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"secret": rotation.Secret, "clientSecret": servicePrincipalSecretDTO(rotation.Created, "")})
+}
+
+func (h Handler) RevokeAllServicePrincipalCredentials(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
+	var request struct {
+		Reason string `json:"reason"`
+	}
+	if err := decodeStrictJSON(r, &request); err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	if len(strings.TrimSpace(request.Reason)) > 512 {
+		writeJSONError(w, fmt.Errorf("reason is too long"), stdhttp.StatusBadRequest)
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	id := chi.URLParam(r, "servicePrincipal")
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationRevokeAllServicePrincipalCredentials(), func(tx access.Repository) (access.AuditEventInput, error) {
+		lifecycle, ok := tx.(access.ServicePrincipalCredentialRepository)
+		if !ok {
+			return access.AuditEventInput{}, fmt.Errorf("service principal credential revocation is unavailable")
+		}
+		mutationErr := lifecycle.RevokeAllServicePrincipalCredentials(r.Context(), id)
+		return auditInput(r, "service_principal_credentials.revoked_all", h.currentPrincipalID(r), "service_principal", id, "", "success", map[string]any{"reason": strings.TrimSpace(request.Reason), "credentialClasses": []string{"sessions", "api_tokens", "service_secrets", "authoring_sessions", "oauth_sessions"}}), mutationErr
+	})
+	if err != nil {
+		writeAuditedMutationError(w, r, accessgen.GenCommandOperationRevokeAllServicePrincipalCredentials(), err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)

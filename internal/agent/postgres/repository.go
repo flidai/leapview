@@ -20,6 +20,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	agentdb "github.com/flidai/leapview/internal/agent/postgres/internal/db"
+	"github.com/flidai/leapview/internal/platform/accesslifecycle"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/google/uuid"
@@ -345,6 +346,16 @@ func (r *Repository) CreateConversation(ctx context.Context, input agent.Convers
 	intent, hasIntent := agent.AuditIntentFromContext(ctx)
 	var out agent.Conversation
 	err = r.withTx(ctx, func(tx Tx, q *agentdb.Queries) error {
+		// Production principal identifiers are access UUIDs. Keep the access
+		// lifecycle lock on this same transaction so offboarding cannot commit
+		// between an active-principal check and conversation insertion. The
+		// standalone agent test authority also supports opaque principal labels;
+		// those have no access.principal lifecycle row to serialize against.
+		if _, parseErr := uuid.Parse(strings.TrimSpace(input.PrincipalID)); parseErr == nil {
+			if err := accesslifecycle.LockOwnedPrincipal(ctx, tx, input.PrincipalID); err != nil {
+				return err
+			}
+		}
 		row, err := q.CreateAgentConversation(ctx, agentdb.CreateAgentConversationParams{ID: id, PrincipalID: principal, Title: title, Status: agent.ConversationStatusActive, MetadataJson: []byte(metadata), TranscriptJson: []byte("[]")})
 		if err != nil {
 			return err

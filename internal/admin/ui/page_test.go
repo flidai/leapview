@@ -4,9 +4,11 @@ import (
 	"html"
 	"strings"
 	"testing"
+	"time"
 
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	appshell "github.com/flidai/leapview/internal/app/shell"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 )
 
@@ -209,5 +211,39 @@ func TestAdminPageRendersAdminRouteShell(t *testing.T) {
 	}
 	if strings.Contains(html, "data-signals=") {
 		t.Fatalf("admin page embedded bootstrap signals:\n%s", html)
+	}
+}
+
+func TestDeliverySignalExplainsDegradedAndStaleEvidence(t *testing.T) {
+	expired := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	page, ok := AdminBootstrapSignals("delivery", AdminData{Delivery: &AdminDeliveryData{
+		Operator: deploymentgen.DeliveryOperatorSnapshotResponse{
+			ProjectId: "project:active", Environment: "production", TargetId: "target:production", TargetRevision: 12,
+			Degraded: true, DegradedReasons: []string{"operator evidence unavailable"},
+		},
+		RetainedGenerations: []deploymentgen.DeliveryGenerationStatusResponse{{
+			Id: "generation:old", Status: deploymentgen.DeliveryGenerationStatusRetired,
+			RollbackClass: deploymentgen.DeliveryRollbackClassRollbackSafe, RollbackUntil: &expired,
+		}},
+	}}, nil)["page"].(uisignals.AdminPageSignal)
+	if !ok {
+		t.Fatal("delivery page signal missing")
+	}
+	if page.Empty == nil || !strings.Contains(*page.Empty, "degraded") || !strings.Contains(*page.Empty, "missing rows") {
+		t.Fatalf("degraded state = %#v", page.Empty)
+	}
+	if page.Sections == nil || len(*page.Sections) != 3 {
+		t.Fatalf("delivery sections = %#v", page.Sections)
+	}
+	facts := (*page.Sections)[0].Facts
+	if facts == nil || (*facts)[0].Label != "Status" || (*facts)[0].Value != "Degraded" {
+		t.Fatalf("operator facts = %#v", facts)
+	}
+	generations := (*page.Sections)[2].Table
+	if generations == nil || len(generations.Rows) != 1 || len(generations.Rows[0]["actions"].([]map[string]any)) != 0 {
+		t.Fatalf("stale rollback actions = %#v", generations)
+	}
+	if generations.Rows[0]["generation"] != "Retained rollback generation" || generations.Rows[0]["evidence"] != "Partial" {
+		t.Fatalf("generation presentation = %#v", generations.Rows[0])
 	}
 }

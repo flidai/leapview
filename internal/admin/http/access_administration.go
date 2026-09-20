@@ -19,6 +19,10 @@ type accessAdministrationCommandSignals struct {
 }
 
 func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if strings.TrimSpace(r.URL.Query().Get("section")) == "access" {
+		h.AccessSettingsCommand(w, r)
+		return
+	}
 	if h.SettingsRepository == nil {
 		nethttp.Error(w, "access administration is unavailable", nethttp.StatusServiceUnavailable)
 		return
@@ -29,6 +33,8 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 		return
 	}
 	command := adminsettings.NormalizeAccessAdministrationCommand(signals.Command)
+	command.RequestID = strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	command.CorrelationID = strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
 	section := strings.TrimSpace(r.URL.Query().Get("section"))
 	started, err := beginAccessAdministrationInvocation(r, command)
 	if err != nil {
@@ -161,6 +167,11 @@ func beginAccessAdministrationInvocation(r *nethttp.Request, command adminsettin
 	case "revoke_session", "revoke_all_sessions":
 		return begin(accessgen.GenUIActionRevokePrincipalSession(), func() (context.Context, error) {
 			ctx, _, err := accessgen.BeginGenRevokePrincipalSessionCommand(r.Context(), accessgen.GenRevokePrincipalSessionCommandInvocation{Surface: apigencommand.SurfaceUI, Principal: command.PrincipalID, RequestID: requestID, CorrelationID: correlationID})
+			return ctx, err
+		})
+	case "revoke_all_credentials":
+		return begin(accessgen.GenUIActionRevokeAllPrincipalCredentials(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenRevokeAllPrincipalCredentialsCommand(r.Context(), accessgen.GenRevokeAllPrincipalCredentialsCommandInvocation{Surface: apigencommand.SurfaceUI, Principal: command.PrincipalID, IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
 	case "create_group":

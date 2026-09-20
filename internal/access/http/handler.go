@@ -16,6 +16,7 @@ import (
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/access/avatar"
@@ -40,7 +41,13 @@ type RepositoryProvider func() (access.Repository, error)
 type PrincipalProvider func(*stdhttp.Request) (Principal, bool)
 type CredentialProvider func(*stdhttp.Request) (access.APICredential, bool)
 type SessionProvider func(*stdhttp.Request) (string, bool)
+
+// InteractiveAuthenticationProvider returns the server-recorded time at
+// which the current browser session last completed interactive
+// authentication. It must never read a client-supplied timestamp.
+type InteractiveAuthenticationProvider func(*stdhttp.Request) (time.Time, bool)
 type EffectiveCapabilitiesProvider func(context.Context, *stdhttp.Request, string) ([]access.Capability, error)
+type EffectiveAccessProvider func(context.Context, string) ([]access.AuthorizationDecision, error)
 type PlatformAdminProvider func(context.Context, string) (bool, error)
 type RequestPlatformAdminProvider func(context.Context, *stdhttp.Request, string) (bool, error)
 
@@ -67,17 +74,27 @@ type Handler struct {
 	CurrentPrincipal               PrincipalProvider
 	CurrentCredential              CredentialProvider
 	CurrentSession                 SessionProvider
+	InteractiveAuthentication      InteractiveAuthenticationProvider
+	Now                            func() time.Time
 	CurrentEffectiveCapabilities   func(context.Context, string) ([]access.Capability, error)
-	CurrentProjectID               func(context.Context) (projectgraph.ResourceID, error)
-	RequestEffectiveCapabilities   EffectiveCapabilitiesProvider
+	// EffectiveAccess is derived from the active immutable authorization
+	// snapshot. It is intentionally separate from CurrentEffectiveCapabilities
+	// so access-review responses can retain direct/group/platform evidence.
+	EffectiveAccess              EffectiveAccessProvider
+	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
+	RequestEffectiveCapabilities EffectiveCapabilitiesProvider
 	// PlatformAdmin evaluates the durable instance-wide role. It is retained as
 	// a narrow callback for non-module callers; RequestPlatformAdmin additionally
 	// applies request-credential attenuation.
 	PlatformAdmin        PlatformAdminProvider
 	RequestPlatformAdmin RequestPlatformAdminProvider
-	AuthoringAuth        AuthoringAuthentication
-	Avatar               AvatarService
-	LocalPasswordEnabled bool
+	// RequirePlatformRoleApproval is an injected deployment policy. When true,
+	// direct grant/revoke commands fail closed and callers must use the durable
+	// request/approve/execute lifecycle.
+	RequirePlatformRoleApproval bool
+	AuthoringAuth               AuthoringAuthentication
+	Avatar                      AvatarService
+	LocalPasswordEnabled        bool
 }
 
 func (h Handler) repository() (access.Repository, error) {
@@ -112,6 +129,19 @@ func (h Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
 		return false
 	}
+	recordDenial := func(reason access.AuditDenialReason) {
+		resourceID := "platform"
+		if r != nil && r.URL != nil && strings.TrimSpace(r.URL.Path) != "" {
+			resourceID = r.URL.Path
+		}
+		repository, err := h.repository()
+		if err != nil {
+			return
+		}
+		persistDeniedAudit(r, repository, deniedAuditInput(r, "authorization.denied", principal.ID, "platform_authorization", resourceID, access.CapabilityProjectAdmin, reason, map[string]any{
+			"method": r.Method,
+		}))
+	}
 	var allowed bool
 	var err error
 	attenuated := false
@@ -134,10 +164,12 @@ func (h Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		allowed, err = reader.IsPlatformAdmin(r.Context(), principal.ID)
 	}
 	if err != nil {
+		recordDenial(access.AuditReasonConfigurationUnavailable)
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return false
 	}
 	if !allowed {
+		recordDenial(access.AuditReasonAuthorizationDenied)
 		writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
 		return false
 	}
@@ -146,15 +178,18 @@ func (h Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	}
 	if credential, ok := h.currentCredential(r); ok {
 		if credential.Principal.ID != "" && credential.Principal.ID != principal.ID {
+			recordDenial(access.AuditReasonCredentialAttenuated)
 			writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
 			return false
 		}
 		if credential.Authoring != nil {
+			recordDenial(access.AuditReasonCredentialAttenuated)
 			writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
 			return false
 		}
 		if credential.Token.ID != "" && credential.Token.Capabilities != nil {
 			if len(credential.Token.Capabilities) == 0 || !containsCapability(credential.Token.Capabilities, access.CapabilityProjectAdmin) {
+				recordDenial(access.AuditReasonCredentialAttenuated)
 				writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
 				return false
 			}
@@ -314,7 +349,7 @@ func apiTokenDTO(row access.APIToken) map[string]any {
 	return out
 }
 func servicePrincipalSecretDTO(row access.ServicePrincipalSecret, raw string) map[string]any {
-	out := map[string]any{"id": row.ID, "servicePrincipalId": row.ServicePrincipalID, "name": row.Name, "expiresAt": row.ExpiresAt, "createdAt": row.CreatedAt, "revokedAt": emptyToNil(row.RevokedAt)}
+	out := map[string]any{"id": row.ID, "servicePrincipalId": row.ServicePrincipalID, "name": row.Name, "expiresAt": row.ExpiresAt, "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt)}
 	if raw != "" {
 		out["secret"] = raw
 	}
@@ -335,6 +370,89 @@ func auditInput(r *stdhttp.Request, action, principalID, resourceKind, resourceI
 	encoded, _ := json.Marshal(metadata)
 	return access.AuditEventInput{PrincipalID: principalID, Action: action, ResourceKind: resourceKind, ResourceID: resourceID, Capability: capability, Status: status, RequestID: requestIDFromRequest(r), CorrelationID: correlationIDFromRequest(r), MetadataJSON: string(encoded)}
 }
+
+// deniedAuditInput creates the common evidence envelope for privileged
+// requests that never reach a successful mutation. The actor is supplied by
+// the authenticated request boundary; callers must not use an actor supplied
+// in the request body or URL. Idempotency keys are evidence only and are never
+// interpreted as authorization.
+func deniedAuditInput(r *stdhttp.Request, action, actorID, resourceKind, resourceID string, capability access.Capability, reason access.AuditDenialReason, metadata map[string]any) access.AuditEventInput {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["outcome"] = "denied"
+	metadata["reason"] = string(reason)
+	metadata["idempotencyKey"] = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	encoded, _ := json.Marshal(metadata)
+	return access.AuditEventInput{PrincipalID: strings.TrimSpace(actorID), Action: action, ResourceKind: resourceKind, ResourceID: resourceID, Capability: capability, Status: "denied", RequestID: requestIDFromRequest(r), CorrelationID: correlationIDFromRequest(r), MetadataJSON: string(encoded)}
+}
+
+// persistDeniedAudit is deliberately best effort. The attempted operation is
+// already denied, and turning an audit append failure into another
+// authorization request would create a recursive failure path. The actor is
+// required so unauthenticated requests never create a durable audit row.
+func persistDeniedAudit(r *stdhttp.Request, repository access.Repository, input access.AuditEventInput) {
+	if r == nil || repository == nil || strings.TrimSpace(input.PrincipalID) == "" {
+		return
+	}
+	// A few narrow test and bootstrap repositories embed access.Repository while
+	// intentionally leaving its audit method nil. Treat that as an unavailable
+	// audit sink rather than allowing a denied request to panic.
+	defer func() { _ = recover() }()
+	_ = access.PersistAuditEvent(r.Context(), repository, input)
+}
+
+func auditDenialReason(err error) access.AuditDenialReason {
+	if err == nil {
+		return access.AuditReasonInternalFailure
+	}
+	switch {
+	case errors.Is(err, errIfMatchRequired), errors.Is(err, errIfMatchFailed), errors.Is(err, access.ErrPlatformAdminStaleRevision):
+		return access.AuditReasonPreconditionFailed
+	case errors.Is(err, access.ErrPlatformAdminIdempotency), errors.Is(err, access.ErrPlatformRoleApprovalConflict):
+		return access.AuditReasonIdempotencyConflict
+	case errors.Is(err, access.ErrPlatformAdminInvalid), errors.Is(err, access.ErrPlatformRoleApprovalInvalid):
+		return access.AuditReasonInvalidRequest
+	case errors.Is(err, access.ErrPlatformAdminNotFound), errors.Is(err, access.ErrPlatformRoleApprovalNotFound):
+		return access.AuditReasonNotFound
+	case errors.Is(err, access.ErrPlatformAdminConflict):
+		return access.AuditReasonConflict
+	case errors.Is(err, access.ErrPlatformRoleApprovalSeparationOfDuty):
+		return access.AuditReasonApprovalSeparationOfDuty
+	case errors.Is(err, access.ErrPlatformRoleApprovalExpired):
+		return access.AuditReasonApprovalExpired
+	case errors.Is(err, access.ErrPlatformRoleApprovalNotDue):
+		return access.AuditReasonApprovalNotDue
+	}
+	if kind, ok := apigenfailure.KindOf(err); ok {
+		switch kind {
+		case "invalid":
+			return access.AuditReasonInvalidRequest
+		case "not_found":
+			return access.AuditReasonNotFound
+		case "conflict":
+			return access.AuditReasonConflict
+		case "precondition":
+			return access.AuditReasonPreconditionFailed
+		case "unavailable", "service_unavailable", "authorization_unavailable":
+			return access.AuditReasonConfigurationUnavailable
+		}
+	}
+	return access.AuditReasonInternalFailure
+}
+
+func (h Handler) recordDeniedPlatformAttempt(r *stdhttp.Request, action, resourceKind, resourceID string, reason access.AuditDenialReason, metadata map[string]any) {
+	actorID := h.currentPrincipalID(r)
+	if strings.TrimSpace(actorID) == "" {
+		return
+	}
+	repository, err := h.repository()
+	if err != nil {
+		return
+	}
+	persistDeniedAudit(r, repository, deniedAuditInput(r, action, actorID, resourceKind, resourceID, access.CapabilityProjectAdmin, reason, metadata))
+}
+
 func runAuditedMutation(r *stdhttp.Request, repo access.Repository, mutation func(access.Repository) (access.AuditEventInput, error)) error {
 	transactional, ok := repo.(access.AuditedMutationRepository)
 	if !ok {
@@ -364,6 +482,48 @@ func executeAuditedMutation(
 	return executor.Execute(r.Context(), operationID.APIGenOperationID(), apigencommand.Execution{
 		Transactional: func(context.Context, apigencommand.Contract) error {
 			return runAuditedMutation(r, repo, mutation)
+		},
+	})
+}
+
+// executeAuditedMutationWithRevision is the generated-command equivalent of
+// runAuditedMutationWithRevision. The revision check stays inside the
+// repository transaction while the generated executor marks the invocation
+// complete for the API transport guard.
+func executeAuditedMutationWithRevision(
+	r *stdhttp.Request,
+	repo access.Repository,
+	operationID accessgen.GenCommandOperationID,
+	currentRevision func(access.Repository) (string, error),
+	mutation func(access.Repository) (access.AuditEventInput, error),
+) error {
+	if _, generated := apigencommand.OperationID(r.Context()); !generated {
+		return runAuditedMutationWithRevision(r, repo, currentRevision, mutation)
+	}
+	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return err
+	}
+	generatedRevision := func(tx access.Repository) (string, error) {
+		current, err := currentRevision(tx)
+		if err != nil {
+			return "", err
+		}
+		if err := executor.CheckConcurrency(r.Context(), operationID.APIGenOperationID(), r.Header.Get("If-Match"), current); err != nil {
+			switch {
+			case errors.Is(err, apigencommand.ErrPreconditionRequired):
+				return "", errIfMatchRequired
+			case errors.Is(err, apigencommand.ErrPreconditionFailed):
+				return "", errIfMatchFailed
+			default:
+				return "", err
+			}
+		}
+		return current, nil
+	}
+	return executor.Execute(r.Context(), operationID.APIGenOperationID(), apigencommand.Execution{
+		Transactional: func(context.Context, apigencommand.Contract) error {
+			return runAuditedMutationWithRevision(r, repo, generatedRevision, mutation)
 		},
 	})
 }

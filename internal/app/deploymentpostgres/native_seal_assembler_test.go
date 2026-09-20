@@ -190,6 +190,9 @@ func TestAssembleNativeGenerationAdmissionInputAcceptsExactEvidence(t *testing.T
 	if got.Generation.GenerationID != input.GenerationID || got.Seal.CatalogVersion != 1 || got.Seal.DuckDBVersion != input.Compatibility.DuckDBRuntime || got.Seal.DuckLakeExtensionVersion != input.Compatibility.DuckLakeExtension || got.Seal.DuckLakeSpecVersion != "1" {
 		t.Fatalf("assembled identity = %#v", got)
 	}
+	if len(got.Seal.ResolvedInputs) == 0 || got.Seal.ResolvedInputsDigest == "" {
+		t.Fatalf("assembled resolved-input evidence = %q digest=%q, want durable record", got.Seal.ResolvedInputs, got.Seal.ResolvedInputsDigest)
+	}
 	if !got.CandidateExpiresAt.Equal(input.Plan.Governance.ExpiresAt.UTC().Truncate(time.Microsecond)) {
 		t.Fatalf("assembled candidate retention expiry = %v, want %v", got.CandidateExpiresAt, input.Plan.Governance.ExpiresAt)
 	}

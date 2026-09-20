@@ -29,6 +29,7 @@ type Module struct {
 	desktopAuth                  *desktopauth.Service
 	authoringAuth                *access.AuthoringAuthService
 	currentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	effectiveAccess              func(context.Context, string) ([]access.AuthorizationDecision, error)
 	currentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	// authoringProjectID resolves the durable project binding used by
 	// authoring OAuth. It is intentionally separate from the active-runtime
@@ -45,6 +46,7 @@ type surfaceConfig struct {
 	Repository                     func() (access.Repository, error)
 	AuthorizationPolicyTargetID    string
 	AuthorizationPolicyEnvironment string
+	RequirePlatformRoleApproval    bool
 	CurrentPrincipal               func(*http.Request) (Principal, bool)
 	CurrentCredential              func(*http.Request) (access.APICredential, bool)
 	CurrentEffectiveCapabilities   func(context.Context, string) ([]access.Capability, error)
@@ -52,8 +54,6 @@ type surfaceConfig struct {
 	AuthoringProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	Auth                           *Auth
 	Logger                         *slog.Logger
-	OAuth                          *mcpoauth.Service
-	OAuthResource                  mcpoauth.ResourceServer
 	AuthoringAuth                  *access.AuthoringAuthService
 	Avatar                         *avatar.Service
 	Presentation                   webpage.Presentation
@@ -101,30 +101,91 @@ func newSurface(config surfaceConfig) (*Module, error) {
 			return "", false
 		}
 		session, err := resolver.CredentialForSessionToken(r.Context(), cookie.Value)
-		if err != nil || session.ID == "" {
+		principal, principalOK := currentPrincipal(r)
+		if err != nil || !principalOK || strings.TrimSpace(principal.ID) == "" || session.PrincipalID != principal.ID || session.ID == "" {
 			return "", false
 		}
 		return session.ID, true
 	}
+	currentInteractiveAuthentication := func(r *http.Request) (time.Time, bool) {
+		// Local password login and external OIDC login both create the same
+		// browser Session record. The server therefore evaluates freshness from
+		// CreatedAt, independent of identity provider and never from a browser
+		// supplied timestamp.
+		if r == nil || config.Repository == nil {
+			return time.Time{}, false
+		}
+		cookieName := sessionCookieName
+		if config.Auth != nil {
+			cookieName = config.Auth.SessionCookieName()
+		}
+		cookie, err := r.Cookie(cookieName)
+		if err != nil || strings.TrimSpace(cookie.Value) == "" {
+			return time.Time{}, false
+		}
+		repository, err := config.Repository()
+		if err != nil || repository == nil {
+			return time.Time{}, false
+		}
+		resolver, ok := repository.(interface {
+			CredentialForSessionToken(context.Context, string) (access.Session, error)
+		})
+		if !ok {
+			return time.Time{}, false
+		}
+		session, err := resolver.CredentialForSessionToken(r.Context(), cookie.Value)
+		principal, principalOK := currentPrincipal(r)
+		if err != nil || !principalOK || strings.TrimSpace(principal.ID) == "" || session.PrincipalID != principal.ID || session.Kind != access.SessionKindBrowser || session.RevokedAt != "" {
+			return time.Time{}, false
+		}
+		created, err := time.Parse(time.RFC3339Nano, session.CreatedAt)
+		if err != nil {
+			return time.Time{}, false
+		}
+		return created.UTC(), true
+	}
 	module := &Module{auth: config.Auth, persistence: config.Persistence, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
-		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
+		authoringAuth:                config.AuthoringAuth,
 		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+		effectiveAccess:              nil,
 		currentProjectID:             config.CurrentProjectID,
 		authoringProjectID:           config.AuthoringProjectID,
 		presentation:                 config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
 			Repository: config.Repository, AuthorizationPolicyTargetID: config.AuthorizationPolicyTargetID,
 			AuthorizationPolicyEnvironment: config.AuthorizationPolicyEnvironment, CurrentPrincipal: currentPrincipal,
-			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession,
+			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession, InteractiveAuthentication: currentInteractiveAuthentication,
 			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 			CurrentProjectID:             config.CurrentProjectID,
 			AuthoringAuth:                config.AuthoringAuth,
 			Avatar:                       avatarService, LocalPasswordEnabled: localPasswordEnabled,
+			RequirePlatformRoleApproval: config.RequirePlatformRoleApproval,
 		},
 	}
 	module.handler.RequestEffectiveCapabilities = module.RequestEffectiveCapabilities
+	module.handler.EffectiveAccess = module.effectiveAccess
 	module.handler.PlatformAdmin = module.IsPlatformAdmin
 	module.handler.RequestPlatformAdmin = module.RequestPlatformAdmin
 	return module, nil
+}
+
+// SetEffectiveAccess installs the active-generation explanation projection.
+// The callback is kept separate from the capability-only projection so
+// callers cannot accidentally reconstruct source evidence from a flattened
+// capability list.
+func (m *Module) SetEffectiveAccess(fn func(context.Context, string) ([]access.AuthorizationDecision, error)) {
+	if m == nil {
+		return
+	}
+	m.effectiveAccess = fn
+	m.handler.EffectiveAccess = fn
+}
+
+// EffectiveAccess returns the active-generation direct/inherited explanation.
+func (m *Module) EffectiveAccess(ctx context.Context, principalID string) ([]access.AuthorizationDecision, error) {
+	if m == nil || m.effectiveAccess == nil {
+		return nil, fmt.Errorf("active authorization explanation is unavailable")
+	}
+	return m.effectiveAccess(ctx, principalID)
 }
 
 func (m *Module) HTTP() accesshttp.Handler { return m.handler }
@@ -219,9 +280,10 @@ func (m *Module) AuthorizeBootstrapCredential(ctx context.Context, principalID, 
 
 // RequestPlatformAdmin evaluates durable platform administration and then
 // applies request-credential attenuation. Credentials can reduce authority,
-// never grant the durable role: authoring credentials always deny, API tokens
-// with nil capabilities inherit, explicit empty capabilities deny, and an
-// explicit non-empty list must include PROJECT_ADMIN.
+// never grant the durable role: authoring credentials and dynamic API tokens
+// always deny, explicit empty capabilities deny, and an explicit non-empty
+// list must include PROJECT_ADMIN. A PAT created before promotion therefore
+// cannot silently become a platform-administration credential.
 func (m *Module) RequestPlatformAdmin(ctx context.Context, r *http.Request, principalID string) (bool, error) {
 	allowed, err := m.IsPlatformAdmin(ctx, principalID)
 	if err != nil || !allowed {
@@ -237,8 +299,11 @@ func (m *Module) RequestPlatformAdmin(ctx context.Context, r *http.Request, prin
 	if credential.Authoring != nil {
 		return false, nil
 	}
-	if credential.Token.ID == "" || credential.Token.Capabilities == nil {
+	if credential.Token.ID == "" {
 		return true, nil
+	}
+	if credential.Token.Capabilities == nil {
+		return false, nil
 	}
 	if len(credential.Token.Capabilities) == 0 {
 		return false, nil

@@ -15,54 +15,60 @@ func TestNormalizeAuditLogCommandResetsCursorAndBoundsLimit(t *testing.T) {
 }
 
 func TestAuditEventSignalParsesMetadataWithoutRawSecret(t *testing.T) {
-	event := AuditEventSignalFromDomain(access.AuditEvent{ID: "a1", ProjectID: "sales", Action: "service_principal_secret.created", MetadataJSON: `{"secretId":"s1"}`})
-	if event.Metadata["secretId"] != "s1" || event.Metadata == nil {
+	event := AuditEventSignalFromDomain(access.AuditEvent{ID: "a1", ProjectID: "project:test", Action: "service_principal_secret.created", MetadataJSON: `{"secretId":"s1"}`})
+	if event.ProjectID != "project:test" || event.Metadata["secretId"] != "s1" || event.Metadata == nil {
 		t.Fatalf("metadata = %#v", event.Metadata)
 	}
-	if event.ProjectID != "sales" {
-		t.Fatalf("project id = %q, want sales", event.ProjectID)
-	}
 }
 
-type testAuditLogReader struct {
+type auditReadRepository struct {
+	access.Repository
 	filter access.AuditEventFilter
+	rows   []access.AuditEvent
 }
 
-func (r *testAuditLogReader) ListAuditEvents(_ context.Context, filter access.AuditEventFilter) ([]access.AuditEvent, error) {
+func (r *auditReadRepository) ListAuditEvents(_ context.Context, filter access.AuditEventFilter) ([]access.AuditEvent, error) {
 	r.filter = filter
-	return []access.AuditEvent{{
-		ID: "event-1", PrincipalID: "principal-1", Action: "agent_tool.called", ResourceKind: "agent_tool",
-		ResourceID: "querySemanticModel", Status: "success", CreatedAt: "2026-09-17T14:17:04Z",
-	}}, nil
+	return append([]access.AuditEvent(nil), r.rows...), nil
 }
 
-func (*testAuditLogReader) ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error) {
-	return []access.Principal{{ID: "principal-1", DisplayName: "Platform Admin", Email: "admin@example.com"}}, nil
+func (*auditReadRepository) ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error) {
+	return nil, nil
 }
 
-func TestLoadAuditLogEnrichesActorIdentity(t *testing.T) {
-	reader := &testAuditLogReader{}
-	signal, err := LoadAuditLog(context.Background(), reader, AuditLogFilters{}, "", 50)
+func (*auditReadRepository) ListAllGroups(context.Context) ([]access.Group, error) {
+	return nil, nil
+}
+
+func (*auditReadRepository) ListServicePrincipals(context.Context) ([]access.Principal, error) {
+	return nil, nil
+}
+
+func TestLoadAuditLogBindsProjectAndPassesDateFilters(t *testing.T) {
+	repository := &auditReadRepository{rows: []access.AuditEvent{{ID: "audit-1", ProjectID: "project:test", CreatedAt: "2026-09-16T00:00:00Z"}}}
+	filters := AuditLogFilters{ProjectID: "project:foreign", From: "2026-09-01T00:00:00Z", To: "2026-10-01T00:00:00Z"}
+	state, err := LoadAuditLog(t.Context(), repository, "project:test", filters, "", 25)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(signal.Items) != 1 {
-		t.Fatalf("items = %d, want 1", len(signal.Items))
+	if repository.filter.ProjectID != "project:test" || !repository.filter.IncludeUnscoped {
+		t.Fatalf("repository project scope = %#v, want bound project plus unscoped events", repository.filter)
 	}
-	event := signal.Items[0]
-	if event.PrincipalName != "Platform Admin" || event.PrincipalEmail != "admin@example.com" {
-		t.Fatalf("actor identity = %q <%s>", event.PrincipalName, event.PrincipalEmail)
+	if repository.filter.From != filters.From || repository.filter.To != filters.To {
+		t.Fatalf("repository date filters = %#v, want from/to preserved", repository.filter)
+	}
+	if state.Filters.ProjectID != "project:test" || len(state.Items) != 1 || state.Items[0].ProjectID != "project:test" {
+		t.Fatalf("audit state = %#v, want bound project and project identity", state)
 	}
 }
 
-func TestLoadAuditLogPassesInclusiveDateRangeToRepository(t *testing.T) {
-	reader := &testAuditLogReader{}
-	filters := AuditLogFilters{From: "2026-09-01", To: "2026-09-18"}
-	if _, err := LoadAuditLog(context.Background(), reader, filters, "", 50); err != nil {
-		t.Fatal(err)
+func TestLoadAuditLogRequiresBoundProject(t *testing.T) {
+	repository := &auditReadRepository{}
+	if _, err := LoadAuditLog(t.Context(), repository, "", AuditLogFilters{}, "", 25); err == nil {
+		t.Fatal("LoadAuditLog accepted an unbound project")
 	}
-	if reader.filter.From != "2026-09-01T00:00:00Z" || reader.filter.To != "2026-09-19T00:00:00Z" {
-		t.Fatalf("repository range = %q to %q, want inclusive Sep 1-18", reader.filter.From, reader.filter.To)
+	if repository.filter.ProjectID != "" {
+		t.Fatalf("repository was read without a bound project: %#v", repository.filter)
 	}
 }
 

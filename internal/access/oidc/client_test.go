@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -37,6 +38,7 @@ func TestAuthCodeURLIncludesStateNonceScopesAndRedirect(t *testing.T) {
 		"response_type": "code",
 		"state":         "state-value",
 		"nonce":         "nonce-value",
+		"max_age":       "900",
 	} {
 		if got := values.Get(key); got != want {
 			t.Fatalf("%s = %q, want %q", key, got, want)
@@ -75,6 +77,7 @@ func TestAuthenticateRejectsInvalidNonce(t *testing.T) {
 }
 
 func TestAuthenticateMapsVerifiedClaims(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	client := newTestClient(&oauth2.Config{}, func(_ context.Context, code string) (*oauth2.Token, error) {
 		if code != "auth-code" {
 			t.Fatalf("code = %q, want auth-code", code)
@@ -84,8 +87,9 @@ func TestAuthenticateMapsVerifiedClaims(t *testing.T) {
 		if raw != "raw-id-token" {
 			t.Fatalf("raw token = %q, want raw-id-token", raw)
 		}
-		return Claims{Subject: "subject-1", Email: "user@example.com", Name: "User Example", PreferredUsername: "user"}, "nonce", nil
+		return Claims{Subject: "subject-1", Email: "user@example.com", Name: "User Example", PreferredUsername: "user", AuthTime: now.Add(-time.Minute)}, "nonce", nil
 	})
+	client.now = func() time.Time { return now }
 
 	claims, err := client.Authenticate(context.Background(), "auth-code", "nonce")
 	if err != nil {
@@ -93,6 +97,42 @@ func TestAuthenticateMapsVerifiedClaims(t *testing.T) {
 	}
 	if claims.Subject != "subject-1" || claims.Email != "user@example.com" || claims.Name != "User Example" || claims.PreferredUsername != "user" {
 		t.Fatalf("claims = %#v", claims)
+	}
+}
+
+func TestAuthenticateRejectsMissingOIDCAuthTime(t *testing.T) {
+	client := newTestClient(&oauth2.Config{}, func(context.Context, string) (*oauth2.Token, error) {
+		return (&oauth2.Token{}).WithExtra(map[string]any{"id_token": "raw-id-token"}), nil
+	}, func(context.Context, string) (Claims, string, error) {
+		return Claims{Subject: "subject-1"}, "nonce", nil
+	})
+
+	if _, err := client.Authenticate(context.Background(), "code", "nonce"); err == nil || !strings.Contains(err.Error(), "auth_time") {
+		t.Fatalf("Authenticate() error = %v, want missing auth_time", err)
+	}
+}
+
+func TestAuthenticateRejectsStaleAndFutureOIDCAuthTime(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name string
+		at   time.Time
+		want string
+	}{
+		{name: "stale", at: now.Add(-interactiveMaxAge - time.Second), want: "stale"},
+		{name: "future", at: now.Add(time.Second), want: "future"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := newTestClient(&oauth2.Config{}, func(context.Context, string) (*oauth2.Token, error) {
+				return (&oauth2.Token{}).WithExtra(map[string]any{"id_token": "raw-id-token"}), nil
+			}, func(context.Context, string) (Claims, string, error) {
+				return Claims{Subject: "subject-1", AuthTime: test.at}, "nonce", nil
+			})
+			client.now = func() time.Time { return now }
+			if _, err := client.Authenticate(context.Background(), "code", "nonce"); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Authenticate() error = %v, want %s auth_time rejection", err, test.want)
+			}
+		})
 	}
 }
 
