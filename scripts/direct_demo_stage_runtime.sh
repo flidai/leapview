@@ -122,6 +122,8 @@ available_kb="$(df --output=avail /opt | tail -1 | tr -d ' ')"
 if (( available_kb <= 7000000 )); then
   df -h /opt
   docker system df
+  du -xhd1 /opt /var/lib /root /tmp /var/log 2>/dev/null | sort -h | tail -35
+  du -xhd2 /opt/leapview-demo 2>/dev/null | sort -h | tail -25
   echo 'At least 7 GB free space required to stage image' >&2
   exit 1
 fi
