@@ -29,8 +29,8 @@ browser/API journeys, and installed-candidate Docker/Compose qualification.
 FAI-997 covers explicit, request-attenuated PAT issuance and atomic rotation;
 FAI-998 covers audited, all-class administrator incident revocation. Both are
 implemented and await the same exact-candidate gate. Session-only bulk
-revocation is being made set-based so its separate Settings action covers more
-than a single inventory page.
+revocation is now set-based, so its separate Settings action covers more than
+a single inventory page.
 
 ## Linear delivery breakdown
 
