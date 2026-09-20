@@ -546,11 +546,14 @@ func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request
 	leaseLost := make(chan error, 1)
 	go p.renewAPIIdempotencyLease(leaseCtx, scope, digest, owner, record.LeaseGeneration, record.LeaseExpires, func(err error) {
 		p.leaseFailed.Store(true)
-		cancelHandler(err)
 		select {
 		case leaseLost <- err:
 		default:
 		}
+		// Publish the loss before cancelling the handler. The handler may return
+		// immediately on cancellation; publishing second would let the protocol
+		// observe an empty leaseLost channel and commit the captured response.
+		cancelHandler(err)
 	})
 	capture := newProtocolResponseCapture()
 	var panicValue any
