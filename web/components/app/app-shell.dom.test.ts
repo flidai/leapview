@@ -982,7 +982,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
   }
 })
 
-test('chat row action menu supports keyboard navigation and pinning without navigating the row', async () => {
+test('chat rows expose direct keyboard-accessible pin and delete actions without navigating the row', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   await page.goto(`${baseURL}/sidebar-history`)
   await page.evaluate(() => {
@@ -991,19 +991,14 @@ test('chat row action menu supports keyboard navigation and pinning without navi
   })
   const row = page.locator('.history-row').filter({ hasText: 'Revenue check' })
   await row.hover()
-  const trigger = row.locator('summary[aria-label="More actions for Revenue check"]')
-  expect(await trigger.count()).toBe(1)
-  await trigger.focus()
-  await trigger.press('Enter')
-  const menu = row.getByRole('menu')
-  expect(await menu.count()).toBe(1)
-  await menu.getByRole('menuitem', { name: 'Pin chat', exact: true }).focus()
-  await page.keyboard.press('ArrowDown')
-  expect(await menu.getByRole('menuitem', { name: 'Rename', exact: true }).evaluate((element) => element === (element.getRootNode() as Document | ShadowRoot).activeElement)).toBe(true)
-  await page.keyboard.press('Escape')
-  expect(await trigger.evaluate((element) => element === (element.getRootNode() as Document | ShadowRoot).activeElement)).toBe(true)
-  await trigger.click()
-  await menu.getByRole('menuitem', { name: 'Pin chat', exact: true }).click()
+  expect(await row.locator('summary[aria-label="More actions for Revenue check"]').count()).toBe(0)
+  const pin = row.getByRole('button', { name: 'Pin Revenue check', exact: true })
+  const remove = row.getByRole('button', { name: 'Delete Revenue check', exact: true })
+  expect(await pin.count()).toBe(1)
+  expect(await remove.count()).toBe(1)
+  await pin.focus()
+  expect(await pin.evaluate((element) => element === (element.getRootNode() as Document | ShadowRoot).activeElement)).toBe(true)
+  await pin.click()
   expect(await page.evaluate(() => (window as any).chatActions.map((item: any) => ({ action: item.action, conversationId: item.conversationId })))).toEqual([{ action: 'pin', conversationId: 'c1' }])
   expect(new URL(page.url()).pathname).toBe('/sidebar-history')
   await page.close()

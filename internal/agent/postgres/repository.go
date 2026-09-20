@@ -601,7 +601,7 @@ func (r *Repository) SetConversationPinned(ctx context.Context, principal, id st
 		if err != nil {
 			return err
 		}
-		row, err := q.UpdateAgentConversationMetadata(ctx, agentdb.UpdateAgentConversationMetadataParams{MetadataJson: []byte(metadata), ID: id, PrincipalID: principal})
+		row, err := q.UpdateAgentConversationPinMetadata(ctx, agentdb.UpdateAgentConversationPinMetadataParams{MetadataJson: []byte(metadata), ID: id, PrincipalID: principal})
 		if err != nil {
 			return err
 		}

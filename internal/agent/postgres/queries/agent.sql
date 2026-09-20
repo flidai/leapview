@@ -73,6 +73,16 @@ WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
 RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
           transcript_revision, created_at, updated_at, archived_at;
 
+-- name: UpdateAgentConversationPinMetadata :one
+-- Pinning changes presentation, not conversation activity; preserve history ordering.
+UPDATE agent.conversations
+SET metadata_json = sqlc.arg(metadata_json)::jsonb
+WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
+  AND status = 'active'
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
+          transcript_revision, created_at, updated_at, archived_at;
+
 -- name: UpdatePendingConversationMetadata :execrows
 -- Undo bookkeeping is not conversation activity; preserve history ordering.
 UPDATE agent.conversations
