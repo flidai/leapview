@@ -361,7 +361,7 @@ for (const viewport of [
         ownerAvatars: [true, true, true, false],
         listBackground: 'rgb(238, 242, 246)',
         hasIcons: true,
-        popularityLabels: ['High popularity — top 10% in the last 30 days', 'Medium popularity — top 20% in the last 30 days', 'Low popularity — top 30% in the last 30 days', 'Not ranked — popularity is based on distinct viewers, not opens; at least 3 viewers and a top-30% rank over 30 days are required.'],
+        popularityLabels: ['High popularity', 'Medium popularity', 'Low popularity', 'Not ranked'],
         popularityLevels: ['high', 'medium', 'low', ''],
         popularityColoredBars: [3, 2, 1],
         iconsAreFramed: true,
@@ -885,10 +885,10 @@ test('dashboard titles use regular emphasis and popularity has a dedicated hover
     expect(state).toEqual({
       headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Updated', 'Last opened', 'Actions'],
       titleWeight: '400',
-      firstLabel: 'High popularity — top 10% in the last 30 days',
-      firstTooltip: 'High popularity — top 10% in the last 30 days',
+      firstLabel: 'High popularity',
+      firstTooltip: 'High popularity',
       firstTooltipVisibility: 'visible',
-      missingLabel: 'Not ranked — popularity is based on distinct viewers, not opens; at least 3 viewers and a top-30% rank over 30 days are required.',
+      missingLabel: 'Not ranked',
     })
   } finally {
     await page.close()

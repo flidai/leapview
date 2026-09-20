@@ -16,6 +16,7 @@ import '../shared/one-time-secret'
 import '../shared/select-menu'
 import type { SelectMenu } from '../shared/select-menu'
 import { renderSettingsActions, renderSettingsRow, renderSettingsSection, settingsLayoutStyles } from '../shared/settings-layout'
+import { submitAuthForm } from '../shared/auth-form'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import { avatarResponseError } from './avatar-response'
 import { formatDate, formatRelativeActivity, humanizeCapability, humanizeSessionKind, sessionFact } from './personal-settings-format'
@@ -852,31 +853,15 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (!session) return
     this.pendingSessionRevocation = null
     this.selectedSession = null
-    if (session.current) this.submitAuthForm('/auth/logout')
+    if (session.current) submitAuthForm('/auth/logout')
     else if (session.kind === 'authoring') this.revokeAuthoringSession(session.id)
     else this.revokeSession(session.id)
   }
-  private signOutCurrentSession = (): void => { this.submitAuthForm('/auth/logout') }
+  private signOutCurrentSession = (): void => { submitAuthForm('/auth/logout') }
   private openLogoutAllDialog = (): void => { this.logoutAllDialogOpen = true }
   private closeLogoutAllDialog = (event?: Event): void => { event?.preventDefault(); this.logoutAllDialogOpen = false }
   private closeLogoutAllOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeLogoutAllDialog(event) }
-  private confirmLogoutAll = (): void => { this.logoutAllDialogOpen = false; this.submitAuthForm('/auth/logout-all') }
-  private submitAuthForm = (action: string): void => {
-    const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content.trim() ?? ''
-    const form = document.createElement('form')
-    form.method = 'POST'
-    form.action = action
-    form.style.display = 'none'
-    if (token) {
-      const input = document.createElement('input')
-      input.type = 'hidden'
-      input.name = 'gorilla.csrf.Token'
-      input.value = token
-      form.append(input)
-    }
-    document.body.append(form)
-    form.submit()
-  }
+  private confirmLogoutAll = (): void => { this.logoutAllDialogOpen = false; submitAuthForm('/auth/logout-all') }
   private revokeSession = (sessionId: string): void => { this.send('lv-personal-session-command', { action: 'revoke', sessionId }) }
   private revokeAuthoringSession = (sessionId: string): void => { this.send('lv-personal-authoring-session-command', { action: 'revoke', sessionId }) }
   private toggleAvatarMenu = (): void => {

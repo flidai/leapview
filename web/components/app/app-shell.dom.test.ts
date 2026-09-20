@@ -297,9 +297,9 @@ test('main sidebar keeps the product toggle in the upper-right and utility actio
       const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
       await sidebar.updateComplete
       const root = (sidebar.shadowRoot as ShadowRoot)!
-      const search = root.querySelector('.search-button') as HTMLButtonElement
+      const search = root.querySelector('.footer .search-button') as HTMLButtonElement
       const collapse = root.querySelector('.collapse-button') as HTMLButtonElement
-      const actions = root.querySelector('.footer-actions') as HTMLElement | null
+      const actions = root.querySelector('.footer .footer-actions') as HTMLElement | null
       const identity = root.querySelector('.brand-identity') as HTMLElement
       const areaSwitcher = root.querySelector('.brand-row > .area-switcher') as HTMLElement | null
       const currentArea = areaSwitcher?.querySelector('.area-item[aria-current="page"]') as HTMLElement | null
@@ -372,7 +372,7 @@ test('product search uses one modal for the sidebar action and Command-K', async
     await page.goto(`${baseURL}/sidebar-active-nav`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar') && customElements.get('lv-product-search'))
 
-    await page.locator('lv-sidebar .search-button').click()
+    await page.locator('lv-sidebar .footer .search-button').click()
     const search = page.locator('lv-product-search')
     await search.locator('dialog[open]').waitFor()
     expect(await search.locator('input[type="search"]').evaluate((input) => input === (input.getRootNode() as Document).activeElement)).toBe(true)
@@ -590,7 +590,7 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
       navVisible: true,
       compactHeader: true,
       identityHidden: true,
-      footerActionCount: 0,
+      footerActionCount: 2,
       footerSearchCount: 0,
     })
     expect(peek.overlayWidth).toBeGreaterThan(200)
@@ -901,7 +901,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
     expect(openState.visibleAreaSwitcherCount).toBe(1)
     expect(openState.globalSearchCount).toBe(1)
     expect(openState.localSearchCount).toBe(0)
-    expect(openState.mobileSettings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
+    expect(openState.mobileSettings).toEqual({ href: null, label: 'Account menu for Current User' })
 
     await page.locator('lv-sidebar .mobile-product-search').click()
     await page.locator('lv-product-search dialog[open]').waitFor()
@@ -1497,7 +1497,7 @@ test('admin sidebar replaces global navigation and provides a back to app action
             name: card.querySelector('.user-name')?.textContent?.trim(),
             initials: avatar?.shadowRoot?.textContent?.trim(),
             avatarSrc: avatar?.shadowRoot?.querySelector('img')?.getAttribute('src'),
-            role: card.querySelector('.user-role')?.textContent?.trim(),
+            role: root.querySelector('.account-role')?.textContent?.trim(),
           }
         })(),
       }
@@ -1550,7 +1550,7 @@ test('admin sidebar replaces global navigation and provides a back to app action
       const root = (sidebar.shadowRoot as ShadowRoot)!
       return {
         groupLabels: Array.from(root.querySelectorAll('.nav-group:not(.primary-action)')).map((group) => group.getAttribute('aria-label')),
-        links: Array.from(root.querySelectorAll('#mobile-navigation a[href^="/admin/"]')).map((link) => link.getAttribute('href')),
+        links: Array.from(root.querySelectorAll('#mobile-navigation .nav-group a[href^="/admin/"]')).map((link) => link.getAttribute('href')),
       }
     })
     expect(filtered).toEqual({ groupLabels: ['Data & sharing'], links: ['/admin/storage'] })
@@ -1578,7 +1578,7 @@ test('sidebar switches between Insights and Develop and remembers the last area 
     ])
     expect(developState.items).toEqual(['Sources', 'Models', 'Semantic models', 'Dashboards', 'Pipelines', 'Connections', 'Runs'])
     expect(developState.visibleGroupLabels).toEqual(['Catalog', 'Operations'])
-    expect(developState.settings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
+    expect(developState.settings).toEqual({ href: null, label: 'Account menu for Current User' })
     expect(developState.visibleAreaSwitcherCount).toBe(1)
     expect(developState.currentAreaClickPrevented).toBe(true)
     expect(developState.navigationItemStyle).toEqual({ gap: '4px', paddingInlineStart: '12px' })
@@ -2119,3 +2119,60 @@ async function sidebarAlignment(page: import('@playwright/test').Page) {
     }
   })
 }
+
+test('account menu supports keyboard actions and submits the real CSRF logout flow', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    const trigger = page.locator('.footer .user-card')
+    await trigger.focus()
+    await page.keyboard.press('Enter')
+    const menu = page.getByRole('menu', { name: 'Account' })
+    await menu.waitFor()
+    const settings = menu.getByRole('menuitem', { name: 'Settings', exact: true })
+    expect(await settings.getAttribute('href')).toBe('/admin/profile')
+    expect(await settings.evaluate(el => el === (el.getRootNode() as ShadowRoot).activeElement)).toBe(true)
+    await page.keyboard.press('ArrowUp')
+    const logout = menu.getByRole('menuitem', { name: 'Log out', exact: true })
+    expect(await logout.evaluate(el => el === (el.getRootNode() as ShadowRoot).activeElement)).toBe(true)
+    await page.keyboard.press('Escape')
+    expect(await trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(await trigger.evaluate(el => el === (el.getRootNode() as ShadowRoot).activeElement)).toBe(true)
+    await page.evaluate(() => {
+      const meta = document.createElement('meta'); meta.name = 'csrf-token'; meta.content = 'test-account-csrf'; document.head.append(meta)
+    })
+    await trigger.click()
+    await page.route('**/auth/logout', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<p>Signed out</p>' }))
+    const request = page.waitForRequest(req => req.url().endsWith('/auth/logout'))
+    await logout.click()
+    const submitted = await request
+    expect(submitted.method()).toBe('POST')
+    expect(new URLSearchParams(submitted.postData()!).get('gorilla.csrf.Token')).toBe('test-account-csrf')
+  } finally { await page.close() }
+})
+
+test('mobile account menu fits above the footer and keeps search available after dismissal', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    for (const route of ['/sidebar-history', '/admin-sidebar']) {
+      await page.goto(`${baseURL}${route}`)
+      await page.locator('lv-sidebar .mobile-menu-button').click()
+      const trigger = page.locator('.mobile-footer .user-card')
+      await trigger.click()
+      const menu = page.getByRole('menu', { name: 'Account', exact: true })
+      const bounds = await menu.boundingBox(), anchor = await trigger.boundingBox()
+      expect(bounds!.x).toBeGreaterThanOrEqual(0)
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390)
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(anchor!.y)
+      await page.keyboard.press('Escape')
+      expect(await trigger.getAttribute('aria-expanded')).toBe('false')
+      await page.locator('lv-sidebar .mobile-footer .search-button').click()
+      await page.getByRole('dialog', { name: 'Search LeapView', exact: true }).waitFor()
+      await page.keyboard.press('Escape')
+      await trigger.click()
+      await page.locator('lv-sidebar .mobile-footer').click({ position: { x: 1, y: 1 } })
+      await menu.waitFor({ state: 'hidden' })
+      expect(await trigger.getAttribute('aria-expanded')).toBe('false')
+    }
+  } finally { await page.close() }
+})

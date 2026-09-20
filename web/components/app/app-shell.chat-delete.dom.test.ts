@@ -61,7 +61,7 @@ test('ordinary chat menus omit Archive', async () => {
   await page.close()
 })
 
-test('account settings hover highlights only the settings icon', async () => {
+test('account hover highlights the whole menu trigger', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
     await page.goto(`${baseURL}/sidebar-history`)
@@ -69,14 +69,14 @@ test('account settings hover highlights only the settings icon', async () => {
     const card = page.locator('lv-app-shell').locator('lv-sidebar').locator('.footer .user-card')
     await card.hover()
     const hovered = await card.evaluate((element) => {
-      const icon = element.querySelector('.user-settings-icon') as HTMLElement
+      const icon = element.querySelector('.user-chevron') as HTMLElement
       return {
         cardBackground: getComputedStyle(element).backgroundColor,
         iconBackground: getComputedStyle(icon).backgroundColor,
       }
     })
-    expect(hovered.cardBackground).toBe('rgba(0, 0, 0, 0)')
-    expect(hovered.iconBackground).not.toBe('rgba(0, 0, 0, 0)')
+    expect(hovered.cardBackground).not.toBe('rgba(0, 0, 0, 0)')
+    expect(hovered.iconBackground).toBe('rgba(0, 0, 0, 0)')
   } finally {
     await page.close()
   }

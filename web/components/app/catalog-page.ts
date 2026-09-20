@@ -19,7 +19,7 @@ type CatalogDashboard = CatalogPageSignal['dashboards'][number]
 
 const catalogFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
 const catalogRecentsStorageKey = 'leapview.dashboard-catalog.recents.v1'
-const unrankedPopularityLabel = 'Not ranked — popularity is based on distinct viewers, not opens; at least 3 viewers and a top-30% rank over 30 days are required.'
+const unrankedPopularityLabel = 'Not ranked'
 
 class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @property({ attribute: 'create-draft-href' }) createDraftHref = ''
@@ -674,7 +674,7 @@ function humanizeCreateDraftModelTitle(value: string): string {
 }
 
 function popularityLabel(level: 'low' | 'medium' | 'high'): string {
-  return `${capitalize(level)} popularity — ${popularityPercentile(level).toLowerCase()} in the last 30 days`
+  return `${capitalize(level)} popularity`
 }
 
 function popularityPercentile(level: 'low' | 'medium' | 'high'): string {
