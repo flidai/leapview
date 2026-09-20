@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/platform/compatibility"
@@ -25,6 +27,10 @@ type upgradeStore struct {
 	recordErr           error
 	getCount            int
 	rotateFenceOnSecond bool
+	enforceLease        bool
+	leaseUntil          atomic.Int64
+	renewCount          atomic.Int64
+	renewErr            error
 }
 
 func (s *upgradeStore) Get(context.Context, string) (transitionoperation.Operation, error) {
@@ -35,7 +41,19 @@ func (s *upgradeStore) Get(context.Context, string) (transitionoperation.Operati
 	return s.op, nil
 }
 func (s *upgradeStore) Validate(context.Context, transitionoperation.Fence) error {
+	if s.enforceLease && time.Now().UnixNano() >= s.leaseUntil.Load() {
+		return transitionoperation.ErrStaleFence
+	}
 	return s.validateErr
+}
+func (s *upgradeStore) Renew(_ context.Context, fence transitionoperation.Fence, until time.Time) (transitionoperation.Fence, error) {
+	if s.renewErr != nil {
+		return transitionoperation.Fence{}, s.renewErr
+	}
+	s.leaseUntil.Store(until.UnixNano())
+	s.renewCount.Add(1)
+	fence.LeaseExpiresAt = until
+	return fence, nil
 }
 func (s *upgradeStore) RecordPhase(_ context.Context, input transitionrunner.PhaseRecordInput) (transitionoperation.Operation, error) {
 	if s.recordErr != nil {
@@ -125,7 +143,7 @@ func upgradeFixture(t *testing.T) (*Upgrader, UpgradeRequest, *upgradeStore, *up
 	require.NoError(t, err)
 	candidateDigest, err := result.Evidence.Candidate.Digest()
 	require.NoError(t, err)
-	store := &upgradeStore{op: transitionoperation.Operation{OperationID: upgradeOperationID, TargetIdentityDigest: result.Evidence.TargetIdentityDigest, PredecessorArtifactDigest: predDigest, CandidateArtifactDigest: candidateDigest, PreflightEvidence: evidenceBytes, PreflightEvidenceDigest: result.EvidenceDigest, Status: transitionoperation.StatusRunning, CurrentPhase: transitionoperation.PhaseCandidateStaged, Fence: transitionoperation.Fence{OperationID: upgradeOperationID, OwnerID: "owner", FencingGeneration: 1}}}
+	store := &upgradeStore{op: transitionoperation.Operation{OperationID: upgradeOperationID, TargetIdentityDigest: result.Evidence.TargetIdentityDigest, PredecessorArtifactDigest: predDigest, CandidateArtifactDigest: candidateDigest, PreflightEvidence: evidenceBytes, PreflightEvidenceDigest: result.EvidenceDigest, Status: transitionoperation.StatusRunning, CurrentPhase: transitionoperation.PhaseCandidateStaged, Fence: transitionoperation.Fence{OperationID: upgradeOperationID, OwnerID: "owner", FencingGeneration: 1, LeaseExpiresAt: time.Now().Add(15 * time.Minute)}}}
 	control := &upgradeControl{configured: predecessor, running: predecessor}
 	upgrader, err := NewUpgrader(UpgradeOptions{Paths: paths, Operations: store, Preflight: upgradePreflight{result: result}, Control: UpgradeControl{ConfiguredImage: control.ConfiguredImage, UpdateImage: control.UpdateImage, Start: control.Start, RunningImage: control.RunningImage}, Payload: func(context.Context, string) (map[string][]byte, error) { return testPayload("candidate-"), nil }})
 	require.NoError(t, err)
@@ -241,6 +259,99 @@ func TestUpgradeAndRecordRejectsFenceChangeBeforeEffect(t *testing.T) {
 	require.ErrorIs(t, err, transitionoperation.ErrStaleFence)
 	require.False(t, called)
 	require.Empty(t, store.op.PhaseResults)
+}
+
+func TestUpgradeAndRecordRecordsUncertainHostMutation(t *testing.T) {
+	for _, phase := range []transitionrunner.Phase{transitionrunner.PhaseActivate, transitionrunner.PhaseRestart} {
+		t.Run(string(phase), func(t *testing.T) {
+			upgrader, request, store, control, paths := upgradeFixture(t)
+			_, err := upgrader.UpgradeAndRecord(t.Context(), request)
+			require.NoError(t, err)
+			request.Phase = transitionrunner.PhaseActivate
+			if phase == transitionrunner.PhaseActivate {
+				upgrader.options.Activate = func(paths Paths, generation string) error {
+					require.NoError(t, activateGeneration(paths, generation))
+					return errors.New("activation response lost")
+				}
+			} else {
+				_, err = upgrader.UpgradeAndRecord(t.Context(), request)
+				require.NoError(t, err)
+				request.Phase = transitionrunner.PhaseRestart
+				control.startErr = errors.New("health failed after Compose up")
+			}
+			_, err = upgrader.UpgradeAndRecord(t.Context(), request)
+			require.ErrorIs(t, err, transitionoperation.ErrIndeterminate)
+			require.Equal(t, transitionoperation.StatusIndeterminate, store.op.Status)
+			require.Equal(t, phase, store.op.PhaseResults[len(store.op.PhaseResults)-1].Phase)
+			require.Equal(t, transitionoperation.PhaseResultIndeterminate, store.op.PhaseResults[len(store.op.PhaseResults)-1].Status)
+			if phase == transitionrunner.PhaseActivate {
+				active, activeErr := activeGeneration(paths)
+				require.NoError(t, activeErr)
+				require.Equal(t, "sha256-"+strings.Repeat("b", 64), active)
+			} else {
+				require.Equal(t, 1, control.starts)
+			}
+		})
+	}
+}
+
+func TestUpgradeAndRecordRenewsLeaseDuringSlowEffect(t *testing.T) {
+	upgrader, request, store, _, _ := upgradeFixture(t)
+	store.op.Fence.LeaseExpiresAt = time.Now().Add(250 * time.Millisecond)
+	store.leaseUntil.Store(store.op.Fence.LeaseExpiresAt.UnixNano())
+	store.enforceLease = true
+	upgrader.options.Payload = func(ctx context.Context, _ string) (map[string][]byte, error) {
+		select {
+		case <-time.After(700 * time.Millisecond):
+			return testPayload("candidate-"), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	_, err := upgrader.UpgradeAndRecord(t.Context(), request)
+	require.NoError(t, err)
+	require.Greater(t, store.renewCount.Load(), int64(0))
+	require.Equal(t, transitionrunner.PhaseActivate, store.op.CurrentPhase)
+}
+
+func TestUpgradeAndRecordLostLeaseAfterEffectBeginsIsIndeterminate(t *testing.T) {
+	upgrader, request, store, _, _ := upgradeFixture(t)
+	store.op.Fence.LeaseExpiresAt = time.Now().Add(250 * time.Millisecond)
+	store.renewErr = transitionoperation.ErrStaleFence
+	upgrader.options.Payload = func(ctx context.Context, _ string) (map[string][]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	_, err := upgrader.UpgradeAndRecord(t.Context(), request)
+	require.ErrorIs(t, err, transitionoperation.ErrIndeterminate)
+	require.ErrorIs(t, err, transitionoperation.ErrStaleFence)
+	require.Equal(t, transitionoperation.StatusIndeterminate, store.op.Status)
+}
+
+func TestUpgradeAndRecordExactCompletedRetryUsesDurableResult(t *testing.T) {
+	upgrader, request, store, _, _ := upgradeFixture(t)
+	first, err := upgrader.UpgradeAndRecord(t.Context(), request)
+	require.NoError(t, err)
+	upgrader.options.Payload = func(context.Context, string) (map[string][]byte, error) {
+		t.Fatal("completed retry must not execute candidate payload effect")
+		return nil, nil
+	}
+	retry, err := upgrader.UpgradeAndRecord(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, first, retry)
+	require.Len(t, store.op.PhaseResults, 1)
+
+	wrongTarget := request
+	wrongTarget.TargetID = "another-target"
+	_, err = upgrader.UpgradeAndRecord(t.Context(), wrongTarget)
+	require.ErrorIs(t, err, transitionoperation.ErrConflict)
+	wrongCandidate := request
+	wrongCandidate.CandidateImage = "ghcr.io/example@sha256:" + strings.Repeat("c", 64)
+	_, err = upgrader.UpgradeAndRecord(t.Context(), wrongCandidate)
+	require.ErrorIs(t, err, transitionoperation.ErrConflict)
+	upgrader.options.Preflight = upgradePreflight{err: errors.New("revoked admission")}
+	_, err = upgrader.UpgradeAndRecord(t.Context(), request)
+	require.ErrorIs(t, err, transitionoperation.ErrConflict)
 }
 
 func TestUpgradeRejectsWrongOrUnboundInstalledTargetBeforeEffect(t *testing.T) {

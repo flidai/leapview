@@ -32,6 +32,7 @@ type UpgradeControl struct {
 type UpgradeOperationStore interface {
 	Get(context.Context, string) (transitionoperation.Operation, error)
 	Validate(context.Context, transitionoperation.Fence) error
+	Renew(context.Context, transitionoperation.Fence, time.Time) (transitionoperation.Fence, error)
 	RecordPhase(context.Context, transitionrunner.PhaseRecordInput) (transitionoperation.Operation, error)
 	Fail(context.Context, transitionrunner.FailureInput) (transitionoperation.Operation, error)
 }
@@ -74,12 +75,40 @@ func (u *Upgrader) UpgradeAndRecord(ctx context.Context, request UpgradeRequest)
 	if err != nil {
 		return transitionrunner.EffectResult{}, fmt.Errorf("read transition operation before effect: %w", err)
 	}
-	request.expectedFence = &op.Fence
-	result, err := u.Upgrade(ctx, request)
-	if err != nil {
-		return transitionrunner.EffectResult{}, err
+	if result, completed, err := u.completedRetry(ctx, request, op); completed || err != nil {
+		return result, err
 	}
-	recorded, err := u.options.Operations.RecordPhase(ctx, transitionrunner.PhaseRecordInput{
+	leaseTTL := time.Until(op.Fence.LeaseExpiresAt)
+	if leaseTTL <= 0 {
+		return transitionrunner.EffectResult{}, fmt.Errorf("transition target fence lease expired: %w", transitionoperation.ErrStaleFence)
+	}
+	effectCtx, cancelEffect := context.WithCancel(ctx)
+	heartbeatDone := make(chan struct{})
+	heartbeatErrors := make(chan error, 1)
+	go u.renewFence(effectCtx, cancelEffect, op.Fence, leaseTTL, heartbeatErrors, heartbeatDone)
+	defer func() { cancelEffect(); <-heartbeatDone }()
+	request.expectedFence = &op.Fence
+	mutated := false
+	result, err := u.upgrade(effectCtx, request, &mutated)
+	select {
+	case heartbeatErr := <-heartbeatErrors:
+		err = errors.Join(err, fmt.Errorf("transition target fence renewal failed: %w", heartbeatErr))
+	default:
+	}
+	if err != nil {
+		if !mutated {
+			return transitionrunner.EffectResult{}, err
+		}
+		failureCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, failErr := u.options.Operations.Fail(failureCtx, transitionrunner.FailureInput{
+			OperationID: op.OperationID, OwnerID: op.Fence.OwnerID, Fence: op.Fence,
+			Phase: request.Phase, Status: transitionoperation.PhaseResultIndeterminate,
+			Code: "host_effect_uncertain", Summary: "host effect may have changed state before completion could be verified",
+		})
+		return transitionrunner.EffectResult{}, errors.Join(transitionoperation.ErrIndeterminate, err, failErr)
+	}
+	recorded, err := u.options.Operations.RecordPhase(effectCtx, transitionrunner.PhaseRecordInput{
 		OperationID: op.OperationID, OwnerID: op.Fence.OwnerID, Fence: op.Fence,
 		Phase: request.Phase, Status: transitionoperation.PhaseResultSucceeded, Result: result.Payload,
 	})
@@ -104,6 +133,28 @@ func (u *Upgrader) UpgradeAndRecord(ctx context.Context, request UpgradeRequest)
 	return transitionrunner.EffectResult{}, errors.Join(transitionoperation.ErrIndeterminate, err, readErr, failErr)
 }
 
+func (u *Upgrader) renewFence(ctx context.Context, cancel context.CancelFunc, fence transitionoperation.Fence, ttl time.Duration, failures chan<- error, done chan<- struct{}) {
+	defer close(done)
+	interval := ttl / 3
+	if interval < time.Millisecond {
+		interval = time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := u.options.Operations.Renew(ctx, fence, time.Now().UTC().Add(ttl)); err != nil {
+				failures <- err
+				cancel()
+				return
+			}
+		}
+	}
+}
+
 func recordedUpgradePhase(op transitionoperation.Operation, phase transitionrunner.Phase, payload []byte) bool {
 	for _, item := range op.PhaseResults {
 		if item.Phase == phase && item.Status == transitionoperation.PhaseResultSucceeded && bytes.Equal(item.Result, payload) {
@@ -113,10 +164,88 @@ func recordedUpgradePhase(op transitionoperation.Operation, phase transitionrunn
 	return false
 }
 
+// completedRetry accepts only a durable result for the same admitted operation
+// and installed target. It never invokes a host effect or requires a live lease.
+func (u *Upgrader) completedRetry(ctx context.Context, request UpgradeRequest, op transitionoperation.Operation) (transitionrunner.EffectResult, bool, error) {
+	var completed *transitionoperation.PhaseResult
+	for i := range op.PhaseResults {
+		item := &op.PhaseResults[i]
+		if item.Phase == request.Phase && item.Status == transitionoperation.PhaseResultSucceeded {
+			completed = item
+			break
+		}
+	}
+	if completed == nil {
+		return transitionrunner.EffectResult{}, false, nil
+	}
+	reject := func() (transitionrunner.EffectResult, bool, error) {
+		return transitionrunner.EffectResult{}, true, fmt.Errorf("completed host phase does not match admitted operation: %w", transitionoperation.ErrConflict)
+	}
+	if request.OperationID != op.OperationID || request.TargetID == "" || (op.Status != transitionoperation.StatusRunning && op.Status != transitionoperation.StatusCompleted) {
+		return reject()
+	}
+	ref, err := ociref.ParseImmutable(request.CandidateImage)
+	if err != nil {
+		return reject()
+	}
+	installed, _, err := readAndValidateConfig(filepath.Join(u.options.Paths.Root, installMarkerName))
+	if err != nil || installed.TargetID == "" || installed.TargetID != request.TargetID {
+		return reject()
+	}
+	evidence, err := transitionpreflight.ParseEvidence(op.PreflightEvidence)
+	if err != nil {
+		return reject()
+	}
+	digest, err := evidence.Digest()
+	if err != nil || digest != op.PreflightEvidenceDigest || evidence.TargetIdentityDigest != op.TargetIdentityDigest {
+		return reject()
+	}
+	predecessorDigest, err := evidence.Predecessor.Digest()
+	if err != nil || predecessorDigest != op.PredecessorArtifactDigest {
+		return reject()
+	}
+	candidateDigest, err := evidence.Candidate.Digest()
+	if err != nil || candidateDigest != op.CandidateArtifactDigest || evidence.Candidate.Release.Image != request.CandidateImage {
+		return reject()
+	}
+	if installed.Image != evidence.Predecessor.Release.Image && installed.Image != request.CandidateImage {
+		return reject()
+	}
+	if evidence.Decision != transitionpreflight.DecisionBinaryRollbackCompatible || evidence.RecoveryFrontier == nil {
+		return reject()
+	}
+	fresh, err := u.options.Preflight.ResolveAndEvaluate(ctx, transitionpreflight.ResolutionRequest{
+		PredecessorRef: evidence.Predecessor.Release.Image, CandidateRef: request.CandidateImage,
+		TargetRef: request.TargetID, RecoveryFrontier: *evidence.RecoveryFrontier,
+	})
+	if err != nil || fresh.EvidenceDigest != digest {
+		return reject()
+	}
+	var result upgradePhaseEvidence
+	if err := json.Unmarshal(completed.Result, &result); err != nil ||
+		result.PredecessorImage != evidence.Predecessor.Release.Image ||
+		result.CandidateImage != request.CandidateImage ||
+		result.TargetIdentityDigest != op.TargetIdentityDigest ||
+		result.PreflightDigest != digest || result.Generation != ref.Generation ||
+		(request.Phase == transitionrunner.PhaseRestart && result.RuntimeImage != request.CandidateImage) ||
+		(request.Phase != transitionrunner.PhaseRestart && result.RuntimeImage != "") {
+		return reject()
+	}
+	return transitionrunner.EffectResult{
+		TargetIdentityDigest:    op.TargetIdentityDigest,
+		CandidateArtifactDigest: candidateDigest,
+		Payload:                 append([]byte(nil), completed.Result...),
+	}, true, nil
+}
+
 // Upgrade executes exactly one host effect under the runner's live target
 // fence. The returned EffectResult carries bound evidence for that runner to
 // validate and persist before it advances to the next phase.
 func (u *Upgrader) Upgrade(ctx context.Context, request UpgradeRequest) (transitionrunner.EffectResult, error) {
+	return u.upgrade(ctx, request, nil)
+}
+
+func (u *Upgrader) upgrade(ctx context.Context, request UpgradeRequest, mutated *bool) (transitionrunner.EffectResult, error) {
 	if strings.TrimSpace(request.OperationID) == "" || strings.TrimSpace(request.TargetID) == "" {
 		return transitionrunner.EffectResult{}, fmt.Errorf("operation ID and target ID are required")
 	}
@@ -216,6 +345,7 @@ func (u *Upgrader) Upgrade(ctx context.Context, request UpgradeRequest) (transit
 		if installed.Image != evidence.Predecessor.Release.Image {
 			return transitionrunner.EffectResult{}, fmt.Errorf("candidate is already active before staging phase")
 		}
+		markHostEffect(mutated)
 		payload, err := u.options.Payload(ctx, request.CandidateImage)
 		if err != nil {
 			return transitionrunner.EffectResult{}, fmt.Errorf("extract admitted candidate payload: %w", err)
@@ -241,16 +371,19 @@ func (u *Upgrader) Upgrade(ctx context.Context, request UpgradeRequest) (transit
 				return transitionrunner.EffectResult{}, fmt.Errorf("transition target fence was lost before activation: %w", err)
 			}
 			if active != candidateRef.Generation {
+				markHostEffect(mutated)
 				if err := u.options.Activate(paths, candidateRef.Generation); err != nil {
 					return transitionrunner.EffectResult{}, fmt.Errorf("activate candidate generation: %w", err)
 				}
 			}
 			if configured != request.CandidateImage {
+				markHostEffect(mutated)
 				if err := u.options.Control.UpdateImage(request.CandidateImage); err != nil {
 					return transitionrunner.EffectResult{}, fmt.Errorf("candidate generation activated but Compose selection is uncertain: %w", err)
 				}
 			}
 			installed.Image = request.CandidateImage
+			markHostEffect(mutated)
 			marker, err := json.MarshalIndent(installed, "", "  ")
 			if err != nil {
 				return transitionrunner.EffectResult{}, err
@@ -265,6 +398,7 @@ func (u *Upgrader) Upgrade(ctx context.Context, request UpgradeRequest) (transit
 		if installed.Image != request.CandidateImage || active != candidateRef.Generation {
 			return transitionrunner.EffectResult{}, fmt.Errorf("candidate is not active for restart")
 		}
+		markHostEffect(mutated)
 		if err := u.options.Control.Start(ctx); err != nil {
 			return transitionrunner.EffectResult{}, fmt.Errorf("restart candidate: %w", err)
 		}
@@ -285,6 +419,12 @@ func (u *Upgrader) Upgrade(ctx context.Context, request UpgradeRequest) (transit
 		return transitionrunner.EffectResult{}, err
 	}
 	return transitionrunner.EffectResult{TargetIdentityDigest: evidence.TargetIdentityDigest, CandidateArtifactDigest: candidateDigest, Payload: result}, nil
+}
+
+func markHostEffect(mutated *bool) {
+	if mutated != nil {
+		*mutated = true
+	}
 }
 
 type upgradePhaseEvidence struct {

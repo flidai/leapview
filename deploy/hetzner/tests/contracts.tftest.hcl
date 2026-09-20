@@ -3,6 +3,7 @@ mock_provider "hcloud" {}
 variables {
   hcloud_token        = "test-token"
   admin_email         = "admin@example.com"
+  target_id           = "deployment-target-1"
   leapview_image      = "ghcr.io/flidai/leapview@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   ssh_allowed_cidrs   = ["203.0.113.10/32"]
   ssh_public_key_path = ""
@@ -25,6 +26,11 @@ run "secure_single_node_plan" {
   assert {
     condition     = length(hcloud_firewall.leapview.rule) == 4
     error_message = "the firewall must expose restricted SSH plus HTTP, HTTPS, and HTTP/3"
+  }
+
+  assert {
+    condition     = local.bootstrap_config.targetId == var.target_id
+    error_message = "host install bootstrap must receive the authoritative deployment target ID"
   }
 }
 
