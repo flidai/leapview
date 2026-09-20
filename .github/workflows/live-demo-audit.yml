@@ -8,7 +8,7 @@ on:
         required: true
         type: choice
         default: prepare
-        options: [prepare, deploy]
+        options: [prepare, deploy, verify]
 
 permissions:
   contents: read
@@ -181,8 +181,8 @@ jobs:
 
   verify:
     name: Verify preserved CFO contents
-    needs: [build, rollout]
-    if: inputs.action == 'deploy'
+    needs: [build, admit, rollout]
+    if: always() && needs.build.result == 'success' && needs.admit.result == 'success' && (inputs.action == 'verify' || (inputs.action == 'deploy' && needs.rollout.result == 'success'))
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: leapview-demo
@@ -193,7 +193,7 @@ jobs:
       - name: Check out exact dispatched source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.build.outputs.revision }}
+          ref: ${{ github.sha }}
       - name: Fetch demo deployment credentials
         uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
         with:
@@ -204,12 +204,6 @@ jobs:
           project-slug: leapview
           env-slug: prod
           secret-path: /demo/deployment
-      - name: Set up verification tools
-        uses: ./.github/actions/setup-ci
-        with:
-          browser: "false"
-      - name: Prepare generated CLI sources
-        run: task generate
       - name: Verify healthy runtime and active CFO project
         env:
           DEMO_SOURCE_REVISION: ${{ needs.build.outputs.revision }}
