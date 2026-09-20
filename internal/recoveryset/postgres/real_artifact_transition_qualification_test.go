@@ -27,6 +27,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	recoverysetpostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
 	"github.com/flidai/leapview/internal/release/artifactadmission"
+	"github.com/flidai/leapview/internal/release/migrationcapability"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 	"github.com/flidai/leapview/internal/release/transitionoperation"
 	"github.com/flidai/leapview/internal/release/transitionpreflight"
@@ -85,8 +86,22 @@ func TestFAI518RealPredecessorCandidateTransitionQualification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	publishRevision019Capabilities(t, capabilities, predecessorIdentity.ArtifactAdmissionDigest, targetDigest, false)
-	publishRevision019Capabilities(t, capabilities, candidateIdentity.ArtifactAdmissionDigest, targetDigest, true)
+	predecessorMigrations, err := loadArtifactMigrations(t.Context(), predecessorIdentity, 19)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateMigrations, err := loadArtifactMigrations(t.Context(), candidateIdentity, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateMigrations.predecessorAdmissionDigest = predecessorIdentity.ArtifactAdmissionDigest
+	candidateMigrations.targetIdentityDigest = targetDigest
+	publishArtifactMigrationCapabilities(t, capabilities, predecessorMigrations, targetDigest, false)
+	publishArtifactMigrationCapabilities(t, capabilities, candidateMigrations, targetDigest, true)
+	candidateCapability, err := capabilities.ResolveMigrationCapability(t.Context(), candidateIdentity.ArtifactAdmissionDigest, targetDigest, migrationcapability.SubsystemGoose)
+	if err != nil {
+		t.Fatal(err)
+	}
 	publishProductionPolicy(t, releases, predecessorIdentity, candidateIdentity)
 	frontier := productionPublishedFrontier(t, recoverySets, productionRecoverySetFixture(t))
 	resolver, err := releasetransitionapp.NewProductionResolver(releasetransitionapp.ProductionDependencies{Releases: releases, Targets: targets, MigrationCapabilities: capabilities, RecoverySets: recoverySets})
@@ -138,12 +153,26 @@ func TestFAI518RealPredecessorCandidateTransitionQualification(t *testing.T) {
 	effects.candidateImage = image
 	t.Cleanup(effects.cleanup)
 	var artifactConsumed bool
+	var migrationEvidence artifactMigrationEvidence
 	runner, err := transitionrunner.New(transitionrunner.Options{Operations: transitions, Preflight: resolver, Fences: transitions,
 		Effects: transitionrunner.EffectFuncs{
-			MigrationsFunc: effects.Migrations,
-			StageFunc:      effects.Stage,
-			ActivateFunc:   effects.Activate,
-			RestartFunc:    effects.Restart,
+			MigrationsFunc: func(ctx context.Context, in transitionrunner.EffectInput) (transitionrunner.EffectResult, error) {
+				var err error
+				migrationEvidence, err = candidateMigrations.apply(ctx, pool, migratorDB, in.Evidence, candidateCapability)
+				if err != nil {
+					return transitionrunner.EffectResult{}, err
+				}
+				effects.migrationsApplied = true
+				effects.predecessor, err = startQualificationProcess(ctx, predecessorImage, in.Evidence.TargetIdentityDigest)
+				if err != nil {
+					return transitionrunner.EffectResult{}, err
+				}
+				payload, err := migrationEvidence.payload()
+				return transitionrunner.EffectResult{TargetIdentityDigest: targetDigest, CandidateArtifactDigest: candidateDigest, Payload: payload}, err
+			},
+			StageFunc:    effects.Stage,
+			ActivateFunc: effects.Activate,
+			RestartFunc:  effects.Restart,
 			PostValidateFunc: func(ctx context.Context, in transitionrunner.EffectInput) (transitionrunner.EffectResult, error) {
 				out, err := effects.PostValidate(ctx, in)
 				if err != nil {
@@ -155,6 +184,12 @@ func TestFAI518RealPredecessorCandidateTransitionQualification(t *testing.T) {
 				}
 				if identity.Revision != revision || identity.Version != admission.Release.Version || identity.Dirty || identity.Development {
 					return out, fmt.Errorf("candidate runtime identity changed: %#v", identity)
+				}
+				if _, err := candidateMigrations.bind(in.Evidence, candidateCapability); err != nil {
+					return out, err
+				}
+				if err := validateArtifactObservedRevision(ctx, pool, migrationEvidence); err != nil {
+					return out, err
 				}
 				artifactConsumed = true
 				return out, nil
@@ -176,7 +211,9 @@ func TestFAI518RealPredecessorCandidateTransitionQualification(t *testing.T) {
 		t.Fatalf("paired migration/admission consumption: migrated=%t consumed=%t predecessorImage=%q predecessorAdmission=%q predecessorOperationArtifact=%q candidateImage=%q candidateAdmission=%q candidateOperationArtifact=%q", effects.migrationsApplied, artifactConsumed, result.Evidence.Predecessor.Release.Image, result.Evidence.Predecessor.ArtifactAdmissionDigest, result.Operation.PredecessorArtifactDigest, result.Evidence.Candidate.Release.Image, result.Evidence.Candidate.ArtifactAdmissionDigest, result.Operation.CandidateArtifactDigest)
 	}
 	assertForwardPhaseResults(t, result.Operation)
-	assertAppliedMigrationRevision(t, pool)
+	if err := validateArtifactObservedRevision(t.Context(), pool, migrationEvidence); err != nil {
+		t.Fatal(err)
+	}
 	after, err := representativeStateDigest(t.Context(), pool)
 	if err != nil || after != baseline {
 		t.Fatalf("predecessor state after migration = %q, error = %v; want %q", after, err, baseline)
@@ -190,13 +227,14 @@ func TestFAI518RealPredecessorCandidateTransitionQualification(t *testing.T) {
 		t.Fatalf("durable real-artifact result = %#v", readback)
 	}
 	assertForwardPhaseResults(t, readback)
+	assertArtifactMigrationReadback(t, readback, migrationEvidence)
 	var fenceGeneration int64
 	var fenceOperation *string
 	var fenceOwner string
 	if err := pool.QueryRow(t.Context(), `SELECT fencing_generation, operation_id::text, owner_id FROM release.release_transition_fence WHERE target_identity_digest=$1`, targetDigest).Scan(&fenceGeneration, &fenceOperation, &fenceOwner); err != nil || fenceGeneration < 1 || fenceOperation != nil || fenceOwner != "" {
 		t.Fatalf("durable released fence generation=%d operation=%v owner=%q error=%v", fenceGeneration, fenceOperation, fenceOwner, err)
 	}
-	if err := writeRealArtifactReport(evidenceDir, realArtifactReport{Image: image, SourceRevision: revision, AdmissionDigest: candidateIdentity.ArtifactAdmissionDigest, ProvenanceEvidenceDigest: admission.Provenance.Reference, SBOMEvidenceDigest: admission.SBOM.Reference, SecurityPolicyDigest: admission.SecurityPolicy.Reference, PreflightDigest: result.EvidenceDigest, OperationID: result.Operation.OperationID, OperationStatus: string(readback.Status), FenceGeneration: fenceGeneration, MigrationRevision: migrations.CurrentRevision, PredecessorStateDigest: baseline, CandidateRuntimeVersion: admission.Release.Version, PredecessorImage: predecessorImage, PredecessorRevision: predecessorRevision, PredecessorAdmissionDigest: predecessorIdentity.ArtifactAdmissionDigest, PredecessorRuntimeVersion: predecessorRuntime.Version, PredecessorMigrationRevision: 19, PredecessorAdminPrincipalID: predecessorAdminID}); err != nil {
+	if err := writeRealArtifactReport(evidenceDir, realArtifactReport{Image: image, SourceRevision: revision, AdmissionDigest: candidateIdentity.ArtifactAdmissionDigest, ProvenanceEvidenceDigest: admission.Provenance.Reference, SBOMEvidenceDigest: admission.SBOM.Reference, SecurityPolicyDigest: admission.SecurityPolicy.Reference, PreflightDigest: result.EvidenceDigest, OperationID: result.Operation.OperationID, OperationStatus: string(readback.Status), FenceGeneration: fenceGeneration, MigrationRevision: migrationEvidence.ObservedRevision, Migration: migrationEvidence, PredecessorStateDigest: baseline, CandidateRuntimeVersion: admission.Release.Version, PredecessorImage: predecessorImage, PredecessorRevision: predecessorRevision, PredecessorAdmissionDigest: predecessorIdentity.ArtifactAdmissionDigest, PredecessorRuntimeVersion: predecessorRuntime.Version, PredecessorMigrationRevision: 19, PredecessorAdminPrincipalID: predecessorAdminID}); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("real predecessor %s and candidate %s admitted and executed through Goose 019→020", predecessorImage, image)
@@ -413,28 +451,35 @@ func alternateDigestCharacter(last byte) string {
 }
 
 type realArtifactReport struct {
-	PredecessorImage             string `json:"predecessorImage"`
-	PredecessorRevision          string `json:"predecessorRevision"`
-	PredecessorAdmissionDigest   string `json:"predecessorArtifactAdmissionDigest"`
-	PredecessorRuntimeVersion    string `json:"predecessorRuntimeVersion"`
-	PredecessorMigrationRevision int64  `json:"predecessorMigrationRevision"`
-	PredecessorAdminPrincipalID  string `json:"predecessorAdminPrincipalId"`
-	Image                        string `json:"image"`
-	SourceRevision               string `json:"sourceRevision"`
-	AdmissionDigest              string `json:"artifactAdmissionDigest"`
-	ProvenanceEvidenceDigest     string `json:"provenanceEvidenceDigest"`
-	SBOMEvidenceDigest           string `json:"sbomEvidenceDigest"`
-	SecurityPolicyDigest         string `json:"securityPolicyDigest"`
-	PreflightDigest              string `json:"preflightEvidenceDigest"`
-	OperationID                  string `json:"operationId"`
-	OperationStatus              string `json:"operationStatus"`
-	FenceGeneration              int64  `json:"fenceGeneration"`
-	MigrationRevision            int64  `json:"migrationRevision"`
-	PredecessorStateDigest       string `json:"predecessorStateDigest"`
-	CandidateRuntimeVersion      string `json:"candidateRuntimeVersion"`
+	Migration                    artifactMigrationEvidence `json:"migration"`
+	PredecessorImage             string                    `json:"predecessorImage"`
+	PredecessorRevision          string                    `json:"predecessorRevision"`
+	PredecessorAdmissionDigest   string                    `json:"predecessorArtifactAdmissionDigest"`
+	PredecessorRuntimeVersion    string                    `json:"predecessorRuntimeVersion"`
+	PredecessorMigrationRevision int64                     `json:"predecessorMigrationRevision"`
+	PredecessorAdminPrincipalID  string                    `json:"predecessorAdminPrincipalId"`
+	Image                        string                    `json:"image"`
+	SourceRevision               string                    `json:"sourceRevision"`
+	AdmissionDigest              string                    `json:"artifactAdmissionDigest"`
+	ProvenanceEvidenceDigest     string                    `json:"provenanceEvidenceDigest"`
+	SBOMEvidenceDigest           string                    `json:"sbomEvidenceDigest"`
+	SecurityPolicyDigest         string                    `json:"securityPolicyDigest"`
+	PreflightDigest              string                    `json:"preflightEvidenceDigest"`
+	OperationID                  string                    `json:"operationId"`
+	OperationStatus              string                    `json:"operationStatus"`
+	FenceGeneration              int64                     `json:"fenceGeneration"`
+	MigrationRevision            int64                     `json:"migrationRevision"`
+	PredecessorStateDigest       string                    `json:"predecessorStateDigest"`
+	CandidateRuntimeVersion      string                    `json:"candidateRuntimeVersion"`
 }
 
 func writeRealArtifactReport(dir string, report realArtifactReport) error {
+	if err := report.Migration.validateObserved(report.MigrationRevision); err != nil {
+		return err
+	}
+	if report.Migration.ObservedRevision != report.MigrationRevision || report.Migration.CandidateAdmissionDigest != report.AdmissionDigest || report.Migration.PredecessorAdmissionDigest != report.PredecessorAdmissionDigest || report.Migration.CandidateImage != report.Image || report.Migration.CandidateSourceRevision != report.SourceRevision {
+		return errors.New("transition report migration/artifact binding mismatch")
+	}
 	contents, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return err

@@ -81,5 +81,5 @@ docker buildx imagetools inspect "$image" --format '{{ json .SBOM }}' > "$eviden
 
 go test -race -tags='duckdb_arrow fai518qualification fai518artifactqualification' \
   ./internal/recoveryset/postgres \
-  -run '^TestFAI518RealPredecessorCandidateTransitionQualification$' \
+  -run '^TestFAI518(RealPredecessorCandidateTransitionQualification|ArtifactMigration)' \
   -count=1 -timeout=30m -v
