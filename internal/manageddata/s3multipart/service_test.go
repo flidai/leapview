@@ -2,21 +2,20 @@ package s3multipart
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/control"
-	"github.com/flidai/leapview/internal/manageddata/sqlite"
+	managedpostgres "github.com/flidai/leapview/internal/manageddata/postgres"
 	"github.com/flidai/leapview/internal/manageddata/storage"
-	"github.com/pressly/goose/v3"
-	_ "modernc.org/sqlite"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 )
 
 const (
@@ -268,7 +267,7 @@ func TestCoordinatorPreservesPersistedSiblingAndAbortsOnlyUnknownOrphan(t *testi
 func TestCoordinatorCreationInitFailureIsRetryableAndDoesNotMultiplyProviderUploads(t *testing.T) {
 	ctx, repo, session := coordinatorFixture(t, []manageddata.File{{Path: "data.csv", Size: 1, SHA256: strings.Repeat("a", 64)}})
 	provider := &fakeMultipartStore{}
-	failing := &failingMultipartRepository{Repository: repo, initErr: errors.New("sqlite init failed")}
+	failing := &failingMultipartRepository{Repository: repo, initErr: errors.New("repository init failed")}
 	first, err := New(failing, provider, Config{Backend: "s3", Clock: func() time.Time { return time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC) }})
 	if err != nil {
 		t.Fatal(err)
@@ -337,6 +336,46 @@ func TestCoordinatorProviderCompletionFailureIsVisibleAndRetryable(t *testing.T)
 	}
 }
 
+func TestCoordinatorConcurrentCompletionExecutesProviderOnce(t *testing.T) {
+	ctx, repo, session := coordinatorFixture(t, []manageddata.File{{Path: "data.csv", Size: 1, SHA256: strings.Repeat("a", 64)}})
+	provider := newBlockingCompletionStore()
+	service := newTestService(t, repo, provider)
+	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "data.csv", IdempotencyKey: "concurrent-completion"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, PartNumber: 1, Size: 1}); err != nil {
+		t.Fatal(err)
+	}
+	request := CompleteRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, IdempotencyKey: "concurrent-completion", Parts: []CompletedPart{{PartNumber: 1, ETag: "etag"}}}
+	firstResult := make(chan error, 1)
+	go func() {
+		_, completeErr := service.Complete(ctx, request)
+		firstResult <- completeErr
+	}()
+	select {
+	case <-provider.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first completion did not reach provider")
+	}
+	if _, err := service.Complete(ctx, request); !errors.Is(err, control.ErrConflict) {
+		t.Fatalf("concurrent completion error = %v, want conflict", err)
+	}
+	if calls := provider.calls.Load(); calls != 1 {
+		t.Fatalf("concurrent provider completion calls = %d, want 1", calls)
+	}
+	close(provider.release)
+	if err := <-firstResult; err != nil {
+		t.Fatalf("first completion: %v", err)
+	}
+	if result, err := service.Complete(ctx, request); err != nil || result.Status != StatusCompleted {
+		t.Fatalf("terminal replay = %#v, %v", result, err)
+	}
+	if calls := provider.calls.Load(); calls != 1 {
+		t.Fatalf("terminal replay provider completion calls = %d, want 1", calls)
+	}
+}
+
 func TestCoordinatorCompletionProviderSuccessBeforeSQLFailureConvergesOnRecovery(t *testing.T) {
 	ctx, repo, session := coordinatorFixture(t, []manageddata.File{{Path: "data.csv", Size: 1, SHA256: strings.Repeat("a", 64)}})
 	provider := &fakeMultipartStore{}
@@ -348,7 +387,7 @@ func TestCoordinatorCompletionProviderSuccessBeforeSQLFailureConvergesOnRecovery
 	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, PartNumber: 1, Size: 1}); err != nil {
 		t.Fatal(err)
 	}
-	failing := &failingMultipartRepository{Repository: repo, finishErr: errors.New("finish sqlite failed")}
+	failing := &failingMultipartRepository{Repository: repo, finishErr: errors.New("finish repository failed")}
 	first, err := New(failing, provider, Config{Backend: "s3", Clock: func() time.Time { return time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC) }})
 	if err != nil {
 		t.Fatal(err)
@@ -409,7 +448,7 @@ func TestCoordinatorClaimsDigestBeforeReconcilingProviderState(t *testing.T) {
 }
 
 type deniedClaimRepository struct {
-	*sqlite.Repository
+	*managedpostgres.Repository
 }
 
 func (*deniedClaimRepository) ClaimS3MultipartDigest(context.Context, string, string, time.Time) (int64, bool, error) {
@@ -428,6 +467,18 @@ type failingMultipartRepository struct {
 	Repository
 	initErr   error
 	finishErr error
+}
+
+func (r *failingMultipartRepository) ClaimS3MultipartDigest(ctx context.Context, digest, owner string, until time.Time) (int64, bool, error) {
+	return r.Repository.(multipartClaimer).ClaimS3MultipartDigest(ctx, digest, owner, until)
+}
+
+func (r *failingMultipartRepository) RenewS3MultipartDigest(ctx context.Context, digest, owner string, epoch int64, until time.Time) (bool, error) {
+	return r.Repository.(multipartClaimer).RenewS3MultipartDigest(ctx, digest, owner, epoch, until)
+}
+
+func (r *failingMultipartRepository) ReleaseS3MultipartDigest(ctx context.Context, digest, owner string, epoch int64) error {
+	return r.Repository.(multipartClaimer).ReleaseS3MultipartDigest(ctx, digest, owner, epoch)
 }
 
 func (r *failingMultipartRepository) InitializeS3MultipartUpload(ctx context.Context, input manageddata.InitializeS3MultipartUploadInput) (manageddata.S3MultipartUpload, error) {
@@ -456,6 +507,29 @@ type fakeMultipartStore struct {
 	listErr        error
 	completedParts []storage.CompletedMultipartPart
 	orphanUploads  []storage.MultipartUpload
+}
+
+type blockingCompletionStore struct {
+	*fakeMultipartStore
+	started     chan struct{}
+	release     chan struct{}
+	startedOnce sync.Once
+	calls       atomic.Int32
+}
+
+func newBlockingCompletionStore() *blockingCompletionStore {
+	return &blockingCompletionStore{fakeMultipartStore: &fakeMultipartStore{}, started: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (s *blockingCompletionStore) CompleteMultipart(ctx context.Context, upload storage.MultipartUpload, parts []storage.CompletedMultipartPart) (storage.Blob, error) {
+	s.calls.Add(1)
+	s.startedOnce.Do(func() { close(s.started) })
+	select {
+	case <-s.release:
+		return s.fakeMultipartStore.CompleteMultipart(ctx, upload, parts)
+	case <-ctx.Done():
+		return storage.Blob{}, ctx.Err()
+	}
 }
 
 func (f *fakeMultipartStore) ListMultipartUploads(_ context.Context, expected storage.Blob) ([]storage.MultipartUpload, error) {
@@ -496,22 +570,11 @@ func (f *fakeMultipartStore) AbortMultipart(context.Context, storage.MultipartUp
 	return nil
 }
 
-func coordinatorFixture(t *testing.T, files []manageddata.File) (context.Context, *sqlite.Repository, manageddata.UploadSession) {
+func coordinatorFixture(t *testing.T, files []manageddata.File) (context.Context, *managedpostgres.Repository, manageddata.UploadSession) {
 	t.Helper()
 	ctx := context.Background()
-	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "leapview.db")+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	database.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = database.Close() })
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		t.Fatal(err)
-	}
-	if err := goose.UpContext(ctx, database, "../../platform/migrations"); err != nil {
-		t.Fatal(err)
-	}
-	repo := sqlite.NewRepository(database)
+	database := postgrestest.Open(t, managedpostgres.ApplySchema)
+	repo := managedpostgres.New(database)
 	collection, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: "collection-a", ProjectID: "project-a", ConnectionID: "warehouse", Name: "Warehouse"})
 	if err != nil {
 		t.Fatal(err)
@@ -526,7 +589,7 @@ func coordinatorFixture(t *testing.T, files []manageddata.File) (context.Context
 	return ctx, repo, session
 }
 
-func newTestService(t *testing.T, repo *sqlite.Repository, provider MultipartStore) *Service {
+func newTestService(t *testing.T, repo *managedpostgres.Repository, provider MultipartStore) *Service {
 	t.Helper()
 	now, _ := time.Parse(time.RFC3339, nowText)
 	service, err := New(repo, provider, Config{Backend: "s3", Clock: func() time.Time { return now }})

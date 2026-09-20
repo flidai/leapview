@@ -191,6 +191,12 @@ func (r *Repository) RegisterSemanticAttribute(ctx context.Context, input access
 			return access.AuditEventInput{}, errors.New("semantic attribute mutation requires PostgreSQL transaction")
 		}
 		queries := accessdb.New(transactional.db)
+		// Principal offboarding and ownership transfer serialize through the
+		// same authority lock. Holding it while validating and inserting an
+		// owner prevents a writer from observing a target's pre-tombstone row.
+		if err := queries.LockPlatformRoleAuthority(ctx); err != nil {
+			return access.AuditEventInput{}, fmt.Errorf("lock principal ownership authority: %w", err)
+		}
 		if err := validateSemanticAttributeOwnerExists(ctx, transactional.db, metadata); err != nil {
 			return access.AuditEventInput{}, err
 		}
@@ -262,6 +268,9 @@ func (r *Repository) UpdateSemanticAttributeMetadataExpected(ctx context.Context
 			return access.AuditEventInput{}, errors.New("semantic attribute mutation requires PostgreSQL transaction")
 		}
 		queries := accessdb.New(transactional.db)
+		if err := queries.LockPlatformRoleAuthority(ctx); err != nil {
+			return access.AuditEventInput{}, fmt.Errorf("lock principal ownership authority: %w", err)
+		}
 		locked, err := queries.LockSemanticAttributeRegistry(ctx)
 		if err != nil {
 			return access.AuditEventInput{}, fmt.Errorf("lock semantic attribute registry: %w", err)

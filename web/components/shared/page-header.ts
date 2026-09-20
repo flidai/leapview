@@ -5,12 +5,16 @@ export const pageHeaderStyles = css`
     display: grid;
     min-width: 0;
     grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
-    gap: var(--base-size-8);
+    align-items: center;
+    gap: var(--base-size-16);
+    border-bottom: var(--lv-border-muted);
+    padding-bottom: var(--base-size-16);
   }
 
   .page-title-block {
+    display: grid;
     min-width: 0;
+    gap: var(--base-size-4);
   }
 
   .page-header h1,
@@ -19,26 +23,21 @@ export const pageHeaderStyles = css`
   }
 
   .page-header h1 {
-    overflow: hidden;
     color: var(--lv-fg-default);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
     font: var(--lv-type-page-title);
   }
 
   .page-header .page-eyebrow {
-    margin-bottom: var(--base-size-4);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
     text-transform: uppercase;
   }
 
   .page-header .page-detail {
-    margin-top: var(--base-size-4);
-    overflow: hidden;
+    max-width: 60rem;
     color: var(--lv-fg-muted);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
     font: var(--lv-type-body-compact);
   }
 
@@ -57,6 +56,7 @@ export const pageHeaderStyles = css`
   @media (max-width: 720px) {
     .page-header {
       grid-template-columns: 1fr;
+      align-items: start;
     }
 
     .page-actions {

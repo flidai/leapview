@@ -6,30 +6,29 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
+	apiidempotency "github.com/flidai/leapview/internal/platform/http/idempotency"
 	apiidempotencypostgres "github.com/flidai/leapview/internal/platform/http/idempotency/postgres"
-	apiidempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func withSQLiteProtocolConfig(t *testing.T, config Config) Config {
+func postgresProtocolStore(t *testing.T) (*apiidempotencypostgres.Store, *pgxpool.Pool) {
 	t.Helper()
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "protocol.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	config.Store = apiidempotencysqlite.NewStore(store.SQLDB())
+	pool := postgrestest.Open(t, operationpostgres.ApplySchema)
+	return apiidempotencypostgres.NewStore(pool), pool
+}
+
+func withPostgresProtocolConfig(t *testing.T, config Config) Config {
+	t.Helper()
+	config.Store, _ = postgresProtocolStore(t)
 	config.CursorSigning = cursorsigning.NewEphemeralInitializer()
 	if config.AuthoritativeScope == nil {
 		config.AuthoritativeScope = testAuthoritativeScope
@@ -42,7 +41,7 @@ func testAuthoritativeScope(*http.Request) (AuthoritativeScope, error) {
 }
 
 func TestBuildConstructsProtocolPersistence(t *testing.T) {
-	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{}))
+	protocol, err := Build(t.Context(), withPostgresProtocolConfig(t, Config{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +51,7 @@ func TestBuildConstructsProtocolPersistence(t *testing.T) {
 }
 
 func TestMiddlewareBypassesDurableIdempotencyForConfiguredCommand(t *testing.T) {
-	store := &fakeIdempotencyStore{record: apiidempotencysqlite.Record{State: "pending", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
+	store := &fakeIdempotencyStore{record: apiidempotency.Record{State: "pending", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
 	protocol, err := Build(t.Context(), Config{
 		Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
 		AuthoritativeScope:       testAuthoritativeScope,
@@ -85,7 +84,7 @@ func TestMiddlewareBypassesDurableIdempotencyForConfiguredCommand(t *testing.T) 
 }
 
 func TestMiddlewareNonBypassedCommandStillClaimsDurableIdempotency(t *testing.T) {
-	store := &fakeIdempotencyStore{record: apiidempotencysqlite.Record{State: "pending", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
+	store := &fakeIdempotencyStore{record: apiidempotency.Record{State: "pending", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
 	protocol, err := Build(t.Context(), Config{
 		Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
 		AuthoritativeScope: testAuthoritativeScope,
@@ -110,7 +109,7 @@ func TestMiddlewareNonBypassedCommandStillClaimsDurableIdempotency(t *testing.T)
 }
 
 func TestBrowserMutationMiddlewareDurablyReplaysAfterCurrentAuthorization(t *testing.T) {
-	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{
+	protocol, err := Build(t.Context(), withPostgresProtocolConfig(t, Config{
 		PrincipalID: func(*http.Request) (string, bool) {
 			return "principal:creator", true
 		},
@@ -157,7 +156,7 @@ func TestBrowserMutationMiddlewareDurablyReplaysAfterCurrentAuthorization(t *tes
 }
 
 func TestBrowserMutationMiddlewareRequiresMatchingGeneratedIdentity(t *testing.T) {
-	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{PrincipalID: func(*http.Request) (string, bool) { return "principal:creator", true }}))
+	protocol, err := Build(t.Context(), withPostgresProtocolConfig(t, Config{PrincipalID: func(*http.Request) (string, bool) { return "principal:creator", true }}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +197,7 @@ func TestNativeK1CursorPassesThroughResponsesAndIsAcceptedOnNextRequest(t *testi
 		t.Fatalf("native response cursor = %s, want unchanged %s", got, body)
 	}
 
-	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{
+	protocol, err := Build(t.Context(), withPostgresProtocolConfig(t, Config{
 		BearerToken:   func(*http.Request) string { return "credential" },
 		AcceptsBearer: func(*http.Request) bool { return true },
 	}))
@@ -223,7 +222,7 @@ func TestNativeK1CursorPassesThroughResponsesAndIsAcceptedOnNextRequest(t *testi
 }
 
 func TestAPICursorScopeMismatchRemainsBadRequest(t *testing.T) {
-	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{
+	protocol, err := Build(t.Context(), withPostgresProtocolConfig(t, Config{
 		BearerToken:   func(*http.Request) string { return "credential" },
 		AcceptsBearer: func(*http.Request) bool { return true },
 	}))
@@ -252,7 +251,7 @@ func TestAPICursorScopeMismatchRemainsBadRequest(t *testing.T) {
 }
 
 func TestMalformedAPICursorReturnsBadRequest(t *testing.T) {
-	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{
+	protocol, err := Build(t.Context(), withPostgresProtocolConfig(t, Config{
 		BearerToken:   func(*http.Request) string { return "credential" },
 		AcceptsBearer: func(*http.Request) bool { return true },
 	}))
@@ -295,13 +294,8 @@ func TestAdversarialIdempotencyNeverStoresWriteOnlyCredentialReferences(t *testi
 
 func TestAdversarialDurableIdempotencyDatabaseExcludesOneTimeCredential(t *testing.T) {
 	ctx := t.Context()
-	databasePath := filepath.Join(t.TempDir(), "idempotency.db")
-	store, err := platform.Open(ctx, databasePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	protocol, err := Build(ctx, Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursorsigning.NewEphemeralInitializer(), AuthoritativeScope: testAuthoritativeScope, BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return true }})
+	store, pool := postgresProtocolStore(t)
+	protocol, err := Build(ctx, Config{Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(), AuthoritativeScope: testAuthoritativeScope, BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return true }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +314,7 @@ func TestAdversarialDurableIdempotencyDatabaseExcludesOneTimeCredential(t *testi
 		t.Fatalf("first response = %d %s", recorder.Code, recorder.Body.String())
 	}
 	var storedBody []byte
-	if err := store.SQLDB().QueryRowContext(ctx, `SELECT response_body FROM api_idempotency_records`).Scan(&storedBody); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT outcome::text FROM platform.operation`).Scan(&storedBody); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(storedBody), secret) {
@@ -336,14 +330,10 @@ func TestAdversarialIdempotencyAllowsNonSecretReplay(t *testing.T) {
 }
 
 func TestAdversarialReplayReauthorizesCurrentCredentialAndGrants(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "replay.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
+	store, _ := postgresProtocolStore(t)
 	var allowed atomic.Bool
 	allowed.Store(true)
-	p, err := Build(t.Context(), Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursorsigning.NewEphemeralInitializer(), AuthoritativeScope: testAuthoritativeScope, BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }})
+	p, err := Build(t.Context(), Config{Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(), AuthoritativeScope: testAuthoritativeScope, BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +366,7 @@ func TestAdversarialReplayReauthorizesCurrentCredentialAndGrants(t *testing.T) {
 func TestAdversarialInMemoryReplayReauthorizesCurrentCredentialAndGrants(t *testing.T) {
 	var allowed atomic.Bool
 	allowed.Store(true)
-	p, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }}))
+	p, err := Build(t.Context(), withPostgresProtocolConfig(t, Config{BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +404,7 @@ func TestAdversarialIdempotencyCanonicalizesEquivalentBearerHeaders(t *testing.T
 		}
 		return ""
 	}
-	p, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{BearerToken: bearer, AcceptsBearer: func(*http.Request) bool { return true }, PrincipalID: func(*http.Request) (string, bool) { return "principal", true }}))
+	p, err := Build(t.Context(), withPostgresProtocolConfig(t, Config{BearerToken: bearer, AcceptsBearer: func(*http.Request) bool { return true }, PrincipalID: func(*http.Request) (string, bool) { return "principal", true }}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,8 +443,8 @@ func TestAdversarialReplaySanitizesLegacyCredentialRecord(t *testing.T) {
 }
 
 func TestAdversarialLeaseLossCancelsHandlerAndQuarantinesOutcome(t *testing.T) {
-	store := &fakeIdempotencyStore{record: apiidempotencysqlite.Record{State: "pending", Digest: "digest", Owner: "owner", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
-	store.renew = func() (time.Time, error) { return time.Time{}, apiidempotencysqlite.ErrLeaseLost }
+	store := &fakeIdempotencyStore{record: apiidempotency.Record{State: "pending", Digest: "digest", Owner: "owner", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
+	store.renew = func() (time.Time, error) { return time.Time{}, apiidempotency.ErrLeaseLost }
 	p := testLeaseProtocol(store, 50*time.Millisecond, 2*time.Millisecond)
 
 	handlerCancelled := make(chan struct{})
@@ -480,7 +470,7 @@ func TestAdversarialLeaseLossCancelsHandlerAndQuarantinesOutcome(t *testing.T) {
 }
 
 func TestAdversarialTransientRenewalFailureRecoversBeforeExpiry(t *testing.T) {
-	store := &fakeIdempotencyStore{record: apiidempotencysqlite.Record{State: "pending", Digest: "digest", Owner: "owner", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
+	store := &fakeIdempotencyStore{record: apiidempotency.Record{State: "pending", Digest: "digest", Owner: "owner", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
 	var renewals atomic.Int32
 	store.renew = func() (time.Time, error) {
 		if renewals.Add(1) == 1 {
@@ -676,6 +666,9 @@ func TestPostgresProtocolReclaimsAllowlistedLeaseAndFencesStaleOwner(t *testing.
 	firstResult := make(chan *httptest.ResponseRecorder, 1)
 	go func() { firstResult <- invoke() }()
 	<-firstEntered
+	// Keep the takeover trigger short while giving the replacement owner enough
+	// time to commit its response on a loaded PostgreSQL runner.
+	p.lease = 5 * time.Second
 	second := invoke()
 	if second.Code != http.StatusCreated || second.Body.String() != `{"owner":"new"}` {
 		t.Fatalf("reclaimed response = %d %s", second.Code, second.Body.String())
@@ -692,7 +685,7 @@ func TestPostgresProtocolReclaimsAllowlistedLeaseAndFencesStaleOwner(t *testing.
 
 type fakeIdempotencyStore struct {
 	mu            sync.Mutex
-	record        apiidempotencysqlite.Record
+	record        apiidempotency.Record
 	execute       bool
 	renew         func() (time.Time, error)
 	claimCalls    atomic.Int32
@@ -705,27 +698,27 @@ type fakeIdempotencyStore struct {
 // expires, while rejecting terminal writes from the stale owner.
 type reclaimingIdempotencyStore struct {
 	mu     sync.Mutex
-	record apiidempotencysqlite.Record
+	record apiidempotency.Record
 }
 
 func newReclaimingIdempotencyStore() *reclaimingIdempotencyStore {
 	return &reclaimingIdempotencyStore{}
 }
 
-func (s *reclaimingIdempotencyStore) Claim(ctx context.Context, scope, digest, owner string, lease, lifetime time.Duration) (apiidempotencysqlite.Record, bool, error) {
+func (s *reclaimingIdempotencyStore) Claim(ctx context.Context, scope, digest, owner string, lease, lifetime time.Duration) (apiidempotency.Record, bool, error) {
 	return s.claim(ctx, scope, digest, owner, lease, lifetime, false)
 }
 
-func (s *reclaimingIdempotencyStore) ClaimReclaimable(ctx context.Context, scope, digest, owner string, lease, lifetime time.Duration) (apiidempotencysqlite.Record, bool, error) {
+func (s *reclaimingIdempotencyStore) ClaimReclaimable(ctx context.Context, scope, digest, owner string, lease, lifetime time.Duration) (apiidempotency.Record, bool, error) {
 	return s.claim(ctx, scope, digest, owner, lease, lifetime, true)
 }
 
-func (s *reclaimingIdempotencyStore) claim(_ context.Context, _ string, digest, owner string, lease, _ time.Duration, reclaimExpired bool) (apiidempotencysqlite.Record, bool, error) {
+func (s *reclaimingIdempotencyStore) claim(_ context.Context, _ string, digest, owner string, lease, _ time.Duration, reclaimExpired bool) (apiidempotency.Record, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC()
 	if s.record.Digest == "" {
-		s.record = apiidempotencysqlite.Record{State: "pending", Digest: digest, Owner: owner, LeaseGeneration: 1, LeaseExpires: now.Add(lease)}
+		s.record = apiidempotency.Record{State: "pending", Digest: digest, Owner: owner, LeaseGeneration: 1, LeaseExpires: now.Add(lease)}
 		return cloneProtocolRecord(s.record), true, nil
 	}
 	if s.record.Digest != digest {
@@ -750,21 +743,21 @@ func (s *reclaimingIdempotencyStore) claim(_ context.Context, _ string, digest, 
 	return cloneProtocolRecord(s.record), true, nil
 }
 
-func (s *reclaimingIdempotencyStore) Load(context.Context, string) (apiidempotencysqlite.Record, error) {
+func (s *reclaimingIdempotencyStore) Load(context.Context, string) (apiidempotency.Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return cloneProtocolRecord(s.record), nil
 }
 
 func (s *reclaimingIdempotencyStore) Renew(context.Context, string, string, string, int64, time.Duration) (time.Time, error) {
-	return time.Time{}, apiidempotencysqlite.ErrLeaseLost
+	return time.Time{}, apiidempotency.ErrLeaseLost
 }
 
 func (s *reclaimingIdempotencyStore) Complete(_ context.Context, _ string, digest, owner string, generation int64, status int, header http.Header, body []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.record.Digest != digest || s.record.Owner != owner || s.record.LeaseGeneration != generation || s.record.State != "pending" || !s.record.LeaseExpires.After(time.Now()) {
-		return apiidempotencysqlite.ErrLeaseLost
+		return apiidempotency.ErrLeaseLost
 	}
 	s.record.State, s.record.Status = "completed", status
 	s.record.Header, s.record.Body = header.Clone(), append([]byte(nil), body...)
@@ -772,16 +765,16 @@ func (s *reclaimingIdempotencyStore) Complete(_ context.Context, _ string, diges
 }
 
 func (s *reclaimingIdempotencyStore) MarkIndeterminate(context.Context, string, string, string, int64) error {
-	return apiidempotencysqlite.ErrLeaseLost
+	return apiidempotency.ErrLeaseLost
 }
 
-func cloneProtocolRecord(record apiidempotencysqlite.Record) apiidempotencysqlite.Record {
+func cloneProtocolRecord(record apiidempotency.Record) apiidempotency.Record {
 	record.Header = record.Header.Clone()
 	record.Body = append([]byte(nil), record.Body...)
 	return record
 }
 
-func (s *fakeIdempotencyStore) Claim(_ context.Context, _ string, digest, owner string, lease, _ time.Duration) (apiidempotencysqlite.Record, bool, error) {
+func (s *fakeIdempotencyStore) Claim(_ context.Context, _ string, digest, owner string, lease, _ time.Duration) (apiidempotency.Record, bool, error) {
 	s.claimCalls.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -790,7 +783,7 @@ func (s *fakeIdempotencyStore) Claim(_ context.Context, _ string, digest, owner 
 	s.record.LeaseExpires = time.Now().Add(lease)
 	return s.record, s.execute, nil
 }
-func (s *fakeIdempotencyStore) Load(context.Context, string) (apiidempotencysqlite.Record, error) {
+func (s *fakeIdempotencyStore) Load(context.Context, string) (apiidempotency.Record, error) {
 	return s.record, nil
 }
 func (s *fakeIdempotencyStore) Renew(context.Context, string, string, string, int64, time.Duration) (time.Time, error) {

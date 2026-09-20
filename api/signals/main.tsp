@@ -371,6 +371,7 @@ model AdminAgentToolSignal {
   `inputSchema`: Record<unknown>;
   `name`: string;
   `outputSchema`: Record<unknown>;
+  `tags`: string[];
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })

@@ -2,13 +2,27 @@
 
 Internal execution plan; not part of the public documentation catalog.
 
-Date: 2026-09-18
+Date: 2026-09-18; updated 2026-09-20
 
-Status: **Complete**
+Status: **Reopened for current-main integration and release qualification**
 
 Source review: [Administrator and deployment readiness review](../admin-deployment-readiness.md)
 
 Linear project: [LeapView administrator-managed deployment readiness](https://linear.app/flid/project/leapview-administrator-managed-deployment-readiness-a2512f4b2475)
+
+## Current integration gate — 2026-09-20
+
+The prior closure below records the earlier standalone PR candidate. PR #659
+still needs integration with `origin/main` and a fresh release gate. The
+remaining issues are FAI-934 (ownership race), FAI-939 (OIDC freshness),
+FAI-935 (credential-aware authorization explanation), FAI-941 (recovery
+replay), FAI-954 (migration collision and main-to-candidate upgrade), FAI-955
+(Settings/runtime integration and removal of superseded work), and FAI-943
+(full CI and installed-candidate qualification). Main already contains
+credential expiry defaults, substantial Settings refinements, and refresh
+recovery work; these must be preserved while merging the still-needed
+administrator controls. Completion requires the integrated candidate commit,
+upgrade evidence, browser/API journeys, and Docker/Compose qualification.
 
 ## Linear delivery breakdown
 
@@ -61,8 +75,9 @@ Every public API operation must dispatch, every privileged identity must have a
 closed credential and authorization lifecycle, and every deployment must be
 discoverable and recoverable from server-owned state.
 
-SQLite adapters are retained test/offline fixtures and are not a production
-qualification target.
+The current mainline has retired SQLite adapters. PostgreSQL is the only
+deployment authority and integration-test target; the earlier SQLite findings
+remain historical evidence for why the credential lifecycle was hardened.
 
 ## Delivery principles
 

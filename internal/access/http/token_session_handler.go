@@ -63,6 +63,7 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	}
 	var input struct {
 		Name         string   `json:"name"`
+		Description  string   `json:"description"`
 		Capabilities []string `json:"capabilities"`
 		ExpiresAt    string   `json:"expiresAt"`
 	}
@@ -118,7 +119,7 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	var token access.APIToken
 	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationCreateCurrentAPIToken(), func(tx access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
-		secret, token, mutationErr = tx.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: input.Name, Capabilities: capabilities, ExpiresAt: expires})
+		secret, token, mutationErr = tx.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: input.Name, Description: input.Description, Capabilities: capabilities, ExpiresAt: expires})
 		return auditInput(r, "api_token.created", principal.ID, "api_token", token.ID, "", "success", nil), mutationErr
 	})
 	if err != nil {

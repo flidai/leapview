@@ -79,6 +79,7 @@ BEGIN
 		GRANT SELECT ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization TO leapview_control_runtime;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization FROM leapview_control_runtime;
 		GRANT EXECUTE ON FUNCTION project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb) TO leapview_control_runtime;
+		GRANT EXECUTE ON FUNCTION project.authorize_resource_uid_restores_for_approval(uuid,uuid) TO leapview_control_runtime;
 		REVOKE EXECUTE ON FUNCTION project.bind_resource_uid_generation(uuid), project.authorize_resource_uid_restore(text,text,text,text,uuid,uuid,text,text,text,text) FROM leapview_control_runtime;
 		GRANT USAGE ON SCHEMA access, admin, dashboard, delivery, event, audit, release, ducklake, jobs, agent, lineage, physical_pool, serving_state, recovery TO leapview_control_runtime;
 		GRANT USAGE ON SCHEMA platform TO leapview_control_runtime;

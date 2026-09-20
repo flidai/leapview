@@ -11,6 +11,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
+	"github.com/flidai/leapview/internal/platform/accesslifecycle"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -21,6 +22,20 @@ type principalLifecycleLock struct {
 	Status     string
 	DisabledAt pgtype.Timestamptz
 	BlockedAt  pgtype.Timestamptz
+}
+
+// LockOwnedPrincipal serializes a principal-owned object writer with
+// offboarding and verifies that the principal is still usable. Product
+// authorities call this on their caller-owned transaction immediately before
+// inserting an object whose owner is an access principal. The platform-role
+// authority lock is deliberately shared with DeletePrincipal and ownership
+// transfer so a writer cannot validate an active snapshot and insert after a
+// committed offboarding decision.
+//
+// The transaction remains owned by the caller; this helper only acquires
+// transaction-scoped locks and performs the lifecycle check.
+func LockOwnedPrincipal(ctx context.Context, db DBTX, principalID string) error {
+	return accesslifecycle.LockOwnedPrincipal(ctx, db, principalID)
 }
 
 // lockPlatformAdminAuthority serializes every principal lifecycle mutation
@@ -59,13 +74,15 @@ func (r *Repository) rejectLastUsablePlatformAdministrator(ctx context.Context, 
 	return nil
 }
 
-func platformAdminCommandDigest(action, principalID, expectedRevision string) string {
-	payload, _ := json.Marshal(struct {
-		Action           string `json:"action"`
-		PrincipalID      string `json:"principalId"`
-		ExpectedRevision string `json:"expectedRevision"`
-	}{Action: action, PrincipalID: principalID, ExpectedRevision: expectedRevision})
-	digest := sha256.Sum256(payload)
+func platformAdminCommandDigest(action, principalID, expectedRevision, requestDigestBinding string) string {
+	payload := struct {
+		Action               string `json:"action"`
+		PrincipalID          string `json:"principalId"`
+		ExpectedRevision     string `json:"expectedRevision"`
+		RequestDigestBinding string `json:"requestDigestBinding,omitempty"`
+	}{Action: action, PrincipalID: principalID, ExpectedRevision: expectedRevision, RequestDigestBinding: strings.TrimSpace(requestDigestBinding)}
+	encoded, _ := json.Marshal(payload)
+	digest := sha256.Sum256(encoded)
 	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
@@ -203,10 +220,10 @@ func (r *Repository) checkPlatformAdminOperation(ctx context.Context, db DBTX, k
 	return access.PlatformAdminGrantResult{Administrator: access.PlatformAdministrator{
 		BindingID: principalUUID(binding.BindingID), Principal: principal,
 		Role: access.PlatformRole(binding.Role), CreatedAt: principalTimestamp(binding.RoleCreatedAt),
-	}, State: state}, state, true, nil
+	}, State: state, Replayed: true}, state, true, nil
 }
 
-func (r *Repository) platformAdminMutationTx(ctx context.Context, inputPrincipalID, expectedRevision, key, action string, mutate func(*accessdb.Queries, access.PlatformAdministratorState, access.Principal, accessdb.GetPlatformRoleBindingRow) (string, error)) (access.PlatformAdminGrantResult, access.PlatformAdministratorState, error) {
+func (r *Repository) platformAdminMutationTx(ctx context.Context, inputPrincipalID, expectedRevision, key, action, requestDigestBinding string, mutate func(*accessdb.Queries, access.PlatformAdministratorState, access.Principal, accessdb.GetPlatformRoleBindingRow) (string, error)) (access.PlatformAdminGrantResult, access.PlatformAdministratorState, error) {
 	if ctx == nil {
 		return access.PlatformAdminGrantResult{}, access.PlatformAdministratorState{}, errors.New("platform administrator context is nil")
 	}
@@ -222,7 +239,7 @@ func (r *Repository) platformAdminMutationTx(ctx context.Context, inputPrincipal
 	if expectedRevision == "" {
 		return access.PlatformAdminGrantResult{}, access.PlatformAdministratorState{}, fmt.Errorf("%w: expected revision is required", access.ErrPlatformAdminStaleRevision)
 	}
-	digest := platformAdminCommandDigest(action, principalID, expectedRevision)
+	digest := platformAdminCommandDigest(action, principalID, expectedRevision, requestDigestBinding)
 	tx, owned, err := r.txOrBegin(ctx)
 	if err != nil {
 		return access.PlatformAdminGrantResult{}, access.PlatformAdministratorState{}, err
@@ -299,7 +316,7 @@ func (r *Repository) platformAdminMutationTx(ctx context.Context, inputPrincipal
 // GrantPlatformAdmin delegates the durable platform_admin role to one already
 // existing enabled user principal.
 func (r *Repository) GrantPlatformAdmin(ctx context.Context, input access.PlatformAdminGrantInput) (access.PlatformAdminGrantResult, error) {
-	result, _, err := r.platformAdminMutationTx(ctx, input.PrincipalID, input.ExpectedRevision, input.IdempotencyKey, "grant", func(q *accessdb.Queries, _ access.PlatformAdministratorState, principal access.Principal, active accessdb.GetPlatformRoleBindingRow) (string, error) {
+	result, _, err := r.platformAdminMutationTx(ctx, input.PrincipalID, input.ExpectedRevision, input.IdempotencyKey, "grant", input.RequestDigestBinding, func(q *accessdb.Queries, _ access.PlatformAdministratorState, principal access.Principal, active accessdb.GetPlatformRoleBindingRow) (string, error) {
 		if active.BindingID.Valid {
 			return principalUUID(active.BindingID), nil
 		}
@@ -318,7 +335,7 @@ func (r *Repository) GrantPlatformAdmin(ctx context.Context, input access.Platfo
 // RevokePlatformAdmin seals the active role binding. The authority lock and
 // row locks make the last-usable-administrator check atomic with revocation.
 func (r *Repository) RevokePlatformAdmin(ctx context.Context, input access.PlatformAdminRevokeInput) (access.PlatformAdministratorState, error) {
-	_, state, err := r.platformAdminMutationTx(ctx, input.PrincipalID, input.ExpectedRevision, input.IdempotencyKey, "revoke", func(q *accessdb.Queries, current access.PlatformAdministratorState, principal access.Principal, active accessdb.GetPlatformRoleBindingRow) (string, error) {
+	_, state, err := r.platformAdminMutationTx(ctx, input.PrincipalID, input.ExpectedRevision, input.IdempotencyKey, "revoke", "", func(q *accessdb.Queries, current access.PlatformAdministratorState, principal access.Principal, active accessdb.GetPlatformRoleBindingRow) (string, error) {
 		if !active.BindingID.Valid {
 			return "", fmt.Errorf("%w: principal %q", access.ErrPlatformAdminNotFound, input.PrincipalID)
 		}

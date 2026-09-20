@@ -12,10 +12,10 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// TestPlatformRoleOperationMigrationUpgradesRevisionNineteen proves that a
+// TestPlatformRoleOperationMigrationUpgradesRevisionTwentyTwo proves that a
 // control database created before the replay table was added receives the
 // table, keeps existing role bindings, and can use the runtime ACL afterward.
-func TestPlatformRoleOperationMigrationUpgradesRevisionNineteen(t *testing.T) {
+func TestPlatformRoleOperationMigrationUpgradesRevisionTwentyTwo(t *testing.T) {
 	harness := postgrestest.Start(t)
 	owner := harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator", Login: true, Password: "platform-operation-migration"})
@@ -87,7 +87,7 @@ DROP SCHEMA access CASCADE;
 RESET ROLE;
 `)},
 	}
-	for revision := 2; revision <= 19; revision++ {
+	for revision := 2; revision <= 22; revision++ {
 		name := fmt.Sprintf("%03d_placeholder.sql", revision)
 		previous[name] = &fstest.MapFile{Data: []byte("-- +goose Up\n-- +goose Down\n")}
 	}
@@ -96,24 +96,24 @@ RESET ROLE;
 		t.Fatal(err)
 	}
 	if _, err := provider.Up(t.Context()); err != nil {
-		t.Fatalf("apply revision-019 fixture: %v", err)
+		t.Fatalf("apply revision-022 fixture: %v", err)
 	}
 	current, _, err := provider.GetVersions(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current != 19 {
-		t.Fatalf("fixture revision = %d, want 19", current)
+	if current != 22 {
+		t.Fatalf("fixture revision = %d, want 22", current)
 	}
 	var operationExists bool
 	if err := admin.QueryRow(t.Context(), `SELECT to_regclass('access.platform_role_operation') IS NOT NULL`).Scan(&operationExists); err != nil {
 		t.Fatal(err)
 	}
 	if operationExists {
-		t.Fatal("revision-019 fixture already contains platform role operation table")
+		t.Fatal("revision-022 fixture already contains platform role operation table")
 	}
 
-	migration, err := fs.ReadFile(MigrationFS(), "020_platform_role_operation.sql")
+	migration, err := fs.ReadFile(MigrationFS(), "023_platform_role_operation.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,13 +121,13 @@ RESET ROLE;
 	for name, file := range previous {
 		upgrade[name] = file
 	}
-	upgrade["020_platform_role_operation.sql"] = &fstest.MapFile{Data: migration}
+	upgrade["023_platform_role_operation.sql"] = &fstest.MapFile{Data: migration}
 	provider, err = newProvider(migrationDB, upgrade)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := provider.Up(t.Context()); err != nil {
-		t.Fatalf("upgrade revision-019 fixture: %v", err)
+		t.Fatalf("upgrade revision-022 fixture: %v", err)
 	}
 	if _, err := provider.Up(t.Context()); err != nil {
 		t.Fatalf("replay platform role operation migration: %v", err)
@@ -136,8 +136,8 @@ RESET ROLE;
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current != 20 {
-		t.Fatalf("upgraded revision = %d, want 20", current)
+	if current != 23 {
+		t.Fatalf("upgraded revision = %d, want 23", current)
 	}
 
 	var bindingCount int
@@ -179,7 +179,7 @@ RESET ROLE;
 	if _, err := admin.Exec(t.Context(), `DELETE FROM access.platform_role_operation WHERE idempotency_key='platform-upgrade-operation'`); err == nil {
 		t.Fatal("platform role operation delete unexpectedly succeeded")
 	}
-	if _, err := provider.DownTo(t.Context(), 19); err == nil {
+	if _, err := provider.DownTo(t.Context(), 22); err == nil {
 		t.Fatal("platform role operation migration Down unexpectedly succeeded")
 	}
 	if err := admin.QueryRow(t.Context(), `SELECT to_regclass('access.platform_role_operation') IS NOT NULL`).Scan(&operationExists); err != nil {

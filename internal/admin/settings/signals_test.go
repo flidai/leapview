@@ -32,6 +32,18 @@ func (r *auditReadRepository) ListAuditEvents(_ context.Context, filter access.A
 	return append([]access.AuditEvent(nil), r.rows...), nil
 }
 
+func (*auditReadRepository) ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error) {
+	return nil, nil
+}
+
+func (*auditReadRepository) ListAllGroups(context.Context) ([]access.Group, error) {
+	return nil, nil
+}
+
+func (*auditReadRepository) ListServicePrincipals(context.Context) ([]access.Principal, error) {
+	return nil, nil
+}
+
 func TestLoadAuditLogBindsProjectAndPassesDateFilters(t *testing.T) {
 	repository := &auditReadRepository{rows: []access.AuditEvent{{ID: "audit-1", ProjectID: "project:test", CreatedAt: "2026-09-16T00:00:00Z"}}}
 	filters := AuditLogFilters{ProjectID: "project:foreign", From: "2026-09-01T00:00:00Z", To: "2026-10-01T00:00:00Z"}
@@ -68,13 +80,16 @@ func (testServiceAccountReader) ListServicePrincipals(context.Context) ([]access
 func (testServiceAccountReader) ListServicePrincipalSecrets(context.Context, string) ([]access.ServicePrincipalSecret, error) {
 	return []access.ServicePrincipalSecret{{ID: "secret-1", ServicePrincipalID: "svc-1", Name: "ci"}}, nil
 }
+func (testServiceAccountReader) CountServicePrincipalSecrets(context.Context) (map[string]int, error) {
+	return map[string]int{"svc-1": 1}, nil
+}
 
 func TestLoadServiceAccountsSortsAndSelectsMetadata(t *testing.T) {
 	signal, err := LoadServiceAccounts(context.Background(), testServiceAccountReader{}, "svc-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if signal.Items[0].ID != "svc-1" || signal.SelectedID != "svc-1" || len(signal.Secrets) != 1 {
+	if signal.Items[0].ID != "svc-1" || signal.Items[0].SecretCount != 1 || signal.SelectedID != "svc-1" || len(signal.Secrets) != 1 {
 		t.Fatalf("signal = %#v", signal)
 	}
 }

@@ -42,7 +42,7 @@ func TestPlatformAdministratorDelegationLifecyclePostgreSQL18(t *testing.T) {
 	if err != nil {
 		t.Fatalf("grant replay: %v", err)
 	}
-	if replay.Administrator.BindingID != grant.Administrator.BindingID || replay.State.Revision != grant.State.Revision {
+	if !replay.Replayed || replay.Administrator.BindingID != grant.Administrator.BindingID || replay.State.Revision != grant.State.Revision {
 		t.Fatalf("grant replay = %#v, want binding %q and revision %q", replay, grant.Administrator.BindingID, grant.State.Revision)
 	}
 	if _, err := repo.GrantPlatformAdmin(ctx, access.PlatformAdminGrantInput{PrincipalID: second.ID, ExpectedRevision: empty.Revision, IdempotencyKey: "platform-grant-first"}); !errors.Is(err, access.ErrPlatformAdminIdempotency) {
@@ -67,6 +67,39 @@ func TestPlatformAdministratorDelegationLifecyclePostgreSQL18(t *testing.T) {
 	}
 	if count := countActivePlatformRoles(t, db, ctx); count != 1 {
 		t.Fatalf("active platform role count after last-admin rejection = %d, want 1", count)
+	}
+}
+
+func TestPlatformAdministratorGrantRecoveryDigestBindingIsIdempotent(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	principal, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{Kind: access.PrincipalKindUser, Email: "platform-recovery-binding@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := repo.ListPlatformAdministrators(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := access.PlatformAdminGrantInput{PrincipalID: principal.ID, ExpectedRevision: state.Revision, IdempotencyKey: "platform-recovery-binding", RequestDigestBinding: "recovery-request-1"}
+	first, err := repo.GrantPlatformAdmin(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := repo.GrantPlatformAdmin(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replay.Replayed || replay.Administrator.BindingID != first.Administrator.BindingID {
+		t.Fatalf("recovery replay = %#v, want replayed binding %q", replay, first.Administrator.BindingID)
+	}
+	input.RequestDigestBinding = "recovery-request-2"
+	if _, err := repo.GrantPlatformAdmin(ctx, input); !errors.Is(err, access.ErrPlatformAdminIdempotency) {
+		t.Fatalf("changed recovery binding error = %v, want idempotency conflict", err)
 	}
 }
 

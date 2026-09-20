@@ -38,11 +38,16 @@ type PlatformAdminGrantInput struct {
 	PrincipalID      string
 	ExpectedRevision string
 	IdempotencyKey   string
+	// RequestDigestBinding optionally binds an external recovery/request
+	// identity into the idempotency digest. Empty preserves the historical
+	// digest for ordinary grants.
+	RequestDigestBinding string
 }
 
 type PlatformAdminGrantResult struct {
 	Administrator PlatformAdministrator
 	State         PlatformAdministratorState
+	Replayed      bool
 }
 
 type PlatformAdminRevokeInput struct {

@@ -1,11 +1,15 @@
 package postgres
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessownership "github.com/flidai/leapview/internal/access/ownership"
+	"github.com/flidai/leapview/internal/semanticvalue"
 )
 
 func TestOwnershipAuthorityBlocksPrincipalAndServiceOffboardingPostgreSQL18(t *testing.T) {
@@ -110,5 +114,72 @@ func TestOwnershipAuthorityProtectsLastPlatformAdministratorPostgreSQL18(t *test
 	}
 	if err := repo.DeletePrincipal(ctx, admin.ID); !errors.Is(err, access.ErrPlatformAdminLastAdmin) {
 		t.Fatalf("deletion=%v, want last-admin conflict", err)
+	}
+}
+
+func TestOwnershipTransferSerializesWithTargetDeletionPostgreSQL18(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	source, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{Kind: access.PrincipalKindUser, Email: "transfer-race-source@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{Kind: access.PrincipalKindUser, Email: "transfer-race-target@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RegisterSemanticAttribute(ctx, access.RegisterSemanticAttributeInput{
+		Name: "transfer_race_attribute", Type: semanticvalue.TypeString, Shape: access.SemanticAttributeScalar,
+		Metadata: access.SemanticAttributeMetadata{Owner: access.SemanticAttributeOwner{Kind: access.SemanticAttributeOwnerPrincipal, ID: source.ID}, DisplayName: "Transfer race"},
+		Mutation: access.SemanticAttributeMutationContext{ActorPrincipalID: source.ID, RequestID: "transfer-race-register"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	authority := NewSemanticAttributeOwnershipAuthority(db.runtime)
+	inventory, err := accessownership.New(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.SetOwnershipGuard(inventory)
+
+	deletionTx, err := db.runtime.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleting := &Repository{db: deletionTx, fingerprintKey: repo.fingerprintKey, ownership: inventory}
+	if err := deleting.DeletePrincipal(ctx, target.ID); err != nil {
+		_ = deletionTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	// DeletePrincipal has acquired the same lifecycle authority lock used by
+	// transfers, but has not committed its tombstone yet. A transfer must not
+	// observe the target's old active snapshot and move ownership into it.
+	blockedCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	_, transferErr := repo.TransferOwnedObjects(blockedCtx, source.ID, target.ID)
+	cancel()
+	if transferErr == nil {
+		_ = deletionTx.Rollback(ctx)
+		t.Fatal("ownership transfer crossed an uncommitted target deletion")
+	}
+	if !errors.Is(transferErr, context.DeadlineExceeded) {
+		_ = deletionTx.Rollback(ctx)
+		t.Fatalf("blocked transfer error = %v, want context deadline", transferErr)
+	}
+	if err := deletionTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.TransferOwnedObjects(ctx, source.ID, target.ID); err == nil {
+		t.Fatal("ownership transfer succeeded after target deletion committed")
+	}
+	owned, err := repo.ListOwnedObjects(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owned.Objects) != 1 {
+		t.Fatalf("source ownership after target deletion = %#v, want one object", owned)
 	}
 }

@@ -34,6 +34,23 @@ func (r *Repository) TransferOwnedObjects(ctx context.Context, principalID, targ
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	// Ownership transfer and principal offboarding share this authority lock.
+	// Lock source then target after the global authority lock so direct and
+	// aggregate ownership adapters use one deterministic principal order. This
+	// makes source lifecycle changes and the ownership mutation one serialized
+	// operation as well as preventing transfer into a deleting target.
+	if _, err := r.lockPlatformAdminAuthority(ctx, tx, principalID); err != nil {
+		return access.OwnershipReport{}, err
+	}
+	if _, err := lockPrincipalLifecycle(ctx, tx, principalID); err != nil {
+		return access.OwnershipReport{}, err
+	}
+	if _, err := r.lockPlatformAdminAuthority(ctx, tx, targetPrincipalID); err != nil {
+		return access.OwnershipReport{}, err
+	}
+	if _, err := lockPrincipalLifecycle(ctx, tx, targetPrincipalID); err != nil {
+		return access.OwnershipReport{}, err
+	}
 	transactional := &Repository{db: tx, fingerprintKey: r.fingerprintKey, ownership: r.ownership}
 	target, err := transactional.PrincipalByID(ctx, targetPrincipalID)
 	if err != nil {
@@ -80,6 +97,12 @@ func (r *Repository) TombstoneOwnedObjects(ctx context.Context, principalID stri
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	if _, err := r.lockPlatformAdminAuthority(ctx, tx, principalID); err != nil {
+		return access.OwnershipReport{}, err
+	}
+	if _, err := lockPrincipalLifecycle(ctx, tx, principalID); err != nil {
+		return access.OwnershipReport{}, err
+	}
 	mutator, err := r.transactionalOwnershipMutator(tx)
 	if err != nil {
 		return access.OwnershipReport{}, err

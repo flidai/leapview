@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	dashboarddb "github.com/flidai/leapview/internal/dashboard/authoring/postgres/internal/db"
+	"github.com/flidai/leapview/internal/platform/accesslifecycle"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -64,6 +65,16 @@ func (r *Repository) TransferOwnedObjects(ctx context.Context, principalID, targ
 		return access.OwnershipReport{}, err
 	}
 	return r.withOwnershipTx(ctx, func(tx dashboarddb.DBTX) (access.OwnershipReport, error) {
+		// Direct ownership adapters are callable outside access' aggregate
+		// repository, so they must establish the same source/target lifecycle
+		// boundary themselves. Access' outer transaction may already hold the
+		// authority lock; PostgreSQL advisory xact locks are re-entrant.
+		if err := accesslifecycle.LockOwnedPrincipal(ctx, tx, owner); err != nil {
+			return access.OwnershipReport{}, err
+		}
+		if err := accesslifecycle.LockOwnedPrincipal(ctx, tx, targetPrincipalID); err != nil {
+			return access.OwnershipReport{}, err
+		}
 		rows, err := dashboarddb.New(tx).TransferOwnedDashboards(ctx, dashboarddb.TransferOwnedDashboardsParams{OwnerPrincipalID: ownerID, TargetPrincipalID: target})
 		if err != nil {
 			return access.OwnershipReport{}, fmt.Errorf("transfer principal-owned dashboards: %w", err)
@@ -81,6 +92,9 @@ func (r *Repository) TombstoneOwnedObjects(ctx context.Context, principalID stri
 		return access.OwnershipReport{}, err
 	}
 	return r.withOwnershipTx(ctx, func(tx dashboarddb.DBTX) (access.OwnershipReport, error) {
+		if err := accesslifecycle.LockOwnedPrincipal(ctx, tx, owner); err != nil {
+			return access.OwnershipReport{}, err
+		}
 		rows, err := dashboarddb.New(tx).TombstoneOwnedDashboards(ctx, ownerID)
 		if err != nil {
 			return access.OwnershipReport{}, fmt.Errorf("tombstone principal-owned dashboards: %w", err)

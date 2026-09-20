@@ -2,11 +2,26 @@
 
 Internal project review; not part of the public documentation catalog.
 
-Date: 2026-09-18
+Date: 2026-09-18; updated 2026-09-20
 
-Status: **Ready for administrator-managed production deployment**
+Status: **Integration and release qualification pending**
 
-## Executive decision
+## Current decision — 2026-09-20
+
+The previous readiness decision applied to the tested PR candidate before
+integration with current `origin/main`. Review of PR #659 at `0635f9b13`
+against `origin/main` at `e2b0ed621` found migration version collisions and
+four correctness gaps. PostgreSQL diagnostic tests reproduced an ownership
+transfer racing recipient offboarding, duplicate Goose migration version 20,
+and a restricted API token receiving an allowed edit decision. Source review
+also found that OIDC session creation is treated as fresh authentication
+without IdP authentication-time evidence, and an offline recovery retry can
+repeat the password reset. The Linear project has been reopened with specific
+acceptance criteria in FAI-934, FAI-939, FAI-935, FAI-941, FAI-954, FAI-955,
+and FAI-943. The release gate remains open until those issues and the final
+installed-candidate qualification are complete.
+
+## Prior candidate decision — 2026-09-18
 
 LeapView now has a strong deployment engine and substantially closed
 administrator credential and discovery lifecycles. The delivery API supports
@@ -80,9 +95,10 @@ delivery collections; effective-access provenance; service-account
 disable/enable, overlapping rotation, revoke-all, and last-used evidence; and
 single-project Access and Delivery Settings surfaces. Manual E2E found and
 fixed command execution, migration, composed-reader, and delivery-collection
-authorization defects that focused tests missed. The overall readiness
-decision is now **ready** because the final installed-candidate and clean
-checkout qualification gates listed above passed on 2026-09-18.
+authorization defects that focused tests missed. The prior candidate's
+readiness decision was **ready** because its installed-candidate and
+clean-checkout qualification gates passed on 2026-09-18. That verdict does
+not apply to the current-main integration.
 
 The final hardening wave added redacted platform-administrator controls,
 server-evaluated recent interactive authentication, optional durable
@@ -92,13 +108,9 @@ PostgreSQL session-evidence composition, Settings approval-policy propagation,
 last-usable-administrator lifecycle races, and durable audit evidence for
 authenticated denied platform-role mutations.
 
-SQLite adapters still exist in the repository as test and offline-tooling
-fixtures, but they are not an application composition option. The architecture
-rules explicitly classify them as non-compositional fixtures and reject SQLite
-imports from production sources (`internal/platform/architecture/rules.go:137-158`;
-`internal/platform/architecture/architecture_test.go:1710-1728`). Fixture
-behavior was useful for finding inconsistent domain assumptions, but it is not
-part of the production deployment verdict.
+Current mainline has retired SQLite adapters. The historical fixture behavior
+was useful for finding inconsistent domain assumptions, but PostgreSQL is the
+only deployment and integration-qualification authority.
 
 ## Current Settings inventory
 
@@ -754,7 +766,7 @@ interactions, and all 12 reviewed visual baselines. The quality budget was met
 by extracting cohesive deployment and refresh responsibilities, without
 raising the budget.
 Migration qualification includes a real native-delivery schema revision 21 to
-current revision 24 upgrade and replay, rather than fresh-schema coverage only.
+current revision 27 upgrade and replay, rather than fresh-schema coverage only.
 SQLite remains a test/offline adapter and is not selectable by production
 composition; its secret-revival regression coverage does not imply that the
 production authority migrated back from PostgreSQL.

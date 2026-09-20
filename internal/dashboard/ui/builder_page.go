@@ -105,14 +105,18 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 
 func DashboardDraftForkPageWithKey(dashboardID, csrfToken, action, idempotencyKey string, providers ...webpage.Provider) g.Node {
 	layout := builderFocusLayout(firstProvider(providers), webpage.Context{Active: "dashboards", SectionID: dashboardID, SectionTitle: dashboardID, PageTitle: "Make a copy", Compact: true})
+	copySlug := strings.TrimPrefix(strings.TrimSpace(dashboardID), "dashboard:") + "-copy"
+	copyTitle := strings.ReplaceAll(strings.TrimSuffix(copySlug, "-copy"), "-", " ") + " copy"
+	cancelHref := strings.TrimSuffix(strings.TrimSpace(action), "/fork")
 	return webpage.Render(layout, webpage.Spec{
 		Title:      "Make a dashboard copy",
 		CSRFToken:  csrfToken,
 		UpdatesURL: "/updates?route=catalog",
 		MainAttrs:  []g.Node{h.ID("dashboard-draft-fork"), h.Class(webpage.RootClass)},
 		Content: draftForm("Make a copy", "Create an editable copy in My dashboards.", action, csrfToken, idempotencyKey,
-			g.Group{h.Input(h.Type("hidden"), h.Name("dashboardId"), h.Value(dashboardID)), h.Label(h.For("fork-title"), g.Text("Title (optional)")), h.Input(h.ID("fork-title"), h.Name("title"), h.AutoComplete("off"))},
-			g.Group{h.Label(h.For("fork-slug"), g.Text("Slug (optional)")), h.Input(h.ID("fork-slug"), h.Name("slug"), h.AutoComplete("off"))},
+			g.Group{h.Input(h.Type("hidden"), h.Name("dashboardId"), h.Value(dashboardID)), h.Label(h.For("fork-title"), g.Text("Title")), h.Input(h.ID("fork-title"), h.Name("title"), h.Value(copyTitle), h.AutoComplete("off"), g.Attr("required", "true"), g.Attr("maxlength", "160"))},
+			g.Group{h.Label(h.For("fork-slug"), g.Text("Slug")), h.Input(h.ID("fork-slug"), h.Name("slug"), h.Value(copySlug), h.AutoComplete("off"), g.Attr("required", "true"), g.Attr("maxlength", "120")), h.Small(g.Text("Used in the dashboard URL. You can edit it before creating the copy."))},
+			h.Div(h.Class("lv-draft-form-actions"), h.A(h.Href(cancelHref), g.Text("Cancel")), h.Button(h.Type("submit"), g.Text("Create copy"))),
 		),
 	})
 }
@@ -123,7 +127,7 @@ func draftForm(title, hint, action, csrfToken, idempotencyKey string, fields ...
 		h.Form(h.Method("post"), h.Action(action), g.Group(append(fields,
 			h.Input(h.Type("hidden"), h.Name("gorilla.csrf.Token"), h.Value(csrfToken)),
 			h.Input(h.Type("hidden"), h.Name("idempotencyKey"), h.Value(idempotencyKey)),
-		)), h.Button(h.Type("submit"), g.Text("Continue"))),
+		))),
 	))
 }
 

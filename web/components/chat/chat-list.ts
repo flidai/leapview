@@ -1,6 +1,6 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { Archive, MessageSquareText, Plus, Search } from 'lucide'
+import { MessageSquareText, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Trash2 } from 'lucide'
 import type { ChatConversationSummary } from '../../generated/signals'
 import { jsonAttribute } from '../shared/json-attribute'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -10,6 +10,19 @@ class LeapViewChatList extends LitElement {
   @property({ attribute: 'active-conversation-id' }) activeConversationId = ''
   @property({ type: Boolean, attribute: 'agent-enabled' }) agentEnabled = false
   @state() private search = ''
+  @state() private openMenuID = ''
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('keydown', this.onMenuKeydown)
+    document.addEventListener('pointerdown', this.closeMenuOnOutsidePointerdown)
+  }
+
+  override disconnectedCallback(): void {
+    document.removeEventListener('keydown', this.onMenuKeydown)
+    document.removeEventListener('pointerdown', this.closeMenuOnOutsidePointerdown)
+    super.disconnectedCallback()
+  }
 
   static styles = css`
     :host {
@@ -126,6 +139,11 @@ class LeapViewChatList extends LitElement {
       outline-offset: var(--focus-outline-offset, var(--base-size-2));
     }
 
+    .new-chat-link.danger:hover,
+    .new-chat-link.danger:focus-visible {
+      color: var(--lv-fg-danger);
+    }
+
     .table-wrap {
       min-width: 0;
       overflow-x: auto;
@@ -219,6 +237,78 @@ class LeapViewChatList extends LitElement {
       gap: var(--base-size-16);
     }
 
+    .row-status {
+      display: grid;
+      min-width: 98px;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-items: end;
+      margin-left: auto;
+    }
+
+    .row-status > * {
+      grid-area: 1 / 1;
+    }
+
+    .quick-actions {
+      position: relative;
+      z-index: 3;
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: var(--base-size-4);
+      visibility: hidden;
+      opacity: 0;
+    }
+
+    tbody tr:hover .quick-actions,
+    tbody tr:focus-within .quick-actions {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    tbody tr:hover .date,
+    tbody tr:focus-within .date {
+      visibility: hidden;
+      opacity: 0;
+    }
+
+    .quick-action {
+      display: inline-flex;
+      width: 30px;
+      height: 30px;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: var(--lv-radius-default);
+      background: transparent;
+      color: var(--lv-fg-default);
+      cursor: pointer;
+    }
+
+    .quick-action:hover,
+    .quick-action:focus-visible {
+      background: var(--lv-bg-panel);
+      color: var(--lv-fg-default);
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
+    .quick-action.danger:hover,
+    .quick-action.danger:focus-visible {
+      color: var(--lv-fg-danger);
+    }
+
+    .options-menu { position: relative; z-index: 3; flex: 0 0 auto; }
+    .options-menu > summary { display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center; border-radius: var(--lv-radius-default); color: var(--lv-fg-muted); cursor: pointer; list-style: none; }
+    .options-menu > summary::-webkit-details-marker { display: none; }
+    .options-menu > summary:hover, .options-menu > summary:focus-visible { background: var(--lv-bg-panel); color: var(--lv-fg-default); outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+    .options-panel { position: absolute; top: calc(100% + 4px); right: 0; display: grid; min-width: 180px; padding: 4px; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); }
+    .chat-action { display: grid; width: 100%; min-height: 32px; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: var(--lv-radius-small); background: transparent; color: var(--lv-fg-default); cursor: pointer; text-align: left; font: var(--lv-type-body-compact); }
+    .chat-action:hover { background: var(--lv-bg-panel-muted); }
+    .chat-action.danger:hover { color: var(--lv-fg-danger); }
+    .chat-action.unavailable { cursor: not-allowed; color: var(--lv-fg-muted); opacity: .6; }
+
     .title {
       overflow: hidden;
       min-width: 0;
@@ -231,6 +321,7 @@ class LeapViewChatList extends LitElement {
 
     .date {
       flex: 0 0 auto;
+      margin-left: auto;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
       white-space: nowrap;
@@ -304,10 +395,20 @@ class LeapViewChatList extends LitElement {
         width: 100%;
       }
 
-      tbody tr:hover .date,
-      tbody tr:focus-within .date {
+      .quick-actions {
+        visibility: visible;
         opacity: 1;
       }
+
+      .date {
+        display: none;
+      }
+
+    }
+
+    @media (hover: none) {
+      .quick-actions { visibility: visible; opacity: 1; }
+      .date { display: none; }
     }
   `
 
@@ -324,7 +425,7 @@ class LeapViewChatList extends LitElement {
         <div class="header">
           <h2>Chats</h2>
           <div class="header-actions">
-            <button class="new-chat-link" type="button" @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-settings-open', { bubbles: true, composed: true }))}>${lucideIcon(Archive)}<span>Archived chats</span></button>
+            <button class="new-chat-link danger" type="button" @click=${() => this.runBulkAction('delete_active')}>${lucideIcon(Trash2)}<span>Delete all chats</span></button>
             ${this.agentEnabled
               ? html`<a class="new-chat-link" href="/chats/new">${lucideIcon(Plus)}<span>New chat</span></a>`
               : html`<button class="new-chat-link" type="button" disabled title="Agent is not configured">${lucideIcon(Plus)}<span>New chat</span></button>`}
@@ -376,7 +477,23 @@ class LeapViewChatList extends LitElement {
           <a class="primary-link" href=${href} data-primary="true" aria-label=${title}></a>
           <div class="row-content">
             <span class="title">${title}</span>
-            <time class="date" datetime=${conversation.updatedAt}>${conversation.updatedAt ? shortDate(conversation.updatedAt) : ''}</time>
+            <div class="row-status">
+              <time class="date" datetime=${conversation.updatedAt}>${conversation.updatedAt ? shortDate(conversation.updatedAt) : ''}</time>
+              <div class="quick-actions" aria-label=${`Quick actions for ${title}`}>
+                <button class="quick-action" type="button" aria-label=${`${conversation.pinned ? 'Unpin' : 'Pin'} ${title}`} title=${conversation.pinned ? 'Unpin chat' : 'Pin chat'} @click=${(event: MouseEvent) => this.runChatAction(event, conversation.pinned ? 'unpin' : 'pin', conversation, href)}>${lucideIcon(conversation.pinned ? PinOff : Pin, { size: 16 })}</button>
+                <button class="quick-action danger" type="button" aria-label=${`Delete ${title}`} title="Delete chat" @click=${(event: MouseEvent) => this.runChatAction(event, 'delete', conversation, href)}>${lucideIcon(Trash2, { size: 16 })}</button>
+              </div>
+            </div>
+            <details class="options-menu" ?open=${this.openMenuID === conversation.id} @toggle=${(event: Event) => this.onMenuToggle(event, conversation.id)}>
+              <summary class="options-button" aria-label=${`More actions for ${title}`} title="More actions">${lucideIcon(MoreHorizontal)}</summary>
+              <div class="options-panel" role="menu" aria-label=${`Actions for ${title}`}>
+                <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'select', conversation, href)}><span aria-hidden="true"></span><span>Select</span></button>
+                <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, conversation.pinned ? 'unpin' : 'pin', conversation, href)}>${lucideIcon(conversation.pinned ? PinOff : Pin, { size: 16 })}<span>${conversation.pinned ? 'Unpin chat' : 'Pin chat'}</span></button>
+                <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'rename', conversation, href)}>${lucideIcon(Pencil, { size: 16 })}<span>Rename</span></button>
+                <button class="chat-action unavailable" type="button" role="menuitem" disabled title="Chat projects are not supported yet"><span aria-hidden="true"></span><span>Add to project</span></button>
+                <button class="chat-action danger" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'delete', conversation, href)}>${lucideIcon(Trash2, { size: 16 })}<span>Delete chat</span></button>
+              </div>
+            </details>
           </div>
         </td>
       </tr>
@@ -385,6 +502,66 @@ class LeapViewChatList extends LitElement {
 
   private onSearchInput = (event: Event): void => {
     this.search = (event.target as HTMLInputElement).value
+  }
+
+  private onMenuToggle(event: Event, conversationID: string): void {
+    const menu = event.currentTarget as HTMLDetailsElement
+    if (menu.open) this.openMenuID = conversationID
+    else if (this.openMenuID === conversationID) this.openMenuID = ''
+  }
+
+  private closeMenuOnOutsidePointerdown = (event: PointerEvent): void => {
+    if (!this.openMenuID) return
+    const menu = this.renderRoot.querySelector<HTMLDetailsElement>('.options-menu[open]')
+    if (menu && !event.composedPath().includes(menu)) {
+      menu.open = false
+      this.openMenuID = ''
+    }
+  }
+
+  private onMenuKeydown = (event: KeyboardEvent): void => {
+    const menu = this.renderRoot.querySelector<HTMLDetailsElement>('.options-menu[open]')
+    if (!menu) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      menu.open = false
+      this.openMenuID = ''
+      menu.querySelector<HTMLElement>('summary')?.focus()
+      return
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !event.composedPath().includes(menu)) return
+    const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'))
+    if (!items.length) return
+    event.preventDefault()
+    const current = items.indexOf(event.composedPath().find((target): target is HTMLButtonElement => target instanceof HTMLButtonElement) as HTMLButtonElement)
+    const index = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? items.length - 1
+        : event.key === 'ArrowDown'
+          ? current < 0 ? 0 : (current + 1) % items.length
+          : current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length
+    items[index].focus()
+  }
+
+  private runChatAction(event: MouseEvent, action: string, conversation: ChatConversationSummary, href: string): void {
+    event.stopPropagation()
+    const menu = (event.currentTarget as HTMLElement).closest('details')
+    if (menu instanceof HTMLDetailsElement) menu.open = false
+    this.openMenuID = ''
+    this.dispatchEvent(new CustomEvent('lv-chat-action', {
+      bubbles: true,
+      composed: true,
+      detail: { action, conversationId: conversation.id, title: conversation.title, href },
+    }))
+  }
+
+  private runBulkAction(action: 'delete_active'): void {
+    this.dispatchEvent(new CustomEvent('lv-chat-action', {
+      bubbles: true,
+      composed: true,
+      detail: { action, conversationId: '' },
+    }))
   }
 }
 

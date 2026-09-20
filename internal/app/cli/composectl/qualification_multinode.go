@@ -367,11 +367,11 @@ func qualificationMultiNodeEnvironment(path string) (map[string]string, error) {
 			}
 		}
 	}
-	// A separate process must use a separate listen/socket home while keeping
-	// the production identity and environment bound to the same PostgreSQL
-	// instance. The certificate itself is mounted read-only below /etc.
+	// The separate bind mount isolates the process's local state while keeping
+	// the configured nested home directory writable by the non-root image user.
+	// The certificate itself is mounted read-only below /etc.
 	values["LEAPVIEW_ADDR"] = ":8080"
-	values["LEAPVIEW_HOME"] = "/var/lib/leapview"
+	values["LEAPVIEW_HOME"] = "/var/lib/leapview/home"
 	values["LEAPVIEW_DUCKDB_EXTENSION_CACHE_DIR"] = qualificationMultiNodeExtensionCache
 	objectStoreBackend := strings.ToLower(strings.TrimSpace(values["LEAPVIEW_OBJECT_STORE_BACKEND"]))
 	if objectStoreBackend == "" || objectStoreBackend == "filesystem" {
@@ -409,7 +409,7 @@ func qualificationMultiNodeContainerName(project string) string {
 
 func qualificationWaitMultiNodeReady(ctx context.Context, container qualificationContainer, stage string) error {
 	if err := waitQualificationHealthcheck(ctx, container, "http://127.0.0.1:8080/readyz", 3*time.Minute); err != nil {
-		return fmt.Errorf("wait for %s readiness: %w", stage, err)
+		return qualificationContainerOperationError(ctx, container, "wait for "+stage+" readiness", err)
 	}
 	return nil
 }

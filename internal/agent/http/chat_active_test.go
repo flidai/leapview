@@ -6,20 +6,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/agent"
-	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
+	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	"github.com/flidai/leapview/internal/agent/ui"
-	"github.com/flidai/leapview/internal/platform"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
-	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -30,9 +26,27 @@ import (
 type activeChatFixture struct {
 	service      *agent.Service
 	owner, other string
-	store        *platform.Store
 	ownerRequest func(*http.Request) (Principal, bool)
 	otherRequest func(*http.Request) (Principal, bool)
+}
+
+func queuedAgentRunWorkflow(input agent.PromptInput, runID string) jobs.WorkflowIntent {
+	return jobs.WorkflowIntent{
+		Event: jobs.EventInput{
+			Key:          "agent_run.queued:" + runID,
+			ResourceKind: "agent_run",
+			ResourceID:   runID,
+			EventType:    "agent_run.queued",
+			Data:         []byte(`{}`),
+		},
+		Job: jobs.EnqueueInput{
+			ID: "agent:" + runID + ":run", Kind: "agent.run",
+			WorkloadClass: jobplatform.WorkloadClassBackground,
+			PrincipalID:   input.Scope.PrincipalID, PartitionKey: "agent:" + input.Scope.ProjectID,
+			ResourceKind: "agent_run", ResourceID: runID,
+			EstimatedMemoryBytes: 1, Payload: []byte(`{}`),
+		},
+	}
 }
 
 type activeChatRecorder struct {
@@ -72,12 +86,8 @@ func (r *activeChatRecorder) body() string {
 
 func newActiveChatFixture(t *testing.T) activeChatFixture {
 	t.Helper()
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "chat-active.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
+	fixture := openAgentHTTPPostgresFixture(t, agentpostgres.Options{})
+	repo := fixture.Access
 	owner, err := repo.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "chat-owner@example.com", DisplayName: "Chat Owner"})
 	if err != nil {
 		t.Fatal(err)
@@ -89,9 +99,9 @@ func newActiveChatFixture(t *testing.T) activeChatFixture {
 	model := agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
 		return agentcore.ModelResponse{Content: "Generated title", FinishReason: agentcore.FinishReasonStop}, nil
 	})
-	service := agent.NewService(agentsqlite.NewRepository(store.SQLDB()), agent.Config{APIKey: "test", Model: "test"}, agent.WithModel(model))
+	service := agent.NewService(fixture.Agent, agent.Config{APIKey: "test", Model: "test"}, agent.WithModel(model))
 	return activeChatFixture{
-		service: service, owner: owner.ID, other: other.ID, store: store,
+		service: service, owner: owner.ID, other: other.ID,
 		ownerRequest: func(*http.Request) (Principal, bool) { return Principal{ID: owner.ID}, true },
 		otherRequest: func(*http.Request) (Principal, bool) { return Principal{ID: other.ID}, true },
 	}
@@ -262,23 +272,17 @@ func TestChatUpdatesForwardsDatastarConversationPatches(t *testing.T) {
 }
 
 func TestActiveChatTurnQueuesAndReturnsBeforeProviderExecution(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "chat-queued.db"))
+	fixture := openAgentHTTPPostgresFixture(t, agentpostgres.Options{})
+	owner, err := fixture.Access.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "queued-chat@example.com", DisplayName: "Queued Chat"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	owner, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "queued-chat@example.com", DisplayName: "Queued Chat"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo := agentsqlite.NewRepositoryWithWorkflow(store.SQLDB(), nil, jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
-		return nil
-	}))
+	repo := fixture.Agent
 	service := agent.NewService(repo, agent.Config{APIKey: "test", Model: "test"}, agent.WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
 		return agentcore.ModelResponse{Content: "provider must not run in the command", FinishReason: agentcore.FinishReasonStop}, nil
 	})))
 	service.SetPromptWorkflow(func(input agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
-		return jobs.WorkflowIntent{Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobplatform.WorkloadClassBackground, PrincipalID: input.Scope.PrincipalID, ResourceKind: "agent_run", ResourceID: runID, EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}}
+		return queuedAgentRunWorkflow(input, runID)
 	})
 	conversation, err := service.CreateConversation(t.Context(), agent.Scope{PrincipalID: owner.ID}, "Queued")
 	if err != nil {
@@ -323,7 +327,7 @@ func TestActiveChatTurnQueuesAndReturnsBeforeProviderExecution(t *testing.T) {
 		t.Fatalf("queued chat response status=%d body=%s", response.Code, response.Body.String())
 	}
 	if queued == nil || !queued.DurablyQueued() {
-		t.Fatal("active chat turn was not durably queued")
+		t.Fatalf("active chat turn was not durably queued: %s", response.Body.String())
 	}
 	if executed {
 		t.Fatal("active chat turn executed provider work in the command request")
@@ -344,23 +348,17 @@ func TestActiveChatTurnQueuesAndReturnsBeforeProviderExecution(t *testing.T) {
 }
 
 func TestActiveChatTurnDoesNotOverwriteSettledWorkerTranscript(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "chat-queued-settled.db"))
+	fixture := openAgentHTTPPostgresFixture(t, agentpostgres.Options{})
+	owner, err := fixture.Access.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "queued-settled@example.com", DisplayName: "Queued Settled"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	owner, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "queued-settled@example.com", DisplayName: "Queued Settled"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo := agentsqlite.NewRepositoryWithWorkflow(store.SQLDB(), nil, jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
-		return nil
-	}))
+	repo := fixture.Agent
 	service := agent.NewService(repo, agent.Config{APIKey: "test", Model: "test"}, agent.WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
 		return agentcore.ModelResponse{Content: "worker terminal output", FinishReason: agentcore.FinishReasonStop}, nil
 	})))
 	service.SetPromptWorkflow(func(input agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
-		return jobs.WorkflowIntent{Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobplatform.WorkloadClassBackground, PrincipalID: input.Scope.PrincipalID, ResourceKind: "agent_run", ResourceID: runID, EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}}
+		return queuedAgentRunWorkflow(input, runID)
 	})
 	scope := agent.Scope{PrincipalID: owner.ID}
 	conversation, err := service.CreateConversation(t.Context(), scope, "Queued settled")
@@ -405,23 +403,17 @@ func TestActiveChatTurnDoesNotOverwriteSettledWorkerTranscript(t *testing.T) {
 }
 
 func TestActiveChatTurnUsesOnlyScopedStreamWhenBrokerConfigured(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "chat-queued-ordered.db"))
+	fixture := openAgentHTTPPostgresFixture(t, agentpostgres.Options{})
+	owner, err := fixture.Access.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "queued-ordered@example.com", DisplayName: "Queued Ordered"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	owner, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "queued-ordered@example.com", DisplayName: "Queued Ordered"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo := agentsqlite.NewRepositoryWithWorkflow(store.SQLDB(), nil, jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
-		return nil
-	}))
+	repo := fixture.Agent
 	service := agent.NewService(repo, agent.Config{APIKey: "test", Model: "test"}, agent.WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
 		return agentcore.ModelResponse{Content: "unused", FinishReason: agentcore.FinishReasonStop}, nil
 	})))
 	service.SetPromptWorkflow(func(input agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
-		return jobs.WorkflowIntent{Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobplatform.WorkloadClassBackground, PrincipalID: input.Scope.PrincipalID, ResourceKind: "agent_run", ResourceID: runID, EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}}
+		return queuedAgentRunWorkflow(input, runID)
 	})
 	scope := agent.Scope{PrincipalID: owner.ID}
 	conversation, err := service.CreateConversation(t.Context(), scope, "Ordered")

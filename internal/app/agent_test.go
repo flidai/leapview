@@ -123,7 +123,7 @@ func TestAgentConfigurationCommandUsesGeneratedPublicContract(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Use verified sources.") {
 		t.Fatalf("update status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	prompt, err := store.GetSetting(ctx, agentconfig.SystemPromptSettingKey)
+	prompt, err := store.fixture.Graph.Bootstrap.GetSetting(ctx, agentconfig.SystemPromptSettingKey)
 	if err != nil || prompt != "Use verified sources." {
 		t.Fatalf("stored prompt=%q err=%v", prompt, err)
 	}
@@ -134,7 +134,7 @@ func TestAgentConfigurationCommandUsesGeneratedPublicContract(t *testing.T) {
 	if staleRec.Code != http.StatusPreconditionFailed {
 		t.Fatalf("stale update status=%d body=%s", staleRec.Code, staleRec.Body.String())
 	}
-	prompt, err = store.GetSetting(ctx, agentconfig.SystemPromptSettingKey)
+	prompt, err = store.fixture.Graph.Bootstrap.GetSetting(ctx, agentconfig.SystemPromptSettingKey)
 	if err != nil || prompt != "Use verified sources." {
 		t.Fatalf("prompt after stale update=%q err=%v", prompt, err)
 	}

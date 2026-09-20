@@ -338,7 +338,7 @@ func groupAuditMetadata(row access.Group) map[string]any {
 	return map[string]any{"provider": row.Provider, "externalId": row.ExternalID, "displayName": row.Name}
 }
 func apiTokenDTO(row access.APIToken) map[string]any {
-	out := map[string]any{"id": row.ID, "principalId": row.PrincipalID, "name": row.Name, "expiresAt": emptyToNil(row.ExpiresAt), "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt)}
+	out := map[string]any{"id": row.ID, "principalId": row.PrincipalID, "name": row.Name, "description": row.Description, "expiresAt": emptyToNil(row.ExpiresAt), "createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt)}
 	if row.Capabilities != nil {
 		values := make([]string, 0, len(row.Capabilities))
 		for _, capability := range row.Capabilities {

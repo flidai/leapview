@@ -304,6 +304,17 @@ func emptyDash(value string) string {
 	return value
 }
 
+// unavailableDash is used on operational tables where a missing value is a
+// genuine absence, rather than a legacy empty catalog field. The em dash is
+// easier to scan in dense history tables and avoids looking like a negative
+// number or an identifier.
+func unavailableDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "—"
+	}
+	return value
+}
+
 func jsonString(value any) string {
 	bytes, err := json.Marshal(value)
 	if err != nil {

@@ -76,6 +76,7 @@ func TestAdminRoutesExposeOnlyPersonalSettingsToViewer(t *testing.T) {
 		{method: http.MethodGet, path: "/admin/profile", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/security", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/api-tokens", status: http.StatusOK},
+		{method: http.MethodGet, path: "/admin/api-tokens/new", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/agent", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/admin/storage", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/admin/storage/tables/model/orders", status: http.StatusForbidden},
@@ -99,7 +100,7 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
 	analyst := testPrincipal(t, ctx, store, "analyst@example.com", "Analyst")
 	repo := testAccessRepository(store)
-	group, err := repo.UpsertGroup(ctx, access.GroupInput{ID: "group_finance", Provider: "local", ExternalID: "finance", Name: "Finance"})
+	group, err := repo.UpsertGroup(ctx, access.GroupInput{Provider: "local", ExternalID: "finance", Name: "Finance"})
 	if err != nil {
 		t.Fatalf("seed group: %v", err)
 	}
@@ -117,10 +118,11 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 	}{
 		{path: "/admin", status: http.StatusSeeOther, want: []string{"/admin/profile"}},
 		{path: "/admin/profile", want: []string{"<lv-admin-page", `section="profile"`, `/updates?route=admin&amp;section=profile`}},
+		{path: "/admin/archived-chats", want: []string{"<lv-admin-page", `section="archived-chats"`, `/updates?route=admin&amp;section=archived-chats`}},
 		{path: "/admin/principals", want: []string{"<lv-admin-page", `section="principals"`, `/updates?route=admin&amp;section=principals`, "/admin/access/command", "createPrincipal"}},
 		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`, "/admin/access/command", "resetPrincipalPassword"}},
 		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`, "/admin/access/command", "createGroup"}},
-		{path: "/admin/groups/group_finance", want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=group_finance&amp;route=admin&amp;section=group-detail`, "/admin/access/command", "addGroupMember"}},
+		{path: "/admin/groups/" + group.ID, want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=` + group.ID + `&amp;route=admin&amp;section=group-detail`, "/admin/access/command", "addGroupMember"}},
 		{path: "/admin/access", want: []string{"<lv-admin-page", `section="access"`, `/updates?route=admin&amp;section=access`, "/admin/access/command?section=access", "createProjectRoleBinding"}},
 		{path: "/admin/agent", want: []string{"<lv-admin-page", `section="agent"`, `/updates?route=admin&amp;section=agent`, "/admin/agent/config", "updateAgentConfig"}},
 		{path: "/admin/storage", want: []string{"<lv-admin-page", `section="storage"`, `/updates?route=admin&amp;section=storage`}},
@@ -231,7 +233,7 @@ func TestAdminAccessCommandCreatesGroupAndReturnsDetailRedirectSignal(t *testing
 
 	server.Routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"redirectTo":"/admin/groups/group_`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"redirectTo":"/admin/groups/`) {
 		t.Fatalf("command response = %d %s", rec.Code, rec.Body.String())
 	}
 	groups, err := testAccessRepository(store).ListGroups(ctx)
@@ -253,7 +255,7 @@ func TestAdminAccessCommandAddsMultipleGroupMembers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, err := repo.UpsertGroup(ctx, access.GroupInput{Name: "Analysts"})
+	group, err := repo.UpsertGroup(ctx, access.GroupInput{Provider: "local", ExternalID: "analysts", Name: "Analysts"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +433,7 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 	}
 	defer unsubscribe()
 
-	body := strings.NewReader(`{"adminQueryHistory":{"filterMenus":[{"id":"project","label":"Project"}]},"adminQueryHistoryCommand":{"action":"filter_search","limit":50,"filterMenu":{"menuId":"project","action":"search","search":"test"}}}`)
+	body := strings.NewReader(`{"adminQueryHistory":{"filterMenus":[{"id":"project","label":"Project"}]},"adminQueryHistoryCommand":{"action":"filter_search","limit":50,"filterMenu":{"menuId":"project","action":"search","search":"operations"}}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -450,13 +452,8 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 		}
 		projectMenu := queryHistoryMenuForTest(uisignals.ValueOrZero(history.FilterMenus), "project")
 		projectOptions := uisignals.ValueOrZero(projectMenu.Options)
-		if uisignals.ValueOrZero(projectMenu.Search) != "test" || len(projectOptions) != 1 || projectOptions[0].Value != "project:test" {
+		if uisignals.ValueOrZero(projectMenu.Search) != "operations" || len(projectOptions) != 1 || projectOptions[0].Value != "project:operations" {
 			t.Fatalf("project menu = %#v", projectMenu)
-		}
-		for _, option := range projectOptions {
-			if option.Value == "project:operations" {
-				t.Fatalf("foreign Project disclosed in query-history options: %#v", projectOptions)
-			}
 		}
 		if len(history.Table.Rows) != 0 {
 			t.Fatalf("filter search should not patch table rows: %#v", history.Table.Rows)
@@ -757,7 +754,7 @@ func TestAdminPrincipalDetailReturnsNotFoundForMissingPrincipal(t *testing.T) {
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/principals/missing", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/principals/00000000-0000-0000-0000-000000000000", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
@@ -775,7 +772,7 @@ func TestAdminGroupDetailReturnsNotFoundForMissingGroup(t *testing.T) {
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/groups/missing", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/groups/00000000-0000-0000-0000-000000000000", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)

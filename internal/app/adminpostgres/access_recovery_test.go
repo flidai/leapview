@@ -50,6 +50,7 @@ type testPlatformAdminRecoveryTransaction struct {
 	input            access.PlatformAdminGrantInput
 	grant            access.PlatformAdminGrantResult
 	recoveryPassword string
+	resetCalls       int
 	reset            access.LocalPasswordReset
 	resetErr         error
 }
@@ -68,6 +69,7 @@ func (*testPlatformAdminRecoveryTransaction) RevokePlatformAdmin(context.Context
 }
 
 func (tx *testPlatformAdminRecoveryTransaction) RecoverLocalPassword(_ context.Context, _ string, password string) (access.LocalPasswordReset, error) {
+	tx.resetCalls++
 	tx.recoveryPassword = password
 	return tx.reset, tx.resetErr
 }
@@ -252,6 +254,43 @@ func TestPlatformAdministratorRecoveryCanResetLocalCredentialWithoutLeakingIt(t 
 	}
 	if !evidence.LocalPasswordReset {
 		t.Fatalf("evidence = %#v", evidence)
+	}
+	// A transport retry must replay the role result without replacing a
+	// password changed after the first recovery or revoking its new session.
+	tx.grant.Replayed = true
+	tx.recoveryPassword = ""
+	out.Reset()
+	if err := ops.RecoverPlatformAdministrator(t.Context(), admincli.PlatformAdminRecoveryRequest{
+		PrincipalID: principalID, ExpectedEmail: principal.Email, OperationID: principalRecoveryTestID(2),
+		ExpectedRevision: before.Revision, LocalPasswordFile: passwordFile,
+		AcknowledgeOfflineRecovery: true, AcknowledgeCredentialReset: true, Apply: true,
+	}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if tx.resetCalls != 1 || tx.recoveryPassword != "" {
+		t.Fatalf("replay replaced password: calls=%d password=%q", tx.resetCalls, tx.recoveryPassword)
+	}
+	if err := json.Unmarshal(out.Bytes(), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if !evidence.Replayed || evidence.LocalPasswordReset || authority.audit.Action != "platform_admin.recovered" {
+		t.Fatalf("replay evidence = %#v, audit = %#v", evidence, authority.audit)
+	}
+}
+
+func TestPlatformAdminRecoveryIntentBinding(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	original, err := platformAdminRecoveryRequestBinding(key, "principal", "operator@example.test", "first password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := platformAdminRecoveryRequestBinding(key, "principal", "operator@example.test", "first password")
+	if err != nil || retry != original {
+		t.Fatalf("stable retry binding = %q, error = %v", retry, err)
+	}
+	changed, err := platformAdminRecoveryRequestBinding(key, "principal", "operator@example.test", "second password")
+	if err != nil || changed == original || strings.Contains(changed, "password") {
+		t.Fatalf("changed password did not change opaque binding: %q, error = %v", changed, err)
 	}
 }
 

@@ -5,23 +5,19 @@ import (
 	"encoding/json"
 	stdhttp "net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 )
 
 func TestPlatformRoleApprovalInvalidRequestPersistsScopedDenialEvidence(t *testing.T) {
 	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
+	store := openAccessHTTPTestStore(t)
+	repo := store.repository
+	admin, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{Kind: access.PrincipalKindUser, Email: "approval-audit-admin@example.test"})
+	if err == nil {
+		_, err = repo.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: admin.ID, Email: admin.Email, Role: access.PlatformRoleAdmin})
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
-	admin, err := repo.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: "approval-audit-admin", Email: "approval-audit-admin@example.test", Role: access.PlatformRoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}

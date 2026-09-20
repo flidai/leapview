@@ -134,30 +134,9 @@ var CompositionContractPrefixes = map[string]struct{}{
 	"internal/deployment/postgres":         {},
 }
 
-// SQLiteFixturePackagePrefixes enumerates the local/evaluation SQLite
-// adapters that remain in the tree solely to support tests and offline
-// tooling. They are deliberately not composition contracts: production code
-// must use the native PostgreSQL implementations instead.
-var SQLiteFixturePackagePrefixes = []string{
-	"internal/access/sqlite",
-	"internal/agent/sqlite",
-	"internal/servingstate/sqlite",
-	"internal/manageddata/sqlite",
-	"internal/refresh/sqlite",
-	"internal/dashboard/publication/sqlite",
-	"internal/platform/http/idempotency/sqlite",
-	"internal/platform/jobs/sqlite",
-}
-
-// SQLiteFixtureFilePaths contains the one retained SQLite implementation that
-// lives in the platform package rather than an explicit /sqlite subpackage.
-// The Store is only a local/evaluation fixture; production composition must
-// never construct it.
-var SQLiteFixtureFilePaths = []string{"internal/platform/store.go"}
-
-// PlatformRootImportPath is the legacy SQLite platform store package. It is
-// retained only as a shared test harness; production code must depend on the
-// explicit platform subpackages instead.
+// PlatformRootImportPath is forbidden because the former package was the
+// shared SQLite control-plane store. Callers must use an explicit platform
+// subpackage instead.
 const PlatformRootImportPath = "github.com/flidai/leapview/internal/platform"
 
 // IsPlatformRootImport reports whether an import targets the legacy platform
@@ -179,28 +158,33 @@ func IsSQLitePackage(path string) bool {
 	return false
 }
 
-// IsSQLiteFixturePackage reports whether path belongs to one of the explicitly
-// retained local/evaluation SQLite adapters.
-func IsSQLiteFixturePackage(path string) bool {
-	path = strings.Trim(path, "/")
-	for _, prefix := range SQLiteFixturePackagePrefixes {
+var controlPlaneSQLitePackagePrefixes = []string{
+	"internal/access/sqlite",
+	"internal/admin/sqlite",
+	"internal/agent/sqlite",
+	"internal/dashboard/appearance/sqlite",
+	"internal/dashboard/authoring/sqlite",
+	"internal/dashboard/publication/sqlite",
+	"internal/manageddata/sqlite",
+	"internal/manageddata/maintenance/sqlite",
+	"internal/platform/http/idempotency/sqlite",
+	"internal/platform/jobs/sqlite",
+	"internal/refresh/sqlite",
+	"internal/release/sqlite",
+	"internal/servingstate/sqlite",
+}
+
+// IsControlPlaneSQLitePackage reports whether path is one of the retired
+// control-plane adapters. Analytics SQLite connectors are deliberately outside
+// this list: SQLite remains a supported source system.
+func IsControlPlaneSQLitePackage(path string) bool {
+	path = strings.Trim(strings.TrimPrefix(path, PlatformRootImportPath+"/"), "/")
+	for _, prefix := range controlPlaneSQLitePackagePrefixes {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
 	}
 	return false
-}
-
-// IsSQLiteFixtureFile reports whether path is an explicitly retained fixture
-// source file or belongs to one of the fixture adapter packages.
-func IsSQLiteFixtureFile(path string) bool {
-	path = strings.Trim(path, "/")
-	for _, fixturePath := range SQLiteFixtureFilePaths {
-		if path == fixturePath {
-			return true
-		}
-	}
-	return IsSQLiteFixturePackage(path)
 }
 
 func IsCompositionContractImport(packagePath string) bool {

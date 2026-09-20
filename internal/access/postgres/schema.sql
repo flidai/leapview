@@ -669,6 +669,7 @@ CREATE TABLE access.api_token (
     id uuid PRIMARY KEY,
     principal_id uuid NOT NULL REFERENCES access.principal(id),
     name text NOT NULL CHECK (name = btrim(name) AND length(name) BETWEEN 1 AND 255),
+    description text NOT NULL DEFAULT '' CHECK (description = btrim(description) AND length(description) <= 1024),
     token_fingerprint bytea NOT NULL UNIQUE,
     verifier bytea NOT NULL,
     capabilities jsonb CHECK (access.valid_capabilities(capabilities)),

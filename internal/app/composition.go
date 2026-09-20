@@ -13,6 +13,7 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmodule "github.com/flidai/leapview/internal/project/module"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
@@ -96,13 +97,16 @@ type claimedProjectBinder interface {
 	BindClaimedProject(projectgraph.ResourceID, servingstatemodule.Environment) error
 }
 
-func bindClaimedProject(runtimeHost claimedProjectBinder, environment servingstatemodule.Environment) func(context.Context, projectgraph.ResourceID, servingstatemodule.Environment) error {
-	return func(_ context.Context, projectID projectgraph.ResourceID, claimedEnvironment servingstatemodule.Environment) error {
+func bindClaimedProject(runtimeHost claimedProjectBinder, identities projectmodule.IdentityRepository, environment servingstatemodule.Environment) func(context.Context, projectgraph.ResourceID, servingstatemodule.Environment) error {
+	return func(ctx context.Context, projectID projectgraph.ResourceID, claimedEnvironment servingstatemodule.Environment) error {
 		if claimedEnvironment != environment {
 			return fmt.Errorf("claimed project environment %q does not match configured environment %q", claimedEnvironment, environment)
 		}
 		if runtimeHost == nil {
 			return errors.New("runtime host is unavailable")
+		}
+		if err := projectmodule.EnsureIdentity(ctx, identities, projectID); err != nil {
+			return fmt.Errorf("ensure claimed project identity: %w", err)
 		}
 		return runtimeHost.BindClaimedProject(projectID, claimedEnvironment)
 	}

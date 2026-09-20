@@ -19,6 +19,12 @@ WHERE service_principal_id = sqlc.arg(principal_id)::uuid
 ORDER BY created_at DESC
 LIMIT sqlc.arg(page_size)::int;
 
+-- name: CountServicePrincipalSecrets :many
+SELECT service_principal_id, COUNT(*)::bigint AS secret_count
+FROM access.service_principal_secret
+WHERE revoked_at IS NULL
+GROUP BY service_principal_id;
+
 -- name: GetServiceSecretForPrincipal :one
 SELECT id, service_principal_id, name, expires_at, created_at, last_used_at, revoked_at
 FROM access.service_principal_secret

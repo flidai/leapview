@@ -29,6 +29,10 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.A
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
+	description := strings.TrimSpace(in.Description)
+	if len(description) > 1024 {
+		return "", access.APIToken{}, fmt.Errorf("token description must not exceed 1024 bytes")
+	}
 	caps, err := capabilitiesJSON(in.Capabilities)
 	if err != nil {
 		return "", access.APIToken{}, err
@@ -53,7 +57,7 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.A
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
-	tag, err := accessdb.New(db).CreateAPIToken(ctx, accessdb.CreateAPITokenParams{ID: tokenID, PrincipalID: principalID, Name: name,
+	tag, err := accessdb.New(db).CreateAPIToken(ctx, accessdb.CreateAPITokenParams{ID: tokenID, PrincipalID: principalID, Name: name, Description: description,
 		TokenFingerprint: r.secretFingerprint(tok), Verifier: ver, Capabilities: caps, ExpiresAt: pgTimestamp(in.ExpiresAt)})
 	if err != nil {
 		return "", access.APIToken{}, err

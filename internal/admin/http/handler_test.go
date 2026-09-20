@@ -89,6 +89,14 @@ func (r *auditCommandRepository) ListAuditEvents(_ context.Context, filter acces
 	return []access.AuditEvent{}, nil
 }
 
+func (auditCommandRepository) ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error) {
+	return nil, nil
+}
+
+func (auditCommandRepository) ListAllGroups(context.Context) ([]access.Group, error) {
+	return nil, nil
+}
+
 func (auditCommandRepository) ListServicePrincipals(context.Context) ([]access.Principal, error) {
 	return nil, nil
 }
@@ -140,7 +148,7 @@ func TestPersonalSettingsRejectAuthoringCredentials(t *testing.T) {
 	handler := Handler{ReadModel: ReadModel{}, CurrentCredential: func(*http.Request) (access.APICredential, bool) {
 		return access.APICredential{Authoring: &access.AuthoringSession{ID: "authoring-1"}}, true
 	}}
-	for _, path := range []string{"/admin/profile", "/admin/security", "/admin/api-tokens"} {
+	for _, path := range []string{"/admin/profile", "/admin/security", "/admin/api-tokens", "/admin/api-tokens/new"} {
 		recorder := httptest.NewRecorder()
 		handler.Profile(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusForbidden {

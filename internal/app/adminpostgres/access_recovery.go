@@ -2,6 +2,9 @@ package adminpostgres
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +25,7 @@ type platformAdminRecoveryEvidence struct {
 	Email              string `json:"email"`
 	AlreadyAdmin       bool   `json:"alreadyAdmin"`
 	LocalPasswordReset bool   `json:"localPasswordReset"`
+	Replayed           bool   `json:"replayed,omitempty"`
 	PreviousRevision   string `json:"previousRevision"`
 	ResultRevision     string `json:"resultRevision,omitempty"`
 	BindingID          string `json:"bindingId,omitempty"`
@@ -91,6 +95,10 @@ func (o Operations) RecoverPlatformAdministrator(ctx context.Context, request ad
 		return err
 	}
 	key, err := accessFingerprintKey(cfg)
+	if err != nil {
+		return err
+	}
+	requestBinding, err := platformAdminRecoveryRequestBinding(key, principalID, expectedEmail, recoveryPassword)
 	if err != nil {
 		return err
 	}
@@ -166,12 +174,13 @@ func (o Operations) RecoverPlatformAdministrator(ctx context.Context, request ad
 		}
 		result, err = writer.GrantPlatformAdmin(ctx, access.PlatformAdminGrantInput{
 			PrincipalID: principalID, ExpectedRevision: expectedRevision,
-			IdempotencyKey: platformAdminRecoveryIdempotencyPrefix + operationID,
+			IdempotencyKey:       platformAdminRecoveryIdempotencyPrefix + operationID,
+			RequestDigestBinding: requestBinding,
 		})
 		if err != nil {
 			return access.AuditEventInput{}, err
 		}
-		if recoveryPassword != "" {
+		if recoveryPassword != "" && !result.Replayed {
 			writer, ok := transaction.(access.LocalPasswordRecoveryWriter)
 			if !ok {
 				return access.AuditEventInput{}, errors.New("transactional local password recovery is unavailable")
@@ -189,6 +198,7 @@ func (o Operations) RecoverPlatformAdministrator(ctx context.Context, request ad
 			"bindingId": result.Administrator.BindingID, "operationId": operationID,
 			"principalId": principalID, "recoveryMode": "offline_operator",
 			"revision": result.State.Revision, "localPasswordReset": localPasswordReset,
+			"replayed": result.Replayed,
 		})
 		if encodeErr != nil {
 			return access.AuditEventInput{}, encodeErr
@@ -205,7 +215,27 @@ func (o Operations) RecoverPlatformAdministrator(ctx context.Context, request ad
 	evidence.BindingID = result.Administrator.BindingID
 	evidence.ResultRevision = result.State.Revision
 	evidence.LocalPasswordReset = localPasswordReset
+	evidence.Replayed = result.Replayed
 	return writePlatformAdminRecoveryEvidence(out, evidence)
+}
+
+// Bind the complete recovery intent to the grant operation without storing a
+// password verifier or an unkeyed password hash in the idempotency ledger.
+// A retry with a changed password file or omitted reset fails as a conflict.
+func platformAdminRecoveryRequestBinding(key []byte, principalID, email, password string) (string, error) {
+	payload, err := json.Marshal(struct {
+		PrincipalID string `json:"principalId"`
+		Email       string `json:"email"`
+		Password    string `json:"password"`
+	}{PrincipalID: principalID, Email: email, Password: password})
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, key)
+	if _, err := mac.Write(payload); err != nil {
+		return "", err
+	}
+	return "hmac-sha256:" + hex.EncodeToString(mac.Sum(nil)), nil
 }
 
 func readRecoveryPasswordFile(path string) (string, error) {

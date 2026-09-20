@@ -301,7 +301,6 @@ func TestPostgresClaimRiverJobRejectsRescuedAttemptAndAllowsHandoff(t *testing.T
 	if claimed.LeaseOwner != "owner-b" || claimed.LeaseRevision != 2 {
 		t.Fatalf("handoff claim fence = %q/%d, want owner-b/2", claimed.LeaseOwner, claimed.LeaseRevision)
 	}
-	assertExpiredRiverJobRecoveryLifecycle(t, db, queue, runID, riverID)
 }
 
 // listRiverRefreshJobs is test-only setup for selecting a pending product

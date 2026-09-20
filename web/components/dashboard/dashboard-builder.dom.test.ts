@@ -1073,17 +1073,14 @@ test('dashboard builder keeps the independent Data pane usable across dock break
         await element.updateComplete
         const root = (element.shadowRoot as ShadowRoot)
         const box = (selector: string) => (root.querySelector(selector) as HTMLElement).getBoundingClientRect()
-        const canvas = box('.canvas-pane')
-        const pageBar = box('.page-bar')
-        const visual = box('.visual-builder')
-        const data = box('.data-pane')
-        const search = box('.data-pane input[aria-label="Search fields"]')
+        const canvas = box('.canvas-pane'); const pageBar = box('.page-bar'); const visual = box('.visual-builder'); const data = box('.data-pane'); const searchInput = root.querySelector<HTMLInputElement>('.data-pane input[aria-label="Search fields"]'); const search = searchInput?.getBoundingClientRect(); const filter = root.querySelector<HTMLElement>('.data-pane .field-filter'); const filterBounds = filter?.getBoundingClientRect()
         return {
           canvas: { right: canvas.right, bottom: canvas.bottom },
           pageBar: { top: pageBar.top, bottom: pageBar.bottom },
           visual: { left: visual.left, top: visual.top, right: visual.right, bottom: visual.bottom },
           data: { left: data.left, top: data.top, right: data.right, bottom: data.bottom },
-          searchVisible: search.width > 0 && search.height > 0,
+          searchVisible: Boolean(search && search.width > 0 && search.height > 0),
+          searchContract: { placeholder: searchInput?.getAttribute('placeholder'), title: searchInput?.getAttribute('title'), filterOverflow: Boolean(filter && filter.scrollWidth > filter.clientWidth + 1), labelsFit: Boolean(filter && filterBounds && Array.from(filter.querySelectorAll('button')).every((button) => button.getBoundingClientRect().right <= filterBounds.right + 1)) },
           semanticHelper: root.querySelector('.data-pane .pane-hint')?.textContent?.trim(),
           horizontalOverflow: document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth,
         }
@@ -1095,6 +1092,7 @@ test('dashboard builder keeps the independent Data pane usable across dock break
     expect(stackedRight.data.left).toBeCloseTo(stackedRight.visual.left, 0)
     expect(stackedRight.data.top).toBeGreaterThanOrEqual(stackedRight.visual.bottom - 1)
     expect(stackedRight.searchVisible).toBe(true)
+    expect(stackedRight.searchContract).toEqual({ placeholder: 'Search fields', title: 'Search measures and dimensions', filterOverflow: false, labelsFit: true })
     expect(stackedRight.semanticHelper).toBeUndefined()
     expect(stackedRight.horizontalOverflow).toBe(false)
 
@@ -1103,6 +1101,7 @@ test('dashboard builder keeps the independent Data pane usable across dock break
     expect(belowCanvas.data.top).toBeCloseTo(belowCanvas.visual.top, 0)
     expect(belowCanvas.data.left).toBeGreaterThanOrEqual(belowCanvas.visual.right - 1)
     expect(belowCanvas.searchVisible).toBe(true)
+    expect(belowCanvas.searchContract).toEqual({ placeholder: 'Search fields', title: 'Search measures and dimensions', filterOverflow: false, labelsFit: true })
     expect(belowCanvas.horizontalOverflow).toBe(false)
   } finally {
     await page.close()

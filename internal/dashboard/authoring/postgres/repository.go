@@ -16,6 +16,7 @@ import (
 	dashboarddb "github.com/flidai/leapview/internal/dashboard/authoring/postgres/internal/db"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
+	"github.com/flidai/leapview/internal/platform/accesslifecycle"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
@@ -190,6 +191,13 @@ func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (a
 			return lifecycle, nil
 		}
 	}
+	// The owner check and dashboard insert must share the access lifecycle
+	// boundary. Otherwise an offboarding transaction could commit after this
+	// request's active-principal read and leave a newly created root owned by a
+	// revoked principal.
+	if err := accesslifecycle.LockOwnedPrincipal(ctx, tx, input.Lifecycle.OwnerPrincipalID); err != nil {
+		return authoring.DashboardLifecycle{}, err
+	}
 	ownerPrincipalID, err := nativeUUID(input.Lifecycle.OwnerPrincipalID)
 	if err != nil {
 		return authoring.DashboardLifecycle{}, fmt.Errorf("owner principal id: %w", err)
@@ -220,7 +228,7 @@ func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (a
 		EventID: nativeUUIDValue(intent.EventID),
 	})
 	if err != nil {
-		if isConstraint(err) {
+		if isUniqueConstraint(err) {
 			return authoring.DashboardLifecycle{}, fmt.Errorf("%w: dashboard identity already exists or slug is in use", authoring.ErrConflict)
 		}
 		return authoring.DashboardLifecycle{}, err
@@ -1474,6 +1482,11 @@ func staleConflict() error {
 }
 
 func conflict(message string) error { return fmt.Errorf("%w: %s", authoring.ErrConflict, message) }
+
+func isUniqueConstraint(err error) bool {
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) && postgresError.Code == "23505"
+}
 
 func isConstraint(err error) bool {
 	if err == nil {

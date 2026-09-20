@@ -12,10 +12,12 @@ type bootstrapAuthorizationContextKey struct{}
 
 type publicationApprovalBootstrapAuthorizationContextKey struct{}
 
+type managedDataStagingAuthorizationContextKey struct{}
+
 // BootstrapAuthorization is an opaque, request-local authorization marker
 // emitted only after the strict bootstrap request checks have passed. It binds
-// downstream managed-data authorization to the exact project, principal, and
-// capability that were admitted before dispatch.
+// downstream authorization to the exact project, principal, and capability
+// that were admitted before dispatch.
 type BootstrapAuthorization struct {
 	ProjectID   projectgraph.ResourceID
 	PrincipalID string
@@ -41,6 +43,40 @@ func BootstrapAuthorizationFromContext(ctx context.Context) (BootstrapAuthorizat
 	marker, ok := ctx.Value(bootstrapAuthorizationContextKey{}).(BootstrapAuthorization)
 	if !ok || marker.ProjectID.Validate() != nil || strings.TrimSpace(marker.PrincipalID) == "" || marker.Capability.Validate() != nil {
 		return BootstrapAuthorization{}, false
+	}
+	return marker, true
+}
+
+// ManagedDataStagingAuthorization is minted only after the access boundary
+// proves that the requested connection is absent from the active predecessor
+// graph (or that no generation is active) and validates the exact project
+// claim plus scoped authoring credential. Binding the connection prevents the
+// marker from authorizing another managed-data target downstream.
+type ManagedDataStagingAuthorization struct {
+	ProjectID    projectgraph.ResourceID
+	ConnectionID projectgraph.ResourceID
+	PrincipalID  string
+	Capability   access.Capability
+}
+
+func withManagedDataStagingAuthorization(ctx context.Context, projectID, connectionID projectgraph.ResourceID, principalID string, capability access.Capability) context.Context {
+	if ctx == nil || projectID.Validate() != nil || connectionID.Validate() != nil || strings.TrimSpace(principalID) == "" || capability.Validate() != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, managedDataStagingAuthorizationContextKey{}, ManagedDataStagingAuthorization{
+		ProjectID: projectID, ConnectionID: connectionID, PrincipalID: strings.TrimSpace(principalID), Capability: capability,
+	})
+}
+
+// ManagedDataStagingAuthorizationFromContext returns the exact request-local
+// staging marker for the managed-data handler authorization adapter.
+func ManagedDataStagingAuthorizationFromContext(ctx context.Context) (ManagedDataStagingAuthorization, bool) {
+	if ctx == nil {
+		return ManagedDataStagingAuthorization{}, false
+	}
+	marker, ok := ctx.Value(managedDataStagingAuthorizationContextKey{}).(ManagedDataStagingAuthorization)
+	if !ok || marker.ProjectID.Validate() != nil || marker.ConnectionID.Validate() != nil || strings.TrimSpace(marker.PrincipalID) == "" || marker.Capability.Validate() != nil {
+		return ManagedDataStagingAuthorization{}, false
 	}
 	return marker, true
 }

@@ -41,6 +41,19 @@ FROM public.river_job
 WHERE id = sqlc.arg(id)
 FOR UPDATE;
 
+-- name: LockJobForRefreshOrphanRescue :one
+SELECT id, kind, partition_key, resource_kind, resource_id, status,
+       attempt_count, river_job_id
+FROM jobs.job_history
+WHERE id = sqlc.arg(id)
+FOR UPDATE;
+
+-- name: LockRiverJobForRefreshOrphanRescue :one
+SELECT id, kind, state::text AS state, attempt, attempted_by, max_attempts
+FROM public.river_job
+WHERE id = sqlc.arg(id)
+FOR UPDATE;
+
 -- name: MarkJobRunning :execrows
 UPDATE jobs.job_history
 SET status = 'running',

@@ -5,31 +5,18 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/admin/product"
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
-func TestSettingsPlatformAdministratorStaleAttemptPersistsScopedDenial(t *testing.T) {
-	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
-	actor, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{ID: "settings-audit-actor", Kind: access.PrincipalKindUser, Email: "settings-audit@example.test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrapped := &settingsDenialRepository{Repository: repo, state: access.PlatformAdministratorState{Revision: "settings-revision-1"}}
+func TestSettingsPlatformAdministratorStaleAttemptRecordsScopedDenial(t *testing.T) {
+	actor := access.Principal{ID: "settings-audit-actor", Kind: access.PrincipalKindUser, Email: "settings-audit@example.test"}
+	wrapped := &settingsDenialRepository{state: access.PlatformAdministratorState{Revision: "settings-revision-1"}}
 	service, err := testProductService()
 	if err != nil {
 		t.Fatal(err)
@@ -60,10 +47,7 @@ func TestSettingsPlatformAdministratorStaleAttemptPersistsScopedDenial(t *testin
 	if response.Code != http.StatusPreconditionFailed {
 		t.Fatalf("status=%d body=%s, want precondition failure", response.Code, response.Body.String())
 	}
-	events, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{Action: "platform_admin.denied"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	events := wrapped.events
 	if len(events) != 1 {
 		t.Fatalf("denial events=%#v, want one", events)
 	}
@@ -87,7 +71,18 @@ func TestSettingsPlatformAdministratorStaleAttemptPersistsScopedDenial(t *testin
 
 type settingsDenialRepository struct {
 	access.Repository
-	state access.PlatformAdministratorState
+	state  access.PlatformAdministratorState
+	events []access.AuditEvent
+}
+
+func (r *settingsDenialRepository) RecordAuditEvent(_ context.Context, input access.AuditEventInput) error {
+	r.events = append(r.events, access.AuditEvent{
+		PrincipalID: input.PrincipalID, Action: input.Action,
+		ResourceID: input.ResourceID, RequestID: input.RequestID,
+		CorrelationID: input.CorrelationID, Status: input.Status,
+		MetadataJSON: input.MetadataJSON,
+	})
+	return nil
 }
 
 func (r *settingsDenialRepository) ListPlatformAdminAuthorities(context.Context) (access.PlatformAdministratorState, error) {

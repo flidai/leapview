@@ -147,12 +147,15 @@ func TestDashboardCopyEntryUsesProductLanguageWithoutDraftStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := html.UnescapeString(rendered.String())
-	for _, want := range []string{"Make a copy", "Create an editable copy in My dashboards."} {
+	for _, want := range []string{"Make a copy", "Create an editable copy in My dashboards.", `value="sales copy"`, `value="sales-copy"`, `href="/dashboards/dashboard:sales"`, "Create copy", "Cancel"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("copy dashboard page missing %q: %s", want, body)
 		}
 	}
 	if strings.Contains(body, "route=dashboard_builder") {
 		t.Fatalf("copy dashboard form opened a draft update stream before the copy exists: %s", body)
+	}
+	if strings.Contains(body, "data-on:submit") {
+		t.Fatalf("copy dashboard form intercepted native submission: %s", body)
 	}
 }

@@ -16,46 +16,9 @@ import (
 	"time"
 
 	content "github.com/flidai/leapview/docs"
-	"github.com/flidai/leapview/internal/analytics/connectors"
 	"github.com/flidai/leapview/internal/app/site/visualdocs"
 	"github.com/stretchr/testify/require"
 )
-
-func TestHomepageFeaturedIntegrationsExistInTheConnectorRegistry(t *testing.T) {
-	for _, group := range siteStackGroups {
-		for _, integration := range group.integrations {
-			if integration.format {
-				if _, ok := connectors.LookupFormat(integration.registryKey); !ok {
-					t.Errorf("featured format %q (%s) is not registered", integration.label, integration.registryKey)
-				}
-				continue
-			}
-			if _, ok := connectors.LookupConnection(integration.registryKey); !ok {
-				t.Errorf("featured connection %q (%s) is not registered", integration.label, integration.registryKey)
-			}
-		}
-	}
-}
-
-func TestHomepageFeaturesSupportedDatabasesAndFormats(t *testing.T) {
-	want := map[string][]string{
-		"Databases": {"postgres", "mysql", "sqlite"},
-		"Formats":   {"csv", "json", "parquet", "excel", "vortex", "delta", "iceberg", "lance", "ducklake"},
-	}
-	for _, group := range siteStackGroups {
-		expected, ok := want[group.title]
-		if !ok {
-			continue
-		}
-		got := make([]string, 0, len(group.integrations))
-		for _, integration := range group.integrations {
-			got = append(got, integration.registryKey)
-		}
-		if strings.Join(got, ",") != strings.Join(expected, ",") {
-			t.Errorf("%s integrations = %v, want %v", group.title, got, expected)
-		}
-	}
-}
 
 func TestSiteUnknownRouteReturnsNotFound(t *testing.T) {
 	server := httptest.NewServer(NewHandler())
@@ -612,7 +575,7 @@ func TestSiteHomeRendersPageStreamDocument(t *testing.T) {
 
 	body := readBody(t, response)
 	for _, want := range []string{
-		"<title>LeapView — agent-native BI and analytics as code</title>",
+		"<title>LeapView — open-source business intelligence</title>",
 		`data-color-mode="auto"`,
 		`/updates`,
 		`data-init="@get(&#39;/updates&#39;, {openWhenHidden: true})"`,
@@ -620,38 +583,28 @@ func TestSiteHomeRendersPageStreamDocument(t *testing.T) {
 		`<link rel="preload" href="/shared/files/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin="anonymous">`,
 		`/static/site.css`,
 		`/static/site-page.js`,
+		`/static/home/screenshot-hero.css`,
+		`/static/home/home.js`,
 		`<meta name="view-transition" content="same-origin">`,
-		`<lv-site-flow-background class="site-hero-background" aria-hidden="true"></lv-site-flow-background>`,
-		`<section id="main-content" class="site-hero">`,
-		`<div class="site-hero-layout">`,
-		`<figure class="site-product-frame"><div class="site-product-stage">`,
-		`<img class="site-product-screenshot site-product-screenshot-light" src="/static/product-dashboard-light.png"`,
-		`<img class="site-product-screenshot site-product-screenshot-dark" src="/static/product-dashboard-dark.png"`,
-		`<div class="site-proof-strip">`,
-		`<svg class="site-stack-edges site-stack-edges-desktop"`,
-		`<li class="site-stack-stage site-stack-node site-stack-product-node">`,
-		`<lv-brand-mark large="" aria-hidden="true"></lv-brand-mark>`,
-		`<lv-site-feature-icon name="dashboard" aria-hidden="true"></lv-site-feature-icon>`,
-		`<lv-site-feature-icon name="git-branch" aria-hidden="true"></lv-site-feature-icon>`,
-		`<section id="product" class="site-workflow">`,
-		`<article class="site-workflow-artifact">`,
-		`apiVersion: leapview.dev/v1`,
-		`<ol class="site-stack-flow" aria-label="How LeapView connects to your data stack">`,
-		`<section class="site-interfaces-section">`,
-		`One model. Two ways to explore.`,
-		`<article class="site-interface-card">`,
-		`<lv-site-feature-icon name="agent" aria-hidden="true"></lv-site-feature-icon>`,
-		`<a class="site-interface-link" href="/docs/guides/integrate/agent">Explore agent integrations</a>`,
-		`<span class="site-stack-integration-label">PostgreSQL</span>`,
-		`<section class="site-trust-section">`,
-		`Governed from question to answer.`,
-		`<section class="site-cta">`,
+		`<section id="main-content" class="hero"`,
+		`<lv-site-flow-background class="site-flow-field" draw-in aria-hidden="true"></lv-site-flow-background>`,
+		`Metrics your whole team can build on.`,
+		`/static/product-dashboard-dark.png`,
+		`/static/product-dashboard-light.png`,
+		`id="mission"`,
+		`id="layers"`,
+		`id="project-explorer"`,
+		`id="connections"`,
+		`id="enterprise"`,
+		`id="openness"`,
+		`id="get-involved"`,
+		`https://discord.gg/pcfV4zAeRV`,
 		`<footer class="site-footer" role="contentinfo">`,
 		`<header class="site-header">`,
 		`<lv-site-theme-toggle></lv-site-theme-toggle>`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("home page missing %q:\n%s", want, body)
+			t.Errorf("home page missing %q", want)
 		}
 	}
 	if strings.Contains(body, "site-capabilities-section") {
@@ -659,6 +612,9 @@ func TestSiteHomeRendersPageStreamDocument(t *testing.T) {
 	}
 	if strings.Contains(body, "site-agent-preview") || strings.Contains(body, "Why did revenue fall in October?") {
 		t.Error("home page still renders the fabricated agent preview")
+	}
+	if strings.Contains(body, `class="site-interfaces-section"`) || strings.Contains(body, `class="site-desktop-section"`) {
+		t.Error("home page still renders the previous sections")
 	}
 }
 
@@ -730,9 +686,9 @@ func TestSiteGettingStartedRendersGuide(t *testing.T) {
 	for _, want := range []string{
 		"<title>Get started with LeapView</title>",
 		`<lv-site-docs-drawer-toggle></lv-site-docs-drawer-toggle>`,
-		`<nav class="site-docs-breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/docs/introduction">Start here</a></li><li><span aria-current="page">Getting started</span></li></ol></nav>`,
 		`<button class="site-docs-drawer-backdrop" type="button" aria-label="Close documentation menu" aria-hidden="true" tabindex="-1" data-site-docs-drawer-close="true"></button>`,
-		`<lv-site-markdown-copy`,
+		`<lv-site-docs-page-actions`,
+		`issue-href="https://github.com/flidai/leapview/issues/new?`,
 		`<article id="main-content" class="site-docs-article">`,
 		`<aside class="site-docs-sidebar" id="site-docs-sidebar">`,
 		`<a class="site-docs-link site-docs-link-current" href="/docs/getting-started" title="Get started with LeapView" aria-current="page">Get started with LeapView</a>`,
@@ -760,6 +716,9 @@ func TestSiteGettingStartedRendersGuide(t *testing.T) {
 	}
 	if strings.Contains(body, "LeapView Docs") {
 		t.Errorf("getting started page retains the redundant docs header:\n%s", body)
+	}
+	if strings.Contains(body, "site-docs-breadcrumb") {
+		t.Errorf("getting started page retains the breadcrumb:\n%s", body)
 	}
 	if strings.Contains(body, "Guides and reference") {
 		t.Errorf("getting started page retains the redundant sidebar heading:\n%s", body)
@@ -828,6 +787,12 @@ func TestSiteDocsIndexListsEverySection(t *testing.T) {
 	}
 
 	body := readBody(t, response)
+	if got := strings.Count(body, `aria-label="Search documentation"`); got != 1 {
+		t.Fatalf("docs index search controls = %d, want one header search:\n%s", got, body)
+	}
+	if strings.Contains(body, `class="site-docs-search"`) {
+		t.Fatalf("docs index rendered the duplicate body search form:\n%s", body)
+	}
 	for _, want := range []string{
 		"<title>LeapView documentation</title>",
 		"<h1>Documentation</h1>",
@@ -898,7 +863,7 @@ func TestSiteDocumentationSupportsNestedArticleSlugs(t *testing.T) {
 		t.Fatalf("nested documentation status = %d, want %d", response.StatusCode, http.StatusOK)
 	}
 	body := readBody(t, response)
-	for _, want := range []string{`<h1 id="query-and-interaction-lifecycle">Query and interaction lifecycle</h1>`, "Core concepts", "Datastar signal flow", "About this page", "Edit this page"} {
+	for _, want := range []string{`<h1 id="query-and-interaction-lifecycle">Query and interaction lifecycle</h1>`, "Core concepts", "Datastar signal flow", `source-label="Edit this page on GitHub"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("nested documentation missing %q", want)
 		}
@@ -1311,7 +1276,6 @@ func TestSiteChartDocumentationArticleRendersConfiguration(t *testing.T) {
 	for _, want := range []string{
 		"<title>Line chart</title>",
 		`data-init="@get(&#39;/updates?view=visual-docs&amp;document=visuals%2Fline&#39;, {openWhenHidden: true})"`,
-		`<nav class="site-docs-breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/docs/visuals/overview">Visuals</a></li><li><span aria-current="page">Line chart</span></li></ol></nav>`,
 		`<h1 id="line-chart">Line chart</h1>`,
 		`<h2 id="site-visual-api-reference">API reference</h2>`,
 		`<table aria-labelledby="site-visual-api-reference">`,
@@ -1334,14 +1298,16 @@ func TestSiteChartDocumentationArticleRendersConfiguration(t *testing.T) {
 			t.Errorf("line chart documentation missing %q:\n%s", want, body)
 		}
 	}
+	if strings.Contains(body, "site-docs-breadcrumb") {
+		t.Errorf("line chart documentation retains the breadcrumb:\n%s", body)
+	}
 	if strings.Contains(body, `class="site-visual-api-summary"`) || strings.Contains(body, `class="site-visual-field-reference"`) {
 		t.Error("API reference is rendered inside a visual-specific container instead of the article's Markdown flow")
 	}
 	stepped := strings.Index(body, `<h2 id="stepped-line">Stepped line</h2>`)
 	api := strings.Index(body, `<h2 id="site-visual-api-reference">API reference</h2>`)
-	about := strings.Index(body, `<h2 id="site-docs-about-this-page">About this page</h2>`)
-	if stepped < 0 || api < stepped || about < api {
-		t.Errorf("article order = stepped %d, API %d, about %d; want examples, API reference, footer", stepped, api, about)
+	if stepped < 0 || api < stepped || strings.Contains(body, "site-docs-about-this-page") {
+		t.Errorf("article order = stepped %d, API %d; want examples then API reference without page meta", stepped, api)
 	}
 }
 

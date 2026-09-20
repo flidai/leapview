@@ -13,6 +13,20 @@ type serviceAccountSecretExpiryMutator struct {
 	input access.ServicePrincipalSecretInput
 }
 
+type serviceAccountCreationRepository struct {
+	access.Repository
+	audit access.AuditEventInput
+}
+
+func (r *serviceAccountCreationRepository) CreateServicePrincipal(context.Context, access.ServicePrincipalInput) (access.Principal, error) {
+	return access.Principal{ID: "created-service-account", Kind: access.PrincipalKindServicePrincipal}, nil
+}
+
+func (r *serviceAccountCreationRepository) RecordAuditEvent(_ context.Context, input access.AuditEventInput) error {
+	r.audit = input
+	return nil
+}
+
 func (m *serviceAccountSecretExpiryMutator) CreateServicePrincipal(context.Context, access.ServicePrincipalInput) (access.Principal, error) {
 	return access.Principal{ID: "svc-1", Kind: access.PrincipalKindServicePrincipal}, nil
 }
@@ -77,5 +91,21 @@ func TestApplyServiceAccountCommandPassesResolvedSecretExpiry(t *testing.T) {
 	}
 	if !mutator.input.ExpiresAt.After(time.Now().UTC().Add(89 * 24 * time.Hour)) {
 		t.Fatalf("resolved expiry = %s, want roughly 90 days from now", mutator.input.ExpiresAt)
+	}
+}
+
+func TestAuditedServiceAccountCreationReturnsNewSelection(t *testing.T) {
+	repository := &serviceAccountCreationRepository{}
+	secret, targetID, err := ApplyServiceAccountCommandAudited(t.Context(), repository, "administrator", ServiceAccountCommand{
+		Action: "create", DisplayName: "Deployment bot",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secret != "" || targetID != "created-service-account" {
+		t.Fatalf("creation result = secret %q target %q, want selected new account", secret, targetID)
+	}
+	if repository.audit.ResourceID != targetID || repository.audit.Action != "service_principal.created" {
+		t.Fatalf("creation audit = %#v, want created service account", repository.audit)
 	}
 }

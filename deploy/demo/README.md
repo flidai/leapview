@@ -36,12 +36,16 @@ runtime compatibility contract above is. No SSH host rollout or tracked SSH
 identity is part of the supported path.
 
 The `leapview-demo` GitHub environment authenticates to Infisical through
-GitHub OIDC. The Infisical `prod:/demo/deployment` path supplies:
+GitHub OIDC. The Infisical `prod:/demo/deployment` path supplies the
+service-principal secrets:
 
-- `DEMO_PUBLISHER_CLIENT_ID`
 - `DEMO_PUBLISHER_CLIENT_SECRET`
-- `DEMO_RELEASE_CLIENT_ID`
 - `DEMO_RELEASE_CLIENT_SECRET`
+
+The GitHub environment stores their durable database identities as
+`DEMO_PUBLISHER_PRINCIPAL_ID` and `DEMO_RELEASE_PRINCIPAL_ID`. Keeping these
+issuer-owned UUIDs beside `DEMO_PROJECT_ID` prevents legacy client aliases from
+being sent to the canonical PostgreSQL credential boundary.
 
 The publisher and release identities are separate service principals. Their
 credentials are exchanged for one-hour, project-scoped OAuth workload tokens
@@ -49,6 +53,10 @@ on every publication. The publisher is restricted to managed-data ingestion,
 project authoring, and release publication. The release principal is restricted
 to viewing, approving, and activating the demo project environment, plus
 managing the public dashboard publications declared by the canonical showcase.
+
+The `leapview-demo` environment variable `DEMO_PROJECT_ID` stores the target's
+durable `ProjectUID`. Content publication must use that issuer-owned identity;
+the source bundle does not provide or replace it.
 
 Target capability discovery requires an authenticated credential but no
 pre-existing project grant. This is essential on the first deployment,

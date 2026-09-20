@@ -786,16 +786,13 @@ tasks:
       - go run ./internal/app/tools/agenttooldocgen
 
   db:generate:
-    desc: Generate SQLite and PostgreSQL adapter code from checked-in schemas and queries
+    desc: Generate PostgreSQL adapter code from checked-in schemas and queries
     method: checksum
     sources:
       - Taskfile.yml
       - sqlc.yaml
       - internal/**/*.sql
     generates:
-      - internal/platform/db/db.go
-      - internal/platform/db/models.go
-      - internal/platform/db/*.sql.go
       - internal/**/internal/db/*.go
       - internal/project/postgres/internal/db/*.go
       - internal/access/postgres/internal/db/*.go
@@ -803,7 +800,6 @@ tasks:
       - internal/platform/http/cursorsigning/postgres/internal/db/*.go
       - internal/manageddata/postgres/internal/db/*.go
       - internal/platform/events/postgres/internal/db/*.go
-      - internal/platform/**/sqlite/*db/*.go
     # Match setup-ci's HTTP/1.1 workaround for checksum-service HTTP/2 stream
     # failures; transport only, with sqlc checksums and TLS integrity unchanged.
     cmds:
@@ -1329,8 +1325,35 @@ tasks:
       - >-
         go test -race -tags='fai518qualification'
         ./internal/recoveryset/postgres
-        -run '^TestFAI518'
+        -run '^(TestFAI518AuthoritativeTransitionPreflightQualification|TestFAI518PublishedRecoveryFrontierRejectsTargetAndTamperedValidation|TestFAI518ProductionPreflightCompositionUsesAuthoritativeV2Evidence)$'
         -count=1 -timeout=10m -v
+
+  qualify:ubdr:release-transition:
+    desc: Qualify the forward-only PostgreSQL-era transition, restart, and durable readback contract
+    deps:
+      - db:generate
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+      LEAPVIEW_TEST_FAI518_RELEASE_TRANSITION_EVIDENCE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr/release-transition"
+    cmds:
+      - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr/release-transition"
+      - >-
+        go test -race -tags='duckdb_arrow fai518qualification'
+        ./internal/recoveryset/postgres
+        -run '^TestFAI518Revision019To020TransitionQualification$'
+        -count=1 -timeout=30m -v
+      - >-
+        go test -race -tags='duckdb_arrow fai518qualification'
+        ./internal/recoveryset/postgres
+        -run '^TestFAI518ForwardOnlyReleaseTransitionQualification$'
+        -count=1 -timeout=30m -v
+
+  qualify:ubdr:release-transition-artifact:
+    desc: Qualify live-admitted predecessor and candidate distributions through the revision-019 forward transition
+    deps:
+      - db:generate
+    cmds:
+      - bash scripts/qualify_fai518_real_artifact.sh
 
   test:go:
     desc: Run Go tests with bounded package parallelism and stable application shards

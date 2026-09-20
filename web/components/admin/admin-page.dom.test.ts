@@ -1,100 +1,20 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { createServer, type Server } from 'node:http'
-import { readFile } from 'node:fs/promises'
-import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
-import { typographyTestTokens } from '../test-typography-tokens'
+import { startAdminPageTestFixture, stopAdminPageTestFixture, type AdminPageTestFixture } from './admin-page.fixture.test'
 
-let server: Server
-let baseURL = ''
-let browser: Browser
-
-const projectRoot = process.cwd()
-const root = join(projectRoot, '.tmp/admin-page-test')
+let fixture: AdminPageTestFixture
 
 beforeAll(async () => {
-  server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
-      return
-    }
-    const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
-    const file = normalize(join(fileRoot, url.pathname))
-    if (!file.startsWith(fileRoot)) {
-      response.writeHead(404)
-      response.end('not found')
-      return
-    }
-    try {
-      response.setHeader('content-type', file.endsWith('.css') ? 'text/css' : 'text/javascript')
-      response.end(await readFile(file))
-    } catch {
-      response.writeHead(404)
-      response.end('not found')
-    }
-  })
-  await new Promise<void>((resolve) => server.listen(0, resolve))
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('test server did not bind to a port')
-  baseURL = `http://127.0.0.1:${address.port}`
-  browser = await chromium.launch()
+  fixture = await startAdminPageTestFixture()
 })
 
 afterAll(async () => {
-  await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  if (fixture) await stopAdminPageTestFixture(fixture)
 }, 15_000)
 
-test('publications admin renders lifecycle controls and emits typed commands', async () => {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-admin-page'))
-    const state = await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ page: {
-        kind: 'admin', title: 'Publications', active: 'publications', headerTitle: 'Publications',
-        headerDetail: 'Public dashboard lifecycle.',
-        sidebar: { label: 'Admin', railLabel: 'Admin', ariaLabel: 'Admin navigation', storageKey: 'admin', activeId: 'publications', numbered: false, collapsible: false, items: [{ id: 'publications', title: 'Publications', href: '/admin/publications', active: true }] },
-        publications: [{ projectId: 'visuals', name: 'website-showcase', dashboard: 'visual-showcase', defaultPage: 'overview', status: 'active', origins: ['https://leapview.dev'], generation: 'state-2', publicUrl: 'https://app.leapview.dev/public/dashboards/id', embedUrl: 'https://app.leapview.dev/embed/dashboards/id', iframeSnippet: '<iframe></iframe>', configuredAt: '2026-07-20', history: ['2026-07-20 · configured · owner'] }],
-      } })
-      const element = document.querySelector('lv-admin-page') as any
-      await element.updateComplete
-      let detail: unknown = null
-      element.addEventListener('lv-publication-command', (event: CustomEvent) => { detail = event.detail })
-      window.confirm = () => true
-      const buttons = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button')) as HTMLButtonElement[]
-      buttons.find((button) => button.textContent?.trim() === 'Suspend')?.click()
-      await element.updateComplete
-      const lockedDuringMutation = Boolean(Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Suspend')?.disabled)
-      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
-      await element.updateComplete
-      return {
-        text: (element.shadowRoot as ShadowRoot).textContent.replace(/\s+/g, ' ').trim(),
-        cards: (element.shadowRoot as ShadowRoot).querySelectorAll('.publication-card').length,
-        detail,
-        lockedDuringMutation,
-        unlockedAfterCompletion: !Boolean(Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Suspend')?.disabled),
-      }
-    })
-    expect(state.cards).toBe(1)
-    expect(state.text).toContain('website-showcase')
-    expect(state.text).toContain('Lifecycle history')
-    expect(state.detail).toEqual({ publication: 'website-showcase', action: 'suspend' })
-    expect(state.lockedDuringMutation).toBe(true)
-    expect(state.unlockedAfterCompletion).toBe(true)
-    expect(state.text).toContain('Publication updated')
-  } finally {
-    await page.close()
-  }
-})
-
 test('profile settings renders the signed-in identity and editable local fields', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 760 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1440, height: 760 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -220,6 +140,7 @@ test('profile settings renders the signed-in identity and editable local fields'
         selectedThemePreviewClipped: selectedThemePreview.scrollWidth > selectedThemePreview.clientWidth || selectedThemePreview.scrollHeight > selectedThemePreview.clientHeight,
         themeListboxClosed: !profileRoot.querySelector('[role="listbox"]'),
         themeTriggerValue: profileRoot.querySelector('.theme-trigger-label')?.textContent?.trim(),
+        account: [profileRoot.querySelector('.account-id')?.textContent?.trim(), profileRoot.querySelector('[data-sign-out]')?.textContent?.trim()],
         keyboardNextTheme,
         themeClosedWithEscape,
         themeTriggerFocusedAfterEscape,
@@ -234,6 +155,9 @@ test('profile settings renders the signed-in identity and editable local fields'
     expect(state.text).toContain('Title')
     expect(state.text).toContain('Username')
     expect(state.text).toContain('Theme')
+    expect(state.text).toContain('Account')
+    expect(state.text).toContain('Account ID')
+    expect(state.account).toEqual(['principal-1', 'Sign out'])
     expect(state.themeOptions).toEqual([
       'System',
       'Light default',
@@ -255,10 +179,9 @@ test('profile settings renders the signed-in identity and editable local fields'
     expect(state.themeTriggerFocusedAfterEscape).toBe(true)
     expect(state.themeCommand).toEqual({ action: 'save', theme: 'dark_colorblind' })
     expect(state.appliedTheme).toBe('dark_colorblind')
-    expect(state.sectionHeadings).toEqual(['Chat history'])
-    expect(state.text).toContain('Archived chats')
-    expect(state.text).toContain('Archive all chats')
-    expect(state.text).toContain('Delete all chats')
+    expect(state.sectionHeadings).toEqual(['Account'])
+    expect(state.text).not.toContain('Archive all chats')
+    expect(state.text).not.toContain('Delete all chats')
     expect(state.mainCentered).toBe(true)
     expect(state.mainWidth).toBe(640)
     expect(state.headerGap).toBeGreaterThanOrEqual(16)
@@ -289,10 +212,128 @@ test('profile settings renders the signed-in identity and editable local fields'
   }
 })
 
-test('personal API tokens use capability selectors', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 700 } })
+test('security settings use a unified session list, focused password dialog, and confirmed revocation', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1200, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
+    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-personal-settings'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        kind: 'admin', title: 'Security & sessions', active: 'security', headerTitle: 'Security & sessions', headerDetail: 'Manage your password and active sessions.',
+      }, personalSettings: {
+        active: 'security',
+        profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
+        security: {
+          localPasswordEnabled: true,
+          sessions: [
+            { id: 'session-current', kind: 'web', clientLabel: 'Chrome on Linux', current: true, createdAt: '2026-09-17T08:00:00Z', lastSeenAt: '2026-09-17T09:00:00Z', expiresAt: '2026-09-18T08:00:00Z', absoluteExpiresAt: '2026-10-17T08:00:00Z', revokedAt: '' },
+            { id: 'session-other', kind: 'desktop', clientLabel: 'LeapView Desktop', current: false, createdAt: '2026-09-16T08:00:00Z', lastSeenAt: '2026-09-17T07:00:00Z', expiresAt: '2026-09-18T08:00:00Z', absoluteExpiresAt: '2026-10-17T08:00:00Z', revokedAt: '' },
+          ],
+          authoringSessions: [
+            { id: 'authoring-1', kind: 'cli', clientId: 'LeapView CLI', targetId: 'target-1', projectId: 'sales', capabilities: ['RESOURCE_READ'], createdAt: '2026-09-15T08:00:00Z', lastUsedAt: '2026-09-17T06:00:00Z', expiresAt: '2026-09-24T08:00:00Z', revokedAt: '' },
+          ],
+        },
+        tokens: { items: [], capabilities: [] },
+      } })
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      const admin = document.querySelector('lv-admin-page') as any
+      await admin.updateComplete
+      const personal = (admin.shadowRoot as ShadowRoot).querySelector('lv-personal-settings') as any
+      await personal.updateComplete
+      const root = personal.shadowRoot as ShadowRoot
+      let sessionCommand: unknown = null
+      let passwordCommand: unknown = null
+      personal.addEventListener('lv-personal-session-command', (event: CustomEvent) => { sessionCommand = event.detail })
+      personal.addEventListener('lv-personal-password-command', (event: CustomEvent) => { passwordCommand = event.detail })
+      const sections = Array.from(root.querySelectorAll<HTMLElement>('.security-section'))
+      const passwordSection = sections.find((section) => section.getAttribute('aria-label') === 'Password')!
+      const sessionsSection = sections.find((section) => section.getAttribute('aria-label') === 'Active sessions')!
+      const passwordInputsBeforeOpen = root.querySelectorAll('[data-password-dialog] input').length
+      passwordSection.querySelector<HTMLButtonElement>('button')!.click()
+      await personal.updateComplete
+      const passwordDialog = root.querySelector<HTMLDialogElement>('[data-password-dialog]')!
+      const currentPassword = passwordDialog.querySelector<HTMLInputElement>('input[name="currentPassword"]')!
+      const newPassword = passwordDialog.querySelector<HTMLInputElement>('input[name="newPassword"]')!
+      currentPassword.value = 'old-password-value'
+      currentPassword.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      newPassword.value = 'new-password-value'
+      newPassword.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await personal.updateComplete
+      const passwordDialogOpened = passwordDialog.open
+      passwordDialog.querySelector<HTMLFormElement>('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await personal.updateComplete
+      const otherGroup = root.querySelector<HTMLElement>('.security-session-group[aria-label="Other devices"]')!
+      const otherRow = otherGroup.querySelector<HTMLElement>('.security-session')!
+      otherRow.querySelector<HTMLButtonElement>('.security-session-main')!.click()
+      await personal.updateComplete
+      const drawer = root.querySelector('lv-drawer') as any
+      const drawerText = drawer.textContent?.replace(/\s+/g, ' ').trim()
+      const drawerNonModal = drawer.modal === false
+      ;(drawer.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.close')!.click()
+      await personal.updateComplete
+      otherRow.querySelector<HTMLButtonElement>('.session-action')!.click()
+      await personal.updateComplete
+      const revokeDialog = root.querySelector<HTMLDialogElement>('[data-session-revoke-dialog]')!
+      const commandBeforeConfirmation = sessionCommand
+      const dialogOpenBeforeConfirmation = revokeDialog.open
+      const dialogTitle = revokeDialog.querySelector('h2')?.textContent?.trim()
+      revokeDialog.querySelector<HTMLButtonElement>('.token-delete-actions button')!.click()
+      await personal.updateComplete
+      return {
+        headings: sections.map((section) => section.querySelector('h2')?.textContent?.trim()),
+        mainClass: (admin.shadowRoot as ShadowRoot).querySelector('.main')?.className,
+        sessionListCount: sessionsSection.querySelectorAll('.security-session-list').length,
+        groupLabels: Array.from(sessionsSection.querySelectorAll('.security-session-group-label')).map((label) => label.textContent?.trim()),
+        activeCount: sessionsSection.querySelector('.security-session-count')?.textContent?.trim(),
+        currentBadge: root.querySelector('.security-badge')?.textContent?.trim(),
+        currentAction: root.querySelector('.security-session-group[aria-label="Current session"] .session-action')?.textContent?.trim(),
+        sessionActions: [root.querySelector('[data-logout-all]')?.textContent?.trim(), otherRow.querySelector('.session-action')?.textContent?.trim()],
+        authoringText: root.querySelector('.security-session-group[aria-label="CLI and authoring"]')?.textContent?.replace(/\s+/g, ' ').trim(),
+        passwordInputsBeforeOpen,
+        passwordDialogOpened,
+        passwordDialogClosed: !root.querySelector('[data-password-dialog]'),
+        passwordCommand,
+        drawerText,
+        drawerNonModal,
+        dialogOpen: dialogOpenBeforeConfirmation,
+        dialogTitle,
+        commandBeforeConfirmation,
+        sessionCommand,
+      }
+    })
+    expect(state.headings).toEqual(['Password', 'Active sessions'])
+    expect(state.mainClass).toContain('main-security')
+    expect(state.sessionListCount).toBe(1)
+    expect(state.groupLabels).toEqual(['Current', 'Other devices', 'CLI & authoring'])
+    expect(state.activeCount).toBe('3 active sessions')
+    expect(state.currentBadge).toBe('This device')
+    expect(state.currentAction).toBe('Sign out')
+    expect(state.sessionActions).toEqual(['Log out all browser and desktop sessions', 'Revoke'])
+    expect(state.authoringText).toContain('LeapView CLI')
+    expect(state.authoringText).toContain('sales')
+    expect(state.authoringText).toContain('Resource read')
+    expect(state.passwordInputsBeforeOpen).toBe(0)
+    expect(state.passwordDialogOpened).toBe(true)
+    expect(state.passwordDialogClosed).toBe(true)
+    expect(state.passwordCommand).toEqual({ currentPassword: 'old-password-value', newPassword: 'new-password-value' })
+    expect(state.drawerText).toContain('LeapView Desktop')
+    expect(state.drawerText).toContain('Session ID session-other')
+    expect(state.drawerText).toContain('Absolute expiration')
+    expect(state.drawerNonModal).toBe(true)
+    expect(state.dialogOpen).toBe(true)
+    expect(state.dialogTitle).toBe('Revoke this session?')
+    expect(state.commandBeforeConfirmation).toBeNull()
+    expect(state.sessionCommand).toEqual({ action: 'revoke', sessionId: 'session-other' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('personal API tokens use capability selectors', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1440, height: 700 } })
+  try {
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-personal-settings'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -318,19 +359,50 @@ test('personal API tokens use capability selectors', async () => {
       const personal = (admin.shadowRoot as ShadowRoot).querySelector('lv-personal-settings') as any
       await personal.updateComplete
       const root = personal.shadowRoot as ShadowRoot
+      const listHeading = root.querySelector('.token-page-header h2')?.textContent?.trim()
+      const pageHeaderVisible = Boolean((admin.shadowRoot as ShadowRoot).querySelector('.page-header'))
+      const generateNew = Array.from(root.querySelectorAll<HTMLAnchorElement>('a')).find((link) => link.textContent?.trim() === 'Generate new token') as HTMLAnchorElement
+      const generateHref = generateNew.getAttribute('href')
+      mergePatch({ page: { active: 'api-token-new', title: 'New personal access token', headerTitle: 'New personal access token', headerDetail: 'Create a scoped credential for API, CLI, and automation access.' } })
+      await admin.updateComplete
+      await personal.updateComplete
       const name = root.querySelector('#token-name') as HTMLInputElement
-      const create = root.querySelector('.token-form button[type="submit"]') as HTMLButtonElement
+      const create = root.querySelector('button[type="submit"]') as HTMLButtonElement
+      const expirationSelect = root.querySelector('lv-select-menu') as any
+      await expirationSelect.updateComplete
+      const expirationRoot = expirationSelect.shadowRoot as ShadowRoot
+      const expirationTrigger = expirationRoot.querySelector('.trigger') as HTMLButtonElement
+      expirationTrigger.click()
+      await expirationSelect.updateComplete
+      const expirationOptions = Array.from(expirationRoot.querySelectorAll<HTMLButtonElement>('.option'))
       const initial = {
+        listHeading,
+        pageHeaderVisible,
+        generateHref,
+        routeMode: personal.getAttribute('token-view'),
+        createHeading: root.querySelector('.token-create-header h2')?.textContent?.trim(),
+        fieldOrder: Array.from(root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLElement>('.token-details input, .token-details textarea, .token-details lv-select-menu')).map((field) => field.id),
+        permissionsHeading: root.querySelector('.permissions-heading h3')?.textContent?.trim(),
+        emptyPermissions: root.querySelector('.selected-permissions-empty .settings-label')?.textContent?.trim(),
         createDisabled: create.disabled,
+        expiration: {
+          label: expirationRoot.querySelector('.value')?.textContent?.trim(),
+          options: expirationOptions.map((option) => option.textContent?.trim()),
+          selected: expirationOptions.find((option) => option.getAttribute('aria-selected') === 'true')?.dataset.value,
+          triggerHeight: Math.round(expirationTrigger.getBoundingClientRect().height),
+          triggerWidth: Math.round(expirationTrigger.getBoundingClientRect().width),
+          optionRowsLargeEnough: expirationOptions.every((option) => option.getBoundingClientRect().height >= 32),
+        },
         rawProjectField: Boolean(root.querySelector('input[placeholder*="Project ID"]')),
         rawPrivilegeField: Boolean(root.querySelector('input[placeholder*="Privileges"]')),
       }
 
       name.value = 'Sales automation'
       name.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-      await Promise.resolve()
+      const description = root.querySelector('#token-description') as HTMLTextAreaElement
+      description.value = 'Used by the weekly sales reporting job.'
+      description.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await personal.updateComplete
-      const namedCreateDisabled = (root.querySelector('.token-form button[type="submit"]') as HTMLButtonElement).disabled
       const add = root.querySelector('.permission-trigger') as HTMLButtonElement
       add.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       await personal.updateComplete
@@ -376,15 +448,19 @@ test('personal API tokens use capability selectors', async () => {
       const selectedPermissions = Array.from(root.querySelectorAll('.selected-permission .settings-label')).map((label) => label.textContent?.trim())
       const triggerFocused = root.activeElement === add
 
-      let command: unknown = null
+      let command: any = null
       personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
       const form = root.querySelector('.token-form') as HTMLFormElement
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
       await personal.updateComplete
+      const confirmation = root.querySelector('[data-token-confirm-dialog]') as HTMLDialogElement
+      const confirmationText = confirmation.textContent?.replace(/\s+/g, ' ').trim()
+      ;(confirmation.querySelector('.token-confirm-actions .primary') as HTMLButtonElement).click()
+      await personal.updateComplete
       const pending = {
         name: (root.querySelector('#token-name') as HTMLInputElement).value,
         selectedPermissions: root.querySelectorAll('.selected-permission').length,
-        buttonText: (root.querySelector('.token-form button[type="submit"]') as HTMLButtonElement).textContent?.trim(),
+        buttonText: (root.querySelector('.token-confirm-actions .primary') as HTMLButtonElement).textContent?.trim(),
       }
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: '403' } } }))
       await personal.updateComplete
@@ -392,23 +468,43 @@ test('personal API tokens use capability selectors', async () => {
         name: (root.querySelector('#token-name') as HTMLInputElement).value,
         selectedPermissions: root.querySelectorAll('.selected-permission').length,
         error: root.querySelector('[role="alert"]')?.textContent?.trim(),
-        createDisabled: (root.querySelector('.token-form button[type="submit"]') as HTMLButtonElement).disabled,
+        createDisabled: (root.querySelector('.token-confirm-actions .primary') as HTMLButtonElement).disabled,
       }
-      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
+      ;(root.querySelector('.token-confirm-actions .primary') as HTMLButtonElement).click()
+      window.history.replaceState(window.history.state, '', '/admin/api-tokens/new')
       mergePatch({ personalSettings: { tokens: { items: [
-        { id: 'token-1', name: 'Sales automation', capabilities: ['RESOURCE_READ'], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '', revokedAt: '' },
+        { id: 'token-1', name: 'Sales automation', description: 'Used by the weekly sales reporting job.', capabilities: ['RESOURCE_READ'], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '2026-10-17T06:40:00Z', revokedAt: '' },
       ], newToken: 'lv_created_secret' } } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await personal.updateComplete
       const succeeded = {
-        name: (root.querySelector('#token-name') as HTMLInputElement).value,
+        createViewClosed: !root.querySelector('#token-name'),
         selectedPermissions: root.querySelectorAll('.selected-permission').length,
-        tokenNames: Array.from(root.querySelectorAll('.card:last-child .settings-label')).map((element) => element.textContent?.trim()),
-        notice: root.querySelector('[role="status"]')?.textContent?.trim(),
+        tokenNames: Array.from(root.querySelectorAll('.token-name')).map((element) => element.textContent?.trim()),
+        description: root.querySelector('.token-description')?.textContent?.trim(),
+        notice: root.querySelector('lv-one-time-secret')?.shadowRoot?.querySelector('[role="status"]')?.textContent?.trim(),
+        pathname: window.location.pathname,
       }
+      let deleteCommand: any = null
+      personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { deleteCommand = event.detail }, { once: true })
+      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === 'Delete') as HTMLButtonElement).click()
+      await personal.updateComplete
+      const deleteDialog = root.querySelector('[data-token-delete-dialog]') as HTMLDialogElement
+      const deletion = {
+        open: deleteDialog.open,
+        title: deleteDialog.querySelector('h2')?.textContent?.trim(),
+        warning: deleteDialog.querySelector('.token-delete-warning')?.textContent?.replace(/\s+/g, ' ').trim(),
+        commandBeforeConfirmation: deleteCommand,
+        confirmLabel: deleteDialog.querySelector('.token-delete-actions button')?.textContent?.trim(),
+        commandAfterConfirmation: null as any,
+        closedAfterConfirmation: false,
+      }
+      ;(deleteDialog.querySelector('.token-delete-actions button') as HTMLButtonElement).click()
+      await personal.updateComplete
+      deletion.commandAfterConfirmation = deleteCommand
+      deletion.closedAfterConfirmation = !root.querySelector('[data-token-delete-dialog]')
       return {
         initial,
-        namedCreateDisabled,
         menuLayout,
         menuHeader,
         filteredPermissions,
@@ -418,10 +514,12 @@ test('personal API tokens use capability selectors', async () => {
         menuClosed: !root.querySelector('.permission-menu'),
         searchFocused,
         triggerFocused,
+        confirmationText,
         command,
         pending,
         failed,
         succeeded,
+        deletion,
       }
     })
 
@@ -430,6 +528,8 @@ test('personal API tokens use capability selectors', async () => {
       const admin = document.querySelector('lv-admin-page') as any
       const personal = (admin.shadowRoot as ShadowRoot).querySelector('lv-personal-settings') as any
       const root = personal.shadowRoot as ShadowRoot
+      await personal.updateComplete
+      personal.tokenView = 'create'
       await personal.updateComplete
       ;(root.querySelector('.permission-trigger') as HTMLButtonElement).click()
       await personal.updateComplete
@@ -447,11 +547,28 @@ test('personal API tokens use capability selectors', async () => {
     })
 
     expect(state.initial).toEqual({
+      listHeading: 'Personal access tokens',
+      pageHeaderVisible: false,
+      generateHref: '/admin/api-tokens/new',
+      routeMode: 'create',
+      createHeading: 'New personal access token',
+      fieldOrder: ['token-name', 'token-description', 'token-expiration-preset'],
+      permissionsHeading: 'Permissions',
+      emptyPermissions: 'No permissions added yet',
       createDisabled: true,
+      expiration: {
+        label: expect.stringMatching(/^30 days \(.+\)$/),
+        options: expect.arrayContaining(['Custom']),
+        selected: '30',
+        triggerHeight: 32,
+        triggerWidth: expect.any(Number),
+        optionRowsLargeEnough: true,
+      },
       rawProjectField: false,
       rawPrivilegeField: false,
     })
-    expect(state.namedCreateDisabled).toBe(true)
+    expect(state.initial.expiration.triggerWidth).toBeGreaterThanOrEqual(190)
+    expect(state.initial.expiration.triggerWidth).toBeLessThanOrEqual(260)
     expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
     expect(state.menuLayout.listScrollable).toBe(true)
     expect(state.menuLayout.listOverflowY).toBe('auto')
@@ -472,18 +589,31 @@ test('personal API tokens use capability selectors', async () => {
     expect(state.searchFocused).toBe(true)
     expect(state.triggerFocused).toBe(true)
     expect(state.command).toMatchObject({
-      action: 'create', name: 'Sales automation', capabilities: ['RESOURCE_USE', 'RESOURCE_READ'], expiresAt: '',
+      action: 'create', name: 'Sales automation', description: 'Used by the weekly sales reporting job.', capabilities: ['RESOURCE_USE', 'RESOURCE_READ'],
     })
-    expect(state.pending).toEqual({ name: 'Sales automation', selectedPermissions: 1, buttonText: 'Creating…' })
+    expect(state.command.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(state.confirmationText).toContain('will be ready for use immediately')
+    expect(state.pending).toEqual({ name: 'Sales automation', selectedPermissions: 1, buttonText: 'Generating…' })
     expect(state.failed).toEqual({
       name: 'Sales automation', selectedPermissions: 1,
       error: 'Token creation is not permitted for your account.',
       createDisabled: false,
     })
-    expect(state.succeeded.name).toBe('')
+    expect(state.succeeded.createViewClosed).toBe(true)
     expect(state.succeeded.selectedPermissions).toBe(0)
     expect(state.succeeded.tokenNames).toContain('Sales automation')
-    expect(state.succeeded.notice).toContain('Copy this token now')
+    expect(state.succeeded.description).toBe('Used by the weekly sales reporting job.')
+    expect(state.succeeded.notice).toContain('Copy your personal access token now')
+    expect(state.succeeded.pathname).toBe('/admin/api-tokens')
+    expect(state.deletion).toEqual({
+      open: true,
+      title: 'Are you sure you want to delete this token?',
+      warning: 'Any applications or scripts using Sales automation will no longer be able to access the LeapView API. You cannot undo this action.',
+      commandBeforeConfirmation: null,
+      confirmLabel: 'I understand, delete this token',
+      commandAfterConfirmation: { action: 'revoke', tokenId: 'token-1' },
+      closedAfterConfirmation: true,
+    })
     expect(mobile.position).toBe('fixed')
     expect(mobile.left).toBeGreaterThanOrEqual(16)
     expect(mobile.right).toBeLessThanOrEqual(mobile.viewportWidth - 16)
@@ -495,9 +625,9 @@ test('personal API tokens use capability selectors', async () => {
 })
 
 test('personal API token permissions expose enforceable access levels', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 800 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-personal-settings'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -523,6 +653,8 @@ test('personal API token permissions expose enforceable access levels', async ()
       const personal = (admin.shadowRoot as ShadowRoot).querySelector('lv-personal-settings') as any
       await personal.updateComplete
       const root = personal.shadowRoot as ShadowRoot
+      personal.tokenView = 'create'
+      await personal.updateComplete
       ;(root.querySelector('.permission-trigger') as HTMLButtonElement).click()
       await personal.updateComplete
       ;(root.querySelector('input[type="checkbox"][value="project-administration"]') as HTMLInputElement).click()
@@ -554,6 +686,8 @@ test('personal API token permissions expose enforceable access levels', async ()
       personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
       ;(root.querySelector('.token-form') as HTMLFormElement).dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
       await personal.updateComplete
+      ;(root.querySelector('.token-confirm-actions .primary') as HTMLButtonElement).click()
+      await personal.updateComplete
       return {
         initialAdministrationAccess,
         administrationAccessOptions,
@@ -576,17 +710,18 @@ test('personal API token permissions expose enforceable access levels', async ()
     expect(state.selectedPermissions).toEqual(['Project administration', 'Resource access'])
     expect(state.fixedAccessControls).toBe(0)
     expect(state.command).toMatchObject({
-      action: 'create', name: 'Content automation', capabilities: ['PROJECT_ADMIN', 'RESOURCE_USE', 'RESOURCE_READ', 'RESOURCE_EDIT'], expiresAt: '',
+      action: 'create', name: 'Content automation', description: '', capabilities: ['PROJECT_ADMIN', 'RESOURCE_USE', 'RESOURCE_READ', 'RESOURCE_EDIT'],
     })
+    expect(state.command.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
   } finally {
     await page.close()
   }
 })
 
-test('members directory list delegates search and filtering to the page stream', async () => {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+test('users directory list delegates search and filtering to the page stream', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1100, height: 760 } })
   try {
-      await page.goto(baseURL)
+      await page.goto(fixture.baseURL)
       await page.waitForFunction(() => customElements.get('lv-entity-list'))
       const state = await page.evaluate(async () => {
         const admin = document.querySelector('lv-admin-page') as any
@@ -629,7 +764,7 @@ test('members directory list delegates search and filtering to the page stream',
       return { initial, filtered, inactiveRows, sortedRows: rows() }
     })
 
-    expect(state.initial.title).toBe('Members')
+    expect(state.initial.title).toBe('Users')
     expect(state.initial.avatarSrc).toBe('/profile/avatars/p1/avatar-digest')
     expect(state.initial.fallbackInitials).toBe('LD')
     expect(state.initial.groupRows).toBe(0)
@@ -651,9 +786,9 @@ test('members directory list delegates search and filtering to the page stream',
 })
 
 test('mobile entity lists advertise horizontal table scrolling while desktop stays quiet', async () => {
-  const page = await browser.newPage({ viewport: { width: 390, height: 760 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 390, height: 760 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-entity-list'))
     const mobile = await page.evaluate(async () => {
       const list = document.querySelector('lv-admin-page')?.shadowRoot?.querySelector('lv-entity-list') as any
@@ -669,16 +804,16 @@ test('mobile entity lists advertise horizontal table scrolling while desktop sta
       }
     })
     expect(mobile).toEqual({
-      role: 'region', label: 'Scrollable Members table', tabIndex: '0',
+      role: 'region', label: 'Scrollable Users table', tabIndex: '0',
       hint: 'Swipe horizontally to see more columns', hintDisplay: 'block',
     })
   } finally {
     await page.close()
   }
 
-  const desktop = await browser.newPage({ viewport: { width: 1280, height: 760 } })
+  const desktop = await fixture.browser.newPage({ viewport: { width: 1280, height: 760 } })
   try {
-    await desktop.goto(baseURL)
+    await desktop.goto(fixture.baseURL)
     await desktop.waitForFunction(() => customElements.get('lv-entity-list'))
     expect(await desktop.locator('lv-admin-page').locator('.entity-list-scroll-hint').evaluate((element) => getComputedStyle(element).display)).toBe('none')
   } finally {
@@ -687,9 +822,9 @@ test('mobile entity lists advertise horizontal table scrolling while desktop sta
 })
 
 test('groups admin uses the reusable entity list and delegates search to the page stream', async () => {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1100, height: 760 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-entity-list'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -735,9 +870,9 @@ test('groups admin uses the reusable entity list and delegates search to the pag
 })
 
 test('group detail lets the shared detail shell own the page heading and summary', async () => {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1100, height: 760 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -765,9 +900,9 @@ for (const viewport of [
   { name: 'mobile', width: 390, height: 820 },
 ]) {
   test(`admin page composes route UI on ${viewport.name}`, async () => {
-    const page = await browser.newPage({ viewport })
+    const page = await fixture.browser.newPage({ viewport })
     try {
-      await page.goto(baseURL)
+      await page.goto(fixture.baseURL)
       await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
       await page.locator('lv-admin-page').evaluate((element: any) => element.updateComplete)
 
@@ -796,8 +931,8 @@ for (const viewport of [
         }
       })
 
-      expect(state.title).toBe('Members')
-      expect(state.headerText).toBe('Members')
+      expect(state.title).toBe('Users')
+      expect(state.headerText).toBe('Users')
       expect(state.hasSubSidebar).toBe(false)
       expect(state.hasEntityList).toBe(true)
       if (viewport.width > 640) {
@@ -1061,10 +1196,73 @@ function queryAuditTableFixture(events: any[]) {
   }
 }
 
-test('query audit page filters table rows and exposes optional metadata columns', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+test('query audit exposes supported time and status shortcuts with clearable filters', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
+    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
+    const state = await page.evaluate(async (fixture) => {
+      const element = document.createElement('lv-admin-page') as any
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: fixture, adminQueryHistory: fixture.queryHistory, adminQueryDetail: { eventId: '', loading: false, error: '' } })
+      ;(window as any).queryHistoryCommands = []
+      element.addEventListener('lv-query-history-command', (event: CustomEvent) => {
+        ;(window as any).queryHistoryCommands.push(event.detail)
+      })
+      document.body.replaceChildren(element)
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const shortcutLabels = Array.from(root.querySelectorAll<HTMLButtonElement>('.query-filter-shortcut')).map((button) => button.textContent?.trim())
+      const timeLabels = Array.from(root.querySelectorAll<HTMLButtonElement>('.query-time-preset')).map((button) => button.textContent?.trim())
+      const slowShortcut = Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === 'Slow')
+      root.querySelector<HTMLButtonElement>('.query-time-preset')?.click()
+      await element.updateComplete
+      const timeCommand = (window as any).queryHistoryCommands.at(-1)
+      root.querySelector<HTMLButtonElement>('.query-filter-shortcut')?.click()
+      await element.updateComplete
+      const failedCommand = (window as any).queryHistoryCommands.at(-1)
+      const activeSummary = root.querySelector('.query-filter-summary')?.textContent?.replace(/\s+/g, ' ').trim()
+      root.querySelector<HTMLButtonElement>('.query-filter-clear')?.click()
+      await element.updateComplete
+      const clearCommand = (window as any).queryHistoryCommands.at(-1)
+      const customFrom = root.querySelector<HTMLInputElement>('#query-filter-from')!
+      customFrom.value = '2026-07-01'
+      customFrom.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await element.updateComplete
+      const customCommand = (window as any).queryHistoryCommands.at(-1)
+      return {
+        shortcutLabels,
+        timeLabels,
+        slowShortcut: Boolean(slowShortcut),
+        timeCommand,
+        failedCommand,
+        activeSummary,
+        clearCommand,
+        customCommand,
+        customFromValue: customFrom.value,
+      }
+    }, queryAuditFixturePage())
+
+    expect(state.shortcutLabels).toEqual(['Failed'])
+    expect(state.timeLabels).toEqual(['Last hour', 'Last 24 hours', 'Last 7 days', 'Current date'])
+    expect(state.slowShortcut).toBe(false)
+    expect(state.timeCommand).toMatchObject({ action: 'reset', filters: { from: expect.stringMatching(/Z$/), to: expect.stringMatching(/Z$/) } })
+    expect(state.timeCommand.filters.from).not.toBe(state.timeCommand.filters.to)
+    expect(state.failedCommand).toMatchObject({ action: 'reset', filters: { statuses: ['error'], from: expect.any(String), to: expect.any(String) } })
+    expect(state.activeSummary).toContain('Active filters')
+    expect(state.activeSummary).toContain('error')
+    expect(state.clearCommand).toEqual(expect.objectContaining({ action: 'reset', filters: {} }))
+    expect(state.customCommand).toMatchObject({ action: 'reset', filters: { from: '2026-07-01T00:00:00.000Z' } })
+    expect(state.customFromValue).toBe('2026-07-01')
+  } finally {
+    await page.close()
+  }
+})
+
+test('query audit page filters table rows and exposes optional metadata columns', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
     const state = await page.evaluate(async (fixture) => {
       localStorage.removeItem('leapview-admin-query-events-columns')
@@ -1226,6 +1424,8 @@ test('query audit page filters table rows and exposes optional metadata columns'
     expect(state.rowText).toMatch(/Query/)
     expect(state.rowText).not.toMatch(/Status/)
     expect(state.rowText).toMatch(/Started/)
+    expect(state.rowText).toMatch(/Jul 2/)
+    expect(state.rowText).not.toMatch(/2026-07-02T/)
     expect(state.rowText).toMatch(/Source type/)
     expect(state.rowText).toMatch(/Runtime/)
     expect(state.rowText).toMatch(/User/)
@@ -1253,15 +1453,14 @@ test('query audit page filters table rows and exposes optional metadata columns'
     expect(state.drawerText).toMatch(/analyst/)
     expect(state.drawerText).toMatch(/api/)
     expect(state.drawerText).toMatch(/sales/)
-    expect(state.hasSubtitle).toBe(false)
+    expect(state.hasSubtitle).toBe(true)
     expect(state.statusTextColor).toBe(state.statusColor)
     expect(state.statusIconColor).not.toBe(state.statusColor)
     expect(state.drawerText).toMatch(/queryevent_1/)
     expect(state.drawerText).toMatch(/req_1/)
     expect(state.drawerText).toMatch(/corr_1/)
     expect(state.drawerHasCodeBlock).toBe(true)
-    expect(state.drawerCode).toContain('SELECT')
-    expect(state.drawerCode).toMatch(/\nFROM\n\s+orders/)
+    expect(state.drawerCode).toMatch(/select\s+status\s+from\s+orders/i)
     expect(state.drawerText).toMatch(/12 ms/)
     expect(state.drawerText).toMatch(/semantic_aggregate/)
     expect(state.drawerText).toMatch(/semantic_dataset:sales:orders/)
@@ -1278,8 +1477,8 @@ test('query audit page filters table rows and exposes optional metadata columns'
     expect(state.operationHeaders).toContain('Operation')
     expect(state.operationText).toMatch(/api_query/)
     expect(state.hasDetailAction).toBe(false)
-    expect(state.refreshedHeaders).toContain('Runtime')
-    expect(state.refreshedHeaders).not.toContain('Operation')
+    expect(state.refreshedHeaders).not.toContain('Runtime')
+    expect(state.refreshedHeaders).toContain('Operation')
     expect(state.refreshedHeaders).not.toContain('Status')
   } finally {
     await page.close()
@@ -1287,9 +1486,9 @@ test('query audit page filters table rows and exposes optional metadata columns'
 })
 
 test('query audit emits load more commands from backend-driven history state', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
       const state = await page.evaluate(async (fixture) => {
         const element = document.createElement('lv-admin-page') as any
@@ -1347,9 +1546,9 @@ test('query audit emits load more commands from backend-driven history state', a
 })
 
 test('query audit detail drawer behaves as a mobile overlay', async () => {
-  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 390, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
       const state = await page.evaluate(async (fixture) => {
         const element = document.createElement('lv-admin-page') as any
@@ -1390,9 +1589,9 @@ test('query audit detail drawer behaves as a mobile overlay', async () => {
 })
 
 test('query audit drawer does not block selecting another row', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
       const state = await page.evaluate(async (fixture) => {
         const element = document.createElement('lv-admin-page') as any
@@ -1461,14 +1660,14 @@ test('query audit drawer does not block selecting another row', async () => {
 })
 
 test('storage renders a simple shared table with a schema column', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   await page.route('**/profile/avatars/**', (route) => route.fulfill({ status: 204 }))
   const consoleErrors: string[] = []
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text())
   })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-entity-list'))
 
     const state = await page.evaluate(async () => {
@@ -1534,6 +1733,14 @@ test('storage renders a simple shared table with a schema column', async () => {
         clientWidth: tableWrap.clientWidth,
       }
       const hrefs = Array.from(root.querySelectorAll<HTMLAnchorElement>('.entity-list-table-row a.entity-list-identity')).map((link) => link.getAttribute('href'))
+      const schemaFilter = root.querySelector<HTMLSelectElement>('.entity-filter')!
+      schemaFilter.value = 'staging'
+      schemaFilter.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await list.updateComplete
+      const schemaFiltered = rowState()
+      schemaFilter.value = 'all'
+      schemaFilter.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await list.updateComplete
       const input = root.querySelector<HTMLInputElement>('.entity-search input')!
       input.value = 'events'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
@@ -1546,11 +1753,13 @@ test('storage renders a simple shared table with a schema column', async () => {
         listText,
         metricsText: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.metrics .metric')).map((metric: Element) => metric.textContent?.replace(/\s+/g, ' ').trim()),
         hrefs,
+        schemaFiltered,
         initialIconState,
         listLabel: root.querySelector('table')?.getAttribute('aria-label'),
         clientFilter: list.clientFilter,
         groupBy: list.groupBy,
         groupHeaderCount: root.querySelectorAll('.entity-list-group-row').length,
+        filterOptions: Array.from(root.querySelectorAll('.entity-filter option')).map((option) => option.textContent?.trim()),
         columnWidths: list.columns.map((column: { width?: string }) => column.width ?? ''),
         layout,
       }
@@ -1560,6 +1769,7 @@ test('storage renders a simple shared table with a schema column', async () => {
     expect(state.clientFilter).toBe(true)
     expect(state.groupBy).toBe('')
     expect(state.groupHeaderCount).toBe(0)
+    expect(state.filterOptions).toEqual(['All schemas', 'model', 'staging'])
     expect(state.columnLabels).toEqual(['Name', 'Schema', 'Type', 'Rows', 'Columns', 'Files', 'Data size', 'Snapshot'])
     expect(state.columnWidths).toEqual(['155px', '85px', '60px', '85px', '70px', '55px', '85px', '75px'])
     expect(state.layout.nameColumnWidth).toBeGreaterThanOrEqual(155)
@@ -1582,10 +1792,12 @@ test('storage renders a simple shared table with a schema column', async () => {
     ])
     expect(state.initial.rows).toEqual(['orders', 'customers', 'events'])
     expect(state.initial.schemas).toEqual(['model', 'model', 'staging'])
-    expect(state.initial.types).toEqual(['table', 'table', 'view'])
+    expect(state.initial.types).toEqual(['Table', 'Table', 'View'])
+    expect(state.schemaFiltered.rows).toEqual(['events'])
+    expect(state.schemaFiltered.schemas).toEqual(['staging'])
     expect(state.filtered.rows).toEqual(['events'])
     expect(state.filtered.schemas).toEqual(['staging'])
-    expect(state.filtered.types).toEqual(['view'])
+    expect(state.filtered.types).toEqual(['View'])
     expect(consoleErrors).toEqual([])
     if (process.env.LEAPVIEW_CAPTURE_STORAGE_V2) {
       const list = page.locator('lv-admin-page lv-entity-list')
@@ -1598,15 +1810,71 @@ test('storage renders a simple shared table with a schema column', async () => {
   }
 })
 
+test('storage catalog errors use a user-facing callout and hide list controls', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(fixture.baseURL)
+    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-entity-list'))
+
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        kind: 'admin',
+        title: 'Storage',
+        active: 'storage',
+        headerTitle: 'Storage',
+        headerDetail: 'Browse tables and views across schemas.',
+        storage: {
+          summary: { totalDataSizeLabel: '', tableCount: 0, dataFileCount: 0 },
+          status: 'DuckLake catalog contains more than 10000 tables',
+          tables: [],
+        },
+      } })
+      const element = document.querySelector('lv-admin-page') as any
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const list = root.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const error = root.querySelector('[role="alert"]') as HTMLElement
+      const details = error.querySelector('details') as HTMLDetailsElement
+      return {
+        heading: error.querySelector('strong')?.textContent?.trim(),
+        message: error.querySelector('p')?.textContent?.trim(),
+        technicalDetails: error.querySelector('code')?.textContent?.trim(),
+        technicalDetailsCollapsed: !details.open,
+        listEmpty: list.querySelector('.entity-list-empty')?.textContent?.trim(),
+        toolbar: Boolean(list.querySelector('.entity-toolbar')),
+        search: Boolean(list.querySelector('.entity-search')),
+        clientFilter: list.clientFilter,
+        showToolbar: list.showToolbar,
+        retry: error.querySelector('.storage-retry')?.textContent?.trim(),
+      }
+    })
+
+    expect(state.heading).toBe('Storage metadata is temporarily unavailable.')
+    expect(state.message).toContain('could not load the table catalog')
+    expect(state.technicalDetails).toBe('DuckLake catalog contains more than 10000 tables')
+    expect(state.technicalDetailsCollapsed).toBe(true)
+    expect(state.listEmpty).toBe('No storage tables are available.')
+    expect(state.toolbar).toBe(false)
+    expect(state.search).toBe(false)
+    expect(state.clientFilter).toBe(false)
+    expect(state.showToolbar).toBe(false)
+    expect(state.retry).toBe('Retry')
+  } finally {
+    await page.close()
+  }
+})
+
 test('storage table detail emphasizes physical storage and active files', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   await page.route('**/profile/avatars/**', (route) => route.fulfill({ status: 204 }))
   const consoleErrors: string[] = []
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text())
   })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
 
     const state = await page.evaluate(async () => {
@@ -1691,10 +1959,10 @@ test('storage table detail emphasizes physical storage and active files', async 
 })
 
 test('admin agent route renders prompt editor, tools catalog, and emits save command', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-agent-prompt-editor') && customElements.get('lv-agent-tools'))
+    await page.goto(fixture.baseURL)
+    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-agent-settings') && customElements.get('lv-agent-prompt-editor') && customElements.get('lv-agent-tools'))
 
     const state = await page.evaluate(async () => {
       const waitFor = async (predicate: () => boolean, timeoutMs = 5000): Promise<void> => {
@@ -1731,6 +1999,9 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
           tools: [{
             name: 'query_visual',
             description: 'Query visual data.',
+            effect: 'read',
+            tags: ['analytics', 'visualization'],
+            defaults: {},
             inputSchema: {
               type: 'object',
               required: ['dashboardId'],
@@ -1740,6 +2011,7 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
               },
               additionalProperties: false,
             },
+            outputSchema: {},
           }],
         },
         sections: [{
@@ -1758,10 +2030,11 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
       let command: unknown = null
       element.addEventListener('lv-agent-system-prompt-save', (event: CustomEvent) => { command = event.detail })
       const root = (element.shadowRoot as ShadowRoot)
-      const editor = root.querySelector('lv-agent-prompt-editor') as any
-      const toolsCatalog = root.querySelector('lv-agent-tools') as any
+      const settings = root.querySelector('lv-agent-settings') as any
+      await settings.updateComplete
+      const settingsRoot = settings.shadowRoot as ShadowRoot
+      const editor = settingsRoot.querySelector('lv-agent-prompt-editor') as any
       await editor.updateComplete
-      await toolsCatalog.updateComplete
       const editorRoot = (editor.shadowRoot as ShadowRoot)
       await customElements.whenDefined('lv-code-editor')
       await waitFor(() => Boolean(editorRoot.querySelector('lv-code-editor')))
@@ -1828,8 +2101,15 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
       await editor.updateComplete
       editorRoot.querySelector<HTMLButtonElement>('.save-button')?.click()
       await editor.updateComplete
+      const toolsTab = Array.from(settingsRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((button) => button.textContent?.trim() === 'Tools')!
+      toolsTab.click()
+      await settings.updateComplete
+      const toolsCatalog = settingsRoot.querySelector('lv-agent-tools') as any
+      await toolsCatalog.updateComplete
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
+        overview: settingsRoot.querySelector('[aria-label="Agent overview"]')?.textContent?.replace(/\s+/g, ' ').trim(),
+        genericMetricCount: root.querySelectorAll('.metrics .metric').length,
         hasEditor: Boolean(editor),
         hasToolsCatalog: Boolean(toolsCatalog),
         hasGenericToolsRecordTable: Boolean(root.querySelector('section[aria-label="Tools"] lv-record-table')),
@@ -1853,11 +2133,15 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
     })
 
     expect(state.title).toBe('Agent')
+    expect(state.overview).toContain('fake-model')
+    expect(state.overview).toContain('Editable')
+    expect(state.genericMetricCount).toBe(0)
     expect(state.hasEditor).toBe(true)
     expect(state.hasToolsCatalog).toBe(true)
     expect(state.hasGenericToolsRecordTable).toBe(false)
     expect(state.toolsCatalogText ?? '').toMatch(/query_visual/)
-    expect(state.toolsCatalogText ?? '').toMatch(/dashboardId/)
+    expect(state.toolsCatalogText ?? '').toMatch(/Data & queries/)
+    expect(state.toolsCatalogText ?? '').toMatch(/2 fields · 1 required/)
     expect(state.hasCodeEditor).toBe(true)
     expect(state.preSwitchState).toEqual({
       hasCodeEditor: true,
@@ -1888,10 +2172,10 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
 })
 
 test('admin agent prompt editor disables saves for read-only users', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-agent-prompt-editor'))
+    await page.goto(fixture.baseURL)
+    await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-agent-settings') && customElements.get('lv-agent-prompt-editor'))
 
     const state = await page.evaluate(async () => {
       const waitFor = async (predicate: () => boolean, timeoutMs = 5000): Promise<void> => {
@@ -1934,7 +2218,10 @@ test('admin agent prompt editor disables saves for read-only users', async () =>
       await element.updateComplete
       let command: unknown = null
       element.addEventListener('lv-agent-system-prompt-save', (event: CustomEvent) => { command = event.detail })
-      const editor = (element.shadowRoot as ShadowRoot).querySelector('lv-agent-prompt-editor') as any
+      const settings = (element.shadowRoot as ShadowRoot).querySelector('lv-agent-settings') as any
+      await settings.updateComplete
+      const settingsRoot = settings.shadowRoot as ShadowRoot
+      const editor = settingsRoot.querySelector('lv-agent-prompt-editor') as any
       await editor.updateComplete
       const editorRoot = (editor.shadowRoot as ShadowRoot)
       const editButton = editorRoot.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Edit"]')!
@@ -1949,11 +2236,13 @@ test('admin agent prompt editor disables saves for read-only users', async () =>
         codeEditorDisabled: codeEditor.disabled,
         hasSaveButton: Boolean(saveButton),
         status: editorRoot.querySelector('.prompt-status')?.textContent?.trim(),
+        notice: settingsRoot.querySelector('.notice')?.textContent?.replace(/\s+/g, ' ').trim(),
         command,
       }
     })
 
     expect(state.codeEditorDisabled).toBe(true)
+    expect(state.notice).toContain('Deployment managed.')
     expect(state.hasSaveButton).toBe(false)
     expect(state.status).toBe('Read-only')
     expect(state.command).toBeNull()
@@ -1962,10 +2251,10 @@ test('admin agent prompt editor disables saves for read-only users', async () =>
   }
 })
 
-test('admin agent tools catalog renders payload fields, JSON, empty, unsupported, and search', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+test('admin agent tools use the shared list and a detail drawer for schemas', async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-agent-tools'))
 
     const state = await page.evaluate(async () => {
@@ -1974,6 +2263,7 @@ test('admin agent tools catalog renders payload fields, JSON, empty, unsupported
         name: 'query_visual',
         description: 'Query visual data.',
         effect: 'read',
+        tags: ['analytics', 'visualization'],
         defaults: { mode: 'summary' },
         inputSchema: {
           type: 'object',
@@ -2037,23 +2327,31 @@ test('admin agent tools catalog renders payload fields, JSON, empty, unsupported
       }, {
         name: 'no_input',
         description: 'No payload required.',
+        tags: ['documentation'],
         inputSchema: { type: 'object', additionalProperties: false },
       }, {
         name: 'unsupported_input',
         description: 'Composition schema.',
+        tags: ['catalog'],
         inputSchema: { oneOf: [{ type: 'string' }, { type: 'number' }] },
       }]
       document.body.append(element)
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)
+      const list = root.querySelector('lv-entity-list') as HTMLElement & { updateComplete: Promise<unknown> }
+      await list.updateComplete
       const firstText = root.textContent ?? ''
-      const catalogHeight = Math.round(root.querySelector('.catalog')!.getBoundingClientRect().height)
-      const listOverflow = getComputedStyle(root.querySelector('.list')!).overflowY
-      const detailBodyOverflow = getComputedStyle(root.querySelector('.detail-body')!).overflowY
-      const toolButtons = Array.from(root.querySelectorAll('.tool-button')).map((button) => button.textContent?.trim())
-      const listText = root.querySelector('.list')?.textContent ?? ''
+      const listRows = Array.from(list.querySelectorAll<HTMLElement>('.entity-list-table-row'))
+      const toolNames = listRows.map((row) => row.querySelector('.entity-list-title')?.textContent?.trim())
+      const listText = list.textContent ?? ''
+      const groupLabels = Array.from(list.querySelectorAll('.entity-list-group-label')).map((label) => label.textContent?.trim())
+      const queryRow = listRows.find((row) => row.textContent?.includes('query_visual'))!
+      const queryCells = Array.from(queryRow.querySelectorAll('th, td')).map((cell) => cell.textContent?.replace(/\s+/g, ' ').trim())
+      queryRow.click()
+      await element.updateComplete
+      const drawer = root.querySelector('lv-drawer') as any
       const firstRows = Array.from(root.querySelectorAll('.fields tbody tr')).map((row) => Array.from(row.querySelectorAll('td')).map((cell) => cell.textContent?.trim()))
-      const detailMeta = Array.from(root.querySelectorAll('.detail-meta .required-count')).map((item) => item.textContent?.trim())
+      const detailFacts = Array.from(root.querySelectorAll('.fact')).map((item) => [item.querySelector('dt')?.textContent?.trim(), item.querySelector('dd')?.textContent?.trim()])
 
       const jsonButton = root.querySelector<HTMLButtonElement>('.tabs button:nth-child(2)')!
       jsonButton.click()
@@ -2065,46 +2363,60 @@ test('admin agent tools catalog renders payload fields, JSON, empty, unsupported
       await element.updateComplete
       const outputText = root.querySelector('.json')?.textContent ?? ''
 
-      const noInputButton = Array.from(root.querySelectorAll<HTMLButtonElement>('.tool-button')).find((button) => button.textContent?.includes('no_input'))!
-      noInputButton.click()
+      const noInputRow = Array.from(list.querySelectorAll<HTMLElement>('.entity-list-table-row')).find((row) => row.textContent?.includes('no_input'))!
+      noInputRow.click()
       await element.updateComplete
       const noInputText = root.textContent ?? ''
 
-      const unsupportedButton = Array.from(root.querySelectorAll<HTMLButtonElement>('.tool-button')).find((button) => button.textContent?.includes('unsupported_input'))!
-      unsupportedButton.click()
+      const unsupportedRow = Array.from(list.querySelectorAll<HTMLElement>('.entity-list-table-row')).find((row) => row.textContent?.includes('unsupported_input'))!
+      unsupportedRow.click()
       await element.updateComplete
       const unsupportedText = root.textContent ?? ''
 
-      const search = root.querySelector<HTMLInputElement>('input[type="search"]')!
+      const search = list.querySelector<HTMLInputElement>('input[type="search"]')!
       search.value = 'filters.dateRange.start'
       search.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+      await list.updateComplete
+      const searchRows = Array.from(list.querySelectorAll('.entity-list-table-row')).map((row) => row.querySelector('.entity-list-title')?.textContent?.trim())
+      ;(drawer.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.close')?.click()
       await element.updateComplete
-      const searchRows = Array.from(root.querySelectorAll('.tool-button')).map((button) => button.textContent?.trim())
       return {
         firstText,
-        catalogHeight,
-        listOverflow,
-        detailBodyOverflow,
-        toolButtons,
+        hasSharedList: Boolean(list),
+        toolNames,
+        groupLabels,
+        queryCells,
+        hasRowIcons: Boolean(list.querySelector('.entity-list-icon')),
         listText,
+        drawerOpen: Boolean(drawer),
+        drawerModal: drawer.modal,
         firstRows,
-        detailMeta,
+        detailFacts,
         jsonText,
         outputText,
         noInputText,
         unsupportedText,
         searchRows,
+        drawerClosed: !root.querySelector('lv-drawer'),
       }
     })
 
     expect(state.firstText).toMatch(/query_visual/)
-    expect(state.firstText).toMatch(/dashboardId, filters\.dateRange\.start, filters\.dateRange\.end \+10/)
-    expect(state.catalogHeight).toBeGreaterThan(440)
-    expect(state.listOverflow).toBe('auto')
-    expect(state.detailBodyOverflow).toBe('auto')
-    expect(state.toolButtons).toEqual(['query_visual', 'no_input', 'unsupported_input'])
-    expect(state.listText).not.toMatch(/Query visual data/)
-    expect(state.detailMeta).toEqual(['read', '6 required', 'dashboardId, filters.dateRange.start, filters.dateRange.end +10', 'Defaults: mode=summary'])
+    expect(state.hasSharedList).toBe(true)
+    expect(state.toolNames).toEqual(['unsupported_input', 'query_visual', 'no_input'])
+    expect(state.groupLabels).toEqual(['Catalog', 'Data & queries', 'Documentation'])
+    expect(state.queryCells).toEqual(['query_visual', 'Query visual data.', 'Read-only', '13 fields · 6 required'])
+    expect(state.hasRowIcons).toBe(false)
+    expect(state.listText).toMatch(/Query visual data/)
+    expect(state.drawerOpen).toBe(true)
+    expect(state.drawerModal).toBe(false)
+    expect(state.detailFacts).toEqual([
+      ['Impact', 'Read-only'],
+      ['Category', 'Data & queries'],
+      ['Required inputs', '6'],
+      ['Input', 'dashboardId, filters.dateRange.start, filters.dateRange.end +10'],
+      ['Defaults', 'mode=summary'],
+    ])
     expect(state.firstRows).toContainEqual(['dashboardId', 'string', 'Yes', 'Dashboard identifier.'])
     expect(state.firstRows).toContainEqual(['filters.dateRange.start', 'string', 'Yes', 'Start date.'])
     expect(state.firstRows).toContainEqual(['filters.dateRange.end', 'string', 'No', 'End date.'])
@@ -2122,15 +2434,16 @@ test('admin agent tools catalog renders payload fields, JSON, empty, unsupported
     expect(state.unsupportedText).toMatch(/Schema is only available as JSON/)
     expect(state.searchRows).toHaveLength(1)
     expect(state.searchRows[0] ?? '').toMatch(/query_visual/)
+    expect(state.drawerClosed).toBe(true)
   } finally {
     await page.close()
   }
 })
 
 test('agent prompt editor seeds edit mode from value attribute', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-agent-prompt-editor'))
 
     const state = await page.evaluate(async () => {
@@ -2167,9 +2480,9 @@ test('agent prompt editor seeds edit mode from value attribute', async () => {
 })
 
 test('agent prompt preview delegates to compact markdown view', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-agent-prompt-editor') && customElements.get('lv-markdown-view'))
 
     const state = await page.evaluate(async () => {
@@ -2223,66 +2536,3 @@ test('agent prompt preview delegates to compact markdown view', async () => {
     await page.close()
   }
 })
-
-function testDocument(): string {
-  const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000).toISOString()
-  const page = {
-    kind: 'admin',
-    title: 'Principals',
-    active: 'principals',
-    sidebar: {
-      label: 'Admin',
-      railLabel: 'Admin',
-      ariaLabel: 'Admin navigation',
-      storageKey: 'leapview-admin-sidebar-collapsed',
-      activeId: 'principals',
-      collapsible: false,
-      numbered: false,
-      items: [
-        { id: 'principals', title: 'Principals', href: '/admin/principals', active: true },
-        { id: 'groups', title: 'Groups', href: '/admin/groups', active: false },
-        { id: 'agent', title: 'Agent', href: '/admin/agent', active: false },
-        { id: 'storage', title: 'Storage', href: '/admin/storage', active: false },
-        { id: 'queries', title: 'Queries', href: '/admin/queries', active: false },
-      ],
-    },
-    headerTitle: 'Members',
-    headerDetail: '',
-    directoryList: {
-      searchPlaceholder: 'Search by name or email',
-      filterLabel: 'Filter members',
-      items: [
-        { id: 'p1', name: 'Analyst', username: 'analyst', avatarUrl: '/profile/avatars/p1/avatar-digest', email: 'analyst@example.com', href: '/admin/principals/p1', status: 'active', groupCount: 1, joinedAt: '2026-07-20', lastSeenAt: fiveMinutesAgo },
-        { id: 'p2', name: 'Local Developer', username: 'dev', email: 'dev@localhost', href: '/admin/principals/p2', status: 'active', groupCount: 0, joinedAt: '2026-07-20', lastSeenAt: '' },
-      ],
-    },
-  }
-  const signals = escapeHTML(JSON.stringify({ page }))
-  return `
-    <!doctype html>
-    <html>
-      <head>
-        <style>
-          html, body { margin: 0; min-height: 100%; }
-          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-page: #fff; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-bg-accent: #0969da; --lv-bg-accent-muted: #ddf4ff; --lv-sidebar-bg: #f1f3f5; --lv-report-rail-bg: #ffffff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-fg-link: #0969da; --lv-fg-success: #1a7f37; --lv-fg-warning: #9a6700; --lv-fg-danger: #d1242f; --lv-fg-on-accent: #fff; --lv-icon-muted: #57606a; --lv-line-muted: #d8dee4; --lv-border-width: 1px; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-settings-content-max-width: 40rem; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --base-size-32: 32px; --base-size-40: 40px; --base-size-48: 48px; --base-size-64: 64px; --lv-transition-fast: 160ms ease; }
-          lv-admin-page { min-height: 720px; }
-        </style>
-      </head>
-      <body>
-        <main data-signals="${signals}">
-          <lv-admin-page></lv-admin-page>
-        </main>
-        <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
-        <script type="module" src="/admin-page-under-test.js"></script>
-      </body>
-    </html>
-  `
-}
-
-function escapeHTML(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('"', '&quot;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-}

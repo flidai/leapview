@@ -714,7 +714,10 @@ func chatTurnStatusError(err error) string {
 	if agent.IsBusy(err) {
 		return "A turn is already running for this conversation."
 	}
-	return err.Error()
+	// Provider, database, and tool failures can contain SQL, request payloads,
+	// or other implementation details. The module records the technical error
+	// for diagnostics; browser-facing signals receive a bounded message.
+	return "The agent could not complete that request. Please try again."
 }
 
 func chatSignalPatch(signal ui.ChatViewState, embedded bool) pagestream.SignalPatch {

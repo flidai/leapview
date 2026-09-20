@@ -25,10 +25,15 @@ The integration has three deliberately separate evidence classes:
 - **Structurally validated, not live Azure** — the CI contract and the manual
   Azure reference are YAML-validated for ordering, trusted-ref gating,
   immutable publication, credential scope, and CI-gate wiring. Repository CI
-  does not exercise live Azure OIDC, storage retention, or Azure RBAC.
+  does not exercise live Azure OIDC, storage retention, or Azure RBAC. The
+  separate manual Azure qualification workflow is maintained and fail-closed,
+  but a successful protected-main run is required before those boundaries are
+  classified as proven live.
 - **Project-free source root** — the profile is discovered from conventional
-  resource directories. The target-bound Project identity remains supplied by
-  `LEAPVIEW_WORKLOAD_PROJECT`; it is not authored in the source tree.
+  resource directories. The issuer bootstraps the durable ProjectUID before
+  target binding; `LEAPVIEW_WORKLOAD_PROJECT` requests the exact bound scope
+  for the CI workload identity, but does not issue Project identity or place it
+  in the portable source tree.
 
 ## Run the local showcase
 
@@ -111,7 +116,9 @@ then ends its Azure session and exposes only the non-secret prefix to a separate
 activation job. That job has no Azure OIDC permission; it renders an ordinary
 Azure-backed Connection/Source source root and invokes `leapview dev --once
 --no-browser` followed by `leapview publish`. The target binds the durable
-Project identity from `LEAPVIEW_WORKLOAD_PROJECT`.
+Project identity already bootstrapped by the issuer. The
+`LEAPVIEW_WORKLOAD_PROJECT` value requests that exact bound Project scope for
+the activation workload; it does not mint a ProjectUID.
 
 The LeapView target owns two credentials that are not present in the producer
 workflow:
@@ -126,6 +133,66 @@ DuckLake write. Never copy the producer's Azure profile or dbt credentials into
 LeapView. GitHub masks configured secrets, and the reference commands suppress
 Azure response bodies and dbt row output. Do not add raw-data previews or
 credential-bearing artifacts to the workflow.
+
+### Run the live Azure boundary qualification
+
+`.github/workflows/dbt-warehouse-boundary-azure-qualification.yml` is the
+manual FAI-688 qualification layer. It is deliberately separate from the
+production reference workflow: it verifies Azure data-plane permissions and
+publication integrity without becoming a serving path or changing the
+portable source bundle. It runs only from the protected default branch through
+the `dbt-warehouse-boundary-azure-qualification` GitHub environment.
+
+Configure that environment with the tenant, subscription, storage account,
+and container variables used by the production reference, plus:
+
+- `DBT_QUALIFICATION_SOURCE_CLIENT_ID`, the OIDC application whose deployed equivalent
+  is bound to the `azure_blob` Source;
+- `DBT_QUALIFICATION_DUCKLAKE_CLIENT_ID`, the OIDC application whose deployed
+  equivalent owns LeapView physical-state writes;
+- `DBT_QUALIFICATION_DUCKLAKE_STORAGE_ACCOUNT` and
+  `DBT_QUALIFICATION_DUCKLAKE_CONTAINER`, a
+  qualification scope separate from producer input and publication storage;
+- `DBT_QUALIFICATION_PROJECT_UID` and `DBT_QUALIFICATION_ENVIRONMENT`, the durable scope used to
+  namespace temporary DuckLake qualification writes.
+
+The three client IDs must be distinct. Use container-scoped Azure assignments
+at minimum: producer input read plus publication write for the producer,
+publication read for the Source identity, and DuckLake-container write for the
+DuckLake identity. Narrow the Source assignment with Azure attribute-based
+conditions when prefix enforcement is supported. Do not grant account-key
+access or management-plane key-listing permission to any qualification job.
+
+The producer publishes one intentionally incomplete prefix and one new
+run/attempt/Git-SHA-qualified complete prefix. Only the complete prefix is
+exported to the read qualification. Uploads forbid overwrite, the exact file
+set is listed, and both downloaded Parquet files must match producer SHA-256
+evidence. The digest values are qualification evidence only; LeapView does not
+consume a marker, manifest, or release envelope. The producer also requires
+denied DuckLake-scope reads and conditional writes.
+
+The Source identity must read and checksum the complete prefix. Safe
+conditional Azure REST probes then require HTTP 403 with
+`AuthorizationPermissionMismatch` for create and overwrite, and a
+nonexistent-object probe requires the same denial for delete. The conditional
+write probes use an impossible ETag, so an unexpectedly privileged identity
+still cannot mutate admitted data. Cross-container probes also reject producer
+input and DuckLake read/write access. The DuckLake identity performs a bounded
+round trip inside its own qualification prefix, removes only that probe, and
+must receive HTTP 403 from the producer publication scope.
+
+The incomplete producer prefix is never exported to LeapView and is not
+deleted as recovery. Its eventual removal belongs to the Azure storage
+lifecycle configured for the qualification container. The same run executes
+the existing consumer failure matrix, which proves stale observations,
+incompatible schemas, failed Model checks, partial input, and activation
+failure retain the prior serving generation through existing LeapView
+lifecycle operations.
+
+A workflow definition or architecture-test pass is not live Azure evidence.
+Record the successful protected-main workflow run URL, immutable prefix,
+non-secret checksum summary, and Azure role-assignment review in FAI-688 before
+marking its live-cloud acceptance criteria complete.
 
 ## Choose the consistency contract
 

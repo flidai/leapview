@@ -154,11 +154,11 @@ func TestAccessCorePostgreSQL18PrincipalCredentialsAndRevocation(t *testing.T) {
 		t.Fatalf("revoked session = %v", err)
 	}
 
-	apiSecret, apiToken, err := repo.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: p.Principal.ID, Name: "ci", Capabilities: []access.Capability{access.CapabilityResourceRead}, ExpiresAt: time.Now().Add(time.Hour)})
+	apiSecret, apiToken, err := repo.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: p.Principal.ID, Name: "ci", Description: "Deploys the reporting project", Capabilities: []access.Capability{access.CapabilityResourceRead}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if apiToken.ID == "" || apiToken.ExpiresAt == "" {
+	if apiToken.ID == "" || apiToken.ExpiresAt == "" || apiToken.Description != "Deploys the reporting project" {
 		t.Fatalf("token metadata = %#v", apiToken)
 	}
 	if _, err := repo.PrincipalForAPIToken(t.Context(), apiSecret); err != nil {
@@ -201,6 +201,34 @@ func TestAccessCorePostgreSQL18CredentialForSessionTokenBindsSessionAndActor(t *
 	}
 	if _, err := repo.CredentialForSessionToken(t.Context(), token); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("revoked session credential error = %v, want no rows", err)
+	}
+}
+
+func TestCreateSessionAtPreservesVerifiedOIDCAuthTimePostgreSQL18(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := repo.CreateLocalUser(t.Context(), access.LocalUserInput{Email: "oidc-auth-time@example.com", DisplayName: "OIDC Auth Time", Password: "oidc auth time password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticatedAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+	token, err := repo.CreateSessionAt(t.Context(), principal.Principal.ID, 8*time.Hour, authenticatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := repo.CredentialForSessionToken(t.Context(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, session.CreatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !createdAt.Equal(authenticatedAt) {
+		t.Fatalf("session created_at = %s, want verified auth_time %s", createdAt, authenticatedAt)
 	}
 }
 

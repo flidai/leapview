@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -598,21 +599,19 @@ func (c *Controller) runQualificationRecovery(
 	if _, err := c.qualificationDocker(ctx, nil, "update", "--cpus", qualificationRecoveryInterruptedWorkCPUs, options.ContainerID); err != nil {
 		return report, err
 	}
-	var refresh struct {
-		ID string `json:"id"`
-	}
 	refreshIDKey := fmt.Sprintf("qualification-refresh-%d", time.Now().Unix())
-	if err := qualificationAPI(
-		ctx, client, http.MethodPost,
+	refreshID, err := waitForQualificationRefreshCreation(
+		ctx,
+		client,
 		apiRoot+"/api/v1/projects/"+urlPath(options.ProjectID)+"/refresh-runs",
 		options.WorkloadToken,
-		map[string]string{"pipelineId": qualificationRefreshPipelineID},
 		refreshIDKey,
-		&refresh,
-	); err != nil {
+		time.Second,
+	)
+	if err != nil {
 		return report, err
 	}
-	refreshURL := apiRoot + "/api/v1/projects/" + urlPath(options.ProjectID) + "/refresh-runs/" + urlPath(refresh.ID)
+	refreshURL := apiRoot + "/api/v1/projects/" + urlPath(options.ProjectID) + "/refresh-runs/" + urlPath(refreshID)
 	if err := waitForQualificationStatus(
 		ctx, client, refreshURL, options.WorkloadToken, "running",
 	); err != nil {
@@ -744,6 +743,48 @@ func (c *Controller) runQualificationRecovery(
 	}
 	_, err = fmt.Fprintln(c.stdout, "installed-candidate recovery qualification passed")
 	return report, err
+}
+
+// waitForQualificationRefreshCreation allows the post-commit runtime cutover
+// to converge before the recovery drill starts refresh work. The publication
+// record commits before the active runtime is reconciled, so the refresh API
+// may briefly reject the durable/runtime identity mismatch with a 503. Reusing
+// one idempotency key makes each retry observe or create the same refresh run.
+func waitForQualificationRefreshCreation(
+	ctx context.Context,
+	client *http.Client,
+	endpoint string,
+	token string,
+	idempotencyKey string,
+	retryInterval time.Duration,
+) (string, error) {
+	var refresh struct {
+		ID string `json:"id"`
+	}
+	err := qualificationWait(ctx, retryInterval, func(waitCtx context.Context) (bool, error) {
+		refresh.ID = ""
+		err := qualificationAPI(
+			waitCtx,
+			client,
+			http.MethodPost,
+			endpoint,
+			token,
+			map[string]string{"pipelineId": qualificationRefreshPipelineID},
+			idempotencyKey,
+			&refresh,
+		)
+		if err != nil {
+			if qualificationTransientDeploymentError(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		if strings.TrimSpace(refresh.ID) == "" {
+			return false, errors.New("refresh creation returned an empty ID")
+		}
+		return true, nil
+	})
+	return refresh.ID, err
 }
 
 func (c *Controller) prepareQualificationRecoveryData(

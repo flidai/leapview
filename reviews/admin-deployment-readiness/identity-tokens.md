@@ -137,4 +137,4 @@ The focused credential lifecycle checks passed against the pinned PostgreSQL
   passed. A revision-020 fixture upgraded to revision 021, preserved the
   existing service-secret row, persisted post-upgrade last-used evidence, and
   rejected the destructive Down path; the embedded migration inventory now
-  includes `021_service_principal_credentials.sql`.
+  includes `024_service_principal_credentials.sql`.

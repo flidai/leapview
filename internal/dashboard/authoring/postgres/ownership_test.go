@@ -1,9 +1,13 @@
 package postgres
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -95,6 +99,48 @@ func TestRepositoryPostgreSQL18OwnershipTransferIsIdempotentAndRetainsChildren(t
 		t.Fatal(err)
 	} else if len(report.Objects) != 1 {
 		t.Fatalf("target ownership after transfer = %#v", report)
+	}
+}
+
+func TestCreateDashboardSerializesWithPrincipalOffboardingPostgreSQL18(t *testing.T) {
+	f := newAuthoringFixture(t)
+	ctx := t.Context()
+	deletionTx, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deletionTx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('leapview.platform-role-authority', 0))`); err != nil {
+		_ = deletionTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := deletionTx.Exec(ctx, `SELECT id FROM access.principal WHERE id=$1::uuid FOR UPDATE`, authoringOwnershipOwner); err != nil {
+		_ = deletionTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := deletionTx.Exec(ctx, `UPDATE access.principal SET status='disabled', disabled_at=clock_timestamp() WHERE id=$1::uuid`, authoringOwnershipOwner); err != nil {
+		_ = deletionTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+
+	blockedCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	_, createErr := f.repo.Create(blockedCtx, authoring.CreateInput{ProjectID: f.project, Lifecycle: f.lifecycle, Revision: f.revision})
+	cancel()
+	if !errors.Is(createErr, context.DeadlineExceeded) {
+		_ = deletionTx.Rollback(ctx)
+		t.Fatalf("dashboard create during uncommitted offboarding = %v, want context deadline", createErr)
+	}
+	if err := deletionTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.repo.Create(ctx, authoring.CreateInput{ProjectID: f.project, Lifecycle: f.lifecycle, Revision: f.revision}); err == nil {
+		t.Fatal("dashboard creation succeeded after principal offboarding")
+	}
+	var count int
+	if err := f.db.QueryRow(ctx, `SELECT count(*) FROM dashboard.authoring_dashboards WHERE owner_principal_id=$1::uuid`, authoringOwnershipOwner).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("dashboards created for offboarded principal = %d, want 0", count)
 	}
 }
 

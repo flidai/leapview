@@ -43,6 +43,9 @@ type Module struct {
 	// River's JobTimeout is a worker-wide safety bound; it is not the lease
 	// contract consumed by capability handlers.
 	handlerLeaseTimeouts map[string]time.Duration
+	refreshRecovery      refreshOrphanRecoveryHandler
+	refreshRecoveryStop  context.CancelFunc
+	refreshRecoveryDone  chan struct{}
 	retryAt              sync.Map
 	mu                   sync.RWMutex
 	// afterRiverResultValidated is a deterministic test seam for the narrow
@@ -58,6 +61,7 @@ var errWaitForStaleRiverClaim = errors.New("wait for stale River claim finalizat
 const (
 	approvalActivationKind        = "delivery.approval.activate"
 	approvalActivationRescueAfter = 2 * time.Minute
+	refreshPipelineKind           = "refresh_pipeline"
 	riverDefaultRescueAfter       = time.Hour
 	noDefaultRiverJobTimeout      = -1
 )
@@ -94,6 +98,7 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 	}
 	registered := make(map[string]jobs.Handler, len(handlers))
 	leaseTimeouts := make(map[string]time.Duration, len(handlers))
+	var refreshRecovery refreshOrphanRecoveryHandler
 	workers := river.NewWorkers()
 	for _, handler := range handlers {
 		if handler == nil || strings.TrimSpace(handler.Kind()) == "" {
@@ -121,7 +126,12 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 			river.AddWorker(workers, &deploymentActivateWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.DeploymentActivateArgs]{module: m, timing: workerTiming}})
 		case approvalActivationKind:
 			river.AddWorker(workers, &approvalActivateWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.ApprovalActivateArgs]{module: m, timing: workerTiming}})
-		case "refresh_pipeline":
+		case refreshPipelineKind:
+			var ok bool
+			refreshRecovery, ok = handler.(refreshOrphanRecoveryHandler)
+			if !ok || refreshRecovery.LeaseTimeout() <= 0 {
+				return errors.New("refresh pipeline handler requires orphan recovery authority")
+			}
 			river.AddWorker(workers, &refreshPipelineWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.RefreshPipelineArgs]{module: m, timing: workerTiming}})
 		default:
 			return errors.Join(jobs.ErrUnknownKind, errors.New(handler.Kind()))
@@ -139,8 +149,8 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 		ID: strings.TrimSpace(m.config.OwnerID), Logger: logger, MaxAttempts: jobpostgres.MaxAttempts,
 		Queues: map[string]river.QueueConfig{"control": {MaxWorkers: 2}, "background": {MaxWorkers: 4}}, Workers: workers,
 		// River couples each worker's Timeout to execution and rescue. Disable the
-		// global execution fallback and let each worker publish its safe rescue
-		// horizon; approval activation alone needs prompt process-loss recovery.
+		// fallback and publish the prior effective horizon per worker; approval
+		// activation alone keeps the bounded horizon needed for prompt recovery.
 		JobTimeout: noDefaultRiverJobTimeout, RescueStuckJobsAfter: approvalActivationRescueAfter,
 	}
 	if m.config.PollInterval > 0 {
@@ -156,6 +166,7 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 	}
 	m.handlers = registered
 	m.handlerLeaseTimeouts = leaseTimeouts
+	m.refreshRecovery = refreshRecovery
 	m.client = client
 	return nil
 }
@@ -167,7 +178,11 @@ func (m *Module) Start(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return m.client.Start(ctx)
+	if err := m.client.Start(ctx); err != nil {
+		return err
+	}
+	m.startRefreshOrphanRecovery()
+	return nil
 }
 
 func (m *Module) Stop(ctx context.Context) error {
@@ -177,7 +192,9 @@ func (m *Module) Stop(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return m.client.StopAndCancel(ctx)
+	m.stopRefreshOrphanRecovery()
+	recoveryErr := m.waitRefreshOrphanRecovery(ctx)
+	return errors.Join(recoveryErr, m.client.StopAndCancel(ctx))
 }
 
 func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, args jobpostgres.ExecutionArgs) error {
@@ -360,8 +377,8 @@ func (m *Module) riverWorkerTiming(handler jobs.Handler) (riverWorkerTiming, err
 	if !ok || timeoutHandler.LeaseTimeout() <= 0 || timeoutHandler.LeaseTimeout() > approvalActivationRescueAfter {
 		return riverWorkerTiming{}, errors.New("approval activation handler requires a bounded execution lease")
 	}
-	// The renewable product lease remains one minute. The River timeout is a
-	// separate safety bound that permits recovery without aborting healthy work.
+	// River couples worker execution and rescue to one timeout. Use the bounded
+	// rescue horizon here, never the shorter renewable capability lease.
 	return riverWorkerTiming{executionTimeout: approvalActivationRescueAfter, rescueAfter: approvalActivationRescueAfter}, nil
 }
 
@@ -474,7 +491,7 @@ type refreshPipelineWorker struct {
 }
 
 func (w *refreshPipelineWorker) Work(ctx context.Context, j *river.Job[jobpostgres.RefreshPipelineArgs]) error {
-	return w.work(ctx, j, "refresh_pipeline", jobpostgres.ExecutionArgs(j.Args))
+	return w.work(ctx, j, refreshPipelineKind, jobpostgres.ExecutionArgs(j.Args))
 }
 
 func (m *Module) Enqueue(ctx context.Context, input jobs.EnqueueInput) (jobs.Job, error) {

@@ -89,8 +89,8 @@ type PendingConversationAction struct {
 
 // ConversationMetadataKey is reserved inside metadata_json for durable chat
 // management state. Keeping this small state in the existing metadata object
-// lets SQLite installations adopt chat management without an unsafe live
-// table rewrite, while the repository still exposes typed fields to callers.
+// lets stored conversations adopt chat management without rewriting the
+// transcript schema, while the repository still exposes typed fields to callers.
 const ConversationMetadataKey = "_leapview_chat"
 
 type ConversationMetadata struct {

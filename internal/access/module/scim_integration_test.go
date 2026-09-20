@@ -3,7 +3,6 @@ package module
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,7 +12,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
+	"github.com/jackc/pgx/v5"
 )
 
 const testSCIMToken = "test-scim-token"
@@ -139,6 +138,7 @@ func TestSCIMDisableRevokesCredentials(t *testing.T) {
 		PrincipalID:  userID,
 		Name:         "disabled-user-token",
 		Capabilities: []access.Capability{access.CapabilityResourceRead},
+		ExpiresAt:    time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("create api token: %v", err)
@@ -154,11 +154,11 @@ func TestSCIMDisableRevokesCredentials(t *testing.T) {
 		t.Fatalf("disable user status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	if _, err := repo.PrincipalForToken(ctx, sessionToken); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("disabled principal session err = %v, want sql.ErrNoRows", err)
+	if _, err := repo.PrincipalForToken(ctx, sessionToken); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("disabled principal session err = %v, want pgx.ErrNoRows", err)
 	}
-	if _, err := repo.CredentialForAPIToken(ctx, apiToken); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("disabled principal api token err = %v, want sql.ErrNoRows", err)
+	if _, err := repo.CredentialForAPIToken(ctx, apiToken); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("disabled principal api token err = %v, want pgx.ErrNoRows", err)
 	}
 }
 
@@ -222,7 +222,7 @@ func TestSCIMUserRoundTripsExternalIDAndNestedPatch(t *testing.T) {
 		t.Fatalf("get principal: %v", err)
 	}
 	if principal.Email != "new-primary@example.com" || principal.DisplayName != "Display User" || principal.DisabledAt != "" {
-		t.Fatalf("patched principal = %#v", principal)
+		t.Fatalf("patched principal = %#v response=%s", principal, rec.Body.String())
 	}
 	if externalID(t, rec.Body.Bytes()) != "nested-user-ext" {
 		t.Fatalf("patched SCIM user externalId = %q, want nested-user-ext body=%s", externalID(t, rec.Body.Bytes()), rec.Body.String())
@@ -231,10 +231,10 @@ func TestSCIMUserRoundTripsExternalIDAndNestedPatch(t *testing.T) {
 
 func TestSCIMCannotMutateNonSCIMPrincipal(t *testing.T) {
 	store := testStore(t)
-	repo := accesssqlite.NewRepository(store.SQLDB())
+	repo := store.repository
 	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, SCIMBearerToken: testSCIMToken}))
 	ctx := context.Background()
-	local, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{ID: "local_user", Email: "local@example.com", DisplayName: "Local"})
+	local, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{Email: "local@example.com", DisplayName: "Local"})
 	if err != nil {
 		t.Fatalf("create local principal: %v", err)
 	}

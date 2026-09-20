@@ -303,32 +303,7 @@ func (m *Module) JobHandlers() []jobs.Handler {
 	if m == nil || m.runs == nil {
 		return nil
 	}
-	run := func(ctx context.Context, job jobs.Job) error {
-		persistence, ok := m.runs.(*postgresRunPersistence)
-		if !ok || persistence == nil || persistence.jobs == nil {
-			return errors.New("River refresh persistence is unavailable")
-		}
-		claimed, err := persistence.jobs.ClaimRiverJob(ctx, job, m.leaseTimeout)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if m.runFinishedCallback != nil {
-				m.runFinishedCallback(context.Background(), claimed)
-			}
-		}()
-		err = executeWithLeaseHeartbeat(ctx, claimed, m.leaseTimeout, m.runs.RenewJobLease, m.service.ExecuteClaimedJob)
-		if err != nil && m.logger != nil {
-			m.logger.ErrorContext(ctx, "refresh pipeline execution failed",
-				slog.String("run_id", claimed.RunID), slog.String("job_id", claimed.ID),
-				slog.String("pipeline_id", claimed.PipelineID.String()),
-				slog.String("error", err.Error()))
-		}
-		return err
-	}
-	return []jobs.Handler{
-		jobs.HandlerFunc{JobKind: refreshrun.JobKindRefreshPipeline, Run: run, ExecutionLeaseTimeout: m.leaseTimeout},
-	}
+	return []jobs.Handler{m.refreshPipelineJobHandler()}
 }
 
 func (m *Module) QueuePipelineRefresh(ctx context.Context, input refreshrun.QueuePipelineInput) (refreshrun.QueueAssetResult, error) {
@@ -909,11 +884,6 @@ func (m *Module) Start(ctx context.Context) error {
 		m.mu.Unlock()
 		return nil
 	}
-	expiredJobRecovery, err := m.recoverExpiredRiverJobsOnStart(ctx)
-	if err != nil {
-		m.mu.Unlock()
-		return err
-	}
 	m.background, m.cancel = context.WithCancel(ctx)
 	m.started = true
 	background := m.background
@@ -924,10 +894,6 @@ func (m *Module) Start(ctx context.Context) error {
 	if m.recoveryLifecycle != nil {
 		m.wg.Add(1)
 		go m.runRecoveryLifecycle(background)
-	}
-	if expiredJobRecovery != nil {
-		m.wg.Add(1)
-		go m.runExpiredRiverJobRecovery(background, expiredJobRecovery)
 	}
 	m.mu.Unlock()
 	return nil

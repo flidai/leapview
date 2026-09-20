@@ -88,6 +88,12 @@ func (a *SemanticAttributeOwnershipAuthority) TransferOwnedObjects(ctx context.C
 	}
 	return a.withOwnershipTx(ctx, func(db DBTX) (access.OwnershipReport, error) {
 		queries := accessdb.New(db)
+		// Keep direct semantic-attribute transfers on the same lifecycle
+		// authority boundary as repository-level offboarding. This adapter is
+		// also used directly by focused control-plane callers.
+		if err := queries.LockPlatformRoleAuthority(ctx); err != nil {
+			return access.OwnershipReport{}, fmt.Errorf("lock principal ownership authority: %w", err)
+		}
 		exists, err := queries.SemanticAttributeTransferPrincipalExists(ctx, targetUUID)
 		if err != nil {
 			return access.OwnershipReport{}, fmt.Errorf("validate semantic-attribute transfer target: %w", err)

@@ -44,9 +44,11 @@ case "${1:-list}" in
     # Bound this conformance lane at four package workers while retaining one
     # fail-closed inventory. Include integration and DuckDB build tags so
     # source-inventoried DuckLake PostgreSQL suites are actually compiled and
-    # executed in this lane. MinIO has its own external lane.
+    # executed in this lane. MinIO has its own external lane. The application
+    # package contains many container-backed tests; allow it more than Go's
+    # default ten-minute package timeout on slower hosted runners.
     LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1 \
-      go test -tags 'integration duckdb_arrow' -p 4 -count=1 -v -skip '^TestMinIOParquetSourceRefreshContract$' "${packages[@]}"
+      go test -tags 'integration duckdb_arrow' -p 4 -count=1 -timeout=30m -v -skip '^TestMinIOParquetSourceRefreshContract$' "${packages[@]}"
     ;;
   *)
     printf 'usage: %s [list|run]\n' "$0" >&2

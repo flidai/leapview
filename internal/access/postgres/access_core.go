@@ -17,12 +17,15 @@ import (
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
-	maxSessionTTL = 30 * 24 * time.Hour
-	maxPageSize   = 1000
+	defaultServicePrincipalSecretTTL  = 180 * 24 * time.Hour
+	maxSessionTTL                     = 30 * 24 * time.Hour
+	maxRecentSessionAuthenticationAge = 15 * time.Minute
+	maxPageSize                       = 1000
 )
 
 var verifierParams = &argon2id.Params{Memory: 19 * 1024, Iterations: 2, Parallelism: 1, SaltLength: 16, KeyLength: 32}
@@ -750,6 +753,10 @@ func (r *Repository) CreateLocalUser(ctx context.Context, input access.LocalUser
 		err = tx.Commit(ctx)
 	}
 	if err != nil {
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) && databaseError.Code == "23505" && databaseError.ConstraintName == "principal_email_active_key" {
+			return access.LocalPasswordReset{}, access.ErrPrincipalAlreadyExists
+		}
 		return access.LocalPasswordReset{}, err
 	}
 	var p access.Principal
@@ -903,6 +910,31 @@ func (r *Repository) setPasswordCredential(ctx context.Context, pid, current, ne
 }
 
 func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Duration) (string, error) {
+	return r.createSession(ctx, pid, ttl, time.Time{})
+}
+
+// CreateSessionAt is the OIDC-aware browser-session constructor. The
+// authenticated-at timestamp was verified in the signed ID token; preserving
+// it as the session's server-owned creation time keeps recent-auth checks
+// anchored to the identity-provider event rather than the callback arrival.
+// It is intentionally an optional concrete capability and is not part of the
+// broad access.Repository interface.
+func (r *Repository) CreateSessionAt(ctx context.Context, pid string, ttl time.Duration, authenticatedAt time.Time) (string, error) {
+	if authenticatedAt.IsZero() {
+		return "", errors.New("authenticated-at time is required")
+	}
+	authenticatedAt = authenticatedAt.UTC()
+	now := time.Now().UTC()
+	if authenticatedAt.After(now) {
+		return "", errors.New("authenticated-at time is in the future")
+	}
+	if now.Sub(authenticatedAt) > maxRecentSessionAuthenticationAge {
+		return "", errors.New("authenticated-at time is stale")
+	}
+	return r.createSession(ctx, pid, ttl, authenticatedAt)
+}
+
+func (r *Repository) createSession(ctx context.Context, pid string, ttl time.Duration, authenticatedAt time.Time) (string, error) {
 	db, err := r.requireDB()
 	if err != nil {
 		return "", err
@@ -934,8 +966,23 @@ func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Dur
 	if err != nil {
 		return "", err
 	}
-	tag, err := accessdb.New(db).CreateBrowserSession(ctx, accessdb.CreateBrowserSessionParams{ID: parsedID, PrincipalID: principalID,
-		TokenFingerprint: r.secretFingerprint(token), Verifier: ver, Ttl: pgInterval(ttl)})
+	var tag pgconn.CommandTag
+	if authenticatedAt.IsZero() {
+		tag, err = accessdb.New(db).CreateBrowserSession(ctx, accessdb.CreateBrowserSessionParams{ID: parsedID, PrincipalID: principalID,
+			TokenFingerprint: r.secretFingerprint(token), Verifier: ver, Ttl: pgInterval(ttl)})
+	} else {
+		// The session identity trigger intentionally rejects post-insert
+		// created_at changes. Insert the verified IdP authentication time in
+		// the same statement instead, while retaining callback-time expiry.
+		tag, err = db.Exec(ctx, `
+			INSERT INTO access.session(id, principal_id, token_fingerprint, verifier, expires_at, created_at, kind)
+			SELECT $1::uuid, $2::uuid, $3, $4, clock_timestamp() + $6::interval, $5, 'browser'
+			WHERE EXISTS (
+				SELECT 1 FROM access.principal
+				WHERE id = $2::uuid AND status = 'active'
+				  AND disabled_at IS NULL AND blocked_at IS NULL
+			)`, parsedID, principalID, r.secretFingerprint(token), ver, authenticatedAt.UTC(), pgInterval(ttl))
+	}
 	if err != nil {
 		return "", err
 	}
@@ -981,6 +1028,21 @@ func (r *Repository) ListSessions(ctx context.Context, pid string) ([]access.Ses
 		out = append(out, s)
 	}
 	return out, nil
+}
+func (r *Repository) RevokeSessionsForPrincipal(ctx context.Context, pid string) error {
+	db, err := r.requireDB()
+	if err != nil {
+		return err
+	}
+	pid, err = uuidID("principal id", pid)
+	if err != nil {
+		return err
+	}
+	principalID, err := pgUUID(pid)
+	if err != nil {
+		return err
+	}
+	return accessdb.New(db).RevokePrincipalSessions(ctx, principalID)
 }
 func (r *Repository) RevokeSession(ctx context.Context, id string) error {
 	db, err := r.requireDB()
@@ -1061,7 +1123,7 @@ func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, 
 	if err != nil {
 		return access.APIToken{}, err
 	}
-	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name,
+	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name, Description: row.Description,
 		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt),
 		LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
 	if len(row.Capabilities) > 0 && string(row.Capabilities) != "null" {
@@ -1190,6 +1252,9 @@ func (r *Repository) CreateServicePrincipalSecret(ctx context.Context, pid strin
 	name, e := bounded(strings.TrimSpace(in.Name), "secret name", 255)
 	if e != nil {
 		return "", access.ServicePrincipalSecret{}, e
+	}
+	if in.ExpiresAt.IsZero() {
+		in.ExpiresAt = time.Now().Add(defaultServicePrincipalSecretTTL)
 	}
 	secret, e := tokenSecret("lv_sp_")
 	if e != nil {

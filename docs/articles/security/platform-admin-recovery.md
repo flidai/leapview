@@ -86,7 +86,11 @@ The command rejects symlinks, non-regular files, files larger than 4096 bytes,
 and files readable by group or other users. Password replacement, session
 revocation, the platform-role grant, and the audit event share the same
 PostgreSQL transaction. Neither JSON output nor audit metadata contains the
-password. Delete the file after securely transferring the value, sign in,
+password. If an apply response is lost, retry with the same operation ID,
+revision, and password file contents. A replay reports `replayed: true` and
+does not reset the password or revoke later sessions. Changing the recovery
+intent under the same operation ID is rejected. Delete the file after securely
+transferring the value, sign in,
 change the temporary password immediately, repair the normal IdP path, and
 restore the intended authentication configuration.
 

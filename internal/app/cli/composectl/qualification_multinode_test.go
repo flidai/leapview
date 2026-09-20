@@ -35,7 +35,7 @@ func TestQualificationMultiNodeEnvironmentRewritesPostgresURLs(t *testing.T) {
 	values, err := qualificationMultiNodeEnvironment(path)
 	require.NoError(t, err)
 	require.Equal(t, ":8080", values["LEAPVIEW_ADDR"])
-	require.Equal(t, "/var/lib/leapview", values["LEAPVIEW_HOME"])
+	require.Equal(t, "/var/lib/leapview/home", values["LEAPVIEW_HOME"])
 	require.Equal(t, qualificationMultiNodeExtensionCache, values["LEAPVIEW_DUCKDB_EXTENSION_CACHE_DIR"])
 	require.Equal(t, qualificationMultiNodeObjectStore, values["LEAPVIEW_OBJECT_STORE_FILESYSTEM_ROOT"])
 	for _, key := range []string{"LEAPVIEW_POSTGRES_CONTROL_URL", "LEAPVIEW_POSTGRES_DUCKLAKE_URL"} {
@@ -102,6 +102,7 @@ func TestQualificationMultiNodeProcessExercisesLossAndRollingRestart(t *testing.
 	}, report)
 	require.Len(t, runtime.request.Volumes, 5)
 	require.True(t, runtime.request.ReadOnly)
+	require.Equal(t, "/var/lib/leapview/home", runtime.request.Environment["LEAPVIEW_HOME"])
 	require.Equal(t, qualificationMultiNodeRootCertificate, runtime.request.Volumes[0].Target)
 	require.Equal(t, qualificationContainerVolume{
 		Source: "multi-node-qualification_leapview-state", Target: qualificationMultiNodePoolDirectory,

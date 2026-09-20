@@ -97,7 +97,7 @@ func TestSearchUsesDirectAndGroupGrantsAndDoesNotEnumerateDeniedResources(t *tes
 	// Build the graph first so grants can be bound to its exact IDs.
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
-		{ID: "model_secret", Kind: projectgraph.KindModel, Name: "secret"},
+		{ID: "model_secret", Kind: projectgraph.KindModel, Name: "orders_secret"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +116,10 @@ func TestSearchUsesDirectAndGroupGrantsAndDoesNotEnumerateDeniedResources(t *tes
 	}
 	if len(page.Items) != 1 || page.Items[0].Ref.ID != "model_orders" {
 		t.Fatalf("authorized search = %#v, want only group-granted model", page.Items)
+	}
+	listed, err := service.List(context.Background(), ListRequest{PrincipalID: principal.ID, Kinds: []projectgraph.Kind{projectgraph.KindModel}, Limit: 20})
+	if err != nil || len(listed.Items) != 1 || listed.Items[0].Ref.ID != "model_orders" {
+		t.Fatalf("authorized list = %#v, %v; want only group-granted model", listed.Items, err)
 	}
 	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: "model_secret", Kind: projectgraph.KindModel}, access.CapabilityResourceRead, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unauthorized resolve error = %v, want non-enumerating not found", err)

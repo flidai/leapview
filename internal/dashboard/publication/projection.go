@@ -8,9 +8,9 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-// Projection is the backend-neutral publication row shape. PostgreSQL and
-// SQLite adapters normalize nullable timestamps and IDs into strings before
-// calling MapProjection; SQL query and transaction details stay backend-owned.
+// Projection is the persistence-neutral publication row shape. The PostgreSQL
+// adapter normalizes nullable timestamps and IDs into strings before calling
+// MapProjection; SQL query and transaction details stay backend-owned.
 type Projection struct {
 	ID                     string
 	ProjectID              string
@@ -33,8 +33,8 @@ type Projection struct {
 	UpdatedAt              string
 }
 
-// MapProjection converts either persistence backend's normalized row into the
-// canonical publication model and preserves identical validation/error rules.
+// MapProjection converts a normalized persistence row into the canonical
+// publication model and preserves its validation/error rules.
 func MapProjection(row Projection) (Publication, error) {
 	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(row.ProjectID))
 	if err != nil {

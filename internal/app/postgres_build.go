@@ -328,6 +328,13 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	projectID := projectgraph.ResourceID("")
 	if found {
 		projectID = claimedProject
+		// Dashboard authoring and the other project-scoped control-plane
+		// projections reference the canonical project identity. Older targets can
+		// carry a valid durable claim without that minimum identity row, so repair
+		// it idempotently before any authoring surface is exposed.
+		if err := projectmodule.EnsureIdentity(ctx, graph.Project, claimedProject); err != nil {
+			return fail(fmt.Errorf("ensure claimed project identity: %w", err))
+		}
 	}
 
 	// Access is built before runtimehost; all current-project callbacks remain
@@ -899,7 +906,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		NativeDeliveryReader:        nativeDeliveryReader,
 		ProjectClaims:               graph.DeploymentRepository,
 		CandidateSources:            nativeProjectSource.CandidateSourceReader,
-		BindClaimedProject:          bindClaimedProject(runtimeHost, environment),
+		BindClaimedProject:          bindClaimedProject(runtimeHost, graph.Project, environment),
 		CurrentApprovalActor: func(r *http.Request) (deploymentmodule.ApprovalActor, bool) {
 			evidence, ok := accessBundle.Module.CurrentCredentialEvidence(r)
 			if !ok {

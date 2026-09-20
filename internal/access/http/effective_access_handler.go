@@ -35,6 +35,7 @@ func (h Handler) ListEffectiveCapabilities(w stdhttp.ResponseWriter, r *stdhttp.
 		return
 	}
 	filtered := filterEffectiveDecisions(decisions, resourceKind, resourceID)
+	filtered = h.attenuateEffectiveDecisions(r, principal.ID, filtered)
 	capabilities := make([]access.Capability, 0)
 	seen := make(map[access.Capability]struct{})
 	for _, decision := range filtered {
@@ -112,7 +113,7 @@ func (h Handler) CheckAuthorizationBatch(w stdhttp.ResponseWriter, r *stdhttp.Re
 		found := false
 		for _, decision := range decisions {
 			if decision.ResourceKind == string(kind) && decision.ResourceID == resourceID.String() && decision.Capability == capability {
-				result = append(result, authorizationDecisionDTO(decision))
+				result = append(result, authorizationDecisionDTO(h.attenuateEffectiveDecision(r, principal.ID, decision)))
 				found = true
 				break
 			}
@@ -125,6 +126,52 @@ func (h Handler) CheckAuthorizationBatch(w stdhttp.ResponseWriter, r *stdhttp.Re
 		}
 	}
 	writeJSON(w, stdhttp.StatusOK, map[string]any{"decisions": result})
+}
+
+// attenuateEffectiveDecision applies the request credential's least-privilege
+// boundary to immutable RBAC evidence. A stored token scope can remove
+// authority, never add it; a dynamic (nil) API-token scope inherits the
+// principal's current decision. Authoring credentials additionally bind the
+// request to their project scope.
+func (h Handler) attenuateEffectiveDecision(r *stdhttp.Request, principalID string, decision access.AuthorizationDecision) access.AuthorizationDecision {
+	if !decision.Allowed {
+		return decision
+	}
+	credential, ok := h.currentCredential(r)
+	if !ok {
+		return decision
+	}
+	if credential.Principal.ID != "" && credential.Principal.ID != principalID {
+		decision.Allowed = false
+		decision.Reason = "credential principal does not match request principal"
+		return decision
+	}
+	if credential.Authoring != nil {
+		projectID := strings.TrimSpace(chi.URLParam(r, "project"))
+		if projectID != "" && credential.Authoring.Scope.ProjectID.String() != projectID {
+			decision.Allowed = false
+			decision.Reason = "credential is scoped to a different project"
+			return decision
+		}
+		if !containsCapability(credential.Authoring.Scope.Capabilities, decision.Capability) {
+			decision.Allowed = false
+			decision.Reason = "credential does not grant requested capability"
+			return decision
+		}
+	}
+	if credential.Token.ID != "" && credential.Token.Capabilities != nil && !containsCapability(credential.Token.Capabilities, decision.Capability) {
+		decision.Allowed = false
+		decision.Reason = "credential does not grant requested capability"
+	}
+	return decision
+}
+
+func (h Handler) attenuateEffectiveDecisions(r *stdhttp.Request, principalID string, decisions []access.AuthorizationDecision) []access.AuthorizationDecision {
+	result := make([]access.AuthorizationDecision, len(decisions))
+	for index, decision := range decisions {
+		result[index] = h.attenuateEffectiveDecision(r, principalID, decision)
+	}
+	return result
 }
 
 func effectiveResourceFilter(r *stdhttp.Request) (string, string, error) {

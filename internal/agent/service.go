@@ -388,7 +388,7 @@ func (s *Service) ManageConversation(ctx context.Context, scope Scope, action, c
 	case "delete":
 		_, err := s.DeleteConversation(ctx, scope, conversationID)
 		return err
-	case "archive_all", "delete_all":
+	case "archive_all", "delete_active", "delete_all":
 		active, err := s.listAllConversations(ctx, scope, false)
 		if err != nil {
 			return err
@@ -399,6 +399,10 @@ func (s *Service) ManageConversation(ctx context.Context, scope Scope, action, c
 		}
 		if action == "archive_all" {
 			_, err = s.BulkArchiveConversations(ctx, scope, ids)
+			return err
+		}
+		if action == "delete_active" {
+			_, err = s.BulkDeleteConversations(ctx, scope, ids)
 			return err
 		}
 		archived, err := s.listAllConversations(ctx, scope, true)

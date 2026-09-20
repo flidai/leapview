@@ -83,6 +83,38 @@ func TestCheckAuthorizationBatchReturnsAllowedAndDeniedReasons(t *testing.T) {
 	}
 }
 
+func TestCheckAuthorizationBatchHonorsRestrictedToken(t *testing.T) {
+	handler := Handler{
+		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+			return Principal{ID: "principal_alice", Kind: access.PrincipalKindUser}, true
+		},
+		CurrentCredential: func(*stdhttp.Request) (access.APICredential, bool) {
+			return access.APICredential{
+				Principal: access.Principal{ID: "principal_alice"},
+				Token:     access.APIToken{ID: "restricted", PrincipalID: "principal_alice", Capabilities: []access.Capability{access.CapabilityResourceRead}},
+			}, true
+		},
+		EffectiveAccess: func(context.Context, string) ([]access.AuthorizationDecision, error) {
+			return []access.AuthorizationDecision{{Allowed: true, Capability: access.CapabilityResourceEdit, ResourceKind: "dashboard", ResourceID: "dashboard_sales", Reason: "direct role binding"}}, nil
+		},
+	}
+	request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/projects/project_demo/authorization-checks", bytes.NewBufferString(`{"checks":[{"resourceKind":"dashboard","resourceId":"dashboard_sales","capability":"RESOURCE_EDIT"}]}`))
+	response := httptest.NewRecorder()
+	handler.CheckAuthorizationBatch(response, request)
+	var body struct {
+		Decisions []struct {
+			Allowed bool   `json:"allowed"`
+			Reason  string `json:"reason"`
+		} `json:"decisions"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != stdhttp.StatusOK || len(body.Decisions) != 1 || body.Decisions[0].Allowed || body.Decisions[0].Reason != "credential does not grant requested capability" {
+		t.Fatalf("restricted token decision: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestWriteOffboardingErrorPreservesTypedConflictAndObjectEvidence(t *testing.T) {
 	response := httptest.NewRecorder()
 	err := &access.OwnershipConflictError{Report: access.OwnershipReport{

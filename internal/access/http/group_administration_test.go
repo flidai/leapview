@@ -6,24 +6,16 @@ import (
 	"io"
 	stdhttp "net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/go-chi/chi/v5"
 )
 
 func TestGlobalGroupAPIIncludesSourceAwareSCIMGroups(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
-	admin, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: "principal-admin", Email: "admin@example.test", Role: access.PlatformRoleAdmin})
+	repository := openAccessHTTPTestStore(t).repository
+	admin, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{Email: "admin@example.test", Role: access.PlatformRoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}

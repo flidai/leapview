@@ -7,6 +7,8 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	agentdb "github.com/flidai/leapview/internal/agent/postgres/internal/db"
+	"github.com/flidai/leapview/internal/platform/accesslifecycle"
+	"github.com/google/uuid"
 )
 
 // ListOwnedObjects reports active, non-tombstoned conversations. Archived
@@ -66,6 +68,12 @@ func (r *Repository) TransferOwnedObjects(ctx context.Context, principalID, targ
 		return access.OwnershipReport{}, fmt.Errorf("principal and target principal ids must differ")
 	}
 	return r.withOwnershipTx(ctx, func(tx Tx, q *agentdb.Queries) (access.OwnershipReport, error) {
+		if err := lockAccessPrincipalIfCanonical(ctx, tx, principalID); err != nil {
+			return access.OwnershipReport{}, err
+		}
+		if err := lockAccessPrincipalIfCanonical(ctx, tx, targetPrincipalID); err != nil {
+			return access.OwnershipReport{}, err
+		}
 		rows, err := q.TransferOwnedAgentConversations(ctx, agentdb.TransferOwnedAgentConversationsParams{PrincipalID: principalID, TargetPrincipalID: targetPrincipalID})
 		if err != nil {
 			return access.OwnershipReport{}, fmt.Errorf("transfer principal-owned agent conversations: %w", err)
@@ -89,6 +97,9 @@ func (r *Repository) TombstoneOwnedObjects(ctx context.Context, principalID stri
 		return access.OwnershipReport{}, err
 	}
 	return r.withOwnershipTx(ctx, func(tx Tx, q *agentdb.Queries) (access.OwnershipReport, error) {
+		if err := lockAccessPrincipalIfCanonical(ctx, tx, principalID); err != nil {
+			return access.OwnershipReport{}, err
+		}
 		rows, err := q.TombstoneOwnedAgentConversations(ctx, principalID)
 		if err != nil {
 			return access.OwnershipReport{}, fmt.Errorf("tombstone principal-owned agent conversations: %w", err)
@@ -129,6 +140,17 @@ func (r *Repository) withOwnershipTx(ctx context.Context, fn func(Tx, *agentdb.Q
 
 func principalIDValue(value string) (string, error) {
 	return principalID(value)
+}
+
+// The standalone agent persistence contract historically allowed opaque
+// principal labels in tests and in isolated deployments. Only canonical
+// access UUIDs have a row in access.principal and therefore participate in
+// access lifecycle serialization.
+func lockAccessPrincipalIfCanonical(ctx context.Context, tx DBTX, principalID string) error {
+	if _, err := uuid.Parse(strings.TrimSpace(principalID)); err != nil {
+		return nil
+	}
+	return accesslifecycle.LockOwnedPrincipal(ctx, tx, principalID)
 }
 
 var _ access.OwnershipAuthority = (*Repository)(nil)

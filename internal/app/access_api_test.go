@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,8 +12,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestServicePrincipalMutationsExecuteGeneratedContracts(t *testing.T) {
@@ -100,8 +98,8 @@ func TestServicePrincipalMutationsExecuteGeneratedContracts(t *testing.T) {
 	if deleteRec.Code != http.StatusNoContent {
 		t.Fatalf("delete service principal status = %d, want %d body=%s", deleteRec.Code, http.StatusNoContent, deleteRec.Body.String())
 	}
-	if _, err := repo.PrincipalByID(ctx, created.ID); err == nil || err != sql.ErrNoRows {
-		t.Fatalf("deleted service principal lookup error = %v, want sql.ErrNoRows", err)
+	if _, err := repo.PrincipalByID(ctx, created.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("deleted service principal lookup error = %v, want pgx.ErrNoRows", err)
 	}
 	for _, tc := range []struct {
 		action   string
@@ -225,7 +223,7 @@ func TestCreateAndResetLocalPrincipalAPI(t *testing.T) {
 	if created.Principal.Email != "local-user@example.com" || created.TemporaryPassword == "" {
 		t.Fatalf("created response = %#v", created)
 	}
-	repo := accesssqlite.NewRepository(store.SQLDB())
+	repo := store.fixture.Graph.Access
 	if _, credential, err := repo.VerifyLocalPassword(ctx, "local-user@example.com", created.TemporaryPassword); err != nil {
 		t.Fatalf("verify created temporary password: %v", err)
 	} else if !credential.MustChangePassword {
@@ -263,7 +261,7 @@ func TestPrincipalLifecycleMutationsExecuteGeneratedContracts(t *testing.T) {
 	ctx := context.Background()
 	admin := testPlatformPrincipal(t, ctx, store, "principal-lifecycle-admin@example.com", "Principal Lifecycle Admin")
 	token, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{PrincipalID: admin.ID, Name: "principal-lifecycle-admin", Capabilities: []access.Capability{access.CapabilityProjectAdmin}})
-	repo := accesssqlite.NewRepository(store.SQLDB())
+	repo := testAccessRepository(store)
 	target, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "principal-lifecycle-target@example.com", DisplayName: "Before"})
 	if err != nil {
 		t.Fatalf("create target principal: %v", err)
@@ -313,8 +311,8 @@ func TestPrincipalLifecycleMutationsExecuteGeneratedContracts(t *testing.T) {
 	if response := do(request(http.MethodDelete, "/api/v1/principals/"+target.Principal.ID, "")); response.Code != http.StatusNoContent {
 		t.Fatalf("delete principal status = %d, want 204; body=%s", response.Code, response.Body.String())
 	}
-	if _, err := repo.PrincipalByID(ctx, target.Principal.ID); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("deleted principal lookup error = %v, want sql.ErrNoRows", err)
+	if _, err := repo.PrincipalByID(ctx, target.Principal.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("deleted principal lookup error = %v, want pgx.ErrNoRows", err)
 	}
 }
 
@@ -333,7 +331,7 @@ func TestCurrentAPITokenRevocationIsScopedToAuthenticatedPrincipal(t *testing.T)
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	for _, id := range []string{foreignToken.ID, "token_missing"} {
+	for _, id := range []string{foreignToken.ID, "00000000-0000-0000-0000-000000000000"} {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/api-tokens/"+id, nil)
 		req.Header.Set("Authorization", "Bearer "+authSecret)
 		req.Header.Set("Accept", "application/json")
@@ -459,7 +457,7 @@ func TestServicePrincipalSecretCreateReturnsExpiry(t *testing.T) {
 		Name:         "platform-admin",
 		Capabilities: []access.Capability{access.CapabilityProjectAdmin},
 	})
-	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{ID: "sp_secret_api", DisplayName: "Secret API"})
+	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: "Secret API"})
 	if err != nil {
 		t.Fatalf("create service principal: %v", err)
 	}
@@ -510,7 +508,7 @@ func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
 		Name:         "platform-admin",
 		Capabilities: []access.Capability{access.CapabilityProjectAdmin, access.CapabilityResourceManage, access.CapabilityResourceUse},
 	})
-	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{ID: "sp_secret_cache", DisplayName: "Secret Cache"})
+	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: "Secret Cache"})
 	if err != nil {
 		t.Fatalf("create service principal: %v", err)
 	}
@@ -586,7 +584,7 @@ func TestCurrentSessionRevocationIsScopedToAuthenticatedPrincipal(t *testing.T) 
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	for _, id := range []string{foreignSessions[0].ID, "session_missing"} {
+	for _, id := range []string{foreignSessions[0].ID, "00000000-0000-0000-0000-000000000000"} {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/sessions/"+id, nil)
 		req.Header.Set("Authorization", "Bearer "+authSecret)
 		req.Header.Set("Accept", "application/json")
@@ -613,8 +611,11 @@ func TestCurrentSessionRevocationIsScopedToAuthenticatedPrincipal(t *testing.T) 
 	}
 }
 
-func testScopedAPIToken(t *testing.T, ctx context.Context, store *platform.Store, input access.APITokenInput) (string, access.APIToken) {
+func testScopedAPIToken(t *testing.T, ctx context.Context, store *testControlStore, input access.APITokenInput) (string, access.APIToken) {
 	t.Helper()
+	if input.ExpiresAt.IsZero() {
+		input.ExpiresAt = time.Now().Add(time.Hour)
+	}
 	secret, token, err := testAccessRepository(store).CreateAPITokenWithMetadata(ctx, input)
 	if err != nil {
 		t.Fatalf("create scoped api token: %v", err)

@@ -1075,18 +1075,17 @@ func (c *Controller) qualificationDiskUsage(
 ) (int64, error) {
 	output, err := c.qualificationContainers.Existing(appContainer).Exec(
 		ctx, nil,
-		"find",
-		"/var/lib/leapview",
-		"-type", "f",
-		"!", "-name", "*.db-wal",
-		"!", "-name", "*.db-shm",
-		"-exec", "stat", "-c", "%s", "{}", "+",
+		"sh", "-ec", qualificationDiskUsageCommand,
+		"qualification-disk-usage", "/var/lib/leapview",
 	)
 	if err != nil {
 		return 0, err
 	}
 	return sumQualificationIntegers(output, label)
 }
+
+const qualificationDiskUsageCommand = `measurements="$(find "$1" -type f ! -name '*.db-wal' ! -name '*.db-shm' -exec du -b {} +)" || exit $?
+printf '%s\n' "$measurements" | awk '{ total += $1 } END { print total + 0 }'`
 
 func verifyQualificationDenialsAndMetrics(
 	ctx context.Context,

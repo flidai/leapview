@@ -145,10 +145,3 @@ func ValidateEnvironment(value Environment) error {
 	}
 	return nil
 }
-
-func NormalizeSource(value Source) Source {
-	if value == "" {
-		return SourcePublish
-	}
-	return value
-}

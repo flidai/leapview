@@ -32,7 +32,7 @@ func TestAdminBootstrapSignalsUseAdminOwnedContracts(t *testing.T) {
 	if !ok {
 		t.Fatalf("chrome = %T, want admin signal contract", signals["chrome"])
 	}
-	if chrome.Sidebar.Active != "profile" || !chrome.Sidebar.Compact || chrome.Sidebar.History != nil || len(chrome.Sidebar.Groups) != 5 {
+	if chrome.Sidebar.Active != "profile" || !chrome.Sidebar.Compact || chrome.Sidebar.History != nil || len(chrome.Sidebar.Groups) != 6 {
 		t.Fatalf("chrome = %#v", chrome)
 	}
 	page, ok := signals["page"].(uisignals.AdminPageSignal)
@@ -178,6 +178,21 @@ func TestAdminDirectoryExcludesMachinePrincipals(t *testing.T) {
 	}, "")
 	if len(signal.Items) != 1 || signal.Items[0].ID != "person" {
 		t.Fatalf("directory items = %#v, want only human principal", signal.Items)
+	}
+	if signal.FilterLabel != "Filter users" {
+		t.Fatalf("directory filter label = %q, want %q", signal.FilterLabel, "Filter users")
+	}
+}
+
+func TestAdminUsesUserTerminologyForHumanPrincipalPages(t *testing.T) {
+	list := adminPageSignal("principals", AdminData{})
+	if list.Title != "Users" || list.HeaderTitle != "Users" || list.HeaderDetail != "Manage user identities, account status, and access." {
+		t.Fatalf("users page = %#v", list)
+	}
+
+	detail := adminPageSignal("principal-detail", AdminData{SelectedPrincipal: &AdminPrincipal{ID: "user-1", DisplayName: "Ada Lovelace", Kind: "user"}})
+	if detail.Title != "User" || detail.HeaderTitle != "Users / Ada Lovelace" {
+		t.Fatalf("user detail page = %#v", detail)
 	}
 }
 

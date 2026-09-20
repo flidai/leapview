@@ -1,0 +1,17 @@
+apiVersion: leapview.dev/v1
+kind: Source
+metadata:
+  id: source:olist.payments
+  name: olist.payments
+  displayName: Payments
+spec:
+  connection: olist
+  location:
+    type: path
+    path: olist_order_payments_dataset.csv
+    format: csv
+  schema:
+    mode: compatible
+  fields:
+    - {name: order_id, datatype: String, description: Order identifier for the payment.}
+    - {name: payment_value, datatype: Float, description: Payment amount for the transaction.}

@@ -6,14 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 )
 
 type browserGuardRepository struct {
@@ -109,13 +106,63 @@ func TestAuthenticateRejectsMissingPrincipal(t *testing.T) {
 	}
 }
 
-func TestAuthMiddlewareRedirectsAnInvalidSessionToBrandedRecovery(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
+func TestAuthenticateRedirectsUnauthenticatedBrowserNavigationToLogin(t *testing.T) {
+	repository := testStore(t).repository
+	auth := mustNewAuth(t, repository, AuthConfig{LocalAuth: true})
+	module, err := newSurface(surfaceConfig{Repository: func() (access.Repository, error) { return repository, nil }, Auth: auth})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/dashboards/dashboard:sales", nil)
+	request.Header.Set("Accept", "text/html")
+	module.Authenticate(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("protected handler ran without authentication")
+	})).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "/login" {
+		t.Fatalf("response = %d location %q, want login redirect", recorder.Code, recorder.Header().Get("Location"))
+	}
+	var returned bool
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == AuthReturnCookieName && cookie.Value != "" {
+			returned = true
+		}
+		if cookie.Name == "lv_session" {
+			t.Fatalf("missing session caused unexpected session cookie mutation: %#v", cookie)
+		}
+	}
+	if !returned {
+		t.Fatal("login redirect did not retain the requested browser route")
+	}
+}
+
+func TestAuthenticateKeepsBearerChallengeForAPITokenOnlyNavigation(t *testing.T) {
+	repository := testStore(t).repository
+	auth := mustNewAuth(t, repository, AuthConfig{APITokenOnly: true})
+	module, err := newSurface(surfaceConfig{Repository: func() (access.Repository, error) { return repository, nil }, Auth: auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/dashboards/dashboard:sales", nil)
+	request.Header.Set("Accept", "text/html")
+	module.Authenticate(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("protected handler ran without a bearer credential")
+	})).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized || recorder.Header().Get("Location") != "" {
+		t.Fatalf("response = %d location %q, want bearer challenge", recorder.Code, recorder.Header().Get("Location"))
+	}
+	if got := recorder.Header().Get("WWW-Authenticate"); got != `Bearer realm="leapview"` {
+		t.Fatalf("WWW-Authenticate = %q", got)
+	}
+}
+
+func TestAuthMiddlewareRedirectsAnInvalidSessionToBrandedRecovery(t *testing.T) {
+	repository := testStore(t).repository
 	auth := mustNewAuth(t, repository, AuthConfig{LocalAuth: true})
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/dashboards/dashboard:sales", nil)
@@ -141,12 +188,7 @@ func TestAuthMiddlewareRedirectsAnInvalidSessionToBrandedRecovery(t *testing.T) 
 }
 
 func TestAuthenticateRedirectsExpiredBrowserNavigationAndDoesNotReplayCommands(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
+	repository := testStore(t).repository
 	auth := mustNewAuth(t, repository, AuthConfig{LocalAuth: true})
 	module, err := newSurface(surfaceConfig{Repository: func() (access.Repository, error) { return repository, nil }, Auth: auth})
 	if err != nil {
@@ -252,13 +294,8 @@ func TestRequirePlatformAdminAllowsDevelopmentBypassWithoutRepository(t *testing
 }
 
 func TestRequirePlatformAdminAttenuatesDynamicAndDenyAllTokensAndHonorsRevocation(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
-	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{ID: "platform-user", Email: "platform@example.test", DisplayName: "Platform User"})
+	repository := testStore(t).repository
+	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "platform@example.test", DisplayName: "Platform User"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,13 +345,8 @@ func TestRequirePlatformAdminAttenuatesDynamicAndDenyAllTokensAndHonorsRevocatio
 }
 
 func TestRequirePlatformAdminIgnoresProjectSnapshotWithoutDurableRole(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
-	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{ID: "project-admin-only", Email: "project-admin@example.test"})
+	repository := testStore(t).repository
+	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "project-admin@example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,13 +372,8 @@ func TestRequirePlatformAdminIgnoresProjectSnapshotWithoutDurableRole(t *testing
 }
 
 func TestRequestPlatformAdminCredentialAttenuation(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
-	principal, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: "attenuated-admin", Email: "attenuated@example.test", Role: access.PlatformRoleAdmin})
+	repository := testStore(t).repository
+	principal, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{Email: "attenuated@example.test", Role: access.PlatformRoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}

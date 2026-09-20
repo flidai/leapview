@@ -1,5 +1,5 @@
 import { css, html } from 'lit'
-import { Archive, ChevronRight, Pin, PinOff, Trash2 } from 'lucide'
+import { ChevronRight, MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
 
@@ -71,17 +71,25 @@ export const sidebarChatHistoryStyles = css`
   .history-row { position: relative; display: flex; align-items: center; min-width: 0; border-radius: var(--lv-radius-default); }
   .history-row .history-item { flex: 1; min-width: 0; }
   .chat-pin { display: inline-flex; flex-shrink: 0; color: var(--lv-fg-muted); }
-  .chat-actions { position: absolute; right: 4px; display: flex; gap: 2px; opacity: 0; pointer-events: none; background: var(--lv-bg-panel-muted); border-radius: var(--lv-radius-default); }
-  .chat-action { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--lv-radius-default); background: transparent; color: var(--lv-fg-muted); cursor: pointer; }
+  .chat-menu { position: absolute; right: 4px; z-index: 3; }
+  .chat-menu > summary { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); color: var(--lv-fg-muted); cursor: pointer; list-style: none; opacity: 0; }
+  .chat-menu > summary::-webkit-details-marker { display: none; }
+  .chat-menu[open] > summary,
+  .history-row:hover .chat-menu > summary,
+  .history-row:focus-within .chat-menu > summary { opacity: 1; }
+  .chat-menu > summary:hover { color: var(--lv-fg-default); background: var(--lv-bg-panel); }
+  .chat-menu > summary:focus-visible { opacity: 1; outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; }
+  .chat-menu-panel { position: absolute; right: 0; top: calc(100% + 4px); display: grid; min-width: 176px; padding: 4px; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); }
+  .chat-action { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 6px 8px; border: 0; border-radius: var(--lv-radius-small); background: transparent; color: var(--lv-fg-default); cursor: pointer; text-align: left; font: var(--lv-type-body-compact); }
   .history-row:hover, .history-row:focus-within { background: var(--lv-bg-panel-muted); }
-  .history-row:hover .history-item, .history-row:focus-within .history-item { padding-right: 96px; background: transparent; }
-  .history-row:hover .chat-actions, .history-row:focus-within .chat-actions { opacity: 1; pointer-events: auto; }
+  .history-row:hover .history-item, .history-row:focus-within .history-item { padding-right: 36px; background: transparent; }
   .chat-action:hover { color: var(--lv-fg-default); background: var(--lv-bg-panel); }
   .chat-action.danger:hover { color: var(--lv-fg-danger); }
+  .chat-action.unavailable { cursor: not-allowed; color: var(--lv-fg-muted); opacity: .6; }
   .chat-action:focus-visible { outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; }
   @media (hover: none) {
-    .chat-actions { opacity: 1; pointer-events: auto; background: var(--lv-bg-panel); }
-    .history-row .history-item { padding-right: 96px; }
+    .chat-menu > summary { opacity: 1; background: var(--lv-bg-panel); }
+    .history-row .history-item { padding-right: 36px; }
   }
 
   .history-title {
@@ -142,11 +150,23 @@ function renderSidebarChatHistoryItem(
         <span class="history-title">${title}</span>
         ${item.pending ? html`<lv-loading-spinner size="small" aria-label="Title loading"></lv-loading-spinner>` : null}
       </a>
-      <div class="chat-actions" role="group" aria-label=${`Actions for ${title}`}>
-        <button class="chat-action" type="button" title=${item.pinned ? 'Unpin chat' : 'Pin chat'} aria-label=${item.pinned ? 'Unpin chat' : 'Pin chat'} @click=${() => chatAction(item.pinned ? 'unpin' : 'pin', item)}>${lucideIcon(item.pinned ? PinOff : Pin, { size: 16 })}</button>
-        <button class="chat-action" type="button" title="Archive chat" aria-label="Archive chat" @click=${() => chatAction('archive', item)}>${lucideIcon(Archive, { size: 16 })}</button>
-        <button class="chat-action danger" type="button" title="Delete chat" aria-label="Delete chat" @click=${() => chatAction('delete', item)}>${lucideIcon(Trash2, { size: 16 })}</button>
-      </div>
+      <details class="chat-menu">
+        <summary aria-label=${`More actions for ${title}`} title="More actions">${lucideIcon(MoreHorizontal, { size: 17 })}</summary>
+        <div class="chat-menu-panel" role="menu" aria-label=${`Actions for ${title}`}>
+          <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => runChatAction(event, 'select', item, chatAction)}> <span aria-hidden="true"></span><span>Select</span></button>
+          <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => runChatAction(event, item.pinned ? 'unpin' : 'pin', item, chatAction)}>${lucideIcon(item.pinned ? PinOff : Pin, { size: 16 })}<span>${item.pinned ? 'Unpin chat' : 'Pin chat'}</span></button>
+          <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => runChatAction(event, 'rename', item, chatAction)}>${lucideIcon(Pencil, { size: 16 })}<span>Rename</span></button>
+          <button class="chat-action unavailable" type="button" role="menuitem" disabled title="Chat projects are not supported yet"> <span aria-hidden="true"></span><span>Add to project</span></button>
+          <button class="chat-action danger" type="button" role="menuitem" @click=${(event: MouseEvent) => runChatAction(event, 'delete', item, chatAction)}>${lucideIcon(Trash2, { size: 16 })}<span>Delete chat</span></button>
+        </div>
+      </details>
     </div>
   `
+}
+
+function runChatAction(event: MouseEvent, action: string, item: SidebarHistoryItem, chatAction: (action: string, item: SidebarHistoryItem) => void): void {
+  event.stopPropagation()
+  const menu = (event.currentTarget as HTMLElement).closest('details')
+  if (menu instanceof HTMLDetailsElement) menu.open = false
+  chatAction(action, item)
 }

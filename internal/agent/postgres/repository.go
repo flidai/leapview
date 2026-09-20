@@ -20,6 +20,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	agentdb "github.com/flidai/leapview/internal/agent/postgres/internal/db"
+	"github.com/flidai/leapview/internal/platform/accesslifecycle"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/google/uuid"
@@ -226,20 +227,13 @@ func (r *Repository) recordAudit(ctx context.Context, tx Tx, intent *access.Audi
 		return errors.New("agent audit intent recorder is required")
 	}
 	copy := *intent
-	// Access' PostgreSQL audit table stores audit_id (and the optional request
-	// and correlation identities) as UUIDs. Generate only an omitted source
-	// event identity; a non-canonical caller value is rejected so retries never
-	// silently lose their correlation key.
+	// Access' PostgreSQL audit table stores audit_id as a UUID. Generate only an
+	// omitted source event identity; request and correlation identities remain
+	// bounded opaque text so HTTP idempotency keys can be retained verbatim.
 	var identityErr error
 	copy.EventID, identityErr = requiredOrUUIDv7(copy.EventID, "audit event id")
 	if identityErr != nil {
 		return identityErr
-	}
-	if copy.RequestID != "" && !isCanonicalUUID(copy.RequestID) {
-		return fmt.Errorf("audit request id must be a UUID")
-	}
-	if copy.CorrelationID != "" && !isCanonicalUUID(copy.CorrelationID) {
-		return fmt.Errorf("audit correlation id must be a UUID")
 	}
 	if domain != nil {
 		if !isCanonicalUUID(domain.EventID) || domain.AggregateVersion <= 0 {
@@ -278,9 +272,8 @@ func (r *Repository) recordAudit(ctx context.Context, tx Tx, intent *access.Audi
 		copy.AggregateKey = "agent_conversation:" + aggregateID
 	}
 	// The canonical domain event sequence is authoritative whenever a domain
-	// event was appended in this transaction.  The legacy fallback below is
-	// retained only for callers that intentionally omit the domain appender
-	// (for example the SQLite compatibility path).
+	// event was appended in this transaction. The fallback below is retained
+	// for narrow callers that intentionally omit the domain appender.
 	if domain == nil {
 		if isRun {
 			if strings.Contains(op, "create") {
@@ -353,6 +346,16 @@ func (r *Repository) CreateConversation(ctx context.Context, input agent.Convers
 	intent, hasIntent := agent.AuditIntentFromContext(ctx)
 	var out agent.Conversation
 	err = r.withTx(ctx, func(tx Tx, q *agentdb.Queries) error {
+		// Production principal identifiers are access UUIDs. Keep the access
+		// lifecycle lock on this same transaction so offboarding cannot commit
+		// between an active-principal check and conversation insertion. The
+		// standalone agent test authority also supports opaque principal labels;
+		// those have no access.principal lifecycle row to serialize against.
+		if _, parseErr := uuid.Parse(strings.TrimSpace(input.PrincipalID)); parseErr == nil {
+			if err := accesslifecycle.LockOwnedPrincipal(ctx, tx, input.PrincipalID); err != nil {
+				return err
+			}
+		}
 		row, err := q.CreateAgentConversation(ctx, agentdb.CreateAgentConversationParams{ID: id, PrincipalID: principal, Title: title, Status: agent.ConversationStatusActive, MetadataJson: []byte(metadata), TranscriptJson: []byte("[]")})
 		if err != nil {
 			return err

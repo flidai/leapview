@@ -5,29 +5,23 @@ import (
 	"encoding/json"
 	stdhttp "net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 )
 
 func TestPlatformAdministratorStaleAttemptPersistsScopedDenialEvidence(t *testing.T) {
 	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "access.db"))
+	store := openAccessHTTPTestStore(t)
+	repo := store.repository
+	wrapped := &platformAdministratorDenialRepository{Repository: repo, revision: "revision-1"}
+	admin, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{Kind: access.PrincipalKindUser, Email: "audit-admin@example.test", DisplayName: "audit-admin"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
-	wrapped := &platformAdministratorDenialRepository{Repository: repo, revision: "revision-1"}
-	admin := access.Principal{ID: "audit-admin", Kind: access.PrincipalKindUser}
-	target := access.Principal{ID: "audit-target", Kind: access.PrincipalKindUser}
-	for _, principal := range []access.Principal{admin, target} {
-		if _, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{ID: principal.ID, Kind: principal.Kind, Email: principal.ID + "@example.test", DisplayName: principal.ID}); err != nil {
-			t.Fatal(err)
-		}
+	target, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{Kind: access.PrincipalKindUser, Email: "audit-target@example.test", DisplayName: "audit-target"})
+	if err != nil {
+		t.Fatal(err)
 	}
 	handler := Handler{
 		Repository: func() (access.Repository, error) { return wrapped, nil },
@@ -98,13 +92,9 @@ func (r *platformAdministratorDenialRepository) RevokePlatformAdmin(context.Cont
 
 func TestPlatformAuthorizationDenialPersistsActorAndTargetEvidence(t *testing.T) {
 	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
-	actor, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{ID: "audit-non-admin", Email: "audit-non-admin@example.test"})
+	store := openAccessHTTPTestStore(t)
+	repo := store.repository
+	actor, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{Kind: access.PrincipalKindUser, Email: "audit-non-admin@example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}

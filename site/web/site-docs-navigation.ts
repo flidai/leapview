@@ -20,7 +20,7 @@ class SiteDocsDrawerToggle extends LitElement {
       display: none;
     }
 
-    @media (max-width: 56.25rem) {
+    @media (max-width: 64rem) {
       :host {
         display: block;
       }
@@ -109,7 +109,7 @@ function syncDocsDrawer(open = false): void {
   const header = document.querySelector<HTMLElement>('.site-header')
   const content = layout.querySelector<HTMLElement>('.site-docs-content')
 
-  const compact = window.matchMedia('(max-width: 56.25rem)').matches
+  const compact = window.matchMedia('(max-width: 64rem)').matches
   const nextOpen = compact && open
   const wasOpen = layout.classList.contains('site-docs-drawer-open')
   layout.classList.toggle('site-docs-drawer-open', nextOpen)

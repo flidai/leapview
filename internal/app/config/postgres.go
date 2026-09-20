@@ -250,9 +250,9 @@ func (c Config) ValidatePostgresUpgrade() error {
 // ValidatePostgresProduction enforces the clean-slate production startup
 // contract. Production serving carries no migrator credential; an optional
 // readonly URL is validated when supplied. This method is kept
-// separate from Config.Validate so embedded development/test fixtures can
-// continue to use their approved local SQLite cache without weakening the
-// production serve command's fail-closed check.
+// separate from Config.Validate so development/test fixtures can omit
+// production-only requirements without weakening the production serve
+// command's fail-closed check.
 func (c Config) ValidatePostgresProduction() error {
 	if !c.Production {
 		return nil

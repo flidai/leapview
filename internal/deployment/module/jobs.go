@@ -72,7 +72,20 @@ type approvedPublicationActivator interface {
 // job is untrusted input: it reloads effective approval and verifies the full
 // immutable publication scope before the coordinator performs its atomic
 // lease/CAS activation transaction.
-func (m *Module) activateApprovedPublication(ctx context.Context, job jobs.Job) error {
+func (m *Module) activateApprovedPublication(ctx context.Context, job jobs.Job) (resultErr error) {
+	logger := slog.Default()
+	if m != nil && m.jobs.Logger != nil {
+		logger = m.jobs.Logger
+	}
+	defer func() {
+		if resultErr != nil {
+			logger.ErrorContext(ctx, "approved publication activation failed",
+				"job_id", job.ID,
+				"publication_id", job.ResourceID,
+				"error", resultErr,
+			)
+		}
+	}()
 	if m == nil || m.persistence == nil || m.persistence.Repository == nil || m.persistence.Approval == nil || m.jobs.Coordinator == nil {
 		return fmt.Errorf("native approval activation worker is unavailable")
 	}

@@ -8,18 +8,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/agent"
-	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
-	"github.com/flidai/leapview/internal/platform"
+	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
-	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/go-chi/chi/v5"
@@ -293,12 +289,8 @@ func TestAgentChatDraftAndActiveTurnsAuditCreatedCommandsOnce(t *testing.T) {
 
 func commandAuditService(t *testing.T) (*agent.Service, string) {
 	t.Helper()
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "agent-audit.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	principal, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(t.Context(), access.PrincipalInput{
+	fixture := openAgentHTTPPostgresFixture(t, agentpostgres.Options{Audit: noopAgentAuditRecorder{}})
+	principal, err := fixture.Access.UpsertPrincipal(t.Context(), access.PrincipalInput{
 		Email: "agent-audit@example.com", DisplayName: "Agent Audit",
 	})
 	if err != nil {
@@ -308,12 +300,16 @@ func commandAuditService(t *testing.T) (*agent.Service, string) {
 		return agentcore.ModelResponse{Content: "ok", FinishReason: agentcore.FinishReasonStop}, nil
 	})
 	return agent.NewService(
-		agentsqlite.NewRepositoryWithAudit(store.SQLDB(), access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
-			return nil
-		})),
+		fixture.Agent,
 		agent.Config{APIKey: "test", Model: "test"},
 		agent.WithModel(model),
 	), principal.ID
+}
+
+type noopAgentAuditRecorder struct{}
+
+func (noopAgentAuditRecorder) RecordAuditIntent(context.Context, agentpostgres.Tx, access.AuditIntent) error {
+	return nil
 }
 
 func commandAuditTestIntent(input CommandAuditInput) *access.AuditIntent {
@@ -336,7 +332,7 @@ func commandAuditTestIntent(input CommandAuditInput) *access.AuditIntent {
 		},
 	})
 	return &access.AuditIntent{
-		EventID: "agent-command-pending", Source: "agent", Operation: input.OperationID,
+		EventID: uuid.NewString(), Source: "agent", Operation: input.OperationID,
 		PrincipalID: input.Scope.PrincipalID, Action: action, ResourceKind: input.TargetType,
 		ResourceID: input.TargetID, Capability: access.CapabilityResourceUse, Outcome: "success",
 		RequestID: input.RequestID, CorrelationID: input.CorrelationID,
