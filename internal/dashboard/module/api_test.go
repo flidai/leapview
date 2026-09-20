@@ -104,8 +104,47 @@ func TestGeneratedListEndpointsResolveModuleServingSnapshot(t *testing.T) {
 		}
 	})
 
-	if resolved != 2 {
-		t.Fatalf("serving snapshot resolver calls = %d, want 2", resolved)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		call   func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "semantic datasets", method: http.MethodGet, path: "/api/v1/semantic-models/semantic_model:one/datasets", call: func(w http.ResponseWriter, r *http.Request) {
+			dashboardAPIGenHandler{module: module}.ListSemanticDatasets(w, r, "semantic_model:one", dashboardgen.GenListSemanticDatasetsParams{})
+		}},
+		{name: "semantic fields", method: http.MethodGet, path: "/api/v1/semantic-models/semantic_model:one/datasets/orders/fields", call: func(w http.ResponseWriter, r *http.Request) {
+			dashboardAPIGenHandler{module: module}.ListSemanticFields(w, r, "semantic_model:one", "orders", dashboardgen.GenListSemanticFieldsParams{})
+		}},
+		{name: "semantic preview explain", method: http.MethodPost, path: "/api/v1/semantic-models/semantic_model:one/datasets/orders/preview/explain", call: func(w http.ResponseWriter, r *http.Request) {
+			dashboardAPIGenHandler{module: module}.ExplainSemanticPreview(w, r, "semantic_model:one", "orders")
+		}},
+		{name: "semantic model fields", method: http.MethodGet, path: "/api/v1/semantic-models/semantic_model:one/fields", call: func(w http.ResponseWriter, r *http.Request) {
+			dashboardAPIGenHandler{module: module}.ListSemanticModelFields(w, r, "semantic_model:one", dashboardgen.GenListSemanticModelFieldsParams{})
+		}},
+		{name: "semantic query explain", method: http.MethodPost, path: "/api/v1/semantic-models/semantic_model:one/query/explain", call: func(w http.ResponseWriter, r *http.Request) {
+			dashboardAPIGenHandler{module: module}.ExplainSemanticModelQuery(w, r, "semantic_model:one")
+		}},
+		{name: "semantic relationships", method: http.MethodGet, path: "/api/v1/semantic-models/semantic_model:one/relationships", call: func(w http.ResponseWriter, r *http.Request) {
+			dashboardAPIGenHandler{module: module}.ListSemanticRelationships(w, r, "semantic_model:one", dashboardgen.GenListSemanticRelationshipsParams{})
+		}},
+		{name: "semantic sources", method: http.MethodGet, path: "/api/v1/semantic-models/semantic_model:one/sources", call: func(w http.ResponseWriter, r *http.Request) {
+			dashboardAPIGenHandler{module: module}.ListSemanticSources(w, r, "semantic_model:one", dashboardgen.GenListSemanticSourcesParams{})
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, nil)
+			request.Header.Set("X-Serving-Snapshot", "state-attacker-controlled")
+			test.call(httptest.NewRecorder(), request)
+			if got := request.Header.Get("X-Serving-Snapshot"); got != servingSnapshot {
+				t.Fatalf("serving snapshot = %q, want %q", got, servingSnapshot)
+			}
+		})
+	}
+
+	if resolved != 9 {
+		t.Fatalf("serving snapshot resolver calls = %d, want 9", resolved)
 	}
 }
 

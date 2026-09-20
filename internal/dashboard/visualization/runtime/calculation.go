@@ -195,12 +195,19 @@ func evaluateCalculation(datasetID string, calculation ir.VisualizationCalculati
 	if err != nil {
 		return nil, err
 	}
+	// Order columns are immutable throughout this calculation. Resolve each
+	// once, rather than copying the entire frame again for every partition.
+	orderValues := make([][]any, len(calculation.OrderBy))
+	for index, order := range calculation.OrderBy {
+		values, err := calculationValues(order.Field.Field, frame, columns, calculated)
+		if err != nil {
+			return nil, err
+		}
+		orderValues[index] = values
+	}
 	out := make([]any, len(frame.Rows))
 	for _, members := range partitions {
-		ordered, orderErr := orderCalculationRows(calculation, members, frame, columns, calculated)
-		if orderErr != nil {
-			return nil, orderErr
-		}
+		ordered := orderCalculationRows(calculation, members, orderValues)
 		switch calculation.Template {
 		case ir.VisualizationCalculationTemplateRunningTotal:
 			evaluateRunningTotal(out, source, ordered, decimalOutput)
@@ -294,8 +301,12 @@ func calculationPartitions(calculation ir.VisualizationCalculation, frame Frame,
 	for rowIndex := range frame.Rows {
 		var key strings.Builder
 		for fieldIndex := range fields {
-			key.WriteString(stableCalculationKey(fieldValues[fieldIndex][rowIndex]))
-			key.WriteByte(0)
+			part := stableCalculationKey(fieldValues[fieldIndex][rowIndex])
+			// Length framing keeps embedded delimiters in user values from
+			// merging otherwise distinct composite partitions.
+			key.WriteString(strconv.Itoa(len(part)))
+			key.WriteByte(':')
+			key.WriteString(part)
 		}
 		value := key.String()
 		if _, exists := byKey[value]; !exists {
@@ -387,18 +398,10 @@ func calculationNumericKey(value any) (string, bool) {
 	return strconv.FormatFloat(number, 'g', -1, 64), true
 }
 
-func orderCalculationRows(calculation ir.VisualizationCalculation, members []int, frame Frame, columns map[string]int, calculated map[string][]any) ([]int, error) {
+func orderCalculationRows(calculation ir.VisualizationCalculation, members []int, orderValues [][]any) []int {
 	ordered := append([]int{}, members...)
 	if len(calculation.OrderBy) == 0 {
-		return ordered, nil
-	}
-	orderValues := make([][]any, len(calculation.OrderBy))
-	for index, order := range calculation.OrderBy {
-		values, err := calculationValues(order.Field.Field, frame, columns, calculated)
-		if err != nil {
-			return nil, err
-		}
-		orderValues[index] = values
+		return ordered
 	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		left, right := ordered[i], ordered[j]
@@ -424,7 +427,7 @@ func orderCalculationRows(calculation ir.VisualizationCalculation, members []int
 		}
 		return left < right
 	})
-	return ordered, nil
+	return ordered
 }
 
 func compareCalculationValues(left, right any) int {
