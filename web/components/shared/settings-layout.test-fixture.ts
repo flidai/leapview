@@ -8,9 +8,8 @@ class SettingsFixture extends LitElement {
     :host { display: block; width: 720px; ${unsafeCSS(typographyTestTokens)}
       --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px;
       --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --base-size-64: 64px;
-      --control-medium-size: 32px; --lv-border-muted: 1px solid #ccc; --lv-border-default: 1px solid #999;
-      --lv-bg-input: white; --lv-bg-panel: white; --lv-fg-default: #111; --lv-fg-muted: #555;
-      --lv-button-bg-rest: #eee; --lv-button-fg-rest: #111; --lv-fg-accent: blue;
+      --control-medium-size: 32px; --borderWidth-thick: 2px;
+      --lv-border-muted: 1px solid currentColor; --lv-border-default: 1px solid currentColor;
     }
   `]
   private submitted = ''

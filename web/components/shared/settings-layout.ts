@@ -66,7 +66,7 @@ export const settingsLayoutStyles = css`
   .settings-button.danger { color: var(--lv-fg-danger); }
   .settings-button:hover:not(:disabled):not(.disabled) { background: var(--lv-button-bg-hover, var(--lv-button-bg-rest)); }
   .settings-button.primary:hover:not(:disabled) { background: var(--lv-button-accent-bg-hover, var(--lv-bg-accent)); }
-  .settings-input:focus-visible, .settings-button:focus-visible, .settings-button:focus-within { outline: var(--borderWidth-thick, 2px) solid var(--focus-outlineColor, var(--lv-fg-accent)); outline-offset: 2px; }
+  .settings-input:focus-visible, .settings-button:focus-visible, .settings-button:focus-within { outline: var(--borderWidth-thick) solid var(--focus-outlineColor, var(--lv-fg-accent)); outline-offset: var(--borderWidth-thick); }
   .settings-button:disabled, .settings-button.disabled { cursor: not-allowed; opacity: .55; }
   @container settings (max-width: 30rem) {
     .settings-section { padding: var(--base-size-12); }
