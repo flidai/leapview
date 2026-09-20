@@ -31,11 +31,15 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @state() private favoriteDashboardIDs: string[] = []
   @state() private recentDashboardIDs: Record<string, string> = {}
   @state() private createDraftOpen = false
+  @state() private copyDraftDashboardID = ''
+  @state() private copyDraftIdempotencyKey = ''
   @state() private actionMenu: { dashboardID: string, top: number, left: number } | null = null
   @state() private detailsDashboardID = ''
   @state() private copyLinkMessage = ''
   private autoOpenChecked = false
+  private copyAutoOpenChecked = false
   private createDraftTrigger: HTMLAnchorElement | null = null
+  private copyDraftTrigger: HTMLElement | null = null
   private actionMenuTrigger: HTMLElement | null = null
   static styles = [pageHeaderStyles, css`
     :host {
@@ -201,7 +205,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     .catalog-details-list dt { color: var(--lv-fg-muted); }
     .catalog-details-list dd { margin: 0; overflow-wrap: anywhere; color: var(--lv-fg-default); }
     .catalog-details-footer { display: flex; gap: var(--base-size-8); border-top: var(--lv-border-muted); padding: var(--base-size-16) var(--base-size-20); }
-    .catalog-details-action { display: inline-flex; min-height: var(--control-medium-size); align-items: center; justify-content: center; gap: var(--base-size-6); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); padding: 0 var(--base-size-12); font: var(--lv-type-body-compact); text-decoration: none; }
+    .catalog-details-action { display: inline-flex; min-height: var(--control-medium-size); align-items: center; justify-content: center; gap: var(--base-size-6); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); padding: 0 var(--base-size-12); cursor: pointer; font: var(--lv-type-body-compact); text-decoration: none; }
     .catalog-details-action:hover { background: var(--lv-button-bg-hover, var(--lv-bg-control-hover)); }
 
     @media (max-width: 720px) {
@@ -235,16 +239,15 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       if (this.urlCreateDraftRequested()) this.createDraftOpen = true
     }
 
-    const dialog = this.renderRoot.querySelector<HTMLDialogElement>('#catalog-create-draft-dialog')
-    if (this.createDraftOpen && dialog && !dialog.open) {
-      dialog.showModal()
-      window.setTimeout(() => {
-        const target = dialog.querySelector<HTMLElement>('[autofocus]') ?? dialog.querySelector<HTMLElement>('input:not([type="hidden"]), select, button')
-        target?.focus({ preventScroll: true })
-      }, 0)
-    } else if (!this.createDraftOpen && dialog?.open) {
-      dialog.close()
+    if (!this.copyAutoOpenChecked && page) {
+      this.copyAutoOpenChecked = true
+      const requested = this.urlCopyDraftRequested()
+      const dashboard = page.dashboards.find((candidate) => candidate.dashboardId === requested || candidate.id === requested)
+      if (dashboard) this.beginDashboardCopy(dashboard)
     }
+
+    this.syncDialog('#catalog-create-draft-dialog', this.createDraftOpen)
+    this.syncDialog('#catalog-copy-draft-dialog', Boolean(this.copyDraftDashboardID))
   }
 
   get page(): CatalogPageSignal | null {
@@ -325,6 +328,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
         ></lv-entity-list>
         ${this.renderDashboardActionMenu(sourceDashboards)}
         ${this.renderDashboardDetails(sourceDashboards)}
+        ${this.renderCopyDraftDialog(sourceDashboards)}
         ${this.copyLinkMessage ? html`<div class="catalog-copy-status" role="status">${this.copyLinkMessage}</div>` : ''}
         ${this.createDraftHref ? this.renderCreateDraftDialog(models) : ''}
       </section>
@@ -374,7 +378,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     return html`
       <button class="catalog-action-dismiss" type="button" tabindex="-1" aria-label="Close dashboard actions" @click=${this.closeDashboardActionMenu}></button>
       <div class="catalog-action-menu" role="menu" aria-label=${`Actions for ${dashboard.title}`} style=${menuStyle}>
-        <a role="menuitem" href=${editOrCopyHref}>${lucideIcon(lucideIconByCanonicalName(editable ? 'pencil' : 'copy'), { size: 16, strokeWidth: 2 })}<span>${editOrCopyLabel}</span></a>
+        ${editable ? html`<a role="menuitem" href=${editOrCopyHref}>${lucideIcon(lucideIconByCanonicalName('pencil'), { size: 16, strokeWidth: 2 })}<span>${editOrCopyLabel}</span></a>` : html`<button type="button" role="menuitem" @click=${(event: Event) => this.openDashboardCopy(event, dashboard)}>${lucideIcon(lucideIconByCanonicalName('copy'), { size: 16, strokeWidth: 2 })}<span>${editOrCopyLabel}</span></button>`}
         <button type="button" role="menuitem" data-action="details" @click=${() => this.openDashboardDetails(dashboard.id)}>${lucideIcon(lucideIconByCanonicalName('panel-right-open'), { size: 16, strokeWidth: 2 })}<span>View details</span></button>
         <button type="button" role="menuitem" data-action="copy-link" @click=${() => this.copyDashboardLink(dashboard)}>${lucideIcon(lucideIconByCanonicalName('link'), { size: 16, strokeWidth: 2 })}<span>Copy link</span></button>
         ${editable ? html`
@@ -425,7 +429,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           </dl>
         </div>
         <footer class="catalog-details-footer">
-          <a class="catalog-details-action" href=${actionHref}>${lucideIcon(lucideIconByCanonicalName(editable ? 'pencil' : 'copy'), { size: 16, strokeWidth: 2 })}<span>${actionLabel}</span></a>
+          ${editable ? html`<a class="catalog-details-action" href=${actionHref}>${lucideIcon(lucideIconByCanonicalName('pencil'), { size: 16, strokeWidth: 2 })}<span>${actionLabel}</span></a>` : html`<button class="catalog-details-action" type="button" @click=${(event: Event) => this.openDashboardCopy(event, dashboard)}>${lucideIcon(lucideIconByCanonicalName('copy'), { size: 16, strokeWidth: 2 })}<span>${actionLabel}</span></button>`}
         </footer>
       </aside>
     `
@@ -600,6 +604,36 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     `
   }
 
+  private renderCopyDraftDialog(dashboards: CatalogDashboard[]) {
+    const dashboard = dashboards.find((candidate) => candidate.id === this.copyDraftDashboardID)
+    if (!dashboard) return ''
+    return html`
+      <dialog id="catalog-copy-draft-dialog" class="catalog-create-dialog" aria-labelledby="catalog-copy-draft-title" aria-describedby="catalog-copy-draft-description" @cancel=${this.cancelCopyDraft} @click=${this.closeCopyDraftOnBackdrop}>
+        <div class="catalog-create-dialog-shell">
+          <header class="catalog-create-dialog-header">
+            <div>
+              <h2 id="catalog-copy-draft-title">Make a copy</h2>
+              <p id="catalog-copy-draft-description">Create an editable copy in My dashboards.</p>
+            </div>
+            <button class="catalog-create-dialog-close" type="button" aria-label="Close dashboard copy" @click=${this.closeCopyDraft}>${lucideIcon(lucideIconByCanonicalName('x'), { size: 16, strokeWidth: 2 })}</button>
+          </header>
+          <form class="catalog-create-dialog-form" method="post" action=${dashboardForkHref(dashboard)}>
+            <div class="catalog-create-field">
+              <label for="catalog-copy-draft-name">Title</label>
+              <input id="catalog-copy-draft-name" name="title" type="text" autocomplete="off" required autofocus maxlength="160" .value=${`${dashboard.title} copy`}>
+            </div>
+            <input type="hidden" name="gorilla.csrf.Token" value=${this.mutationCSRFToken || this.createDraftCSRFToken}>
+            <input type="hidden" name="idempotencyKey" value=${this.copyDraftIdempotencyKey}>
+            <div class="catalog-create-dialog-actions">
+              <button type="button" @click=${this.closeCopyDraft}>Cancel</button>
+              <button type="submit">Create copy</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+    `
+  }
+
   private createDraftModels(): CreateDraftModel[] {
     let value: unknown
     try {
@@ -623,6 +657,23 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
 
   private urlCreateDraftRequested(): boolean {
     return new URL(window.location.href).searchParams.get('create') === 'dashboard'
+  }
+
+  private urlCopyDraftRequested(): string {
+    return new URL(window.location.href).searchParams.get('copy')?.trim() ?? ''
+  }
+
+  private syncDialog(selector: string, open: boolean): void {
+    const dialog = this.renderRoot.querySelector<HTMLDialogElement>(selector)
+    if (open && dialog && !dialog.open) {
+      dialog.showModal()
+      window.setTimeout(() => {
+        const target = dialog.querySelector<HTMLElement>('[autofocus]') ?? dialog.querySelector<HTMLElement>('input:not([type="hidden"]), select, button')
+        target?.focus({ preventScroll: true })
+      }, 0)
+    } else if (!open && dialog?.open) {
+      dialog.close()
+    }
   }
 
   private handleCreateDraftTrigger = (event: MouseEvent): void => {
@@ -649,6 +700,37 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
 
   private closeCreateDraftOnBackdrop = (event: MouseEvent): void => {
     if (event.target === event.currentTarget) this.closeCreateDraft()
+  }
+
+  private openDashboardCopy(event: Event, dashboard: CatalogDashboard): void {
+    const trigger = event.currentTarget
+    this.copyDraftTrigger = this.actionMenu ? this.actionMenuTrigger : trigger instanceof HTMLElement ? trigger : null
+    this.actionMenu = null
+    this.beginDashboardCopy(dashboard)
+  }
+
+  private beginDashboardCopy(dashboard: CatalogDashboard): void {
+    this.copyDraftDashboardID = dashboard.id
+    this.copyDraftIdempotencyKey = newRequestID()
+  }
+
+  private closeCopyDraft = (): void => {
+    const dialog = this.renderRoot.querySelector<HTMLDialogElement>('#catalog-copy-draft-dialog')
+    if (dialog?.open) dialog.close()
+    this.copyDraftDashboardID = ''
+    this.copyDraftIdempotencyKey = ''
+    const trigger = this.copyDraftTrigger
+    this.copyDraftTrigger = null
+    queueMicrotask(() => trigger?.focus({ preventScroll: true }))
+  }
+
+  private cancelCopyDraft = (event: Event): void => {
+    event.preventDefault()
+    this.closeCopyDraft()
+  }
+
+  private closeCopyDraftOnBackdrop = (event: MouseEvent): void => {
+    if (event.target === event.currentTarget) this.closeCopyDraft()
   }
 
   private renderCatalogTab(scope: 'all' | 'favorites' | 'mine', label: string) {

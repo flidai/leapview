@@ -129,8 +129,8 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	getFork := httptest.NewRecorder()
 	getForkRequest := withBuilderURLParams(httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/fork", nil), "sales", "revenue")
 	handler.DashboardDraftFork(getFork, getForkRequest)
-	if getFork.Code != nethttp.StatusOK || !strings.Contains(getFork.Body.String(), `action="/dashboards/revenue/fork"`) || !formContainsUUIDv7(getFork.Body.String(), "idempotencyKey") {
-		t.Fatalf("fork page = %d %s", getFork.Code, getFork.Body.String())
+	if getFork.Code != nethttp.StatusSeeOther || getFork.Header().Get("Location") != "/?copy=revenue" {
+		t.Fatalf("fork entry redirect = %d %q", getFork.Code, getFork.Header().Get("Location"))
 	}
 	create := httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=sales-model&slug=sales&idempotencyKey="+browserTestRequestID))
 	create.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -142,7 +142,7 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	if fake.createRequest.SemanticModel != "sales-model" || fake.createRequest.IdempotencyKey != browserTestRequestID || fake.createRequest.Origin != authoring.OriginUI || !fake.auditIntentFound || fake.auditIntent.Operation != "createDashboardAuthoringDraft" {
 		t.Fatalf("create request = %#v", fake.createRequest)
 	}
-	fork := httptest.NewRequest(nethttp.MethodPost, "/dashboards/revenue/fork", strings.NewReader("title=Sales%20copy&slug=sales-copy&idempotencyKey="+browserTestRequestID))
+	fork := httptest.NewRequest(nethttp.MethodPost, "/dashboards/revenue/fork", strings.NewReader("title=Sales%20copy&idempotencyKey="+browserTestRequestID))
 	fork.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	fork = withBuilderURLParams(fork, "sales", "revenue")
 	forkRec := httptest.NewRecorder()

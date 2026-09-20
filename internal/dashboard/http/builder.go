@@ -26,7 +26,6 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/ui"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
-	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -232,13 +231,8 @@ func (h Handler) DashboardDraftFork(w nethttp.ResponseWriter, r *nethttp.Request
 	}
 	dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
 	if r.Method == nethttp.MethodGet {
-		csrfToken := ""
-		if h.CSRFToken != nil {
-			csrfToken = h.CSRFToken(r)
-		}
-		if err := ui.DashboardDraftForkPageWithKey(dashboardID, csrfToken, dashboardBuilderBasePath(dashboardID)+"/fork", httptransport.NewRequestID()).Render(w); err != nil {
-			nethttp.Error(w, "dashboard fork unavailable", nethttp.StatusInternalServerError)
-		}
+		values := url.Values{"copy": []string{dashboardID}}
+		nethttp.Redirect(w, r, "/?"+values.Encode(), nethttp.StatusSeeOther)
 		return
 	}
 	creator, ok := h.Authoring.(browserDraftCreator)

@@ -239,7 +239,12 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   private renderQueries(page: AdminPageSignal) {
     const history = this.currentQueryHistory(page)
     const rows = tableRows(history.table)
-    const table = queryHistoryPresentation(history.table)
+    const table = queryHistoryPresentation({
+      ...history.table,
+      empty: queryHistoryHasActiveFilters(history.filters)
+        ? 'No query events match these filters.'
+        : 'No query activity yet. Run a dashboard or agent query to see it here.',
+    })
     const detail = this.queryDetail ?? emptyQueryDetail
     return html`
       <section class="query-audit" aria-label="Query audit">
@@ -710,6 +715,10 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     window.location.reload()
   }
 
+}
+
+function queryHistoryHasActiveFilters(filters: AdminQueryHistoryFilters): boolean {
+  return Object.values(filters).some((value) => Array.isArray(value) ? value.length > 0 : typeof value === 'string' ? value.trim().length > 0 : Boolean(value))
 }
 
 if (!customElements.get('lv-admin-page')) customElements.define('lv-admin-page', LeapViewAdminPage)
