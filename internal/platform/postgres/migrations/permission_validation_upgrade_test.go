@@ -84,7 +84,7 @@ RESET ROLE;
 `)
 }
 
-func TestTypedPermissionValidationMigrationUpgradesRevisionTwentyTwoWithContractCorpus(t *testing.T) {
+func TestTypedPermissionValidationMigrationUpgradesRevisionTwentyFourWithContractCorpus(t *testing.T) {
 	harness := postgrestest.Start(t)
 	owner := harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator", Login: true, Password: "permission-upgrade"})
@@ -130,13 +130,13 @@ func TestTypedPermissionValidationMigrationUpgradesRevisionTwentyTwoWithContract
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 22); err != nil {
-		t.Fatalf("apply revision 22 fixture: %v", err)
+	if _, err := provider.UpTo(ctx, 24); err != nil {
+		t.Fatalf("apply revision 24 fixture: %v", err)
 	}
 	if current, _, err := provider.GetVersions(ctx); err != nil {
 		t.Fatal(err)
-	} else if current != 22 {
-		t.Fatalf("pre-hardening revision = %d, want 22", current)
+	} else if current != 24 {
+		t.Fatalf("pre-hardening revision = %d, want 24", current)
 	}
 
 	fixtures := readPermissionPairContractFixtures(t)
@@ -161,26 +161,26 @@ func TestTypedPermissionValidationMigrationUpgradesRevisionTwentyTwoWithContract
 			decode(repeat('cd', 32), 'hex'), 'leapview.permissions/v1',
 			$1::jsonb, clock_timestamp() + interval '1 day'
 		)`, validFixture.Pairs); err != nil {
-		t.Fatalf("insert valid revision-22 typed token: %v", err)
+		t.Fatalf("insert valid revision-24 typed token: %v", err)
 	}
 
 	upgrade := fstest.MapFS{
 		"001_permission_fixture.sql":                    {Data: permissionValidationFixtureBaseline()},
 		"024_typed_api_token_permissions.sql":           {Data: typedMigration},
-		"023_noop.sql":                                  {Data: []byte("-- +goose Up\n-- +goose Down\n")},
+		"025_noop.sql":                                  {Data: []byte("-- +goose Up\n-- +goose Down\n")},
 		"026_typed_permission_validation_hardening.sql": {Data: hardeningMigration},
 	}
 	provider, err = newProvider(migrationDB, upgrade)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 24); err != nil {
-		t.Fatalf("upgrade revision 22 fixture through revision 24: %v", err)
+	if _, err := provider.UpTo(ctx, 26); err != nil {
+		t.Fatalf("upgrade revision 24 fixture through revision 26: %v", err)
 	}
 	if current, _, err := provider.GetVersions(ctx); err != nil {
 		t.Fatal(err)
-	} else if current != 24 {
-		t.Fatalf("post-hardening revision = %d, want 24", current)
+	} else if current != 26 {
+		t.Fatalf("post-hardening revision = %d, want 26", current)
 	}
 
 	for _, fixture := range fixtures {
