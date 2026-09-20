@@ -1,0 +1,47 @@
+name: Restore hosted CFO demo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: leapview-hosted-demo
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Publish CFO Command Center
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: leapview-demo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+      - name: Prepare generated code
+        run: task generate
+      - name: Validate CFO source
+        run: go test ./internal/project/compiler -run TestCFOVarianceLegendMeasuresPreserveSignedAmounts -count=1
+      - name: Fetch demo deployment credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /demo/deployment
+      - name: Publish CFO data and dashboard
+        env:
+          DEMO_SOURCE_REVISION: ${{ github.sha }}
+          DEMO_EXPECTED_RUNTIME_REVISION: d24ad786be8e838d923f6e57cd744eb8623c893b
+          DEMO_TARGET: https://demo.leapview.dev
+          DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
+          DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
+          DEMO_RELEASE_CLIENT_ID: ${{ vars.DEMO_RELEASE_PRINCIPAL_ID }}
+        run: ./scripts/deploy_cfo_demo.sh
