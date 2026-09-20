@@ -1,11 +1,14 @@
 package hostinstall
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
@@ -24,11 +27,13 @@ type UpgradeControl struct {
 	RunningImage    func(context.Context) (string, error)
 }
 
-// UpgradeOperationStore exposes only the existing operation and target fence.
-// The transition runner, not the host command, records phase results.
+// UpgradeOperationStore exposes the existing operation, target fence, and
+// durable phase records shared by the runner and standalone host command.
 type UpgradeOperationStore interface {
 	Get(context.Context, string) (transitionoperation.Operation, error)
 	Validate(context.Context, transitionoperation.Fence) error
+	RecordPhase(context.Context, transitionrunner.PhaseRecordInput) (transitionoperation.Operation, error)
+	Fail(context.Context, transitionrunner.FailureInput) (transitionoperation.Operation, error)
 }
 
 type UpgradeRequest struct {
@@ -36,6 +41,7 @@ type UpgradeRequest struct {
 	CandidateImage string
 	TargetID       string
 	Phase          transitionrunner.Phase
+	expectedFence  *transitionoperation.Fence
 }
 
 type UpgradeOptions struct {
@@ -57,6 +63,54 @@ func NewUpgrader(options UpgradeOptions) (*Upgrader, error) {
 		options.Activate = activateGeneration
 	}
 	return &Upgrader{options: options}, nil
+}
+
+// UpgradeAndRecord is the standalone host command boundary. The effect result
+// is reported only after the existing operation repository has durably
+// advanced its phase. An in-process transition runner can continue to call
+// Upgrade as an effect and retain its own phase-recording responsibility.
+func (u *Upgrader) UpgradeAndRecord(ctx context.Context, request UpgradeRequest) (transitionrunner.EffectResult, error) {
+	op, err := u.options.Operations.Get(ctx, request.OperationID)
+	if err != nil {
+		return transitionrunner.EffectResult{}, fmt.Errorf("read transition operation before effect: %w", err)
+	}
+	request.expectedFence = &op.Fence
+	result, err := u.Upgrade(ctx, request)
+	if err != nil {
+		return transitionrunner.EffectResult{}, err
+	}
+	recorded, err := u.options.Operations.RecordPhase(ctx, transitionrunner.PhaseRecordInput{
+		OperationID: op.OperationID, OwnerID: op.Fence.OwnerID, Fence: op.Fence,
+		Phase: request.Phase, Status: transitionoperation.PhaseResultSucceeded, Result: result.Payload,
+	})
+	if err == nil && recordedUpgradePhase(recorded, request.Phase, result.Payload) {
+		return result, nil
+	}
+	// The write may have committed even when its response was lost. Read back
+	// the exact durable phase before classifying its outcome as uncertain.
+	current, readErr := u.options.Operations.Get(ctx, request.OperationID)
+	if readErr == nil && recordedUpgradePhase(current, request.Phase, result.Payload) {
+		return result, nil
+	}
+	// The host effect has happened. A failed or unreadable phase write cannot
+	// safely be called failed; use the existing indeterminate operation status.
+	failureCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, failErr := u.options.Operations.Fail(failureCtx, transitionrunner.FailureInput{
+		OperationID: op.OperationID, OwnerID: op.Fence.OwnerID, Fence: op.Fence,
+		Phase: request.Phase, Status: transitionoperation.PhaseResultIndeterminate,
+		Code: "phase_record_failed", Summary: "host effect completed but durable phase recording is uncertain",
+	})
+	return transitionrunner.EffectResult{}, errors.Join(transitionoperation.ErrIndeterminate, err, readErr, failErr)
+}
+
+func recordedUpgradePhase(op transitionoperation.Operation, phase transitionrunner.Phase, payload []byte) bool {
+	for _, item := range op.PhaseResults {
+		if item.Phase == phase && item.Status == transitionoperation.PhaseResultSucceeded && bytes.Equal(item.Result, payload) {
+			return true
+		}
+	}
+	return false
 }
 
 // Upgrade executes exactly one host effect under the runner's live target
@@ -83,9 +137,15 @@ func (u *Upgrader) Upgrade(ctx context.Context, request UpgradeRequest) (transit
 	if err != nil {
 		return transitionrunner.EffectResult{}, fmt.Errorf("existing host installation is required: %w", err)
 	}
+	if installed.TargetID == "" || installed.TargetID != request.TargetID {
+		return transitionrunner.EffectResult{}, fmt.Errorf("installed host target identity does not match transition target")
+	}
 	op, err := u.options.Operations.Get(ctx, request.OperationID)
 	if err != nil {
 		return transitionrunner.EffectResult{}, fmt.Errorf("read transition operation: %w", err)
+	}
+	if request.expectedFence != nil && (op.Fence.OperationID != request.expectedFence.OperationID || op.Fence.OwnerID != request.expectedFence.OwnerID || op.Fence.FencingGeneration != request.expectedFence.FencingGeneration) {
+		return transitionrunner.EffectResult{}, fmt.Errorf("transition target fence changed before host effect: %w", transitionoperation.ErrStaleFence)
 	}
 	if op.Status != transitionoperation.StatusRunning || op.CurrentPhase != request.Phase {
 		return transitionrunner.EffectResult{}, fmt.Errorf("transition operation is not at %s", request.Phase)

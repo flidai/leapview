@@ -20,15 +20,48 @@ import (
 const upgradeOperationID = "0198f2c0-7c7a-7f00-8a11-000000000999"
 
 type upgradeStore struct {
-	op          transitionoperation.Operation
-	validateErr error
+	op                  transitionoperation.Operation
+	validateErr         error
+	recordErr           error
+	getCount            int
+	rotateFenceOnSecond bool
 }
 
 func (s *upgradeStore) Get(context.Context, string) (transitionoperation.Operation, error) {
+	s.getCount++
+	if s.rotateFenceOnSecond && s.getCount == 2 {
+		s.op.Fence.FencingGeneration++
+	}
 	return s.op, nil
 }
 func (s *upgradeStore) Validate(context.Context, transitionoperation.Fence) error {
 	return s.validateErr
+}
+func (s *upgradeStore) RecordPhase(_ context.Context, input transitionrunner.PhaseRecordInput) (transitionoperation.Operation, error) {
+	if s.recordErr != nil {
+		return transitionoperation.Operation{}, s.recordErr
+	}
+	if input.OperationID != s.op.OperationID || input.Fence != s.op.Fence || input.Phase != s.op.CurrentPhase {
+		return transitionoperation.Operation{}, transitionoperation.ErrConflict
+	}
+	s.op.PhaseResults = append(s.op.PhaseResults, transitionoperation.PhaseResult{Phase: input.Phase, Status: input.Status, Result: append([]byte(nil), input.Result...)})
+	switch input.Phase {
+	case transitionrunner.PhaseStage:
+		s.op.CurrentPhase = transitionrunner.PhaseActivate
+	case transitionrunner.PhaseActivate:
+		s.op.CurrentPhase = transitionrunner.PhaseRestart
+	case transitionrunner.PhaseRestart:
+		s.op.CurrentPhase = transitionrunner.PhasePostValidate
+	}
+	return s.op, nil
+}
+func (s *upgradeStore) Fail(_ context.Context, input transitionrunner.FailureInput) (transitionoperation.Operation, error) {
+	if input.OperationID != s.op.OperationID || input.Fence != s.op.Fence || input.Phase != s.op.CurrentPhase {
+		return transitionoperation.Operation{}, transitionoperation.ErrConflict
+	}
+	s.op.Status = transitionoperation.StatusIndeterminate
+	s.op.PhaseResults = append(s.op.PhaseResults, transitionoperation.PhaseResult{Phase: input.Phase, Status: input.Status, Result: []byte(`{"uncertain":true}`)})
+	return s.op, nil
 }
 
 type upgradePreflight struct {
@@ -82,7 +115,7 @@ func upgradeFixture(t *testing.T) (*Upgrader, UpgradeRequest, *upgradeStore, *up
 	writeTestPayload(t, paths.Payload)
 	result := upgradePreflightFixture(t)
 	predecessor := result.Evidence.Predecessor.Release.Image
-	writeConfig(t, paths.Config, Config{SchemaVersion: 1, Domain: "dash.example.com", AdminEmail: "admin@example.com", Environment: "prod", Image: predecessor, HTTPS: boolPointer(true)})
+	writeConfig(t, paths.Config, Config{SchemaVersion: 1, Domain: "dash.example.com", AdminEmail: "admin@example.com", Environment: "prod", Image: predecessor, TargetID: "target", HTTPS: boolPointer(true)})
 	installer, err := New(Options{Paths: paths, LifecycleFactory: func(string) (Lifecycle, error) { return &recordingLifecycle{}, nil }})
 	require.NoError(t, err)
 	require.NoError(t, installer.Install(t.Context()))
@@ -167,6 +200,69 @@ func TestUpgradeStagesThenActivatesAndRestartsExactCandidate(t *testing.T) {
 	assertUpgradeResult(t, result, request, store)
 	require.Equal(t, request.CandidateImage, control.running)
 	require.Equal(t, 1, control.starts)
+}
+
+func TestUpgradeAndRecordAdvancesDurableHostPhases(t *testing.T) {
+	upgrader, request, store, control, _ := upgradeFixture(t)
+	result, err := upgrader.UpgradeAndRecord(t.Context(), request)
+	require.NoError(t, err)
+	assertUpgradeResult(t, result, request, store)
+	require.Equal(t, transitionrunner.PhaseActivate, store.op.CurrentPhase)
+	require.Len(t, store.op.PhaseResults, 1)
+	require.Equal(t, transitionoperation.PhaseResultSucceeded, store.op.PhaseResults[0].Status)
+
+	request.Phase = transitionrunner.PhaseActivate
+	result, err = upgrader.UpgradeAndRecord(t.Context(), request)
+	require.NoError(t, err, "activation must use the phase persisted by staging")
+	assertUpgradeResult(t, result, request, store)
+	require.Equal(t, transitionrunner.PhaseRestart, store.op.CurrentPhase)
+	require.Equal(t, request.CandidateImage, control.configured)
+	require.Len(t, store.op.PhaseResults, 2)
+}
+
+func TestUpgradeAndRecordFailsIndeterminateWhenPhaseWriteFails(t *testing.T) {
+	upgrader, request, store, _, paths := upgradeFixture(t)
+	store.recordErr = errors.New("phase write unavailable")
+	result, err := upgrader.UpgradeAndRecord(t.Context(), request)
+	require.ErrorIs(t, err, transitionoperation.ErrIndeterminate)
+	require.Empty(t, result.Payload)
+	require.Equal(t, transitionoperation.StatusIndeterminate, store.op.Status)
+	require.Equal(t, transitionoperation.PhaseResultIndeterminate, store.op.PhaseResults[0].Status)
+	_, err = os.Stat(filepath.Join(paths.Root, "releases", "sha256-"+strings.Repeat("b", 64)))
+	require.NoError(t, err, "the external stage effect completed before the failed phase write")
+}
+
+func TestUpgradeAndRecordRejectsFenceChangeBeforeEffect(t *testing.T) {
+	upgrader, request, store, _, _ := upgradeFixture(t)
+	store.rotateFenceOnSecond = true
+	called := false
+	upgrader.options.Payload = func(context.Context, string) (map[string][]byte, error) { called = true; return nil, nil }
+	_, err := upgrader.UpgradeAndRecord(t.Context(), request)
+	require.ErrorIs(t, err, transitionoperation.ErrStaleFence)
+	require.False(t, called)
+	require.Empty(t, store.op.PhaseResults)
+}
+
+func TestUpgradeRejectsWrongOrUnboundInstalledTargetBeforeEffect(t *testing.T) {
+	for _, targetID := range []string{"other-target", ""} {
+		t.Run("installed-"+targetID, func(t *testing.T) {
+			upgrader, request, store, _, paths := upgradeFixture(t)
+			markerPath := filepath.Join(paths.Root, installMarkerName)
+			marker, _, err := readAndValidateConfig(markerPath)
+			require.NoError(t, err)
+			marker.TargetID = targetID
+			contents, err := json.Marshal(marker)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(markerPath, contents, 0o600))
+			called := false
+			upgrader.options.Payload = func(context.Context, string) (map[string][]byte, error) { called = true; return nil, nil }
+			_, err = upgrader.UpgradeAndRecord(t.Context(), request)
+			require.ErrorContains(t, err, "installed host target identity")
+			require.False(t, called)
+			require.Equal(t, transitionrunner.PhaseStage, store.op.CurrentPhase)
+			require.Empty(t, store.op.PhaseResults)
+		})
+	}
 }
 
 func TestUpgradeResumesInterruptedActivation(t *testing.T) {

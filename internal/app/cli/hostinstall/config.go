@@ -33,6 +33,9 @@ func readAndValidateConfig(path string) (Config, composectl.InitOptions, error) 
 	if config.HTTPS == nil {
 		return Config{}, composectl.InitOptions{}, fmt.Errorf("https is required")
 	}
+	if config.TargetID != strings.TrimSpace(config.TargetID) || strings.ContainsAny(config.TargetID, "\r\n\t") {
+		return Config{}, composectl.InitOptions{}, fmt.Errorf("targetId must be a canonical single-line target identifier")
+	}
 	address, err := mail.ParseAddress(strings.TrimSpace(config.AdminEmail))
 	if err != nil || address.Address != strings.TrimSpace(config.AdminEmail) {
 		return Config{}, composectl.InitOptions{}, fmt.Errorf("adminEmail must be a valid bare email address")
@@ -72,5 +75,5 @@ func configsEqual(first, second Config) bool {
 	}
 	return first.SchemaVersion == second.SchemaVersion && first.Domain == second.Domain &&
 		first.AdminEmail == second.AdminEmail && first.Environment == second.Environment &&
-		first.Image == second.Image && *first.HTTPS == *second.HTTPS
+		first.Image == second.Image && first.TargetID == second.TargetID && *first.HTTPS == *second.HTTPS
 }

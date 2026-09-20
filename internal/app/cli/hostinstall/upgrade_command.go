@@ -96,7 +96,7 @@ func addUpgradeCommand(ctx context.Context, host *cobra.Command, options Command
 			if err != nil {
 				return err
 			}
-			result, err := upgrader.Upgrade(ctx, UpgradeRequest{OperationID: operationID, CandidateImage: candidateImage, TargetID: targetID, Phase: transitionrunner.Phase(phase)})
+			result, err := upgrader.UpgradeAndRecord(ctx, UpgradeRequest{OperationID: operationID, CandidateImage: candidateImage, TargetID: targetID, Phase: transitionrunner.Phase(phase)})
 			if err != nil {
 				return err
 			}
