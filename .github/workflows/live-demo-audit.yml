@@ -12,7 +12,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  inspect:
+    name: Inspect CFO build failure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: leapview-demo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Fetch infrastructure credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /hetzner-qualification/infrastructure
+      - name: Fetch demo deployment credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /demo/deployment
+      - name: Inspect failed CFO build
+        env:
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+        run: |
+          export DEMO_RUNNER_IP="$(curl -4fsS --max-time 10 https://api.ipify.org)"
+          bash scripts/inspect_cfo_demo.sh
   deploy:
+    if: false
     name: Publish CFO Command Center
     runs-on: ubuntu-24.04
     timeout-minutes: 30
