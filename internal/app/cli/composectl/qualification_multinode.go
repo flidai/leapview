@@ -16,6 +16,8 @@ import (
 const (
 	qualificationMultiNodeRootCertificate = "/etc/ssl/certs/leapview-qualification-postgres-ca.pem"
 	qualificationMultiNodeStateTmpfs      = "/var/lib/leapview:rw,exec,nosuid,nodev,mode=0700,uid=999,gid=999,size=512m"
+	qualificationMultiNodeHomeTmpfs       = "/var/lib/leapview/home:rw,exec,nosuid,nodev,mode=0700,uid=999,gid=999,size=512m"
+	qualificationMultiNodeArtifactsTmpfs  = "/var/lib/leapview/home/artifacts:rw,exec,nosuid,nodev,mode=0700,uid=999,gid=999,size=512m"
 	qualificationMultiNodePoolDirectory   = "/var/lib/leapview/home/data"
 	qualificationMultiNodeExtensionCache  = "/var/lib/leapview/home/duckdb-extension-cache"
 	qualificationMultiNodeObjectStore     = "/var/lib/leapview/home/artifacts/object-store"
@@ -97,6 +99,11 @@ func (c *Controller) runQualificationMultiNode(
 			// the disposable node isolated writable state without sharing the
 			// primary filesystem or weakening directory permissions.
 			qualificationMultiNodeStateTmpfs,
+			// Docker creates intermediate directories for nested shared-volume
+			// mounts as root, even under a uid-owned tmpfs. Give each private
+			// parent its own uid-owned mount so startup can chmod it safely.
+			qualificationMultiNodeHomeTmpfs,
+			qualificationMultiNodeArtifactsTmpfs,
 		},
 		Environment: environment,
 	})

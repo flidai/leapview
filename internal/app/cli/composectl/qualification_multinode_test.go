@@ -121,6 +121,8 @@ func TestQualificationMultiNodeProcessExercisesLossAndRollingRestart(t *testing.
 		Subpath: "home/managed-data",
 	}, runtime.request.Volumes[4])
 	require.Contains(t, runtime.request.Tmpfs, qualificationMultiNodeStateTmpfs)
+	require.Contains(t, runtime.request.Tmpfs, qualificationMultiNodeHomeTmpfs)
+	require.Contains(t, runtime.request.Tmpfs, qualificationMultiNodeArtifactsTmpfs)
 	require.Equal(t, 1, secondary.removed)
 	require.Equal(t, 1, primary.kills)
 	require.GreaterOrEqual(t, primary.restarts, 1)

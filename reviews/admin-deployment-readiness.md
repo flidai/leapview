@@ -51,6 +51,16 @@ enforce instead of echoing a misleading claim; unscoped exchange remains
 supported. FAI-999 and FAI-1000 track these final corrections. Their combined
 candidate still requires the same exact-commit qualification.
 
+The `3902efe7` candidate passed local `task ci:full` and hosted PR/security
+checks, but the installed-candidate release gate failed on both architectures
+in the two-node drill. Docker created intermediate directories for the
+secondary node's nested shared-volume mounts as root; startup could not
+secure `/var/lib/leapview/home`. A complete local mount-tree reproduction
+also found root ownership at `/var/lib/leapview/home/artifacts`. The
+qualification fixture now gives both private parents uid-owned tmpfs mounts
+while retaining the four shared volume subpaths. The updated candidate must
+still pass exact-commit release qualification before this decision closes.
+
 ## Prior candidate decision — 2026-09-18
 
 LeapView now has a strong deployment engine and substantially closed

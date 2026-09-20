@@ -34,6 +34,14 @@ affordances and exposes service-account rename. FAI-1000 rejects unenforced
 scope claims on the legacy service-principal OAuth fallback. These changes are
 implemented and await the same exact-candidate gate.
 
+The first integrated release run on `3902efe7` passed recovery but failed its
+two-node drill on amd64 and arm64 because Docker made private parents of
+nested shared-volume mounts root-owned. The secondary app could not secure its
+home directory. The full mount tree was reproduced locally; uid-owned tmpfs
+mounts for `home` and `home/artifacts` now preserve private directory
+ownership, and the focused qualification regression passes. FAI-943 remains
+open until the amended candidate passes the exact-SHA release run.
+
 ## Linear delivery breakdown
 
 The umbrella workstreams remain FAI-927 through FAI-931. Execution is split
