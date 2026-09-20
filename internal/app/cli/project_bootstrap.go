@@ -20,12 +20,12 @@ import (
 )
 
 const (
-	bootstrapOwnerBindingID             = "project-bootstrap-owner"
-	bootstrapOwnerBindingName           = "Project bootstrap owner"
-	bootstrapEditorBindingID            = "project-bootstrap-editor"
-	bootstrapEditorBindingName          = "Project bootstrap editor"
-	bootstrapReleaseOperatorBindingID   = "project-bootstrap-release-operator"
-	bootstrapReleaseOperatorBindingName = "Project bootstrap release operator"
+	bootstrapOwnerBindingID             = access.BootstrapOwnerBindingID
+	bootstrapOwnerBindingName           = access.BootstrapOwnerBindingName
+	bootstrapEditorBindingID            = access.BootstrapEditorBindingID
+	bootstrapEditorBindingName          = access.BootstrapEditorBindingName
+	bootstrapReleaseOperatorBindingID   = access.BootstrapReleaseOperatorBindingID
+	bootstrapReleaseOperatorBindingName = access.BootstrapReleaseOperatorBindingName
 )
 
 type bootstrapBindingSpec struct {

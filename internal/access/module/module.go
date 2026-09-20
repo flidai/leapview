@@ -161,6 +161,14 @@ func (m *Module) CurrentEffectivePermissionOptions(ctx context.Context, principa
 
 func (m *Module) HTTP() accesshttp.Handler { return m.handler }
 
+// SetClaimBootstrapBindingAuthorizer installs the application-owned durable
+// claim check after deployment and access have both been composed.
+func (m *Module) SetClaimBootstrapBindingAuthorizer(fn func(*http.Request, access.AuthorizationPolicyScope, access.RoleBinding, string) (bool, error)) {
+	if m != nil {
+		m.handler.AuthorizeClaimBootstrapBinding = fn
+	}
+}
+
 // SetCurrentEffectiveCapabilities installs the active-generation projection
 // used by the current-user capability endpoint. It is intentionally an
 // explicit setter because the serving snapshot is created after the access

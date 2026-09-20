@@ -73,10 +73,14 @@ type Handler struct {
 	// authority for session-authenticated token issuance. It is never sourced
 	// from browser picker data.
 	CurrentEffectivePermissionOptions func(context.Context, string) ([]access.PermissionPair, error)
-	CurrentProjectID                  func(context.Context) (projectgraph.ResourceID, error)
-	DurableGrantService               DurableGrantServiceProvider
-	DurableGrantInstanceID            string
-	RequestEffectiveCapabilities      EffectiveCapabilitiesProvider
+	// AuthorizeClaimBootstrapBinding is a narrowly scoped escape hatch for the
+	// claiming principal's three deterministic bindings before a policy exists.
+	// It must prove the request's bootstrap marker, live credential, and claim.
+	AuthorizeClaimBootstrapBinding func(*stdhttp.Request, access.AuthorizationPolicyScope, access.RoleBinding, string) (bool, error)
+	CurrentProjectID               func(context.Context) (projectgraph.ResourceID, error)
+	DurableGrantService            DurableGrantServiceProvider
+	DurableGrantInstanceID         string
+	RequestEffectiveCapabilities   EffectiveCapabilitiesProvider
 	// PlatformAdmin evaluates the durable instance-wide role. It is retained as
 	// a narrow callback for non-module callers; RequestPlatformAdmin additionally
 	// applies request-credential attenuation.

@@ -241,20 +241,30 @@ func (h Handler) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.R
 		if !ok {
 			return access.AuditEventInput{}, errors.New("transactional authorization policy writer is unavailable")
 		}
-		envelopes, ok := tx.(access.CurrentGrantAdminEnvelopeReader)
-		if !ok {
-			return access.AuditEventInput{}, errors.New("transactional grant administration authority is unavailable")
-		}
 		actorID := h.currentPrincipalID(r)
-		envelope, envelopeErr := envelopes.CurrentGrantAdminEnvelopeForMutation(r.Context(), input.GrantAdminEnvelopeID, actorID)
-		if envelopeErr != nil {
-			return access.AuditEventInput{}, envelopeErr
+		bootstrap := false
+		if input.GrantAdminEnvelopeID == "" && h.AuthorizeClaimBootstrapBinding != nil {
+			var bootstrapErr error
+			bootstrap, bootstrapErr = h.AuthorizeClaimBootstrapBinding(r, scope, binding, actorID)
+			if bootstrapErr != nil {
+				return access.AuditEventInput{}, bootstrapErr
+			}
 		}
-		if envelopeErr := access.ValidateGrantAdminEnvelopeRoleBinding(envelope, actorID, projectgraph.ResourceID(scope.ProjectID), binding.Subject, binding.PermissionRole, binding.Permissions); envelopeErr != nil {
-			return access.AuditEventInput{}, envelopeErr
-		}
-		if envelopeErr := h.authorizeProjectRoleBindingMutation(r, envelope, actorID, projectgraph.ResourceID(scope.ProjectID), binding.Permissions); envelopeErr != nil {
-			return access.AuditEventInput{}, envelopeErr
+		if !bootstrap {
+			envelopes, ok := tx.(access.CurrentGrantAdminEnvelopeReader)
+			if !ok {
+				return access.AuditEventInput{}, errors.New("transactional grant administration authority is unavailable")
+			}
+			envelope, envelopeErr := envelopes.CurrentGrantAdminEnvelopeForMutation(r.Context(), input.GrantAdminEnvelopeID, actorID)
+			if envelopeErr != nil {
+				return access.AuditEventInput{}, envelopeErr
+			}
+			if envelopeErr := access.ValidateGrantAdminEnvelopeRoleBinding(envelope, actorID, projectgraph.ResourceID(scope.ProjectID), binding.Subject, binding.PermissionRole, binding.Permissions); envelopeErr != nil {
+				return access.AuditEventInput{}, envelopeErr
+			}
+			if envelopeErr := h.authorizeProjectRoleBindingMutation(r, envelope, actorID, projectgraph.ResourceID(scope.ProjectID), binding.Permissions); envelopeErr != nil {
+				return access.AuditEventInput{}, envelopeErr
+			}
 		}
 		policy, err = writer.UpsertAuthorizationRoleBinding(r.Context(), access.AuthorizationRoleBindingInput{
 			Scope: scope, Binding: binding, ExpectedRevision: *input.ExpectedRevision,

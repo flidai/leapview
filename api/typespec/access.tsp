@@ -134,8 +134,8 @@ model RoleBindingCreateRequest {
   subjectId: string;
   @doc("A versioned named role from the typed permission catalog. The server captures its exact expansion.")
   role: string;
-  @doc("A live bounded envelope authorizing this exact recipient and role expansion.")
-  grantAdminEnvelopeId: string;
+  @doc("A live bounded envelope authorizing this exact recipient and role expansion. Omission is accepted only for the three canonical bindings of the durable project-claim bootstrap principal while claim bootstrap remains open.")
+  grantAdminEnvelopeId?: string;
   @doc("Compare-and-swap fence. Use 0 when creating the first policy revision.")
   expectedRevision: int64;
 }

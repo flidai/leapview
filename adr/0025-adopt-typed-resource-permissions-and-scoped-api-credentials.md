@@ -96,6 +96,16 @@ issuer and ceiling authority server-side; role binding creation consumes a
 locked exact administration envelope. The obsolete generic grant-management API
 is no longer served.
 
+The first project-claim bootstrap is the sole role-binding exception: before a
+serving policy can issue a grant-administration envelope, the target accepts
+only the three deterministic, profile-pinned bindings above for the durable
+claiming principal. The request must carry the exact project bootstrap marker
+and a live, capability-attenuated platform-administrator API credential; the
+target rechecks the claim and bootstrap-open state at mutation time. No other
+subject, role, binding ID, or closed-bootstrap mutation uses this path. Normal
+role-binding creation continues to require the envelope and current
+principal/credential ceiling checks.
+
 The Go catalog is the runtime authority and generated checks prevent contract
 drift. The ADR-0026 ledger remains authoritative for deliberately unsupported or
 separately governed work such as public/embed consumption, downstream durable

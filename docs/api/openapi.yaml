@@ -80330,7 +80330,6 @@ components:
         - subjectType
         - subjectId
         - role
-        - grantAdminEnvelopeId
         - expectedRevision
       properties:
         id:
@@ -80353,7 +80352,9 @@ components:
         grantAdminEnvelopeId:
           type: string
           description: A live bounded envelope authorizing this exact recipient and
-            role expansion.
+            role expansion. Omission is accepted only for the three canonical bindings
+            of the durable project-claim bootstrap principal while claim bootstrap
+            remains open.
           example: example
         expectedRevision:
           type: integer

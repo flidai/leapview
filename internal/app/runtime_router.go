@@ -1898,6 +1898,28 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		apiGenAuthorizer.SetBootstrapAuthorizer(bootstrapAuthorizer)
 		policy.managedDataBootstrap = bootstrapAuthorizer
+		routes.accessModule.SetClaimBootstrapBindingAuthorizer(func(r *http.Request, scope access.AuthorizationPolicyScope, binding access.RoleBinding, actorID string) (bool, error) {
+			if r == nil || scope.TargetID != runtimeConfig.InstanceID || scope.Environment != policy.defaultEnvironment || actorID == "" {
+				return false, nil
+			}
+			projectID := projectgraph.ResourceID(scope.ProjectID)
+			marker, marked := accessmodule.BootstrapAuthorizationFromContext(r.Context())
+			if !marked || marker.ProjectID != projectID || marker.PrincipalID != actorID || marker.Capability != access.CapabilityProjectAdmin {
+				return false, nil
+			}
+			decision, err := bootstrapAuthorizer(r.Context(), r, "createProjectRoleBinding", projectID, access.CapabilityProjectAdmin)
+			if err != nil || !decision.Handled || !decision.Allowed {
+				return false, err
+			}
+			claim, err := claimReader.GetProjectClaim(r.Context())
+			if err != nil {
+				return false, err
+			}
+			if claim.ProjectID != projectID || string(claim.Environment) != scope.Environment || claim.ClaimedBy != actorID || !access.IsProjectClaimBootstrapBinding(binding, projectID, actorID) {
+				return false, nil
+			}
+			return routes.accessModule.AuthorizeBootstrapRequest(r.Context(), r, access.CapabilityProjectAdmin)
+		})
 	}
 	if err := apigencommand.ValidateDependencies(apiaggregate.GetAPIGenCommandRuntimeContracts(), map[apigencommand.Dependency]bool{
 		apigencommand.DependencyAuthorization: apiGenAuthorizer != nil,

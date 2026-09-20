@@ -15,15 +15,16 @@ import (
 
 type roleBindingPolicyRepositoryStub struct {
 	access.Repository
-	policy      access.AuthorizationPolicy
-	readScope   access.AuthorizationPolicyScope
-	input       access.AuthorizationRoleBindingInput
-	deleteInput access.AuthorizationRoleBindingDeleteInput
-	audit       access.AuditEventInput
-	envelope    access.GrantAdminEnvelope
-	envelopeErr error
-	writerCalls int
-	directCalls int
+	policy        access.AuthorizationPolicy
+	readScope     access.AuthorizationPolicyScope
+	input         access.AuthorizationRoleBindingInput
+	deleteInput   access.AuthorizationRoleBindingDeleteInput
+	audit         access.AuditEventInput
+	envelope      access.GrantAdminEnvelope
+	envelopeErr   error
+	envelopeCalls int
+	writerCalls   int
+	directCalls   int
 }
 
 func (s *roleBindingPolicyRepositoryStub) AuthorizationPolicy(_ context.Context, scope access.AuthorizationPolicyScope) (access.AuthorizationPolicy, error) {
@@ -65,6 +66,7 @@ func (tx *roleBindingPolicyTransactionStub) UpsertAuthorizationRoleBinding(_ con
 }
 
 func (tx *roleBindingPolicyTransactionStub) CurrentGrantAdminEnvelopeForMutation(_ context.Context, id, principalID string) (access.GrantAdminEnvelope, error) {
+	tx.parent.envelopeCalls++
 	if tx.parent.envelopeErr != nil {
 		return access.GrantAdminEnvelope{}, tx.parent.envelopeErr
 	}
@@ -211,6 +213,50 @@ func TestCreateProjectRoleBindingCapturesTypedRoleExpansionAndBindsServerScope(t
 	handler.CreateProjectRoleBinding(denial, denied)
 	if denial.Code != http.StatusForbidden || repo.writerCalls != 1 {
 		t.Fatalf("principal without delegate status=%d writerCalls=%d body=%s", denial.Code, repo.writerCalls, denial.Body.String())
+	}
+}
+
+func TestCreateProjectRoleBindingAllowsCanonicalClaimBootstrapWithoutEnvelope(t *testing.T) {
+	repo := &roleBindingPolicyRepositoryStub{}
+	var callbackCalls int
+	handler := Handler{
+		Repository:                     func() (access.Repository, error) { return repo, nil },
+		AuthorizationPolicyTargetID:    "target-bootstrap",
+		AuthorizationPolicyEnvironment: "prod",
+		CurrentPrincipal:               func(*http.Request) (Principal, bool) { return Principal{ID: "principal-bootstrap"}, true },
+		AuthorizeClaimBootstrapBinding: func(r *http.Request, scope access.AuthorizationPolicyScope, binding access.RoleBinding, actorID string) (bool, error) {
+			callbackCalls++
+			if r == nil {
+				t.Fatal("claim bootstrap callback received nil request")
+			}
+			if scope != (access.AuthorizationPolicyScope{TargetID: "target-bootstrap", ProjectID: "project_bootstrap", Environment: "prod"}) {
+				t.Fatalf("claim bootstrap scope = %#v", scope)
+			}
+			if actorID != "principal-bootstrap" {
+				t.Fatalf("claim bootstrap actor = %q", actorID)
+			}
+			if !access.IsProjectClaimBootstrapBinding(binding, "project_bootstrap", actorID) {
+				t.Fatalf("claim bootstrap binding = %#v", binding)
+			}
+			return true, nil
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_bootstrap/role-bindings", strings.NewReader(`{"id":"project-bootstrap-owner","name":"Project bootstrap owner","subjectType":"principal","subjectId":"principal-bootstrap","role":"project_admin","expectedRevision":0}`))
+	request = withProjectRoute(request, "project_bootstrap")
+	request.Header.Set("Idempotency-Key", "bootstrap-owner-1")
+	recorder := httptest.NewRecorder()
+	handler.CreateProjectRoleBinding(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if callbackCalls != 1 {
+		t.Fatalf("claim bootstrap callback calls = %d, want 1", callbackCalls)
+	}
+	if repo.envelopeCalls != 0 {
+		t.Fatalf("grant-admin envelope lookups = %d, want 0 for claim bootstrap", repo.envelopeCalls)
+	}
+	if repo.writerCalls != 1 {
+		t.Fatalf("writer calls = %d, want 1", repo.writerCalls)
 	}
 }
 
