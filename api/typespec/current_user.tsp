@@ -11,6 +11,7 @@ model EffectiveCapabilitiesResponse {
 
 model APITokenCreateRequest {
   name: string;
+  description?: string;
   @doc("Required explicit action-target attenuation pairs. An empty list creates an authentication-only token; omitted or null permissions are invalid. A pair's catalog profile and target are persisted without expanding independent action/resource lists.")
   permissions: PermissionPair[];
   expiresAt?: utcDateTime;
@@ -19,6 +20,7 @@ model APITokenCreateRequest {
 model APITokenResponse {
   id: string;
   name: string;
+  description: string;
   @doc("The versioned catalog profile for typed action-target permissions. Legacy capability-only rows omit this value.")
   permissionProfile?: PermissionCatalogProfile;
   @doc("The exact action-target pairs persisted for this token. Legacy capability-only rows expose an explicit empty array.")

@@ -250,6 +250,153 @@ export const chatThreadStyles = css`
       background: var(--lv-bg-danger-muted);
     }
 
+    .tool-call {
+      display: grid;
+      width: fit-content;
+      max-width: 100%;
+      margin-block: var(--lv-chat-agent-tool-gap);
+      gap: var(--lv-space-sm);
+    }
+
+    .tool-call.has-artifact {
+      width: min(100%, 48rem);
+    }
+
+    .tool-trigger {
+      display: inline-flex;
+      width: fit-content;
+      max-width: 100%;
+      align-items: center;
+      gap: var(--lv-chat-activity-gap, var(--lv-space-sm));
+      border: 0;
+      border-radius: var(--lv-radius-tight, var(--lv-radius-default));
+      background: transparent;
+      padding: var(--lv-chat-activity-padding-block) 0;
+      color: var(--lv-fg-muted);
+      cursor: pointer;
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
+      line-height: var(--base-text-lineHeight-snug);
+      text-align: left;
+      transition: color var(--lv-transition-fast);
+    }
+
+    .tool-icon {
+      display: inline-flex;
+      width: var(--lv-chat-activity-icon-size);
+      height: var(--lv-chat-activity-icon-size);
+      flex: 0 0 var(--lv-chat-activity-icon-size);
+      color: currentColor;
+    }
+
+    .tool-icon svg,
+    .tool-chevron svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .tool-call.running .tool-trigger {
+      color: var(--lv-fg-warning);
+    }
+
+    .tool-call.running .tool-icon {
+      animation: pulse 1.1s ease-in-out infinite;
+    }
+
+    .tool-call.error .tool-trigger {
+      color: var(--lv-fg-danger);
+    }
+
+    .tool-trigger:hover,
+    .tool-trigger:focus-visible {
+      color: var(--lv-fg-default);
+    }
+
+    .tool-call.error .tool-trigger:hover,
+    .tool-call.error .tool-trigger:focus-visible {
+      color: var(--lv-fg-danger);
+    }
+
+    .tool-trigger:focus-visible {
+      outline: var(--lv-border-width-focus) solid var(--lv-line-emphasis, var(--lv-line-accent));
+      outline-offset: var(--lv-space-xs);
+    }
+
+    .activity-text {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tool-status {
+      color: var(--lv-fg-muted);
+      font-weight: var(--base-text-weight-normal);
+      white-space: nowrap;
+    }
+
+    .tool-chevron {
+      display: inline-flex;
+      width: var(--lv-chat-activity-icon-size);
+      height: var(--lv-chat-activity-icon-size);
+      flex: 0 0 var(--lv-chat-activity-icon-size);
+      opacity: 0;
+      transform: translateX(calc(-1 * var(--lv-space-xs)));
+      transition: opacity var(--lv-transition-fast), transform var(--lv-transition-fast);
+    }
+
+    .tool-trigger:hover .tool-chevron,
+    .tool-trigger:focus-visible .tool-chevron,
+    .tool-trigger[aria-expanded='true'] .tool-chevron {
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    .tool-trigger[aria-expanded='true'] .tool-chevron {
+      transform: rotate(90deg);
+    }
+
+    .tool-details {
+      display: grid;
+      max-width: min(42rem, 100%);
+      gap: var(--lv-space-md);
+      border-left: var(--lv-border-width-focus) solid var(--lv-line-muted);
+      padding-left: var(--lv-space-lg);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-secondary);
+      animation: tool-details-open var(--lv-transition-normal);
+      transform-origin: top left;
+    }
+
+    .tool-detail-block {
+      display: grid;
+      gap: var(--lv-space-xs);
+    }
+
+    .tool-detail-label {
+      color: var(--lv-fg-muted);
+      font-weight: var(--base-text-weight-medium);
+    }
+
+    .tool-detail-block lv-code-block {
+      max-width: 100%;
+    }
+
+    .tool-error {
+      color: var(--lv-fg-danger);
+      white-space: pre-wrap;
+    }
+
+    .tool-empty {
+      color: var(--lv-fg-muted);
+    }
+
     lv-visual-artifact {
       display: block;
       width: 100%;
@@ -268,6 +415,22 @@ export const chatThreadStyles = css`
     @keyframes working-pulse {
       0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
       30% { opacity: 1; transform: translateY(-2px); }
+    }
+
+    @keyframes tool-details-open {
+      from {
+        opacity: 0;
+        transform: translateY(calc(-1 * var(--lv-chat-tool-disclosure-offset)));
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.45; }
+      50% { opacity: 1; }
     }
 
     @media (max-width: 720px) {

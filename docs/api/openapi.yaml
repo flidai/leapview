@@ -15347,6 +15347,7 @@ paths:
                   - capabilities:
                       - PLATFORM_ADMIN
                     createdAt: "2026-01-02T15:04:05Z"
+                    description: example
                     expiresAt: "2026-01-02T15:04:05Z"
                     id: example
                     lastUsedAt: "2026-01-02T15:04:05Z"
@@ -15632,6 +15633,7 @@ paths:
                   capabilities:
                     - PLATFORM_ADMIN
                   createdAt: "2026-01-02T15:04:05Z"
+                  description: example
                   expiresAt: "2026-01-02T15:04:05Z"
                   id: example
                   lastUsedAt: "2026-01-02T15:04:05Z"
@@ -15891,6 +15893,7 @@ paths:
             schema:
               $ref: '#/components/schemas/APITokenCreateRequest'
             example:
+              description: example
               expiresAt: "2026-01-02T15:04:05Z"
               name: example
               permissions:
@@ -61010,6 +61013,9 @@ components:
         name:
           type: string
           example: example
+        description:
+          type: string
+          example: example
         permissions:
           type: array
           items:
@@ -61031,6 +61037,7 @@ components:
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
+        description: example
         expiresAt: "2026-01-02T15:04:05Z"
         name: example
         permissions:
@@ -61057,6 +61064,7 @@ components:
           capabilities:
             - PLATFORM_ADMIN
           createdAt: "2026-01-02T15:04:05Z"
+          description: example
           expiresAt: "2026-01-02T15:04:05Z"
           id: example
           lastUsedAt: "2026-01-02T15:04:05Z"
@@ -61086,6 +61094,7 @@ components:
             - capabilities:
                 - PLATFORM_ADMIN
               createdAt: "2026-01-02T15:04:05Z"
+              description: example
               expiresAt: "2026-01-02T15:04:05Z"
               id: example
               lastUsedAt: "2026-01-02T15:04:05Z"
@@ -61107,6 +61116,7 @@ components:
           - capabilities:
               - PLATFORM_ADMIN
             createdAt: "2026-01-02T15:04:05Z"
+            description: example
             expiresAt: "2026-01-02T15:04:05Z"
             id: example
             lastUsedAt: "2026-01-02T15:04:05Z"
@@ -61128,6 +61138,7 @@ components:
       required:
         - id
         - name
+        - description
         - permissions
         - createdAt
       properties:
@@ -61135,6 +61146,9 @@ components:
           type: string
           example: example
         name:
+          type: string
+          example: example
+        description:
           type: string
           example: example
         permissionProfile:
@@ -61183,6 +61197,7 @@ components:
         capabilities:
           - PLATFORM_ADMIN
         createdAt: "2026-01-02T15:04:05Z"
+        description: example
         expiresAt: "2026-01-02T15:04:05Z"
         id: example
         lastUsedAt: "2026-01-02T15:04:05Z"
@@ -61304,6 +61319,7 @@ components:
         - restore
         - delete
         - archive_all
+        - delete_active
         - delete_all
       example: pin
     AgentConversationManagementRequest:

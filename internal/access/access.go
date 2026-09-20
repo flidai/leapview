@@ -464,6 +464,7 @@ type SCIMGroupFilter struct {
 type APITokenInput struct {
 	PrincipalID  string
 	Name         string
+	Description  string
 	Capabilities []Capability
 	ExpiresAt    time.Time
 }
@@ -475,6 +476,7 @@ type APITokenInput struct {
 type ScopedAPITokenInput struct {
 	PrincipalID string
 	Name        string
+	Description string
 	Permissions []PermissionPair
 	ExpiresAt   time.Time
 }
@@ -485,6 +487,7 @@ type APIToken struct {
 	ID          string
 	PrincipalID string
 	Name        string
+	Description string
 	// TokenFingerprint is the non-secret durable fingerprint used to bind
 	// queued caller authority back to the initiating credential. It is never a
 	// bearer secret and is not exposed by token presentation DTOs.

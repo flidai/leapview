@@ -13,7 +13,7 @@ but must never replace or generate it.
 
 The same rule applies to the access-owned forward migrations
 `002_typed_attribute_registry.sql`, `003_semantic_attribute_control.sql`, and
-`026_durable_authority_grants.sql`. They define the profile-qualified
+`028_durable_authority_grants.sql`. They define the profile-qualified
 registry/control and durable-grant tables, immutable identity and tombstone
 triggers, singleton revision/digest guards, subject/definition checks, and
 role ACLs. Those are schema authority and remain handwritten migration input.

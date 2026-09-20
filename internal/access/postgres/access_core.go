@@ -985,6 +985,21 @@ func (r *Repository) ListSessions(ctx context.Context, pid string) ([]access.Ses
 	}
 	return out, nil
 }
+func (r *Repository) RevokeSessionsForPrincipal(ctx context.Context, pid string) error {
+	db, err := r.requireDB()
+	if err != nil {
+		return err
+	}
+	pid, err = uuidID("principal id", pid)
+	if err != nil {
+		return err
+	}
+	principalID, err := pgUUID(pid)
+	if err != nil {
+		return err
+	}
+	return accessdb.New(db).RevokePrincipalSessions(ctx, principalID)
+}
 func (r *Repository) RevokeSession(ctx context.Context, id string) error {
 	db, err := r.requireDB()
 	if err != nil {
@@ -1070,6 +1085,10 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.A
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
+	description := strings.TrimSpace(in.Description)
+	if len(description) > 1024 {
+		return "", access.APIToken{}, fmt.Errorf("token description must not exceed 1024 bytes")
+	}
 	caps, err := capabilitiesJSON(in.Capabilities)
 	if err != nil {
 		return "", access.APIToken{}, err
@@ -1097,7 +1116,7 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.A
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
-	tag, err := accessdb.New(db).CreateAPIToken(ctx, accessdb.CreateAPITokenParams{ID: tokenID, PrincipalID: principalID, Name: name,
+	tag, err := accessdb.New(db).CreateAPIToken(ctx, accessdb.CreateAPITokenParams{ID: tokenID, PrincipalID: principalID, Name: name, Description: description,
 		TokenFingerprint: r.secretFingerprint(tok), Verifier: ver, Capabilities: caps, ExpiresAt: pgTimestamp(in.ExpiresAt)})
 	if err != nil {
 		return "", access.APIToken{}, err
@@ -1126,7 +1145,7 @@ func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, 
 	if err != nil {
 		return access.APIToken{}, err
 	}
-	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name, TokenFingerprint: hex.EncodeToString(row.TokenFingerprint),
+	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name, Description: row.Description, TokenFingerprint: hex.EncodeToString(row.TokenFingerprint),
 		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt),
 		LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
 	if row.PermissionProfile != nil {

@@ -18,6 +18,7 @@ import (
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
+	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 )
 
 // Authorities contains the already-composed sibling capability authorities
@@ -72,7 +73,7 @@ func NewPersistence(control deploymentpostgresql.DBTX, authorities Authorities) 
 	operationAdapter := deploymentoperation.New(authorities.Operations)
 	eventAdapter := deploymentevents.NewWithRepository(authorities.Events)
 	auditAdapter := deploymentaudit.NewWithRepository(authorities.Access)
-	workflowAdapter := deploymentworkflow.NewWithRepository(repository, authorities.Jobs)
+	workflowAdapter := deploymentworkflow.NewWithRepository(repository, projectpostgres.New(control), authorities.Jobs)
 	approvalAuthority, err := deploymentpostgresql.NewApprovalAuthority(repository, deploymentpostgresql.ApprovalAuthorityOptions{
 		Authorize: authorities.ApprovalAuthorize, Operation: operationAdapter, Event: eventAdapter, Audit: auditAdapter,
 		Activation: workflowAdapter,

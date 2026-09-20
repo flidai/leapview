@@ -79,7 +79,7 @@ func (f *fakeRepository) ListAPITokens(context.Context, string) ([]access.APITok
 func (f *fakeRepository) CreateScopedAPITokenWithMetadata(_ context.Context, input access.ScopedAPITokenInput) (string, access.APIToken, error) {
 	f.createdToken = true
 	f.scopedInput = input
-	row := access.APIToken{ID: "token-typed", PrincipalID: input.PrincipalID, Name: input.Name, PermissionProfile: access.PermissionCatalogProfile, Permissions: input.Permissions, CreatedAt: "now"}
+	row := access.APIToken{ID: "token-typed", PrincipalID: input.PrincipalID, Name: input.Name, Description: input.Description, PermissionProfile: access.PermissionCatalogProfile, Permissions: input.Permissions, CreatedAt: "now"}
 	f.tokens = append(f.tokens, row)
 	return "lv_typed_secret", row, nil
 }
@@ -258,6 +258,47 @@ func mustPersonalResourceRef(t *testing.T, id, kind string) access.ResourceRef {
 	return resource
 }
 
+func TestServiceLoadIncludesOnlyUniqueActiveSessions(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	stamp := func(value time.Time) string { return value.Format(time.RFC3339Nano) }
+	repo := &fakeRepository{
+		principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser, Email: "user@example.com"},
+		identity:  access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal},
+		sessions: []access.Session{
+			{ID: "current", Kind: access.SessionKindBrowser, ExpiresAt: stamp(now.Add(time.Hour))},
+			{ID: "current", Kind: access.SessionKindBrowser, ExpiresAt: stamp(now.Add(2 * time.Hour))},
+			{ID: "expired", Kind: access.SessionKindBrowser, ExpiresAt: stamp(now)},
+			{ID: "revoked", Kind: access.SessionKindDesktop, RevokedAt: stamp(now.Add(-time.Minute))},
+			{ID: "desktop", Kind: access.SessionKindDesktop, ClientID: "  Desktop app  ", AbsoluteExpiresAt: stamp(now.Add(time.Hour))},
+		},
+	}
+	service := testService(repo)
+	service.Now = func() time.Time { return now }
+	service.Authoring = &fakeAuthoring{sessions: []access.AuthoringSession{
+		{ID: "cli", Kind: access.AuthoringSessionHumanCLI, ExpiresAt: now.Add(time.Hour)},
+		{ID: "cli", Kind: access.AuthoringSessionHumanCLI, ExpiresAt: now.Add(2 * time.Hour)},
+		{ID: "old-cli", Kind: access.AuthoringSessionHumanCLI, ExpiresAt: now},
+		{ID: "revoked-cli", Kind: access.AuthoringSessionHumanCLI, ExpiresAt: now.Add(time.Hour), RevokedAt: now.Add(-time.Minute)},
+	}}
+
+	state, err := service.Load(context.Background(), repo.principal.ID, "current", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Security.Sessions) != 2 {
+		t.Fatalf("active sessions = %#v, want one browser and one desktop", state.Security.Sessions)
+	}
+	if state.Security.Sessions[0].ID != "current" || !state.Security.Sessions[0].Current {
+		t.Fatalf("current session = %#v", state.Security.Sessions[0])
+	}
+	if state.Security.Sessions[1].ID != "desktop" || state.Security.Sessions[1].ClientLabel != "Desktop app" {
+		t.Fatalf("desktop session = %#v", state.Security.Sessions[1])
+	}
+	if len(state.Security.AuthoringSessions) != 1 || state.Security.AuthoringSessions[0].ID != "cli" {
+		t.Fatalf("active authoring sessions = %#v", state.Security.AuthoringSessions)
+	}
+}
+
 func TestServiceMutationsAuditAndValidateIdentity(t *testing.T) {
 	repo := &fakeRepository{principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser, Email: "user@example.com"}, identity: access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal, HasLocalPassword: true}}
 	service := testService(repo)
@@ -277,12 +318,15 @@ func TestServiceMutationsAuditAndValidateIdentity(t *testing.T) {
 	service.CurrentEffectivePermissionOptions = func(context.Context, string) ([]access.PermissionPair, error) {
 		return []access.PermissionPair{allowed}, nil
 	}
-	secret, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "CI", Permissions: []PermissionPairSignal{permissionPairSignal(allowed)}})
+	secret, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "CI", Description: "Reporting automation", Permissions: []PermissionPairSignal{permissionPairSignal(allowed)}})
 	if err != nil || secret == nil || *secret != "lv_typed_secret" {
 		t.Fatalf("create token = %v, %v", secret, err)
 	}
 	if !repo.passwordChanged || !repo.createdToken || !repo.themeChanged || repo.theme != access.ThemeDarkColorblind || len(repo.audits) != 4 {
 		t.Fatalf("mutations changed=%v token=%v audits=%d", repo.passwordChanged, repo.createdToken, len(repo.audits))
+	}
+	if got := repo.tokens[len(repo.tokens)-1].Description; got != "Reporting automation" {
+		t.Fatalf("token description = %q", got)
 	}
 	unauthorized, err := access.NewExactPermissionPair(access.ActionDashboardRead, "project-1", mustPersonalResourceRef(t, "dashboard_b", "dashboard"))
 	if err != nil {

@@ -337,7 +337,7 @@ func apiTokenDTO(row access.APIToken) map[string]any {
 		})
 	}
 	return map[string]any{
-		"id": row.ID, "principalId": row.PrincipalID, "name": row.Name,
+		"id": row.ID, "principalId": row.PrincipalID, "name": row.Name, "description": row.Description,
 		"permissionProfile": emptyToNil(row.PermissionProfile), "permissions": permissions,
 		"capabilities": values, "expiresAt": emptyToNil(row.ExpiresAt),
 		"createdAt": row.CreatedAt, "lastUsedAt": emptyToNil(row.LastUsedAt), "revokedAt": emptyToNil(row.RevokedAt),

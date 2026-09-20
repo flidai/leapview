@@ -352,7 +352,7 @@ test('chat thread renders visual artifacts with dashboard web components', async
   })
   expect(rendered.chart).toBe('cartesian')
   expect(rendered.table).toBe('table')
-  expect(rendered.toolRows).toBe(0)
+  expect(rendered.toolRows).toBe(2)
   expect(rendered.bodyText.includes('delivered')).toBe(false)
   expect(rendered.artifactBackground).toBe('rgb(1, 2, 3)')
   expect(rendered.artifactBorderTopWidth).toBe('2px')
@@ -360,7 +360,7 @@ test('chat thread renders visual artifacts with dashboard web components', async
   await page.close()
 })
 
-test('chat thread hides tool activity while keeping Working and run errors visible', async () => {
+test('chat thread renders tool activity with accessible expandable details', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
@@ -396,21 +396,111 @@ test('chat thread hides tool activity while keeping Working and run errors visib
       working: root.querySelector('.working')?.textContent?.replace(/\s+/g, ' ').trim(),
       toolRows: root.querySelectorAll('.tool-call').length,
       codeBlocks: root.querySelectorAll('lv-code-block').length,
+      labels: Array.from(root.querySelectorAll('.tool-trigger')).map((trigger: any) => trigger.textContent.replace(/\s+/g, ' ').trim()),
+      statuses: Array.from(root.querySelectorAll('.tool-call')).map((row: any) => ({
+        className: row.className,
+        expanded: row.querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
+        controls: row.querySelector('.tool-trigger')?.getAttribute('aria-controls'),
+      })),
       agentTurns: root.querySelectorAll('.agent-turn').length,
       runError: root.querySelector('.message.error')?.textContent?.replace(/\s+/g, ' ').trim(),
       assistantMarkdown: (root.querySelector('.agent-markdown') as any)?.value,
     }
   })
 
-  expect(state.working).toBe('Working')
-  expect(state.toolRows).toBe(0)
+  expect(state.working).toBeUndefined()
+  expect(state.toolRows).toBe(3)
   expect(state.codeBlocks).toBe(0)
+  expect(state.labels).toEqual(['Catalog Search Running', 'Catalog Get Failed', 'Catalog List Complete'])
+  expect(state.statuses).toEqual([
+    { className: 'tool-call running', expanded: 'false', controls: 'tool-details-tool-running' },
+    { className: 'tool-call error', expanded: 'false', controls: 'tool-details-tool-error' },
+    { className: 'tool-call done', expanded: 'false', controls: 'tool-details-tool-complete' },
+  ])
   expect(state.agentTurns).toBe(1)
   expect(state.runError).toBe('The dashboard could not be loaded.')
   expect(state.text).toContain('Find the sales dashboard.')
   expect(state.assistantMarkdown).toBe('I could not load that dashboard.')
   expect(state.text).not.toContain('Catalog lookup failed.')
   expect(state.text).not.toContain('secret tool result')
+
+  await page.locator('lv-chat-thread').evaluate(async (element: any) => {
+    for (const trigger of Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.tool-trigger')) as HTMLButtonElement[]) {
+      trigger.click()
+    }
+    await element.updateComplete
+  })
+  const details = await page.locator('lv-chat-thread').evaluate((element: any) => {
+    const root = element.shadowRoot as ShadowRoot
+    return {
+      expanded: Array.from(root.querySelectorAll('.tool-trigger')).map((trigger) => trigger.getAttribute('aria-expanded')),
+      codeBlocks: root.querySelectorAll('lv-code-block').length,
+      detailsText: Array.from(root.querySelectorAll('.tool-details')).map((detail) => detail.textContent?.replace(/\s+/g, ' ').trim()),
+      errorText: root.querySelector('.tool-error')?.textContent,
+    }
+  })
+  expect(details.expanded).toEqual(['true', 'true', 'true'])
+  expect(details.codeBlocks).toBe(5)
+  expect(details.detailsText[0]).toContain('sales')
+  expect(details.detailsText[1]).toContain('Catalog lookup failed.')
+  expect(details.detailsText[1]).toContain('secret tool result')
+  expect(details.detailsText[2]).toContain('dashboard:sales')
+  expect(details.errorText).toBe('Catalog lookup failed.')
+  await page.close()
+})
+
+test('chat thread keeps one tool row per call when durable history replaces live activity', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.transcript = [
+      { id: 'tool-running', toolCallId: 'call-1', kind: 'tool', name: 'catalog_search', status: 'running', inputJson: '{"query":"sales"}' },
+      { id: 'tool-complete', toolCallId: 'call-2', kind: 'tool', name: 'catalog_list', status: 'complete', resultJson: 'items[1]{id}: sales' },
+    ]
+    await thread.updateComplete
+    thread.transcript = [
+      { id: 'tool-running', toolCallId: 'call-1', kind: 'tool', name: 'catalog_search', status: 'complete', inputJson: '{"query":"sales"}', resultJson: 'items[1]{id}: sales' },
+      { id: 'tool-complete', toolCallId: 'call-2', kind: 'tool', name: 'catalog_list', status: 'complete', resultJson: 'items[1]{id}: sales' },
+    ]
+    await thread.updateComplete
+  })
+  const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
+    const root = element.shadowRoot as ShadowRoot
+    return {
+      rows: root.querySelectorAll('.tool-call').length,
+      labels: Array.from(root.querySelectorAll('.tool-trigger')).map((trigger: any) => trigger.textContent.replace(/\s+/g, ' ').trim()),
+      ids: Array.from(root.querySelectorAll('.tool-details')).map((detail: any) => detail.id),
+    }
+  })
+  expect(state.rows).toBe(2)
+  expect(state.labels).toEqual(['Catalog Search Complete', 'Catalog List Complete'])
+  expect(state.ids).toEqual([])
+  await page.close()
+})
+
+test('chat thread marks orphaned historical tools interrupted without hiding a new run indicator', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: true, runId: 'run-new' }
+    thread.transcript = [
+      { id: 'tool-old', runId: 'run-old', toolCallId: 'call-old', kind: 'tool', name: 'catalog_search', status: 'running' },
+    ]
+    await thread.updateComplete
+  })
+  const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
+    const root = element.shadowRoot as ShadowRoot
+    return {
+      label: root.querySelector('.tool-trigger')?.textContent?.replace(/\s+/g, ' ').trim(),
+      className: root.querySelector('.tool-call')?.className,
+      working: root.querySelector('.working')?.textContent?.replace(/\s+/g, ' ').trim(),
+    }
+  })
+  expect(state).toEqual({ label: 'Catalog Search Interrupted', className: 'tool-call interrupted', working: 'Working' })
   await page.close()
 })
 

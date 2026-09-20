@@ -108,6 +108,7 @@ model PersonalCapabilityOptionSignal {
 model PersonalTokenSignal {
   `id`: string;
   `name`: string;
+  `description`: string;
   `permissionProfile`?: string;
   `permissions`: PersonalPermissionPairSignal[];
   /** Legacy capability rows remain readable during migration; new issuance uses permissions. */
@@ -159,6 +160,7 @@ model PersonalTokenCommand {
   `action`: string;
   `tokenId`: string;
   `name`: string;
+  `description`: string;
   `permissions`: PersonalPermissionPairSignal[];
   `expiresAt`: string;
 }

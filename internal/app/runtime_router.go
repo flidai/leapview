@@ -860,9 +860,7 @@ func buildApplicationSurfaces(
 			return snapshot, nil
 		}
 		snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, routes.accessModule.AuthorizationSubjects)
-		authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection, func(ctx context.Context) (bool, error) {
-			return hasActiveBootstrapServingState(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, policy.defaultEnvironment, runtimeConfig.DeliveryTargetReader, runtimeConfig.InstanceID, runtimeConfig.ProjectID.String())
-		})
+		authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection)
 		routes.accessModule.SetCurrentEffectiveCapabilities(func(ctx context.Context, principalID string) ([]access.Capability, error) {
 			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
 			if err != nil {
@@ -1872,7 +1870,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return deliveryProjectAllows(snapshot, subjects, projectID, capability)
 			}
-			resources, err := deliveryAuthorizationResources(plan)
+			impact, err := deliveryAuthorizationResources(plan)
 			if err != nil {
 				return false, err
 			}
@@ -1885,12 +1883,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if err != nil {
 				return false, err
 			}
-			if len(resources) == 0 {
-				// Unknown/new resources require an explicit target-owned role;
-				// a grant on an unrelated graph object must never widen scope.
-				return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
-			}
-			return deliverySnapshotAllows(snapshot, subjects, resources, capability)
+			// Added resources cannot exist in the current immutable graph. They
+			// require an explicit project role while existing affected resources
+			// continue through exact snapshot grants.
+			return deliveryAuthorizationImpactAllows(snapshot, subjects, impact, capability)
 		},
 	})
 	if err != nil {

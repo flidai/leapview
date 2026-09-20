@@ -244,8 +244,8 @@ SELECT sqlc.arg(expires_at)::timestamptz > clock_timestamp()
    AND sqlc.arg(expires_at)::timestamptz <= clock_timestamp() + interval '365 days';
 
 -- name: CreateAPIToken :execresult
-INSERT INTO access.api_token(id, principal_id, name, token_fingerprint, verifier, capabilities, expires_at)
-SELECT sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, sqlc.arg(name),
+INSERT INTO access.api_token(id, principal_id, name, description, token_fingerprint, verifier, capabilities, expires_at)
+SELECT sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, sqlc.arg(name), sqlc.arg(description),
        sqlc.arg(token_fingerprint), sqlc.arg(verifier), sqlc.arg(capabilities)::jsonb,
        sqlc.arg(expires_at)
 WHERE sqlc.arg(expires_at)::timestamptz > clock_timestamp()
@@ -257,8 +257,8 @@ WHERE sqlc.arg(expires_at)::timestamptz > clock_timestamp()
   );
 
 -- name: CreateScopedAPIToken :execresult
-INSERT INTO access.api_token(id, principal_id, name, token_fingerprint, verifier, capabilities, permission_profile, permissions, expires_at)
-SELECT sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, sqlc.arg(name),
+INSERT INTO access.api_token(id, principal_id, name, description, token_fingerprint, verifier, capabilities, permission_profile, permissions, expires_at)
+SELECT sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, sqlc.arg(name), sqlc.arg(description),
        sqlc.arg(token_fingerprint), sqlc.arg(verifier), NULL,
        sqlc.arg(permission_profile), sqlc.arg(permissions)::jsonb,
        sqlc.arg(expires_at)
@@ -271,7 +271,7 @@ WHERE sqlc.arg(expires_at)::timestamptz > clock_timestamp()
   );
 
 -- name: GetAPIToken :one
-SELECT id, principal_id, name, token_fingerprint, capabilities, permission_profile, permissions,
+SELECT id, principal_id, name, description, token_fingerprint, capabilities, permission_profile, permissions,
        expires_at, created_at, last_used_at, revoked_at
 FROM access.api_token
 WHERE id = sqlc.arg(id)::uuid;

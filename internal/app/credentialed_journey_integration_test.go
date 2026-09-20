@@ -203,8 +203,8 @@ func TestCredentialedBrowserAndPipelineJourney(t *testing.T) {
 	}
 	logout.Body.Close()
 	protected := get("/admin/profile")
-	if protected.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("post-logout /admin = %d location=%q", protected.StatusCode, protected.Header.Get("Location"))
+	if protected.StatusCode != http.StatusFound || protected.Header.Get("Location") != "/login" {
+		t.Fatalf("post-logout /admin recovery = %d location=%q", protected.StatusCode, protected.Header.Get("Location"))
 	}
 	protected.Body.Close()
 

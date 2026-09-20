@@ -10,7 +10,7 @@ release_client_id="${DEMO_RELEASE_CLIENT_ID:?Set DEMO_RELEASE_CLIENT_ID}"
 release_client_secret="${DEMO_RELEASE_CLIENT_SECRET:?Set DEMO_RELEASE_CLIENT_SECRET}"
 source_root="$repo_root/dashboards"
 data_link="$repo_root/.data/olist"
-project_id="project:leapview-showcase"
+project_id="${DEMO_PROJECT_ID:?Set DEMO_PROJECT_ID to the durable target ProjectUID}"
 candidate_key="hosted-demo"
 temporary_directory="$(mktemp -d)"
 
@@ -73,12 +73,14 @@ runtime_capabilities="$("$leapview" api call getCapabilities \
   --target "$demo_target" \
   --token "$publisher_token")"
 runtime_revision="$(jq -er '.buildRevision | strings | select(test("^[0-9a-f]{40}$"))' <<<"$runtime_capabilities")"
-jq -e '
+jq -e --arg source_revision "$source_revision" '
   .apiVersion == "v1" and
-  .deliveryMode == "native-postgres" and
+  .deliveryMode == "native_postgres" and
+  .buildRevision == $source_revision and
   .buildDirty == false and
-  .buildDevelopment == false
+  .buildDevelopment == true
 ' <<<"$runtime_capabilities" >/dev/null || {
+  jq -c '{apiVersion,deliveryMode,buildRevision,buildDirty,buildDevelopment}' <<<"$runtime_capabilities" >&2
   echo "demo runtime does not satisfy the content-publication compatibility contract" >&2
   exit 1
 }
@@ -226,4 +228,17 @@ jq -e --arg project "$project_id" --arg candidate "$candidate_id" --arg generati
   .projectId == $project and .candidateId == $candidate and .generationId == $generation
 ' <<<"$publication_status_json" >/dev/null
 curl --fail --silent --show-error --max-time 15 "$demo_target/readyz" >/dev/null
+mapfile -t browser_entry < <(curl --silent --show-error --max-time 15 \
+  --output /dev/null \
+  --write-out '%{http_code}\n%{redirect_url}\n' \
+  "$demo_target/")
+if [[ "${browser_entry[0]:-}" != "302" || "${browser_entry[1]:-}" != "$demo_target/login" ]]; then
+  echo "demo browser entry did not redirect unauthenticated visitors to /login" >&2
+  exit 1
+fi
+login_page="$(curl --fail --silent --show-error --max-time 15 "$demo_target/login")"
+if [[ "$login_page" != *"<title>LeapView Login</title>"* ]]; then
+  echo "demo login page did not render the branded sign-in surface" >&2
+  exit 1
+fi
 printf 'published source %s to compatible runtime %s at %s\n' "$source_revision" "$runtime_revision" "$demo_target"

@@ -61,6 +61,7 @@ enum AgentConversationManagementAction {
   restore,
   deleteConversation: "delete",
   archiveAll: "archive_all",
+  deleteActive: "delete_active",
   deleteAll: "delete_all",
 }
 

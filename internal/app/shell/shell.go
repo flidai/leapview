@@ -226,6 +226,11 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 				{ID: "profile", Label: "Profile", Href: "/admin/profile", Icon: "user"},
 				{ID: "security", Label: "Security & sessions", Href: "/admin/security", Icon: "activity"},
 				{ID: "api-tokens", Label: "API tokens", Href: "/admin/api-tokens", Icon: "data"},
+			},
+		},
+		{
+			Label: "Chats",
+			Items: []Item{
 				{ID: "archived-chats", Label: "Archived chats", Href: "/admin/archived-chats", Icon: "history"},
 			},
 		},
@@ -238,7 +243,7 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 		{
 			Label: "Access",
 			Items: filterItems([]conditionalItem{
-				{allowed: allowed.ManageIdentity, item: Item{ID: "principals", Label: "Principals", Href: "/admin/principals", Icon: "users"}},
+				{allowed: allowed.ManageIdentity, item: Item{ID: "principals", Label: "Users", Href: "/admin/principals", Icon: "users"}},
 				{allowed: allowed.ManageIdentity, item: Item{ID: "groups", Label: "Groups", Href: "/admin/groups", Icon: "users-round"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "service-accounts", Label: "Service accounts", Href: "/admin/service-accounts", Icon: "bot"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "authentication", Label: "Authentication", Href: "/admin/authentication", Icon: "system"}},

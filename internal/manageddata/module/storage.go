@@ -412,10 +412,9 @@ func TusProtocolHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPatch:
-			// Upload chunks are capacity protected and session expiry bounds
-			// abandoned bodies, so they must not inherit the general API read
-			// deadline.
-			_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
+			// The outer authorization guard extends the general API deadline to
+			// a bounded upload window and holds generation evidence until this
+			// mutation completes. Preserve that deadline here.
 			next.ServeHTTP(w, r)
 		case http.MethodOptions, http.MethodHead, http.MethodDelete:
 			next.ServeHTTP(w, r)

@@ -141,6 +141,27 @@ phase and readback check passes; failed or interrupted runs must not publish a
 success report. Preserve the resulting report with the release evidence and
 the exact immutable image references.
 
+For the real predecessor/candidate artifact lane, run
+`task qualify:ubdr:release-transition-artifact` with the exact image and source
+revision inputs required by `scripts/qualify_fai518_real_artifact.sh`. Both
+images must pass live artifact admission. The lane loads the complete Goose
+migration set from each admitted artifact's attested source revision. The
+selected predecessor must contain exactly revisions 001–019; the candidate
+must contain exactly 001–020. Checkout migrations are never supplied to this
+candidate migration provider. An extra candidate migration, including 021,
+fails before migration execution rather than being filtered away.
+
+The existing signed Goose capability binds the candidate admission and target
+to the migration-set digest. Migration execution runs under the existing
+migration fence. Post-validation requires observed database revision 020;
+it does not use the checkout's current revision. The durable migration-phase
+result and `transition-report.json` retain both admission digests, target
+identity, candidate image/source, capability and migration-set digests, and
+the observed revision. Regressions cover a checkout containing 021, an extra
+candidate migration, inconsistent bindings, and rejection of a database or
+success report at revision 021. This evidence does not qualify host upgrades
+or rollback.
+
 This qualification is a local disposable-PostgreSQL and host-install
 simulation: it does not prove provider-specific image rollout, cloud recovery,
 or production systemd/container orchestration. The disposable database is

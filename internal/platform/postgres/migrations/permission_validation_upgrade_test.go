@@ -114,17 +114,17 @@ func TestTypedPermissionValidationMigrationUpgradesRevisionTwentyTwoWithContract
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = migrationDB.Close() })
-	typedMigration, err := fs.ReadFile(MigrationFS(), "022_typed_api_token_permissions.sql")
+	typedMigration, err := fs.ReadFile(MigrationFS(), "024_typed_api_token_permissions.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	hardeningMigration, err := fs.ReadFile(MigrationFS(), "024_typed_permission_validation_hardening.sql")
+	hardeningMigration, err := fs.ReadFile(MigrationFS(), "026_typed_permission_validation_hardening.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	previous := fstest.MapFS{
 		"001_permission_fixture.sql":          {Data: permissionValidationFixtureBaseline()},
-		"022_typed_api_token_permissions.sql": {Data: typedMigration},
+		"024_typed_api_token_permissions.sql": {Data: typedMigration},
 	}
 	provider, err := newProvider(migrationDB, previous)
 	if err != nil {
@@ -166,9 +166,9 @@ func TestTypedPermissionValidationMigrationUpgradesRevisionTwentyTwoWithContract
 
 	upgrade := fstest.MapFS{
 		"001_permission_fixture.sql":                    {Data: permissionValidationFixtureBaseline()},
-		"022_typed_api_token_permissions.sql":           {Data: typedMigration},
+		"024_typed_api_token_permissions.sql":           {Data: typedMigration},
 		"023_noop.sql":                                  {Data: []byte("-- +goose Up\n-- +goose Down\n")},
-		"024_typed_permission_validation_hardening.sql": {Data: hardeningMigration},
+		"026_typed_permission_validation_hardening.sql": {Data: hardeningMigration},
 	}
 	provider, err = newProvider(migrationDB, upgrade)
 	if err != nil {

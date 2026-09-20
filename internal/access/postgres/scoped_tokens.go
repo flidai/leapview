@@ -28,6 +28,10 @@ func (r *Repository) CreateScopedAPITokenWithMetadata(ctx context.Context, in ac
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
+	description := strings.TrimSpace(in.Description)
+	if len(description) > 1024 {
+		return "", access.APIToken{}, fmt.Errorf("token description must not exceed 1024 bytes")
+	}
 	permissions, err := permissionsJSON(in.Permissions)
 	if err != nil {
 		return "", access.APIToken{}, err
@@ -57,7 +61,7 @@ func (r *Repository) CreateScopedAPITokenWithMetadata(ctx context.Context, in ac
 	}
 	profile := access.PermissionCatalogProfile
 	tag, err := accessdb.New(db).CreateScopedAPIToken(ctx, accessdb.CreateScopedAPITokenParams{
-		ID: tokenID, PrincipalID: principalID, Name: name,
+		ID: tokenID, PrincipalID: principalID, Name: name, Description: description,
 		TokenFingerprint: r.secretFingerprint(tok), Verifier: ver,
 		PermissionProfile: &profile, Permissions: permissions, ExpiresAt: pgTimestamp(in.ExpiresAt),
 	})

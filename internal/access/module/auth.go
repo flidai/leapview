@@ -78,6 +78,10 @@ type sessionManager interface {
 	DeleteSession(ctx context.Context, token string) error
 }
 
+type principalSessionRevoker interface {
+	RevokeSessionsForPrincipal(ctx context.Context, principalID string) error
+}
+
 type localCredentialManager interface {
 	VerifyLocalPassword(ctx context.Context, email, password string) (access.Principal, access.LocalCredential, error)
 	ChangeLocalPassword(ctx context.Context, principalID, currentPassword, newPassword string) (access.LocalCredential, error)
@@ -354,6 +358,42 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+// LogoutAll revokes the current principal's browser and desktop sessions in
+// one audited mutation. Authoring sessions and API tokens are separate
+// credentials and remain available for their explicit revocation controls.
+func (a *Auth) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	if a == nil || a.repo == nil {
+		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		return
+	}
+	principal, ok := PrincipalFromContext(r.Context())
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		principal, _, ok = a.authenticate(r)
+	}
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+	err := runAuthAuditedMutation(r, a.repo, func(repository access.Repository) (access.AuditEventInput, error) {
+		revoker, ok := repository.(principalSessionRevoker)
+		if !ok {
+			return access.AuditEventInput{}, errors.New("bulk session revocation is unavailable")
+		}
+		if err := revoker.RevokeSessionsForPrincipal(r.Context(), principal.ID); err != nil {
+			return access.AuditEventInput{}, err
+		}
+		return authAuditInput(r, "principal.sessions.revoked", principal.ID, "principal", principal.ID, "", "success", map[string]any{
+			"scope": "browser_and_desktop",
+		}), nil
+	})
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.expiredSessionCookie())
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
 func (a *Auth) LocalLogin(w http.ResponseWriter, r *http.Request) {
 	if !a.localAuth {
 		http.Error(w, "local auth is not enabled", http.StatusServiceUnavailable)
@@ -518,7 +558,7 @@ func (a *Auth) defaultLoginRedirect() string {
 }
 
 func (a *Auth) mustChangeLocalPassword(r *http.Request, principalID string, credential *access.APICredential) bool {
-	if !a.localAuth || r.URL.Path == "/auth/local/password" || r.URL.Path == "/auth/logout" {
+	if !a.localAuth || r.URL.Path == "/auth/local/password" || r.URL.Path == "/auth/logout" || r.URL.Path == "/auth/logout-all" {
 		return false
 	}
 	if credential != nil && credential.Token.Name == access.APITokenNameInitialPublisher {

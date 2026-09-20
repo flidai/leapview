@@ -372,6 +372,12 @@ func (l filteredLease) DuckLakeSnapshotID() int64 {
 	}
 	return 0
 }
+func (m *Module) AcquireCutoverFence(ctx context.Context) (func(), error) {
+	if m == nil || m.registry == nil {
+		return nil, runtimehost.ErrRegistryClosed
+	}
+	return m.registry.AcquireCutoverFence(ctx)
+}
 func (m *Module) LeasedSnapshots() []int64 { return m.registry.LeasedSnapshots() }
 func (m *Module) LeaseRenewalError() error {
 	if m == nil || m.registry == nil {

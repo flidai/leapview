@@ -64,6 +64,7 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	}
 	var input struct {
 		Name        string          `json:"name"`
+		Description string          `json:"description"`
 		Permissions json.RawMessage `json:"permissions"`
 		ExpiresAt   string          `json:"expiresAt"`
 	}
@@ -128,7 +129,7 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			}
 			var mutationErr error
 			secret, token, mutationErr = scoped.CreateScopedAPITokenWithMetadata(r.Context(), access.ScopedAPITokenInput{
-				PrincipalID: principal.ID, Name: input.Name, Permissions: permissions, ExpiresAt: expires,
+				PrincipalID: principal.ID, Name: input.Name, Description: input.Description, Permissions: permissions, ExpiresAt: expires,
 			})
 			return auditInput(r, "api_token.created", principal.ID, "api_token", token.ID, "", "success", nil), mutationErr
 		})
@@ -137,7 +138,6 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			return
 		}
 		writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"token": secret, "apiToken": apiTokenDTO(token)})
-		return
 	}
 }
 

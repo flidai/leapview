@@ -64,11 +64,12 @@ type RecordColumn = {
   id: string
   header: string
   kind?: 'text' | 'code' | 'expression' | 'badge' | 'status' | 'query' | 'diff' | 'number' | 'link' | 'tags' | 'entity' | 'button' | 'actions'
-  align?: 'left' | 'right'
+  align?: 'left' | 'center' | 'right'
   hrefKey?: string
   width?: string
   sortable?: boolean
   toggleable?: boolean
+  mobileHidden?: boolean
 }
 
 type RecordColumnSelector = {
@@ -194,7 +195,10 @@ function applyUpdater<T>(updater: unknown, current: T): T {
 }
 
 function columnAlignClass(column: RecordColumn): string {
-  return column.align === 'right' || column.kind === 'number' ? 'is-right' : ''
+  return [
+    column.align === 'center' ? 'is-center' : column.align === 'right' || column.kind === 'number' ? 'is-right' : '',
+    column.mobileHidden ? 'is-mobile-hidden' : '',
+  ].filter(Boolean).join(' ')
 }
 
 function columnWidth(column: RecordColumn): string {
@@ -243,7 +247,7 @@ class RecordTable extends LitElement {
         aria-label="Scrollable table"
         tabindex="0"
       >
-        <table class="record-table" style=${table.minWidth ? `min-width: ${table.minWidth}` : ''}>
+        <table class=${`record-table ${columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : ''}`} style=${table.minWidth ? `min-width: ${table.minWidth}` : ''}>
           <thead>
             <tr>
               ${columns.map((column) => {
@@ -277,7 +281,7 @@ class RecordTable extends LitElement {
           </tbody>
         </table>
       </div>
-      ${table.minWidth && table.minWidth !== '0' ? html`<p class="record-table-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns</p>` : nothing}
+      ${table.minWidth && table.minWidth !== '0' ? html`<p class=${`record-table-scroll-hint ${columns.some((column) => column.mobileHidden) ? 'has-mobile-alternative' : ''}`} aria-hidden="true">Swipe horizontally to see more columns</p>` : nothing}
     `
   }
 
@@ -917,6 +921,23 @@ const recordTableStyles = `
       display: block;
     }
 
+    lv-record-table .record-table-scroll-hint.has-mobile-alternative {
+      display: none;
+    }
+
+    lv-record-table .record-table.has-mobile-hidden-columns {
+      min-width: 100% !important;
+      table-layout: auto;
+    }
+
+    lv-record-table .record-table .is-mobile-hidden {
+      display: none;
+    }
+
+    lv-record-table .record-table.has-mobile-hidden-columns th:first-child {
+      width: auto !important;
+    }
+
   }
 
   lv-record-table .record-table th,
@@ -980,6 +1001,9 @@ const recordTableStyles = `
     text-align: right;
   }
 
+  lv-record-table .record-table th.is-center,
+  lv-record-table .record-table td.is-center { text-align: center; }
+  lv-record-table .record-table th.is-center .record-table-sort { justify-content: center; }
   lv-record-table .record-table tbody tr:last-child td {
     border-bottom: 0;
   }

@@ -155,11 +155,11 @@ func TestAccessCorePostgreSQL18PrincipalCredentialsAndRevocation(t *testing.T) {
 		t.Fatalf("revoked session = %v", err)
 	}
 
-	apiSecret, apiToken, err := repo.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: p.Principal.ID, Name: "ci", Capabilities: []access.Capability{access.CapabilityResourceRead}, ExpiresAt: time.Now().Add(time.Hour)})
+	apiSecret, apiToken, err := repo.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: p.Principal.ID, Name: "ci", Description: "Deploys the reporting project", Capabilities: []access.Capability{access.CapabilityResourceRead}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if apiToken.ID == "" || apiToken.ExpiresAt == "" {
+	if apiToken.ID == "" || apiToken.ExpiresAt == "" || apiToken.Description != "Deploys the reporting project" {
 		t.Fatalf("token metadata = %#v", apiToken)
 	}
 	if _, err := repo.PrincipalForAPIToken(t.Context(), apiSecret); err != nil {

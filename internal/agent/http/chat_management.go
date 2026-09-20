@@ -29,6 +29,7 @@ const (
 	conversationManagementActionDeletePending  = "delete_pending"
 	conversationManagementActionUndo           = "undo"
 	conversationManagementActionArchiveAll     = "archive_all"
+	conversationManagementActionDeleteActive   = "delete_active"
 	conversationManagementActionDeleteAll      = "delete_all"
 )
 
@@ -43,6 +44,7 @@ var conversationManagementActions = map[string]struct{}{
 	conversationManagementActionDeletePending:  {},
 	conversationManagementActionUndo:           {},
 	conversationManagementActionArchiveAll:     {},
+	conversationManagementActionDeleteActive:   {},
 	conversationManagementActionDeleteAll:      {},
 }
 
@@ -352,9 +354,9 @@ func validateConversationManagementRequest(input conversationManagementRequest) 
 	action := strings.TrimSpace(input.Action)
 	conversationID := strings.TrimSpace(input.ConversationID)
 	if _, ok := conversationManagementActions[action]; !ok {
-		return "", "", fmt.Errorf("action must be one of pin, unpin, archive, restore, rename, delete, archive_all, or delete_all")
+		return "", "", fmt.Errorf("action must be one of pin, unpin, archive, restore, rename, delete, archive_all, delete_active, or delete_all")
 	}
-	individual := action != conversationManagementActionArchiveAll && action != conversationManagementActionDeleteAll
+	individual := action != conversationManagementActionArchiveAll && action != conversationManagementActionDeleteActive && action != conversationManagementActionDeleteAll
 	if individual && conversationID == "" {
 		return "", "", fmt.Errorf("conversationId is required for %s", action)
 	}
@@ -406,6 +408,8 @@ func conversationManagementMessage(action string) string {
 		return "Conversation action canceled."
 	case conversationManagementActionArchiveAll:
 		return "All conversations archived."
+	case conversationManagementActionDeleteActive:
+		return "Active conversations deleted."
 	case conversationManagementActionDeleteAll:
 		return "All conversations deleted."
 	default:

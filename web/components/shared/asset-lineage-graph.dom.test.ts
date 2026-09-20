@@ -61,6 +61,7 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
       const viewport = graph.querySelector('.react-flow__viewport') as HTMLElement
       const node = graph.querySelector('.react-flow__node') as HTMLElement
       const edge = graph.querySelector('.react-flow__edges') as HTMLElement
+      const edgePath = graph.querySelector('.react-flow__edge') as SVGElement
       const controlButton = graph.querySelector('.react-flow__controls-button') as HTMLElement
       const controlIcon = controlButton.querySelector('svg') as SVGElement
       const flowRect = flow.getBoundingClientRect()
@@ -74,6 +75,7 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
         viewportPosition: getComputedStyle(viewport).position,
         viewportMatchesFlowWidth: Math.round(Number.parseFloat(getComputedStyle(viewport).width)) === Math.round(flowRect.width),
         edgePosition: getComputedStyle(edge).position,
+        edgeRouting: edgePath.getAttribute('class') ?? '',
         nodePosition: getComputedStyle(node).position,
         nodeInsideFlow: nodeRect.top >= flowRect.top && nodeRect.top < flowRect.bottom,
         controlDisplay: getComputedStyle(controlButton).display,
@@ -91,6 +93,7 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
       viewportPosition: 'absolute',
       viewportMatchesFlowWidth: true,
       edgePosition: 'absolute',
+      edgeRouting: expect.stringContaining('react-flow__edge-smoothstep'),
       nodePosition: 'absolute',
       nodeInsideFlow: true,
       controlDisplay: 'flex',
@@ -126,6 +129,29 @@ test('asset lineage selection clears from the background and Escape', async () =
   }
 })
 
+test('asset lineage uses a non-looping route for peers in the same rank', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      element.graph = {
+        nodes: [
+          { id: 'model-a', label: 'Model A', kind: 'model', rank: -1 },
+          { id: 'model-b', label: 'Model B', kind: 'model', rank: -1 },
+        ],
+        edges: [{ id: 'model-a-model-b', source: 'model-a', target: 'model-b', kind: 'uses_model' }],
+      }
+    })
+    const edge = graph.locator('.react-flow__edge[data-id="model-a-model-b"]')
+    await edge.waitFor()
+    expect(await edge.getAttribute('class')).toContain('react-flow__edge-default')
+  } finally {
+    await page.close()
+  }
+})
+
 test('asset lineage keeps dense graphs readable on initial fit', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
   try {
@@ -144,16 +170,19 @@ test('asset lineage keeps dense graphs readable on initial fit', async () => {
       const match = (viewport as HTMLElement).style.transform.match(/scale\(([-\d.]+)\)/)
       const flowRect = flow.getBoundingClientRect()
       const selectedRect = selected.getBoundingClientRect()
+      const nodeRects = Array.from(element.querySelectorAll<HTMLElement>('.react-flow__node')).map((node) => node.getBoundingClientRect())
       return {
         scale: Number(match?.[1]),
         selectedVisible: selectedRect.top >= flowRect.top
           && selectedRect.bottom <= flowRect.bottom
           && selectedRect.left < flowRect.right
           && selectedRect.right > flowRect.left,
+        allNodesVerticallyVisible: nodeRects.every((rect) => rect.top >= flowRect.top && rect.bottom <= flowRect.bottom),
       }
     })
-    expect(state.scale).toBeGreaterThanOrEqual(0.55)
+    expect(state.scale).toBeGreaterThanOrEqual(0.45)
     expect(state.selectedVisible).toBe(true)
+    expect(state.allNodesVerticallyVisible).toBe(true)
   } finally {
     await page.close()
   }

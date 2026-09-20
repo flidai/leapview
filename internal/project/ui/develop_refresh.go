@@ -204,7 +204,7 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "version", Header: "Version", Kind: uisignals.Pointer("number"), Align: uisignals.Pointer("right"), Width: uisignals.Pointer("90px")},
+			{ID: "version", Header: "Version", Kind: uisignals.Pointer("number"), Align: uisignals.Pointer("center"), Width: uisignals.Pointer("90px")},
 			{ID: "published", Header: "Published", Width: uisignals.Pointer("180px")},
 			{ID: "diff_stat", Header: "Changes", Kind: uisignals.Pointer("diff"), Width: uisignals.Pointer("120px")},
 			{ID: "status", Header: "Status", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("120px")},

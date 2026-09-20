@@ -1,18 +1,23 @@
 import { LitElement, html, nothing } from 'lit'
-import { property, query, state } from 'lit/decorators.js'
-import { CircleSlash2, Info, Pencil, UserPlus, X } from 'lucide'
+import { property, state } from 'lit/decorators.js'
+import { Bot, CalendarDays, CircleSlash2, Info, Pencil, Plus, Trash2, UserPlus, X } from 'lucide'
 import { DatastarLit } from '../shared/datastar-lit'
 import { browserCommandFailure } from '../shared/command-failure'
 import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { lucideIcon } from '../shared/lucide-icons'
-import type { AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditEventSignal, AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
+import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
+import { settingsSurfaceStyles } from './settings-surfaces.styles'
+import { identitySourceLabel, principalInitials, currentPrincipalAvatarUrl, initialsForValue, memberActionLabel, formatAccessDate, humanizeAccessValue, principalActivityLabel, formValue } from './settings-surfaces.helpers'
+import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditEventSignal, AuditLogFilters, AuditLogSignal, ServiceAccountSecretSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
 import '../shared/entity-list'
 import '../shared/user-avatar'
 import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
 import '../shared/entity-multi-select'
+import '../shared/one-time-secret'
+import '../shared/record-table'
 import type { EntityMultiSelectItem } from '../shared/entity-multi-select'
-import { currentPrincipalAvatarUrl, formValue, formatAccessDate, humanizeAccessValue, identitySourceLabel, initialsForValue, memberActionLabel, principalActivityLabel, principalInitials } from './settings-surface-helpers'
-import { tableStyles } from './settings-surface-styles'
+import '../shared/select-menu'
+import '../shared/drawer'
 
 type DatastarFetchOwnerDetail = { type?: string; el?: Element }
 
@@ -32,7 +37,7 @@ function ownsAdminActionFetch(element: Element, event: Event): boolean {
 const emptyAccessAdministration: AccessAdministrationSignal = { principals: [], groups: [], projects: [], sessions: [], roleAssignments: [], activity: [], loading: true }
 
 abstract class LeapViewAccessAdministrationBase extends DatastarLit(LitElement) {
-  static styles = [entityDetailStyles, tableStyles]
+  static styles = [entityDetailStyles, settingsSurfaceStyles]
   @property({ type: Boolean }) createOpen = false
   @state() private passwordCopied = false
   private dismissedTemporaryPassword = ''
@@ -54,7 +59,8 @@ abstract class LeapViewAccessAdministrationBase extends DatastarLit(LitElement) 
   protected feedback() {
     const signal = this.accessState
     return html`
-      ${signal.message ? html`<p role="status">${signal.message}</p>` : signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
+      ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
+      ${signal.message ? html`<p role="status">${signal.message}</p>` : nothing}
       ${signal.temporaryPassword ? html`<div class="notice" role="status"><strong>Copy this temporary password now:</strong> <code>${signal.temporaryPassword}</code> <button type="button" @click=${this.copyTemporaryPassword}>${this.passwordCopied ? 'Copied' : 'Copy'}</button></div>` : nothing}
     `
   }
@@ -104,26 +110,9 @@ abstract class LeapViewAccessAdministrationBase extends DatastarLit(LitElement) 
 
 class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
   @state() private copiedPrincipalID = false
-  @state() private actionMenuOpen = false
-  @state() private sessionsVisible = 10
-  @state() private activityVisible = 10
-  @query('.principal-actions-trigger') private actionMenuTrigger?: HTMLButtonElement
-
-  override connectedCallback(): void {
-    super.connectedCallback()
-    document.addEventListener('pointerdown', this.handleActionMenuOutside)
-    window.addEventListener('keydown', this.handleActionMenuKeydown)
-  }
-
-  override disconnectedCallback(): void {
-    document.removeEventListener('pointerdown', this.handleActionMenuOutside)
-    window.removeEventListener('keydown', this.handleActionMenuKeydown)
-    super.disconnectedCallback()
-  }
-
   render() {
     const signal = this.accessState
-    if (signal.loading && !signal.principals.length) return html`<p class="muted" aria-live="polite">Loading principals…</p>`
+    if (signal.loading && !signal.principals.length) return html`<p class="muted" aria-live="polite">Loading users…</p>`
     const principal = signal.principals.find((item) => item.id === signal.selectedPrincipalId)
     if (!principal) return this.renderCreate(signal)
     return this.renderDetail(signal, principal)
@@ -153,25 +142,25 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
   private renderDetail(signal: AccessAdministrationSignal, principal: AccessPrincipalSignal) {
     const source = identitySourceLabel(principal)
     const status = principal.disabledAt ? 'Disabled' : principal.blockedAt ? 'Blocked' : 'Active'
-    const projects = new Map((signal.projects || []).map((project) => [project.id, project.name || 'Project']))
+    const projects = new Map((signal.projects || []).map((project) => [project.id, project.name || project.id]))
     const actions = html`
       ${principal.capabilities.canBlock ? html`<button class="primary-detail-action" @click=${() => this.blockPrincipal(principal)}>${lucideIcon(CircleSlash2, { size: 16, strokeWidth: 2 })}<span>Block access</span></button>` : nothing}
       ${principal.capabilities.canUnblock ? html`<button class="primary-detail-action" @click=${() => this.emit({ action: 'unblock_principal', principalId: principal.id })}>Unblock access</button>` : nothing}
       ${principal.capabilities.canResetPassword || (principal.capabilities.canManageSessions && signal.sessions.length) || principal.capabilities.canDelete ? html`
-        <div class="action-menu">
-          <button class="principal-actions-trigger" type="button" aria-haspopup="menu" aria-expanded=${String(this.actionMenuOpen)} @click=${this.toggleActionMenu} @keydown=${this.handleActionMenuTriggerKeydown}>More actions</button>
-          ${this.actionMenuOpen ? html`<div class="action-menu-popover" role="menu" @keydown=${this.handleActionMenuItemsKeydown}>
-            ${principal.capabilities.canResetPassword ? html`<button role="menuitem" type="button" @click=${() => this.runAction(() => this.resetPassword(principal))}>Reset password</button>` : nothing}
-            ${principal.capabilities.canManageSessions && signal.sessions.length ? html`<button role="menuitem" type="button" @click=${() => this.runAction(() => this.revokeAllSessions(principal))}>Revoke all sessions</button>` : nothing}
-            ${principal.capabilities.canDelete ? html`<button role="menuitem" type="button" class="danger" @click=${() => this.runAction(() => this.deletePrincipal(principal))}>Delete user</button>` : nothing}
-          </div>` : nothing}
-        </div>` : nothing}`
+        <details class="action-menu">
+          <summary>More actions</summary>
+          <div class="action-menu-popover">
+            ${principal.capabilities.canResetPassword ? html`<button @click=${() => this.resetPassword(principal)}>Reset password</button>` : nothing}
+            ${principal.capabilities.canManageSessions && signal.sessions.length ? html`<button @click=${() => this.revokeAllSessions(principal)}>Revoke all sessions</button>` : nothing}
+            ${principal.capabilities.canDelete ? html`<button class="danger" @click=${() => this.deletePrincipal(principal)}>Delete user</button>` : nothing}
+          </div>
+        </details>` : nothing}`
     const notice = principal.identitySource === 'external' ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>${source} owns this identity.</strong> Profile fields and synchronized memberships are read-only in LeapView. Block access locally or revoke sessions here; update or permanently remove the user in ${source}.</p></div>`
       : principal.identitySource === 'system' ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>System-managed account.</strong> Profile fields are read-only because this account is provisioned by LeapView configuration. Block access locally or revoke sessions here; update it through its provisioning source.</p></div>` : nothing
     const avatarUrl = currentPrincipalAvatarUrl(this.signal<{ sidebar?: { userAvatarUrl?: string } }>('chrome', {}), principal.id)
     return renderEntityDetail({
       label: 'User administration', feedback: this.feedback(), backHref: '/admin/principals', backLabel: 'All users',
-      avatar: avatarUrl ? html`<lv-user-avatar class="detail-user-avatar" .name=${principal.displayName || principal.email || 'User'} .imageUrl=${avatarUrl} aria-hidden="true"></lv-user-avatar>` : principalInitials(principal), title: principal.displayName || principal.email || 'User', subtitle: principal.email,
+      avatar: avatarUrl ? html`<lv-user-avatar class="detail-user-avatar" .name=${principal.displayName || principal.email} .imageUrl=${avatarUrl} aria-hidden="true"></lv-user-avatar>` : principalInitials(principal), title: principal.displayName || principal.email || principal.id, subtitle: principal.email,
       badges: html`<span class="badge">${source}</span><span class=${`badge status-${status.toLowerCase()}`} data-user-status>${status}</span>`,
       actions, notice,
       sections: html`
@@ -192,17 +181,17 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
         </section>
         <section class="detail-section" aria-labelledby="user-access-title">
           <div class="card-header"><h2 id="user-access-title">Access</h2></div>
-          <div class="detail-subsection">${signal.roleAssignments.length ? html`<h3>Project roles</h3><div class="table-wrap"><table><thead><tr><th>Project</th><th>Role</th><th>Granted through</th></tr></thead><tbody>${signal.roleAssignments.map((assignment) => html`<tr><td>${projects.get(assignment.projectId) || 'Unknown project'}</td><td>${humanizeAccessValue(assignment.role)}</td><td>${assignment.sourceType === 'group' ? html`<a href=${`/admin/groups/${encodeURIComponent(assignment.sourceId)}`}>Via ${assignment.sourceName || 'group'}</a>` : 'Direct assignment'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Project roles</strong><span>No project roles assigned.</span></div>`}</div>
-          <div class="detail-subsection">${principal.groups.length ? html`<h3>Groups</h3><div class="table-wrap"><table><thead><tr><th>Group</th><th>Source</th></tr></thead><tbody>${principal.groups.map((group) => html`<tr><td><a href=${`/admin/groups/${encodeURIComponent(group.id)}`}>${group.name || 'Group'}</a></td><td>${group.provider || 'local'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Groups</strong><span>No group memberships.</span></div>`}</div>
+          <div class="detail-subsection">${signal.roleAssignments.length ? html`<h3>Project roles</h3><div class="table-wrap"><table><thead><tr><th>Project</th><th>Role</th><th>Granted through</th></tr></thead><tbody>${signal.roleAssignments.map((assignment) => html`<tr><td>${projects.get(assignment.projectId) || assignment.projectId}</td><td>${humanizeAccessValue(assignment.role)}</td><td>${assignment.sourceType === 'group' ? html`<a href=${`/admin/groups/${encodeURIComponent(assignment.sourceId)}`}>Via ${assignment.sourceName}</a>` : 'Direct assignment'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Project roles</strong><span>No project roles assigned.</span></div>`}</div>
+          <div class="detail-subsection">${principal.groups.length ? html`<h3>Groups</h3><div class="table-wrap"><table><thead><tr><th>Group</th><th>Source</th></tr></thead><tbody>${principal.groups.map((group) => html`<tr><td><a href=${`/admin/groups/${encodeURIComponent(group.id)}`}>${group.name || group.id}</a></td><td>${group.provider || 'local'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Groups</strong><span>No group memberships.</span></div>`}</div>
         </section>
         <section class="detail-section" aria-labelledby="user-security-title">
           <div class="card-header"><h2 id="user-security-title">Security</h2></div>
           ${principal.disabledAt ? html`<p class="notice">This account was disabled by ${source} on ${formatAccessDate(principal.disabledAt)}.</p>` : principal.blockedAt ? html`<p class="notice">LeapView access has been blocked since ${formatAccessDate(principal.blockedAt)}.</p>` : nothing}
-          ${principal.capabilities.canManageSessions ? html`${signal.sessions.length ? html`<div class="table-wrap"><table><thead><tr><th>Session</th><th>Created</th><th>Last seen</th><th>Expires</th><th></th></tr></thead><tbody>${signal.sessions.slice(0, this.sessionsVisible).map((session) => html`<tr><td>${humanizeAccessValue(session.kind)}</td><td>${formatAccessDate(session.createdAt)}</td><td>${formatAccessDate(session.lastSeenAt || session.createdAt)}</td><td>${formatAccessDate(session.expiresAt)}</td><td><button @click=${() => this.emit({ action: 'revoke_session', principalId: principal.id, sessionId: session.id })}>Revoke</button></td></tr>`)}</tbody></table></div>${signal.sessions.length > this.sessionsVisible ? html`<button type="button" @click=${() => { this.sessionsVisible += 10 }}>Show 10 more sessions</button>` : nothing}` : html`<div class="detail-empty-row"><strong>Active sessions</strong><span>No active sessions.</span></div>`}` : nothing}
+          ${principal.capabilities.canManageSessions ? html`${signal.sessions.length ? html`<div class="table-wrap"><table><thead><tr><th>Session</th><th>Last seen</th><th>Expires</th><th></th></tr></thead><tbody>${signal.sessions.map((session) => html`<tr><td>${humanizeAccessValue(session.kind)}</td><td>${formatAccessDate(session.lastSeenAt || session.createdAt)}</td><td>${formatAccessDate(session.expiresAt)}</td><td><button @click=${() => this.emit({ action: 'revoke_session', principalId: principal.id, sessionId: session.id })}>Revoke</button></td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Active sessions</strong><span>No active sessions.</span></div>`}` : nothing}
         </section>
         <section class="detail-section" aria-labelledby="user-activity-title">
           <div class="card-header"><h2 id="user-activity-title">Recent activity</h2><a href="/admin/audit">View audit log</a></div>
-          ${signal.activity.length ? html`<ol class="activity-list">${signal.activity.slice(0, this.activityVisible).map((activity) => html`<li class="activity-item"><span class="activity-dot" aria-hidden="true"></span><div class="activity-copy"><span>${principalActivityLabel(activity)}</span>${activity.status && activity.status !== 'success' ? html`<span class="error">${humanizeAccessValue(activity.status)}</span>` : nothing}</div><time datetime=${activity.createdAt}>${formatAccessDate(activity.createdAt)}</time></li>`)}</ol>${signal.activity.length > this.activityVisible ? html`<button type="button" @click=${() => { this.activityVisible += 10 }}>Show 10 more activity events</button>` : nothing}` : html`<p class="muted">No recent administrative activity.</p>`}
+          ${signal.activity.length ? html`<ol class="activity-list">${signal.activity.map((activity) => html`<li class="activity-item"><span class="activity-dot" aria-hidden="true"></span><div class="activity-copy"><span>${principalActivityLabel(activity)}</span>${activity.status && activity.status !== 'success' ? html`<span class="error">${humanizeAccessValue(activity.status)}</span>` : nothing}</div><time datetime=${activity.createdAt}>${formatAccessDate(activity.createdAt)}</time></li>`)}</ol>` : html`<p class="muted">No recent administrative activity.</p>`}
         </section>
       `,
     })
@@ -233,63 +222,6 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
   }
   private deletePrincipal(principal: AccessPrincipalSignal): void {
     if (window.confirm(`Delete ${principal.displayName || principal.email}? This cannot be undone.`)) this.emit({ action: 'delete_principal', principalId: principal.id })
-  }
-
-  private toggleActionMenu = (): void => {
-    this.actionMenuOpen = !this.actionMenuOpen
-    if (this.actionMenuOpen) void this.focusActionMenuItem()
-    else this.actionMenuTrigger?.focus()
-  }
-
-  private closeActionMenu = (returnFocus = false): void => {
-    if (!this.actionMenuOpen) return
-    this.actionMenuOpen = false
-    if (returnFocus) void this.updateComplete.then(() => this.actionMenuTrigger?.focus())
-  }
-
-  private runAction(action: () => void): void {
-    this.closeActionMenu(true)
-    action()
-  }
-
-  private focusActionMenuItem = async (): Promise<void> => {
-    await this.updateComplete
-    this.renderRoot.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
-  }
-
-  private handleActionMenuOutside = (event: PointerEvent): void => {
-    const menu = this.renderRoot.querySelector('.action-menu')
-    if (menu && !event.composedPath().includes(menu)) this.closeActionMenu()
-  }
-
-  private handleActionMenuKeydown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape' && this.actionMenuOpen) {
-      event.preventDefault()
-      this.closeActionMenu(true)
-    }
-  }
-
-  private handleActionMenuTriggerKeydown = (event: KeyboardEvent): void => {
-    if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      if (!this.actionMenuOpen) this.toggleActionMenu()
-    }
-  }
-
-  private handleActionMenuItemsKeydown = (event: KeyboardEvent): void => {
-    const items = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
-    const index = items.indexOf(this.shadowRoot?.activeElement as HTMLButtonElement)
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault()
-      const offset = event.key === 'ArrowDown' ? 1 : -1
-      items[(index + offset + items.length) % items.length]?.focus()
-    } else if (event.key === 'Home' || event.key === 'End') {
-      event.preventDefault()
-      items[event.key === 'Home' ? 0 : items.length - 1]?.focus()
-    } else if (event.key === 'Escape') {
-      event.preventDefault()
-      this.closeActionMenu(true)
-    }
   }
 }
 
@@ -348,7 +280,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
     const notice = !local ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>${provider.toUpperCase()} owns this group.</strong> Its profile and membership are synchronized and read-only in LeapView. Update or remove it through its provisioning source.</p></div>` : nothing
     return html`${renderEntityDetail({
       label: 'Group administration', feedback: this.feedback(), backHref: '/admin/groups', backLabel: 'All groups',
-      avatar: initialsForValue(group.name || 'Group'), title: group.name || 'Group',
+      avatar: initialsForValue(group.name || group.id), title: group.name || group.id,
       subtitle: group.externalId ? `External ID ${group.externalId}` : undefined,
       badges: html`<span class="badge">${provider}</span><span class="badge status-active">${local ? 'Managed in LeapView' : 'Synchronized'}</span>`,
       actions, notice,
@@ -369,7 +301,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
             <h2 id="group-members-title">Members</h2>
             ${group.capabilities.canManageMembers ? html`<button class="section-action" type="button" @click=${() => this.openDetailDialog('add-member')}>${lucideIcon(UserPlus, { size: 16 })}<span>Add members</span></button>` : nothing}
           </div>
-          ${group.members.length ? html`<div class="table-wrap"><table class="member-table"><thead><tr><th>Member</th><th>Email</th><th></th></tr></thead><tbody>${group.members.map((member) => html`<tr><td><a href=${`/admin/principals/${encodeURIComponent(member.id)}`}>${member.displayName || member.email || 'User'}</a></td><td>${member.email || '—'}</td><td>${group.capabilities.canManageMembers ? html`<button @click=${() => this.removeMember(group, member.id, member.displayName || member.email || 'this user')}>Remove</button>` : nothing}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Members</strong><span>No members.</span></div>`}
+          ${group.members.length ? html`<div class="table-wrap"><table class="member-table"><thead><tr><th>Member</th><th>Email</th><th></th></tr></thead><tbody>${group.members.map((member) => html`<tr><td><a href=${`/admin/principals/${encodeURIComponent(member.id)}`}>${member.displayName || member.email}</a></td><td>${member.email}</td><td>${group.capabilities.canManageMembers ? html`<button @click=${() => this.removeMember(group, member.id, member.displayName || member.email)}>Remove</button>` : nothing}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Members</strong><span>No members.</span></div>`}
         </section>
       `,
     })}${this.renderDetailDialog(signal, group, candidates)}`
@@ -453,8 +385,175 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
   private deleteGroup(group: AccessGroupSignal): void { if (window.confirm(`Delete ${group.name}? Access granted through this group will be removed.`)) this.emit({ action: 'delete_group', groupId: group.id }) }
 }
 
+function auditFilterOptions(items: AuditEventSignal[], key: 'action' | 'resourceKind', allLabel: string, currentValue = '') {
+  const values = Array.from(new Set([...items.map((item) => item[key]), currentValue].filter(Boolean))).sort((left, right) => left.localeCompare(right))
+  return [{ value: '', label: allLabel }, ...values.map((value) => ({ value, label: humanizeAuditValue(value) }))]
+}
+
+function humanizeAuditValue(value?: string): string {
+  const normalized = (value || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[._-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+  return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : '—'
+}
+
+function formatAuditTimestamp(value: string): string {
+  if (!value) return 'Unknown time'
+  const timestamp = new Date(value)
+  if (Number.isNaN(timestamp.valueOf())) return value
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp)
+}
+
+function formatAuditTableTimestamp(value: string): string {
+  if (!value) return 'Unknown time'
+  const timestamp = new Date(value)
+  if (Number.isNaN(timestamp.valueOf())) return value
+  const now = new Date()
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  const sameDay = (left: Date, right: Date) => left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate()
+  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(timestamp)
+  if (sameDay(timestamp, now)) return `Today, ${time}`
+  if (sameDay(timestamp, yesterday)) return `Yesterday, ${time}`
+  const date = new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(timestamp.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' as const }),
+  }).format(timestamp)
+  return `${date}, ${time}`
+}
+
+function auditActorLabel(event: AuditEventSignal): string {
+  return event.principalName?.trim() || event.principalEmail?.trim() || (event.principalId ? 'Unknown user' : 'System')
+}
+
+function auditActorDescription(event: AuditEventSignal): string {
+  const email = event.principalEmail?.trim() || ''
+  return email && email !== auditActorLabel(event) ? email : ''
+}
+
+function auditResourceDescription(event: AuditEventSignal): string {
+  if (!event.resourceId?.trim()) return ''
+  switch ((event.resourceKind || '').trim().toLowerCase()) {
+    case 'agent_tool':
+    case 'tool':
+    case 'dashboard':
+    case 'model':
+    case 'semantic_model':
+    case 'project':
+    case 'publication':
+      return humanizeAuditValue(event.resourceId)
+    default:
+      return ''
+  }
+}
+
+function auditStatusCell(status?: string) {
+  const normalized = (status || '').toLowerCase()
+  if (!normalized) return { label: '—', tone: 'muted' as const, icon: 'dot' as const }
+  if (normalized === 'success' || normalized === 'succeeded' || normalized === 'ok') return { label: 'Succeeded', tone: 'success' as const, icon: 'check' as const }
+  if (normalized === 'failure' || normalized === 'failed' || normalized === 'error') return { label: 'Failed', tone: 'danger' as const, icon: 'x' as const }
+  if (normalized === 'pending' || normalized === 'queued' || normalized === 'running') return { label: humanizeAuditValue(status), tone: 'attention' as const, icon: 'clock' as const }
+  return { label: humanizeAuditValue(status), tone: 'muted' as const, icon: 'dot' as const }
+}
+
+type AuditPresetID = 'security' | 'access' | 'credentials' | 'failed'
+
+type AuditPreset = {
+  id: AuditPresetID
+  label: string
+  description: string
+  filters: AuditLogFilters
+}
+
+const auditPresets: AuditPreset[] = [
+  { id: 'security', label: 'Security', description: 'Principal and account security events', filters: { resourceKind: 'principal' } },
+  { id: 'access', label: 'Role changes', description: 'Recorded role-binding changes', filters: { resourceKind: 'role_binding' } },
+  { id: 'credentials', label: 'Service accounts', description: 'Service-account and credential events', filters: { resourceKind: 'service_principal' } },
+  // AuditLogFilters deliberately has no status field. Failed events are therefore
+  // narrowed in the already-loaded rows while the command remains contract-valid.
+  { id: 'failed', label: 'Failed events', description: 'Failed events in the loaded result set', filters: {} },
+]
+
+function auditPresetItems(signal: AuditLogSignal, preset: AuditPresetID | ''): AuditEventSignal[] {
+  if (preset !== 'failed') return signal.items
+  return signal.items.filter((event) => {
+    const status = (event.status || '').toLowerCase()
+    return status === 'failure' || status === 'failed' || status === 'error'
+  })
+}
+
+function auditPrincipalHref(principalID?: string): string {
+  return principalID ? `/admin/principals/${encodeURIComponent(principalID)}` : ''
+}
+
+function auditResourceHref(event: AuditEventSignal): string {
+  if (!event.resourceId) return ''
+  switch ((event.resourceKind || '').toLowerCase()) {
+    case 'principal':
+    case 'user':
+      return `/admin/principals/${encodeURIComponent(event.resourceId)}`
+    case 'group':
+      return `/admin/groups/${encodeURIComponent(event.resourceId)}`
+    default:
+      return ''
+  }
+}
+
+function auditEventSummary(event: AuditEventSignal): string {
+  const actor = auditActorLabel(event)
+  const action = humanizeAuditValue(event.action).toLowerCase()
+  const resourceDescription = auditResourceDescription(event)
+  const resource = event.resourceKind
+    ? ` on ${humanizeAuditValue(event.resourceKind)}${resourceDescription ? ` ${resourceDescription}` : ''}`
+    : ''
+  return `${actor} ${action}${resource}`
+}
+
+function auditMetadataText(event: AuditEventSignal): string {
+  if (!event.metadata || Object.keys(event.metadata).length === 0) return '{}'
+  try {
+    return JSON.stringify(event.metadata, null, 2)
+  } catch {
+    return String(event.metadata)
+  }
+}
+
+function auditTable(signal: AuditLogSignal, items = signal.items) {
+  return {
+    columns: [
+      { id: 'time', header: 'Time', kind: 'entity' as const, width: '180px' },
+      { id: 'action', header: 'Action', kind: 'badge' as const, width: '190px' },
+      { id: 'actor', header: 'Actor', kind: 'entity' as const, width: '180px', mobileHidden: true },
+      { id: 'resource', header: 'Resource', kind: 'entity' as const, width: '220px', mobileHidden: true },
+      { id: 'capability', header: 'Capability', width: '150px', mobileHidden: true },
+      { id: 'status', header: 'Status', kind: 'status' as const, width: '120px', mobileHidden: true },
+    ],
+    rows: items.map((event) => ({
+      id: event.id,
+      time: { label: formatAuditTableTimestamp(event.createdAt) },
+      action: { label: humanizeAuditValue(event.action), tone: 'accent' as const },
+      actor: event.principalId
+        ? { label: auditActorLabel(event), description: auditActorDescription(event), href: event.principalName || event.principalEmail ? auditPrincipalHref(event.principalId) : '' }
+        : { label: 'System', description: 'Automated operation' },
+      resource: { label: humanizeAuditValue(event.resourceKind), description: auditResourceDescription(event), href: auditResourceHref(event) },
+      capability: humanizeAuditValue(event.capability),
+      status: auditStatusCell(event.status),
+    })),
+    empty: signal.loading && !signal.items.length ? 'Loading audit events…' : 'No audit events match these filters.',
+    minWidth: '720px',
+    density: 'tight' as const,
+    rowAction: 'open',
+  }
+}
+
 class LeapViewProjectRegistry extends DatastarLit(LitElement) {
-  static styles = tableStyles
+  static styles = settingsSurfaceStyles
   get registry(): ProjectRegistrySignal { return this.signal('adminProjects', { items: [], loading: false, hasMore: false }) }
   render() {
     const signal = this.registry
@@ -479,7 +578,7 @@ function projectListItems(signal: ProjectRegistrySignal): EntityListItem[] {
     const deployment = item.deploymentStatus || item.servingStateStatus || 'Not deployed'
     return {
       id: item.id,
-      title: item.title || 'Project',
+      title: item.title || item.id,
       description: item.description,
       href: item.href || item.links.project,
       icon: 'database',
@@ -526,15 +625,125 @@ function projectTimestamp(value = ''): number {
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
+type ServiceSecretExpirationPreset = '30' | '60' | '90' | 'custom'
+
+function serviceAccountListItems(accounts: ServiceAccountSignal[], busy: boolean): EntityListItem[] {
+  return accounts.map((account) => ({
+    id: account.id,
+    title: account.displayName || account.id,
+    description: account.id,
+    icon: 'application',
+    iconTreatment: 'plain',
+    columns: {
+      status: account.disabledAt ? 'Disabled' : 'Active',
+      created: serviceAccountDateLabel(account.createdAt),
+      updated: serviceAccountDateLabel(account.updatedAt),
+      actions: '',
+    },
+    columnTitles: {
+      created: account.createdAt || '',
+      updated: account.updatedAt || '',
+    },
+    sortValues: {
+      created: account.createdAt || '',
+      updated: account.updatedAt || '',
+    },
+    actions: [{ label: 'Manage credentials', action: 'select', icon: 'details', disabled: busy }],
+  }))
+}
+
+function serviceAccountListColumns(): EntityListColumn[] {
+  return [
+    { id: 'name', label: 'Service account', width: '42%' },
+    { id: 'status', label: 'Status', width: '16%', render: 'status' },
+    { id: 'created', label: 'Created', width: '18%', render: 'datetime' },
+    { id: 'updated', label: 'Updated', width: '18%', render: 'datetime' },
+    { id: 'actions', label: 'Actions', width: '6%', align: 'right', sortable: false, render: 'actions' },
+  ]
+}
+
+function serviceSecretListItems(secrets: ServiceAccountSecretSignal[], busy: boolean): EntityListItem[] {
+  return secrets.map((secret) => {
+    const expired = Boolean(secret.expiresAt && Date.parse(secret.expiresAt) <= Date.now())
+    const status = secret.revokedAt ? 'Revoked' : expired ? 'Expired' : 'Active'
+    return {
+      id: secret.id,
+      title: secret.name || secret.id,
+      description: secret.id,
+      icon: 'key',
+      iconTreatment: 'plain',
+      columns: {
+        created: serviceAccountDateLabel(secret.createdAt),
+        expires: secret.expiresAt ? serviceAccountDateLabel(secret.expiresAt) : 'Never',
+        status,
+        actions: '',
+      },
+      columnTitles: {
+        created: secret.createdAt || '',
+        expires: secret.expiresAt || '',
+      },
+      sortValues: {
+        created: secret.createdAt || '',
+        expires: secret.expiresAt || '',
+      },
+      actions: [{ label: secret.revokedAt ? 'Credential revoked' : 'Revoke credential', action: 'revoke', icon: 'cancel', disabled: busy || Boolean(secret.revokedAt) }],
+    }
+  })
+}
+
+function serviceSecretListColumns(): EntityListColumn[] {
+  return [
+    { id: 'name', label: 'Credential', width: '38%' },
+    { id: 'created', label: 'Created', width: '20%', render: 'datetime' },
+    { id: 'expires', label: 'Expires', width: '20%', render: 'datetime' },
+    { id: 'status', label: 'Status', width: '16%', render: 'status' },
+    { id: 'actions', label: 'Actions', width: '6%', align: 'right', sortable: false, render: 'actions' },
+  ]
+}
+
+function serviceAccountDateLabel(value?: string): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.valueOf())) return value
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date)
+}
+
+function serviceSecretExpirationOptions(): Array<{ value: ServiceSecretExpirationPreset, label: string }> {
+  return ([30, 60, 90] as const).map((days) => ({
+    value: String(days) as ServiceSecretExpirationPreset,
+    label: `${days} days (${serviceEndOfDayInDays(days).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })})`,
+  })).concat([
+    { value: 'custom', label: 'Custom date' },
+  ])
+}
+
+function serviceEndOfDayInDays(days: number): Date {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  date.setHours(23, 59, 59, 999)
+  return date
+}
+
+function serviceDateInputValueInDays(days: number): string {
+  const date = serviceEndOfDayInDays(days)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 class LeapViewServiceAccounts extends DatastarLit(LitElement) {
-  static styles = tableStyles
-  @property() mode: 'list' | 'new' = 'list'
+  static styles = [pageHeaderStyles, entityDetailStyles, settingsSurfaceStyles]
+  @property({ type: Boolean }) createAccountOpen = false
   @state() private busy = false
   @state() private commandError = ''
-  @state() private secretCopied = false
-  @state() private secretDismissed = ''
-  private handledSecret = ''
+  @state() private createSecretOpen = false
+  @state() private deleteAccountOpen = false
+  @state() private pendingSecretRevocation: ServiceAccountSecretSignal | null = null
+  @state() private secretExpirationPreset: ServiceSecretExpirationPreset = '90'
+  @state() private secretCustomExpiration = ''
   private pendingSignalKey = ''
+  private pendingAction = ''
 
   override connectedCallback(): void {
     super.connectedCallback()
@@ -547,116 +756,284 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   }
 
   get accounts(): ServiceAccountsSignal { return this.signal('adminServiceAccounts', { items: [], secrets: [], loading: false, hasMore: false }) }
+
   override updated(): void {
-    const key = JSON.stringify(this.accounts)
-    if (this.busy && key !== this.pendingSignalKey) this.busy = false
-    const createdSecret = this.accounts.createdSecret ?? ''
-    if (!createdSecret) {
-      this.handledSecret = ''
-    } else if (createdSecret !== this.handledSecret) {
-      this.handledSecret = createdSecret
-      this.secretCopied = false
-      this.secretDismissed = ''
-    }
+    const signal = this.accounts
+    const key = JSON.stringify(signal)
+    if (this.busy && key !== this.pendingSignalKey) this.completePendingCommand()
     this.pendingSignalKey = key
-  }
-
-  private emit(detail: Record<string, unknown>) {
-    this.commandError = ''
-    this.busy = true
-    this.pendingSignalKey = JSON.stringify(this.accounts)
-    this.dispatchEvent(new CustomEvent('lv-service-account-command', { bubbles: true, composed: true, detail }))
-  }
-
-  private handleDatastarFetch = (event: Event): void => {
-    if (!this.busy) return
-    const detail = (event as CustomEvent<DatastarFetchOwnerDetail>).detail
-    if (!ownsAdminActionFetch(this, event)) return
-    if (detail?.type === 'finished') {
-      // A successful command may be idempotent (for example selecting the
-      // already-selected account), so the signal tree can be byte-for-byte
-      // unchanged. Clear the local lock on transport completion rather than
-      // waiting for a serialized signal diff.
-      this.busy = false
-      return
-    }
-    const failure = browserCommandFailure(event, 'Service account update')
-    if (!failure) return
-    this.busy = false
-    this.commandError = failure.message
+    this.openDialog('[data-service-account-dialog="create"]', this.createAccountOpen)
+    this.openDialog('[data-service-account-dialog="secret"]', this.createSecretOpen)
+    this.openDialog('[data-service-account-dialog="delete"]', this.deleteAccountOpen)
+    this.openDialog('[data-service-account-dialog="revoke"]', Boolean(this.pendingSecretRevocation))
   }
 
   render() {
     const signal = this.accounts
-    if (this.mode === 'new') return this.renderCreatePage(signal)
-    return html`<section class="surface" aria-label="Service accounts">
-      <div class="section-heading"><div><h2>Service accounts</h2><p class="muted">Machine identities for automation and integrations.</p></div><a class="primary" href="/admin/service-accounts/new">Create service account</a></div>
-      ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
-      ${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
-      ${this.renderCreatedSecret(signal)}
-      ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Account</th><th>Status</th><th>Secrets</th><th>Actions</th></tr></thead><tbody>
-        ${signal.items.map((account) => html`<tr>
-          <td><strong>${account.displayName || 'Unnamed service account'}</strong><div class="muted">${account.email || 'Machine identity'}</div></td><td>${account.disabledAt ? 'Disabled' : 'Active'}</td>
-          <td>${account.secretCount}</td>
-          <td class="actions"><button ?disabled=${this.busy} @click=${() => this.emit({ action: 'select', accountId: account.id })}>Secrets</button><button ?disabled=${this.busy} @click=${() => this.deleteAccount(account)}>Delete</button></td>
-        </tr>`)}</tbody></table></div>` : html`<p class="empty">No service accounts have been created.</p>`}
-      ${signal.selectedId ? html`<div><h3>Secrets</h3><form class="form" @submit=${(event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const input = form.elements.namedItem('secretName') as HTMLInputElement; const name = input.value.trim(); if (!name) return; this.emit({ action: 'create_secret', accountId: signal.selectedId, secretName: name }); input.value = '' }}><label>Secret name<input name="secretName" required placeholder="CI pipeline" ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Create secret</button></form>${signal.secrets?.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody>${signal.secrets.map((secret) => html`<tr><td>${secret.name}</td><td>${secret.createdAt || '—'}</td><td>${secret.expiresAt || 'Never'}</td><td><button ?disabled=${this.busy || Boolean(secret.revokedAt)} @click=${() => this.emit({ action: 'revoke_secret', accountId: signal.selectedId, secretId: secret.id })}>${secret.revokedAt ? 'Revoked' : 'Revoke'}</button></td></tr>`)}</tbody></table></div>` : html`<p class="empty">No secrets have been created.</p>`}</div>` : nothing}
+    const selected = signal.items?.find((account) => account.id === signal.selectedId)
+    return selected ? this.renderDetail(signal, selected) : this.renderList(signal)
+  }
+
+  private renderList(signal: ServiceAccountsSignal) {
+    const feedback = this.renderFeedback(signal)
+    return html`<section class="service-page" aria-label="Service accounts">
+      ${renderPageHeader('Service accounts', 'Manage machine identities and credentials.')}
+      ${feedback}
+      ${signal.loading && !signal.items?.length ? html`<p class="muted" aria-live="polite">Loading service accounts…</p>` : html`
+        <lv-entity-list
+          .items=${serviceAccountListItems(signal.items ?? [], this.busy)}
+          .columns=${serviceAccountListColumns()}
+          .actions=${[{ id: 'create-service-account', label: 'Create service account', emphasis: 'primary' }]}
+          client-filter
+          list-label="Service accounts"
+          search-placeholder="Search service accounts"
+          empty-text="No service accounts have been created."
+          @lv-entity-list-action=${this.handleListAction}
+          @lv-entity-list-row-action=${this.handleAccountRowAction}
+        ></lv-entity-list>
+      `}
+      ${this.renderCreateAccountDialog()}
     </section>`
   }
 
-  private renderCreatePage(signal: ServiceAccountsSignal) {
-    const account = signal.selectedId ? signal.items.find((item) => item.id === signal.selectedId) : undefined
-    return html`<section class="surface" aria-label="Create service account">
-      <p class="muted">An editable machine identity will be added to the service-account list. Secrets are generated separately and shown only once.</p>
+  private renderDetail(signal: ServiceAccountsSignal, account: ServiceAccountSignal) {
+    return html`${renderEntityDetail({
+      label: 'Service account details',
+      feedback: this.renderFeedback(signal),
+      backHref: '/admin/service-accounts',
+      backLabel: 'All service accounts',
+      avatar: lucideIcon(Bot, { size: 32, strokeWidth: 1.75 }),
+      avatarTreatment: 'plain',
+      title: account.displayName || account.id,
+      subtitle: account.id,
+      badges: html`<span class="badge" data-service-account-status>${account.disabledAt ? 'Disabled' : 'Active'}</span>`,
+      actions: html`<button class="service-detail-action danger" type="button" ?disabled=${this.busy} @click=${() => { this.deleteAccountOpen = true }}>${lucideIcon(Trash2, { size: 15, strokeWidth: 2 })}<span>Delete service account</span></button>`,
+      notice: signal.createdSecret ? this.renderCreatedSecret(signal.createdSecret) : nothing,
+      sections: html`
+        <section class="detail-section" aria-label="Overview">
+          <h2>Overview</h2>
+          <dl class="facts">
+            <div class="fact"><dt>Service account ID</dt><dd><code>${account.id}</code></dd></div>
+            <div class="fact"><dt>Status</dt><dd>${account.disabledAt ? 'Disabled' : 'Active'}</dd></div>
+            <div class="fact"><dt>Created</dt><dd>${serviceAccountDateLabel(account.createdAt)}</dd></div>
+            <div class="fact"><dt>Last updated</dt><dd>${serviceAccountDateLabel(account.updatedAt)}</dd></div>
+          </dl>
+        </section>
+        <section class="detail-section" aria-label="Credentials">
+          <div class="section-heading">
+            <div class="card-header-copy"><h2>Credentials</h2><p class="muted">Create a separate credential for each application or automation.</p></div>
+            <button class="service-detail-action primary" type="button" ?disabled=${this.busy} @click=${() => { this.createSecretOpen = true }}>${lucideIcon(Plus, { size: 15, strokeWidth: 2 })}<span>Create credential</span></button>
+          </div>
+          <lv-entity-list
+            .items=${serviceSecretListItems(signal.secrets ?? [], this.busy)}
+            .columns=${serviceSecretListColumns()}
+            compact
+            client-filter
+            .showToolbar=${false}
+            list-label="Service account credentials"
+            empty-text="No credentials have been created."
+            @lv-entity-list-row-action=${this.handleSecretRowAction}
+          ></lv-entity-list>
+        </section>
+      `,
+    })}
+    ${this.renderCreateSecretDialog(account)}
+    ${this.renderDeleteAccountDialog(account)}
+    ${this.renderRevokeSecretDialog(account)}
+    `
+  }
+
+  private renderFeedback(signal: ServiceAccountsSignal) {
+    if (!signal.error && !this.commandError) return nothing
+    return html`<div class="service-feedback">
       ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
       ${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
-      ${account ? html`<div class="notice" role="status"><strong>${account.displayName || 'Service account'} created.</strong><p class="muted">Create its first secret from the account list.</p><a href="/admin/service-accounts">Go to service accounts</a></div>` : html`<form class="form" @submit=${this.createAccount}>
-        <label>Account name<input id="service-account-display-name" aria-label="Account name" name="displayName" required minlength="1" maxlength="120" autocomplete="off" placeholder="Finance automation" ?disabled=${this.busy}></label>
-        <div class="actions"><a href="/admin/service-accounts">Cancel</a><button class="primary" type="submit" ?disabled=${this.busy}>${this.busy ? 'Creating…' : 'Create service account'}</button></div>
-      </form>`}
-    </section>`
+    </div>`
+  }
+
+  private renderCreatedSecret(secret: string) {
+    return html`<lv-one-time-secret secret=${secret} message="Copy this credential now. You will not be able to see it again." copy-label="Copy service account credential"></lv-one-time-secret>`
+  }
+
+  private renderCreateAccountDialog() {
+    if (!this.createAccountOpen) return nothing
+    return html`<dialog data-service-account-dialog="create" aria-labelledby="create-service-account-title" @cancel=${this.closeCreateAccount} @click=${this.closeCreateAccountOnBackdrop}>
+      <section class="modal">
+        <header class="modal-header">
+          <div class="modal-title"><h2 id="create-service-account-title">Create service account</h2><p class="muted">Create a machine identity for an application, CLI, or automation.</p></div>
+          <button class="modal-close" type="button" aria-label="Close" @click=${this.closeCreateAccount}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button>
+        </header>
+        <form class="modal-body" @submit=${this.createAccount}>
+          <label class="service-dialog-field"><span>Display name</span><input id="service-account-display-name" aria-label="Display name" name="displayName" required autocomplete="off" placeholder="For example, Production deploy" ?disabled=${this.busy}></label>
+          <div class="modal-actions"><button type="button" @click=${this.closeCreateAccount}>Cancel</button><button class="primary" type="submit" ?disabled=${this.busy}>${this.busy && this.pendingAction === 'create' ? 'Creating…' : 'Create service account'}</button></div>
+        </form>
+      </section>
+    </dialog>`
+  }
+
+  private renderCreateSecretDialog(account: ServiceAccountSignal) {
+    if (!this.createSecretOpen) return nothing
+    const expirationOptions = serviceSecretExpirationOptions()
+    return html`<dialog data-service-account-dialog="secret" aria-labelledby="create-service-secret-title" @cancel=${this.closeCreateSecret} @click=${this.closeCreateSecretOnBackdrop}>
+      <section class="modal">
+        <header class="modal-header">
+          <div class="modal-title"><h2 id="create-service-secret-title">Create credential</h2><p class="muted">Create a credential for ${account.displayName || account.id}.</p></div>
+          <button class="modal-close" type="button" aria-label="Close" @click=${this.closeCreateSecret}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button>
+        </header>
+        <form class="modal-body" @submit=${(event: SubmitEvent) => this.createSecret(event, account)}>
+          <label class="service-dialog-field"><span>Credential name</span><input name="secretName" aria-label="Credential name" required autocomplete="off" placeholder="For example, CI pipeline" ?disabled=${this.busy}></label>
+          <div class="service-dialog-field"><span>Expiration</span>
+            <lv-select-menu class="service-expiration-control" label="Credential expiration" .options=${expirationOptions} .value=${this.secretExpirationPreset} @lv-select-change=${this.chooseSecretExpiration}>
+              <span slot="leading">${lucideIcon(CalendarDays, { size: 16, strokeWidth: 2 })}</span>
+            </lv-select-menu>
+            ${this.secretExpirationPreset === 'custom' ? html`<input name="customExpiration" aria-label="Custom expiration date" type="date" min=${serviceDateInputValueInDays(1)} max=${serviceDateInputValueInDays(364)} .value=${this.secretCustomExpiration} @input=${this.updateSecretCustomExpiration} required>` : nothing}
+          </div>
+          <div class="modal-actions"><button type="button" @click=${this.closeCreateSecret}>Cancel</button><button class="primary" type="submit" ?disabled=${this.busy}>${this.busy && this.pendingAction === 'create_secret' ? 'Creating…' : 'Create credential'}</button></div>
+        </form>
+      </section>
+    </dialog>`
+  }
+
+  private renderDeleteAccountDialog(account: ServiceAccountSignal) {
+    if (!this.deleteAccountOpen) return nothing
+    return html`<dialog data-service-account-dialog="delete" aria-labelledby="delete-service-account-title" @cancel=${this.closeDeleteAccount} @click=${this.closeDeleteAccountOnBackdrop}>
+      <section class="modal">
+        <header class="modal-header"><div class="modal-title"><h2 id="delete-service-account-title">Delete this service account?</h2></div><button class="modal-close" type="button" aria-label="Close" @click=${this.closeDeleteAccount}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button></header>
+        <div class="service-delete-warning"><p>Applications using credentials for <strong>${account.displayName || account.id}</strong> will immediately lose access. You cannot undo this action.</p></div>
+        <div class="service-delete-actions"><button type="button" @click=${this.closeDeleteAccount}>Cancel</button><button class="danger" type="button" ?disabled=${this.busy} @click=${() => this.confirmDeleteAccount(account)}>${this.busy && this.pendingAction === 'delete' ? 'Deleting…' : 'I understand, delete this service account'}</button></div>
+      </section>
+    </dialog>`
+  }
+
+  private renderRevokeSecretDialog(account: ServiceAccountSignal) {
+    const secret = this.pendingSecretRevocation
+    if (!secret) return nothing
+    return html`<dialog data-service-account-dialog="revoke" aria-labelledby="revoke-service-secret-title" @cancel=${this.closeRevokeSecret} @click=${this.closeRevokeSecretOnBackdrop}>
+      <section class="modal">
+        <header class="modal-header"><div class="modal-title"><h2 id="revoke-service-secret-title">Revoke this credential?</h2></div><button class="modal-close" type="button" aria-label="Close" @click=${this.closeRevokeSecret}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button></header>
+        <div class="service-delete-warning"><p>Applications using <strong>${secret.name}</strong> will immediately lose access. You cannot undo this action.</p></div>
+        <div class="service-delete-actions"><button type="button" @click=${this.closeRevokeSecret}>Cancel</button><button class="danger" type="button" ?disabled=${this.busy} @click=${() => this.confirmRevokeSecret(account, secret)}>${this.busy && this.pendingAction === 'revoke_secret' ? 'Revoking…' : 'I understand, revoke this credential'}</button></div>
+      </section>
+    </dialog>`
+  }
+
+  private emit(detail: Record<string, unknown>): void {
+    if (this.busy) return
+    this.commandError = ''
+    this.busy = true
+    this.pendingAction = String(detail.action ?? '')
+    this.pendingSignalKey = JSON.stringify(this.accounts)
+    this.dispatchEvent(new CustomEvent('lv-service-account-command', { bubbles: true, composed: true, detail }))
+  }
+
+  private handleListAction = (event: CustomEvent<{ id: string }>): void => {
+    if (event.detail.id === 'create-service-account' && !this.busy) this.createAccountOpen = true
+  }
+
+  private handleAccountRowAction = (event: CustomEvent<{ action: string, item: EntityListItem }>): void => {
+    if (event.detail.action === 'select') this.emit({ action: 'select', accountId: event.detail.item.id })
+  }
+
+  private handleSecretRowAction = (event: CustomEvent<{ action: string, item: EntityListItem }>): void => {
+    if (event.detail.action !== 'revoke') return
+    const secret = this.accounts.secrets?.find((candidate) => candidate.id === event.detail.item.id)
+    if (secret && !secret.revokedAt) this.pendingSecretRevocation = secret
   }
 
   private createAccount = (event: SubmitEvent): void => {
     event.preventDefault()
     const form = event.currentTarget as HTMLFormElement
-    const name = (form.elements.namedItem('displayName') as HTMLInputElement).value.trim()
-    if (!name || this.busy) return
-    this.emit({ action: 'create', displayName: name })
+    const displayName = (form.elements.namedItem('displayName') as HTMLInputElement).value.trim()
+    if (displayName) this.emit({ action: 'create', displayName })
   }
 
-  private renderCreatedSecret(signal: ServiceAccountsSignal) {
-    const secret = signal.createdSecret || ''
-    if (!secret || secret === this.secretDismissed) return nothing
-    return html`<div class="secret-result" role="status"><strong>Secret created. Copy it now.</strong><span class="muted">This secret will not be shown again after you dismiss this message.</span><code>${secret}</code><div class="actions"><button type="button" @click=${() => this.copySecret(secret)}>${this.secretCopied ? 'Copied' : 'Copy secret'}</button><button type="button" @click=${() => this.dismissSecret(secret)}>Done</button></div></div>`
+  private createSecret(event: SubmitEvent, account: ServiceAccountSignal): void {
+    event.preventDefault()
+    const form = event.currentTarget as HTMLFormElement
+    const secretName = (form.elements.namedItem('secretName') as HTMLInputElement).value.trim()
+    const expiresAt = this.secretExpiration()
+    if (!secretName || expiresAt === null) return
+    this.emit({ action: 'create_secret', accountId: account.id, secretName, expiresAt })
   }
 
-  private async copySecret(secret: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(secret)
-      this.secretCopied = true
-    } catch {
-      this.commandError = 'Copy failed. Select the secret manually before dismissing this message.'
+  private chooseSecretExpiration = (event: CustomEvent<{ value: ServiceSecretExpirationPreset }>): void => {
+    this.secretExpirationPreset = event.detail.value
+    if (event.detail.value !== 'custom') this.secretCustomExpiration = ''
+  }
+
+  private updateSecretCustomExpiration = (event: Event): void => {
+    this.secretCustomExpiration = (event.currentTarget as HTMLInputElement).value
+  }
+
+  private secretExpiration(): string | null {
+    if (this.secretExpirationPreset === 'custom') {
+      if (!this.secretCustomExpiration) return null
+      const date = new Date(`${this.secretCustomExpiration}T23:59:59.999`)
+      return Number.isNaN(date.valueOf()) ? null : date.toISOString()
     }
+    return serviceEndOfDayInDays(Number(this.secretExpirationPreset)).toISOString()
   }
 
-  private dismissSecret(secret: string): void {
-    if (!this.secretCopied && !window.confirm('Dismiss this secret without copying? It cannot be viewed again.')) return
-    this.secretDismissed = secret
+  private confirmDeleteAccount(account: ServiceAccountSignal): void {
+    this.emit({ action: 'delete', accountId: account.id })
   }
 
-  private deleteAccount(account: ServiceAccountSignal): void {
-    if (window.confirm(`Delete ${account.displayName || 'this service account'}? Its credentials will stop working immediately.`)) {
-      this.emit({ action: 'delete', accountId: account.id })
+  private confirmRevokeSecret(account: ServiceAccountSignal, secret: ServiceAccountSecretSignal): void {
+    this.emit({ action: 'revoke_secret', accountId: account.id, secretId: secret.id })
+  }
+
+  private closeCreateAccount = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.createAccountOpen = false }
+  private closeCreateAccountOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeCreateAccount(event) }
+  private closeCreateSecret = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.createSecretOpen = false }
+  private closeCreateSecretOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeCreateSecret(event) }
+  private closeDeleteAccount = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.deleteAccountOpen = false }
+  private closeDeleteAccountOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeDeleteAccount(event) }
+  private closeRevokeSecret = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.pendingSecretRevocation = null }
+  private closeRevokeSecretOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeRevokeSecret(event) }
+
+  private openDialog(selector: string, shouldOpen: boolean): void {
+    const dialog = this.renderRoot.querySelector<HTMLDialogElement>(selector)
+    if (!shouldOpen || !dialog || dialog.open) return
+    dialog.showModal()
+    window.setTimeout(() => dialog.querySelector<HTMLElement>('input, button')?.focus(), 0)
+  }
+
+  private completePendingCommand(): void {
+    const action = this.pendingAction
+    this.busy = false
+    this.pendingAction = ''
+    if (action === 'create') this.createAccountOpen = false
+    if (action === 'create_secret') {
+      this.createSecretOpen = false
+      this.secretExpirationPreset = '90'
+      this.secretCustomExpiration = ''
     }
+    if (action === 'delete') this.deleteAccountOpen = false
+    if (action === 'revoke_secret') this.pendingSecretRevocation = null
+  }
+
+  private handleDatastarFetch = (event: Event): void => {
+    if (!this.busy || !ownsAdminActionFetch(this, event)) return
+    const detail = (event as CustomEvent<DatastarFetchOwnerDetail>).detail
+    if (detail?.type === 'finished') {
+      this.completePendingCommand()
+      return
+    }
+    const failure = browserCommandFailure(event, 'Service account update')
+    if (!failure) return
+    this.busy = false
+    this.pendingAction = ''
+    this.commandError = failure.message
   }
 }
 
 class LeapViewAuditLog extends DatastarLit(LitElement) {
-  static styles = tableStyles
+  static styles = settingsSurfaceStyles
   @state() private busy = false
   @state() private commandError = ''
-  @state() private selectedEvent: AuditEventSignal | null = null
+  @state() private selectedEventID = ''
+  @state() private activePreset: AuditPresetID | '' = ''
+  @state() private copiedAuditValue = ''
   private pendingSignalKey = ''
 
   override connectedCallback(): void {
@@ -699,24 +1076,160 @@ class LeapViewAuditLog extends DatastarLit(LitElement) {
     this.commandError = failure.message
   }
 
+  private filterSelect(key: 'action' | 'resourceKind', value: string): void {
+    if (this.busy) return
+    this.activePreset = ''
+    this.emit({ action: 'filter', filters: { ...this.audit.filters, [key]: value } })
+  }
+
+  private applyPreset(preset: AuditPreset): void {
+    if (this.busy) return
+    this.activePreset = preset.id
+    this.emit({ action: 'filter', filters: { ...preset.filters } })
+  }
+
+  private submitFilter(event: SubmitEvent): void {
+    event.preventDefault()
+    const form = event.currentTarget as HTMLFormElement
+    const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value.trim() || ''
+    this.activePreset = ''
+    this.emit({
+      action: 'filter',
+      filters: {
+        projectId: value('projectId'),
+        principalId: value('principalId'),
+        action: this.audit.filters?.action || '',
+        resourceKind: this.audit.filters?.resourceKind || '',
+        resourceId: value('resourceId'),
+        from: value('from'),
+        to: value('to'),
+      },
+    })
+  }
+
+  private handleRecordTableAction = (event: CustomEvent<{ action?: string; row?: { id?: string } }>): void => {
+    if (event.detail?.action !== 'open' || !event.detail.row?.id) return
+    this.selectedEventID = String(event.detail.row.id)
+    this.copiedAuditValue = ''
+  }
+
+  private closeEventDrawer = (): void => {
+    this.selectedEventID = ''
+    this.copiedAuditValue = ''
+  }
+
+  private async copyAuditValue(value: string): Promise<void> {
+    if (!value) return
+    try {
+      await navigator.clipboard?.writeText(value)
+      this.copiedAuditValue = value
+    } catch {
+      this.copiedAuditValue = ''
+    }
+  }
+
+  private renderCopyButton(value: string): unknown {
+    if (!value) return nothing
+    return html`<button class="audit-drawer-copy" type="button" @click=${() => this.copyAuditValue(value)}>${this.copiedAuditValue === value ? 'Copied' : 'Copy'}</button>`
+  }
+
+  private renderAuditIdentifier(label: string, value: string, href = '') {
+    if (!value) return html`<span class="muted">—</span>`
+    return html`${href ? html`<a href=${href}>${value}</a>` : html`<code>${value}</code>`}${this.renderCopyButton(value)}`
+  }
+
+  private renderAuditDrawer(event: AuditEventSignal) {
+    const status = auditStatusCell(event.status)
+    return html`<lv-drawer
+      open
+      size="wide"
+      label="Audit event details"
+      .modal=${false}
+      @lv-drawer-close=${this.closeEventDrawer}
+    >
+      <div slot="title" class="audit-drawer-title">
+        <h2>${humanizeAuditValue(event.action)}</h2>
+        <p>${auditEventSummary(event)}</p>
+      </div>
+      <div class="audit-drawer-body">
+        <section class="audit-drawer-section" aria-label="Event summary">
+          <h3>Event summary</h3>
+          <dl class="audit-drawer-facts">
+            <div class="audit-drawer-fact"><dt>Time</dt><dd><time datetime=${event.createdAt || nothing}>${formatAuditTimestamp(event.createdAt)}</time></dd></div>
+            <div class="audit-drawer-fact"><dt>Exact timestamp</dt><dd><code data-audit-exact-timestamp>${event.createdAt || '—'}</code>${this.renderCopyButton(event.createdAt)}</dd></div>
+            <div class="audit-drawer-fact"><dt>Event ID</dt><dd>${this.renderAuditIdentifier('Event ID', event.id)}</dd></div>
+            <div class="audit-drawer-fact"><dt>Actor</dt><dd>${event.principalId ? html`<a href=${auditPrincipalHref(event.principalId)}>${auditActorLabel(event)}</a>${event.principalEmail ? html`<span class="muted">${event.principalEmail}</span>` : nothing}` : html`<span>System</span>`}</dd></div>
+            ${event.principalId ? html`<div class="audit-drawer-fact"><dt>Actor ID</dt><dd>${this.renderAuditIdentifier('Actor ID', event.principalId)}</dd></div>` : nothing}
+            <div class="audit-drawer-fact"><dt>Capability</dt><dd>${humanizeAuditValue(event.capability)}</dd></div>
+            <div class="audit-drawer-fact"><dt>Status</dt><dd><span class=${`audit-drawer-status audit-drawer-status-${status.tone}`}>${status.label}</span></dd></div>
+          </dl>
+        </section>
+        <section class="audit-drawer-section" aria-label="Resource details">
+          <h3>Resource</h3>
+          <dl class="audit-drawer-facts">
+            <div class="audit-drawer-fact"><dt>Resource type</dt><dd>${humanizeAuditValue(event.resourceKind)}</dd></div>
+            <div class="audit-drawer-fact"><dt>Resource ID</dt><dd>${this.renderAuditIdentifier('Resource ID', event.resourceId, auditResourceHref(event))}</dd></div>
+            ${event.projectId ? html`<div class="audit-drawer-fact"><dt>Project ID</dt><dd>${this.renderAuditIdentifier('Project ID', event.projectId)}</dd></div>` : nothing}
+            ${event.requestId ? html`<div class="audit-drawer-fact"><dt>Request ID</dt><dd>${this.renderAuditIdentifier('Request ID', event.requestId)}</dd></div>` : nothing}
+            ${event.correlationId ? html`<div class="audit-drawer-fact"><dt>Correlation ID</dt><dd>${this.renderAuditIdentifier('Correlation ID', event.correlationId)}</dd></div>` : nothing}
+          </dl>
+        </section>
+        <details class="audit-drawer-metadata">
+          <summary>Raw metadata</summary>
+          <pre><code>${auditMetadataText(event)}</code></pre>
+        </details>
+      </div>
+    </lv-drawer>`
+  }
+
   render() {
     const signal = this.audit
     const filters = signal.filters || {}
-    const submit = (event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value || ''; this.emit({ action: 'filter', filters: { projectId: value('projectId'), principalId: value('principalId'), action: value('action'), resourceKind: value('resourceKind'), resourceId: value('resourceId'), from: value('from'), to: value('to') } }) }
-    return html`<section class="surface" aria-label="Audit log"><p class="muted">Read-only product activity. Select an event to inspect technical metadata.</p>${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
-      <form class="toolbar" @submit=${submit}><label>Project<input id="audit-project-id" aria-label="Project" name="projectId" value=${filters.projectId || ''} ?disabled=${this.busy}></label><label>Actor<input id="audit-principal-id" aria-label="Actor" name="principalId" value=${filters.principalId || ''} ?disabled=${this.busy}></label><label>Action<input id="audit-action" aria-label="Action" name="action" value=${filters.action || ''} ?disabled=${this.busy}></label><label>Resource kind<input id="audit-resource-kind" aria-label="Resource kind" name="resourceKind" value=${filters.resourceKind || ''} ?disabled=${this.busy}></label><label>Resource ID<input id="audit-resource-id" aria-label="Resource ID" name="resourceId" value=${filters.resourceId || ''} ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Filter</button><button type="button" ?disabled=${this.busy} @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear all</button></form>
-      ${signal.items?.length ? html`<div class="table-wrap"><table class="audit-table"><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Resource</th><th>Capability</th><th>Status</th></tr></thead><tbody>${signal.items.map((event) => html`<tr class="audit-row" tabindex="0" @click=${() => { this.selectedEvent = event }} @keydown=${(keyboardEvent: KeyboardEvent) => { if (keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') { keyboardEvent.preventDefault(); this.selectedEvent = event } }}><td>${formatAuditDate(event.createdAt)}</td><td>${humanizeAccessValue(event.action)}</td><td>${event.principalName || (event.principalId ? 'Unknown actor' : 'System')}</td><td>${event.resourceLabel || humanizeAccessValue(event.resourceKind)}</td><td>${event.capability ? humanizeAccessValue(event.capability) : '—'}</td><td>${event.status ? humanizeAccessValue(event.status) : '—'}</td></tr>`)}</tbody></table></div>` : html`<p class="empty">No audit events match these filters.</p>`}
-      ${signal.hasMore ? html`<button ?disabled=${this.busy} @click=${() => this.emit({ action: 'load_more', filters, pageToken: signal.nextCursor })}>Load more</button>` : nothing}
-      ${this.selectedEvent ? html`<dialog class="audit-detail" open @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.selectedEvent = null }}><div class="modal"><header class="modal-header"><div class="modal-title"><h2>Audit event details</h2><p class="muted">${formatAuditDate(this.selectedEvent.createdAt)}</p></div><button class="modal-close" type="button" aria-label="Close details" @click=${() => { this.selectedEvent = null }}>×</button></header><div class="modal-body"><dl class="audit-detail-grid"><div><dt>Actor</dt><dd>${this.selectedEvent.principalName || 'System'}${this.selectedEvent.principalId ? html`<br><code>${this.selectedEvent.principalId}</code>` : nothing}</dd></div><div><dt>Action</dt><dd>${this.selectedEvent.action}</dd></div><div><dt>Resource</dt><dd>${this.selectedEvent.resourceLabel || humanizeAccessValue(this.selectedEvent.resourceKind)}<br><code>${this.selectedEvent.resourceKind} / ${this.selectedEvent.resourceId}</code></dd></div><div><dt>Status</dt><dd>${this.selectedEvent.status || '—'}</dd></div>${this.selectedEvent.requestId ? html`<div><dt>Request ID</dt><dd><code>${this.selectedEvent.requestId}</code></dd></div>` : nothing}${this.selectedEvent.correlationId ? html`<div><dt>Correlation ID</dt><dd><code>${this.selectedEvent.correlationId}</code></dd></div>` : nothing}${this.selectedEvent.metadata ? html`<div><dt>Metadata</dt><dd><code>${JSON.stringify(this.selectedEvent.metadata, null, 2)}</code></dd></div>` : nothing}</dl></div></div></dialog>` : nothing}
+    const disabled = this.busy || signal.loading
+    const actionOptions = auditFilterOptions(signal.items, 'action', 'All actions', filters.action)
+    const resourceKindOptions = auditFilterOptions(signal.items, 'resourceKind', 'All resource kinds', filters.resourceKind)
+    const selectedEvent = signal.items.find((event) => event.id === this.selectedEventID)
+    const visibleItems = auditPresetItems(signal, this.activePreset)
+    const loadedLabel = signal.loading
+      ? 'Loading audit events…'
+      : this.activePreset === 'failed'
+        ? `${visibleItems.length} failed events in ${signal.loadedCount || signal.items.length} loaded`
+        : signal.items.length ? `${signal.loadedCount || signal.items.length} events loaded` : 'No audit events'
+    return html`<section class="surface audit-surface" aria-label="Audit log">
+      ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
+      ${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
+      <div class="audit-presets" aria-label="Audit log quick filters">
+        <span class="audit-presets-label">Quick filters</span>
+        ${auditPresets.map((preset) => html`<button
+          class="audit-preset"
+          type="button"
+          title=${preset.description}
+          aria-pressed=${this.activePreset === preset.id ? 'true' : 'false'}
+          data-audit-preset=${preset.id}
+          ?disabled=${disabled}
+          @click=${() => this.applyPreset(preset)}
+        >${preset.label}</button>`)}
+      </div>
+      <form class="audit-toolbar" aria-label="Audit log filters" @submit=${this.submitFilter}>
+        <label class="audit-filter">Project<input id="audit-project-id" type="search" aria-label="Project" name="projectId" .value=${filters.projectId || ''} ?disabled=${disabled} placeholder="Project ID"></label>
+        <label class="audit-filter">Actor<input id="audit-principal-id" type="search" aria-label="Actor" name="principalId" .value=${filters.principalId || ''} ?disabled=${disabled} placeholder="Principal ID"></label>
+        <div class="audit-filter"><span>Action</span><lv-select-menu label="Action" .options=${actionOptions} .value=${filters.action || ''} ?disabled=${disabled} @lv-select-change=${(event: CustomEvent<{ value: string }>) => this.filterSelect('action', event.detail.value)}></lv-select-menu></div>
+        <div class="audit-filter"><span>Resource kind</span><lv-select-menu label="Resource kind" .options=${resourceKindOptions} .value=${filters.resourceKind || ''} ?disabled=${disabled} @lv-select-change=${(event: CustomEvent<{ value: string }>) => this.filterSelect('resourceKind', event.detail.value)}></lv-select-menu></div>
+        <label class="audit-filter">Resource ID<input id="audit-resource-id" type="search" aria-label="Resource ID" name="resourceId" .value=${filters.resourceId || ''} ?disabled=${disabled} placeholder="Resource ID"></label>
+        <label class="audit-filter">From<input id="audit-from" type="date" aria-label="From" name="from" .value=${filters.from || ''} ?disabled=${disabled}></label>
+        <label class="audit-filter">To<input id="audit-to" type="date" aria-label="To" name="to" .value=${filters.to || ''} ?disabled=${disabled}></label>
+        <div class="audit-actions"><button class="primary" type="submit" ?disabled=${disabled}>Filter</button><button type="button" ?disabled=${disabled} @click=${() => { this.activePreset = ''; this.emit({ action: 'clear', filters: {} }) }}>Clear</button></div>
+      </form>
+      <div class="audit-results">
+        <lv-record-table variant="compact" .table=${auditTable(signal, visibleItems)} @lv-record-table-action=${this.handleRecordTableAction}></lv-record-table>
+        <div class="audit-footer" aria-live="polite">
+          <span>${loadedLabel}</span>
+          ${signal.hasMore ? html`<button class="audit-load-more" type="button" ?disabled=${disabled} @click=${() => this.emit({ action: 'load_more', filters, pageToken: signal.nextCursor })}>${signal.loading ? 'Loading…' : 'Load more'}</button>` : nothing}
+        </div>
+      </div>
+      ${selectedEvent ? this.renderAuditDrawer(selectedEvent) : nothing}
     </section>`
   }
-}
-
-function formatAuditDate(value: string): string {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
 if (!customElements.get('lv-project-registry')) customElements.define('lv-project-registry', LeapViewProjectRegistry)

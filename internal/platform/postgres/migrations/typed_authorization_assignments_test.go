@@ -7,7 +7,7 @@ import (
 )
 
 func TestTypedAuthorizationAssignmentsMigrationIsForwardOnlyAndPairPinned(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "025_typed_authorization_assignments.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "027_typed_authorization_assignments.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -50,7 +50,7 @@ function testDocument(): string {
   const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000).toISOString()
   const page = {
     kind: 'admin',
-    title: 'Principals',
+    title: 'Users',
     active: 'principals',
     sidebar: {
       label: 'Admin',
@@ -61,14 +61,14 @@ function testDocument(): string {
       collapsible: false,
       numbered: false,
       items: [
-        { id: 'principals', title: 'Principals', href: '/admin/principals', active: true },
+        { id: 'principals', title: 'Users', href: '/admin/principals', active: true },
         { id: 'groups', title: 'Groups', href: '/admin/groups', active: false },
         { id: 'agent', title: 'Agent', href: '/admin/agent', active: false },
         { id: 'storage', title: 'Storage', href: '/admin/storage', active: false },
         { id: 'queries', title: 'Queries', href: '/admin/queries', active: false },
       ],
     },
-    headerTitle: 'Members',
+    headerTitle: 'Users',
     headerDetail: '',
     directoryList: {
       searchPlaceholder: 'Search by name or email',

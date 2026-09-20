@@ -187,6 +187,70 @@ func TestAuthorizeAuthoringBootstrapRequestAllowsClaimedProjectBeforeActivation(
 	}
 }
 
+func TestAuthorizeManagedDataStagingRequestAllowsClaimedProjectForScopedNonAdmin(t *testing.T) {
+	module, err := newSurface(surfaceConfig{
+		Auth: &Auth{},
+		Repository: func() (access.Repository, error) {
+			return browserGuardRepository{admin: false}, nil
+		},
+		AuthoringProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return "project_claimed", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authoringBootstrapRequest(t, access.AuthoringSessionWorkload, "publisher", "project_claimed", []access.Capability{access.CapabilityResourceEdit})
+	allowed, err := module.AuthorizeManagedDataStagingRequest(request.Context(), request, "project_claimed", access.CapabilityResourceEdit)
+	if err != nil || !allowed {
+		t.Fatalf("managed-data staging authorization = %t, %v; want true, nil", allowed, err)
+	}
+}
+
+func TestAuthorizeManagedDataStagingRequestRequiresExistingExactClaim(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		claimed projectgraph.ResourceID
+	}{
+		{name: "unclaimed target"},
+		{name: "different project", claimed: "project_foreign"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			module, err := newSurface(surfaceConfig{
+				Auth: &Auth{},
+				AuthoringProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+					return test.claimed, nil
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := authoringBootstrapRequest(t, access.AuthoringSessionWorkload, "publisher", "project_claimed", []access.Capability{access.CapabilityResourceEdit})
+			allowed, err := module.AuthorizeManagedDataStagingRequest(request.Context(), request, "project_claimed", access.CapabilityResourceEdit)
+			if err != nil || allowed {
+				t.Fatalf("managed-data staging authorization = %t, %v; want false, nil", allowed, err)
+			}
+		})
+	}
+}
+
+func TestAuthorizeManagedDataStagingRequestRequiresScopedCapability(t *testing.T) {
+	module, err := newSurface(surfaceConfig{
+		Auth: &Auth{},
+		AuthoringProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return "project_claimed", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authoringBootstrapRequest(t, access.AuthoringSessionWorkload, "publisher", "project_claimed", []access.Capability{access.CapabilityResourceRead})
+	allowed, err := module.AuthorizeManagedDataStagingRequest(request.Context(), request, "project_claimed", access.CapabilityResourceEdit)
+	if err != nil || allowed {
+		t.Fatalf("managed-data staging authorization = %t, %v; want false, nil", allowed, err)
+	}
+}
+
 func TestAuthorizeAuthoringBootstrapRequestRejectsNonAdminOnFreshTarget(t *testing.T) {
 	module, err := newSurface(surfaceConfig{
 		Auth: &Auth{},
