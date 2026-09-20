@@ -302,6 +302,7 @@ func (r *Repository) touchServicePrincipalSecret(ctx context.Context, id pgtype.
 	tag, err := accessdb.New(r.db).TouchServiceSecret(ctx, accessdb.TouchServiceSecretParams{ID: id, MinInterval: pgInterval(serviceSecretTouchInterval)})
 	if err != nil {
 		slog.Default().WarnContext(ctx, "service principal secret last-used update failed", "credential_class", "service_principal_secret", "credential_id", principalUUID(id), "error", err)
+		observeCredentialTouchFailure(credentialClassServicePrincipalSecret)
 		return
 	}
 	_ = tag

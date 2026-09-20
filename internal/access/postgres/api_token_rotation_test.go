@@ -117,11 +117,11 @@ func TestAPITokenTouchFailureDoesNotRejectAuthenticationAndIncrementsMetric(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := apiTokenTouchFailureMetricValue(t)
+	before := credentialTouchFailureMetricValue(t, credentialClassAPIToken)
 	if _, err := failingRepo.PrincipalForAPIToken(t.Context(), secret); err != nil {
 		t.Fatalf("authentication failed after touch error: %v", err)
 	}
-	after := apiTokenTouchFailureMetricValue(t)
+	after := credentialTouchFailureMetricValue(t, credentialClassAPIToken)
 	if after != before+1 {
 		t.Fatalf("api-token touch failure metric = %v, want %v", after, before+1)
 	}
@@ -160,7 +160,29 @@ func TestAPITokenLastUsedTouchCoalescesWithinInterval(t *testing.T) {
 	}
 }
 
-func apiTokenTouchFailureMetricValue(t *testing.T) float64 {
+type serviceSecretTouchFailureDB struct{ DBTX }
+
+func (db serviceSecretTouchFailureDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "UPDATE access.service_principal_secret") {
+		return pgconn.CommandTag{}, errors.New("injected service secret touch failure")
+	}
+	return db.DBTX.Exec(ctx, sql, args...)
+}
+
+func TestServiceSecretTouchFailureIncrementsBoundedMetric(t *testing.T) {
+	id, err := pgUUID("00000000-0000-7000-8000-000000000099")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := credentialTouchFailureMetricValue(t, credentialClassServicePrincipalSecret)
+	(&Repository{db: serviceSecretTouchFailureDB{}}).touchServicePrincipalSecret(t.Context(), id)
+	after := credentialTouchFailureMetricValue(t, credentialClassServicePrincipalSecret)
+	if after != before+1 {
+		t.Fatalf("service-secret touch failure metric = %v, want %v", after, before+1)
+	}
+}
+
+func credentialTouchFailureMetricValue(t *testing.T, class string) float64 {
 	t.Helper()
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(credentialTouchFailures)
@@ -174,7 +196,7 @@ func apiTokenTouchFailureMetricValue(t *testing.T) float64 {
 		}
 		for _, metric := range family.GetMetric() {
 			for _, label := range metric.GetLabel() {
-				if label.GetName() == "credential_class" && label.GetValue() == "api_token" {
+				if label.GetName() == "credential_class" && label.GetValue() == class {
 					return metric.GetCounter().GetValue()
 				}
 			}
