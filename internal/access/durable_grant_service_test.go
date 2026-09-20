@@ -125,6 +125,7 @@ func serviceAuthority(permissions, credentialPermissions []PermissionPair, class
 	return CurrentAuthoritySnapshot{
 		Principal:   Principal{ID: serviceIssuerID, Kind: PrincipalKindUser},
 		Permissions: permissions, CredentialPermissions: credentialPermissions,
+		Policy: GrantIssuancePolicy{Scope: AuthorizationPolicyScope{TargetID: serviceInstanceID, ProjectID: serviceProjectID, Environment: "production"}, Revision: 1, Digest: "sha256:" + strings.Repeat("a", 64)},
 		Credential: CredentialEvidence{Class: class, ID: func() string {
 			if class == GrantCredentialClassSession {
 				return serviceSessionID
@@ -144,6 +145,25 @@ func serviceForTest(t *testing.T, authority CurrentAuthoritySnapshot) (*DurableG
 	}
 	service.now = func() time.Time { return time.Now().UTC() }
 	return service, writer, resolver
+}
+
+func TestDurableGrantServiceRequiresCurrentTargetPolicyEvidence(t *testing.T) {
+	target := serviceShareTarget()
+	share := serviceResourcePair(t, ActionResourceShare, target)
+	read := serviceResourcePair(t, ActionDashboardRead, target)
+	request := ResourceShareGrantRequest{Target: target, RecipientPrincipalID: serviceRecipientID, Permissions: []PermissionPair{read}, IdempotencyKey: "policy-evidence"}
+	authority := serviceAuthority([]PermissionPair{share, read}, []PermissionPair{share, read}, GrantCredentialClassAPIToken)
+	authority.Policy = GrantIssuancePolicy{}
+	service, writer, _ := serviceForTest(t, authority)
+	if _, err := service.IssueResourceShare(t.Context(), request); !errors.Is(err, ErrGrantAuthorityUnavailable) || shareWriterCalled(writer) {
+		t.Fatalf("missing target policy reached writer: err=%v input=%+v", err, writer.share)
+	}
+	authority.Policy = serviceAuthority(nil, nil, GrantCredentialClassAPIToken).Policy
+	authority.Policy.Scope.TargetID = "another_target"
+	service, writer, _ = serviceForTest(t, authority)
+	if _, err := service.IssueResourceShare(t.Context(), request); !errors.Is(err, ErrGrantAuthorityInvalid) || shareWriterCalled(writer) {
+		t.Fatalf("cross-target policy reached writer: err=%v input=%+v", err, writer.share)
+	}
 }
 
 func TestDurableGrantServiceDerivesShareIssuancePermissionsAndAcceptsGroupRecipient(t *testing.T) {

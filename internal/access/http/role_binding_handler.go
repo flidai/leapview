@@ -72,6 +72,99 @@ func roleBindingPolicyMetadata(scope access.AuthorizationPolicyScope, policy acc
 	}
 }
 
+func validateProjectRoleBindingPermissionCeiling(ceiling, requested []access.PermissionPair) error {
+	if err := access.ValidatePermissionPairs(ceiling); err != nil {
+		return fmt.Errorf("credential permission ceiling: %w", err)
+	}
+	if err := access.ValidatePermissionPairs(requested); err != nil {
+		return err
+	}
+	for index, pair := range requested {
+		required, err := access.RequiredPermissionPairs(pair)
+		if err != nil {
+			return err
+		}
+		for _, requirement := range required {
+			covered := false
+			for _, granted := range ceiling {
+				// A future-resource selector is allowed to cover an exact
+				// resource, while an exact selector must never widen into a
+				// future-resource role. Equal future selectors are direct
+				// authority and therefore match by their complete pair key.
+				if granted.Key() == requirement.Key() || access.PermissionPairAllows(granted, requirement) {
+					covered = true
+					break
+				}
+			}
+			if !covered {
+				return fmt.Errorf("%w: permission %d (%s)", access.ErrTokenPermissionNotAllowed, index, pair.Action)
+			}
+		}
+	}
+	return nil
+}
+
+// authorizeProjectRoleBindingMutation applies the mutation-boundary checks
+// that cannot be represented by the generated operation's single manage
+// privilege. A role binding is an authority issuance: the caller must hold
+// delegate and every pair captured by the role, using the same credential that
+// issued the administration envelope.
+func (h Handler) authorizeProjectRoleBindingMutation(r *stdhttp.Request, envelope access.GrantAdminEnvelope, actorID string, projectID projectgraph.ResourceID, permissions []access.PermissionPair) error {
+	if envelope.Issuer.PrincipalID != actorID {
+		return access.ErrGrantAdminEnvelopeMismatch
+	}
+	delegate, err := access.NewProjectPermissionPair(access.ActionProjectAccessDelegate, projectID)
+	if err != nil {
+		return fmt.Errorf("%w: delegate pair: %v", access.ErrGrantAdminEnvelopeMismatch, err)
+	}
+	required := make([]access.PermissionPair, 0, len(permissions)+1)
+	required = append(required, delegate)
+	required = append(required, permissions...)
+	if h.CurrentEffectivePermissionOptions == nil {
+		return access.ErrGrantAdminEnvelopeMismatch
+	}
+	authority, err := h.CurrentEffectivePermissionOptions(r.Context(), actorID)
+	if err != nil {
+		return fmt.Errorf("%w: current authority: %v", access.ErrGrantAdminEnvelopeMismatch, err)
+	}
+	if err := validateProjectRoleBindingPermissionCeiling(authority, required); err != nil {
+		return fmt.Errorf("%w: %v", access.ErrGrantAdminEnvelopeMismatch, err)
+	}
+
+	if credential, found := h.currentCredential(r); found {
+		if credential.Token.ID == "" {
+			return access.ErrGrantAdminEnvelopeMismatch
+		}
+		if (credential.Principal.ID != "" && credential.Principal.ID != actorID) || credential.Token.PrincipalID != actorID {
+			return access.ErrGrantAdminEnvelopeMismatch
+		}
+		issuer := envelope.Issuer.Credential
+		if issuer.Class != access.GrantCredentialClassAPIToken || issuer.ID != credential.Token.ID || issuer.Fingerprint == "" || credential.Token.TokenFingerprint == "" || issuer.Fingerprint != credential.Token.TokenFingerprint {
+			return access.ErrGrantAdminEnvelopeMismatch
+		}
+		if credential.Token.PermissionProfile != access.PermissionCatalogProfile || credential.Token.Permissions == nil {
+			return fmt.Errorf("%w: %v", access.ErrGrantAdminEnvelopeMismatch, access.ErrTokenPermissionAttenuationNeeded)
+		}
+		if err := validateProjectRoleBindingPermissionCeiling(credential.Token.Permissions, required); err != nil {
+			return fmt.Errorf("%w: %v", access.ErrGrantAdminEnvelopeMismatch, err)
+		}
+		return nil
+	}
+
+	// Browser sessions intentionally do not populate APICredential. Their
+	// durable session ID is still an exact credential identity, while the
+	// active typed snapshot supplies the current (non-attenuated) authority.
+	if h.CurrentSession == nil {
+		return access.ErrGrantAdminEnvelopeMismatch
+	}
+	sessionID, found := h.CurrentSession(r)
+	issuer := envelope.Issuer.Credential
+	if !found || sessionID == "" || issuer.Class != access.GrantCredentialClassSession || issuer.ID != sessionID {
+		return access.ErrGrantAdminEnvelopeMismatch
+	}
+	return nil
+}
+
 func (h Handler) ListProjectRoleBindings(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
@@ -158,6 +251,9 @@ func (h Handler) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.R
 			return access.AuditEventInput{}, envelopeErr
 		}
 		if envelopeErr := access.ValidateGrantAdminEnvelopeRoleBinding(envelope, actorID, projectgraph.ResourceID(scope.ProjectID), binding.Subject, binding.PermissionRole, binding.Permissions); envelopeErr != nil {
+			return access.AuditEventInput{}, envelopeErr
+		}
+		if envelopeErr := h.authorizeProjectRoleBindingMutation(r, envelope, actorID, projectgraph.ResourceID(scope.ProjectID), binding.Permissions); envelopeErr != nil {
 			return access.AuditEventInput{}, envelopeErr
 		}
 		policy, err = writer.UpsertAuthorizationRoleBinding(r.Context(), access.AuthorizationRoleBindingInput{

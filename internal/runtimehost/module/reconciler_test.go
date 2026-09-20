@@ -99,6 +99,41 @@ func reconcilerRegistry(t *testing.T, ids ...servingstate.ID) *runtimehost.Regis
 	return registry
 }
 
+func TestActiveLeaseAndProviderApplyAuthorizationFilter(t *testing.T) {
+	registry := reconcilerRegistry(t, "generation-1")
+	if err := registry.ReconcileSealed(t.Context(), "generation-1"); err != nil {
+		t.Fatal(err)
+	}
+	module := &Module{registry: registry}
+	var calls atomic.Int32
+	module.SetAuthorizationSnapshotFilter(func(_ context.Context, captured accesssnapshot.AuthorizationSnapshot) (accesssnapshot.AuthorizationSnapshot, error) {
+		calls.Add(1)
+		return captured, nil
+	})
+	for _, acquire := range []func(context.Context) (runtimehost.Lease, error){module.Acquire, module.Provider().Acquire} {
+		lease, err := acquire(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		filtered, ok := lease.(interface {
+			AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+		})
+		if !ok || filtered.AuthorizationSnapshot().Identity() != lease.Identity() {
+			t.Fatal("filtered lease lost its bound authorization snapshot")
+		}
+		lease.Release()
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("filter calls = %d, want 2", got)
+	}
+	module.SetAuthorizationSnapshotFilter(func(context.Context, accesssnapshot.AuthorizationSnapshot) (accesssnapshot.AuthorizationSnapshot, error) {
+		return accesssnapshot.AuthorizationSnapshot{}, errors.New("current policy unavailable")
+	})
+	if lease, err := module.Acquire(t.Context()); lease != nil || err == nil {
+		t.Fatalf("failed policy lookup returned lease=%v, err=%v", lease, err)
+	}
+}
+
 func TestActiveReconcilerConvergesAfterMissedNotification(t *testing.T) {
 	registry := reconcilerRegistry(t, "generation-1", "generation-2")
 	if err := registry.ReconcileSealed(t.Context(), "generation-1"); err != nil {

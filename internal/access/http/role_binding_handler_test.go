@@ -112,8 +112,19 @@ func TestCreateProjectRoleBindingCapturesTypedRoleExpansionAndBindsServerScope(t
 	if err != nil {
 		t.Fatal(err)
 	}
+	manage, err := access.NewProjectPermissionPair(access.ActionProjectAccessManage, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	delegate, err := access.NewProjectPermissionPair(access.ActionProjectAccessDelegate, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
 	repo := &roleBindingPolicyRepositoryStub{envelope: access.GrantAdminEnvelope{
 		ID: "envelope-1", BoundPrincipalID: "actor-1", TargetProjectID: "project_demo",
+		Issuer: access.GrantIssuerEvidence{PrincipalID: "actor-1", Credential: access.GrantCredentialEvidence{
+			Class: access.GrantCredentialClassAPIToken, ID: "token-1", Fingerprint: "fingerprint-token-1",
+		}},
 		RecipientSelector: "group:group-1", RoleVersion: access.PermissionRoleVersion(access.PermissionRoleViewer),
 		Permissions: wantPermissions,
 	}}
@@ -122,6 +133,15 @@ func TestCreateProjectRoleBindingCapturesTypedRoleExpansionAndBindsServerScope(t
 		AuthorizationPolicyTargetID:    "target-server",
 		AuthorizationPolicyEnvironment: "prod",
 		CurrentPrincipal:               func(*http.Request) (Principal, bool) { return Principal{ID: "actor-1"}, true },
+		CurrentEffectivePermissionOptions: func(context.Context, string) ([]access.PermissionPair, error) {
+			return append([]access.PermissionPair{manage, delegate}, wantPermissions...), nil
+		},
+		CurrentCredential: func(*http.Request) (access.APICredential, bool) {
+			return access.APICredential{Principal: access.Principal{ID: "actor-1"}, Token: access.APIToken{
+				ID: "token-1", PrincipalID: "actor-1", TokenFingerprint: "fingerprint-token-1",
+				PermissionProfile: access.PermissionCatalogProfile, Permissions: append([]access.PermissionPair{manage, delegate}, wantPermissions...),
+			}}, true
+		},
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/role-bindings", strings.NewReader(`{"id":"binding-1","subjectType":"group","subjectId":"group-1","role":"viewer","grantAdminEnvelopeId":"envelope-1","expectedRevision":0}`))
 	request = withProjectRoute(request, "project_demo")
@@ -180,6 +200,155 @@ func TestCreateProjectRoleBindingCapturesTypedRoleExpansionAndBindsServerScope(t
 	}
 	if payload["targetId"] != "target-server" || payload["environment"] != "prod" || payload["role"] != "viewer" {
 		t.Fatalf("audit metadata = %#v", metadata)
+	}
+	handler.CurrentEffectivePermissionOptions = func(context.Context, string) ([]access.PermissionPair, error) {
+		return append([]access.PermissionPair{manage}, wantPermissions...), nil
+	}
+	denied := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/role-bindings", strings.NewReader(`{"id":"binding-1","subjectType":"group","subjectId":"group-1","role":"viewer","grantAdminEnvelopeId":"envelope-1","expectedRevision":0}`))
+	denied = withProjectRoute(denied, "project_demo")
+	denied.Header.Set("Idempotency-Key", "idem-2")
+	denial := httptest.NewRecorder()
+	handler.CreateProjectRoleBinding(denial, denied)
+	if denial.Code != http.StatusForbidden || repo.writerCalls != 1 {
+		t.Fatalf("principal without delegate status=%d writerCalls=%d body=%s", denial.Code, repo.writerCalls, denial.Body.String())
+	}
+}
+
+func TestCreateProjectRoleBindingRejectsTokenWithManageButNoDelegate(t *testing.T) {
+	wantPermissions, err := access.ExpandPermissionRole(access.PermissionRoleViewer, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manage, err := access.NewProjectPermissionPair(access.ActionProjectAccessManage, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	delegate, err := access.NewProjectPermissionPair(access.ActionProjectAccessDelegate, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &roleBindingPolicyRepositoryStub{envelope: access.GrantAdminEnvelope{
+		ID: "envelope-1", BoundPrincipalID: "actor-1", TargetProjectID: "project_demo",
+		Issuer: access.GrantIssuerEvidence{PrincipalID: "actor-1", Credential: access.GrantCredentialEvidence{
+			Class: access.GrantCredentialClassAPIToken, ID: "token-1", Fingerprint: "fingerprint-token-1",
+		}},
+		RecipientSelector: "group:group-1", RoleVersion: access.PermissionRoleVersion(access.PermissionRoleViewer), Permissions: wantPermissions,
+	}}
+	handler := Handler{
+		Repository:                  func() (access.Repository, error) { return repo, nil },
+		AuthorizationPolicyTargetID: "target-server", AuthorizationPolicyEnvironment: "prod",
+		CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "actor-1"}, true },
+		CurrentEffectivePermissionOptions: func(context.Context, string) ([]access.PermissionPair, error) {
+			return append([]access.PermissionPair{manage, delegate}, wantPermissions...), nil
+		},
+		CurrentCredential: func(*http.Request) (access.APICredential, bool) {
+			return access.APICredential{Principal: access.Principal{ID: "actor-1"}, Token: access.APIToken{
+				ID: "token-1", PrincipalID: "actor-1", TokenFingerprint: "fingerprint-token-1",
+				PermissionProfile: access.PermissionCatalogProfile, Permissions: append([]access.PermissionPair{manage}, wantPermissions...),
+			}}, true
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/role-bindings", strings.NewReader(`{"id":"binding-1","subjectType":"group","subjectId":"group-1","role":"viewer","grantAdminEnvelopeId":"envelope-1","expectedRevision":0}`))
+	request = withProjectRoute(request, "project_demo")
+	recorder := httptest.NewRecorder()
+	handler.CreateProjectRoleBinding(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if repo.writerCalls != 0 {
+		t.Fatalf("writer calls = %d, want 0", repo.writerCalls)
+	}
+}
+
+func TestCreateProjectRoleBindingRejectsTokenPairCeilingNarrowerThanRole(t *testing.T) {
+	wantPermissions, err := access.ExpandPermissionRole(access.PermissionRoleViewer, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manage, err := access.NewProjectPermissionPair(access.ActionProjectAccessManage, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	delegate, err := access.NewProjectPermissionPair(access.ActionProjectAccessDelegate, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &roleBindingPolicyRepositoryStub{envelope: access.GrantAdminEnvelope{
+		ID: "envelope-1", BoundPrincipalID: "actor-1", TargetProjectID: "project_demo",
+		Issuer: access.GrantIssuerEvidence{PrincipalID: "actor-1", Credential: access.GrantCredentialEvidence{
+			Class: access.GrantCredentialClassAPIToken, ID: "token-1", Fingerprint: "fingerprint-token-1",
+		}},
+		RecipientSelector: "group:group-1", RoleVersion: access.PermissionRoleVersion(access.PermissionRoleViewer), Permissions: wantPermissions,
+	}}
+	handler := Handler{
+		Repository:                  func() (access.Repository, error) { return repo, nil },
+		AuthorizationPolicyTargetID: "target-server", AuthorizationPolicyEnvironment: "prod",
+		CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "actor-1"}, true },
+		CurrentEffectivePermissionOptions: func(context.Context, string) ([]access.PermissionPair, error) {
+			return append([]access.PermissionPair{manage, delegate}, wantPermissions...), nil
+		},
+		CurrentCredential: func(*http.Request) (access.APICredential, bool) {
+			return access.APICredential{Principal: access.Principal{ID: "actor-1"}, Token: access.APIToken{
+				ID: "token-1", PrincipalID: "actor-1", TokenFingerprint: "fingerprint-token-1",
+				PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{manage, delegate, wantPermissions[0]},
+			}}, true
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/role-bindings", strings.NewReader(`{"id":"binding-1","subjectType":"group","subjectId":"group-1","role":"viewer","grantAdminEnvelopeId":"envelope-1","expectedRevision":0}`))
+	request = withProjectRoute(request, "project_demo")
+	recorder := httptest.NewRecorder()
+	handler.CreateProjectRoleBinding(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if repo.writerCalls != 0 {
+		t.Fatalf("writer calls = %d, want 0", repo.writerCalls)
+	}
+}
+
+func TestCreateProjectRoleBindingRejectsEnvelopeIssuedByAnotherToken(t *testing.T) {
+	wantPermissions, err := access.ExpandPermissionRole(access.PermissionRoleViewer, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manage, err := access.NewProjectPermissionPair(access.ActionProjectAccessManage, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	delegate, err := access.NewProjectPermissionPair(access.ActionProjectAccessDelegate, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &roleBindingPolicyRepositoryStub{envelope: access.GrantAdminEnvelope{
+		ID: "envelope-1", BoundPrincipalID: "actor-1", TargetProjectID: "project_demo",
+		Issuer: access.GrantIssuerEvidence{PrincipalID: "actor-1", Credential: access.GrantCredentialEvidence{
+			Class: access.GrantCredentialClassAPIToken, ID: "token-2", Fingerprint: "fingerprint-token-2",
+		}},
+		RecipientSelector: "group:group-1", RoleVersion: access.PermissionRoleVersion(access.PermissionRoleViewer), Permissions: wantPermissions,
+	}}
+	handler := Handler{
+		Repository:                  func() (access.Repository, error) { return repo, nil },
+		AuthorizationPolicyTargetID: "target-server", AuthorizationPolicyEnvironment: "prod",
+		CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "actor-1"}, true },
+		CurrentEffectivePermissionOptions: func(context.Context, string) ([]access.PermissionPair, error) {
+			return append([]access.PermissionPair{manage, delegate}, wantPermissions...), nil
+		},
+		CurrentCredential: func(*http.Request) (access.APICredential, bool) {
+			return access.APICredential{Principal: access.Principal{ID: "actor-1"}, Token: access.APIToken{
+				ID: "token-1", PrincipalID: "actor-1", TokenFingerprint: "fingerprint-token-1",
+				PermissionProfile: access.PermissionCatalogProfile, Permissions: append([]access.PermissionPair{manage, delegate}, wantPermissions...),
+			}}, true
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/role-bindings", strings.NewReader(`{"id":"binding-1","subjectType":"group","subjectId":"group-1","role":"viewer","grantAdminEnvelopeId":"envelope-1","expectedRevision":0}`))
+	request = withProjectRoute(request, "project_demo")
+	recorder := httptest.NewRecorder()
+	handler.CreateProjectRoleBinding(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if repo.writerCalls != 0 {
+		t.Fatalf("writer calls = %d, want 0", repo.writerCalls)
 	}
 }
 

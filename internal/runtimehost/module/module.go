@@ -3,10 +3,12 @@ package module
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 	"github.com/flidai/leapview/internal/servingstate"
@@ -49,17 +51,19 @@ type Config struct {
 }
 
 type Module struct {
-	registry         *runtimehost.Registry
-	reapStop         chan struct{}
-	reapDone         chan struct{}
-	reconcileStop    chan struct{}
-	reconcileDone    chan struct{}
-	reconcileCancel  context.CancelFunc
-	reconcileMu      sync.Mutex
-	reconcileRunning bool
-	logger           *slog.Logger
-	closeOnce        sync.Once
-	closeErr         error
+	registry              *runtimehost.Registry
+	authorizationFilterMu sync.RWMutex
+	authorizationFilter   func(context.Context, accesssnapshot.AuthorizationSnapshot) (accesssnapshot.AuthorizationSnapshot, error)
+	reapStop              chan struct{}
+	reapDone              chan struct{}
+	reconcileStop         chan struct{}
+	reconcileDone         chan struct{}
+	reconcileCancel       context.CancelFunc
+	reconcileMu           sync.Mutex
+	reconcileRunning      bool
+	logger                *slog.Logger
+	closeOnce             sync.Once
+	closeErr              error
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
@@ -271,7 +275,7 @@ func (m *Module) ActivatePreparedContext(ctx context.Context, prepared *runtimeh
 func (m *Module) VerifyPrepared(ctx context.Context, prepared *runtimehost.Prepared) (runtimehost.PreparedVerification, error) {
 	return m.registry.VerifyPrepared(ctx, prepared)
 }
-func (m *Module) Provider() runtimehost.Provider { return m.registry.Provider() }
+func (m *Module) Provider() runtimehost.Provider { return filteredProvider{module: m} }
 func (m *Module) ProjectID() projectgraph.ResourceID {
 	if m == nil || m.registry == nil {
 		return ""
@@ -305,7 +309,68 @@ func (m *Module) Environment() servingstate.Environment {
 	return m.registry.Environment()
 }
 func (m *Module) Acquire(ctx context.Context) (runtimehost.Lease, error) {
-	return m.registry.Acquire(ctx)
+	lease, err := m.registry.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	m.authorizationFilterMu.RLock()
+	filter := m.authorizationFilter
+	m.authorizationFilterMu.RUnlock()
+	if filter == nil {
+		return lease, nil
+	}
+	withSnapshot, ok := lease.(interface {
+		AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+	})
+	if !ok {
+		lease.Release()
+		return nil, errors.New("active runtime lease does not expose authorization snapshot")
+	}
+	snapshot, err := filter(ctx, withSnapshot.AuthorizationSnapshot())
+	if err != nil {
+		lease.Release()
+		return nil, fmt.Errorf("filter active authorization snapshot: %w", err)
+	}
+	if snapshot.Identity() != lease.Identity() {
+		lease.Release()
+		return nil, errors.New("filtered authorization snapshot identity differs from leased runtime")
+	}
+	if err := snapshot.ValidateBound(); err != nil {
+		lease.Release()
+		return nil, fmt.Errorf("validate filtered authorization snapshot: %w", err)
+	}
+	return filteredLease{Lease: lease, authorization: snapshot}, nil
+}
+
+// SetAuthorizationSnapshotFilter installs a request-time restriction on the
+// immutable generation policy. It is applied to both direct and Provider
+// leases, and failures release the underlying runtime lease before returning.
+func (m *Module) SetAuthorizationSnapshotFilter(filter func(context.Context, accesssnapshot.AuthorizationSnapshot) (accesssnapshot.AuthorizationSnapshot, error)) {
+	m.authorizationFilterMu.Lock()
+	m.authorizationFilter = filter
+	m.authorizationFilterMu.Unlock()
+}
+
+type filteredProvider struct{ module *Module }
+
+func (p filteredProvider) Acquire(ctx context.Context) (runtimehost.Lease, error) {
+	return p.module.Acquire(ctx)
+}
+
+type filteredLease struct {
+	runtimehost.Lease
+	authorization accesssnapshot.AuthorizationSnapshot
+}
+
+func (l filteredLease) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
+	return l.authorization
+}
+
+func (l filteredLease) DuckLakeSnapshotID() int64 {
+	if snapshot, ok := l.Lease.(interface{ DuckLakeSnapshotID() int64 }); ok {
+		return snapshot.DuckLakeSnapshotID()
+	}
+	return 0
 }
 func (m *Module) LeasedSnapshots() []int64 { return m.registry.LeasedSnapshots() }
 func (m *Module) LeaseRenewalError() error {

@@ -1,6 +1,8 @@
 package postgres
 
 import (
+	"context"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -105,10 +108,21 @@ func seedDurableGrantPrincipals(t *testing.T, db auditDatabase) {
 	}
 }
 
-func durableGrantPostgresInput(t *testing.T, issuer access.GrantIssuerEvidence, target access.DurableGrantTarget, recipient access.SubjectRef, idempotency string, issued, expires time.Time, permissions, ceiling []access.PermissionPair) access.ResourceShareGrantInput {
+func seedDurableGrantPolicy(t *testing.T, repo *Repository) access.GrantIssuancePolicy {
+	t.Helper()
+	scope := access.AuthorizationPolicyScope{TargetID: durableGrantTestInstance, ProjectID: durableGrantTestProject, Environment: "production"}
+	binding := access.RoleBinding{ID: "binding-grant-issuer", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: durableGrantIssuer}, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}
+	policy, err := repo.UpsertAuthorizationRoleBinding(t.Context(), access.AuthorizationRoleBindingInput{Scope: scope, Binding: binding, IdempotencyKey: "grant-test-policy", ExpectedRevision: 0})
+	if err != nil {
+		t.Fatalf("seed current target policy: %v", err)
+	}
+	return access.GrantIssuancePolicy{Scope: scope, Revision: policy.Revision, Digest: policy.Digest}
+}
+
+func durableGrantPostgresInput(t *testing.T, issuer access.GrantIssuerEvidence, policy access.GrantIssuancePolicy, target access.DurableGrantTarget, recipient access.SubjectRef, idempotency string, issued, expires time.Time, permissions, ceiling []access.PermissionPair) access.ResourceShareGrantInput {
 	t.Helper()
 	return access.ResourceShareGrantInput{
-		Target: target, Issuer: issuer, Recipient: recipient, Permissions: permissions, IssuancePermissions: ceiling,
+		Target: target, Issuer: issuer, IssuancePolicy: policy, Recipient: recipient, Permissions: permissions, IssuancePermissions: ceiling,
 		IssuedAt: issued, ExpiresAt: expires, IdempotencyKey: idempotency,
 	}
 }
@@ -121,6 +135,7 @@ func TestDurableGrantPostgreSQLResourceShareLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	policy := seedDurableGrantPolicy(t, repo)
 	target := access.DurableGrantTarget{InstanceID: durableGrantTestInstance, ProjectID: durableGrantTestProject, ResourceUID: durableGrantTestUID, ResourceID: "dashboard_test", ResourceKind: projectgraph.KindDashboard}
 	resource, err := access.NewResourceRef(target.ResourceID, target.ResourceKind)
 	if err != nil {
@@ -147,7 +162,7 @@ func TestDurableGrantPostgreSQLResourceShareLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := durableGrantPostgresInput(t, issuer, target, principal, "share-replay", issued, expires, []access.PermissionPair{read}, []access.PermissionPair{share, read})
+	input := durableGrantPostgresInput(t, issuer, policy, target, principal, "share-replay", issued, expires, []access.PermissionPair{read}, []access.PermissionPair{share, read})
 	onward := input
 	onward.IdempotencyKey = "share-onward-rejected"
 	onward.AllowOnwardDelegation = true
@@ -180,11 +195,11 @@ func TestDurableGrantPostgreSQLResourceShareLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conflict := durableGrantPostgresInput(t, issuer, target, group, "share-replay", issued, expires, []access.PermissionPair{read}, []access.PermissionPair{share, read})
+	conflict := durableGrantPostgresInput(t, issuer, policy, target, group, "share-replay", issued, expires, []access.PermissionPair{read}, []access.PermissionPair{share, read})
 	if _, err := repo.CreateResourceShareGrant(t.Context(), conflict); !errors.Is(err, access.ErrGrantIdempotencyConflict) {
 		t.Fatalf("idempotency conflict error = %v", err)
 	}
-	groupGrant, err := repo.CreateResourceShareGrant(t.Context(), durableGrantPostgresInput(t, issuer, target, group, "share-group", issued, expires, []access.PermissionPair{read}, []access.PermissionPair{share, read}))
+	groupGrant, err := repo.CreateResourceShareGrant(t.Context(), durableGrantPostgresInput(t, issuer, policy, target, group, "share-group", issued, expires, []access.PermissionPair{read}, []access.PermissionPair{share, read}))
 	if err != nil {
 		t.Fatalf("create group share: %v", err)
 	}
@@ -242,6 +257,139 @@ func TestDurableGrantPostgreSQLResourceShareLifecycle(t *testing.T) {
 	}
 }
 
+func TestDurableGrantPostgreSQLBrowserSessionIssuance(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	installDurableGrantMigration(t, db)
+	seedDurableGrantPrincipals(t, db)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := seedDurableGrantPolicy(t, repo)
+	target := access.DurableGrantTarget{InstanceID: durableGrantTestInstance, ProjectID: durableGrantTestProject, ResourceUID: durableGrantTestUID, ResourceID: "dashboard_test", ResourceKind: projectgraph.KindDashboard}
+	resource, err := access.NewResourceRef(target.ResourceID, target.ResourceKind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	share, err := access.NewExactPermissionPair(access.ActionResourceShare, target.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := access.NewExactPermissionPair(access.ActionDashboardRead, target.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionToken, err := repo.CreateSession(t.Context(), durableGrantIssuer, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := repo.secretFingerprint(sessionToken)
+	var sessionID string
+	if err := db.runtime.QueryRow(t.Context(), `SELECT id::text FROM access.session WHERE token_fingerprint=$1`, fingerprint).Scan(&sessionID); err != nil {
+		t.Fatal(err)
+	}
+	issuer := access.GrantIssuerEvidence{PrincipalID: durableGrantIssuer, Credential: access.GrantCredentialEvidence{Class: access.GrantCredentialClassSession, ID: sessionID, Fingerprint: hex.EncodeToString(fingerprint)}}
+	recipient, err := access.NewSubjectRef(access.SubjectKindPrincipal, durableGrantRecipient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := durableGrantPostgresInput(t, issuer, policy, target, recipient, "browser-share", time.Now().UTC(), time.Now().UTC().Add(time.Hour), []access.PermissionPair{read}, []access.PermissionPair{share, read})
+	if _, err := repo.CreateResourceShareGrant(t.Context(), in); err != nil {
+		t.Fatalf("current browser session share: %v", err)
+	}
+	// A grant mutation holds this credential lock until commit. Revocation may
+	// win before admission or wait until the in-flight grant commits, but it
+	// cannot commit between the authorization check and the grant write.
+	tx, err := db.runtime.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	txRepo := &Repository{db: tx, fingerprintKey: repo.fingerprintKey}
+	if err := txRepo.checkCredentialEvidence(t.Context(), tx, issuer); err != nil {
+		t.Fatalf("lock issuing browser session: %v", err)
+	}
+	revokeCtx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	err = repo.RevokeSession(revokeCtx, sessionID)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("revocation should wait for issuance commit, got %v", err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RevokeSession(t.Context(), sessionID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("revoke after issuing transaction: %v", err)
+	}
+	in.IdempotencyKey = "browser-share-after-revoke"
+	if _, err := repo.CreateResourceShareGrant(t.Context(), in); !errors.Is(err, access.ErrGrantCredentialInvalid) {
+		t.Fatalf("revoked session grant error = %v, want invalid credential", err)
+	}
+}
+
+func TestDurableGrantPostgreSQLPolicyRevisionFence(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	installDurableGrantMigration(t, db)
+	seedDurableGrantPrincipals(t, db)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := seedDurableGrantPolicy(t, repo)
+	target := access.DurableGrantTarget{InstanceID: durableGrantTestInstance, ProjectID: durableGrantTestProject, ResourceUID: durableGrantTestUID, ResourceID: "dashboard_test", ResourceKind: projectgraph.KindDashboard}
+	resource, err := access.NewResourceRef(target.ResourceID, target.ResourceKind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	share, err := access.NewExactPermissionPair(access.ActionResourceShare, target.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := access.NewExactPermissionPair(access.ActionDashboardRead, target.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, token, err := repo.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{PrincipalID: durableGrantIssuer, Name: "policy-fence-issuer", Permissions: []access.PermissionPair{share, read}, ExpiresAt: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := access.GrantIssuerEvidence{PrincipalID: durableGrantIssuer, Credential: access.GrantCredentialEvidence{Class: access.GrantCredentialClassAPIToken, ID: token.ID, Fingerprint: token.TokenFingerprint}}
+	recipient := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: durableGrantRecipient}
+	ceiling := []access.PermissionPair{share, read}
+	in := durableGrantPostgresInput(t, issuer, policy, target, recipient, "policy-fence-share", time.Now().UTC(), time.Now().UTC().Add(time.Hour), []access.PermissionPair{read}, ceiling)
+	tx, err := db.runtime.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	txRepo := &Repository{db: tx, fingerprintKey: repo.fingerprintKey}
+	if err := txRepo.checkGrantIssuance(t.Context(), tx, issuer, recipient, ceiling, policy, target.ProjectID, target.InstanceID); err != nil {
+		t.Fatalf("lock issuance authority: %v", err)
+	}
+	updatedBinding := access.RoleBinding{ID: "binding-grant-issuer", Name: "changed policy", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: durableGrantIssuer}, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}
+	update := access.AuthorizationRoleBindingInput{Scope: policy.Scope, Binding: updatedBinding, ExpectedRevision: policy.Revision, IdempotencyKey: "change-policy-after-issuance"}
+	updateCtx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	_, err = repo.UpsertAuthorizationRoleBinding(updateCtx, update)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("policy mutation should wait for issuance commit, got %v", err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := repo.UpsertAuthorizationRoleBinding(t.Context(), update)
+	if err != nil {
+		t.Fatalf("mutate policy after issuance transaction: %v", err)
+	}
+	if _, err := repo.CreateResourceShareGrant(t.Context(), in); !errors.Is(err, access.ErrGrantAuthorityUnavailable) {
+		t.Fatalf("stale issuance policy error = %v, want unavailable authority", err)
+	}
+	in.IssuancePolicy = access.GrantIssuancePolicy{Scope: policy.Scope, Revision: updated.Revision, Digest: updated.Digest}
+	if _, err := repo.CreateResourceShareGrant(t.Context(), in); err != nil {
+		t.Fatalf("fresh issuance policy rejected: %v", err)
+	}
+}
+
 func TestDurableGrantPostgreSQLExecutionEvidenceAndMutationGuard(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	installDurableGrantMigration(t, db)
@@ -250,6 +398,7 @@ func TestDurableGrantPostgreSQLExecutionEvidenceAndMutationGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	policy := seedDurableGrantPolicy(t, repo)
 	target := access.DurableGrantTarget{InstanceID: durableGrantTestInstance, ProjectID: durableGrantTestProject, ResourceUID: durableGrantTestUID2, ResourceID: "pipeline_test", ResourceKind: projectgraph.KindPipeline}
 	resource, err := access.NewResourceRef(target.ResourceID, target.ResourceKind)
 	if err != nil {
@@ -268,7 +417,7 @@ func TestDurableGrantPostgreSQLExecutionEvidenceAndMutationGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	issuer := access.GrantIssuerEvidence{PrincipalID: durableGrantIssuer, Credential: access.GrantCredentialEvidence{Class: access.GrantCredentialClassAPIToken, ID: token.ID, Fingerprint: token.TokenFingerprint}}
-	in := access.ExecutionGrantInput{Target: target, Issuer: issuer, ExecutionPrincipalID: durableGrantExecution, Permissions: []access.PermissionPair{run}, IssuancePermissions: []access.PermissionPair{run, delegate}, WorkflowID: "workflow", WorkflowRevision: "revision-1", ClosureDigest: "sha256:" + strings.Repeat("a", 64), BindingDigest: "sha256:" + strings.Repeat("b", 64), DestinationDigest: "sha256:" + strings.Repeat("c", 64), TriggerDigest: "sha256:" + strings.Repeat("d", 64), IssuedAt: time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond), ExpiresAt: time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond), IdempotencyKey: "execution-1"}
+	in := access.ExecutionGrantInput{Target: target, Issuer: issuer, IssuancePolicy: policy, ExecutionPrincipalID: durableGrantExecution, Permissions: []access.PermissionPair{run}, IssuancePermissions: []access.PermissionPair{run, delegate}, WorkflowID: "workflow", WorkflowRevision: "revision-1", ClosureDigest: "sha256:" + strings.Repeat("a", 64), BindingDigest: "sha256:" + strings.Repeat("b", 64), DestinationDigest: "sha256:" + strings.Repeat("c", 64), TriggerDigest: "sha256:" + strings.Repeat("d", 64), IssuedAt: time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond), ExpiresAt: time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond), IdempotencyKey: "execution-1"}
 	grant, err := repo.CreateExecutionGrant(t.Context(), in)
 	if err != nil {
 		t.Fatalf("create execution grant: %v", err)

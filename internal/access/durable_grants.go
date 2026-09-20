@@ -77,6 +77,31 @@ type GrantIssuerEvidence struct {
 	Credential  GrantCredentialEvidence `json:"credential"`
 }
 
+// GrantIssuancePolicy is the current target-policy head observed before
+// resolving the issuer's effective authority. The writer locks and compares
+// it again in the grant transaction, so a role revocation cannot commit
+// between authority resolution and grant issuance.
+type GrantIssuancePolicy struct {
+	Scope    AuthorizationPolicyScope
+	Revision int64
+	Digest   string
+}
+
+func (p GrantIssuancePolicy) Validate() error {
+	if err := ValidateAuthorizationPolicyScope(p.Scope); err != nil {
+		return err
+	}
+	if p.Revision <= 0 || len(p.Digest) != len("sha256:")+64 || !strings.HasPrefix(p.Digest, "sha256:") {
+		return fmt.Errorf("%w: issuance policy revision or digest is invalid", ErrGrantAuthorityInvalid)
+	}
+	for _, character := range p.Digest[len("sha256:"):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return fmt.Errorf("%w: issuance policy digest is not canonical", ErrGrantAuthorityInvalid)
+		}
+	}
+	return nil
+}
+
 func (e GrantIssuerEvidence) Validate() error {
 	if !canonicalUUID(e.PrincipalID) {
 		return fmt.Errorf("%w: issuer principal is required", ErrInvalidDurableGrant)
@@ -153,6 +178,7 @@ type ResourceShareGrantInput struct {
 	Profile               string
 	Target                DurableGrantTarget
 	Issuer                GrantIssuerEvidence
+	IssuancePolicy        GrantIssuancePolicy
 	Recipient             SubjectRef
 	RecipientPrincipalID  string
 	Permissions           []PermissionPair
@@ -262,6 +288,7 @@ type ExecutionGrantInput struct {
 	Profile              string
 	Target               DurableGrantTarget
 	Issuer               GrantIssuerEvidence
+	IssuancePolicy       GrantIssuancePolicy
 	ExecutionPrincipalID string
 	Permissions          []PermissionPair
 	IssuancePermissions  []PermissionPair
@@ -361,6 +388,7 @@ type GrantAdminEnvelopeInput struct {
 	ID                    string
 	Profile               string
 	Issuer                GrantIssuerEvidence
+	IssuancePolicy        GrantIssuancePolicy
 	BoundPrincipalID      string
 	Permissions           []PermissionPair
 	IssuancePermissions   []PermissionPair

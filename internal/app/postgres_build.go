@@ -584,6 +584,11 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(fmt.Errorf("build runtime host: %w", err))
 	}
+	policyReader, ok := accessBundle.Repository.(access.AuthorizationPolicyReader)
+	if !ok {
+		return fail(errors.New("current authorization policy reader is unavailable"))
+	}
+	runtimeHost.SetAuthorizationSnapshotFilter(currentTargetAuthorizationFilter(policyReader, instanceID, projectID, string(environment)))
 	// Approval authorization is deliberately late-bound to the active runtime
 	// snapshot. The graph is constructed before the runtime host and therefore
 	// starts fail-closed; install both identity and capability resolvers only

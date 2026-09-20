@@ -175,21 +175,21 @@ SELECT EXISTS (
     WHERE id = sqlc.arg(id)::uuid AND revoked_at IS NULL
 );
 
--- name: IsActiveSessionCredential :one
-SELECT EXISTS (
-    SELECT 1 FROM access.session
-    WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
-      AND token_fingerprint = sqlc.arg(fingerprint)::bytea
-      AND revoked_at IS NULL AND expires_at > clock_timestamp()
-);
+-- name: LockActiveSessionCredential :one
+SELECT id
+FROM access.session
+WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
+  AND token_fingerprint = sqlc.arg(fingerprint)::bytea
+  AND revoked_at IS NULL AND expires_at > clock_timestamp()
+FOR SHARE;
 
--- name: IsActiveAPITokenCredential :one
-SELECT EXISTS (
-    SELECT 1 FROM access.api_token
-    WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
-      AND token_fingerprint = sqlc.arg(fingerprint)::bytea
-      AND revoked_at IS NULL AND expires_at > clock_timestamp()
-);
+-- name: LockActiveAPITokenCredential :one
+SELECT id
+FROM access.api_token
+WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
+  AND token_fingerprint = sqlc.arg(fingerprint)::bytea
+  AND revoked_at IS NULL AND expires_at > clock_timestamp()
+FOR SHARE;
 
 -- name: GetAPITokenPermissionCeiling :one
 SELECT COALESCE(permission_profile, '') AS permission_profile,

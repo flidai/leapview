@@ -33,6 +33,7 @@ func (m *Module) resolveCurrentGrantAuthority(ctx context.Context, r *http.Reque
 	if !ok || strings.TrimSpace(principal.ID) == "" {
 		return access.CurrentAuthoritySnapshot{}, access.ErrGrantAuthorityUnavailable
 	}
+	var issuancePolicy access.GrantIssuancePolicy
 	if request.Target.ProjectID != "" {
 		if m.currentProjectID == nil {
 			return access.CurrentAuthoritySnapshot{}, errors.New("active project identity is unavailable")
@@ -41,6 +42,19 @@ func (m *Module) resolveCurrentGrantAuthority(ctx context.Context, r *http.Reque
 		if err != nil || activeProject != request.Target.ProjectID {
 			return access.CurrentAuthoritySnapshot{}, fmt.Errorf("durable grant target is outside the active project")
 		}
+		if request.Target.InstanceID != "" && request.Target.InstanceID != m.handler.DurableGrantInstanceID {
+			return access.CurrentAuthoritySnapshot{}, access.ErrGrantAuthorityInvalid
+		}
+		reader, ok := m.repositoryValue().(access.AuthorizationPolicyReader)
+		if !ok {
+			return access.CurrentAuthoritySnapshot{}, access.ErrGrantAuthorityUnavailable
+		}
+		scope := access.AuthorizationPolicyScope{TargetID: m.handler.AuthorizationPolicyTargetID, ProjectID: activeProject.String(), Environment: m.handler.AuthorizationPolicyEnvironment}
+		policy, err := reader.AuthorizationPolicy(ctx, scope)
+		if err != nil {
+			return access.CurrentAuthoritySnapshot{}, fmt.Errorf("resolve grant issuance policy: %w", err)
+		}
+		issuancePolicy = access.GrantIssuancePolicy{Scope: scope, Revision: policy.Revision, Digest: policy.Digest}
 	}
 	permissions, err := m.CurrentEffectivePermissionOptions(ctx, principal.ID)
 	if err != nil {
@@ -67,7 +81,7 @@ func (m *Module) resolveCurrentGrantAuthority(ctx context.Context, r *http.Reque
 	}
 	return access.CurrentAuthoritySnapshot{
 		Principal: access.Principal{ID: principal.ID, Kind: principal.Kind, Email: principal.Email, DisplayName: principal.DisplayName, CreatedAt: principal.CreatedAt, UpdatedAt: principal.UpdatedAt},
-		Groups:    groups, Permissions: access.ClonePermissionPairs(permissions), Credential: credential,
+		Groups:    groups, Permissions: access.ClonePermissionPairs(permissions), Policy: issuancePolicy, Credential: credential,
 		CredentialPermissions: credentialPermissions,
 	}, nil
 }

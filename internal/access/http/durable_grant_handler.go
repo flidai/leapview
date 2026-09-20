@@ -3,10 +3,13 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	stdhttp "net/http"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
@@ -25,6 +28,36 @@ type resourceShareGrantIssueRequest struct {
 
 type resourceShareGrantRevokeRequest struct {
 	Reason string `json:"reason,omitempty"`
+}
+
+var durableGrantAuditActions = map[string]string{
+	"issueResourceShareGrant":  "resource_share_grant.issued",
+	"revokeResourceShareGrant": "resource_share_grant.revoked",
+	"issueGrantAdminEnvelope":  "grant_admin_envelope.issued",
+	"revokeGrantAdminEnvelope": "grant_admin_envelope.revoked",
+}
+
+// executeDurableGrantCommand completes the generated command guard around a
+// service-owned mutation. DurableGrantService delegates to PostgreSQL methods
+// that already atomically mutate and append their audit event; the executor
+// callback therefore observes that completed mutation without opening a
+// second repository transaction around it.
+func executeDurableGrantCommand(r *stdhttp.Request, operation accessgen.GenCommandOperationID, mutation func() error) error {
+	if _, generated := apigencommand.OperationID(r.Context()); !generated {
+		return mutation()
+	}
+	executor, err := apigencommand.NewExecutor(accessgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return err
+	}
+	return executor.Execute(r.Context(), operation.APIGenOperationID(), apigencommand.Execution{
+		Transactional: func(_ context.Context, contract apigencommand.Contract) error {
+			if expected := durableGrantAuditActions[operation.APIGenOperationID()]; expected != "" && contract.AuditAction != expected {
+				return fmt.Errorf("generated audit action %q does not match durable grant action %q", contract.AuditAction, expected)
+			}
+			return mutation()
+		},
+	})
 }
 
 func (h Handler) IssueResourceShareGrant(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -67,8 +100,12 @@ func (h Handler) IssueResourceShareGrant(w stdhttp.ResponseWriter, r *stdhttp.Re
 		writeResourceShareError(w, err)
 		return
 	}
-	grant, err := service.IssueResourceShare(r.Context(), request)
-	if err != nil {
+	var grant access.ResourceShareGrant
+	if err := executeDurableGrantCommand(r, accessgen.GenCommandOperationIssueResourceShareGrant(), func() error {
+		var err error
+		grant, err = service.IssueResourceShare(r.Context(), request)
+		return err
+	}); err != nil {
 		writeResourceShareError(w, err)
 		return
 	}
@@ -112,7 +149,9 @@ func (h Handler) RevokeResourceShareGrant(w stdhttp.ResponseWriter, r *stdhttp.R
 		writeResourceShareError(w, err)
 		return
 	}
-	if err := service.RevokeResourceShareGrantForTarget(r.Context(), id, input.Reason, grant.Target); err != nil {
+	if err := executeDurableGrantCommand(r, accessgen.GenCommandOperationRevokeResourceShareGrant(), func() error {
+		return service.RevokeResourceShareGrantForTarget(r.Context(), id, input.Reason, grant.Target)
+	}); err != nil {
 		writeResourceShareError(w, err)
 		return
 	}
@@ -161,7 +200,7 @@ func writeResourceShareError(w stdhttp.ResponseWriter, err error) {
 		status = stdhttp.StatusNotFound
 	case errors.Is(err, access.ErrGrantAuthorityUnavailable):
 		status = stdhttp.StatusServiceUnavailable
-	case errors.Is(err, access.ErrForbidden), errors.Is(err, access.ErrGrantAdminEnvelopeMismatch):
+	case errors.Is(err, access.ErrForbidden), errors.Is(err, access.ErrGrantAdminEnvelopeMismatch), errors.Is(err, access.ErrGrantAuthorityInvalid):
 		status = stdhttp.StatusForbidden
 	}
 	writeJSONError(w, err, status)

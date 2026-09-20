@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
+	apigenruntime "github.com/flidai/leapview/internal/app/api/apigenruntime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
@@ -21,6 +23,40 @@ const (
 	durableHTTPGrantID     = "grant-http-1"
 	durableHTTPResourceUID = "00000000-0000-7000-8000-000000000303"
 )
+
+type durableGrantGeneratedAuthorizer struct{}
+
+func (durableGrantGeneratedAuthorizer) Protect(_ string, next http.Handler) (http.Handler, bool) {
+	return next, true
+}
+
+func runDurableGrantGeneratedRequest(t *testing.T, operation string, handler Handler, request *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
+	runtime, err := apigenruntime.Build(durableGrantGeneratedAuthorizer{}, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
+		switch operationID {
+		case "issueResourceShareGrant":
+			handler.IssueResourceShareGrant(w, r)
+		case "revokeResourceShareGrant":
+			handler.RevokeResourceShareGrant(w, r)
+		case "issueGrantAdminEnvelope":
+			handler.IssueGrantAdminEnvelope(w, r)
+		case "revokeGrantAdminEnvelope":
+			handler.RevokeGrantAdminEnvelope(w, r)
+		default:
+			return false
+		}
+		return true
+	}, accessgen.GetAPIGenCommandRuntimeContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Header.Get("Content-Type") == "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	recorder := httptest.NewRecorder()
+	runtime.HandleAPIGen(operation, recorder, request)
+	return recorder
+}
 
 type durableGrantHTTPRepository struct {
 	access.Repository
@@ -130,6 +166,7 @@ func durableHTTPAuthority(t *testing.T, principalID string, target access.Durabl
 	return access.CurrentAuthoritySnapshot{
 		Principal:   access.Principal{ID: principalID, Kind: access.PrincipalKindUser},
 		Permissions: []access.PermissionPair{share, read}, CredentialPermissions: []access.PermissionPair{share, read},
+		Policy: access.GrantIssuancePolicy{Scope: access.AuthorizationPolicyScope{TargetID: target.InstanceID, ProjectID: target.ProjectID.String(), Environment: "production"}, Revision: 1, Digest: "sha256:" + strings.Repeat("a", 64)},
 		Credential: access.CredentialEvidence{
 			Class: access.GrantCredentialClassAPIToken, ID: "token-http-1", Fingerprint: "sha256:" + strings.Repeat("b", 64),
 			PrincipalID: principalID, ExpiresAt: time.Now().Add(time.Hour),
@@ -150,6 +187,7 @@ func durableHTTPEnvelopeAuthority(t *testing.T, principalID string, projectID pr
 	return access.CurrentAuthoritySnapshot{
 		Principal: principalIDSnapshot(principalID), Permissions: []access.PermissionPair{manage, delegate},
 		CredentialPermissions: []access.PermissionPair{manage, delegate},
+		Policy:                access.GrantIssuancePolicy{Scope: access.AuthorizationPolicyScope{TargetID: "instance-http", ProjectID: projectID.String(), Environment: "production"}, Revision: 1, Digest: "sha256:" + strings.Repeat("a", 64)},
 		Credential:            access.CredentialEvidence{Class: access.GrantCredentialClassAPIToken, ID: "token-envelope-http", Fingerprint: "sha256:" + strings.Repeat("d", 64), PrincipalID: principalID, ExpiresAt: time.Now().Add(time.Hour)},
 	}
 }
@@ -406,4 +444,131 @@ func TestRevokeGrantAdminEnvelopeBindsStoredProjectTarget(t *testing.T) {
 	if resolved.Target != want || repository.revokeActor != durableHTTPIssuerID || repository.envelope.RevocationReason != "security review" {
 		t.Fatalf("revoke target/actor/reason = %#v/%q/%q", resolved.Target, repository.revokeActor, repository.envelope.RevocationReason)
 	}
+}
+
+func TestDurableGrantCommandsCompleteGeneratedRuntimeContract(t *testing.T) {
+	t.Run("issue resource share", func(t *testing.T) {
+		target := durableHTTPTarget()
+		repository := &durableGrantHTTPRepository{}
+		authority := durableHTTPAuthority(t, durableHTTPIssuerID, target)
+		service, err := access.NewDurableGrantService(repository, access.CurrentAuthorityResolverFunc(func(_ context.Context, request access.CurrentAuthorityRequest) (access.CurrentAuthoritySnapshot, error) {
+			if request.Target != target {
+				t.Fatalf("resolved target = %#v, want %#v", request.Target, target)
+			}
+			return authority, nil
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		handler := Handler{
+			DurableGrantService:    func(*http.Request) (*access.DurableGrantService, error) { return service, nil },
+			DurableGrantInstanceID: target.InstanceID,
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/resource-share-grants", strings.NewReader(`{"resourceUid":"`+target.ResourceUID+`","resourceKind":"dashboard","resourceId":"dashboard_sales","recipientType":"principal","recipientId":"`+durableHTTPRecipientID+`","permissions":[{"action":"dashboard.read","profile":"leapview.permissions/v1","target":{"scope":"resource","projectId":"project_demo","resourceKind":"dashboard","resourceId":"dashboard_sales"}}],"ttlSeconds":3600}`))
+		request = withProjectRoute(request, "project_demo")
+		request.Header.Set("Idempotency-Key", "generated-issue-share")
+		response := runDurableGrantGeneratedRequest(t, "issueResourceShareGrant", handler, request)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		if repository.createInput.Target != target || repository.createInput.IdempotencyKey != "generated-issue-share" {
+			t.Fatalf("durable input = %#v", repository.createInput)
+		}
+	})
+
+	t.Run("revoke resource share", func(t *testing.T) {
+		target := durableHTTPTarget()
+		repository := &durableGrantHTTPRepository{grant: access.ResourceShareGrant{
+			ID: durableHTTPGrantID, Target: target,
+			Issuer: access.GrantIssuerEvidence{PrincipalID: durableHTTPIssuerID, Credential: access.GrantCredentialEvidence{Class: access.GrantCredentialClassAPIToken, ID: "token-generated-share", Fingerprint: "sha256:" + strings.Repeat("b", 64)}},
+		}}
+		authority := durableHTTPAuthority(t, durableHTTPIssuerID, target)
+		service, err := access.NewDurableGrantService(repository, access.CurrentAuthorityResolverFunc(func(_ context.Context, request access.CurrentAuthorityRequest) (access.CurrentAuthoritySnapshot, error) {
+			if request.Target != target {
+				t.Fatalf("resolved target = %#v, want %#v", request.Target, target)
+			}
+			return authority, nil
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		handler := Handler{
+			Repository: func() (access.Repository, error) { return repository, nil },
+			CurrentPrincipal: func(*http.Request) (Principal, bool) {
+				return Principal{ID: durableHTTPIssuerID}, true
+			},
+			DurableGrantService: func(*http.Request) (*access.DurableGrantService, error) { return service, nil },
+		}
+		request := withGrantRoute(httptest.NewRequest(http.MethodDelete, "/api/v1/resource-share-grants/"+durableHTTPGrantID, strings.NewReader(`{"reason":"generated revoke"}`)), durableHTTPGrantID)
+		response := runDurableGrantGeneratedRequest(t, "revokeResourceShareGrant", handler, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		if repository.revokeActor != durableHTTPIssuerID || repository.grant.RevocationReason != "generated revoke" {
+			t.Fatalf("revoke actor/reason = %q/%q", repository.revokeActor, repository.grant.RevocationReason)
+		}
+	})
+
+	t.Run("issue grant admin envelope", func(t *testing.T) {
+		projectID := projectgraph.ResourceID("project_demo")
+		repository := &durableGrantHTTPRepository{}
+		authority := durableHTTPEnvelopeAuthority(t, durableHTTPIssuerID, projectID)
+		service, err := access.NewDurableGrantService(repository, access.CurrentAuthorityResolverFunc(func(_ context.Context, request access.CurrentAuthorityRequest) (access.CurrentAuthoritySnapshot, error) {
+			want := access.DurableGrantTarget{ProjectID: projectID}
+			if request.Target != want {
+				t.Fatalf("resolved target = %#v, want %#v", request.Target, want)
+			}
+			return authority, nil
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		handler := Handler{DurableGrantService: func(*http.Request) (*access.DurableGrantService, error) { return service, nil }}
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/grant-admin-envelopes", strings.NewReader(`{"permissions":[{"profile":"leapview.permissions/v1","action":"project.access.manage","target":{"scope":"project","projectId":"project_demo"}}],"recipientSelector":"group:`+durableHTTPRecipientID+`","roleVersion":"leapview.permissions/v1:role:viewer","ttlSeconds":3600}`))
+		request = withProjectRoute(request, "project_demo")
+		request.Header.Set("Idempotency-Key", "generated-issue-envelope")
+		response := runDurableGrantGeneratedRequest(t, "issueGrantAdminEnvelope", handler, request)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		if repository.envelopeInput.BoundPrincipalID != durableHTTPIssuerID || repository.envelopeInput.IdempotencyKey != "generated-issue-envelope" {
+			t.Fatalf("durable input = %#v", repository.envelopeInput)
+		}
+	})
+
+	t.Run("revoke grant admin envelope", func(t *testing.T) {
+		projectID := projectgraph.ResourceID("project_demo")
+		repository := &durableGrantHTTPRepository{envelope: access.GrantAdminEnvelope{
+			ID: "envelope-generated-1", TargetProjectID: projectID, TargetResourceKind: projectgraph.KindDashboard, TargetResourceID: "dashboard_sales",
+			BoundPrincipalID: durableHTTPIssuerID, Issuer: access.GrantIssuerEvidence{PrincipalID: durableHTTPIssuerID},
+		}}
+		authority := durableHTTPEnvelopeAuthority(t, durableHTTPIssuerID, projectID)
+		service, err := access.NewDurableGrantService(repository, access.CurrentAuthorityResolverFunc(func(_ context.Context, request access.CurrentAuthorityRequest) (access.CurrentAuthoritySnapshot, error) {
+			want := access.DurableGrantTarget{ProjectID: projectID, ResourceKind: projectgraph.KindDashboard, ResourceID: "dashboard_sales"}
+			if request.Target != want {
+				t.Fatalf("resolved target = %#v, want %#v", request.Target, want)
+			}
+			return authority, nil
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		handler := Handler{
+			Repository: func() (access.Repository, error) { return repository, nil },
+			CurrentPrincipal: func(*http.Request) (Principal, bool) {
+				return Principal{ID: durableHTTPIssuerID}, true
+			},
+			DurableGrantService: func(*http.Request) (*access.DurableGrantService, error) { return service, nil },
+		}
+		request := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/project_demo/grant-admin-envelopes/envelope-generated-1", strings.NewReader(`{"reason":"generated revoke"}`))
+		request = withProjectRoute(request, "project_demo")
+		chi.RouteContext(request.Context()).URLParams.Add("envelope", "envelope-generated-1")
+		response := runDurableGrantGeneratedRequest(t, "revokeGrantAdminEnvelope", handler, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		if repository.revokeActor != durableHTTPIssuerID || repository.envelope.RevocationReason != "generated revoke" {
+			t.Fatalf("revoke actor/reason = %q/%q", repository.revokeActor, repository.envelope.RevocationReason)
+		}
+	})
 }

@@ -63,6 +63,7 @@ type CurrentAuthoritySnapshot struct {
 	Principal             Principal
 	Groups                []SubjectRef
 	Permissions           []PermissionPair
+	Policy                GrantIssuancePolicy
 	Credential            CredentialEvidence
 	CredentialPermissions []PermissionPair
 }
@@ -185,7 +186,8 @@ func (s *DurableGrantService) IssueResourceShare(ctx context.Context, request Re
 	}
 	in := ResourceShareGrantInput{
 		ID: request.ID, Profile: request.Profile, Target: request.Target, Issuer: issuer,
-		Recipient: request.Recipient, RecipientPrincipalID: request.RecipientPrincipalID,
+		IssuancePolicy: authority.Policy,
+		Recipient:      request.Recipient, RecipientPrincipalID: request.RecipientPrincipalID,
 		Permissions: ClonePermissionPairs(request.Permissions), IssuancePermissions: ceiling,
 		IssuedAt: request.IssuedAt, ExpiresAt: request.ExpiresAt, TTL: request.TTL,
 		IdempotencyKey: request.IdempotencyKey, RequestDigest: request.RequestDigest,
@@ -217,6 +219,7 @@ func (s *DurableGrantService) IssueExecutionGrant(ctx context.Context, request E
 	}
 	in := ExecutionGrantInput{
 		ID: request.ID, Profile: request.Profile, Target: request.Target, Issuer: issuer,
+		IssuancePolicy:       authority.Policy,
 		ExecutionPrincipalID: request.ExecutionPrincipalID, Permissions: ClonePermissionPairs(request.Permissions),
 		IssuancePermissions: ceiling, WorkflowID: request.WorkflowID, WorkflowRevision: request.WorkflowRevision,
 		ClosureDigest: request.ClosureDigest, BindingDigest: request.BindingDigest,
@@ -251,7 +254,8 @@ func (s *DurableGrantService) IssueGrantAdminEnvelope(ctx context.Context, reque
 	}
 	in := GrantAdminEnvelopeInput{
 		ID: request.ID, Profile: request.Profile, Issuer: issuer, BoundPrincipalID: authority.Principal.ID,
-		Permissions: ClonePermissionPairs(request.Permissions), IssuancePermissions: ceiling,
+		IssuancePolicy: authority.Policy,
+		Permissions:    ClonePermissionPairs(request.Permissions), IssuancePermissions: ceiling,
 		TargetProjectID: request.TargetProjectID, TargetResourceKind: request.TargetResourceKind, TargetResourceID: request.TargetResourceID,
 		RecipientSelector: request.RecipientSelector, RoleVersion: request.RoleVersion,
 		IssuedAt: request.IssuedAt, ExpiresAt: request.ExpiresAt, TTL: request.TTL,
@@ -339,6 +343,12 @@ func (authority CurrentAuthoritySnapshot) issuance(target DurableGrantTarget, ki
 	issuer, err := authority.issuerEvidence(now)
 	if err != nil {
 		return GrantIssuerEvidence{}, nil, err
+	}
+	if err := authority.Policy.Validate(); err != nil {
+		return GrantIssuerEvidence{}, nil, fmt.Errorf("%w: %v", ErrGrantAuthorityUnavailable, err)
+	}
+	if authority.Policy.Scope.ProjectID != target.ProjectID.String() || (target.InstanceID != "" && authority.Policy.Scope.TargetID != target.InstanceID) {
+		return GrantIssuerEvidence{}, nil, ErrGrantAuthorityInvalid
 	}
 	seenGroups := make(map[string]struct{}, len(authority.Groups))
 	for _, group := range authority.Groups {

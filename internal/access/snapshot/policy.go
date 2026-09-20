@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -399,6 +400,41 @@ func (s AuthorizationSnapshot) Grants() []Grant { return cloneGrants(s.grants) }
 
 // RoleBindings returns defensive copies of explicit project assignments.
 func (s AuthorizationSnapshot) RoleBindings() []RoleBinding { return cloneRoleBindings(s.roleBindings) }
+
+// RestrictToCurrentRoleBindings returns the serving policy with only those
+// captured role assignments whose current target-owned definition is still
+// identical. A newly assigned or widened role cannot enter a serving graph
+// until a new generation is admitted, while revocation takes effect on the
+// next lease. Durable grants and data policies retain their own lifecycles.
+func (s AuthorizationSnapshot) RestrictToCurrentRoleBindings(current []RoleBinding) (AuthorizationSnapshot, error) {
+	if err := s.ValidateBound(); err != nil {
+		return AuthorizationSnapshot{}, err
+	}
+	byID := make(map[string]RoleBinding, len(current))
+	for _, binding := range current {
+		if err := access.ValidateAuthorizationRoleBinding(binding); err != nil {
+			return AuthorizationSnapshot{}, fmt.Errorf("current role binding %q: %w", binding.ID, err)
+		}
+		if _, duplicate := byID[binding.ID]; duplicate {
+			return AuthorizationSnapshot{}, fmt.Errorf("duplicate current role binding %q", binding.ID)
+		}
+		byID[binding.ID] = binding
+	}
+	retained := make([]RoleBinding, 0, len(s.roleBindings))
+	for _, captured := range s.roleBindings {
+		live, exists := byID[captured.ID]
+		if !exists {
+			continue
+		}
+		// Names are descriptive; all authority-bearing fields must match.
+		capturedAuthority := captured
+		capturedAuthority.Name, live.Name = "", ""
+		if reflect.DeepEqual(capturedAuthority, live) {
+			retained = append(retained, captured)
+		}
+	}
+	return NewAuthorizationSnapshotWithRoleBindings(s.identity, s.project, retained, s.grants, s.dataPolicies)
+}
 
 // DataPolicies returns a defensive copy of the validated policy list.
 func (s AuthorizationSnapshot) DataPolicies() []DataPolicy { return clonePolicies(s.dataPolicies) }

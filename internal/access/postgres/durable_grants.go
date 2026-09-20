@@ -85,7 +85,7 @@ func (r *Repository) insertResourceShareGrant(ctx context.Context, in access.Res
 	if err != nil {
 		return access.ResourceShareGrant{}, false, err
 	}
-	if err := r.checkGrantIssuance(ctx, db, in.Issuer, recipient, in.IssuancePermissions); err != nil {
+	if err := r.checkGrantIssuance(ctx, db, in.Issuer, recipient, in.IssuancePermissions, in.IssuancePolicy, in.Target.ProjectID, in.Target.InstanceID); err != nil {
 		return access.ResourceShareGrant{}, false, err
 	}
 	permissions, err := access.EncodePermissionPairs(in.Permissions)
@@ -213,7 +213,7 @@ func (r *Repository) insertExecutionGrant(ctx context.Context, in access.Executi
 	if err != nil {
 		return access.ExecutionGrant{}, false, err
 	}
-	if err := r.checkGrantIssuance(ctx, db, in.Issuer, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: in.ExecutionPrincipalID}, in.IssuancePermissions); err != nil {
+	if err := r.checkGrantIssuance(ctx, db, in.Issuer, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: in.ExecutionPrincipalID}, in.IssuancePermissions, in.IssuancePolicy, in.Target.ProjectID, in.Target.InstanceID); err != nil {
 		return access.ExecutionGrant{}, false, err
 	}
 	permissions, err := access.EncodePermissionPairs(in.Permissions)
@@ -334,7 +334,7 @@ func (r *Repository) insertGrantAdminEnvelope(ctx context.Context, in access.Gra
 	if err != nil {
 		return access.GrantAdminEnvelope{}, false, err
 	}
-	if err := r.checkGrantIssuance(ctx, db, in.Issuer, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: in.BoundPrincipalID}, in.IssuancePermissions); err != nil {
+	if err := r.checkGrantIssuance(ctx, db, in.Issuer, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: in.BoundPrincipalID}, in.IssuancePermissions, in.IssuancePolicy, in.TargetProjectID, ""); err != nil {
 		return access.GrantAdminEnvelope{}, false, err
 	}
 	permissions, err := access.EncodePermissionPairs(in.Permissions)
@@ -501,7 +501,26 @@ func grantAuditInput(principalID, action, projectID, resourceID string, kind pro
 	return access.AuditEventInput{PrincipalID: principalID, Action: action, ProjectID: projectID, ResourceKind: string(kind), ResourceID: resourceID, Status: "success", MetadataJSON: string(metadata)}
 }
 
-func (r *Repository) checkGrantIssuance(ctx context.Context, db DBTX, issuer access.GrantIssuerEvidence, recipient access.SubjectRef, issuancePermissions []access.PermissionPair) error {
+func (r *Repository) checkGrantIssuance(ctx context.Context, db DBTX, issuer access.GrantIssuerEvidence, recipient access.SubjectRef, issuancePermissions []access.PermissionPair, policy access.GrantIssuancePolicy, projectID projectgraph.ResourceID, instanceID string) error {
+	if err := policy.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", access.ErrGrantAuthorityUnavailable, err)
+	}
+	if policy.Scope.ProjectID != projectID.String() || (instanceID != "" && policy.Scope.TargetID != instanceID) {
+		return access.ErrGrantAuthorityInvalid
+	}
+	if err := r.validateAuthorizationPolicyScope(policy.Scope); err != nil {
+		return err
+	}
+	head, err := accessdb.New(db).LockAuthorizationPolicyHeadForShare(ctx, policyScopeParamsForShare(policy.Scope))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return access.ErrGrantAuthorityUnavailable
+	}
+	if err != nil {
+		return fmt.Errorf("lock grant issuance policy: %w", err)
+	}
+	if head.Revision != policy.Revision || head.Digest != policy.Digest {
+		return fmt.Errorf("%w: target policy changed before grant commit", access.ErrGrantAuthorityUnavailable)
+	}
 	if err := r.checkCurrentPrincipalOn(ctx, db, issuer.PrincipalID); err != nil {
 		return err
 	}
@@ -576,34 +595,34 @@ func (r *Repository) checkCredentialEvidence(ctx context.Context, db DBTX, issue
 	if err != nil || !issuerPrincipal.Valid {
 		return access.ErrGrantCredentialInvalid
 	}
-	var active bool
+	queries := accessdb.New(db)
 	switch issuer.Credential.Class {
 	case access.GrantCredentialClassSession:
-		active, err = accessdb.New(db).IsActiveSessionCredential(ctx, accessdb.IsActiveSessionCredentialParams{ID: parsed, PrincipalID: issuerPrincipal, Fingerprint: fingerprint})
+		_, err = queries.LockActiveSessionCredential(ctx, accessdb.LockActiveSessionCredentialParams{ID: parsed, PrincipalID: issuerPrincipal, Fingerprint: fingerprint})
 	case access.GrantCredentialClassAPIToken:
-		active, err = accessdb.New(db).IsActiveAPITokenCredential(ctx, accessdb.IsActiveAPITokenCredentialParams{ID: parsed, PrincipalID: issuerPrincipal, Fingerprint: fingerprint})
+		_, err = queries.LockActiveAPITokenCredential(ctx, accessdb.LockActiveAPITokenCredentialParams{ID: parsed, PrincipalID: issuerPrincipal, Fingerprint: fingerprint})
 	default:
+		return access.ErrGrantCredentialInvalid
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
 		return access.ErrGrantCredentialInvalid
 	}
 	if err != nil {
 		return err
 	}
-	if !active {
-		return access.ErrGrantCredentialInvalid
-	}
 	return nil
 }
 
 // checkCredentialPermissionCeiling resolves the typed ceiling attached to an
-// API token. Browser sessions do not yet have a durable typed permission
-// projection, so accepting caller-supplied issuance permissions for them
-// would turn evidence into authority; fail closed until that resolver exists.
+// API token. Sessions have no independent pair ceiling: their principal/group
+// authority is resolved by DurableGrantService, while the session row is
+// locked and checked for current validity by checkCredentialEvidence.
 func (r *Repository) checkCredentialPermissionCeiling(ctx context.Context, db DBTX, issuer access.GrantIssuerEvidence, requested []access.PermissionPair) error {
 	if requested == nil {
 		return access.ErrGrantPermissionCeiling
 	}
 	if issuer.Credential.Class == access.GrantCredentialClassSession {
-		return fmt.Errorf("%w: typed session authority resolver is unavailable", access.ErrGrantPermissionCeiling)
+		return nil
 	}
 	credentialID, err := pgUUID(issuer.Credential.ID)
 	if err != nil {

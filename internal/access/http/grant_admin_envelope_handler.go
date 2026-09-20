@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
@@ -53,18 +54,22 @@ func (h Handler) IssueGrantAdminEnvelope(w stdhttp.ResponseWriter, r *stdhttp.Re
 		writeResourceShareError(w, err)
 		return
 	}
-	grant, err := service.IssueGrantAdminEnvelope(r.Context(), access.GrantAdminEnvelopeRequest{
-		TargetProjectID:       projectID,
-		TargetResourceKind:    body.TargetResourceKind,
-		TargetResourceID:      body.TargetResourceID,
-		Permissions:           access.ClonePermissionPairs(body.Permissions),
-		RecipientSelector:     body.RecipientSelector,
-		RoleVersion:           body.RoleVersion,
-		TTL:                   time.Duration(body.TTLSeconds) * time.Second,
-		IdempotencyKey:        r.Header.Get("Idempotency-Key"),
-		AllowOnwardDelegation: false,
-	})
-	if err != nil {
+	var grant access.GrantAdminEnvelope
+	if err := executeDurableGrantCommand(r, accessgen.GenCommandOperationIssueGrantAdminEnvelope(), func() error {
+		var err error
+		grant, err = service.IssueGrantAdminEnvelope(r.Context(), access.GrantAdminEnvelopeRequest{
+			TargetProjectID:       projectID,
+			TargetResourceKind:    body.TargetResourceKind,
+			TargetResourceID:      body.TargetResourceID,
+			Permissions:           access.ClonePermissionPairs(body.Permissions),
+			RecipientSelector:     body.RecipientSelector,
+			RoleVersion:           body.RoleVersion,
+			TTL:                   time.Duration(body.TTLSeconds) * time.Second,
+			IdempotencyKey:        r.Header.Get("Idempotency-Key"),
+			AllowOnwardDelegation: false,
+		})
+		return err
+	}); err != nil {
 		writeResourceShareError(w, err)
 		return
 	}
@@ -126,7 +131,9 @@ func (h Handler) RevokeGrantAdminEnvelope(w stdhttp.ResponseWriter, r *stdhttp.R
 		ResourceKind: grant.TargetResourceKind,
 		ResourceID:   grant.TargetResourceID,
 	}
-	if err := service.RevokeGrantAdminEnvelopeForTarget(r.Context(), id, body.Reason, target); err != nil {
+	if err := executeDurableGrantCommand(r, accessgen.GenCommandOperationRevokeGrantAdminEnvelope(), func() error {
+		return service.RevokeGrantAdminEnvelopeForTarget(r.Context(), id, body.Reason, target)
+	}); err != nil {
 		writeResourceShareError(w, err)
 		return
 	}

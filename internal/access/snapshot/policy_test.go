@@ -56,6 +56,51 @@ func TestAuthorizationSnapshotRoundTripAndDigest(t *testing.T) {
 	require.NotEmpty(t, digest)
 }
 
+func TestRestrictToCurrentRoleBindingsRevokesWithoutImportingNewAuthority(t *testing.T) {
+	project := testGraph(t)
+	bob := mustSubject(t, access.SubjectKindPrincipal, "bob")
+	charlie := mustSubject(t, access.SubjectKindPrincipal, "charlie")
+	viewer := RoleBinding{ID: "binding_1", Name: "viewer", Subject: bob, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}
+	snapshot, err := NewAuthorizationSnapshotWithRoleBindings(testIdentity(), project, []RoleBinding{viewer}, []Grant{{ID: "grant_1", Canonical: testGrant(t, project)}}, nil)
+	require.NoError(t, err)
+	resource, err := access.NewResourceRef("dashboard_main", graph.KindDashboard)
+	require.NoError(t, err)
+	allowed, err := snapshot.Allows(bob, resource, access.CapabilityResourceRead)
+	require.NoError(t, err)
+	require.True(t, allowed)
+
+	newViewer := RoleBinding{ID: "binding_2", Name: "new viewer", Subject: charlie, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}
+	restricted, err := snapshot.RestrictToCurrentRoleBindings([]RoleBinding{newViewer})
+	require.NoError(t, err)
+	require.Empty(t, restricted.RoleBindings())
+	allowed, err = restricted.Allows(bob, resource, access.CapabilityResourceRead)
+	require.NoError(t, err)
+	require.False(t, allowed)
+	allowed, err = restricted.Allows(charlie, resource, access.CapabilityResourceRead)
+	require.NoError(t, err)
+	require.False(t, allowed)
+	alice := mustSubject(t, access.SubjectKindPrincipal, "alice")
+	allowed, err = restricted.Allows(alice, resource, access.CapabilityResourceRead)
+	require.NoError(t, err)
+	require.True(t, allowed, "an independent durable grant remains effective")
+
+	current := viewer
+	current.Name = "renamed viewer"
+	restricted, err = snapshot.RestrictToCurrentRoleBindings([]RoleBinding{current})
+	require.NoError(t, err)
+	require.Len(t, restricted.RoleBindings(), 1)
+	require.Equal(t, viewer.Name, restricted.RoleBindings()[0].Name)
+	current.Role = access.ProjectRoleAdmin
+	current.Capabilities = access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
+	restricted, err = snapshot.RestrictToCurrentRoleBindings([]RoleBinding{current})
+	require.NoError(t, err)
+	require.Empty(t, restricted.RoleBindings(), "a changed role must await a new generation")
+	current.Role = access.ProjectRoleViewer
+	current.Capabilities = access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
+	restricted, err = snapshot.RestrictToCurrentRoleBindings([]RoleBinding{current})
+	require.Error(t, err, "invalid current role expansion must fail closed")
+}
+
 func mustSubject(t *testing.T, kind access.SubjectKind, id string) access.SubjectRef {
 	t.Helper()
 	subject, err := access.NewSubjectRef(kind, id)
