@@ -890,6 +890,18 @@ test('dashboard titles use regular emphasis and popularity has a dedicated hover
       firstTooltipVisibility: 'visible',
       missingLabel: 'Not ranked',
     })
+    const last = page.locator('.entity-list-popularity').last()
+    await last.hover()
+    const clipped = await last.locator('.entity-list-hover-tooltip').evaluate(tooltip => {
+      const box = tooltip.getBoundingClientRect()
+      for (let ancestor = tooltip.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        if (!['hidden', 'auto', 'scroll', 'clip'].includes(getComputedStyle(ancestor).overflowY)) continue
+        const bounds = ancestor.getBoundingClientRect()
+        if (box.top < bounds.top || box.bottom > bounds.bottom) return true
+      }
+      return false
+    })
+    expect(clipped).toBe(false)
   } finally {
     await page.close()
   }
