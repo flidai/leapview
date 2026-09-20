@@ -119,6 +119,12 @@ if [[ -x "$release/leapview" && -f "$release/immutable-image.txt" && -f "$releas
 fi
 
 available_kb="$(df --output=avail /opt | tail -1 | tr -d ' ')"
+if (( available_kb <= 7000000 )) && command -v go >/dev/null && [[ -d /root/.cache/go-build && ! -L /root/.cache/go-build ]]; then
+  echo 'Reclaiming only the regenerable Go compiler/test cache before staging'
+  du -sh /root/.cache/go-build
+  GOCACHE=/root/.cache/go-build go clean -cache -testcache
+  available_kb="$(df --output=avail /opt | tail -1 | tr -d ' ')"
+fi
 if (( available_kb <= 7000000 )); then
   df -h /opt
   docker system df
