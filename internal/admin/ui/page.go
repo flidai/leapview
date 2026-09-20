@@ -371,9 +371,6 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 	case "api-tokens":
 		page.HeaderTitle = "API tokens"
 		page.HeaderDetail = "Manage personal API and CLI credentials."
-	case "archived-chats":
-		page.HeaderTitle = "Archived chats"
-		page.HeaderDetail = "Restore or delete conversations hidden from your chat history."
 	case "api-token-new":
 		page.HeaderTitle = "New personal access token"
 		page.HeaderDetail = "Create a scoped credential for API, CLI, and automation access."

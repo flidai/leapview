@@ -8,8 +8,8 @@ publisher_client_id="${DEMO_PUBLISHER_CLIENT_ID:?Set DEMO_PUBLISHER_CLIENT_ID}"
 publisher_client_secret="${DEMO_PUBLISHER_CLIENT_SECRET:?Set DEMO_PUBLISHER_CLIENT_SECRET}"
 release_client_id="${DEMO_RELEASE_CLIENT_ID:?Set DEMO_RELEASE_CLIENT_ID}"
 release_client_secret="${DEMO_RELEASE_CLIENT_SECRET:?Set DEMO_RELEASE_CLIENT_SECRET}"
-source_root="$repo_root/dashboards"
-data_link="$repo_root/.data/olist"
+source_root="$repo_root/dashboards/experiments/cfo-demo"
+data_link="$repo_root/.data/cfo-demo"
 project_id="${DEMO_PROJECT_ID:?Set DEMO_PROJECT_ID to the durable target ProjectUID}"
 candidate_key="hosted-demo"
 temporary_directory="$(mktemp -d)"
@@ -85,11 +85,11 @@ jq -e --arg source_revision "$source_revision" '
   exit 1
 }
 go run ./internal/app/tools/configgen
-go run ./internal/app/tools/bootstrapolist --shared-cache --out "$data_link"
+go run ./internal/app/tools/bootstrapfinance --shared-cache --out "$data_link"
 data_path="$(cd -P "$data_link" && pwd)"
 "$leapview" data sync \
   --source-root "$source_root" \
-  --connection olist \
+  --connection finance_files \
   --from "$data_path" \
   --target "$demo_target" \
   --project-id "$project_id" \

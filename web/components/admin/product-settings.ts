@@ -89,7 +89,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     .identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
     .attribution { color: var(--lv-fg-muted); text-decoration: none; font: var(--lv-type-caption); }
     .attribution:hover, .attribution:focus-visible { color: var(--lv-fg-default); text-decoration: underline; }
-    .file-action { position: relative; display: inline-flex; align-items: center; border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-button-bg-rest); color: var(--lv-button-fg-rest); cursor: pointer; padding: .42rem .7rem; font: var(--lv-type-body-compact); }
+    .file-action { box-sizing: border-box; position: relative; display: inline-flex; align-items: center; border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-button-bg-rest); color: var(--lv-button-fg-rest); cursor: pointer; padding: .42rem .7rem; font: var(--lv-type-body-compact); }
     .file-action:focus-within { outline: var(--borderWidth-thick) solid var(--focus-outlineColor); outline-offset: -1px; }
     .file-action.disabled { cursor: not-allowed; opacity: .55; }
     .file-action input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
@@ -116,6 +116,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
       .panel { padding: var(--base-size-12); }
       .status-grid { grid-template-columns: 1fr; }
       .inline { align-items: stretch; flex-direction: column; }
+      .inline input[type="text"] { flex: 0 1 auto; }
       .inline input[type="text"], .inline .file-action, .inline button { width: 100%; }
       .logo { align-items: flex-start; }
     }
@@ -290,9 +291,9 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           <p class="hint">Configured query and managed-data budgets for this instance.</p>
         </div>
         <div class="status-grid">
-          ${this.limitCard('Query result rows', limits.queryResultMaxRows)}
+          ${this.limitCard('Query result rows', limits.queryResultMaxRows, 'count')}
           ${this.limitCard('Query result bytes', limits.queryResultMaxBytes)}
-          ${this.limitCard('Managed-data files', limits.managedDataMaxFiles)}
+          ${this.limitCard('Managed-data files', limits.managedDataMaxFiles, 'count')}
           ${this.limitCard('Managed-data file bytes', limits.managedDataMaxFileBytes)}
           ${this.limitCard('Managed-data revision bytes', limits.managedDataMaxRevisionBytes)}
         </div>
@@ -319,8 +320,8 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     return html`<div class="status-card"><strong>${label}</strong><span class=${`status status-${tone} ${tone === 'positive' ? 'enabled' : tone === 'neutral' ? 'disabled' : ''}`} data-status=${tone} role="status">${value}</span></div>`
   }
 
-  private limitCard(label: string, value: number) {
-    return html`<div class="status-card"><strong>${label}</strong><span class="settings-value">${formatLimit(value)}</span></div>`
+  private limitCard(label: string, value: number, format: 'bytes' | 'count' = 'bytes') {
+    return html`<div class="status-card"><strong>${label}</strong><span class="settings-value">${format === 'count' ? formatCount(value) : formatLimit(value)}</span></div>`
   }
 
   private handleDisplayNameInput = (event: Event): void => {
@@ -418,6 +419,11 @@ function formatLimit(value: number): string {
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)} KB`
+  return value.toLocaleString()
+}
+
+function formatCount(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return 'Not configured'
   return value.toLocaleString()
 }
 

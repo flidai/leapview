@@ -1,6 +1,8 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import type { CatalogPageSignal, ChromeSignal } from '../../generated/signals'
+import { readStringList, readStringRecord, writeStorage } from './catalog-preferences'
+import { uuidv7 } from '../shared/command'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
@@ -262,6 +264,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     return html`
       <section aria-label="LeapView dashboard catalog">
         ${renderPageHeader(page.title, '', '', this.createDraftHref ? html`<a class="catalog-create-draft" href=${this.createDraftHref} aria-haspopup="dialog" aria-controls="catalog-create-draft-dialog" @click=${this.handleCreateDraftTrigger}>${lucideIcon(lucideIconByCanonicalName('plus'), { size: 16, strokeWidth: 2 })}<span>New dashboard</span></a>` : undefined)}
+        ${['archive', 'delete'].includes(new URLSearchParams(window.location.search).get('dashboardActionError') ?? '') ? html`<p role="alert">The dashboard could not be ${new URLSearchParams(window.location.search).get('dashboardActionError') === 'delete' ? 'deleted' : 'archived'}. Refresh the page and try again. If the problem continues, check your dashboard permissions with an administrator.</p>` : ''}
         <nav class="catalog-tabs" aria-label="Dashboard views" role="tablist">
           ${this.renderCatalogTab('all', 'All dashboards')}
           ${this.renderCatalogTab('favorites', 'Favorites')}
@@ -376,10 +379,15 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
         <button type="button" role="menuitem" data-action="copy-link" @click=${() => this.copyDashboardLink(dashboard)}>${lucideIcon(lucideIconByCanonicalName('link'), { size: 16, strokeWidth: 2 })}<span>Copy link</span></button>
         ${editable ? html`
           <div class="catalog-action-divider" role="separator"></div>
-          <form class="catalog-action-form" method="post" action=${dashboardArchiveHref(dashboard)}>
+          <form class="catalog-action-form" method="post" action=${`${dashboardViewHref(dashboard)}/archive`}>
             <input type="hidden" name="gorilla.csrf.Token" value=${this.mutationCSRFToken || this.createDraftCSRFToken}>
             <input type="hidden" name="idempotencyKey" value=${newRequestID()}>
-            <button class="catalog-action-danger" type="submit" role="menuitem">${lucideIcon(lucideIconByCanonicalName('archive'), { size: 16, strokeWidth: 2 })}<span>Archive</span></button>
+            <button type="submit" role="menuitem">${lucideIcon(lucideIconByCanonicalName('archive'), { size: 16, strokeWidth: 2 })}<span>Archive</span></button>
+          </form>
+          <form class="catalog-action-form" method="post" action=${dashboardDeleteHref(dashboard)} @submit=${(event: SubmitEvent) => this.confirmDashboardDelete(event, dashboard)}>
+            <input type="hidden" name="gorilla.csrf.Token" value=${this.mutationCSRFToken || this.createDraftCSRFToken}>
+            <input type="hidden" name="idempotencyKey" value=${newRequestID()}>
+            <button class="catalog-action-danger" type="submit" role="menuitem">${lucideIcon(lucideIconByCanonicalName('trash-2'), { size: 16, strokeWidth: 2 })}<span>Delete</span></button>
           </form>
         ` : ''}
       </div>
@@ -522,6 +530,10 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     const trigger = this.actionMenuTrigger
     this.actionMenuTrigger = null
     queueMicrotask(() => trigger?.focus({ preventScroll: true }))
+  }
+
+  private confirmDashboardDelete(event: SubmitEvent, dashboard: CatalogDashboard): void {
+    if (!window.confirm(`Delete ${dashboard.title}? This cannot be undone.`)) event.preventDefault()
   }
 
   private handleGlobalKeydown = (event: KeyboardEvent): void => {
@@ -698,8 +710,8 @@ function dashboardForkHref(dashboard: CatalogDashboard): string {
   return `${dashboardViewHref(dashboard)}/fork`
 }
 
-function dashboardArchiveHref(dashboard: CatalogDashboard): string {
-  return `${dashboardViewHref(dashboard)}/archive`
+function dashboardDeleteHref(dashboard: CatalogDashboard): string {
+  return `${dashboardViewHref(dashboard)}/delete`
 }
 
 function dashboardAppearanceColor(value: string): string {
@@ -707,40 +719,13 @@ function dashboardAppearanceColor(value: string): string {
 }
 
 function newRequestID(): string {
-  return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `archive-${Date.now()}`
+  return uuidv7()
 }
 
 function timestamp(value: string | undefined): number {
   if (!value) return 0
   const result = new Date(value).getTime()
   return Number.isNaN(result) ? 0 : result
-}
-
-function readStringList(key: string): string[] {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(key) ?? '[]')
-    return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim())) : []
-  } catch {
-    return []
-  }
-}
-
-function readStringRecord(key: string): Record<string, string> {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(key) ?? '{}')
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-    return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
-  } catch {
-    return {}
-  }
-}
-
-function writeStorage(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // Discovery preferences are a progressive enhancement when storage is unavailable.
-  }
 }
 
 function formatCompactDate(value: string | undefined): string {

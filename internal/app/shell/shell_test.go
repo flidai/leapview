@@ -145,7 +145,7 @@ func TestProviderUsesAdminNavigationAndBackAction(t *testing.T) {
 	if chrome.Sidebar.Area != "" || len(chrome.Sidebar.Areas) != 0 {
 		t.Fatalf("admin sidebar areas = %q %#v, want none", chrome.Sidebar.Area, chrome.Sidebar.Areas)
 	}
-	if len(chrome.Sidebar.Groups) != 6 {
+	if len(chrome.Sidebar.Groups) != 5 {
 		t.Fatalf("navigation = %#v", chrome.Sidebar.Groups)
 	}
 	wantGroups := []struct {
@@ -159,10 +159,6 @@ func TestProviderUsesAdminNavigationAndBackAction(t *testing.T) {
 			label string
 			icon  string
 		}{{label: "Profile", icon: "user"}, {label: "Security & sessions", icon: "activity"}, {label: "API tokens", icon: "data"}}},
-		{label: "Chats", items: []struct {
-			label string
-			icon  string
-		}{{label: "Archived chats", icon: "history"}}},
 		{label: "Product", items: []struct {
 			label string
 			icon  string

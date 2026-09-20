@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "cbf29cf113a459baac963a4aa61eb9145849efc1361f4ec1ac01dd772ee6c1ac"
+	const expectedRouteContractDigest = "33a038ca855b6e5fdf6764d64495ef2a7209c6ed810ad973709a2082f6b6a04e"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -136,7 +136,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	switch {
 	case strings.HasPrefix(path, "/product/logo/"):
 		authenticated.owner = "admin"
-	case path == "/admin" || path == "/admin/profile" || path == "/admin/security" || path == "/admin/api-tokens" || path == "/admin/api-tokens/new" || path == "/admin/archived-chats" || path == "/admin/personal-settings/command":
+	case path == "/admin" || path == "/admin/profile" || path == "/admin/security" || path == "/admin/api-tokens" || path == "/admin/api-tokens/new" || path == "/admin/personal-settings/command":
 		authenticated.owner = "admin"
 	case path == "/admin/agent" || path == "/admin/agent/config":
 		authenticated.owner = "agent"
@@ -161,7 +161,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case path == "/dashboards/{dashboard}/edit" || path == "/dashboards/{dashboard}/draft/command" || path == "/dashboards/{dashboard}/draft/visual-window":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_EDIT"
-	case path == "/dashboards/{dashboard}/archive":
+	case path == "/dashboards/{dashboard}/archive" || path == "/dashboards/{dashboard}/delete":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_MANAGE"
 	case path == "/dashboards/new" || path == "/dashboards/{dashboard}/fork":
@@ -253,7 +253,6 @@ GET /.well-known/oauth-protected-resource
 GET /.well-known/oauth-protected-resource/mcp
 GET /admin
 GET /admin/api-tokens
-GET /admin/archived-chats
 GET /admin/api-tokens/new
 GET /admin/agent
 GET /admin/audit
@@ -366,6 +365,7 @@ GET /connections/search
 GET /dashboards/search
 POST /explore/command
 POST /dashboards/{dashboard}/archive
+POST /dashboards/{dashboard}/delete
 POST /dashboards/{dashboard}/commands/clear-selection
 POST /dashboards/{dashboard}/commands/filter
 POST /dashboards/{dashboard}/commands/filter-options

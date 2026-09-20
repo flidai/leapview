@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	nethttp "net/http"
 	"net/url"
 	"sort"
@@ -311,37 +312,37 @@ func (h Handler) DashboardArchive(w nethttp.ResponseWriter, r *nethttp.Request) 
 	project, err := h.projectIDForRequest(r.Context())
 	actorID := h.currentActor(r)
 	if err != nil || h.Authoring == nil || actorID == "" {
-		writeBuilderError(w, r, access.ErrForbidden)
+		writeDashboardCatalogActionError(w, r, "archive", access.ErrForbidden)
 		return
 	}
 	reader, ok := h.Authoring.(dashboardAuthoringDraftReader)
 	if !ok {
-		writeBuilderError(w, r, errors.New("dashboard authoring archive operation is unavailable"))
+		writeDashboardCatalogActionError(w, r, "archive", errors.New("dashboard authoring archive operation is unavailable"))
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		writeBuilderError(w, r, fmt.Errorf("read dashboard archive form: %w", err))
+		writeDashboardCatalogActionError(w, r, "archive", fmt.Errorf("read dashboard archive form: %w", err))
 		return
 	}
 	requestID, err := browserFormRequestID(r)
 	if err != nil {
-		writeBuilderError(w, r, err)
+		writeDashboardCatalogActionError(w, r, "archive", err)
 		return
 	}
 	dashboardID := authoring.DashboardID(strings.TrimSpace(chi.URLParam(r, "dashboard")))
 	if err := dashboardID.Validate(); err != nil {
-		writeBuilderError(w, r, err)
+		writeDashboardCatalogActionError(w, r, "archive", err)
 		return
 	}
 	draft, err := reader.Draft(r.Context(), application.DraftRequest{
 		ProjectID: project, ActorID: actorID, DashboardID: dashboardID,
 	})
 	if err != nil {
-		writeBuilderError(w, r, err)
+		writeDashboardCatalogActionError(w, r, "archive", err)
 		return
 	}
 	if draft.Lifecycle.Draft == nil || draft.Lifecycle.Draft.ID == "" {
-		writeBuilderError(w, r, fmt.Errorf("%w: dashboard has no current draft", authoring.ErrNotFound))
+		writeDashboardCatalogActionError(w, r, "archive", fmt.Errorf("%w: dashboard has no current draft", authoring.ErrNotFound))
 		return
 	}
 	command := authoring.Command{
@@ -354,7 +355,47 @@ func (h Handler) DashboardArchive(w nethttp.ResponseWriter, r *nethttp.Request) 
 		_, mutationErr := h.Authoring.Execute(ctx, project, command)
 		return mutationErr
 	}); err != nil {
-		writeBuilderError(w, r, err)
+		writeDashboardCatalogActionError(w, r, "archive", err)
+		return
+	}
+	nethttp.Redirect(w, r, "/", nethttp.StatusSeeOther)
+}
+
+// DashboardDelete permanently removes the repository-backed dashboard. The
+// authoring service resolves the current lifecycle revision inside its
+// transaction, so the catalog only needs to submit the dashboard identity and
+// retry key.
+func (h Handler) DashboardDelete(w nethttp.ResponseWriter, r *nethttp.Request) {
+	project, err := h.projectIDForRequest(r.Context())
+	actorID := h.currentActor(r)
+	if err != nil || h.Authoring == nil || actorID == "" {
+		writeDashboardCatalogActionError(w, r, "delete", access.ErrForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeDashboardCatalogActionError(w, r, "delete", fmt.Errorf("read dashboard delete form: %w", err))
+		return
+	}
+	requestID, err := browserFormRequestID(r)
+	if err != nil {
+		writeDashboardCatalogActionError(w, r, "delete", err)
+		return
+	}
+	dashboardID := authoring.DashboardID(strings.TrimSpace(chi.URLParam(r, "dashboard")))
+	if err := dashboardID.Validate(); err != nil {
+		writeDashboardCatalogActionError(w, r, "delete", err)
+		return
+	}
+	command := authoring.Command{
+		ID: authoring.CommandID(requestID), DashboardID: dashboardID,
+		Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: actorID},
+		Delete:     &authoring.DeletePayload{},
+	}
+	if err := executeAuthoringUIMutation(r, "executeDashboardAuthoringCommand", project.String(), requestID, actorID, command.DashboardID.String(), "", authoring.OriginUI, access.CapabilityResourceManage, nil, func(ctx context.Context) error {
+		_, mutationErr := h.Authoring.Execute(ctx, project, command)
+		return mutationErr
+	}); err != nil {
+		writeDashboardCatalogActionError(w, r, "delete", err)
 		return
 	}
 	nethttp.Redirect(w, r, "/", nethttp.StatusSeeOther)
@@ -489,7 +530,7 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, err)
 		return
 	}
-	if command.Archive != nil {
+	if command.Archive != nil || command.Delete != nil {
 		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"builder": map[string]any{"redirectTo": "/"}})
 		return
 	}
@@ -911,6 +952,8 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.Publish = &authoring.PublishPayload{}
 	case "archive":
 		command.Archive = &authoring.ArchivePayload{}
+	case "delete":
+		command.Delete = &authoring.DeletePayload{}
 	case "set_visibility":
 		visibility := authoring.Visibility(strings.TrimSpace(s.Visibility))
 		if err := visibility.Validate(); err != nil {
@@ -1374,4 +1417,11 @@ func writeBuilderError(w nethttp.ResponseWriter, r *nethttp.Request, err error) 
 		}
 	}
 	nethttp.Error(w, message, status)
+}
+
+// Browser catalog forms return failures to the application, never to a raw
+// transport error document. Details stay in server diagnostics.
+func writeDashboardCatalogActionError(w nethttp.ResponseWriter, r *nethttp.Request, action string, err error) {
+	slog.WarnContext(r.Context(), "dashboard catalog action failed", "action", action, "error", err)
+	nethttp.Redirect(w, r, "/?dashboardActionError="+url.QueryEscape(action), nethttp.StatusSeeOther)
 }

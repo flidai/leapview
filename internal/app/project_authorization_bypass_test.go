@@ -67,9 +67,9 @@ func TestProjectAuthoringGuardRoutesManageToDashboardManageAuthorization(t *test
 		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
 	)
 	router := chi.NewRouter()
-	router.Post("/dashboards/{dashboard}/archive", guarded)
+	router.Post("/dashboards/{dashboard}/delete", guarded)
 	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/dashboards/dashboard_owned/archive", nil))
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/dashboards/dashboard_owned/delete", nil))
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
 	}

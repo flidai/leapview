@@ -180,6 +180,24 @@ func TestDashboardArchiveResolvesTheCurrentDraftAndRedirectsToCatalog(t *testing
 	}
 }
 
+func TestDashboardDeleteUsesThePermanentDeleteCommandAndRedirectsToCatalog(t *testing.T) {
+	fake := &builderAuthoringFake{}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/dashboard-owned/delete", strings.NewReader("idempotencyKey="+browserTestRequestID))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request = withBuilderURLParams(request, "sales", "dashboard-owned")
+	recorder := httptest.NewRecorder()
+
+	handler.DashboardDelete(recorder, request)
+
+	if recorder.Code != nethttp.StatusSeeOther || recorder.Header().Get("Location") != "/" {
+		t.Fatalf("delete redirect = %d %q body=%s", recorder.Code, recorder.Header().Get("Location"), recorder.Body.String())
+	}
+	if fake.executed.ID != authoring.CommandID(browserTestRequestID) || fake.executed.Delete == nil || fake.executed.DraftID != "" || !fake.auditIntentFound || fake.auditIntent.Capability != access.CapabilityResourceManage {
+		t.Fatalf("delete command = %#v", fake.executed)
+	}
+}
+
 func TestDashboardDraftCreateOffersAndPreselectsGovernedModels(t *testing.T) {
 	handler := Handler{
 		Authoring:          &builderAuthoringFake{},
@@ -813,29 +831,29 @@ func TestDashboardBuilderCommandTranslatesPublishWithExactRevision(t *testing.T)
 	}
 }
 
-func TestDashboardBuilderCommandArchivesAndRedirectsToCatalog(t *testing.T) {
+func TestDashboardBuilderCommandDeletesAndRedirectsToCatalog(t *testing.T) {
 	fake := &builderAuthoringFake{}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
 	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{
 		"builderCommand": map[string]any{
 			"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1",
-			"revisionNumber": "7", "revisionContentHash": "sha256:" + strings.Repeat("a", 64), "action": "archive",
+			"revisionNumber": "7", "revisionContentHash": "sha256:" + strings.Repeat("a", 64), "action": "delete",
 		},
 	})
 	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
-	req.Header.Set("X-Request-ID", "archive-1")
+	req.Header.Set("X-Request-ID", "delete-1")
 	recorder := httptest.NewRecorder()
 	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
-	if recorder.Code != nethttp.StatusOK || fake.executed.Archive == nil || fake.executed.ID != authoring.CommandID(browserTestRequestID) {
-		t.Fatalf("archive response = %d command=%#v body=%s", recorder.Code, fake.executed, recorder.Body.String())
+	if recorder.Code != nethttp.StatusOK || fake.executed.Delete == nil || fake.executed.ID != authoring.CommandID(browserTestRequestID) {
+		t.Fatalf("delete response = %d command=%#v body=%s", recorder.Code, fake.executed, recorder.Body.String())
 	}
 	body := recorder.Body.String()
 	patches := ssetest.PatchSignals(t, body)
 	if len(patches) != 1 || patches[0]["builder"].(map[string]any)["redirectTo"] != "/" {
-		t.Fatalf("archive did not signal a catalog redirect: %#v body=%s", patches, body)
+		t.Fatalf("delete did not signal a catalog redirect: %#v body=%s", patches, body)
 	}
 	if fake.builderReq.DashboardID != "" {
-		t.Fatalf("archive attempted to re-project an archived builder: %#v", fake.builderReq)
+		t.Fatalf("delete attempted to re-project a deleted builder: %#v", fake.builderReq)
 	}
 }
 
@@ -1362,5 +1380,18 @@ func TestDashboardBuilderCommandRepreviewsAuthoritativeRevision(t *testing.T) {
 	}
 	if fake.previewReq.ProjectID != "sales" || fake.previewReq.ActorID != "principal-1" || fake.previewReq.DashboardID != "revenue" || fake.previewReq.DraftID != "draft-1" || fake.previewReq.ExpectedRevision.Number != 7 || fake.previewReq.ExpectedRevision.RevisionID != "revision-1" || fake.previewReq.PageID != selectedPage {
 		t.Fatalf("preview request = %#v", fake.previewReq)
+	}
+}
+
+func TestDashboardCatalogActionsReturnFailuresToApplication(t *testing.T) {
+	h := Handler{Authoring: &builderAuthoringFake{}, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	for action, handler := range map[string]nethttp.HandlerFunc{"archive": h.DashboardArchive, "delete": h.DashboardDelete} {
+		req := httptest.NewRequest(nethttp.MethodPost, "/dashboards/owned/"+action, strings.NewReader("idempotencyKey=not-a-uuid"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		handler(rec, req)
+		if rec.Code != nethttp.StatusSeeOther || rec.Header().Get("Location") != "/?dashboardActionError="+action {
+			t.Fatalf("%s failure escaped app: %d %s", action, rec.Code, rec.Body.String())
+		}
 	}
 }

@@ -40,12 +40,6 @@ export function testDocument(includeShellScript: boolean, compact = false, histo
           ],
         },
         {
-          label: 'Chats',
-          items: [
-            { id: 'archived-chats', label: 'Archived chats', href: '/admin/archived-chats', icon: 'history' },
-          ],
-        },
-        {
           label: 'Product',
           items: [
             { id: 'general', label: 'General', href: '/admin/general', icon: 'settings' },

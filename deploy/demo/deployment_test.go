@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDemoUsesCanonicalOlistShowcase(t *testing.T) {
+func TestDemoUsesCFOShowcase(t *testing.T) {
 	root := filepath.Join("..", "..")
-	sourceRoot := filepath.Join(root, "dashboards")
+	sourceRoot := filepath.Join(root, "dashboards", "experiments", "cfo-demo")
 	_, err := projectcompiler.Compile(sourceRoot)
 	require.NoError(t, err)
 
@@ -29,11 +29,11 @@ func TestDemoUsesCanonicalOlistShowcase(t *testing.T) {
 	}
 	project := strings.ToLower(source.String())
 	for _, required := range []string{
-		"name: olist",
+		"name: finance_files",
 		"type: managed",
-		"name: visual-showcase",
-		"name: executive-sales",
-		"name: fulfillment-operations",
+		"name: finance.financials",
+		"name: finance",
+		"name: cfo-command-center",
 	} {
 		require.Contains(t, project, required)
 	}
@@ -42,7 +42,7 @@ func TestDemoUsesCanonicalOlistShowcase(t *testing.T) {
 
 func TestDemoBundleDoesNotCarryControlPlaneAccessPolicy(t *testing.T) {
 	root := filepath.Join("..", "..")
-	compiled, err := projectcompiler.Compile(filepath.Join(root, "dashboards"))
+	compiled, err := projectcompiler.Compile(filepath.Join(root, "dashboards", "experiments", "cfo-demo"))
 	require.NoError(t, err)
 	canonical := string(compiled.Canonical())
 	require.NotContains(t, canonical, `"access"`)
@@ -62,7 +62,7 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"id-token: write",
 		"Infisical/secrets-action@",
 		"scripts/deploy_demo.sh",
-		"Publish the canonical Olist showcase",
+		"Publish the CFO showcase",
 		"vars.DEMO_PROJECT_ID",
 		"vars.DEMO_PUBLISHER_PRINCIPAL_ID",
 		"vars.DEMO_RELEASE_PRINCIPAL_ID",
@@ -72,9 +72,10 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 
 	script := read(t, filepath.Join(root, "scripts", "deploy_demo.sh"))
 	for _, required := range []string{
-		"source_root=\"$repo_root/dashboards\"",
+		"source_root=\"$repo_root/dashboards/experiments/cfo-demo\"",
 		"--source-root \"$source_root\"",
-		"bootstrapolist",
+		"bootstrapfinance",
+		"--connection finance_files",
 		"cd -P",
 		"data sync",
 		"plan",
@@ -122,10 +123,10 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		require.NotContains(t, strings.ToLower(script), forbidden)
 	}
 	configGeneration := strings.Index(script, "go run ./internal/app/tools/configgen")
-	olistBootstrap := strings.Index(script, "go run ./internal/app/tools/bootstrapolist")
+	financeBootstrap := strings.Index(script, "go run ./internal/app/tools/bootstrapfinance")
 	require.NotEqual(t, -1, configGeneration, "demo deployment must generate ignored config sources")
-	require.NotEqual(t, -1, olistBootstrap, "demo deployment must bootstrap Olist")
-	require.Less(t, configGeneration, olistBootstrap, "config generation must precede Olist compilation")
+	require.NotEqual(t, -1, financeBootstrap, "demo deployment must bootstrap finance data")
+	require.Less(t, configGeneration, financeBootstrap, "config generation must precede finance compilation")
 	if _, err := os.Stat(filepath.Join(root, "deploy", "demo", "ssh-host-key.sha256")); !os.IsNotExist(err) {
 		t.Fatalf("stale demo SSH identity remains tracked: %v", err)
 	}

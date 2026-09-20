@@ -972,6 +972,39 @@ func TestDataExplorerSignalsRejectsMalformedQueryEscaping(t *testing.T) {
 	}
 }
 
+func TestDataExplorerSignalPatchRefreshesAgentContext(t *testing.T) {
+	page := projectsignals.DataExplorerPageSignal{
+		Kind:  projectsignals.RouteKindData,
+		Title: "Data Explorer",
+		Context: projectsignals.DataExplorerContextSignal{
+			Active: true, Environment: "dev", ProjectID: "project:test",
+		},
+	}
+	explorer := projectsignals.DataExplorerSignal{
+		Explore: projectsignals.DataExploreSignal{Command: projectsignals.DataExploreCommand{
+			SemanticModelID: projectsignals.Pointer("semantic-model:visuals"),
+			DatasetID:       projectsignals.Pointer("orders"),
+			Dimensions:      []string{"orders.status"},
+			Metrics:         []string{"revenue"},
+			Filters:         []projectsignals.DataExploreFilterSignal{},
+			Sort:            []projectsignals.DataExploreSortSignal{},
+			Limit:           100,
+		}},
+	}
+
+	patch := dataExplorerSignalPatch(page, explorer)
+	context, ok := patch["agentContext"].(projectsignals.AgentContextSignal)
+	if !ok {
+		t.Fatalf("agent context patch = %#v", patch["agentContext"])
+	}
+	if context.Surface != "data" || context.ModelID != "semantic-model:visuals" || projectsignals.ValueOrZero(context.DatasetID) != "orders" {
+		t.Fatalf("agent context = %#v", context)
+	}
+	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Dimensions[0] != "orders.status" || len(context.Exploration.Metrics) != 1 || context.Exploration.Metrics[0] != "revenue" {
+		t.Fatalf("agent exploration = %#v", context.Exploration)
+	}
+}
+
 func TestDataExplorerPreviewExecutesGovernedModelQuery(t *testing.T) {
 	executor := &browserDataQueryStub{result: dataquery.Result{
 		Rows:           []dataquery.Row{{"order_id": int64(42), "status": "paid"}},

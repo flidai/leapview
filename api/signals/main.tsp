@@ -1919,6 +1919,7 @@ model RecordTableSignal {
   `density`?: string;
   `empty`: string;
   `minWidth`?: string;
+  `width`?: string;
   `rowAction`?: string;
   `rows`: Record<unknown>[];
 }

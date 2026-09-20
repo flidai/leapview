@@ -71,7 +71,7 @@ test('product settings renders redacted sections and emits typed identity comman
         general: { displayName: 'Acme Analytics', revision: 7, updatedAt: '2026-08-11T00:00:00Z', instanceId: 'lvinst_test', canonicalOrigin: 'https://example.test', environment: 'production', logo: { url: '/logo.png', sha256: 'abc', mediaType: 'image/png', sizeBytes: 3, width: 16, height: 8 } },
         authentication: { browserEnabled: true, apiTokenOnly: false, local: { available: true, enabled: true }, oidc: { available: true, enabled: true, provider: 'corporate' }, azure: { available: true, enabled: false }, scim: { available: true, enabled: true }, managedBy: 'deployment' },
         api: { bearerCredentials: { available: true, enabled: true }, servicePrincipals: { available: true, enabled: true }, oauth: { available: true, enabled: true }, mcp: { available: true, enabled: true }, externalMcpIssuer: false },
-        system: { instanceId: 'lvinst_test', canonicalOrigin: 'https://example.test', environment: 'production', build: { version: '1.2.3', revision: 'abcdef', buildTime: 'now', dirty: false, development: false }, storageBackend: 'local', agent: { available: true, configured: true, provider: 'openai-compatible', modelConfigured: true }, limits: { queryResultMaxRows: 10, queryResultMaxBytes: 1024, managedDataMaxFiles: 2, managedDataMaxFileBytes: 3, managedDataMaxRevisionBytes: 4 }, runtime: { health: 'healthy', controlPlane: 'available', environment: 'production' } },
+        system: { instanceId: 'lvinst_test', canonicalOrigin: 'https://example.test', environment: 'production', build: { version: '1.2.3', revision: 'abcdef', buildTime: 'now', dirty: false, development: false }, storageBackend: 'local', agent: { available: true, configured: true, provider: 'openai-compatible', modelConfigured: true }, limits: { queryResultMaxRows: 10000, queryResultMaxBytes: 1024, managedDataMaxFiles: 2000, managedDataMaxFileBytes: 3, managedDataMaxRevisionBytes: 4 }, runtime: { health: 'healthy', controlPlane: 'available', environment: 'production' } },
       } })
       const element = document.querySelector('lv-product-settings') as any
       await element.updateComplete
@@ -109,6 +109,7 @@ test('product settings renders redacted sections and emits typed identity comman
         authStatusTones,
         systemHeadings: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLHeadingElement>('h2')).map((heading) => heading.textContent?.trim()),
         systemPanelLabels: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLElement>('section')).map((section) => section.getAttribute('aria-label')),
+        systemLimitValues: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLElement>('section[aria-label="Limits settings"] .status-card')).map((card) => [card.querySelector('strong')?.textContent?.trim(), card.querySelector('.settings-value')?.textContent?.trim()]),
         websiteHref,
         saveCommand,
         resetCommand,
@@ -129,10 +130,34 @@ test('product settings renders redacted sections and emits typed identity comman
     expect(state.authStatusTones).toContain('neutral')
     expect(state.systemHeadings).toEqual(['Runtime health', 'Build', 'Limits', 'About LeapView'])
     expect(state.systemPanelLabels).toEqual(['Runtime health settings', 'Build settings', 'Limits settings', 'About LeapView'])
+    expect(state.systemLimitValues).toEqual([
+      ['Query result rows', '10,000'],
+      ['Query result bytes', '1.0 KB'],
+      ['Managed-data files', '2,000'],
+      ['Managed-data file bytes', '3'],
+      ['Managed-data revision bytes', '4'],
+    ])
     expect(state.websiteHref).toBe('https://leapview.dev')
     expect(state.saveCommand).toEqual({ action: 'save_display_name', displayName: 'Acme BI', revision: 7 })
     expect(state.resetCommand).toEqual({ action: 'reset_identity', revision: 7 })
     expect(state.fieldLabelFontSize).toBe('14px')
+
+    await page.setViewportSize({ width: 420, height: 760 })
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ productSettings: { active: 'general' } })
+      await (document.querySelector('lv-product-settings') as any).updateComplete
+    })
+    const narrowLayout = await page.evaluate(() => {
+      const root = (document.querySelector('lv-product-settings') as any).shadowRoot as ShadowRoot
+      const panel = root.querySelector<HTMLElement>('section[aria-label="Instance identity settings"]')!.getBoundingClientRect()
+      const input = root.querySelector<HTMLInputElement>('#product-instance-name')!.getBoundingClientRect()
+      const upload = root.querySelector<HTMLElement>('.file-action')!.getBoundingClientRect()
+      return { panelRight: panel.right, inputRight: input.right, inputHeight: input.height, uploadRight: upload.right }
+    })
+    expect(narrowLayout.inputHeight).toBeLessThan(100)
+    expect(narrowLayout.inputRight).toBeLessThanOrEqual(narrowLayout.panelRight)
+    expect(narrowLayout.uploadRight).toBeLessThanOrEqual(narrowLayout.panelRight)
   } finally {
     await page.close()
   }

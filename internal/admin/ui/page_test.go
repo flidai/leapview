@@ -30,7 +30,7 @@ func TestAdminBootstrapSignalsUseAdminOwnedContracts(t *testing.T) {
 	if !ok {
 		t.Fatalf("chrome = %T, want admin signal contract", signals["chrome"])
 	}
-	if chrome.Sidebar.Active != "profile" || !chrome.Sidebar.Compact || chrome.Sidebar.History != nil || len(chrome.Sidebar.Groups) != 6 {
+	if chrome.Sidebar.Active != "profile" || !chrome.Sidebar.Compact || chrome.Sidebar.History != nil || len(chrome.Sidebar.Groups) != 5 {
 		t.Fatalf("chrome = %#v", chrome)
 	}
 	page, ok := signals["page"].(uisignals.AdminPageSignal)

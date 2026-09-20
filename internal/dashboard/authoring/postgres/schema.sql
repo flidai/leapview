@@ -126,6 +126,20 @@ CREATE TABLE IF NOT EXISTS dashboard.authoring_commands (
         OR (result_revision_id IS NOT NULL AND result_revision_number > 0 AND result_content_hash ~ '^sha256:[0-9a-f]{64}$'))
 );
 
+-- Permanent deletions retain only their command identity and fingerprint so a
+-- retried request is idempotent after the authored rows are gone.
+CREATE TABLE IF NOT EXISTS dashboard.authoring_delete_commands (
+    project_id text NOT NULL,
+    dashboard_id text NOT NULL,
+    command_id uuid NOT NULL,
+    request_fingerprint text NOT NULL CHECK (request_fingerprint = btrim(request_fingerprint) AND octet_length(request_fingerprint) BETWEEN 1 AND 255),
+    revision_id uuid NOT NULL,
+    revision_number bigint NOT NULL CHECK (revision_number > 0),
+    content_hash text NOT NULL CHECK (content_hash ~ '^sha256:[0-9a-f]{64}$'),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (project_id, dashboard_id, command_id)
+);
+
 CREATE TABLE IF NOT EXISTS dashboard.authoring_create_operations (
     project_id text NOT NULL,
     actor_id text NOT NULL CHECK (actor_id = btrim(actor_id) AND octet_length(actor_id) BETWEEN 1 AND 255),
@@ -177,6 +191,7 @@ CREATE INDEX IF NOT EXISTS authoring_dashboards_project_idx ON dashboard.authori
 CREATE INDEX IF NOT EXISTS authoring_revisions_project_idx ON dashboard.authoring_revisions(project_id, dashboard_id, revision_number);
 CREATE INDEX IF NOT EXISTS authoring_compiled_project_idx ON dashboard.authoring_compiled_revisions(project_id, dashboard_id, revision_number);
 CREATE INDEX IF NOT EXISTS authoring_revalidation_project_idx ON dashboard.authoring_revalidation_attempts(project_id, dashboard_id, attempted_at DESC);
+CREATE INDEX IF NOT EXISTS authoring_delete_commands_project_idx ON dashboard.authoring_delete_commands(project_id, dashboard_id, created_at DESC);
 
 -- Authoring projections retain stable identities while their pointers advance.
 -- Keep these invariants in the database as well as in the repository so a
@@ -606,6 +621,90 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION dashboard.authoring_delete_dashboard(
+    p_project_id text, p_dashboard_id text, p_expected_revision_id uuid,
+    p_expected_revision_number bigint, p_expected_content_hash text,
+    p_command_id uuid, p_request_fingerprint text, p_action text,
+    p_command_provenance_json jsonb, p_occurred_at timestamptz
+) RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, dashboard
+AS $$
+DECLARE
+    v_existing_fingerprint text;
+    v_rows bigint;
+BEGIN
+    PERFORM 1 FROM dashboard.authoring_dashboards
+     WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id
+     FOR UPDATE;
+    IF NOT FOUND THEN
+        SELECT request_fingerprint INTO v_existing_fingerprint
+          FROM dashboard.authoring_delete_commands
+         WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id
+           AND command_id = p_command_id;
+        IF NOT FOUND THEN RAISE EXCEPTION 'authoring dashboard was not found'; END IF;
+        IF v_existing_fingerprint IS DISTINCT FROM p_request_fingerprint THEN
+            RAISE EXCEPTION 'authoring delete command request fingerprint differs';
+        END IF;
+        RETURN 0;
+    END IF;
+    IF p_action <> 'delete' THEN
+        RAISE EXCEPTION 'authoring delete requires delete command evidence';
+    END IF;
+    SELECT request_fingerprint INTO v_existing_fingerprint
+      FROM dashboard.authoring_delete_commands
+     WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id
+       AND command_id = p_command_id;
+    IF FOUND THEN
+        IF v_existing_fingerprint IS DISTINCT FROM p_request_fingerprint THEN
+            RAISE EXCEPTION 'authoring delete command request fingerprint differs';
+        END IF;
+        RETURN 0;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM dashboard.authoring_drafts
+         WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id
+           AND revision_id = p_expected_revision_id
+           AND revision_number = p_expected_revision_number
+           AND content_hash = p_expected_content_hash
+    ) AND NOT EXISTS (
+        SELECT 1 FROM dashboard.authoring_published
+         WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id
+           AND revision_id = p_expected_revision_id
+           AND revision_number = p_expected_revision_number
+           AND content_hash = p_expected_content_hash
+    ) THEN
+        RAISE EXCEPTION 'authoring delete compare-and-swap conflict';
+    END IF;
+    INSERT INTO dashboard.authoring_delete_commands(
+        project_id, dashboard_id, command_id, request_fingerprint,
+        revision_id, revision_number, content_hash
+    ) VALUES (
+        p_project_id, p_dashboard_id, p_command_id, p_request_fingerprint,
+        p_expected_revision_id, p_expected_revision_number, p_expected_content_hash
+    );
+    DELETE FROM dashboard.authoring_create_operations
+     WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id;
+    DELETE FROM dashboard.authoring_revalidation_attempts
+     WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id;
+    DELETE FROM dashboard.authoring_commands
+     WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id;
+    DELETE FROM dashboard.authoring_published
+     WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id;
+    DELETE FROM dashboard.authoring_drafts
+     WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id;
+    DELETE FROM dashboard.authoring_compiled_revisions
+     WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id;
+    DELETE FROM dashboard.authoring_revisions
+     WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id;
+    DELETE FROM dashboard.authoring_dashboards
+     WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    IF v_rows <> 1 THEN RAISE EXCEPTION 'authoring dashboard delete lifecycle conflict'; END IF;
+    RETURN 1;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION dashboard.authoring_commit_revalidation(
     p_project_id text, p_dashboard_id text, p_revision_id uuid,
     p_revision_number bigint, p_content_hash text, p_definition_json jsonb,
@@ -787,7 +886,7 @@ BEGIN
 END $$;
 
 REVOKE ALL ON SCHEMA dashboard FROM PUBLIC;
-REVOKE ALL ON TABLE dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts FROM PUBLIC;
+REVOKE ALL ON TABLE dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_delete_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.guard_authoring_dashboard_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.lock_authoring_dashboard(text,text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.guard_authoring_draft_update() FROM PUBLIC;
@@ -796,38 +895,42 @@ REVOKE ALL ON FUNCTION dashboard.authoring_create_dashboard(text,text,uuid,text,
 REVOKE ALL ON FUNCTION dashboard.authoring_append_draft(text,text,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,jsonb,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.authoring_publish_dashboard(text,text,text,text,text,text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,jsonb,timestamptz,uuid,text,text,jsonb,timestamptz,uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.authoring_archive_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION dashboard.authoring_delete_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz) FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.authoring_commit_revalidation(text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,timestamptz,uuid,bigint,text,text,text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.authoring_record_revalidation_failure(text,text,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,text,text,timestamptz) FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.guard_authoring_dashboard_evidence() FROM PUBLIC;
 DO $$ BEGIN
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_owner') THEN
  GRANT USAGE ON SCHEMA dashboard TO leapview_control_owner;
-  GRANT ALL ON TABLE dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts TO leapview_control_owner;
+  GRANT EXECUTE ON FUNCTION dashboard.authoring_delete_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz) TO leapview_control_owner;
+  GRANT ALL ON TABLE dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_delete_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts TO leapview_control_owner;
   GRANT ALL ON FUNCTION dashboard.guard_authoring_dashboard_update(), dashboard.lock_authoring_dashboard(text,text), dashboard.guard_authoring_draft_update(), dashboard.guard_authoring_published_update(), dashboard.guard_authoring_dashboard_evidence(), dashboard.authoring_create_dashboard(text,text,uuid,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,uuid,jsonb,boolean,text,text,text,text,text,text,uuid), dashboard.authoring_append_draft(text,text,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,jsonb,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_publish_dashboard(text,text,text,text,text,text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,jsonb,timestamptz,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_archive_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_commit_revalidation(text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,timestamptz,uuid,bigint,text,text,text), dashboard.authoring_record_revalidation_failure(text,text,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,text,text,timestamptz) TO leapview_control_owner;
  END IF;
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_migrator') THEN
  GRANT USAGE ON SCHEMA dashboard TO leapview_control_migrator;
-  GRANT ALL ON TABLE dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts TO leapview_control_migrator;
+  GRANT EXECUTE ON FUNCTION dashboard.authoring_delete_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz) TO leapview_control_migrator;
+  GRANT ALL ON TABLE dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_delete_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts TO leapview_control_migrator;
   GRANT ALL ON FUNCTION dashboard.guard_authoring_dashboard_update(), dashboard.lock_authoring_dashboard(text,text), dashboard.guard_authoring_draft_update(), dashboard.guard_authoring_published_update(), dashboard.guard_authoring_dashboard_evidence(), dashboard.authoring_create_dashboard(text,text,uuid,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,uuid,jsonb,boolean,text,text,text,text,text,text,uuid), dashboard.authoring_append_draft(text,text,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,jsonb,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_publish_dashboard(text,text,text,text,text,text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,jsonb,timestamptz,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_archive_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_commit_revalidation(text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,timestamptz,uuid,bigint,text,text,text), dashboard.authoring_record_revalidation_failure(text,text,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,text,text,timestamptz) TO leapview_control_migrator;
  END IF;
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
  GRANT USAGE ON SCHEMA dashboard TO leapview_control_runtime;
-  GRANT SELECT ON dashboard.authoring_dashboards,dashboard.authoring_revisions,dashboard.authoring_drafts,dashboard.authoring_compiled_revisions,dashboard.authoring_published,dashboard.authoring_commands,dashboard.authoring_create_operations,dashboard.authoring_revalidation_attempts TO leapview_control_runtime;
-  REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON dashboard.authoring_dashboards,dashboard.authoring_revisions,dashboard.authoring_drafts,dashboard.authoring_compiled_revisions,dashboard.authoring_published,dashboard.authoring_commands,dashboard.authoring_create_operations,dashboard.authoring_revalidation_attempts FROM leapview_control_runtime;
+  GRANT SELECT ON dashboard.authoring_dashboards,dashboard.authoring_revisions,dashboard.authoring_drafts,dashboard.authoring_compiled_revisions,dashboard.authoring_published,dashboard.authoring_commands,dashboard.authoring_delete_commands,dashboard.authoring_create_operations,dashboard.authoring_revalidation_attempts TO leapview_control_runtime;
+  REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON dashboard.authoring_dashboards,dashboard.authoring_revisions,dashboard.authoring_drafts,dashboard.authoring_compiled_revisions,dashboard.authoring_published,dashboard.authoring_commands,dashboard.authoring_delete_commands,dashboard.authoring_create_operations,dashboard.authoring_revalidation_attempts FROM leapview_control_runtime;
   GRANT EXECUTE ON FUNCTION dashboard.authoring_create_dashboard(text,text,uuid,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,uuid,jsonb,boolean,text,text,text,text,text,text,uuid) TO leapview_control_runtime;
   GRANT EXECUTE ON FUNCTION dashboard.lock_authoring_dashboard(text,text) TO leapview_control_runtime;
   GRANT EXECUTE ON FUNCTION dashboard.authoring_append_draft(text,text,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,jsonb,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid) TO leapview_control_runtime;
   GRANT EXECUTE ON FUNCTION dashboard.authoring_publish_dashboard(text,text,text,text,text,text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,jsonb,timestamptz,uuid,text,text,jsonb,timestamptz,uuid) TO leapview_control_runtime;
   GRANT EXECUTE ON FUNCTION dashboard.authoring_archive_dashboard(text,text,uuid,bigint,text,uuid,text, text,jsonb,timestamptz,uuid) TO leapview_control_runtime;
+  GRANT EXECUTE ON FUNCTION dashboard.authoring_delete_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz) TO leapview_control_runtime;
   GRANT EXECUTE ON FUNCTION dashboard.authoring_commit_revalidation(text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,timestamptz,uuid,bigint,text,text,text) TO leapview_control_runtime;
   GRANT EXECUTE ON FUNCTION dashboard.authoring_record_revalidation_failure(text,text,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,text,text,timestamptz) TO leapview_control_runtime;
  END IF;
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN
   GRANT USAGE ON SCHEMA dashboard TO leapview_control_readonly;
-  GRANT SELECT ON dashboard.authoring_dashboards,dashboard.authoring_revisions,dashboard.authoring_drafts,dashboard.authoring_compiled_revisions,dashboard.authoring_published,dashboard.authoring_commands,dashboard.authoring_create_operations,dashboard.authoring_revalidation_attempts TO leapview_control_readonly;
+  GRANT SELECT ON dashboard.authoring_dashboards,dashboard.authoring_revisions,dashboard.authoring_drafts,dashboard.authoring_compiled_revisions,dashboard.authoring_published,dashboard.authoring_commands,dashboard.authoring_delete_commands,dashboard.authoring_create_operations,dashboard.authoring_revalidation_attempts TO leapview_control_readonly;
  END IF;
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_backup') THEN
   GRANT USAGE ON SCHEMA dashboard TO leapview_control_backup;
-  GRANT SELECT ON dashboard.authoring_dashboards,dashboard.authoring_revisions,dashboard.authoring_drafts,dashboard.authoring_compiled_revisions,dashboard.authoring_published,dashboard.authoring_commands,dashboard.authoring_create_operations,dashboard.authoring_revalidation_attempts TO leapview_control_backup;
+  GRANT SELECT ON dashboard.authoring_dashboards,dashboard.authoring_revisions,dashboard.authoring_drafts,dashboard.authoring_compiled_revisions,dashboard.authoring_published,dashboard.authoring_commands,dashboard.authoring_delete_commands,dashboard.authoring_create_operations,dashboard.authoring_revalidation_attempts TO leapview_control_backup;
  END IF;
 END $$;

@@ -229,12 +229,6 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 			},
 		},
 		{
-			Label: "Chats",
-			Items: []Item{
-				{ID: "archived-chats", Label: "Archived chats", Href: "/admin/archived-chats", Icon: "history"},
-			},
-		},
-		{
 			Label: "Product",
 			Items: filterItems([]conditionalItem{
 				{allowed: allowed.ManagePlatform, item: Item{ID: "general", Label: "General", Href: "/admin/general", Icon: "settings"}},

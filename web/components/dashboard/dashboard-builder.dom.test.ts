@@ -2363,33 +2363,40 @@ test('dashboard builder edits the dashboard icon and color from the title bar', 
   }
 })
 
-test('dashboard builder archives an owned dashboard from More without an extra confirmation step', async () => {
+test('dashboard builder deletes an owned dashboard from More after confirmation', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    let dialogMessage = ''
+    page.once('dialog', async (dialog) => {
+      dialogMessage = dialog.message()
+      await dialog.accept()
+    })
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)
       let command: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
-      const archive = root.querySelector<HTMLButtonElement>('[data-builder-action="archive"]')
-      archive?.click()
+      const deleteButton = root.querySelector<HTMLButtonElement>('[data-builder-action="delete"]')
+      deleteButton?.click()
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
       await element.updateComplete
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ builder: { capabilities: { canArchive: false } } })
       await element.updateComplete
       return {
-        label: archive?.textContent?.replace(/\s+/g, ' ').trim(),
-        disabled: archive?.disabled,
+        label: deleteButton?.textContent?.replace(/\s+/g, ' ').trim(),
+        disabled: deleteButton?.disabled,
         command,
-        archiveAfterPermissionChange: Boolean(root.querySelector('[data-builder-action="archive"]')),
+        deleteAfterPermissionChange: Boolean(root.querySelector('[data-builder-action="delete"]')),
       }
     })
-    expect(state.label).toBe('Archive dashboard')
+    expect(dialogMessage).toContain('Delete Revenue draft?')
+    expect(state.label).toBe('Delete dashboard')
     expect(state.disabled).toBe(false)
-    expect(state.command).toMatchObject({ action: 'archive', dashboardId: 'revenue', draftId: 'draft-7', revisionId: 'rev-7' })
-    expect(state.archiveAfterPermissionChange).toBe(false)
+    expect(state.command).toMatchObject({ action: 'delete', dashboardId: 'revenue', draftId: 'draft-7', revisionId: 'rev-7' })
+    expect(state.deleteAfterPermissionChange).toBe(false)
   } finally {
     await page.close()
   }

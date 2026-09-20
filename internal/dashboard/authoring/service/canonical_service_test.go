@@ -51,6 +51,10 @@ type canonicalRepository struct {
 		fingerprint string
 		token       authoring.RevisionToken
 	}
+	deleteCommands map[authoring.CommandID]struct {
+		fingerprint string
+		token       authoring.RevisionToken
+	}
 	operations           map[string]authoring.CreateOperationResult
 	compiled             authoring.CompiledRevision
 	createCalls          int
@@ -61,6 +65,9 @@ type canonicalRepository struct {
 
 func newCanonicalRepository() *canonicalRepository {
 	return &canonicalRepository{revisions: map[authoring.RevisionID]authoring.Revision{}, commands: map[authoring.CommandID]struct {
+		fingerprint string
+		token       authoring.RevisionToken
+	}{}, deleteCommands: map[authoring.CommandID]struct {
 		fingerprint string
 		token       authoring.RevisionToken
 	}{}, operations: map[string]authoring.CreateOperationResult{}}
@@ -159,6 +166,28 @@ func (r *canonicalRepository) Archive(_ context.Context, input authoring.Archive
 	}{input.Evidence.Fingerprint, input.ExpectedCurrentRevision}
 	return r.lifecycle, nil
 }
+func (r *canonicalRepository) LookupDeleteCommand(_ context.Context, _ graph.ResourceID, _ authoring.DashboardID, evidence authoring.CommandEvidence) (authoring.DeleteResult, bool, error) {
+	value, ok := r.deleteCommands[evidence.ID]
+	if !ok {
+		return authoring.DeleteResult{}, false, nil
+	}
+	if value.fingerprint != evidence.Fingerprint {
+		return authoring.DeleteResult{}, false, authoring.ErrCommandReuse
+	}
+	return authoring.DeleteResult{Revision: value.token, Replayed: true}, true, nil
+}
+func (r *canonicalRepository) Delete(_ context.Context, input authoring.DeleteInput) (authoring.DeleteResult, error) {
+	if current := currentLifecycleToken(r.lifecycle); current != input.ExpectedCurrentRevision {
+		return authoring.DeleteResult{}, authoring.ErrStaleRevision
+	}
+	r.deleteCommands[input.Evidence.ID] = struct {
+		fingerprint string
+		token       authoring.RevisionToken
+	}{input.Evidence.Fingerprint, input.ExpectedCurrentRevision}
+	r.lifecycle = authoring.DashboardLifecycle{}
+	r.revisions = map[authoring.RevisionID]authoring.Revision{}
+	return authoring.DeleteResult{Revision: input.ExpectedCurrentRevision}, nil
+}
 func (r *canonicalRepository) GetPublishedCompilation(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
 	if r.compiled.DashboardID == "" {
 		return authoring.CompiledRevision{}, authoring.ErrNotFound
@@ -230,6 +259,34 @@ func TestCanonicalServiceCreateEditPublishArchiveAndAuthorization(t *testing.T) 
 	}
 	if len(authorizer.calls) < 4 || authorizer.calls[0].Action != authoring.AuthorizationActionEdit || authorizer.calls[len(authorizer.calls)-1].Action != authoring.AuthorizationActionArchive {
 		t.Fatalf("authorization calls = %#v", authorizer.calls)
+	}
+}
+
+func TestCanonicalServicePermanentlyDeletesAndReplaysWithoutTheDashboard(t *testing.T) {
+	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
+	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-created", "draft-created", "revision-created")
+	created, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "model:test", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-delete"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := authoring.Command{ID: "delete-1", DashboardID: created.Lifecycle.ID, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Delete: &authoring.DeletePayload{}}
+	deleted, err := svc.Execute(t.Context(), "project:test", command)
+	if err != nil || deleted.Revision != created.Revision {
+		t.Fatalf("deleted result = %#v (%v)", deleted, err)
+	}
+	if repository.lifecycle.ID != "" || len(repository.revisions) != 0 {
+		t.Fatalf("deleted content remains: lifecycle=%#v revisions=%#v", repository.lifecycle, repository.revisions)
+	}
+	if got := authorizer.calls[len(authorizer.calls)-1].Action; got != authoring.AuthorizationActionDelete {
+		t.Fatalf("delete authorization action = %q", got)
+	}
+	getCalls, authorizationCalls := repository.getCalls, len(authorizer.calls)
+	replayed, err := svc.Execute(t.Context(), "project:test", command)
+	if err != nil || replayed.Revision != created.Revision {
+		t.Fatalf("delete replay = %#v (%v)", replayed, err)
+	}
+	if repository.getCalls != getCalls || len(authorizer.calls) != authorizationCalls {
+		t.Fatalf("delete replay touched removed dashboard: get calls %d -> %d, authorization calls %d -> %d", getCalls, repository.getCalls, authorizationCalls, len(authorizer.calls))
 	}
 }
 

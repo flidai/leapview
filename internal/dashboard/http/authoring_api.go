@@ -1178,6 +1178,8 @@ func authoringCommandCapability(command authoring.Command) access.Capability {
 			capability = access.CapabilityResourcePublish
 		case authoring.AuthorizationActionArchive:
 			capability = access.CapabilityResourceManage
+		case authoring.AuthorizationActionDelete:
+			capability = access.CapabilityResourceManage
 		}
 	}
 	return capability

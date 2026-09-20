@@ -1407,6 +1407,7 @@ type RecordTableSignal struct {
 	Density        *string                    `json:"density,omitempty" yaml:"density,omitempty"`
 	Empty          string                     `json:"empty" yaml:"empty"`
 	MinWidth       *string                    `json:"minWidth,omitempty" yaml:"minWidth,omitempty"`
+	Width          *string                    `json:"width,omitempty" yaml:"width,omitempty"`
 	RowAction      *string                    `json:"rowAction,omitempty" yaml:"rowAction,omitempty"`
 	Rows           []map[string]any           `json:"rows" yaml:"rows"`
 }

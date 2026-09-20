@@ -457,9 +457,14 @@ func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhtt
 	if !ok {
 		return
 	}
-	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
+	_ = pagestream.PatchResponse(w, r, dataExplorerSignalPatch(page, explorer))
+}
+
+func dataExplorerSignalPatch(page projectsignals.DataExplorerPageSignal, explorer projectsignals.DataExplorerSignal) pagestream.SignalPatch {
+	return pagestream.SignalPatch{
 		"page": page, "dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
-	})
+		"agentContext": projectui.DataExplorerAgentContext(page, explorer),
+	}
 }
 
 func (h *BrowserHandler) ModelDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {

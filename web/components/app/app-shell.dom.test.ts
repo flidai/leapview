@@ -1503,10 +1503,10 @@ test('admin sidebar replaces global navigation and provides a back to app action
       }
     })
 
-    expect(state.groupLabels).toEqual(['Personal', 'Chats', 'Product', 'Access', 'Data & sharing', 'Operations'])
+    expect(state.groupLabels).toEqual(['Personal', 'Product', 'Access', 'Data & sharing', 'Operations'])
     expect(state.adminMode).toBe(true)
     expect(state.width).toBe(248)
-    expect(state.visibleGroupLabels).toEqual(['Personal', 'Chats', 'Product', 'Access', 'Data & sharing', 'Operations'])
+    expect(state.visibleGroupLabels).toEqual(['Personal', 'Product', 'Access', 'Data & sharing', 'Operations'])
     expect(state.links).toEqual(expect.arrayContaining([
       { href: '/admin/profile', text: 'Profile', current: 'false' },
       { href: '/admin/principals', text: 'Users', current: 'page' },
