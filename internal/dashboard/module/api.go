@@ -47,6 +47,41 @@ func (m *Module) ListSemanticModels(w http.ResponseWriter, r *http.Request) {
 	m.semantic.ListSemanticModels(w, r)
 }
 
+func (m *Module) ListSemanticDatasets(w http.ResponseWriter, r *http.Request, modelID string) {
+	m.setServingSnapshot(r, modelID)
+	m.semantic.ListSemanticDatasets(w, r)
+}
+
+func (m *Module) ListSemanticFields(w http.ResponseWriter, r *http.Request, modelID, datasetID string) {
+	m.setServingSnapshot(r, modelID)
+	m.semantic.ListSemanticFields(w, r)
+}
+
+func (m *Module) ExplainSemanticPreview(w http.ResponseWriter, r *http.Request, modelID, datasetID string) {
+	m.setServingSnapshot(r, modelID)
+	m.semantic.ExplainSemanticPreview(w, r)
+}
+
+func (m *Module) ListSemanticModelFields(w http.ResponseWriter, r *http.Request, modelID string) {
+	m.setServingSnapshot(r, modelID)
+	m.semantic.ListSemanticModelFields(w, r)
+}
+
+func (m *Module) ExplainSemanticModelQuery(w http.ResponseWriter, r *http.Request, modelID string) {
+	m.setServingSnapshot(r, modelID)
+	m.semantic.ExplainSemanticModelQuery(w, r)
+}
+
+func (m *Module) ListSemanticRelationships(w http.ResponseWriter, r *http.Request, modelID string) {
+	m.setServingSnapshot(r, modelID)
+	m.semantic.ListSemanticRelationships(w, r)
+}
+
+func (m *Module) ListSemanticSources(w http.ResponseWriter, r *http.Request, modelID string) {
+	m.setServingSnapshot(r, modelID)
+	m.semantic.ListSemanticSources(w, r)
+}
+
 func (m *Module) setServingSnapshot(r *http.Request, _ string) {
 	r.Header.Del("X-Serving-Snapshot")
 	if m == nil || m.snapshot == nil {
