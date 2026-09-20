@@ -706,6 +706,8 @@ test('managed dashboard menu offers an editable copy without edit or delete acti
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const menu = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { ...element.page, dashboards: element.page.dashboards.map((dashboard: any, index: number) => index === 0 ? { ...dashboard, dashboardId: 'dashboard:cfo-command-center' } : dashboard) } })
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)
       const list = root.querySelector('lv-entity-list') as CatalogListElement
@@ -719,7 +721,7 @@ test('managed dashboard menu offers an editable copy without edit or delete acti
     })
 
     expect(menu).toEqual([
-      { label: 'Make an editable copy', href: '/dashboards/executive-sales/fork' },
+      { label: 'Make an editable copy', href: '/dashboards/dashboard:cfo-command-center/fork' },
       { label: 'View details', href: null },
       { label: 'Copy link', href: null },
     ])

@@ -696,7 +696,8 @@ function semanticModelLabel(value: string | undefined): string {
 }
 
 function dashboardViewHref(dashboard: CatalogDashboard): string {
-  return `/dashboards/${encodeURIComponent(dashboard.dashboardId)}`
+  // Match the server's canonical path segment: resource IDs retain their colon.
+  return `/dashboards/${encodeURIComponent(dashboard.dashboardId).replace(/%3A/g, ':')}`
 }
 
 function dashboardEditorHref(dashboard: CatalogDashboard): string {
