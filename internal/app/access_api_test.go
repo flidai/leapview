@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,111 @@ import (
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 )
+
+func TestServicePrincipalMutationsExecuteGeneratedContracts(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	repo := testAccessRepository(store)
+	admin := testPlatformPrincipal(t, ctx, store, "service-principal-contract-admin@example.com", "Service Principal Contract Admin")
+	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
+		PrincipalID: admin.ID,
+		Name:        "platform-admin",
+		Capabilities: []access.Capability{
+			access.CapabilityProjectAdmin,
+		},
+	})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})}))
+
+	request := func(method, path, body string) *http.Request {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+authSecret)
+		req.Header.Set("Accept", "application/json")
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		return req
+	}
+	do := func(req *http.Request) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		server.Routes().ServeHTTP(rec, req)
+		return rec
+	}
+
+	createReq := request(http.MethodPost, "/api/v1/service-principals", `{"displayName":"Contract Service Principal"}`)
+	createReq.Header.Set("Idempotency-Key", "create-service-principal-contract")
+	createRec := do(createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create service principal status = %d, want %d body=%s", createRec.Code, http.StatusCreated, createRec.Body.String())
+	}
+	var created access.Principal
+	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created service principal: %v body=%s", err, createRec.Body.String())
+	}
+	if created.ID == "" || created.Kind != access.PrincipalKindServicePrincipal {
+		t.Fatalf("created service principal = %#v", created)
+	}
+
+	secretReq := request(http.MethodPost, "/api/v1/service-principals/"+created.ID+"/secrets", `{"name":"contract-secret"}`)
+	secretReq.Header.Set("Idempotency-Key", "create-service-principal-secret-contract")
+	secretRec := do(secretReq)
+	if secretRec.Code != http.StatusCreated {
+		t.Fatalf("create service principal secret status = %d, want %d body=%s", secretRec.Code, http.StatusCreated, secretRec.Body.String())
+	}
+	var secretBody struct {
+		ClientSecret struct {
+			ID string `json:"id"`
+		} `json:"clientSecret"`
+	}
+	if err := json.Unmarshal(secretRec.Body.Bytes(), &secretBody); err != nil {
+		t.Fatalf("decode created service principal secret: %v body=%s", err, secretRec.Body.String())
+	}
+	if secretBody.ClientSecret.ID == "" {
+		t.Fatalf("created service principal secret missing id: %s", secretRec.Body.String())
+	}
+
+	revokeRec := do(request(http.MethodDelete, "/api/v1/service-principals/"+created.ID+"/secrets/"+secretBody.ClientSecret.ID, ""))
+	if revokeRec.Code != http.StatusNoContent {
+		t.Fatalf("revoke service principal secret status = %d, want %d body=%s", revokeRec.Code, http.StatusNoContent, revokeRec.Body.String())
+	}
+	secretReader, ok := repo.(interface {
+		GetServicePrincipalSecret(context.Context, string, string) (access.ServicePrincipalSecret, error)
+	})
+	if !ok {
+		t.Fatal("access repository does not expose service principal secret metadata")
+	}
+	secret, err := secretReader.GetServicePrincipalSecret(ctx, created.ID, secretBody.ClientSecret.ID)
+	if err != nil {
+		t.Fatalf("load revoked service principal secret: %v", err)
+	}
+	if secret.RevokedAt == "" {
+		t.Fatalf("revoked service principal secret = %#v, want revoked timestamp", secret)
+	}
+
+	deleteRec := do(request(http.MethodDelete, "/api/v1/service-principals/"+created.ID, ""))
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("delete service principal status = %d, want %d body=%s", deleteRec.Code, http.StatusNoContent, deleteRec.Body.String())
+	}
+	if _, err := repo.PrincipalByID(ctx, created.ID); err == nil || err != sql.ErrNoRows {
+		t.Fatalf("deleted service principal lookup error = %v, want sql.ErrNoRows", err)
+	}
+	for _, tc := range []struct {
+		action   string
+		resource string
+	}{
+		{action: "service_principal.created", resource: created.ID},
+		{action: "service_principal_secret.created", resource: created.ID},
+		{action: "service_principal_secret.revoked", resource: created.ID},
+		{action: "service_principal.deleted", resource: created.ID},
+	} {
+		events, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{Action: tc.action})
+		if err != nil {
+			t.Fatalf("list %s audit events: %v", tc.action, err)
+		}
+		if len(events) != 1 || events[0].ResourceID != tc.resource || events[0].PrincipalID != admin.ID || events[0].Status != "success" {
+			t.Fatalf("%s audit events = %#v, want resource %q actor %q success", tc.action, events, tc.resource, admin.ID)
+		}
+	}
+}
 
 func TestAPITokenCapabilityAllowlistIsEnforced(t *testing.T) {
 	store := testStore(t)
@@ -91,8 +198,9 @@ func TestCreateAndResetLocalPrincipalAPI(t *testing.T) {
 	ctx := context.Background()
 	admin := testPlatformPrincipal(t, ctx, store, "access-admin@example.com", "Access Admin")
 	token, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: admin.ID,
-		Name:        "access-admin",
+		PrincipalID:  admin.ID,
+		Name:         "access-admin",
+		Capabilities: []access.Capability{access.CapabilityProjectAdmin},
 	})
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
@@ -147,6 +255,66 @@ func TestCreateAndResetLocalPrincipalAPI(t *testing.T) {
 		t.Fatalf("verify reset temporary password: %v", err)
 	} else if !credential.MustChangePassword {
 		t.Fatal("reset credential must_change_password = false, want true")
+	}
+}
+
+func TestPrincipalLifecycleMutationsExecuteGeneratedContracts(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	admin := testPlatformPrincipal(t, ctx, store, "principal-lifecycle-admin@example.com", "Principal Lifecycle Admin")
+	token, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{PrincipalID: admin.ID, Name: "principal-lifecycle-admin", Capabilities: []access.Capability{access.CapabilityProjectAdmin}})
+	repo := accesssqlite.NewRepository(store.SQLDB())
+	target, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "principal-lifecycle-target@example.com", DisplayName: "Before"})
+	if err != nil {
+		t.Fatalf("create target principal: %v", err)
+	}
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
+
+	request := func(method, path, body string) *http.Request {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/json")
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		return req
+	}
+	do := func(req *http.Request) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		server.Routes().ServeHTTP(rec, req)
+		return rec
+	}
+
+	get := do(request(http.MethodGet, "/api/v1/principals/"+target.Principal.ID, ""))
+	if get.Code != http.StatusOK || get.Header().Get("ETag") == "" {
+		t.Fatalf("get principal status = %d, want 200 with ETag; body=%s", get.Code, get.Body.String())
+	}
+
+	update := request(http.MethodPatch, "/api/v1/principals/"+target.Principal.ID, `{"displayName":"After"}`)
+	update.Header.Set("If-Match", get.Header().Get("ETag"))
+	updated := do(update)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("update principal status = %d, want 200; body=%s", updated.Code, updated.Body.String())
+	}
+
+	disable := request(http.MethodPost, "/api/v1/principals/"+target.Principal.ID+"/disable", "")
+	disable.Header.Set("Idempotency-Key", "disable-principal-lifecycle-target")
+	if response := do(disable); response.Code != http.StatusOK {
+		t.Fatalf("disable principal status = %d, want 200; body=%s", response.Code, response.Body.String())
+	}
+
+	enable := request(http.MethodPost, "/api/v1/principals/"+target.Principal.ID+"/enable", "")
+	enable.Header.Set("Idempotency-Key", "enable-principal-lifecycle-target")
+	if response := do(enable); response.Code != http.StatusOK {
+		t.Fatalf("enable principal status = %d, want 200; body=%s", response.Code, response.Body.String())
+	}
+
+	if response := do(request(http.MethodDelete, "/api/v1/principals/"+target.Principal.ID, "")); response.Code != http.StatusNoContent {
+		t.Fatalf("delete principal status = %d, want 204; body=%s", response.Code, response.Body.String())
+	}
+	if _, err := repo.PrincipalByID(ctx, target.Principal.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("deleted principal lookup error = %v, want sql.ErrNoRows", err)
 	}
 }
 

@@ -15,38 +15,201 @@ async function requireJSON(response, description) {
   return response.json()
 }
 
-async function signIn(page, email, temporaryPassword, password) {
-  await page.goto(new URL('/login', baseURL).href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
-  await page.getByLabel('Email').fill(email)
-  await page.locator('input[name="password"]').fill(temporaryPassword)
-  await page.locator('input[name="password"]').press('Enter')
-  await page.locator('input[name="currentPassword"]').waitFor({ state: 'visible', timeout: 30_000 })
-  await page.locator('input[name="currentPassword"]').fill(temporaryPassword)
-  await page.locator('input[name="newPassword"]').fill(password)
-  await Promise.all([
+async function gotoWithNetworkRetry(page, url, options = {}) {
+  let lastError
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    try {
+      const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000, ...options })
+      if (!page.url().startsWith('chrome-error://')) return response
+      lastError = new Error(`navigation reached ${page.url()}`)
+    } catch (error) {
+      lastError = error
+    }
+    await page.waitForTimeout(Math.min(attempt * 500, 3_000))
+  }
+  throw lastError || new Error(`navigation failed: ${url}`)
+}
+
+async function authorizeDeviceCode(page, userCode) {
+  await page.getByLabel('Device code').fill(userCode)
+  const outcomePromise = Promise.race([
     page.waitForResponse((response) => {
       const url = new URL(response.url())
-      return url.pathname === '/auth/local/password' && response.status() === 302
-    }),
-    page.locator('input[name="newPassword"]').press('Enter'),
+      return response.request().method() === 'POST' && url.pathname === '/device'
+    }, { timeout: 30_000 }).then((response) => ({ response })),
+    page.waitForEvent('requestfailed', {
+      predicate: (request) => {
+        const url = new URL(request.url())
+        return request.method() === 'POST' && url.pathname === '/device'
+      },
+      timeout: 30_000,
+    }).then((request) => ({ request })),
   ])
-  // Changing a temporary password revokes the bootstrap session. Complete a
-  // fresh sign-in with the replacement password before continuing the journey.
+  const clickErrorPromise = page
+    .getByRole('button', { name: 'Authorize', exact: true })
+    .click({ force: true, noWaitAfter: true })
+    .then(() => undefined, (error) => error)
+  const outcome = await outcomePromise
+  const clickError = await clickErrorPromise
+  if (outcome.request) {
+    const failure = outcome.request.failure()?.errorText || 'unknown error'
+    if (failure !== 'net::ERR_NETWORK_CHANGED') {
+      throw new Error(`device authorization request failed: ${failure}`)
+    }
+  } else {
+    const responseBody = await outcome.response.text().catch(() => '')
+    if (!outcome.response.ok() || !responseBody.includes('CLI authorized')) {
+      const clickDetail = clickError ? `; click failed: ${String(clickError)}` : ''
+      throw new Error(`device authorization returned ${outcome.response.status()} without its confirmation${clickDetail}`)
+    }
+  }
+  // Chromium can transiently replace a successfully returned confirmation
+  // with chrome-error://chromewebdata/ when Compose changes a network. The
+  // authoritative POST response still proves the same UI contract; retain the
+  // visible-heading assertion whenever the page survives the transition.
+  if (outcome.response && !page.url().startsWith('chrome-error://')) {
+    await page.getByRole('heading', { name: 'CLI authorized' }).waitFor({ timeout: 30_000 })
+  }
+}
+
+async function classifyLoginState(page) {
+  if (new URL(page.url()).pathname !== '/login') return 'authenticated'
+  return Promise.race([
+    page.getByLabel('Email').waitFor({ state: 'visible', timeout: 10_000 }).then(() => 'login'),
+    page.locator('input[name="currentPassword"]').waitFor({ state: 'visible', timeout: 10_000 }).then(() => 'must-change'),
+  ])
+}
+
+async function openLoginState(page) {
+  let lastError
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      await gotoWithNetworkRetry(page, new URL('/login', baseURL).href)
+      return await classifyLoginState(page)
+    } catch (error) {
+      lastError = error
+      await page.waitForTimeout(attempt * 500)
+    }
+  }
+  throw lastError || new Error('login page did not reach a usable state')
+}
+
+async function submitLocalLogin(page, email, password) {
+  const initialState = await openLoginState(page)
+  if (initialState !== 'login') return initialState
   await page.getByLabel('Email').fill(email)
   await page.locator('input[name="password"]').fill(password)
-  await page.locator('input[name="password"]').press('Enter')
-  await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 })
+  const loginOutcome = Promise.race([
+    page.waitForResponse((response) => {
+      const url = new URL(response.url())
+      return response.request().method() === 'POST' && url.pathname === '/auth/local/login'
+    }, { timeout: 30_000 }).then((response) => ({ response })),
+    page.waitForEvent('requestfailed', {
+      predicate: (request) => {
+        const url = new URL(request.url())
+        return request.method() === 'POST' && url.pathname === '/auth/local/login'
+      },
+      timeout: 30_000,
+    }).then((request) => ({ request })),
+  ])
+  const navigationPromise = page
+    .waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30_000 })
+    .then(() => undefined, (error) => error)
+  const pressErrorPromise = page
+    .locator('input[name="password"]')
+    .press('Enter', { noWaitAfter: true })
+    .then(() => undefined, (error) => error)
+  const outcome = await loginOutcome
+  const pressError = await pressErrorPromise
+  if (outcome.response && ![302, 303].includes(outcome.response.status())) {
+    throw new Error(`local login returned ${outcome.response.status()}`)
+  }
+  if (outcome.request && outcome.request.failure()?.errorText !== 'net::ERR_NETWORK_CHANGED') {
+    throw new Error(`local login request failed: ${outcome.request.failure()?.errorText || 'unknown error'}`)
+  }
+  if (pressError && !outcome.request) throw pressError
+  const navigationError = await navigationPromise
+  if (!navigationError) return classifyLoginState(page)
+  return openLoginState(page)
+}
+
+async function submitPasswordChange(page, temporaryPassword, password) {
+  await page.locator('input[name="currentPassword"]').fill(temporaryPassword)
+  await page.locator('input[name="newPassword"]').fill(password)
+  const passwordChangeOutcome = Promise.race([
+    page.waitForResponse((response) => {
+      const url = new URL(response.url())
+      return response.request().method() === 'POST' && url.pathname === '/auth/local/password'
+    }, { timeout: 30_000 }).then((response) => ({ response })),
+    page.waitForEvent('requestfailed', {
+      predicate: (request) => {
+        const url = new URL(request.url())
+        return request.method() === 'POST' && url.pathname === '/auth/local/password'
+      },
+      timeout: 30_000,
+    }).then((request) => ({ request })),
+  ])
+  const navigationPromise = page
+    .waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30_000 })
+    .then(() => undefined, (error) => error)
+  const pressErrorPromise = page
+    .locator('input[name="newPassword"]')
+    .press('Enter', { noWaitAfter: true })
+    .then(() => undefined, (error) => error)
+  const outcome = await passwordChangeOutcome
+  const pressError = await pressErrorPromise
+  if (outcome.response && ![302, 401].includes(outcome.response.status())) {
+    throw new Error(`password change returned ${outcome.response.status()}`)
+  }
+  if (outcome.request && outcome.request.failure()?.errorText !== 'net::ERR_NETWORK_CHANGED') {
+    throw new Error(`password change request failed: ${outcome.request.failure()?.errorText || 'unknown error'}`)
+  }
+  if (pressError && !outcome.request) throw pressError
+  await navigationPromise
+}
+
+async function signIn(page, email, temporaryPassword, password) {
+  let lastError
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    try {
+      const temporaryState = await submitLocalLogin(page, email, temporaryPassword)
+      if (temporaryState === 'authenticated') {
+        throw new Error('temporary administrator password authenticated without requiring rotation')
+      }
+      if (temporaryState === 'must-change') {
+        await submitPasswordChange(page, temporaryPassword, password)
+      }
+      // A network transition can discard the password-change response and its
+      // session cookie independently. Prove the mutation with a fresh login;
+      // when it did not commit, the next iteration safely retries the still
+      // valid temporary credential and its must-change flow.
+      const replacementState = await submitLocalLogin(page, email, password)
+      if (replacementState === 'authenticated') return
+      lastError = new Error(`replacement administrator password reached ${replacementState}`)
+    } catch (error) {
+      lastError = error
+      await page.waitForTimeout(attempt * 500)
+    }
+  }
+  throw lastError || new Error('administrator sign-in did not complete')
 }
 
 async function resolvePrincipalFromDirectory(page, email) {
-  await page.goto(new URL('/admin/principals', baseURL).href, {
-    waitUntil: 'domcontentloaded',
-    timeout: 60_000,
-  })
-  const rows = page
-    .locator('tr.entity-list-table-row')
-    .filter({ hasText: email })
-  await rows.first().waitFor({ state: 'visible', timeout: 30_000 })
+  const directoryURL = new URL('/admin/principals', baseURL).href
+  let rows
+  let directoryError
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await gotoWithNetworkRetry(page, directoryURL)
+    rows = page.locator('tr.entity-list-table-row').filter({ hasText: email })
+    try {
+      await rows.first().waitFor({ state: 'visible', timeout: 30_000 })
+      directoryError = undefined
+      break
+    } catch (error) {
+      directoryError = error
+    }
+  }
+  if (directoryError || !rows) throw directoryError || new Error(`resolve principal ${email} did not load the directory`)
   const count = await rows.count()
   if (count !== 1) {
     throw new Error(`resolve principal ${email} returned ${count} directory rows`)
@@ -82,11 +245,9 @@ async function issueToken(context, page, capabilities) {
     `device authorization for ${capabilities.join(', ')}`,
   )
   const deviceURL = new URL(challenge.verification_uri_complete, baseURL)
-  await page.goto(deviceURL.href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await gotoWithNetworkRetry(page, deviceURL.href)
   await page.getByRole('heading', { name: 'Authorize LeapView CLI' }).waitFor()
-  await page.getByLabel('Device code').fill(challenge.user_code)
-  await page.getByRole('button', { name: 'Authorize', exact: true }).click({ force: true })
-  await page.getByRole('heading', { name: 'CLI authorized' }).waitFor({ timeout: 30_000 })
+  await authorizeDeviceCode(page, challenge.user_code)
   const tokens = await requireJSON(
     await context.request.post(
       new URL('/oauth/token', baseURL).href,
@@ -106,6 +267,16 @@ async function issueToken(context, page, capabilities) {
 const browser = await chromium.launch({ headless: true })
 const administratorContext = await browser.newContext({ ignoreHTTPSErrors: true })
 const administratorPage = await administratorContext.newPage()
+const administratorDiagnostics = []
+administratorPage.on('console', (message) => {
+  if (message.type() === 'error' || message.type() === 'warning') {
+    administratorDiagnostics.push(`console.${message.type()}: ${message.text()}`)
+  }
+})
+administratorPage.on('pageerror', (error) => administratorDiagnostics.push(`pageerror: ${String(error)}`))
+administratorPage.on('requestfailed', (request) => {
+  administratorDiagnostics.push(`requestfailed: ${request.method()} ${request.url()} ${request.failure()?.errorText || ''}`)
+})
 let reviewerContext
 let reviewerPage
 
@@ -130,10 +301,7 @@ const methods = {
   },
 
   async createReviewer(params) {
-    await administratorPage.goto(new URL('/admin/principals', baseURL).href, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60_000,
-    })
+    await gotoWithNetworkRetry(administratorPage, new URL('/admin/principals', baseURL).href)
     // The admin page is fed by a live Datastar stream. During the initial
     // principals refresh the toolbar can be re-rendered while Playwright is
     // checking actionability, which makes a normal click wait for the button
@@ -160,10 +328,7 @@ const methods = {
   },
 
   async createAdministratorAPIToken(params) {
-    await administratorPage.goto(new URL('/admin/api-tokens', baseURL).href, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60_000,
-    })
+    await gotoWithNetworkRetry(administratorPage, new URL('/admin/api-tokens', baseURL).href)
     await administratorPage.locator('#token-name').fill(params.name)
     await administratorPage.locator('#token-expiry').fill(params.expiresAt.slice(0, 16))
     const settings = administratorPage.locator('lv-personal-settings')
@@ -212,14 +377,9 @@ const methods = {
   async authorizeCLI(params) {
     const deviceURL = new URL(params.verificationUrl, baseURL)
     deviceURL.searchParams.set('user_code', params.userCode)
-    await administratorPage.goto(
-      deviceURL.href,
-      { waitUntil: 'domcontentloaded', timeout: 60_000 },
-    )
+    await gotoWithNetworkRetry(administratorPage, deviceURL.href)
     await administratorPage.getByRole('heading', { name: 'Authorize LeapView CLI' }).waitFor()
-    await administratorPage.getByLabel('Device code').fill(params.userCode)
-    await administratorPage.getByRole('button', { name: 'Authorize', exact: true }).click({ force: true })
-    await administratorPage.getByRole('heading', { name: 'CLI authorized' }).waitFor({ timeout: 30_000 })
+    await authorizeDeviceCode(administratorPage, params.userCode)
     return { authorized: true }
   },
 
@@ -228,10 +388,7 @@ const methods = {
     if (!previewURL.pathname.startsWith('/candidates/')) {
       throw new Error(`CLI returned a non-candidate preview URL: ${previewURL.href}`)
     }
-    const previewResponse = await administratorPage.goto(
-      previewURL.href,
-      { waitUntil: 'domcontentloaded', timeout: 60_000 },
-    )
+    const previewResponse = await gotoWithNetworkRetry(administratorPage, previewURL.href)
     if (!previewResponse || !previewResponse.ok()) {
       const status = previewResponse ? previewResponse.status() : 'no response'
       throw new Error(`candidate preview returned HTTP ${status}: ${previewURL.href}`)
@@ -243,10 +400,7 @@ const methods = {
     // The candidate redirect is authoritative for the compiled resource ID
     // and default page. Authored filenames are not serving-route identities.
     const dashboardURL = new URL(administratorPage.url())
-    await administratorPage.goto(
-      dashboardURL.href,
-      { waitUntil: 'domcontentloaded', timeout: 60_000 },
-    )
+    await gotoWithNetworkRetry(administratorPage, dashboardURL.href)
     await administratorPage
       .getByText('Governed order rows', { exact: true })
       .waitFor({ state: 'visible', timeout: 60_000 })
@@ -296,6 +450,13 @@ try {
           method: request?.method || '',
           title: await administratorPage.title().catch(() => ''),
           url: administratorPage.url(),
+          diagnostics: administratorDiagnostics.slice(-40),
+          page: await administratorPage.evaluate(() => ({
+            adminDefined: Boolean(customElements.get('lv-admin-page')),
+            entityListDefined: Boolean(customElements.get('lv-entity-list')),
+            adminText: document.querySelector('lv-admin-page')?.textContent?.replace(/\s+/g, ' ').trim().slice(0, 1000) || '',
+            bodyText: document.body?.innerText?.replace(/\s+/g, ' ').trim().slice(0, 1000) || '',
+          })).catch(() => ({})),
         })}\n`,
         { mode: 0o644 },
       ).catch(() => {})
@@ -308,6 +469,7 @@ try {
           message: String(error),
         },
       })}\n`)
+      break
     }
   }
 } finally {

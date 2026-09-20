@@ -47,6 +47,40 @@ model PrincipalCreateRequest {
   displayName?: string;
 }
 
+model OwnedObject {
+  kind: string;
+  id: string;
+  name?: string;
+  ownerPrincipalId: string;
+  lifecycle: string;
+  transferable: boolean;
+  tombstoneOnOffboard: boolean;
+}
+
+model OwnershipResolutionRequest {
+  @doc("Use transfer to assign live objects to targetPrincipalId, or tombstone to retire them while retaining evidence.")
+  action: string;
+  targetPrincipalId: string;
+}
+
+model OwnershipResolutionResponse {
+  principalId: string;
+  action: string;
+  objects: OwnedObject[];
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model OwnershipResolutionAuditPayload {
+  @apigen.auditPii
+  principalId: string;
+  @apigen.auditPublic
+  action: string;
+  @apigen.auditPii
+  targetPrincipalId: string;
+  @apigen.auditInternal
+  objectCount: int32;
+}
+
 model LocalPasswordResetResponse {
   principal: PrincipalResponse;
   temporaryPassword: string;
@@ -71,6 +105,16 @@ model ServicePrincipalSecretCreateRequest {
   expiresAt?: utcDateTime;
 }
 
+model ServicePrincipalSecretRotateRequest {
+  name: string;
+  expiresAt?: utcDateTime;
+  revokePrevious?: boolean;
+}
+
+model ServicePrincipalCredentialsRevokeAllRequest {
+  reason?: string;
+}
+
 model ServicePrincipalSecretResponse {
   id: string;
   servicePrincipalId: string;
@@ -78,6 +122,7 @@ model ServicePrincipalSecretResponse {
   secret?: string;
   expiresAt?: utcDateTime;
   createdAt?: utcDateTime;
+  lastUsedAt?: utcDateTime;
   revokedAt?: utcDateTime;
 }
 
@@ -133,6 +178,11 @@ model RoleBindingCreateRequest {
   expectedRevision: int64;
 }
 
+model RoleBindingDeleteRequest {
+  @doc("Compare-and-swap fence. Use the current target-owned policy revision.")
+  expectedRevision: int64;
+}
+
 model GroupCreateRequest {
   name: string;
   displayName?: string;
@@ -147,17 +197,14 @@ model GroupResponse {
   provider: string;
   externalId: string;
   name: string;
-  displayName: string;
   capabilities: GroupAdministrationCapabilities;
   createdAt: utcDateTime;
-  updatedAt: utcDateTime;
 }
 
 model GroupAdministrationCapabilities {
   canUpdate: boolean;
   canDelete: boolean;
   canManageMembers: boolean;
-  canManageAuthorization: boolean;
 }
 
 model GroupListResponse {
@@ -504,6 +551,138 @@ model RoleBindingAuditPayload {
   policyDigest: string;
 }
 
+model PlatformAdministratorResponse {
+  bindingId: string;
+  principalId: string;
+  email: string;
+  displayName: string;
+  role: string;
+  grantedAt: utcDateTime;
+}
+
+model PlatformAdministratorListResponse {
+  items: PlatformAdministratorResponse[];
+  page: PageInfo;
+}
+
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "PLATFORM_ADMIN_INVALID",
+  publicDetail: "The platform administrator request is invalid.",
+})
+model PlatformAdministratorInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "PLATFORM_ADMIN_NOT_FOUND",
+  publicDetail: "The platform administrator was not found.",
+})
+model PlatformAdministratorNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "conflict",
+  statusCode: 409,
+  code: "PLATFORM_ADMIN_CONFLICT",
+  publicDetail: "The platform administrator change conflicts with current state.",
+})
+model PlatformAdministratorConflictFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "unauthorized",
+  statusCode: 401,
+  code: "RECENT_AUTHENTICATION_REQUIRED",
+  publicDetail: "Recent interactive authentication is required before changing platform authority.",
+})
+model RecentAuthenticationRequiredFailure {}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model PlatformAdministratorAuditPayload {
+  @apigen.auditPii
+  principalId: string;
+  @apigen.auditInternal
+  bindingId: string;
+  @apigen.auditPublic
+  role: string;
+  @apigen.auditInternal
+  revision: string;
+}
+
+model PlatformRoleApprovalResponse {
+  id: string;
+  action: string;
+  principalId: string;
+  requesterId: string;
+  approverId?: string;
+  canceledBy?: string;
+  expiredBy?: string;
+  status: string;
+  expectedRevision: string;
+  revision: int64;
+  idempotencyKey: string;
+  expiresAt: utcDateTime;
+  createdAt: utcDateTime;
+  approvedAt?: utcDateTime;
+  canceledAt?: utcDateTime;
+  expiredAt?: utcDateTime;
+  executedAt?: utcDateTime;
+  bindingId?: string;
+  resultRevision?: string;
+}
+
+model PlatformRoleApprovalListResponse {
+  items: PlatformRoleApprovalResponse[];
+}
+
+model PlatformRoleApprovalCreateRequest {
+  action: string;
+  principalId: string;
+  expectedRevision: string;
+}
+
+model PlatformRoleApprovalDecisionRequest {
+  expectedRevision: int64;
+}
+
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "PLATFORM_ROLE_APPROVAL_INVALID",
+  publicDetail: "The platform-role approval request is invalid.",
+})
+model PlatformRoleApprovalInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "PLATFORM_ROLE_APPROVAL_NOT_FOUND",
+  publicDetail: "Platform-role approval request not found.",
+})
+model PlatformRoleApprovalNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "conflict",
+  statusCode: 409,
+  code: "PLATFORM_ROLE_APPROVAL_CONFLICT",
+  publicDetail: "The platform-role approval conflicts with current state.",
+})
+model PlatformRoleApprovalConflictFailure {}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model PlatformRoleApprovalAuditPayload {
+  @apigen.auditInternal
+  approvalId: string;
+  @apigen.auditPublic
+  action: string;
+  @apigen.auditPii
+  principalId: string;
+  @apigen.auditInternal
+  status: string;
+  @apigen.auditInternal
+  revision: int64;
+}
+
 model EffectiveCapabilityListResponse {
   resourceId: ResourceId;
   resourceKind: ResourceKind;
@@ -611,13 +790,13 @@ alias ListPrincipalSessionsOK = OkJson<SessionListResponse>;
 interface Principals {
   @summary("List principals")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   listPrincipals(@query email?: string, @query q?: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListPrincipalsOK | CommonErrors;
 
   @summary("Create a local principal")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "principal.local_user.created" })
   @apigen.failsWith(PrincipalAlreadyExistsFailure)
@@ -628,14 +807,14 @@ interface Principals {
   @summary("Get a principal")
   @route("/{principal}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   getPrincipal(@path principal: string): GetPrincipalOK | CommonErrors;
 
   @summary("Update a principal")
   @route("/{principal}")
   @patch
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "principal.updated",
@@ -651,7 +830,7 @@ interface Principals {
   @summary("Delete a principal")
   @route("/{principal}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "principal.deleted",
@@ -665,10 +844,27 @@ interface Principals {
   @apigen.ui("principal.delete")
   deletePrincipal(@path principal: string): EmptyResponse | CommonErrors;
 
+  @summary("Transfer or tombstone a principal's owned product objects")
+  @doc("Resolve live dashboard-authoring and agent-conversation ownership before deleting the principal. Tombstones retain domain evidence and are safe to retry.")
+  @route("/{principal}/ownership")
+  @post
+  @apigen.authz(#{ mode: "platform_admin" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{
+    auditAction: "principal.ownership.resolved",
+    failures: #[
+      #{ kind: "invalid", statusCode: 422, code: "OWNERSHIP_RESOLUTION_INVALID", publicDetail: "The ownership resolution request is invalid." },
+    ],
+  })
+  @apigen.failsWith(PrincipalNotFoundFailure)
+  @apigen.auditPayload(OwnershipResolutionAuditPayload)
+  @apigen.ui("principal.ownership.resolve")
+  resolvePrincipalOwnership(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: OwnershipResolutionRequest): OkJson<OwnershipResolutionResponse> | CommonErrors;
+
   @summary("Reset a local principal password")
   @route("/{principal}/password-reset")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "principal.local_password.reset" })
   @apigen.failsWith(PrincipalNotFoundFailure)
@@ -680,7 +876,7 @@ interface Principals {
   @doc("Sets an independent LeapView administrator block. External provisioning cannot clear this block.")
   @route("/{principal}/disable")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "principal.blocked",
@@ -697,7 +893,7 @@ interface Principals {
   @doc("Clears only the LeapView administrator block. An externally disabled principal remains disabled.")
   @route("/{principal}/enable")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "principal.unblocked",
@@ -713,14 +909,14 @@ interface Principals {
   @summary("List a principal's sessions")
   @route("/{principal}/sessions")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   listPrincipalSessions(@path principal: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListPrincipalSessionsOK | CommonErrors;
 
   @summary("Revoke a principal's session")
   @route("/{principal}/sessions/{session}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "session.revoked" })
   @apigen.failsWith(SessionNotFoundFailure)
@@ -740,13 +936,13 @@ alias CreateServicePrincipalSecretCreated = CreatedJson<ServicePrincipalSecretCr
 interface ServicePrincipals {
   @summary("List service principals")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   listServicePrincipals(@query limit?: ListLimit, @query pageToken?: PageToken): ListServicePrincipalsOK | CommonErrors;
 
   @summary("Create a service principal")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "service_principal.created" })
   @apigen.failsWith(ServicePrincipalInvalidFailure)
@@ -757,21 +953,16 @@ interface ServicePrincipals {
   @summary("Get a service principal")
   @route("/{servicePrincipal}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   getServicePrincipal(@path servicePrincipal: string): OkJson<PrincipalResponse> | CommonErrors;
 
   @summary("Update a service principal")
   @route("/{servicePrincipal}")
   @patch
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{
-    auditAction: "service_principal.updated",
-    failures: #[
-      #{ kind: "conflict", statusCode: 409, code: "SERVICE_PRINCIPAL_OWNS_OBJECTS", publicDetail: "Transfer owned objects before deleting this service principal." },
-    ],
-  })
+  @apigen.command(#{ auditAction: "service_principal.updated" })
   @apigen.failsWith(ServicePrincipalNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
   updateServicePrincipal(@path servicePrincipal: string, @header("If-Match") ifMatch: string, @body body: ServicePrincipalPatchRequest): UpdateServicePrincipalOK | CommonErrors;
@@ -779,18 +970,45 @@ interface ServicePrincipals {
   @summary("Delete a service principal")
   @route("/{servicePrincipal}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{ auditAction: "service_principal.deleted" })
+  @apigen.command(#{
+    auditAction: "service_principal.deleted",
+    failures: #[
+      #{ kind: "conflict", statusCode: 409, code: "SERVICE_PRINCIPAL_OWNS_OBJECTS", publicDetail: "Transfer owned objects before deleting this service principal." },
+    ],
+  })
   @apigen.failsWith(ServicePrincipalNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
   @apigen.ui("service-account.delete")
   deleteServicePrincipal(@path @apigen.target servicePrincipal: string): EmptyResponse | CommonErrors;
 
+  @summary("Disable a service principal and revoke its credentials")
+  @route("/{servicePrincipal}/disable")
+  @post
+  @apigen.authz(#{ mode: "platform_admin" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "service_principal.disabled" })
+  @apigen.failsWith(ServicePrincipalNotFoundFailure)
+  @apigen.auditPayload(ServicePrincipalAuditPayload)
+  @apigen.ui("service-account.disable")
+  disableServicePrincipal(@path @apigen.target servicePrincipal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
+
+  @summary("Enable a service principal")
+  @route("/{servicePrincipal}/enable")
+  @post
+  @apigen.authz(#{ mode: "platform_admin" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "service_principal.enabled" })
+  @apigen.failsWith(ServicePrincipalNotFoundFailure)
+  @apigen.auditPayload(ServicePrincipalAuditPayload)
+  @apigen.ui("service-account.enable")
+  enableServicePrincipal(@path @apigen.target servicePrincipal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<PrincipalResponse> | CommonErrors;
+
   @summary("Create a service principal secret")
   @route("/{servicePrincipal}/secrets")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "service_principal_secret.created" })
   @apigen.failsWith(ServicePrincipalSecretInvalidFailure)
@@ -801,27 +1019,49 @@ interface ServicePrincipals {
   @summary("List service-principal secrets")
   @route("/{servicePrincipal}/secrets")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   listServicePrincipalSecrets(@path servicePrincipal: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ServicePrincipalSecretListResponse> | CommonErrors;
 
   @summary("Get service-principal secret metadata")
   @route("/{servicePrincipal}/secrets/{secret}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   getServicePrincipalSecret(@path servicePrincipal: string, @path secret: string): OkJson<ServicePrincipalSecretResponse> | CommonErrors;
 
   @summary("Revoke a service principal secret")
   @route("/{servicePrincipal}/secrets/{secret}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "service_principal_secret.revoked" })
   @apigen.failsWith(ServicePrincipalSecretNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalSecretAuditPayload)
   @apigen.ui("service-account.secret.revoke")
   revokeServicePrincipalSecret(@path @apigen.target servicePrincipal: string, @path secret: string): EmptyResponse | CommonErrors;
+
+  @summary("Rotate a service principal secret")
+  @route("/{servicePrincipal}/secrets/{secret}/rotate")
+  @post
+  @apigen.authz(#{ mode: "platform_admin" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "service_principal_secret.rotated" })
+  @apigen.failsWith(ServicePrincipalSecretInvalidFailure)
+  @apigen.auditPayload(ServicePrincipalSecretAuditPayload)
+  @apigen.ui("service-account.secret.rotate")
+  rotateServicePrincipalSecret(@path @apigen.target servicePrincipal: string, @path secret: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ServicePrincipalSecretRotateRequest): CreateServicePrincipalSecretCreated | CommonErrors;
+
+  @summary("Revoke every service principal credential")
+  @route("/{servicePrincipal}/credentials/revoke-all")
+  @post
+  @apigen.authz(#{ mode: "platform_admin" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "service_principal_credentials.revoked_all" })
+  @apigen.failsWith(ServicePrincipalNotFoundFailure)
+  @apigen.auditPayload(ServicePrincipalAuditPayload)
+  @apigen.ui("service-account.credentials.revoke-all")
+  revokeAllServicePrincipalCredentials(@path @apigen.target servicePrincipal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ServicePrincipalCredentialsRevokeAllRequest): EmptyResponse | CommonErrors;
 }
 
 alias ListGroupsOK = OkJson<GroupListResponse>;
@@ -837,13 +1077,13 @@ alias AddGroupMemberOK = OkJson<StatusResponse>;
 interface Groups {
   @summary("List groups")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   listGroups(@query limit?: ListLimit, @query pageToken?: PageToken): ListGroupsOK | CommonErrors;
 
   @summary("Create a group")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "group.created" })
   @apigen.failsWith(GroupInvalidFailure)
@@ -854,7 +1094,7 @@ interface Groups {
   @summary("Delete a group")
   @route("/{group}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "group.deleted" })
   @apigen.failsWith(GroupNotFoundFailure)
@@ -866,14 +1106,14 @@ interface Groups {
   @summary("Get a group")
   @route("/{group}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   getGroup(@path group: string): GetGroupOK | CommonErrors;
 
   @summary("Update a group")
   @route("/{group}")
   @patch
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "group.updated" })
   @apigen.failsWith(GroupNotFoundFailure)
@@ -885,14 +1125,14 @@ interface Groups {
   @summary("List group members")
   @route("/{group}/members")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   listGroupMembers(@path group: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListGroupMembersOK | CommonErrors;
 
   @summary("Remove a group member")
   @route("/{group}/members/{principal}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "group.member_removed",
@@ -908,7 +1148,7 @@ interface Groups {
   @summary("Add a group member")
   @route("/{group}/members/{principal}")
   @put
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{
     auditAction: "group.member_added",
@@ -923,6 +1163,131 @@ interface Groups {
 }
 
 alias ListProjectRolesOK = OkJson<RoleListResponse>;
+
+alias ListPlatformAdministratorsOK = OkJson<PlatformAdministratorListResponse>;
+alias GrantPlatformAdministratorOK = OkJson<PlatformAdministratorResponse>;
+
+@tag("Access")
+@summary("List active platform administrators")
+@route("/platform-administrators")
+@get
+@apigen.authz(#{ mode: "platform_admin" })
+@extension("x-leapview-object-scope", "platform")
+op listPlatformAdministrators(@query limit?: ListLimit, @query pageToken?: PageToken): ListPlatformAdministratorsOK | CommonErrors;
+
+@tag("Access")
+@summary("Grant the platform administrator role")
+@route("/platform-administrators/{principal}")
+@put
+@apigen.authz(#{ mode: "platform_admin" })
+@extension("x-leapview-object-scope", "platform")
+@apigen.command(#{ auditAction: "platform_admin.granted", guarantee: "transactional" })
+@apigen.ui("platform-administrator.grant")
+@apigen.failsWith(PlatformAdministratorInvalidFailure)
+@apigen.failsWith(PlatformAdministratorConflictFailure)
+@apigen.failsWith(PlatformAdministratorNotFoundFailure)
+@apigen.failsWith(RecentAuthenticationRequiredFailure)
+@apigen.auditPayload(PlatformAdministratorAuditPayload)
+op grantPlatformAdministrator(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("If-Match") ifMatch: string): GrantPlatformAdministratorOK | CommonErrors;
+
+@tag("Access")
+@summary("Revoke the platform administrator role")
+@route("/platform-administrators/{principal}")
+@delete
+@apigen.authz(#{ mode: "platform_admin" })
+@extension("x-leapview-object-scope", "platform")
+@apigen.command(#{ auditAction: "platform_admin.revoked", guarantee: "transactional" })
+@apigen.ui("platform-administrator.revoke")
+@apigen.failsWith(PlatformAdministratorInvalidFailure)
+@apigen.failsWith(PlatformAdministratorConflictFailure)
+@apigen.failsWith(PlatformAdministratorNotFoundFailure)
+@apigen.failsWith(RecentAuthenticationRequiredFailure)
+@apigen.auditPayload(PlatformAdministratorAuditPayload)
+op revokePlatformAdministrator(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("If-Match") ifMatch: string): EmptyResponse | CommonErrors;
+
+alias ListPlatformRoleApprovalsOK = OkJson<PlatformRoleApprovalListResponse>;
+alias PlatformRoleApprovalOK = OkJson<PlatformRoleApprovalResponse>;
+alias RequestPlatformRoleApprovalCreated = CreatedJson<PlatformRoleApprovalResponse>;
+
+@tag("Access")
+@summary("List platform-role approval requests")
+@route("/platform-role-approvals")
+@get
+@apigen.authz(#{ mode: "platform_admin" })
+@extension("x-leapview-object-scope", "platform")
+op listPlatformRoleApprovals(): ListPlatformRoleApprovalsOK | CommonErrors;
+
+@tag("Access")
+@summary("Get a platform-role approval request")
+@route("/platform-role-approvals/{approval}")
+@get
+@apigen.authz(#{ mode: "platform_admin" })
+@extension("x-leapview-object-scope", "platform")
+op getPlatformRoleApproval(@path approval: string): PlatformRoleApprovalOK | CommonErrors;
+
+@tag("Access")
+@summary("Request a platform-role change for second-admin approval")
+@route("/platform-role-approvals")
+@post
+@apigen.authz(#{ mode: "platform_admin" })
+@extension("x-leapview-object-scope", "platform")
+@apigen.command(#{ auditAction: "platform_role_approval.requested", guarantee: "transactional" })
+@apigen.failsWith(PlatformRoleApprovalInvalidFailure)
+@apigen.failsWith(PlatformRoleApprovalConflictFailure)
+@apigen.auditPayload(PlatformRoleApprovalAuditPayload)
+op requestPlatformRoleApproval(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: PlatformRoleApprovalCreateRequest): RequestPlatformRoleApprovalCreated | CommonErrors;
+
+@tag("Access")
+@summary("Approve a platform-role approval request")
+@route("/platform-role-approvals/{approval}/approve")
+@post
+@apigen.authz(#{ mode: "platform_admin" })
+@extension("x-leapview-object-scope", "platform")
+@apigen.command(#{ auditAction: "platform_role_approval.approved", guarantee: "transactional" })
+@apigen.failsWith(PlatformRoleApprovalInvalidFailure)
+@apigen.failsWith(PlatformRoleApprovalNotFoundFailure)
+@apigen.failsWith(PlatformRoleApprovalConflictFailure)
+@apigen.auditPayload(PlatformRoleApprovalAuditPayload)
+op approvePlatformRoleApproval(@path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: PlatformRoleApprovalDecisionRequest): PlatformRoleApprovalOK | CommonErrors;
+
+@tag("Access")
+@summary("Cancel a platform-role approval request")
+@route("/platform-role-approvals/{approval}/cancel")
+@post
+@apigen.authz(#{ mode: "platform_admin" })
+@extension("x-leapview-object-scope", "platform")
+@apigen.command(#{ auditAction: "platform_role_approval.canceled", guarantee: "transactional" })
+@apigen.failsWith(PlatformRoleApprovalInvalidFailure)
+@apigen.failsWith(PlatformRoleApprovalNotFoundFailure)
+@apigen.failsWith(PlatformRoleApprovalConflictFailure)
+@apigen.auditPayload(PlatformRoleApprovalAuditPayload)
+op cancelPlatformRoleApproval(@path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: PlatformRoleApprovalDecisionRequest): PlatformRoleApprovalOK | CommonErrors;
+
+@tag("Access")
+@summary("Expire a due platform-role approval request")
+@route("/platform-role-approvals/{approval}/expire")
+@post
+@apigen.authz(#{ mode: "platform_admin" })
+@extension("x-leapview-object-scope", "platform")
+@apigen.command(#{ auditAction: "platform_role_approval.expired", guarantee: "transactional" })
+@apigen.failsWith(PlatformRoleApprovalInvalidFailure)
+@apigen.failsWith(PlatformRoleApprovalNotFoundFailure)
+@apigen.failsWith(PlatformRoleApprovalConflictFailure)
+@apigen.auditPayload(PlatformRoleApprovalAuditPayload)
+op expirePlatformRoleApproval(@path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: PlatformRoleApprovalDecisionRequest): PlatformRoleApprovalOK | CommonErrors;
+
+@tag("Access")
+@summary("Execute an approved platform-role change")
+@route("/platform-role-approvals/{approval}/execute")
+@post
+@apigen.authz(#{ mode: "platform_admin" })
+@extension("x-leapview-object-scope", "platform")
+@apigen.command(#{ auditAction: "platform_role_approval.executed", guarantee: "transactional" })
+@apigen.failsWith(PlatformRoleApprovalInvalidFailure)
+@apigen.failsWith(PlatformRoleApprovalNotFoundFailure)
+@apigen.failsWith(PlatformRoleApprovalConflictFailure)
+@apigen.auditPayload(PlatformRoleApprovalAuditPayload)
+op executePlatformRoleApproval(@path approval: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): PlatformRoleApprovalOK | CommonErrors;
 
 @tag("Access")
 @summary("List project roles")
@@ -954,11 +1319,26 @@ op listProjectRoleBindings(@path project: ResourceId, @query limit?: ListLimit, 
 @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
 @extension("x-leapview-object-scope", "project")
 @apigen.command(#{ auditAction: "role_binding.created", guarantee: "transactional" })
+@apigen.ui("role-binding.create")
 @apigen.failsWith(RoleBindingInvalidFailure)
 @apigen.failsWith(RoleBindingConflictFailure)
 @apigen.failsWith(RoleBindingNotFoundFailure)
 @apigen.auditPayload(RoleBindingAuditPayload)
 op createProjectRoleBinding(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingCreateRequest): CreateProjectRoleBindingCreated | CommonErrors;
+
+@tag("Access")
+@summary("Delete a target-owned project role binding")
+@route("/projects/{project}/role-bindings/{binding}")
+@delete
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
+@apigen.command(#{ auditAction: "role_binding.deleted", guarantee: "transactional" })
+@apigen.ui("role-binding.delete")
+@apigen.failsWith(RoleBindingInvalidFailure)
+@apigen.failsWith(RoleBindingConflictFailure)
+@apigen.failsWith(RoleBindingNotFoundFailure)
+@apigen.auditPayload(RoleBindingAuditPayload)
+op deleteProjectRoleBinding(@path @apigen.target project: ResourceId, @path binding: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingDeleteRequest): EmptyResponse | CommonErrors;
 
 alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
 
@@ -970,66 +1350,10 @@ alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
 @extension("x-leapview-object-scope", "project")
 op listEffectiveCapabilities(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId): ListEffectiveCapabilitiesOK | CommonErrors;
 
-alias ListGrantsOK = OkJson<GrantListResponse>;
-alias CreateGrantCreated = CreatedJson<GrantResponse>;
-
-@tag("Access")
-@route("/projects/{project}/grants")
-@apigen.commandDefaults(#{ guarantee: "transactional" })
-interface Grants {
-  @summary("List grants")
-  @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  listGrants(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListGrantsOK | CommonErrors;
-
-  @summary("Create a grant")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.ui("project.access.grant.create")
-  @apigen.command(#{
-    auditAction: "grant.created",
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "GRANT_INVALID", publicDetail: "The grant request is invalid." },
-    ],
-  })
-  @apigen.auditPayload(GrantAuditPayload)
-  createGrant(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GrantRequest): CreateGrantCreated | CommonErrors;
-
-  @summary("Get a resource capability grant")
-  @route("/{grant}")
-  @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  getGrant(@path project: ResourceId, @path grant: string): OkJson<GrantResponse> | CommonErrors;
-
-  @summary("Update a resource capability grant")
-  @route("/{grant}")
-  @patch
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.command(#{
-    auditAction: "grant.updated",
-    failures: #[
-      #{ kind: "invalid", statusCode: 422, code: "GRANT_INVALID", publicDetail: "The grant is invalid." },
-    ],
-  })
-  @apigen.failsWith(GrantNotFoundFailure)
-  @apigen.auditPayload(GrantAuditPayload)
-  updateGrant(@path @apigen.target project: ResourceId, @path grant: string, @header("If-Match") ifMatch: string, @body body: GrantRequest): OkJson<GrantResponse> | CommonErrors;
-
-  @summary("Delete a grant")
-  @route("/{grant}")
-  @delete
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.ui("project.access.grant.delete")
-  @apigen.command(#{ auditAction: "grant.deleted" })
-  @apigen.failsWith(GrantNotFoundFailure)
-  @apigen.auditPayload(GrantAuditPayload)
-  deleteGrant(@path @apigen.target project: ResourceId, @path grant: string): EmptyResponse | CommonErrors;
-}
+// Fine-grained grants are authored in the project access declaration and
+// compiled into the immutable serving generation. Runtime grant CRUD is not a
+// supported API surface; keep these shared models for compiled/effective
+// authorization contracts that may consume them.
 
 @tag("Access")
 @summary("Check multiple authorization decisions")
@@ -1295,12 +1619,12 @@ alias SemanticAttributeImpactPreviewOK = OkJson<SemanticAttributeImpactPreviewRe
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface SemanticAttributeDefinitions {
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   listSemanticAttributeDefinitions(@query q?: string, @query ownerKind?: SemanticAttributeOwnerKindValue, @query limit?: ListLimit, @query pageToken?: PageToken): ListSemanticAttributeDefinitionsOK | CommonErrors;
 
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   // The repository's durable audit event is semantic_attribute.register.
   // Replays use a distinct durable replay action but retain this canonical
@@ -1313,14 +1637,14 @@ interface SemanticAttributeDefinitions {
 
   @route("/{attribute}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
   getSemanticAttributeDefinition(@path attribute: string): GetSemanticAttributeDefinitionOK | CommonErrors;
 
   @route("/{attribute}")
   @patch
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "semantic_attribute.metadata_update" })
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
@@ -1330,7 +1654,7 @@ interface SemanticAttributeDefinitions {
 
   @route("/{attribute}/disable")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "semantic_attribute.disable" })
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
@@ -1339,7 +1663,7 @@ interface SemanticAttributeDefinitions {
 
   @route("/{attribute}/restore")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "semantic_attribute.enable" })
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
@@ -1353,13 +1677,13 @@ interface SemanticAttributeDefinitions {
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface PrincipalSemanticAttributeAssignments {
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   listPrincipalSemanticAttributeAssignments(@path principal: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticAttributeAssignmentListResponse> | CommonErrors;
 
   @route("/{attribute}")
   @put
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "semantic_attribute.assignment.set" })
   @apigen.failsWith(SemanticAttributeInvalidFailure)
@@ -1369,7 +1693,7 @@ interface PrincipalSemanticAttributeAssignments {
 
   @route("/{attribute}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "semantic_attribute.assignment.tombstone" })
   @apigen.failsWith(SemanticAttributeAssignmentNotFoundFailure)
@@ -1383,13 +1707,13 @@ interface PrincipalSemanticAttributeAssignments {
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface GroupSemanticAttributeAssignments {
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   listGroupSemanticAttributeAssignments(@path group: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticAttributeAssignmentListResponse> | CommonErrors;
 
   @route("/{attribute}")
   @put
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "semantic_attribute.assignment.set" })
   @apigen.failsWith(SemanticAttributeInvalidFailure)
@@ -1399,7 +1723,7 @@ interface GroupSemanticAttributeAssignments {
 
   @route("/{attribute}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "semantic_attribute.assignment.tombstone" })
   @apigen.failsWith(SemanticAttributeAssignmentNotFoundFailure)
@@ -1413,12 +1737,12 @@ interface GroupSemanticAttributeAssignments {
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface SemanticAttributeClaimMappings {
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   listSemanticAttributeClaimMappings(@path attribute: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticAttributeClaimMappingListResponse> | CommonErrors;
 
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "semantic_attribute.claim_mapping.set" })
   @apigen.failsWith(SemanticAttributeInvalidFailure)
@@ -1428,7 +1752,7 @@ interface SemanticAttributeClaimMappings {
 
   @route("/{mapping}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "platform_admin" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "semantic_attribute.claim_mapping.tombstone" })
   @apigen.failsWith(SemanticAttributeClaimMappingNotFoundFailure)
@@ -1441,7 +1765,7 @@ interface SemanticAttributeClaimMappings {
 @route("/semantic-attributes/{attribute}/impact-preview")
 @post
 @apigen.query
-@apigen.authz(#{ mode: "authenticated" })
+@apigen.authz(#{ mode: "platform_admin" })
 @extension("x-leapview-object-scope", "platform")
   @apigen.failsWith(SemanticAttributeInvalidFailure)
   @apigen.failsWith(SemanticAttributeNotFoundFailure)

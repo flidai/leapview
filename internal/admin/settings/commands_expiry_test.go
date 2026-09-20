@@ -1,0 +1,81 @@
+package settings
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/flidai/leapview/internal/access"
+)
+
+type serviceAccountSecretExpiryMutator struct {
+	input access.ServicePrincipalSecretInput
+}
+
+func (m *serviceAccountSecretExpiryMutator) CreateServicePrincipal(context.Context, access.ServicePrincipalInput) (access.Principal, error) {
+	return access.Principal{ID: "svc-1", Kind: access.PrincipalKindServicePrincipal}, nil
+}
+
+func (m *serviceAccountSecretExpiryMutator) UpdateServicePrincipal(context.Context, string, access.ServicePrincipalInput) (access.Principal, error) {
+	return access.Principal{}, nil
+}
+
+func (m *serviceAccountSecretExpiryMutator) DeleteServicePrincipal(context.Context, string) error {
+	return nil
+}
+
+func (m *serviceAccountSecretExpiryMutator) CreateServicePrincipalSecret(_ context.Context, _ string, input access.ServicePrincipalSecretInput) (string, access.ServicePrincipalSecret, error) {
+	m.input = input
+	return "secret", access.ServicePrincipalSecret{ID: "secret-1"}, nil
+}
+
+func (m *serviceAccountSecretExpiryMutator) RevokeServicePrincipalSecret(context.Context, string, string) error {
+	return nil
+}
+
+func TestResolveServiceAccountSecretExpiryUsesSharedDefaultAndMaximum(t *testing.T) {
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		command ServiceAccountCommand
+		want    time.Time
+		wantErr error
+	}{
+		{name: "omitted", command: ServiceAccountCommand{}, want: now.Add(access.ServicePrincipalSecretDefaultLifetime)},
+		{name: "preset", command: ServiceAccountCommand{SecretLifetimeDays: 365}, want: now.Add(access.ServicePrincipalSecretMaxLifetime)},
+		{name: "over maximum", command: ServiceAccountCommand{SecretLifetimeDays: 366}, wantErr: access.ErrCredentialExpiryTooFar},
+		{name: "past date", command: ServiceAccountCommand{ExpiresAt: now.Add(-time.Minute).Format(time.RFC3339)}, wantErr: access.ErrCredentialExpiryInPast},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := resolveServiceAccountSecretExpiry(test.command, now)
+			if test.wantErr != nil {
+				if !errors.Is(err, test.wantErr) {
+					t.Fatalf("error = %v, want errors.Is(..., %v)", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolve expiry: %v", err)
+			}
+			if !got.Equal(test.want) {
+				t.Fatalf("expiry = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
+func TestApplyServiceAccountCommandPassesResolvedSecretExpiry(t *testing.T) {
+	mutator := &serviceAccountSecretExpiryMutator{}
+	_, _, err := applyServiceAccountCommand(context.Background(), mutator, ServiceAccountCommand{
+		Action: "create_secret", AccountID: "svc-1", SecretName: "CI", SecretLifetimeDays: 90,
+	})
+	if err != nil {
+		t.Fatalf("apply command: %v", err)
+	}
+	if !mutator.input.ExpiresAt.After(time.Now().UTC().Add(89 * 24 * time.Hour)) {
+		t.Fatalf("resolved expiry = %s, want roughly 90 days from now", mutator.input.ExpiresAt)
+	}
+}

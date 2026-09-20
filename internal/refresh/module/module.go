@@ -317,7 +317,14 @@ func (m *Module) JobHandlers() []jobs.Handler {
 				m.runFinishedCallback(context.Background(), claimed)
 			}
 		}()
-		return executeWithLeaseHeartbeat(ctx, claimed, m.leaseTimeout, m.runs.RenewJobLease, m.service.ExecuteClaimedJob)
+		err = executeWithLeaseHeartbeat(ctx, claimed, m.leaseTimeout, m.runs.RenewJobLease, m.service.ExecuteClaimedJob)
+		if err != nil && m.logger != nil {
+			m.logger.ErrorContext(ctx, "refresh pipeline execution failed",
+				slog.String("run_id", claimed.RunID), slog.String("job_id", claimed.ID),
+				slog.String("pipeline_id", claimed.PipelineID.String()),
+				slog.String("error", err.Error()))
+		}
+		return err
 	}
 	return []jobs.Handler{
 		jobs.HandlerFunc{JobKind: refreshrun.JobKindRefreshPipeline, Run: run, ExecutionLeaseTimeout: m.leaseTimeout},
@@ -902,6 +909,11 @@ func (m *Module) Start(ctx context.Context) error {
 		m.mu.Unlock()
 		return nil
 	}
+	expiredJobRecovery, err := m.recoverExpiredRiverJobsOnStart(ctx)
+	if err != nil {
+		m.mu.Unlock()
+		return err
+	}
 	m.background, m.cancel = context.WithCancel(ctx)
 	m.started = true
 	background := m.background
@@ -912,6 +924,10 @@ func (m *Module) Start(ctx context.Context) error {
 	if m.recoveryLifecycle != nil {
 		m.wg.Add(1)
 		go m.runRecoveryLifecycle(background)
+	}
+	if expiredJobRecovery != nil {
+		m.wg.Add(1)
+		go m.runExpiredRiverJobRecovery(background, expiredJobRecovery)
 	}
 	m.mu.Unlock()
 	return nil

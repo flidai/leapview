@@ -18,6 +18,8 @@ import (
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	"github.com/flidai/leapview/internal/deployment"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -33,14 +35,17 @@ type Handler struct {
 	EnsureClientID      func(nethttp.ResponseWriter, *nethttp.Request) bool
 	Broker              *pagestream.Broker
 	PublicationMutation func(*nethttp.Request, uisignals.AdminPublicationCommand) error
+	DeliveryRollback    func(context.Context, string, string, string, string) error
 	PersonalSettings    *personalsettings.Handler
 	ProductSettings     *productsettings.Handler
 	SettingsRepository  interface {
 		access.Repository
 		adminsettings.ServiceAccountReader
 	}
-	AuthorizationProjection adminsettings.AuthorizationProjectionReader
-	CurrentCredential       func(*nethttp.Request) (access.APICredential, bool)
+	AuthorizationProjection        adminsettings.AuthorizationProjectionReader
+	AuthorizationPolicyTargetID    string
+	AuthorizationPolicyEnvironment string
+	CurrentCredential              func(*nethttp.Request) (access.APICredential, bool)
 }
 
 type publicationCommandSignals struct {
@@ -117,6 +122,10 @@ func (h Handler) PrincipalDetail(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (h Handler) Groups(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "groups")
+}
+
+func (h Handler) AccessSettings(w nethttp.ResponseWriter, r *nethttp.Request) {
+	h.renderPage(w, r, "access")
 }
 
 func (h Handler) PrincipalsSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -210,6 +219,85 @@ func (h Handler) Publications(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	h.writePage(w, r, "publications", data)
+}
+
+func (h Handler) Delivery(w nethttp.ResponseWriter, r *nethttp.Request) {
+	data, err := h.readModel().DeliveryData(r)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	h.writePage(w, r, "delivery", data)
+}
+
+type deliveryCommandSignals struct {
+	Generation string `json:"generation"`
+}
+
+func (h Handler) DeliveryCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.DeliveryRollback == nil {
+		nethttp.Error(w, "delivery management is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+	generation := strings.TrimSpace(r.URL.Query().Get("generation"))
+	if generation == "" {
+		var command deliveryCommandSignals
+		if err := pagestream.ReadSignals(r, &command); err != nil {
+			nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+			return
+		}
+		generation = strings.TrimSpace(command.Generation)
+	}
+	if generation == "" {
+		nethttp.Error(w, "generation is required", nethttp.StatusBadRequest)
+		return
+	}
+	projectID, err := h.ReadModel.projectID(r.Context())
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusServiceUnavailable)
+		return
+	}
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	operationID := deploymentgen.GenCommandOperationRollbackDeliveryGeneration().APIGenOperationID()
+	if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), operationID); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	ctx, _, err := deploymentgen.BeginGenRollbackDeliveryGenerationCommand(r.Context(), deploymentgen.GenRollbackDeliveryGenerationCommandInvocation{
+		Surface: apigencommand.SurfaceUI, Project: projectID.String(), IdempotencyKey: idempotencyKey,
+		RequestID: requestID, CorrelationID: correlationID,
+	})
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	actorID := ""
+	if h.ReadModel.CurrentPrincipal != nil {
+		if principal, ok := h.ReadModel.CurrentPrincipal(r); ok {
+			actorID = principal.ID
+		}
+	}
+	if err := h.DeliveryRollback(ctx, projectID.String(), generation, idempotencyKey, actorID); err != nil {
+		nethttp.Error(w, nethttp.StatusText(deliveryCommandStatus(err)), deliveryCommandStatus(err))
+		return
+	}
+	data, _ := h.readModel().DeliveryData(r.WithContext(ctx))
+	_ = pagestream.PatchResponse(w, r.WithContext(ctx), map[string]any{"page": ui.AdminBootstrapSignals("delivery", data)["page"]})
+}
+
+func deliveryCommandStatus(err error) int {
+	if errors.Is(err, deployment.ErrDeliveryInvalid) {
+		return nethttp.StatusUnprocessableEntity
+	}
+	if errors.Is(err, deployment.ErrNotFound) {
+		return nethttp.StatusNotFound
+	}
+	if errors.Is(err, deployment.ErrDeliveryStale) || errors.Is(err, deployment.ErrDeliveryConflict) || errors.Is(err, deployment.ErrDeliveryIdempotencyDrift) {
+		return nethttp.StatusConflict
+	}
+	return nethttp.StatusServiceUnavailable
 }
 
 func (h Handler) PublicationCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -355,6 +443,20 @@ func beginServiceAccountInvocation(r *nethttp.Request, command adminsettings.Ser
 			})
 			return ctx, err
 		})
+	case "disable":
+		return begin(accessgen.GenUIActionDisableServicePrincipal(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenDisableServicePrincipalCommand(r.Context(), accessgen.GenDisableServicePrincipalCommandInvocation{
+				Surface: apigencommand.SurfaceUI, ServicePrincipal: strings.TrimSpace(command.AccountID), IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case "enable":
+		return begin(accessgen.GenUIActionEnableServicePrincipal(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenEnableServicePrincipalCommand(r.Context(), accessgen.GenEnableServicePrincipalCommandInvocation{
+				Surface: apigencommand.SurfaceUI, ServicePrincipal: strings.TrimSpace(command.AccountID), IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
 	case "create_secret":
 		return begin(accessgen.GenUIActionCreateServicePrincipalSecret(), func() (context.Context, error) {
 			ctx, _, err := accessgen.BeginGenCreateServicePrincipalSecretCommand(r.Context(), accessgen.GenCreateServicePrincipalSecretCommandInvocation{
@@ -367,6 +469,20 @@ func beginServiceAccountInvocation(r *nethttp.Request, command adminsettings.Ser
 		return begin(accessgen.GenUIActionRevokeServicePrincipalSecret(), func() (context.Context, error) {
 			ctx, _, err := accessgen.BeginGenRevokeServicePrincipalSecretCommand(r.Context(), accessgen.GenRevokeServicePrincipalSecretCommandInvocation{
 				Surface: apigencommand.SurfaceUI, ServicePrincipal: strings.TrimSpace(command.AccountID), RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case "rotate_secret":
+		return begin(accessgen.GenUIActionRotateServicePrincipalSecret(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenRotateServicePrincipalSecretCommand(r.Context(), accessgen.GenRotateServicePrincipalSecretCommandInvocation{
+				Surface: apigencommand.SurfaceUI, ServicePrincipal: strings.TrimSpace(command.AccountID), IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case "revoke_all":
+		return begin(accessgen.GenUIActionRevokeAllServicePrincipalCredentials(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenRevokeAllServicePrincipalCredentialsCommand(r.Context(), accessgen.GenRevokeAllServicePrincipalCredentialsCommandInvocation{
+				Surface: apigencommand.SurfaceUI, ServicePrincipal: strings.TrimSpace(command.AccountID), IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID,
 			})
 			return ctx, err
 		})
@@ -386,10 +502,18 @@ func (h Handler) AuditLogCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	command := adminsettings.NormalizeAuditLogCommand(request.Command)
-	state, err := adminsettings.LoadAuditLog(r.Context(), h.SettingsRepository, command.Filters, command.PageToken, command.Limit)
+	projectID, err := h.ReadModel.projectID(r.Context())
 	if err != nil {
 		current := request.Current
 		current.Filters = command.Filters
+		h.patchAuditLogError(w, r, current, err)
+		return
+	}
+	state, err := adminsettings.LoadAuditLog(r.Context(), h.SettingsRepository, projectID.String(), command.Filters, command.PageToken, command.Limit)
+	if err != nil {
+		current := request.Current
+		current.Filters = command.Filters
+		current.Filters.ProjectID = projectID.String()
 		h.patchAuditLogError(w, r, current, err)
 		return
 	}
@@ -529,11 +653,35 @@ func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals m
 		}
 		signals["adminAccess"] = state
 		signals["adminAccessCommand"] = adminsettings.AccessAdministrationCommand{}
+	case "access":
+		if h.SettingsRepository == nil {
+			return nil
+		}
+		scope, err := h.accessSettingsScope(r.Context())
+		if err != nil {
+			return err
+		}
+		principalID := ""
+		if h.ReadModel.CurrentPrincipal != nil {
+			if principal, ok := h.ReadModel.CurrentPrincipal(r); ok {
+				principalID = principal.ID
+			}
+		}
+		state, err := adminsettings.LoadAccessSettingsForPrincipal(r.Context(), h.SettingsRepository, scope, principalID, h.ReadModel.EffectiveAccess)
+		if err != nil {
+			return err
+		}
+		signals["adminAccessSettings"] = state
+		signals["adminAccessSettingsCommand"] = adminsettings.AccessSettingsCommand{}
 	case "audit":
 		if h.SettingsRepository == nil {
 			return nil
 		}
-		state, err := adminsettings.LoadAuditLog(r.Context(), h.SettingsRepository, adminsettings.AuditLogFilters{}, "", 50)
+		projectID, err := h.ReadModel.projectID(r.Context())
+		if err != nil {
+			return err
+		}
+		state, err := adminsettings.LoadAuditLog(r.Context(), h.SettingsRepository, projectID.String(), adminsettings.AuditLogFilters{}, "", 50)
 		if err != nil {
 			return err
 		}
@@ -584,6 +732,8 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 		return h.readModel().StorageTableData(r, r.URL.Query().Get("schema"), r.URL.Query().Get("table"))
 	case "profile", "security", "api-tokens", "general", "service-accounts", "authentication", "audit", "system":
 		return h.readModel().SettingsData(r)
+	case "delivery":
+		return h.readModel().DeliveryData(r)
 	}
 	data, err := h.adminData(r)
 	if err != nil {

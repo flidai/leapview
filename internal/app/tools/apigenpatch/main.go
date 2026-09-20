@@ -92,9 +92,10 @@ func applyAccessResourceKindPolicy(source []byte) ([]byte, error) {
 	text := string(source)
 	const old = "*ResourceKind"
 	const desired = "*GenSchemaResourceKind"
-	// The two remaining filters are grant listing and authorization checks;
-	// DataPolicy authoring was removed by the semantic-access cutover.
-	const expected = 2
+	// Effective-capability filtering is the remaining access ResourceKind
+	// request parameter; runtime project-grant listing was removed because
+	// fine-grained grants are compiled from project-authored policy.
+	const expected = 1
 	oldCount := strings.Count(text, old)
 	desiredCount := strings.Count(text, desired)
 	switch {

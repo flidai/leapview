@@ -2,14 +2,71 @@ package module
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	"github.com/flidai/leapview/pkg/strictjson"
 )
+
+// nativeGenerationLifecycleReader is an optional extension implemented by
+// the native PostgreSQL authority. The base read port remains compatible with
+// narrow test/offline readers, while the production authority can project
+// lifecycle timestamps retained by publication and retention-root rows.
+type nativeGenerationLifecycleReader interface {
+	HistoricalCommittedPublication(context.Context, string) (nativepostgres.DeliveryPublication, error)
+	GenerationRetentionRoot(context.Context, string) (nativepostgres.DeliveryRetentionRoot, error)
+	GenerationRollbackUntil(context.Context, string) (time.Time, error)
+}
+
+func (m *Module) nativeGenerationLifecycle(ctx context.Context, generation nativepostgres.DeliveryGeneration, operator nativepostgres.DeliveryOperatorSnapshot) (bool, time.Time, time.Time, time.Time, error) {
+	active := operator.ActiveGenerationID == generation.GenerationID
+	var activatedAt time.Time
+	if active && operator.ActivePublicationID != "" {
+		publication, err := m.nativeDeliveryReader.Publication(ctx, operator.ActivePublicationID)
+		if err != nil {
+			return false, time.Time{}, time.Time{}, time.Time{}, nativeReadError(err)
+		}
+		if publication.PublicationID != operator.ActivePublicationID || publication.GenerationID != generation.GenerationID || publication.TargetID != generation.TargetID || publication.State != "committed" {
+			return false, time.Time{}, time.Time{}, time.Time{}, fmt.Errorf("%w: active generation publication identity is inconsistent", deployment.ErrDeliveryConflict)
+		}
+		activatedAt = publication.CommittedAt
+	}
+	var retiredAt, rollbackUntil time.Time
+	lifecycle, ok := m.nativeDeliveryReader.(nativeGenerationLifecycleReader)
+	if !ok {
+		return active, activatedAt, retiredAt, rollbackUntil, nil
+	}
+	if publication, err := lifecycle.HistoricalCommittedPublication(ctx, generation.GenerationID); err == nil {
+		if publication.GenerationID != generation.GenerationID || publication.TargetID != generation.TargetID || publication.State != "committed" {
+			return false, time.Time{}, time.Time{}, time.Time{}, fmt.Errorf("%w: generation publication identity is inconsistent", deployment.ErrDeliveryConflict)
+		}
+		if activatedAt.IsZero() {
+			activatedAt = publication.CommittedAt
+		}
+	} else if !errors.Is(err, nativepostgres.ErrNotFound) {
+		return false, time.Time{}, time.Time{}, time.Time{}, nativeReadError(err)
+	}
+	if root, err := lifecycle.GenerationRetentionRoot(ctx, generation.GenerationID); err == nil {
+		if root.GenerationID != generation.GenerationID || root.TargetID != generation.TargetID || root.RootKind != "generation" {
+			return false, time.Time{}, time.Time{}, time.Time{}, fmt.Errorf("%w: generation retention identity is inconsistent", deployment.ErrDeliveryConflict)
+		}
+		retiredAt = root.RetiredAt
+	} else if !errors.Is(err, nativepostgres.ErrNotFound) {
+		return false, time.Time{}, time.Time{}, time.Time{}, nativeReadError(err)
+	}
+	if rollback, err := lifecycle.GenerationRollbackUntil(ctx, generation.GenerationID); err == nil {
+		rollbackUntil = rollback
+	} else if !errors.Is(err, nativepostgres.ErrNotFound) {
+		return false, time.Time{}, time.Time{}, time.Time{}, nativeReadError(err)
+	}
+	return active, activatedAt, retiredAt, rollbackUntil, nil
+}
 
 func nativeReadError(err error) error {
 	if errors.Is(err, nativepostgres.ErrNotFound) {
@@ -50,14 +107,36 @@ func nativeBuildStatus(state nativepostgres.BuildAttemptState, sealed bool) depl
 			return deploymentgen.DeliveryBuildStatusSealed
 		}
 		return deploymentgen.DeliveryBuildStatusSealing
-	case nativepostgres.AttemptAborted, nativepostgres.AttemptIndeterminate:
+	case nativepostgres.AttemptAborted:
+		return deploymentgen.DeliveryBuildStatusFailed
+	case nativepostgres.AttemptIndeterminate:
 		return deploymentgen.DeliveryBuildStatusAbandoned
 	default:
 		return deploymentgen.DeliveryBuildStatusBuilding
 	}
 }
 
-func nativeSealStatus(seal nativepostgres.SnapshotSeal) deploymentgen.DeliverySealStatus {
+// nativeBuildFailureCode returns the bounded classification retained in the
+// attempt termination evidence. The native build authority deliberately does
+// not persist raw error text; classification is the stable operator-facing
+// failure code available to this read model.
+func nativeBuildFailureCode(attempt nativepostgres.DeliveryBuildAttempt) *string {
+	if attempt.State != nativepostgres.AttemptAborted && attempt.State != nativepostgres.AttemptIndeterminate {
+		return nil
+	}
+	var evidence struct {
+		Classification string `json:"classification"`
+	}
+	if len(attempt.TerminationEvidence) == 0 || json.Unmarshal(attempt.TerminationEvidence, &evidence) != nil {
+		return nil
+	}
+	return optionalText(evidence.Classification)
+}
+
+func nativeSealStatus(seal nativepostgres.SnapshotSeal, attemptState nativepostgres.BuildAttemptState) deploymentgen.DeliverySealStatus {
+	if attemptState == nativepostgres.AttemptAborted || attemptState == nativepostgres.AttemptIndeterminate {
+		return deploymentgen.DeliverySealStatusFailed
+	}
 	if seal.QualifiedAt.IsZero() {
 		return deploymentgen.DeliverySealStatusUploaded
 	}
@@ -77,9 +156,12 @@ func nativeCandidateStatus(status string) deploymentgen.DeliveryCandidateStatus 
 	}
 }
 
-func nativeGenerationStatus(active bool) deploymentgen.DeliveryGenerationStatus {
+func nativeGenerationStatus(active bool, retiredAt time.Time) deploymentgen.DeliveryGenerationStatus {
 	if active {
 		return deploymentgen.DeliveryGenerationStatusActive
+	}
+	if !retiredAt.IsZero() {
+		return deploymentgen.DeliveryGenerationStatusRetired
 	}
 	return deploymentgen.DeliveryGenerationStatusPrepared
 }
@@ -98,7 +180,15 @@ func nativePublicationStatus(state string) deploymentgen.DeliveryPublicationStat
 }
 
 func nativePlanResponse(plan deployment.DeliveryPlan) deploymentgen.DeliveryPlanPreviewResponse {
-	return planPreviewResponse(plan)
+	response := planPreviewResponse(plan)
+	// Expiry is derived from the immutable governance deadline so a plan that
+	// was never revisited by a writer still reports its terminal lifecycle
+	// state during incident discovery.
+	if response.Status == deploymentgen.DeliveryPlanStatusPlanned &&
+		!plan.Governance.ExpiresAt.IsZero() && plan.Expired(time.Now().UTC()) {
+		response.Status = deploymentgen.DeliveryPlanStatusExpired
+	}
+	return response
 }
 
 func nativeBuildResponse(attempt nativepostgres.DeliveryBuildAttempt, plan deployment.DeliveryPlan, candidate nativepostgres.DeliveryCandidate, seal nativepostgres.SnapshotSeal) deploymentgen.DeliveryBuildStatusResponse {
@@ -112,6 +202,7 @@ func nativeBuildResponse(attempt nativepostgres.DeliveryBuildAttempt, plan deplo
 		SnapshotSealId: optionalText(seal.SealID), CandidateId: optionalText(attempt.CandidateID),
 		CandidateRevision: optionalNativeInt64(candidate.CandidateRevision),
 	}
+	response.FailureCode = nativeBuildFailureCode(attempt)
 	if seal.SealID != "" {
 		response.DucklakeSnapshotId = optionalNativeInt64(seal.DuckLakeSnapshotID)
 		response.RelationManifestDigest = optionalText(seal.RelationManifestDigest)
@@ -131,18 +222,71 @@ func nativeBuildResponse(attempt nativepostgres.DeliveryBuildAttempt, plan deplo
 	return response
 }
 
-func nativeSealResponse(seal nativepostgres.SnapshotSeal, plan deployment.DeliveryPlan) deploymentgen.DeliverySealStatusResponse {
-	return deploymentgen.DeliverySealStatusResponse{
+func nativeSealResponse(seal nativepostgres.SnapshotSeal, attempt nativepostgres.DeliveryBuildAttempt, candidate nativepostgres.DeliveryCandidate, plan deployment.DeliveryPlan) deploymentgen.DeliverySealStatusResponse {
+	response := deploymentgen.DeliverySealStatusResponse{
 		SnapshotSealId: seal.SealID, AttemptId: seal.AttemptID, PlanId: plan.ID, PlanDigest: seal.PlanDigest,
 		ExecutionDigest: plan.ExecutionDigest, PhysicalPoolId: seal.PhysicalPoolID,
 		DucklakeSnapshotId: seal.DuckLakeSnapshotID, RelationManifestDigest: seal.RelationManifestDigest, ClosureDigest: seal.ClosureDigest,
 		CompatibilityDigest: seal.CompatibilityDigest, ServingArtifactId: seal.ServingArtifactID,
-		ServingArtifactDigest: seal.ServingArtifactDigest, ServingStateId: "",
-		Status: nativeSealStatus(seal), CreatedAt: isoTime(seal.QualifiedAt), VerifiedAt: optionalText(isoTime(seal.QualifiedAt)),
+		ServingArtifactDigest: seal.ServingArtifactDigest, ServingStateId: "", QualificationDigest: optionalText(candidate.QualificationDigest),
+		Status: nativeSealStatus(seal, attempt.State), CreatedAt: isoTime(seal.CreatedAt), VerifiedAt: optionalText(isoTime(seal.QualifiedAt)),
 	}
+	response.FailureCode = nativeBuildFailureCode(attempt)
+	return response
 }
 
-func nativeCandidateResponse(candidate nativepostgres.DeliveryCandidate, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal, servingStateID string) deploymentgen.DeliveryCandidateStatusResponse {
+type nativeResolvedInputsRecord struct {
+	Inputs         []deployment.DeliveryResolvedDataInput `json:"inputs"`
+	PolicyDigest   string                                 `json:"policyDigest"`
+	EvidenceDigest string                                 `json:"evidenceDigest"`
+}
+
+func nativeCandidateResolvedInputs(candidate nativepostgres.DeliveryCandidate, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal) (deployment.DeliveryResolvedBuildInputs, error) {
+	if nativeResolvedInputsEmpty(candidate.ResolvedInputs) {
+		if !nativeResolvedInputsEmpty(seal.ResolvedInputs) {
+			return deployment.DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: candidate resolved-input evidence is missing from its snapshot seal", deployment.ErrDeliveryConflict)
+		}
+		return deployment.DeliveryResolvedBuildInputs{Inputs: []deployment.DeliveryResolvedDataInput{}}, nil
+	}
+	var record nativeResolvedInputsRecord
+	if err := strictjson.DecodeWithOptions(candidate.ResolvedInputs, &record, strictjson.Options{MaxBytes: 32 << 10, MaxDepth: 24, DuplicateKeys: strictjson.CaseSensitiveKeys, AllowUnknownFields: false}); err != nil {
+		return deployment.DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: decode candidate resolved-input evidence: %v", deployment.ErrDeliveryInvalid, err)
+	}
+	if candidate.ResolvedInputsDigest == "" || record.EvidenceDigest != candidate.ResolvedInputsDigest {
+		return deployment.DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: candidate resolved-input digest is incomplete", deployment.ErrDeliveryConflict)
+	}
+	if !nativeResolvedInputsEmpty(seal.ResolvedInputs) {
+		var sealRecord nativeResolvedInputsRecord
+		if err := strictjson.DecodeWithOptions(seal.ResolvedInputs, &sealRecord, strictjson.Options{MaxBytes: 32 << 10, MaxDepth: 24, DuplicateKeys: strictjson.CaseSensitiveKeys, AllowUnknownFields: false}); err != nil {
+			return deployment.DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: decode seal resolved-input evidence: %v", deployment.ErrDeliveryInvalid, err)
+		}
+		if seal.ResolvedInputsDigest != candidate.ResolvedInputsDigest || sealRecord.EvidenceDigest != record.EvidenceDigest || !sameJSON(seal.ResolvedInputs, candidate.ResolvedInputs) {
+			return deployment.DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: candidate and seal resolved-input evidence differ", deployment.ErrDeliveryConflict)
+		}
+	}
+	qualification, err := decodeNativePreviewGateEvidence(seal.QualificationEvidence)
+	if err != nil {
+		return deployment.DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: candidate gate evidence unavailable: %v", deployment.ErrDeliveryInvalid, err)
+	}
+	if qualification.CandidateID != candidate.CandidateID || qualification.AttemptID != seal.AttemptID || (candidate.AttemptID != "" && qualification.AttemptID != candidate.AttemptID) || qualification.Digest != candidate.QualificationDigest {
+		return deployment.DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: candidate gate evidence identity differs", deployment.ErrDeliveryConflict)
+	}
+	resolved, err := deployment.ValidateDeliveryResolvedBuildInputs(plan, deployment.DeliveryResolvedBuildInputs{Inputs: record.Inputs, PolicyDigest: record.PolicyDigest, EvidenceDigest: record.EvidenceDigest, GateEvidence: &qualification.Gates})
+	if err != nil {
+		return deployment.DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: validate candidate resolved-input evidence: %v", deployment.ErrDeliveryConflict, err)
+	}
+	return resolved, nil
+}
+
+func nativeResolvedInputsEmpty(raw []byte) bool {
+	return len(raw) == 0 || strings.TrimSpace(string(raw)) == "{}"
+}
+
+func nativeCandidateResponse(candidate nativepostgres.DeliveryCandidate, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal, servingStateID string) (deploymentgen.DeliveryCandidateStatusResponse, error) {
+	resolved, err := nativeCandidateResolvedInputs(candidate, plan, seal)
+	if err != nil {
+		return deploymentgen.DeliveryCandidateStatusResponse{}, err
+	}
 	response := deploymentgen.DeliveryCandidateStatusResponse{
 		Id: candidate.CandidateID, PlanId: candidate.PlanID, PlanDigest: plan.Digest,
 		TargetId: candidate.TargetID, ProjectId: plan.ProjectID.String(), Environment: plan.Environment,
@@ -152,14 +296,15 @@ func nativeCandidateResponse(candidate nativepostgres.DeliveryCandidate, plan de
 		RelationManifestDigest: optionalText(seal.RelationManifestDigest), ClosureDigest: optionalText(seal.ClosureDigest), CompatibilityDigest: seal.CompatibilityDigest,
 		PhysicalPoolId: seal.PhysicalPoolID, ServingArtifactId: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest,
 		ServingStateId: servingStateID,
-		Status:         nativeCandidateStatus(candidate.Status), ResolvedInputs: []deploymentgen.DeliveryResolvedInputView{},
+		Status:         nativeCandidateStatus(candidate.Status), ResolvedInputs: deliveryResolvedInputViews(resolved),
 		CreatedAt: isoTime(candidate.CreatedAt), ReadyAt: optionalText(isoTime(candidate.QualifiedAt)), RetiredAt: optionalText(isoTime(candidate.RetiredAt)),
 		QualificationDigest: optionalText(candidate.QualificationDigest),
 	}
 	if candidate.SnapshotSealID == "" {
 		response.SnapshotSealId = nil
 	}
-	return response
+	response.ResolvedInputsDigest = optionalText(resolved.EvidenceDigest)
+	return response, nil
 }
 
 func resolveNativeCandidateServingState(ctx context.Context, reader NativeDeliveryReader, candidate nativepostgres.DeliveryCandidate, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal) (string, error) {
@@ -169,11 +314,11 @@ func resolveNativeCandidateServingState(ctx context.Context, reader NativeDelive
 	}
 	resolution, err := reader.ResolveCandidateGeneration(ctx, candidate.CandidateID)
 	if err != nil {
-		// Retirement is also valid for a rejected or qualified candidate that
-		// was never published. Preserve that terminal status without inventing
-		// a serving identity; malformed multi-generation history still fails
-		// closed as a conflict.
-		if status == deploymentgen.DeliveryCandidateStatusRetired && errors.Is(err, nativepostgres.ErrNotFound) {
+		// A qualified candidate may be waiting for publication, and a retired
+		// candidate may never have been published. Preserve those lifecycle
+		// states without inventing a serving identity; malformed multi-generation
+		// history still fails closed as a conflict.
+		if (status == deploymentgen.DeliveryCandidateStatusReady || status == deploymentgen.DeliveryCandidateStatusRetired) && errors.Is(err, nativepostgres.ErrNotFound) {
 			return "", nil
 		}
 		return "", nativeReadError(err)
@@ -207,7 +352,7 @@ func resolveNativeCandidateServingState(ctx context.Context, reader NativeDelive
 	return generation.GenerationID, nil
 }
 
-func nativeGenerationResponse(generation nativepostgres.DeliveryGeneration, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal, active bool) deploymentgen.DeliveryGenerationStatusResponse {
+func nativeGenerationResponse(generation nativepostgres.DeliveryGeneration, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal, active bool, activatedAt, retiredAt, rollbackUntil time.Time) deploymentgen.DeliveryGenerationStatusResponse {
 	return deploymentgen.DeliveryGenerationStatusResponse{
 		Id: generation.GenerationID, CandidateId: generation.CandidateID, PlanId: generation.PlanID,
 		PlanDigest: generation.PlanDigest, TargetId: generation.TargetID, ProjectId: plan.ProjectID.String(), Environment: plan.Environment,
@@ -215,7 +360,7 @@ func nativeGenerationResponse(generation nativepostgres.DeliveryGeneration, plan
 		PhysicalPoolId: seal.PhysicalPoolID, ServingArtifactId: seal.ServingArtifactID,
 		ServingArtifactDigest: generation.ServingArtifactDigest, ServingStateId: generation.GenerationID,
 		CompatibilityDigest: seal.CompatibilityDigest, RollbackClass: deploymentgen.DeliveryRollbackClass(plan.Evidence.Rollback.Class),
-		Status: nativeGenerationStatus(active), CreatedAt: isoTime(generation.CreatedAt),
+		Status: nativeGenerationStatus(active, retiredAt), CreatedAt: isoTime(generation.CreatedAt), ActivatedAt: optionalText(isoTime(activatedAt)), RetiredAt: optionalText(isoTime(retiredAt)), RollbackUntil: optionalText(isoTime(rollbackUntil)),
 	}
 }
 
@@ -231,7 +376,14 @@ func nativePublicationResponse(publication nativepostgres.DeliveryPublication, g
 }
 
 func nativeOperatorResponse(snapshot nativepostgres.DeliveryOperatorSnapshot) deploymentgen.DeliveryOperatorSnapshotResponse {
-	response := deploymentgen.DeliveryOperatorSnapshotResponse{ProjectId: snapshot.ProjectID, Environment: snapshot.Environment, TargetId: snapshot.TargetID, TargetRevision: snapshot.TargetRevision, DegradedReasons: []string{}, PhysicalPools: []deploymentgen.DeliveryPhysicalPoolAdmissionView{}, Roots: []deploymentgen.DeliveryRootView{}, QueryLeases: []deploymentgen.DeliveryQueryLeaseView{}, WriterLeases: []deploymentgen.DeliveryWriterLeaseView{}}
+	// The native reader owns target identity and active pointers only. Mark the
+	// projection degraded while detail authorities are unavailable so an empty
+	// detail set cannot be mistaken for a healthy zero-resource target.
+	response := deploymentgen.DeliveryOperatorSnapshotResponse{
+		ProjectId: snapshot.ProjectID, Environment: snapshot.Environment, TargetId: snapshot.TargetID,
+		TargetRevision: snapshot.TargetRevision, Degraded: true,
+		DegradedReasons: []string{"detailed_evidence_unavailable"},
+	}
 	response.ActiveGeneration = optionalText(snapshot.ActiveGenerationID)
 	return response
 }

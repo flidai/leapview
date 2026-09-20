@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/admin/product"
 	signals "github.com/flidai/leapview/internal/admin/ui/signals"
 )
@@ -19,16 +20,19 @@ type Pinger interface {
 }
 
 type ReadModel struct {
-	Service      *product.Service
-	Status       product.Status
-	ControlPlane Pinger
+	Service                *product.Service
+	Status                 product.Status
+	ControlPlane           Pinger
+	PlatformAdministration access.PlatformAdminAuthorityLister
 }
 
 type Data struct {
-	Identity  product.Identity
-	Status    product.Status
-	CanManage bool
-	Active    string
+	Identity                    product.Identity
+	Status                      product.Status
+	CanManage                   bool
+	Active                      string
+	PlatformAdministration      access.PlatformAdministratorState
+	PlatformAdministrationError string
 }
 
 func (m ReadModel) Data(ctx context.Context, active string, canManage bool) (Data, error) {
@@ -52,7 +56,19 @@ func (m ReadModel) Data(ctx context.Context, active string, canManage bool) (Dat
 	if active == "" {
 		active = "general"
 	}
-	return Data{Identity: identity, Status: status, CanManage: canManage, Active: active}, nil
+	data := Data{Identity: identity, Status: status, CanManage: canManage, Active: active,
+		PlatformAdministration: access.PlatformAdministratorState{Administrators: []access.PlatformAdministrator{}}}
+	if m.PlatformAdministration != nil {
+		state, listErr := m.PlatformAdministration.ListPlatformAdminAuthorities(ctx)
+		if listErr != nil {
+			data.PlatformAdministrationError = "Platform authority history is unavailable."
+		} else {
+			data.PlatformAdministration = state
+		}
+	} else {
+		data.PlatformAdministrationError = "Platform authority history is unavailable."
+	}
+	return data, nil
 }
 
 // Signal projects one complete, self-contained settings subtree. Keeping all
@@ -89,12 +105,29 @@ func Signal(data Data) signals.ProductSettingsSignal {
 	build := system.Build
 	limits := system.Limits
 	agent := system.Agent
+	platformAdministrators := make([]signals.ProductPlatformAdministratorSignal, 0, len(data.PlatformAdministration.Administrators))
+	for _, administrator := range data.PlatformAdministration.Administrators {
+		item := signals.ProductPlatformAdministratorSignal{BindingID: administrator.BindingID, PrincipalID: administrator.Principal.ID,
+			Email: administrator.Principal.Email, DisplayName: administrator.Principal.DisplayName, Role: string(administrator.Role), GrantedAt: administrator.CreatedAt}
+		if administrator.RevokedAt != "" {
+			value := administrator.RevokedAt
+			item.RevokedAt = &value
+		}
+		platformAdministrators = append(platformAdministrators, item)
+	}
+	var authorityError *string
+	if data.PlatformAdministrationError != "" {
+		value := data.PlatformAdministrationError
+		authorityError = &value
+	}
 	return signals.ProductSettingsSignal{
 		Active: data.Active, CanManage: data.CanManage, General: general,
 		Authentication: signals.ProductAuthenticationSignal{
 			BrowserEnabled: auth.BrowserEnabled, APITokenOnly: auth.APITokenOnly,
 			Local: availability(auth.Local), Oidc: named(auth.OIDC), Azure: availability(auth.Azure),
 			Scim: availability(auth.SCIM), ManagedBy: managedBy,
+			PlatformAdministrators: platformAdministrators, PlatformAdministrationRevision: data.PlatformAdministration.Revision,
+			PlatformAdministrationAvailable: data.PlatformAdministrationError == "", PlatformAdministrationError: authorityError,
 		},
 		API: signals.ProductAPIStatusSignal{
 			BearerCredentials: availability(api.BearerCredentials), ServicePrincipals: availability(api.ServicePrincipals),

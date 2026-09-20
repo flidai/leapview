@@ -183,7 +183,7 @@ func loadCandidateForAllocation(ctx context.Context, db DBTX, id, target, plan s
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
-	c := DeliveryCandidate{CandidateID: row.CandidateID, TargetID: row.TargetID, PlanID: row.PlanID, AttemptID: row.AttemptID, SnapshotSealID: row.SnapshotSealID, Status: row.Status, CandidateRevision: row.CandidateRevision, ArtifactDigest: row.ArtifactDigest, QualificationDigest: row.QualificationDigest, CreatedAt: dbTime(row.CreatedAt)}
+	c := DeliveryCandidate{CandidateID: row.CandidateID, TargetID: row.TargetID, PlanID: row.PlanID, AttemptID: row.AttemptID, SnapshotSealID: row.SnapshotSealID, Status: row.Status, CandidateRevision: row.CandidateRevision, ArtifactDigest: row.ArtifactDigest, QualificationDigest: row.QualificationDigest, ResolvedInputs: append([]byte(nil), row.ResolvedInputs...), ResolvedInputsDigest: row.ResolvedInputsDigest, CreatedAt: dbTime(row.CreatedAt)}
 	if row.QualifiedAt.Valid {
 		c.QualifiedAt = row.QualifiedAt.Time.UTC()
 	}
@@ -253,7 +253,7 @@ func loadCandidate(ctx context.Context, db DBTX, id string, expected CandidateIn
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
-	c.CandidateID, c.TargetID, c.PlanID, c.AttemptID, c.SnapshotSealID, c.Status, c.CandidateRevision, c.ArtifactDigest, c.QualificationDigest, c.CreatedAt = row.CandidateID, row.TargetID, row.PlanID, row.AttemptID, row.SnapshotSealID, row.Status, row.CandidateRevision, row.ArtifactDigest, row.QualificationDigest, dbTime(row.CreatedAt)
+	c.CandidateID, c.TargetID, c.PlanID, c.AttemptID, c.SnapshotSealID, c.Status, c.CandidateRevision, c.ArtifactDigest, c.QualificationDigest, c.ResolvedInputs, c.ResolvedInputsDigest, c.CreatedAt = row.CandidateID, row.TargetID, row.PlanID, row.AttemptID, row.SnapshotSealID, row.Status, row.CandidateRevision, row.ArtifactDigest, row.QualificationDigest, append([]byte(nil), row.ResolvedInputs...), row.ResolvedInputsDigest, dbTime(row.CreatedAt)
 	if row.QualifiedAt.Valid {
 		c.QualifiedAt = row.QualifiedAt.Time.UTC()
 	}

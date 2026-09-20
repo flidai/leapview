@@ -39,6 +39,8 @@ type DeliveryAPIGenHandler interface {
 	DenyDeliveryPublicationApproval(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string, string)
 	RevokeDeliveryPublicationApproval(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string, string)
 	GetDeliveryOperatorSnapshot(stdhttp.ResponseWriter, *stdhttp.Request, string)
+	ListDeliveryPublications(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
+	ListRetainedDeliveryGenerations(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
 }
 
 func (d *APIGenDispatcher) RetainProjectCandidateSource(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, headers deploymentgen.GenRetainProjectCandidateSourceHeaders) {
@@ -196,6 +198,66 @@ func (d *APIGenDispatcher) RevokeDeliveryPublicationApproval(w stdhttp.ResponseW
 func (d *APIGenDispatcher) GetDeliveryOperatorSnapshot(w stdhttp.ResponseWriter, r *stdhttp.Request, project string) {
 	if h, ok := d.handler.(DeliveryAPIGenHandler); ok {
 		h.GetDeliveryOperatorSnapshot(w, r, project)
+		return
+	}
+	writeDeliveryUnavailable(w)
+}
+
+func (d *APIGenDispatcher) ListDeliveryPublications(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, params deploymentgen.GenListDeliveryPublicationsParams) {
+	if h, ok := d.handler.(interface {
+		ListDeliveryPublications(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
+	}); ok {
+		h.ListDeliveryPublications(w, r, project, params.Limit, params.PageToken)
+		return
+	}
+	writeDeliveryUnavailable(w)
+}
+
+func (d *APIGenDispatcher) ListRetainedDeliveryGenerations(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, params deploymentgen.GenListRetainedDeliveryGenerationsParams) {
+	if h, ok := d.handler.(interface {
+		ListRetainedDeliveryGenerations(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
+	}); ok {
+		h.ListRetainedDeliveryGenerations(w, r, project, params.Limit, params.PageToken)
+		return
+	}
+	writeDeliveryUnavailable(w)
+}
+
+func (d *APIGenDispatcher) ListDeliveryPlans(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, params deploymentgen.GenListDeliveryPlansParams) {
+	if h, ok := d.handler.(interface {
+		ListDeliveryPlans(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
+	}); ok {
+		h.ListDeliveryPlans(w, r, project, params.Limit, params.PageToken)
+		return
+	}
+	writeDeliveryUnavailable(w)
+}
+
+func (d *APIGenDispatcher) ListDeliveryBuildAttempts(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, params deploymentgen.GenListDeliveryBuildAttemptsParams) {
+	if h, ok := d.handler.(interface {
+		ListDeliveryBuildAttempts(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
+	}); ok {
+		h.ListDeliveryBuildAttempts(w, r, project, params.Limit, params.PageToken)
+		return
+	}
+	writeDeliveryUnavailable(w)
+}
+
+func (d *APIGenDispatcher) ListDeliveryCandidates(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, params deploymentgen.GenListDeliveryCandidatesParams) {
+	if h, ok := d.handler.(interface {
+		ListDeliveryCandidates(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
+	}); ok {
+		h.ListDeliveryCandidates(w, r, project, params.Limit, params.PageToken)
+		return
+	}
+	writeDeliveryUnavailable(w)
+}
+
+func (d *APIGenDispatcher) ListDeliveryApprovalRequests(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, params deploymentgen.GenListDeliveryApprovalRequestsParams) {
+	if h, ok := d.handler.(interface {
+		ListDeliveryApprovalRequests(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
+	}); ok {
+		h.ListDeliveryApprovalRequests(w, r, project, params.Limit, params.PageToken)
 		return
 	}
 	writeDeliveryUnavailable(w)

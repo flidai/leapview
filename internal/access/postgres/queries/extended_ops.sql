@@ -13,14 +13,14 @@ SELECT EXISTS (
 );
 
 -- name: ListServiceSecrets :many
-SELECT id, service_principal_id, name, expires_at, created_at, revoked_at
+SELECT id, service_principal_id, name, expires_at, created_at, last_used_at, revoked_at
 FROM access.service_principal_secret
 WHERE service_principal_id = sqlc.arg(principal_id)::uuid
 ORDER BY created_at DESC
 LIMIT sqlc.arg(page_size)::int;
 
 -- name: GetServiceSecretForPrincipal :one
-SELECT id, service_principal_id, name, expires_at, created_at, revoked_at
+SELECT id, service_principal_id, name, expires_at, created_at, last_used_at, revoked_at
 FROM access.service_principal_secret
 WHERE id = sqlc.arg(id)::uuid AND service_principal_id = sqlc.arg(principal_id)::uuid;
 

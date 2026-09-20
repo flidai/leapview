@@ -19,6 +19,10 @@ type accessAdministrationCommandSignals struct {
 }
 
 func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if strings.TrimSpace(r.URL.Query().Get("section")) == "access" {
+		h.AccessSettingsCommand(w, r)
+		return
+	}
 	if h.SettingsRepository == nil {
 		nethttp.Error(w, "access administration is unavailable", nethttp.StatusServiceUnavailable)
 		return
@@ -29,6 +33,8 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 		return
 	}
 	command := adminsettings.NormalizeAccessAdministrationCommand(signals.Command)
+	command.RequestID = strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	command.CorrelationID = strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
 	section := strings.TrimSpace(r.URL.Query().Get("section"))
 	started, err := beginAccessAdministrationInvocation(r, command)
 	if err != nil {

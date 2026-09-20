@@ -153,6 +153,7 @@ func TestApplyAccessAdministrationCommandAddsMultipleGroupMembers(t *testing.T) 
 	}
 	result, err := ApplyAccessAdministrationCommand(ctx, repository, actor.Principal.ID, AccessAdministrationCommand{
 		Action: "add_group_member", GroupID: group.ID, PrincipalIDs: []string{" " + first.Principal.ID + " ", second.Principal.ID, first.Principal.ID},
+		RequestID: "req-group-members", CorrelationID: "corr-group-members",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +167,13 @@ func TestApplyAccessAdministrationCommandAddsMultipleGroupMembers(t *testing.T) 
 	}
 	if len(members) != 2 {
 		t.Fatalf("members = %#v", members)
+	}
+	events, err := repository.ListAuditEvents(ctx, access.AuditEventFilter{Action: "group.members_added", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].RequestID != "req-group-members" || events[0].CorrelationID != "corr-group-members" {
+		t.Fatalf("group audit context = %#v", events)
 	}
 }
 

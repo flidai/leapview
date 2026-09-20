@@ -102,6 +102,54 @@ func TestAuthorizationPolicyPostgreSQLCASIdempotencyAndHistoricalReads(t *testin
 	if _, err := repo.AuthorizationPolicy(ctx, wrongScope); !errors.Is(err, access.ErrAuthorizationPolicyNotFound) {
 		t.Fatalf("wrong environment read error = %v, want ErrAuthorizationPolicyNotFound", err)
 	}
+	deleted, err := repo.DeleteAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: binding.ID, ExpectedRevision: second.Revision, IdempotencyKey: "policy-delete"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted.Revision != 3 || len(deleted.RoleBindings) != 0 || deleted.Digest == second.Digest {
+		t.Fatalf("deleted policy = %+v, want empty successor revision 3", deleted)
+	}
+	deleteReplay, err := repo.DeleteAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: binding.ID, ExpectedRevision: second.Revision, IdempotencyKey: "policy-delete"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleteReplay.Revision != deleted.Revision || deleteReplay.Digest != deleted.Digest || len(deleteReplay.RoleBindings) != 0 {
+		t.Fatalf("delete idempotent replay = %+v, want exact empty successor", deleteReplay)
+	}
+	if _, err := repo.DeleteAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: "different-binding", ExpectedRevision: second.Revision, IdempotencyKey: "policy-delete"}); !errors.Is(err, access.ErrAuthorizationPolicyIdempotency) {
+		t.Fatalf("conflicting delete idempotency error = %v, want ErrAuthorizationPolicyIdempotency", err)
+	}
+	if _, err := repo.DeleteAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: binding.ID, ExpectedRevision: second.Revision, IdempotencyKey: "policy-delete-conflict"}); !errors.Is(err, access.ErrAuthorizationPolicyStaleRevision) {
+		t.Fatalf("delete stale CAS error = %v, want ErrAuthorizationPolicyStaleRevision", err)
+	}
+	if _, err := repo.DeleteAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: "missing-binding", ExpectedRevision: deleted.Revision, IdempotencyKey: "policy-delete-missing"}); !errors.Is(err, access.ErrAuthorizationPolicyNotFound) {
+		t.Fatalf("delete missing binding error = %v, want ErrAuthorizationPolicyNotFound", err)
+	}
+	historicalAfterDelete, err := repo.AuthorizationPolicyRevision(ctx, scope, second.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(historicalAfterDelete.RoleBindings) != 1 || historicalAfterDelete.RoleBindings[0].Name != changed.Name {
+		t.Fatalf("historical policy after delete = %+v, want changed binding preserved", historicalAfterDelete)
+	}
+	adminBinding := access.RoleBinding{ID: "binding-admin", Name: "Policy administrator", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: policySubjectID}, Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin)}
+	adminPolicy, err := repo.UpsertAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingInput{Scope: scope, Binding: adminBinding, ExpectedRevision: deleted.Revision, IdempotencyKey: "policy-admin-create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adminPolicy.Revision != 4 || len(adminPolicy.RoleBindings) != 1 {
+		t.Fatalf("administrator policy = %+v, want one binding at revision 4", adminPolicy)
+	}
+	if _, err := repo.DeleteAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: adminBinding.ID, ExpectedRevision: adminPolicy.Revision, IdempotencyKey: "policy-last-admin-delete"}); !errors.Is(err, access.ErrAuthorizationPolicyConflict) {
+		t.Fatalf("last administrator deletion error = %v, want ErrAuthorizationPolicyConflict", err)
+	}
+	currentAfterAdminReject, err := repo.AuthorizationPolicy(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentAfterAdminReject.Revision != adminPolicy.Revision || len(currentAfterAdminReject.RoleBindings) != 1 {
+		t.Fatalf("policy after rejected last-admin delete = %+v, want unchanged revision and binding", currentAfterAdminReject)
+	}
 }
 
 func TestAuthorizationPolicyPostgreSQLConcurrentFirstWritesReplayExactly(t *testing.T) {
@@ -170,6 +218,92 @@ func TestAuthorizationPolicyPostgreSQLConcurrentFirstWritesReplayExactly(t *test
 	}
 	if headRevision != 1 {
 		t.Fatalf("concurrent first-write head revision = %d, want 1", headRevision)
+	}
+}
+
+func TestAuthorizationPolicyPostgreSQLRoleBindingAuditsAreProjectScoped(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	ctx := t.Context()
+	if _, err := db.admin.Exec(ctx, `INSERT INTO access.principal (id, principal_type, status) VALUES ($1::uuid, 'user', 'active')`, policySubjectID); err != nil {
+		t.Fatal(err)
+	}
+	repo := &Repository{db: db.runtime}
+	scope := access.AuthorizationPolicyScope{TargetID: "target-audit-journey", ProjectID: "project:audit-journey", Environment: "production"}
+	binding := access.RoleBinding{
+		ID: "binding-audit-journey", Name: "Audit journey viewer",
+		Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: policySubjectID},
+		Role:    access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer),
+	}
+
+	var created access.AuthorizationPolicy
+	if err := repo.RunAuditedMutation(ctx, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		writer, ok := txRepo.(access.AuthorizationPolicyWriter)
+		if !ok {
+			return access.AuditEventInput{}, errors.New("transactional policy writer is unavailable")
+		}
+		var err error
+		created, err = writer.UpsertAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingInput{
+			Scope: scope, Binding: binding, ExpectedRevision: 0, IdempotencyKey: "audit-journey-create",
+		})
+		if err != nil {
+			return access.AuditEventInput{}, err
+		}
+		return access.AuditEventInput{
+			ProjectID: scope.ProjectID, PrincipalID: policySubjectID,
+			Action: "role_binding.created", ResourceKind: "role_binding", ResourceID: binding.ID,
+			Capability: access.CapabilityProjectAdmin, Status: "success", MetadataJSON: `{}`,
+		}, nil
+	}); err != nil {
+		t.Fatalf("create role binding with audit: %v", err)
+	}
+
+	if err := repo.RunAuditedMutation(ctx, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		writer, ok := txRepo.(access.AuthorizationPolicyWriter)
+		if !ok {
+			return access.AuditEventInput{}, errors.New("transactional policy writer is unavailable")
+		}
+		if _, err := writer.DeleteAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingDeleteInput{
+			Scope: scope, BindingID: binding.ID, ExpectedRevision: created.Revision, IdempotencyKey: "audit-journey-delete",
+		}); err != nil {
+			return access.AuditEventInput{}, err
+		}
+		return access.AuditEventInput{
+			ProjectID: scope.ProjectID, PrincipalID: policySubjectID,
+			Action: "role_binding.deleted", ResourceKind: "role_binding", ResourceID: binding.ID,
+			Capability: access.CapabilityProjectAdmin, Status: "success", MetadataJSON: `{}`,
+		}, nil
+	}); err != nil {
+		t.Fatalf("delete role binding with audit: %v", err)
+	}
+
+	events, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{
+		ProjectID: scope.ProjectID, ResourceKind: "role_binding", ResourceID: binding.ID, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("list project role-binding audits: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("project role-binding audits = %d, want exactly 2: %+v", len(events), events)
+	}
+	actions := make(map[string]int, len(events))
+	for _, event := range events {
+		if event.ProjectID != scope.ProjectID {
+			t.Fatalf("project audit event = %+v, want project %q", event, scope.ProjectID)
+		}
+		actions[event.Action]++
+	}
+	if actions["role_binding.created"] != 1 || actions["role_binding.deleted"] != 1 {
+		t.Fatalf("project role-binding audit actions = %#v, want one create and one delete", actions)
+	}
+
+	foreign, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{
+		ProjectID: "project:other", ResourceKind: "role_binding", ResourceID: binding.ID, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("list foreign project role-binding audits: %v", err)
+	}
+	if len(foreign) != 0 {
+		t.Fatalf("foreign project role-binding audits = %+v, want none", foreign)
 	}
 }
 

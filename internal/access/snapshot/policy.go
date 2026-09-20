@@ -182,6 +182,83 @@ func (s AuthorizationSnapshot) EffectiveCapabilities(subjects []access.SubjectRe
 	return result, nil
 }
 
+// ExplainEffectiveAccess returns every direct and inherited capability in the
+// immutable serving snapshot.  The snapshot remains the authorization
+// authority: this projection is derived from its captured grants/roles and
+// the identity authority's already-resolved subjects, never from mutable
+// access rows.  Multiple rows for one capability are intentional evidence.
+func (s AuthorizationSnapshot) ExplainEffectiveAccess(subjects []access.SubjectRef, platform bool) ([]access.AuthorizationDecision, error) {
+	if err := s.ValidateBound(); err != nil {
+		return nil, err
+	}
+	validatedSubjects := make([]access.SubjectRef, 0, len(subjects))
+	seenSubjects := make(map[access.SubjectRef]struct{}, len(subjects))
+	for _, subject := range subjects {
+		if err := subject.Validate(); err != nil {
+			return nil, err
+		}
+		if _, seen := seenSubjects[subject]; seen {
+			continue
+		}
+		seenSubjects[subject] = struct{}{}
+		validatedSubjects = append(validatedSubjects, subject)
+	}
+	if len(validatedSubjects) == 0 {
+		return []access.AuthorizationDecision{}, nil
+	}
+	resources := make([]access.ResourceRef, 0, len(s.project.Resources())+1)
+	project, err := access.NewResourceRef(s.identity.ProjectID, graph.KindProjectNamespace)
+	if err != nil {
+		return nil, err
+	}
+	resources = append(resources, project)
+	for _, item := range s.project.Resources() {
+		resource, resourceErr := access.NewResourceRef(item.ID, item.Kind)
+		if resourceErr != nil {
+			return nil, resourceErr
+		}
+		resources = append(resources, resource)
+	}
+	decisions := make([]access.AuthorizationDecision, 0)
+	for _, resource := range resources {
+		decisions = append(decisions, access.ExplainRoleBindingAccess(s.roleBindings, validatedSubjects, resource)...)
+		for _, grant := range s.grants {
+			canonical := grant.Canonical
+			if _, subjectOK := seenSubjects[canonical.Subject()]; !subjectOK || canonical.Resource() != resource {
+				continue
+			}
+			inherited := canonical.Subject().Kind == access.SubjectKindGroup
+			reason := "direct grant"
+			if inherited {
+				reason = "group-inherited grant"
+			}
+			decisions = append(decisions, access.AuthorizationDecision{
+				Allowed: true, Capability: canonical.Capability(), Reason: reason,
+				ResourceKind: string(resource.Kind()), ResourceID: resource.ID().String(),
+				GrantID: grant.ID, GrantResourceID: canonical.Resource().ID().String(),
+				SubjectType: string(canonical.Subject().Kind), SubjectID: canonical.Subject().ID,
+				Inherited: inherited,
+			})
+		}
+	}
+	if platform {
+		for _, subject := range validatedSubjects {
+			if subject.Kind != access.SubjectKindPrincipal {
+				continue
+			}
+			decisions = append(decisions, access.AuthorizationDecision{
+				Allowed: true, Capability: access.CapabilityProjectAdmin,
+				Reason: "platform administrator", ResourceKind: string(graph.KindProjectNamespace),
+				ResourceID: s.identity.ProjectID.String(), SubjectType: string(subject.Kind),
+				SubjectID: subject.ID, Platform: true,
+			})
+			break
+		}
+	}
+	access.SortAuthorizationDecisions(decisions)
+	return decisions, nil
+}
+
 type snapshotWire struct {
 	Identity     graph.ServingIdentity `json:"identity"`
 	RoleBindings []roleBindingWire     `json:"roleBindings,omitempty"`

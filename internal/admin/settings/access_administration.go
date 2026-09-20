@@ -111,14 +111,16 @@ type AccessActivitySignal struct {
 }
 
 type AccessAdministrationCommand struct {
-	Action       string   `json:"action"`
-	PrincipalID  string   `json:"principalId,omitempty"`
-	PrincipalIDs []string `json:"principalIds,omitempty"`
-	GroupID      string   `json:"groupId,omitempty"`
-	SessionID    string   `json:"sessionId,omitempty"`
-	Email        string   `json:"email,omitempty"`
-	DisplayName  string   `json:"displayName,omitempty"`
-	Revision     string   `json:"revision,omitempty"`
+	Action        string   `json:"action"`
+	PrincipalID   string   `json:"principalId,omitempty"`
+	PrincipalIDs  []string `json:"principalIds,omitempty"`
+	GroupID       string   `json:"groupId,omitempty"`
+	SessionID     string   `json:"sessionId,omitempty"`
+	Email         string   `json:"email,omitempty"`
+	DisplayName   string   `json:"displayName,omitempty"`
+	Revision      string   `json:"revision,omitempty"`
+	RequestID     string   `json:"-"`
+	CorrelationID string   `json:"-"`
 }
 
 type AccessAdministrationResult struct {
@@ -138,6 +140,8 @@ func NormalizeAccessAdministrationCommand(command AccessAdministrationCommand) A
 	command.Email = access.NormalizeEmail(command.Email)
 	command.DisplayName = strings.TrimSpace(command.DisplayName)
 	command.Revision = strings.TrimSpace(command.Revision)
+	command.RequestID = strings.TrimSpace(command.RequestID)
+	command.CorrelationID = strings.TrimSpace(command.CorrelationID)
 	return command
 }
 
@@ -300,7 +304,7 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 	command = NormalizeAccessAdministrationCommand(command)
 	result := AccessAdministrationResult{SelectedPrincipalID: command.PrincipalID, SelectedGroupID: command.GroupID}
 	mutation := func(tx access.Repository) (access.AuditEventInput, error) {
-		event := access.AuditEventInput{PrincipalID: strings.TrimSpace(actorID), Capability: access.CapabilityProjectAdmin, Status: "success", MetadataJSON: `{}`}
+		event := access.AuditEventInput{PrincipalID: strings.TrimSpace(actorID), Capability: access.CapabilityProjectAdmin, Status: "success", RequestID: command.RequestID, CorrelationID: command.CorrelationID, MetadataJSON: `{}`}
 		var mutationErr error
 		switch command.Action {
 		case "create_principal":
@@ -481,14 +485,7 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 		}
 		return result, nil
 	}
-	event, err := mutation(repository)
-	if err != nil {
-		return AccessAdministrationResult{}, err
-	}
-	if err := access.PersistAuditEvent(ctx, repository, event); err != nil {
-		return AccessAdministrationResult{}, err
-	}
-	return result, nil
+	return AccessAdministrationResult{}, fmt.Errorf("%w: access administration requires an atomic audit repository", access.ErrAuditTransaction)
 }
 
 func accessAdministrationPrincipal(ctx context.Context, repository access.Repository, id string) (access.Principal, access.PrincipalIdentityManagement, error) {

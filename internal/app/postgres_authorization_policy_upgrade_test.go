@@ -84,6 +84,15 @@ func seedAuthorizationPolicyUpgradeFixture(t *testing.T, db *pgxpool.Pool) {
 }
 
 func seedAuthorizationPolicyUpgradeFixtureWithPolicy(t *testing.T, db *pgxpool.Pool, policyJSON string) {
+	seedAuthorizationPolicyUpgradeFixturePrefix(t, db)
+	seedAuthorizationPolicyUpgradeFixtureEvidence(t, db, policyJSON)
+}
+
+// seedAuthorizationPolicyUpgradeFixturePrefix contains only authority rows
+// that existed before the native delivery evidence migration. Keeping this
+// prefix separate lets migration-upgrade tests exercise immutable history
+// without asking a later migration to rewrite a pre-existing seal.
+func seedAuthorizationPolicyUpgradeFixturePrefix(t *testing.T, db *pgxpool.Pool) {
 	t.Helper()
 	ctx := t.Context()
 	targets := deploymentpostgres.New(db)
@@ -103,7 +112,6 @@ func seedAuthorizationPolicyUpgradeFixtureWithPolicy(t *testing.T, db *pgxpool.P
 	graphDigest := authorizationPolicyUpgradeDigest('c')
 	configDigest := authorizationPolicyUpgradeDigest('d')
 	securityDigest := authorizationPolicyUpgradeDigest('e')
-	rootDigest := authorizationPolicyUpgradeDigest('f')
 	requestDigest := authorizationPolicyUpgradeDigest('1')
 	exec(`INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,approval_required,approval_policy_revision,plan_document)
 VALUES($1::uuid,$2,1,$3,$4,$5,$6,$7,$8,false,false,1,'{}'::jsonb)`, authorizationPolicyUpgradePlanID, authorizationPolicyUpgradeTargetID, planDigest, graphDigest, configDigest, securityDigest, artifactDigest, planDigest)
@@ -111,6 +119,24 @@ VALUES($1::uuid,$2,1,$3,$4,$5,$6,$7,$8,false,false,1,'{}'::jsonb)`, authorizatio
 VALUES($1::uuid,$2,$3::uuid,'building',1,$4)`, authorizationPolicyUpgradeCandidateID, authorizationPolicyUpgradeTargetID, authorizationPolicyUpgradePlanID, artifactDigest)
 	exec(`INSERT INTO delivery.delivery_build_attempt(attempt_id,plan_id,candidate_id,owner_id,physical_pool_id,catalog_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity,snapshot_id,commit_marker,finished_at)
 VALUES($1::uuid,$2::uuid,$3::uuid,'builder','upgrade-pool','upgrade-catalog',1,$4,$5,'committed','candidate/upgrade',clock_timestamp()+interval '1 hour','upgrade-session',1,'{"committed":true}'::jsonb,clock_timestamp())`, authorizationPolicyUpgradeAttemptID, authorizationPolicyUpgradePlanID, authorizationPolicyUpgradeCandidateID, requestDigest, planDigest)
+}
+
+func seedAuthorizationPolicyUpgradeFixtureEvidence(t *testing.T, db *pgxpool.Pool, policyJSON string) {
+	t.Helper()
+	ctx := t.Context()
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(ctx, query, args...); err != nil {
+			t.Fatalf("seed authorization policy upgrade fixture: %v", err)
+		}
+	}
+	planDigest := authorizationPolicyUpgradeDigest('a')
+	artifactDigest := authorizationPolicyUpgradeDigest('b')
+	graphDigest := authorizationPolicyUpgradeDigest('c')
+	configDigest := authorizationPolicyUpgradeDigest('d')
+	securityDigest := authorizationPolicyUpgradeDigest('e')
+	rootDigest := authorizationPolicyUpgradeDigest('f')
+	requestDigest := authorizationPolicyUpgradeDigest('1')
 	exec(`INSERT INTO delivery.delivery_snapshot_seal(seal_id,attempt_id,candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,closure_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,request_digest,plan_digest,compatibility_digest,serving_artifact_id,serving_artifact_digest,duckdb_version,runtime_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence)
 VALUES($1::uuid,$2::uuid,$3::uuid,'upgrade-pool','upgrade-tenant','test-region','upgrade-encryption','objects/upgrade','ducklake','upgrade-catalog',$4::uuid,1,1,'candidate/upgrade',$5,$6,'objects/upgrade',$7,'artifacts/upgrade',$8,$9,$10,$11,$12,$13,$14,'artifact-'||substr($15,8),$15,'1','runtime','1','1','1','{}'::jsonb)`, authorizationPolicyUpgradeSealID, authorizationPolicyUpgradeAttemptID, authorizationPolicyUpgradeCandidateID, "80000000-0000-0000-0000-000000000007", authorizationPolicyUpgradeDigest('2'), authorizationPolicyUpgradeDigest('3'), rootDigest, rootDigest, graphDigest, configDigest, securityDigest, requestDigest, planDigest, artifactDigest, artifactDigest)
 	exec(`UPDATE delivery.delivery_candidate

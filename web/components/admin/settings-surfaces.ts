@@ -6,6 +6,7 @@ import { browserCommandFailure } from '../shared/command-failure'
 import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { lucideIcon } from '../shared/lucide-icons'
 import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
+import './access-settings'
 import '../shared/entity-list'
 import '../shared/user-avatar'
 import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
@@ -35,8 +36,12 @@ const tableStyles = css`
   .empty { padding: var(--base-size-20) var(--base-size-12); color: var(--lv-fg-muted); }
   .actions { display: flex; flex-wrap: wrap; gap: 6px; }
   .notice { border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); padding: var(--base-size-12); }
+  .state-banner { border: var(--lv-border-attention, var(--lv-border-muted)); border-radius: var(--lv-radius-default); background: var(--lv-bg-attention-muted, var(--lv-bg-panel-muted)); padding: var(--base-size-12); }
+  .state-banner.error { border-color: var(--lv-border-danger, var(--lv-border-muted)); background: var(--lv-bg-danger-muted, var(--lv-bg-panel-muted)); color: var(--lv-fg-danger); }
   .danger { color: var(--lv-fg-danger); }
   code { overflow-wrap: anywhere; }
+  .technical-details { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .technical-details summary { cursor: pointer; }
   dialog { width: min(30rem, calc(100vw - var(--base-size-32))); max-width: none; max-height: calc(100svh - var(--base-size-32)); overflow: auto; border: 0; border-radius: var(--lv-radius-large); background: transparent; color: inherit; padding: 0; }
   dialog::backdrop { background: var(--lv-modal-backdrop); }
   .modal { display: grid; overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); }
@@ -100,6 +105,27 @@ const tableStyles = css`
 `
 
 type DatastarFetchOwnerDetail = { type?: string; el?: Element }
+
+const serviceAccountSecretLifetimeOptions = [
+  { value: 30, label: '30 days' },
+  { value: 90, label: '90 days' },
+  { value: 180, label: '180 days (recommended)' },
+  { value: 365, label: '1 year (maximum)' },
+] as const
+// Keep the Settings default aligned with access.ServicePrincipalSecretDefaultLifetime.
+const serviceAccountSecretDefaultLifetimeDays = 180
+
+function auditDateTimeLocal(value: string | undefined): string {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.valueOf()) ? '' : date.toISOString().slice(0, 16)
+}
+
+function auditTimestamp(value: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.valueOf()) ? '' : date.toISOString()
+}
 
 // Datastar's fetch lifecycle is document-global. Settings controls may only
 // consume a successful completion from the lv-admin-page host whose data-on
@@ -658,11 +684,11 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
       ${signal.createdSecret ? html`<p role="status"><strong>Copy this secret now:</strong> <code>${signal.createdSecret}</code></p>` : nothing}
       ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Account</th><th>Status</th><th>Secrets</th><th>Actions</th></tr></thead><tbody>
         ${signal.items.map((account) => html`<tr>
-          <td><strong>${account.displayName || account.id}</strong><div class="muted">${account.id}</div></td><td>${account.disabledAt ? 'Disabled' : 'Active'}</td>
+          <td><strong>${account.displayName || 'Unnamed service account'}</strong><div class="muted">Machine identity</div><details class="technical-details"><summary>Technical identifier</summary><code>${account.id}</code></details></td><td>${account.disabledAt ? 'Disabled' : 'Active'}</td>
           <td>${account.id === signal.selectedId ? (signal.secrets?.length || 0) : '—'}</td>
-          <td class="actions"><button ?disabled=${this.busy} @click=${() => this.emit({ action: 'select', accountId: account.id })}>Secrets</button><button ?disabled=${this.busy} @click=${() => this.deleteAccount(account)}>Delete</button></td>
+          <td class="actions"><button ?disabled=${this.busy} @click=${() => this.emit({ action: 'select', accountId: account.id })}>Secrets</button>${account.disabledAt ? html`<button ?disabled=${this.busy} @click=${() => this.emit({ action: 'enable', accountId: account.id })}>Enable</button>` : html`<button ?disabled=${this.busy} @click=${() => this.disableAccount(account)}>Disable</button>`}<button ?disabled=${this.busy} @click=${() => this.revokeAll(account)}>Revoke all</button><button ?disabled=${this.busy} @click=${() => this.deleteAccount(account)}>Delete</button></td>
         </tr>`)}</tbody></table></div>` : html`<p class="empty">No service accounts have been created.</p>`}
-      ${signal.selectedId ? html`<div><h3>Secrets</h3><form class="form" @submit=${(event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const name = (form.elements.namedItem('secretName') as HTMLInputElement).value; this.emit({ action: 'create_secret', accountId: signal.selectedId, secretName: name }); }}><label>Secret name<input name="secretName" required placeholder="CI pipeline" ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Create secret</button></form>${signal.secrets?.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody>${signal.secrets.map((secret) => html`<tr><td>${secret.name}</td><td>${secret.createdAt || '—'}</td><td>${secret.expiresAt || 'Never'}</td><td><button ?disabled=${this.busy || Boolean(secret.revokedAt)} @click=${() => this.emit({ action: 'revoke_secret', accountId: signal.selectedId, secretId: secret.id })}>${secret.revokedAt ? 'Revoked' : 'Revoke'}</button></td></tr>`)}</tbody></table></div>` : html`<p class="empty">No secrets have been created.</p>`}</div>` : nothing}
+      ${signal.selectedId ? html`<div><h3>Secrets</h3><p class="muted">Credentials belong only to the selected machine identity. Revoke or disable actions take effect immediately and cannot be undone.</p><form class="form" @submit=${(event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const name = (form.elements.namedItem('secretName') as HTMLInputElement).value; const lifetimeDays = Number((form.elements.namedItem('secretLifetimeDays') as HTMLSelectElement).value); this.emit({ action: 'create_secret', accountId: signal.selectedId, secretName: name, secretLifetimeDays: lifetimeDays }); }}><label>Secret name<input name="secretName" required placeholder="CI pipeline" ?disabled=${this.busy}></label><label>Expiration<select name="secretLifetimeDays" ?disabled=${this.busy}>${serviceAccountSecretLifetimeOptions.map((option) => html`<option value=${option.value} ?selected=${option.value === serviceAccountSecretDefaultLifetimeDays}>${option.label}</option>`)}</select><span class="muted">Secrets expire automatically; choose a shorter or longer lifetime.</span></label><button type="submit" ?disabled=${this.busy}>Create secret</button></form>${signal.secrets?.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr></thead><tbody>${signal.secrets.map((secret) => html`<tr><td><strong>${secret.name}</strong><details class="technical-details"><summary>Technical secret ID</summary><code>${secret.id}</code></details></td><td>${secret.createdAt || '—'}</td><td>${secret.lastUsedAt || 'Never'}</td><td>${secret.expiresAt || 'Never'}</td><td class="actions"><button ?disabled=${this.busy || Boolean(secret.revokedAt)} @click=${() => this.rotateSecret(signal.selectedId || '', secret)}>Rotate</button><button ?disabled=${this.busy || Boolean(secret.revokedAt)} @click=${() => this.revokeSecret(signal.selectedId || '', secret)}>${secret.revokedAt ? 'Revoked' : 'Revoke'}</button></td></tr>`)}</tbody></table></div>` : html`<p class="empty">No secrets have been created for this account.</p>`}</div>` : nothing}
     </section>`
   }
 
@@ -671,12 +697,37 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
       this.emit({ action: 'delete', accountId: account.id })
     }
   }
+
+  private disableAccount(account: ServiceAccountSignal): void {
+    if (window.confirm(`Disable ${account.displayName || account.id}? All credentials will be revoked.`)) {
+      this.emit({ action: 'disable', accountId: account.id })
+    }
+  }
+
+  private revokeAll(account: ServiceAccountSignal): void {
+    if (window.confirm(`Revoke every credential for ${account.displayName || 'this service account'}? Every secret stops working immediately and cannot be restored.`)) {
+      this.emit({ action: 'revoke_all', accountId: account.id, reason: 'Settings operator action' })
+    }
+  }
+
+  private rotateSecret(accountID: string, secret: NonNullable<ServiceAccountsSignal['secrets']>[number]): void {
+    if (window.confirm(`Rotate ${secret.name}? A replacement secret will be issued; existing credentials remain valid until explicitly revoked.`)) {
+      this.emit({ action: 'rotate_secret', accountId: accountID, secretId: secret.id, secretName: `${secret.name}-rotated` })
+    }
+  }
+
+  private revokeSecret(accountID: string, secret: NonNullable<ServiceAccountsSignal['secrets']>[number]): void {
+    if (window.confirm(`Revoke ${secret.name}? It will stop working immediately and cannot be restored.`)) {
+      this.emit({ action: 'revoke_secret', accountId: accountID, secretId: secret.id })
+    }
+  }
 }
 
 class LeapViewAuditLog extends DatastarLit(LitElement) {
   static styles = tableStyles
   @state() private busy = false
   @state() private commandError = ''
+  @state() private clearPending = false
   private pendingSignalKey = ''
 
   override connectedCallback(): void {
@@ -711,20 +762,30 @@ class LeapViewAuditLog extends DatastarLit(LitElement) {
       // Filtering or loading an empty page can legitimately return the same
       // signal payload. Transport completion still marks the command done.
       this.busy = false
+      this.clearPending = false
       return
     }
     const failure = browserCommandFailure(event, 'Audit log update')
     if (!failure) return
     this.busy = false
+    this.clearPending = false
     this.commandError = failure.message
+  }
+
+  private clearFilters = (event: MouseEvent): void => {
+    const form = (event.currentTarget as HTMLButtonElement).form
+    form?.querySelectorAll<HTMLInputElement>('input:not([name="projectId"])').forEach((input) => { input.value = '' })
+    this.clearPending = true
+    this.emit({ action: 'clear', filters: {} })
   }
 
   render() {
     const signal = this.audit
     const filters = signal.filters || {}
-    const submit = (event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value || ''; this.emit({ action: 'filter', filters: { projectId: value('projectId'), principalId: value('principalId'), action: value('action'), resourceKind: value('resourceKind'), resourceId: value('resourceId'), from: value('from'), to: value('to') } }) }
+    const displayedFilters = this.clearPending ? { projectId: filters.projectId } : filters
+    const submit = (event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value || ''; this.clearPending = false; this.emit({ action: 'filter', filters: { projectId: value('projectId'), principalId: value('principalId'), action: value('action'), resourceKind: value('resourceKind'), resourceId: value('resourceId'), from: auditTimestamp(value('from')), to: auditTimestamp(value('to')) } }) }
     return html`<section class="surface" aria-label="Audit log"><h2>Audit log</h2><p class="muted">Read-only product activity.</p>${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
-      <form class="toolbar" @submit=${submit}><label>Project<input id="audit-project-id" aria-label="Project" name="projectId" value=${filters.projectId || ''} ?disabled=${this.busy}></label><label>Actor<input id="audit-principal-id" aria-label="Actor" name="principalId" value=${filters.principalId || ''} ?disabled=${this.busy}></label><label>Action<input id="audit-action" aria-label="Action" name="action" value=${filters.action || ''} ?disabled=${this.busy}></label><label>Resource kind<input id="audit-resource-kind" aria-label="Resource kind" name="resourceKind" value=${filters.resourceKind || ''} ?disabled=${this.busy}></label><label>Resource ID<input id="audit-resource-id" aria-label="Resource ID" name="resourceId" value=${filters.resourceId || ''} ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Filter</button><button type="button" ?disabled=${this.busy} @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear</button></form>
+      <form class="toolbar" @submit=${submit}><label>Project<input id="audit-project-id" aria-label="Project" name="projectId" .value=${displayedFilters.projectId || ''} readonly aria-readonly="true" ?disabled=${this.busy}><span class="muted">Bound to the active serving project.</span></label><label>Actor<input id="audit-principal-id" aria-label="Actor" name="principalId" .value=${displayedFilters.principalId || ''} ?disabled=${this.busy}></label><label>Action<input id="audit-action" aria-label="Action" name="action" .value=${displayedFilters.action || ''} ?disabled=${this.busy}></label><label>Resource kind<input id="audit-resource-kind" aria-label="Resource kind" name="resourceKind" .value=${displayedFilters.resourceKind || ''} ?disabled=${this.busy}></label><label>Resource ID<input id="audit-resource-id" aria-label="Resource ID" name="resourceId" .value=${displayedFilters.resourceId || ''} ?disabled=${this.busy}></label><label>From<input id="audit-from" aria-label="From" name="from" type="datetime-local" .value=${auditDateTimeLocal(displayedFilters.from)} ?disabled=${this.busy}></label><label>To<input id="audit-to" aria-label="To" name="to" type="datetime-local" .value=${auditDateTimeLocal(displayedFilters.to)} ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Filter</button><button type="button" ?disabled=${this.busy} @click=${this.clearFilters}>Clear</button></form>
       ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Resource</th><th>Capability</th><th>Status</th></tr></thead><tbody>${signal.items.map((event) => html`<tr><td>${event.createdAt}</td><td>${event.action}</td><td>${event.principalId || 'System'}</td><td>${event.resourceKind} / ${event.resourceId}</td><td>${event.capability || '—'}</td><td>${event.status || '—'}</td></tr>`)}</tbody></table></div>` : html`<p class="empty">No audit events match these filters.</p>`}
       ${signal.hasMore ? html`<button ?disabled=${this.busy} @click=${() => this.emit({ action: 'load_more', filters, pageToken: signal.nextCursor })}>Load more</button>` : nothing}
     </section>`

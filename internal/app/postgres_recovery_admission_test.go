@@ -431,7 +431,9 @@ func seedRecoveryAdmissionDelivery(t *testing.T, url string, set recoveryset.Rec
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec(`INSERT INTO delivery.delivery_snapshot_seal SELECT r.* FROM jsonb_populate_record(NULL::delivery.delivery_snapshot_seal, $1::jsonb || jsonb_build_object('attempt_id',$2::text,'candidate_id',$3::text,'qualification_evidence','{}'::jsonb,'qualified_at',now())) r`, string(encoded), attempt, candidate)
+	// jsonb_populate_record materializes omitted columns as NULL, so it bypasses
+	// SQL defaults for migration-added NOT NULL evidence fields.
+	exec(`INSERT INTO delivery.delivery_snapshot_seal SELECT r.* FROM jsonb_populate_record(NULL::delivery.delivery_snapshot_seal, $1::jsonb || jsonb_build_object('attempt_id',$2::text,'candidate_id',$3::text,'qualification_evidence','{}'::jsonb,'created_at',clock_timestamp(),'resolved_inputs','{}'::jsonb,'qualified_at',clock_timestamp())) r`, string(encoded), attempt, candidate)
 	exec(`UPDATE delivery.delivery_candidate SET status='qualified', snapshot_seal_id=$2, qualification_digest=$3, qualified_at=clock_timestamp() WHERE candidate_id=$1`, candidate, s.SealID, s.CompatibilityDigest)
 	exec(`INSERT INTO delivery.delivery_generation(generation_id,target_id,candidate_id,snapshot_seal_id,plan_id,plan_digest,artifact_root,artifact_root_digest,serving_artifact_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,generation_revision) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1)`, set.Delivery.GenerationID, set.Delivery.TargetID, candidate, s.SealID, plan, s.PlanDigest, s.ArtifactRoot, s.ArtifactRootDigest, s.ServingArtifactDigest, s.CompiledGraphDigest, s.CompiledConfigDigest, s.SecurityDomainFingerprint)
 }

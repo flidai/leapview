@@ -47,10 +47,24 @@ type beginner interface {
 type Repository struct {
 	db             DBTX
 	fingerprintKey []byte
+	// ownership is installed by application composition. The access-owned
+	// semantic-attribute adapter remains the local fallback for low-level
+	// repository users and isolated tests.
+	ownership access.OwnershipGuard
 	// authorizationScope is optional for the aggregate access repository. A
 	// target-policy-only repository sets it to make project/environment scope
 	// part of the authority configuration rather than caller input.
 	authorizationScope *access.AuthorizationPolicyScope
+}
+
+// SetOwnershipGuard installs the composed, read-only ownership inventory used
+// by destructive principal lifecycle operations. Composition owns this
+// mutable wiring step before serving requests begin.
+func (r *Repository) SetOwnershipGuard(guard access.OwnershipGuard) {
+	if r == nil {
+		return
+	}
+	r.ownership = guard
 }
 
 var _ access.Repository = (*Repository)(nil)

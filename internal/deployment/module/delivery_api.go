@@ -657,7 +657,15 @@ func (m *Module) GetDeliverySealStatus(w http.ResponseWriter, r *http.Request, p
 		m.writeDeliveryReadError(w, r, err)
 		return
 	}
-	apitransport.WriteJSON(w, http.StatusOK, nativeSealResponse(seal, plan))
+	candidate := nativepostgres.DeliveryCandidate{}
+	if seal.CandidateID != "" {
+		candidate, err = m.nativeDeliveryReader.Candidate(r.Context(), seal.CandidateID)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, nativeReadError(err))
+			return
+		}
+	}
+	apitransport.WriteJSON(w, http.StatusOK, nativeSealResponse(seal, attempt, candidate, plan))
 }
 
 func (m *Module) GetDeliveryCandidateStatus(w http.ResponseWriter, r *http.Request, project, candidateID string) {
@@ -690,7 +698,12 @@ func (m *Module) GetDeliveryCandidateStatus(w http.ResponseWriter, r *http.Reque
 		m.writeDeliveryReadError(w, r, err)
 		return
 	}
-	apitransport.WriteJSON(w, http.StatusOK, nativeCandidateResponse(candidate, plan, seal, servingStateID))
+	response, err := nativeCandidateResponse(candidate, plan, seal, servingStateID)
+	if err != nil {
+		m.writeDeliveryReadError(w, r, err)
+		return
+	}
+	apitransport.WriteJSON(w, http.StatusOK, response)
 }
 
 func (m *Module) GetDeliveryGenerationStatus(w http.ResponseWriter, r *http.Request, project, generationID string) {
@@ -724,7 +737,12 @@ func (m *Module) GetDeliveryGenerationStatus(w http.ResponseWriter, r *http.Requ
 		m.writeDeliveryReadError(w, r, fmt.Errorf("%w: generation target scope differs", deployment.ErrNotFound))
 		return
 	}
-	apitransport.WriteJSON(w, http.StatusOK, nativeGenerationResponse(generation, plan, seal, operator.ActiveGenerationID == generation.GenerationID))
+	active, activatedAt, retiredAt, rollbackUntil, err := m.nativeGenerationLifecycle(r.Context(), generation, operator)
+	if err != nil {
+		m.writeDeliveryReadError(w, r, err)
+		return
+	}
+	apitransport.WriteJSON(w, http.StatusOK, nativeGenerationResponse(generation, plan, seal, active, activatedAt, retiredAt, rollbackUntil))
 }
 
 func (m *Module) GetDeliveryPublicationEvidence(w http.ResponseWriter, r *http.Request, project, publicationID string) {

@@ -247,6 +247,34 @@ type PostgresJobsAuthority interface {
 	PostgresQueueLifecycle
 	PostgresJobHistory
 	ClaimRiverJob(context.Context, jobs.Job, time.Duration) (refreshrun.JobRecord, error)
+	RecoverExpiredRiverJobs(context.Context, int) (int64, error)
+}
+
+// RecoverExpiredRiverJobs hands abandoned refresh work back to River using the
+// refresh capability's renewable lease as the authority. River's generic
+// timeout must remain long enough for healthy materializations, so process-loss
+// recovery cannot safely use attempted_at alone. This transaction locks the
+// exact refresh run and River attempt, verifies that the owner/fence still
+// match and the refresh lease is expired, and only then makes that one attempt
+// retryable. A healthy worker racing this statement renews the locked lease
+// first and is excluded by the predicate.
+func (a *PostgresJobsAdapter) RecoverExpiredRiverJobs(ctx context.Context, limit int) (int64, error) {
+	if !a.Configured() {
+		return 0, errors.New("canonical PostgreSQL jobs and refresh repositories are required")
+	}
+	if limit < 1 || limit > 1000 {
+		return 0, errors.New("refresh recovery batch limit must be between 1 and 1000")
+	}
+	var recovered int64
+	err := a.Refresh.InTx(ctx, func(tx refreshpostgres.Tx) error {
+		affected, err := a.Jobs.RecoverExpiredRefreshJobsTx(ctx, tx, int32(limit))
+		if err != nil {
+			return err
+		}
+		recovered = affected
+		return nil
+	})
+	return recovered, err
 }
 
 func (a *PostgresJobsAdapter) CompleteJobTx(ctx context.Context, tx refreshpostgres.Tx, job refreshrun.JobRecord) error {

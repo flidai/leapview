@@ -54,6 +54,19 @@ func TestProjectDeliveryAPIContract(t *testing.T) {
 	} {
 		assertOperation(operation.path, "get", operation.id, operation.privilege)
 	}
+	for _, operation := range []struct {
+		path, id string
+	}{
+		{base + "/plans", "listDeliveryPlans"},
+		{base + "/builds", "listDeliveryBuildAttempts"},
+		{base + "/candidates", "listDeliveryCandidates"},
+		{base + "/approval-requests", "listDeliveryApprovalRequests"},
+	} {
+		read := assertOperation(operation.path, "get", operation.id, "RESOURCE_READ")
+		if !operationHasParameter(read, "query", "limit") || !operationHasParameter(read, "query", "pageToken") {
+			t.Fatalf("%s is missing bounded pagination parameters", operation.id)
+		}
+	}
 	schemas := openAPIMap(t, openAPIMap(t, spec, "components"), "schemas")
 	for schema, fields := range map[string][]string{
 		"DeliveryPlanPreviewResponse":     {"id", "projectId", "targetId", "environment", "sourceDigest", "planDigest", "status", "evidence"},

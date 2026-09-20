@@ -64,18 +64,28 @@ test('publications admin renders lifecycle controls and emits typed commands', a
       await element.updateComplete
       let detail: unknown = null
       element.addEventListener('lv-publication-command', (event: CustomEvent) => { detail = event.detail })
+      window.confirm = () => true
       const buttons = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button')) as HTMLButtonElement[]
       buttons.find((button) => button.textContent?.trim() === 'Suspend')?.click()
+      await element.updateComplete
+      const lockedDuringMutation = Boolean(Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Suspend')?.disabled)
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
       return {
         text: (element.shadowRoot as ShadowRoot).textContent.replace(/\s+/g, ' ').trim(),
         cards: (element.shadowRoot as ShadowRoot).querySelectorAll('.publication-card').length,
         detail,
+        lockedDuringMutation,
+        unlockedAfterCompletion: !Boolean(Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Suspend')?.disabled),
       }
     })
     expect(state.cards).toBe(1)
     expect(state.text).toContain('website-showcase')
     expect(state.text).toContain('Lifecycle history')
     expect(state.detail).toEqual({ publication: 'website-showcase', action: 'suspend' })
+    expect(state.lockedDuringMutation).toBe(true)
+    expect(state.unlockedAfterCompletion).toBe(true)
+    expect(state.text).toContain('Publication updated')
   } finally {
     await page.close()
   }
@@ -309,7 +319,7 @@ test('personal API tokens use capability selectors', async () => {
       await personal.updateComplete
       const root = personal.shadowRoot as ShadowRoot
       const name = root.querySelector('#token-name') as HTMLInputElement
-      const create = root.querySelector('button[type="submit"]') as HTMLButtonElement
+      const create = root.querySelector('.token-form button[type="submit"]') as HTMLButtonElement
       const initial = {
         createDisabled: create.disabled,
         rawProjectField: Boolean(root.querySelector('input[placeholder*="Project ID"]')),
@@ -318,7 +328,9 @@ test('personal API tokens use capability selectors', async () => {
 
       name.value = 'Sales automation'
       name.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await Promise.resolve()
       await personal.updateComplete
+      const namedCreateDisabled = (root.querySelector('.token-form button[type="submit"]') as HTMLButtonElement).disabled
       const add = root.querySelector('.permission-trigger') as HTMLButtonElement
       add.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       await personal.updateComplete
@@ -372,7 +384,7 @@ test('personal API tokens use capability selectors', async () => {
       const pending = {
         name: (root.querySelector('#token-name') as HTMLInputElement).value,
         selectedPermissions: root.querySelectorAll('.selected-permission').length,
-        buttonText: (root.querySelector('button[type="submit"]') as HTMLButtonElement).textContent?.trim(),
+        buttonText: (root.querySelector('.token-form button[type="submit"]') as HTMLButtonElement).textContent?.trim(),
       }
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: '403' } } }))
       await personal.updateComplete
@@ -380,7 +392,7 @@ test('personal API tokens use capability selectors', async () => {
         name: (root.querySelector('#token-name') as HTMLInputElement).value,
         selectedPermissions: root.querySelectorAll('.selected-permission').length,
         error: root.querySelector('[role="alert"]')?.textContent?.trim(),
-        createDisabled: (root.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
+        createDisabled: (root.querySelector('.token-form button[type="submit"]') as HTMLButtonElement).disabled,
       }
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
       mergePatch({ personalSettings: { tokens: { items: [
@@ -396,6 +408,7 @@ test('personal API tokens use capability selectors', async () => {
       }
       return {
         initial,
+        namedCreateDisabled,
         menuLayout,
         menuHeader,
         filteredPermissions,
@@ -438,6 +451,7 @@ test('personal API tokens use capability selectors', async () => {
       rawProjectField: false,
       rawPrivilegeField: false,
     })
+    expect(state.namedCreateDisabled).toBe(true)
     expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
     expect(state.menuLayout.listScrollable).toBe(true)
     expect(state.menuLayout.listOverflowY).toBe('auto')

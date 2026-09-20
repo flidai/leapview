@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	stdhttp "net/http"
+	"strings"
 
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
@@ -20,6 +21,10 @@ type roleBindingCreateRequest struct {
 	SubjectType      string `json:"subjectType"`
 	SubjectID        string `json:"subjectId"`
 	Role             string `json:"role"`
+	ExpectedRevision *int64 `json:"expectedRevision"`
+}
+
+type roleBindingDeleteRequest struct {
 	ExpectedRevision *int64 `json:"expectedRevision"`
 }
 
@@ -55,6 +60,27 @@ func roleBindingPolicyMetadata(scope access.AuthorizationPolicyScope, policy acc
 		"targetId": scope.TargetID, "projectId": scope.ProjectID, "environment": scope.Environment,
 		"policyRevision": policy.Revision, "policyDigest": policy.Digest,
 	}
+}
+
+// ListProjectRoles exposes the closed project-role catalog. Role semantics are
+// server-owned and do not come from a request or a mutable policy row; the
+// project route is still validated against the configured target scope so the
+// endpoint cannot be used as an unscoped access surface.
+func (h Handler) ListProjectRoles(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if _, err := h.authorizationPolicyScope(r); err != nil {
+		writeAuthorizationPolicyError(w, err)
+		return
+	}
+	items := make([]accessgen.RoleResponse, 0, len(access.CanonicalProjectRoles()))
+	for _, role := range access.CanonicalProjectRoles() {
+		capabilities := access.ProjectRoleCapabilities(role)
+		encoded := make([]accessgen.GenSchemaCapability, 0, len(capabilities))
+		for _, capability := range capabilities {
+			encoded = append(encoded, accessgen.GenSchemaCapability(capability))
+		}
+		items = append(items, accessgen.RoleResponse{Name: string(role), Capabilities: encoded})
+	}
+	_ = writePagedJSON(w, r, items)
 }
 
 func (h Handler) ListProjectRoleBindings(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -157,6 +183,7 @@ func (h Handler) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.R
 			return access.AuditEventInput{}, encodeErr
 		}
 		event := auditInput(r, "role_binding.created", h.currentPrincipalID(r), "role_binding", binding.ID, access.CapabilityProjectAdmin, "success", nil)
+		event.ProjectID = scope.ProjectID
 		event.MetadataJSON = metadata
 		return event, nil
 	})
@@ -171,6 +198,91 @@ func (h Handler) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.R
 		}
 	}
 	writeJSONError(w, errors.New("created authorization role binding is missing from policy"), stdhttp.StatusInternalServerError)
+}
+
+// DeleteProjectRoleBinding removes a binding through the target-owned policy
+// successor-revision command. The historical expected revision is read in
+// the same transaction as the delete so audit metadata remains stable on an
+// idempotent retry even though the current policy no longer contains it.
+func (h Handler) DeleteProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var input roleBindingDeleteRequest
+	if err := decodeStrictJSON(r, &input); err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	if input.ExpectedRevision == nil {
+		writeJSONError(w, errors.New("expectedRevision is required"), stdhttp.StatusBadRequest)
+		return
+	}
+	scope, err := h.authorizationPolicyScope(r)
+	if err != nil {
+		writeAuthorizationPolicyError(w, err)
+		return
+	}
+	bindingID := chi.URLParam(r, "binding")
+	if bindingID == "" || strings.TrimSpace(bindingID) != bindingID || len(bindingID) > 255 || strings.ContainsAny(bindingID, "\x00\r\n") {
+		writeAuthorizationPolicyError(w, fmt.Errorf("%w: binding id is invalid", access.ErrAuthorizationPolicyInvalidBinding))
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	if _, ok := repo.(access.AuthorizationPolicyWriter); !ok {
+		writeJSONError(w, errors.New("authorization policy writer is unavailable"), stdhttp.StatusServiceUnavailable)
+		return
+	}
+	var policy access.AuthorizationPolicy
+	var removed access.RoleBinding
+	operation := accessgen.GenCommandOperationDeleteProjectRoleBinding()
+	err = executeAuditedMutation(r, repo, operation, func(tx access.Repository) (access.AuditEventInput, error) {
+		reader, ok := tx.(access.AuthorizationPolicyReader)
+		if !ok {
+			return access.AuditEventInput{}, errors.New("transactional authorization policy reader is unavailable")
+		}
+		historical, readErr := reader.AuthorizationPolicyRevision(r.Context(), scope, *input.ExpectedRevision)
+		if readErr != nil {
+			return access.AuditEventInput{}, readErr
+		}
+		for _, binding := range historical.RoleBindings {
+			if binding.ID == bindingID {
+				removed = binding
+				break
+			}
+		}
+		if removed.ID == "" {
+			return access.AuditEventInput{}, fmt.Errorf("%w: role binding %q", access.ErrAuthorizationPolicyNotFound, bindingID)
+		}
+		writer, ok := tx.(access.AuthorizationPolicyWriter)
+		if !ok {
+			return access.AuditEventInput{}, errors.New("transactional authorization policy writer is unavailable")
+		}
+		policy, err = writer.DeleteAuthorizationRoleBinding(r.Context(), access.AuthorizationRoleBindingDeleteInput{
+			Scope: scope, BindingID: bindingID, ExpectedRevision: *input.ExpectedRevision,
+			IdempotencyKey: r.Header.Get("Idempotency-Key"),
+		})
+		if err != nil {
+			return access.AuditEventInput{}, err
+		}
+		metadata, encodeErr := accessgen.EncodeGenDeleteProjectRoleBindingAuditPayload(accessgen.GenSchemaRoleBindingAuditPayload{
+			TargetId: scope.TargetID, ProjectId: scope.ProjectID, Environment: scope.Environment,
+			BindingId: removed.ID, SubjectType: string(removed.Subject.Kind), SubjectId: removed.Subject.ID,
+			Role: string(removed.Role), PolicyRevision: policy.Revision, PolicyDigest: policy.Digest,
+		})
+		if encodeErr != nil {
+			return access.AuditEventInput{}, encodeErr
+		}
+		event := auditInput(r, "role_binding.deleted", h.currentPrincipalID(r), "role_binding", bindingID, access.CapabilityProjectAdmin, "success", nil)
+		event.ProjectID = scope.ProjectID
+		event.MetadataJSON = metadata
+		return event, nil
+	})
+	if err != nil {
+		writeAuthorizationPolicyError(w, err)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
 func writeAuthorizationPolicyError(w stdhttp.ResponseWriter, err error) {

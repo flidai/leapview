@@ -46,6 +46,18 @@ SET disabled_at = COALESCE(disabled_at, CURRENT_TIMESTAMP),
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
+-- name: DisableServicePrincipal :exec
+UPDATE principals
+SET disabled_at = COALESCE(disabled_at, CURRENT_TIMESTAMP),
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND kind = 'service_principal';
+
+-- name: EnableServicePrincipal :exec
+UPDATE principals
+SET disabled_at = NULL, blocked_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND kind = 'service_principal';
+
 -- name: ListSCIMPrincipals :many
 SELECT p.*
 FROM principals p
@@ -306,6 +318,11 @@ UPDATE api_tokens
 SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
 WHERE principal_id = ? AND revoked_at IS NULL;
 
+-- name: RevokeServicePrincipalSecretsByPrincipal :exec
+UPDATE service_principal_secrets
+SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+WHERE service_principal_id = ? AND revoked_at IS NULL;
+
 -- name: DeactivateOAuthSessionsByPrincipal :exec
 UPDATE oauth_sessions
 SET active = 0
@@ -325,6 +342,12 @@ WHERE p.kind = 'service_principal'
   AND s.secret_fingerprint = ?
   AND s.revoked_at IS NULL
   AND (s.expires_at IS NULL OR datetime(s.expires_at) > CURRENT_TIMESTAMP);
+
+-- name: TouchServicePrincipalSecret :exec
+UPDATE service_principal_secrets
+SET last_used_at = CURRENT_TIMESTAMP
+WHERE id = sqlc.arg(id)
+  AND (last_used_at IS NULL OR datetime(last_used_at) < datetime(CURRENT_TIMESTAMP, '-1 minute'));
 
 -- name: RevokeServicePrincipalSecret :exec
 UPDATE service_principal_secrets

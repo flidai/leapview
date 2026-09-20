@@ -184,6 +184,16 @@ func queries(db DBTX) *jobdb.Queries { return jobdb.New(db) }
 func NewRepository(db DBTX) *Repository              { return &Repository{db: db} }
 func New(db DBTX) *Repository                        { return NewRepository(db) }
 func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
+
+// RecoverExpiredRefreshJobsTx makes expired product-owned refresh attempts
+// retryable inside the caller's refresh-authority transaction.
+func (r *Repository) RecoverExpiredRefreshJobsTx(ctx context.Context, tx Tx, limit int32) (int64, error) {
+	if r == nil || r.db == nil || tx == nil || limit < 1 || limit > 1000 {
+		return 0, errors.New("invalid expired refresh job recovery input")
+	}
+	return jobdb.New(tx).RecoverExpiredRefreshJobs(ctx, limit)
+}
+
 func (r *Repository) DB() DBTX {
 	if r == nil {
 		return nil

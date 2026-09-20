@@ -64,8 +64,23 @@ func (r *Repository) UpsertSCIMUser(ctx context.Context, in access.SCIMUserInput
 	var principalID pgtype.UUID
 	principalID, err = accessdb.New(tx).FindSCIMPrincipalBySubject(ctx, subject)
 	pid := ""
+	var existingLifecycle accessdb.LockPrincipalForPlatformRoleRow
+	var existingPrincipal bool
 	if err == nil {
 		pid = principalUUID(principalID)
+		existingPrincipal = true
+		if _, err = r.lockPlatformAdminAuthority(ctx, tx, pid); err != nil {
+			return access.SCIMUser{}, err
+		}
+		existingLifecycle, err = accessdb.New(tx).LockPrincipalForPlatformRole(ctx, principalID)
+		if err != nil {
+			return access.SCIMUser{}, err
+		}
+		if !in.Active {
+			if err = r.rejectLastUsablePlatformAdministrator(ctx, tx, pid); err != nil {
+				return access.SCIMUser{}, err
+			}
+		}
 	} else if err == pgx.ErrNoRows {
 		if strings.TrimSpace(in.ID) != "" {
 			pid, err = uuidID("principal id", in.ID)
@@ -100,6 +115,13 @@ func (r *Repository) UpsertSCIMUser(ctx context.Context, in access.SCIMUserInput
 			return access.SCIMUser{}, err
 		}
 		if err = accessdb.New(tx).UpdateSCIMPrincipal(ctx, accessdb.UpdateSCIMPrincipalParams{ID: principalID, Status: scimStatus(in.Active), Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName)}); err != nil {
+			return access.SCIMUser{}, err
+		}
+	}
+	if existingPrincipal && (!in.Active || existingLifecycle.Status != "active" || existingLifecycle.DisabledAt.Valid || existingLifecycle.BlockedAt.Valid) {
+		// Reconciliation is allowed to restore identity access, but it must not
+		// restore a platform role that was usable before the lifecycle change.
+		if _, err = accessdb.New(tx).RevokePlatformRole(ctx, principalID); err != nil {
 			return access.SCIMUser{}, err
 		}
 	}
@@ -200,7 +222,19 @@ func (r *Repository) DisableSCIMUser(ctx context.Context, id string) (access.SCI
 	if !exists {
 		return access.SCIMUser{}, pgx.ErrNoRows
 	}
+	if _, err = r.lockPlatformAdminAuthority(ctx, tx, id); err != nil {
+		return access.SCIMUser{}, err
+	}
+	if _, err = accessdb.New(tx).LockPrincipalForPlatformRole(ctx, principalID); err != nil {
+		return access.SCIMUser{}, err
+	}
+	if err = r.rejectLastUsablePlatformAdministrator(ctx, tx, id); err != nil {
+		return access.SCIMUser{}, err
+	}
 	if _, err = accessdb.New(tx).DisablePrincipal(ctx, principalID); err != nil {
+		return access.SCIMUser{}, err
+	}
+	if _, err = accessdb.New(tx).RevokePlatformRole(ctx, principalID); err != nil {
 		return access.SCIMUser{}, err
 	}
 	if err = revokeSCIMPrincipalCredentials(ctx, tx, principalID); err != nil {

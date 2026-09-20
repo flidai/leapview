@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -97,13 +98,47 @@ func (m *Module) RequirePlatformAdmin(next http.Handler) http.Handler {
 		}
 		allowed, err := m.RequestPlatformAdmin(r.Context(), r, principal.ID)
 		if err != nil {
+			m.recordPlatformAuthorizationDenial(r, principal.ID, access.AuditReasonConfigurationUnavailable)
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
 		if !allowed {
+			m.recordPlatformAuthorizationDenial(r, principal.ID, access.AuditReasonAuthorizationDenied)
 			uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
 	}))
+}
+
+// recordPlatformAuthorizationDenial runs after Authenticate has established a
+// canonical principal. It is intentionally outside the authorization callback
+// so a failed audit append cannot recurse through the platform-admin guard.
+func (m *Module) recordPlatformAuthorizationDenial(r *http.Request, principalID string, reason access.AuditDenialReason) {
+	if m == nil || r == nil || strings.TrimSpace(principalID) == "" {
+		return
+	}
+	repository := m.repositoryValue()
+	if repository == nil {
+		return
+	}
+	resourceID := "platform"
+	if r.URL != nil && strings.TrimSpace(r.URL.Path) != "" {
+		resourceID = r.URL.Path
+	}
+	metadata, err := json.Marshal(map[string]any{
+		"method":         r.Method,
+		"operation":      resourceID,
+		"outcome":        "denied",
+		"reason":         string(reason),
+		"idempotencyKey": strings.TrimSpace(r.Header.Get("Idempotency-Key")),
+	})
+	if err != nil {
+		return
+	}
+	input := access.AuditEventInput{PrincipalID: principalID, Action: "authorization.denied", ResourceKind: "platform_authorization", ResourceID: resourceID, Capability: access.CapabilityProjectAdmin, Status: "denied", RequestID: firstNonEmpty(r.Header.Get("X-Request-Id"), r.Header.Get("X-Request-ID")), CorrelationID: firstNonEmpty(r.Header.Get("X-Correlation-Id"), r.Header.Get("X-Correlation-ID"), r.Header.Get("X-Request-Id"), r.Header.Get("X-Request-ID")), MetadataJSON: string(metadata)}
+	defer func() { _ = recover() }()
+	if err := access.PersistAuditEvent(r.Context(), repository, input); err != nil && m.logger != nil {
+		m.logger.WarnContext(r.Context(), "platform authorization denial audit failed", "error", err)
+	}
 }

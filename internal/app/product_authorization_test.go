@@ -19,7 +19,7 @@ func TestProductAdministrationUsesGeneratedRouteDispatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	principal := testPlatformPrincipal(t, ctx, store, "platform-admin@example.test", "Platform Admin")
-	token := testAPIToken(t, ctx, store, principal.ID, "platform-manage")
+	token := testPlatformAPIToken(t, ctx, store, principal.ID, "platform-manage")
 	productStorage := newProductAuthorizationStorage()
 	service, err := product.NewWithStorage(productStorage, productAuthorizationBlobs{})
 	if err != nil {

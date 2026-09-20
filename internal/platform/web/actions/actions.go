@@ -34,6 +34,14 @@ func CommandPost(binding uicommand.Binding, path string, signalPaths ...string) 
 	return request("post", path, signalPaths, jsString(binding.OperationID()))
 }
 
+// CommandPostOperation is used for generated command operations which do not
+// declare a UI action (for example, an operator-only rollback). The caller
+// still supplies the operation identity from the generated contract, while
+// this helper keeps Datastar transport construction in one place.
+func CommandPostOperation(operationID, pathExpression string, signalPaths ...string) string {
+	return requestWithPathExpression("post", pathExpression, signalPaths, jsString(operationID))
+}
+
 func CommandPatch(binding uicommand.Binding, path, revision string, signalPaths ...string) string {
 	return requestWithHeaders("patch", path, signalPaths, "window.LeapViewCommand.headers("+jsString(binding.OperationID())+", "+jsString(revision)+")")
 }

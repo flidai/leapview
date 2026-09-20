@@ -449,6 +449,8 @@ model AdminPageEnvelope {
   // inactive branches to manufacture placeholder payloads.
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminAccess", `x-leapview-signal-owner`: "server" })
   `adminAccess`?: AccessAdministrationSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminAccessSettings", `x-leapview-signal-owner`: "server" })
+  `adminAccessSettings`?: AccessSettingsSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminAgentCommand", `x-leapview-signal-owner`: "server" })
   `adminAgentCommand`?: AdminAgentCommandSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminAuditLog", `x-leapview-signal-owner`: "server" })

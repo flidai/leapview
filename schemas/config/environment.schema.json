@@ -3519,6 +3519,14 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_REQUIRE_PLATFORM_ROLE_APPROVAL": {
+      "default": "false",
+      "description": "Require a durable second administrator approval before platform-role grants and revocations.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_ROUTE_QA_SCOPE": {
       "default": "all",
       "description": "Assembled browser route QA scope.",

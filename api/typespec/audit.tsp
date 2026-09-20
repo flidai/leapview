@@ -38,6 +38,6 @@ op listAuditEvents(@path project: ResourceId, @query actor?: string, @query acti
 @summary("List product audit events")
 @route("/audit-events")
 @get
-@apigen.authz(#{ mode: "authenticated" })
+@apigen.authz(#{ mode: "platform_admin" })
 @extension("x-leapview-object-scope", "platform")
 op listPlatformAuditEvents(@query project?: ResourceId, @query actor?: string, @query action?: string, @query resourceKind?: AuditTargetKind, @query resourceId?: ResourceId, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListAuditEventsOK | CommonErrors;

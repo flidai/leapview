@@ -16,9 +16,15 @@ Project role bindings apply reusable privilege sets such as viewer, member, edit
 
 Roles express common responsibilities. Owners and grant managers should be rare; routine project deployment should use a dedicated deployer identity rather than an owner token.
 
+`owner` and `admin` currently resolve to the same canonical capability bundle,
+as do `contributor` and `editor`. These names communicate operating intent;
+they are not additional authorization boundaries. Review the expanded
+capabilities returned by the Access API when deciding whether an assignment is
+safe, and do not rely on an alias name to withhold a capability.
+
 ## Explicit grants
 
-Use a target-owned grant when one subject needs one privilege on a specific securable object outside the standard role shape. Create and review grants through **Admin → Access** or the [Access API](/docs/api/access), using the exact compiled resource ID and the narrowest supported capability.
+Use a target-owned, project-authored grant when one subject needs one privilege on a specific securable object outside the standard role shape. Fine-grained grants are compiled into the immutable serving generation; they are not mutable through **Admin → Access** or a runtime grant API. To change one, update the project access declaration, validate it, and deliver a new generation. Review the resulting access through effective-privilege views and audit events, using the exact compiled resource ID and narrowest supported capability.
 
 Choose the narrowest object and privilege that supports the task. Avoid accumulating one-off direct user grants; they are harder to review and can survive team changes.
 
@@ -69,6 +75,22 @@ policy fails closed instead of reaching a query planner.
 
 Ownership and platform administration are distinct from ordinary project-resource use. Keep the instance-wide `platform_admin` role, project `PROJECT_ADMIN`, and resource capabilities such as `RESOURCE_USE`, `RESOURCE_READ`, `RESOURCE_EDIT`, `RESOURCE_MANAGE`, `RESOURCE_SHARE`, and `RESOURCE_PUBLISH` separated according to operational responsibility.
 
+Platform administrators can review current and revoked instance authority in
+**Admin → Authentication**. Browser grant and revoke actions require a local or
+OIDC browser session whose interactive authentication occurred within the last
+15 minutes. The server reads that timestamp from the durable session; a client
+cannot assert freshness. API tokens, service credentials, desktop credentials,
+and authoring credentials cannot use the browser mutation path.
+
+For production environments that require separation of duties, set
+`LEAPVIEW_REQUIRE_PLATFORM_ROLE_APPROVAL=true`. Direct platform-role mutations
+then fail with an approval-required response. Use the Access API to request the
+change, have a different usable platform administrator approve it, and execute
+the approved request. Requests expire after 24 hours, may be canceled, survive
+restart, retain idempotent operation evidence, and recheck both the captured
+platform-authority revision and last-usable-administrator rule at execution.
+Every lifecycle transition and the resulting grant or revoke is audited.
+
 A service principal used by CI should exist only on the target instances and receive the project and deployment/data privileges required by that pipeline. A read-only integration should not inherit project activation or grant management.
 
 ## Review access
@@ -84,4 +106,4 @@ Use this periodic review:
 7. Remove or deactivate obsolete identities and revoke credentials.
 8. Audit every binding, policy, and ownership change.
 
-Validate target access policy before deployment and test with a non-owner principal afterward. Use the [Access API](/docs/api/access) and the effective-privilege views to review role bindings, grants, and data policies.
+Validate the project access declaration before deployment and test with a non-owner principal afterward. Use the [Access API](/docs/api/access) for mutable role bindings and the effective-privilege views/audit events to review compiled grants and data policies.

@@ -201,7 +201,7 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 	if !scopeOK {
 		return nil, false
 	}
-	if contract.AuthzMode != "authenticated" && contract.AuthzMode != "privilege" {
+	if contract.AuthzMode != "authenticated" && contract.AuthzMode != "platform_admin" && contract.AuthzMode != "privilege" {
 		return nil, false
 	}
 	if contract.Command != nil && contract.Command.AuthzMode != contract.AuthzMode {
@@ -232,6 +232,12 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 		})
 	}
 	if scope == "platform" {
+		return a.module.RequirePlatformAdmin(next), true
+	}
+	if contract.AuthzMode == "platform_admin" {
+		if scope != "platform" {
+			return nil, false
+		}
 		return a.module.RequirePlatformAdmin(next), true
 	}
 	if contract.AuthzMode == "authenticated" {
@@ -816,7 +822,7 @@ func (a *APIGenAuthorizer) validateOperation(operationID string, contract APIGen
 		}
 		return nil
 	}
-	if contract.AuthzMode != "authenticated" && contract.AuthzMode != "privilege" {
+	if contract.AuthzMode != "authenticated" && contract.AuthzMode != "platform_admin" && contract.AuthzMode != "privilege" {
 		return fmt.Errorf("APIGen operation %q has unsupported authz mode %q", operationID, contract.AuthzMode)
 	}
 	scope, scopeOK := apiGenScope(contract)
@@ -829,8 +835,20 @@ func (a *APIGenAuthorizer) validateOperation(operationID string, contract APIGen
 	if !apiGenExtensionModeMatches(contract) {
 		return fmt.Errorf("APIGen operation %q extension authz mode does not match operation", operationID)
 	}
+	if contract.AuthzMode == "platform_admin" {
+		privilege := ""
+		if contract.Command != nil {
+			privilege = contract.Command.Privilege
+		} else if authz, ok := contract.Extensions["x-authz"].(map[string]any); ok {
+			privilege, _ = authz["privilege"].(string)
+		}
+		if scope != "platform" || strings.TrimSpace(privilege) != "" {
+			return fmt.Errorf("APIGen operation %q has invalid platform-admin authorization metadata", operationID)
+		}
+		return nil
+	}
 	if contract.AuthzMode == "authenticated" {
-		if scope != "" && scope != "platform" && scope != "principal" {
+		if scope != "" && scope != "principal" {
 			return fmt.Errorf("APIGen operation %q has invalid authenticated resource scope", operationID)
 		}
 		return nil

@@ -223,6 +223,62 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 	}
 }
 
+func TestDeliveryAuthorizationMapsBuildUseToDashboardRead(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboardID, err := projectgraph.NewResourceID("dashboard_recovery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelID, err := projectgraph.NewResourceID("model_orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: dashboardID, Kind: projectgraph.KindDashboard, Name: "Recovery"},
+		{ID: modelID, Kind: projectgraph.KindModel, Name: "Orders"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal_recovery"}
+	dashboard, err := access.NewResourceRef(dashboardID, projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboardGrant, err := access.NewCanonicalGrant(graph, subject, dashboard, access.CapabilityResourceRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := access.NewResourceRef(modelID, projectgraph.KindModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelGrant, err := access.NewCanonicalGrant(graph, subject, model, access.CapabilityResourceUse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{
+		{ID: "grant_dashboard_read", Canonical: dashboardGrant},
+		{ID: "grant_model_use", Canonical: modelGrant},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := deliveryResourceCapability(dashboard, access.CapabilityResourceUse); got != access.CapabilityResourceRead {
+		t.Fatalf("dashboard build capability = %q, want %q", got, access.CapabilityResourceRead)
+	}
+	if got := deliveryResourceCapability(model, access.CapabilityResourceUse); got != access.CapabilityResourceUse {
+		t.Fatalf("model build capability = %q, want %q", got, access.CapabilityResourceUse)
+	}
+	allowed, err := deliverySnapshotAllows(snapshot, []access.SubjectRef{subject}, []access.ResourceRef{dashboard, model}, access.CapabilityResourceUse)
+	if err != nil || !allowed {
+		t.Fatalf("recovered mixed dashboard/model build authorization = %t, %v; want allowed", allowed, err)
+	}
+}
+
 func TestValidTusTransportIDRequiresCanonicalOpaqueToken(t *testing.T) {
 	valid := "tus_" + strings.Repeat("a", 64)
 	for _, value := range []string{valid, "tus_" + strings.Repeat("A", 64), " tus_" + strings.Repeat("a", 64), "tus_" + strings.Repeat("a", 63)} {

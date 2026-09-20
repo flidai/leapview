@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -524,6 +525,9 @@ func (r *Repository) servicePrincipalSecretForSecret(ctx context.Context, servic
 	}
 	if !verifySecret(secret, row.SecretVerifier) {
 		return platformdb.ServicePrincipalSecret{}, sql.ErrNoRows
+	}
+	if err := r.q.TouchServicePrincipalSecret(ctx, row.ID); err != nil {
+		slog.Default().WarnContext(ctx, "service principal secret last-used update failed", "credential_class", "service_principal_secret", "credential_id", row.ID, "error", err)
 	}
 	return row, nil
 }

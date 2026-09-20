@@ -45,7 +45,7 @@ func TestPostgresAgentAdminJourney(t *testing.T) {
 	if _, err := fixture.Graph.Access.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: owner.ID, Role: access.PlatformRoleAdmin}); err != nil {
 		t.Fatalf("grant owner platform-admin role: %v", err)
 	}
-	ownerToken, _, err := fixture.Graph.Access.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: owner.ID, Name: "journey-owner", ExpiresAt: time.Now().Add(time.Hour)})
+	ownerToken, _, err := fixture.Graph.Access.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: owner.ID, Name: "journey-owner", Capabilities: []access.Capability{access.CapabilityProjectAdmin}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("create owner API token: %v", err)
 	}

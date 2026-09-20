@@ -34,6 +34,7 @@ type Config struct {
 	// InstanceID is used; neither value is accepted from request payloads.
 	AuthorizationPolicyTargetID    string
 	AuthorizationPolicyEnvironment string
+	RequirePlatformRoleApproval    bool
 	MCPIssuerURL                   string
 	CurrentEffectiveCapabilities   func(context.Context, string) ([]access.Capability, error)
 	CurrentProjectID               func(context.Context) (projectgraph.ResourceID, error)
@@ -59,13 +60,13 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			Persistence:                    config.Persistence,
 			AuthorizationPolicyTargetID:    firstNonEmpty(config.AuthorizationPolicyTargetID, config.InstanceID),
 			AuthorizationPolicyEnvironment: config.AuthorizationPolicyEnvironment,
+			RequirePlatformRoleApproval:    config.RequirePlatformRoleApproval,
 			Auth:                           auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 			CurrentProjectID:   config.CurrentProjectID,
 			AuthoringProjectID: config.AuthoringProjectID,
 			Presentation:       config.Presentation, Assets: config.Assets,
 		}
 		if config.Profile != nil {
-			surface.OAuthResource = config.Profile.oauthResource
 			if config.Profile.repository != nil {
 				surface.Repository = func() (access.Repository, error) { return config.Profile.repository, nil }
 			}
@@ -83,7 +84,14 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			surface.CurrentPrincipal = auth.Principal
 			surface.CurrentCredential = auth.APICredential
 		}
-		return newSurface(surface)
+		module, err := newSurface(surface)
+		if err != nil {
+			return nil, err
+		}
+		if config.Profile != nil {
+			module.oauthResource = config.Profile.oauthResource
+		}
+		return module, nil
 	}
 	if config.Production && !config.Persistence.isPostgres() {
 		return nil, errors.New("production access build requires PostgreSQL persistence")
@@ -141,6 +149,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		Persistence:                    config.Persistence,
 		AuthorizationPolicyTargetID:    firstNonEmpty(config.AuthorizationPolicyTargetID, config.InstanceID),
 		AuthorizationPolicyEnvironment: config.AuthorizationPolicyEnvironment,
+		RequirePlatformRoleApproval:    config.RequirePlatformRoleApproval,
 		Repository:                     func() (access.Repository, error) { return repository, nil },
 		Auth:                           auth,
 		CurrentEffectiveCapabilities:   config.CurrentEffectiveCapabilities,

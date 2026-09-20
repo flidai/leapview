@@ -190,6 +190,85 @@ func TestCursorSnapshotNeverFabricatesIdentity(t *testing.T) {
 	}
 }
 
+func TestNativeK1CursorPassesThroughResponsesAndIsAcceptedOnNextRequest(t *testing.T) {
+	const nativeCursor = "k1.native-page-cursor"
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project/delivery/plans", nil)
+	body := []byte(`{"page":{"nextCursor":"` + nativeCursor + `"}}`)
+	if got := SignResponseCursor(request, body); string(got) != string(body) {
+		t.Fatalf("native response cursor = %s, want unchanged %s", got, body)
+	}
+
+	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{
+		BearerToken:   func(*http.Request) string { return "credential" },
+		AcceptsBearer: func(*http.Request) bool { return true },
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var received string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = r.URL.Query().Get("pageToken")
+		w.WriteHeader(http.StatusNoContent)
+	})
+	nextRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project/delivery/plans", nil)
+	query := nextRequest.URL.Query()
+	query.Set("pageToken", nativeCursor)
+	nextRequest.URL.RawQuery = query.Encode()
+	nextRequest.Header.Set("Authorization", "Bearer credential")
+	recorder := httptest.NewRecorder()
+	protocol.Middleware(next).ServeHTTP(recorder, nextRequest)
+	if recorder.Code != http.StatusNoContent || received != nativeCursor {
+		t.Fatalf("native cursor request = status %d, received %q, body=%s; want status %d and cursor %q", recorder.Code, received, recorder.Body.String(), http.StatusNoContent, nativeCursor)
+	}
+}
+
+func TestAPICursorScopeMismatchRemainsBadRequest(t *testing.T) {
+	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{
+		BearerToken:   func(*http.Request) string { return "credential" },
+		AcceptsBearer: func(*http.Request) bool { return true },
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project-a/delivery/plans", nil)
+	issued.Header.Set(CursorSnapshotHeader, "deployment:active")
+	cursor := SignPageCursor(issued, "cursor-value")
+	if !strings.HasPrefix(cursor, "g1.") {
+		t.Fatalf("issued cursor = %q, want API-signed g1 cursor", cursor)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project-b/delivery/plans", nil)
+	query := request.URL.Query()
+	query.Set("pageToken", cursor)
+	request.URL.RawQuery = query.Encode()
+	request.Header.Set("Authorization", "Bearer credential")
+	request.Header.Set(CursorSnapshotHeader, "deployment:active")
+	recorder := httptest.NewRecorder()
+	called := false
+	protocol.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || called || !strings.Contains(recorder.Body.String(), "INVALID_CURSOR") {
+		t.Fatalf("scope-mismatched cursor = status %d called=%t body=%s; want INVALID_CURSOR 400", recorder.Code, called, recorder.Body.String())
+	}
+}
+
+func TestMalformedAPICursorReturnsBadRequest(t *testing.T) {
+	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{
+		BearerToken:   func(*http.Request) string { return "credential" },
+		AcceptsBearer: func(*http.Request) bool { return true },
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project/delivery/plans?pageToken=not-a-cursor", nil)
+	request.Header.Set("Authorization", "Bearer credential")
+	recorder := httptest.NewRecorder()
+	called := false
+	protocol.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || called || !strings.Contains(recorder.Body.String(), "INVALID_CURSOR") {
+		t.Fatalf("malformed cursor = status %d called=%t body=%s; want INVALID_CURSOR 400", recorder.Code, called, recorder.Body.String())
+	}
+}
+
 func TestAdversarialIdempotencyNeverStoresOneTimeCredentials(t *testing.T) {
 	status, header, body := safeIdempotencyResponse(http.StatusCreated, http.Header{"Content-Type": []string{"application/json"}}, []byte(`{"token":"plaintext-secret","id":"x"}`))
 	if status != http.StatusConflict || header.Get("Content-Type") != "application/problem+json" {

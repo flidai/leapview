@@ -15,6 +15,7 @@ import (
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
 )
 
 type nativeReadFixture struct{}
@@ -79,6 +80,30 @@ func TestNativeDeliveryOperatorReadUsesNativePort(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
+	var response deploymentgen.DeliveryOperatorSnapshotResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Degraded || len(response.DegradedReasons) != 1 || response.DegradedReasons[0] != "detailed_evidence_unavailable" || response.ActiveGeneration != nil {
+		t.Fatalf("operator response = %#v, want bounded degraded snapshot", response)
+	}
+}
+
+func TestNativeDeliveryOperatorReadPreservesOwnedActivePointerWhenPartial(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	m := nativeReadModule(rows)
+	recorder := httptest.NewRecorder()
+	m.GetDeliveryOperatorSnapshot(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response deploymentgen.DeliveryOperatorSnapshotResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ActiveGeneration == nil || *response.ActiveGeneration != rows.generation.GenerationID || !response.Degraded || len(response.DegradedReasons) != 1 || response.DegradedReasons[0] != "detailed_evidence_unavailable" {
+		t.Fatalf("operator response = %#v, want active pointer plus explicit partial-evidence degradation", response)
+	}
 }
 
 func TestNativeDeliveryReadMapsMissingRowsToNotFound(t *testing.T) {
@@ -112,6 +137,12 @@ type nativeReadRowsWithGeneration struct {
 	generationOverride nativepostgres.DeliveryGeneration
 }
 
+type nativeReadRowsWithLifecycle struct {
+	nativeReadRows
+	root          nativepostgres.DeliveryRetentionRoot
+	rollbackUntil time.Time
+}
+
 type nativeReadRowsWithoutGeneration struct{ nativeReadRows }
 
 func (nativeReadRowsWithoutGeneration) ResolveCandidateGeneration(context.Context, string) (nativepostgres.CandidateGenerationResolution, error) {
@@ -124,6 +155,22 @@ func (r nativeReadRowsWithGeneration) Generation(context.Context, string) (nativ
 
 func (r nativeReadRowsWithGeneration) LoadGeneration(ctx context.Context, id string) (nativepostgres.DeliveryGeneration, error) {
 	return r.Generation(ctx, id)
+}
+
+func (r nativeReadRowsWithLifecycle) OperatorSnapshot(context.Context, string) (nativepostgres.DeliveryOperatorSnapshot, error) {
+	return nativepostgres.DeliveryOperatorSnapshot{ProjectID: "finance", Environment: "prod", TargetID: "target", TargetRevision: 3}, nil
+}
+
+func (r nativeReadRowsWithLifecycle) HistoricalCommittedPublication(context.Context, string) (nativepostgres.DeliveryPublication, error) {
+	return r.publication, nil
+}
+
+func (r nativeReadRowsWithLifecycle) GenerationRetentionRoot(context.Context, string) (nativepostgres.DeliveryRetentionRoot, error) {
+	return r.root, nil
+}
+
+func (r nativeReadRowsWithLifecycle) GenerationRollbackUntil(context.Context, string) (time.Time, error) {
+	return r.rollbackUntil, nil
 }
 
 func (r nativeReadRows) Plan(context.Context, string) (nativepostgres.DeliveryPlan, error) {
@@ -163,7 +210,7 @@ func (r nativeReadRows) LoadPublication(ctx context.Context, id string) (nativep
 	return r.Publication(ctx, id)
 }
 func (r nativeReadRows) OperatorSnapshot(context.Context, string) (nativepostgres.DeliveryOperatorSnapshot, error) {
-	return nativepostgres.DeliveryOperatorSnapshot{ProjectID: "finance", Environment: "prod", TargetID: "target", TargetRevision: 3, ActiveGenerationID: r.generation.GenerationID}, nil
+	return nativepostgres.DeliveryOperatorSnapshot{ProjectID: "finance", Environment: "prod", TargetID: "target", TargetRevision: 3, ActiveGenerationID: r.generation.GenerationID, ActivePublicationID: r.publication.PublicationID}, nil
 }
 func (r nativeReadRows) ResolveCandidateGeneration(context.Context, string) (nativepostgres.CandidateGenerationResolution, error) {
 	return nativepostgres.CandidateGenerationResolution{
@@ -292,6 +339,191 @@ func TestNativeDeliveryBuildReadProjectsCandidateRevisionSeparately(t *testing.T
 	}
 }
 
+func TestNativeDeliveryBuildReadPreservesTerminalFailureClassification(t *testing.T) {
+	for _, test := range []struct {
+		state  nativepostgres.BuildAttemptState
+		status deploymentgen.DeliveryBuildStatus
+		code   string
+	}{
+		{state: nativepostgres.AttemptAborted, status: deploymentgen.DeliveryBuildStatusFailed, code: "deterministic_no_commit"},
+		{state: nativepostgres.AttemptIndeterminate, status: deploymentgen.DeliveryBuildStatusAbandoned, code: "indeterminate"},
+	} {
+		t.Run(string(test.state), func(t *testing.T) {
+			rows := nativeReadRowsFixture(t, "target")
+			rows.attempt.State = test.state
+			rows.attempt.TerminationEvidence = json.RawMessage(`{"classification":"` + test.code + `"}`)
+			m := nativeReadModule(rows)
+			recorder := httptest.NewRecorder()
+			m.GetDeliveryBuildStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.attempt.AttemptID)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			var response deploymentgen.DeliveryBuildStatusResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Status != test.status || response.FailureCode == nil || *response.FailureCode != test.code || response.TerminalAt == nil {
+				t.Fatalf("terminal build response = %#v, want status %q and failure %q", response, test.status, test.code)
+			}
+		})
+	}
+}
+
+func TestNativeDeliverySealReadPreservesQualificationEvidence(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	rows.seal.CreatedAt = rows.seal.QualifiedAt.Add(-time.Minute)
+	m := nativeReadModule(rows)
+	recorder := httptest.NewRecorder()
+	m.GetDeliverySealStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.seal.SealID)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response deploymentgen.DeliverySealStatusResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != deploymentgen.DeliverySealStatusVerified || response.QualificationDigest == nil || *response.QualificationDigest != rows.candidate.QualificationDigest || response.CreatedAt != isoTime(rows.seal.CreatedAt) || response.VerifiedAt == nil || *response.VerifiedAt != isoTime(rows.seal.QualifiedAt) {
+		t.Fatalf("seal response = %#v, want verified qualification and durable creation timestamp", response)
+	}
+}
+
+func TestNativeDeliverySealReadPreservesAttemptFailure(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	rows.attempt.State = nativepostgres.AttemptAborted
+	rows.attempt.TerminationEvidence = json.RawMessage(`{"classification":"deterministic_no_commit"}`)
+	m := nativeReadModule(rows)
+	recorder := httptest.NewRecorder()
+	m.GetDeliverySealStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.seal.SealID)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response deploymentgen.DeliverySealStatusResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != deploymentgen.DeliverySealStatusFailed || response.FailureCode == nil || *response.FailureCode != "deterministic_no_commit" {
+		t.Fatalf("seal response = %#v, want failed seal with terminal classification", response)
+	}
+}
+
+func TestNativeDeliveryCandidateReadDoesNotInventResolvedInputs(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	m := nativeReadModule(rows)
+	recorder := httptest.NewRecorder()
+	m.GetDeliveryCandidateStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.candidate.CandidateID)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response deploymentgen.DeliveryCandidateStatusResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ResolvedInputs == nil || len(response.ResolvedInputs) != 0 || response.ResolvedInputsDigest != nil {
+		t.Fatalf("candidate response = %#v, want no unowned resolved-input evidence", response)
+	}
+}
+
+func TestNativeDeliveryCandidateReadProjectsResolvedInputs(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	plan, err := rows.plan.RichPlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate, err := (release.GateEvidence{
+		Version: 1, CandidateID: rows.candidate.CandidateID, SourceDigest: plan.SourceDigest,
+		BindingGeneration: nativeReadDigest('a'), RuntimeVersion: "runtime-v1", DuckDBVersion: "duckdb-v1",
+		Bounds: release.GateBounds{MaxRows: 1, MaxQueries: 1, MaxMillis: 1}, Outcome: release.GateSuccess,
+		EvaluatedAt: time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC),
+	}).Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	qualification := nativeQualificationEvidenceEnvelope{
+		SchemaVersion: 1, CandidateID: rows.candidate.CandidateID, AttemptID: rows.attempt.AttemptID,
+		PhysicalPoolID: rows.seal.PhysicalPoolID, CatalogID: "catalog", SnapshotID: 42,
+		ObjectRoot: "objects/root", RelationNamespace: "candidate/relation",
+		RelationManifestDigest: rows.seal.RelationManifestDigest, ClosureDigest: rows.seal.ClosureDigest,
+		Runtime: nativePreviewRuntimeEvidence{SnapshotID: 42, CatalogType: "postgres", DataPath: rows.seal.ObjectRoot, MetadataSchema: "metadata", DuckDBRuntime: "duckdb-v1", DuckLakeExtension: rows.seal.DuckLakeExtensionVersion, CatalogFormat: rows.seal.DuckLakeSpecVersion, CompatibilityDigest: rows.seal.CompatibilityDigest, CatalogSchemaVersion: rows.seal.CatalogSchemaVersion},
+		Gates:   gate,
+	}
+	rows.seal.QualificationEvidence = marshalNativePreviewEnvelope(t, qualification)
+	qualificationDecoded, err := decodeNativePreviewGateEvidence(rows.seal.QualificationEvidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows.candidate.QualificationDigest = qualificationDecoded.Digest
+	resolved, err := deployment.ValidateDeliveryResolvedBuildInputs(plan, deployment.DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, GateEvidence: &gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := json.Marshal(nativeResolvedInputsRecord{Inputs: resolved.Inputs, PolicyDigest: resolved.PolicyDigest, EvidenceDigest: resolved.EvidenceDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows.seal.ResolvedInputs, rows.seal.ResolvedInputsDigest = record, resolved.EvidenceDigest
+	rows.candidate.ResolvedInputs, rows.candidate.ResolvedInputsDigest = record, resolved.EvidenceDigest
+	if _, err := nativeCandidateResolvedInputs(rows.candidate, plan, rows.seal); err != nil {
+		t.Fatalf("resolve candidate inputs: %v", err)
+	}
+	m := nativeReadModule(rows)
+	recorder := httptest.NewRecorder()
+	m.GetDeliveryCandidateStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.candidate.CandidateID)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response deploymentgen.DeliveryCandidateStatusResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ResolvedInputs == nil || len(response.ResolvedInputs) != 0 || response.ResolvedInputsDigest == nil || *response.ResolvedInputsDigest != resolved.EvidenceDigest {
+		t.Fatalf("candidate response = %#v, want resolved-input digest", response)
+	}
+}
+
+func TestNativeDeliveryGenerationReadPreservesActivationTimestamp(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	m := nativeReadModule(rows)
+	recorder := httptest.NewRecorder()
+	m.GetDeliveryGenerationStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.generation.GenerationID)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response deploymentgen.DeliveryGenerationStatusResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != deploymentgen.DeliveryGenerationStatusActive || response.ActivatedAt == nil || *response.ActivatedAt != isoTime(rows.publication.CommittedAt) {
+		t.Fatalf("generation response = %#v, want active timestamp %q", response, isoTime(rows.publication.CommittedAt))
+	}
+}
+
+func TestNativeDeliveryHistoricalGenerationReadPreservesRecoveryWindows(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	retiredAt := rows.publication.CommittedAt.Add(time.Hour)
+	rollbackUntil := retiredAt.Add(24 * time.Hour)
+	reader := nativeReadRowsWithLifecycle{
+		nativeReadRows: rows,
+		root: nativepostgres.DeliveryRetentionRoot{
+			TargetID: rows.generation.TargetID, GenerationID: rows.generation.GenerationID,
+			RootKind: "generation", State: "retiring", RetiredAt: retiredAt,
+		},
+		rollbackUntil: rollbackUntil,
+	}
+	m := nativeReadModule(reader)
+	recorder := httptest.NewRecorder()
+	m.GetDeliveryGenerationStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.generation.GenerationID)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response deploymentgen.DeliveryGenerationStatusResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != deploymentgen.DeliveryGenerationStatusRetired || response.ActivatedAt == nil || *response.ActivatedAt != isoTime(rows.publication.CommittedAt) || response.RetiredAt == nil || *response.RetiredAt != isoTime(retiredAt) || response.RollbackUntil == nil || *response.RollbackUntil != isoTime(rollbackUntil) {
+		t.Fatalf("historical generation response = %#v, want retired activation/retirement/rollback windows", response)
+	}
+}
+
 func TestNativeDeliveryCandidateReadProjectsResolvedServingState(t *testing.T) {
 	for _, status := range []string{"qualified", "admitted"} {
 		t.Run(status, func(t *testing.T) {
@@ -377,5 +609,74 @@ func TestNativeDeliveryReadRejectsAnotherTargetInSameProjectEnvironment(t *testi
 	m.GetDeliveryPlanPreview(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.plan.PlanID)
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+type nativeCollectionRows struct {
+	nativeReadRows
+	publications  nativepostgres.DeliveryPublicationPage
+	generations   nativepostgres.DeliveryGenerationPage
+	publicationIn struct {
+		project, target, environment, token string
+		limit                               int32
+	}
+	generationIn struct {
+		project, target, environment, token string
+		limit                               int32
+	}
+}
+
+func (r *nativeCollectionRows) ListPublications(_ context.Context, project, target, environment string, limit int32, token string) (nativepostgres.DeliveryPublicationPage, error) {
+	r.publicationIn.project, r.publicationIn.target, r.publicationIn.environment, r.publicationIn.limit, r.publicationIn.token = project, target, environment, limit, token
+	return r.publications, nil
+}
+
+func (r *nativeCollectionRows) ListRetainedGenerations(_ context.Context, project, target, environment string, limit int32, token string) (nativepostgres.DeliveryGenerationPage, error) {
+	r.generationIn.project, r.generationIn.target, r.generationIn.environment, r.generationIn.limit, r.generationIn.token = project, target, environment, limit, token
+	return r.generations, nil
+}
+
+func TestNativeDeliveryCollectionsUseScopedReaderAndExistingDetailProjections(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	token := "k1.next"
+	reader := &nativeCollectionRows{
+		nativeReadRows: rows,
+		publications:   nativepostgres.DeliveryPublicationPage{Items: []nativepostgres.DeliveryPublication{rows.publication}, NextCursor: &token},
+		generations:    nativepostgres.DeliveryGenerationPage{Items: []nativepostgres.DeliveryGeneration{rows.generation}, NextCursor: &token},
+	}
+	m := nativeReadModule(reader)
+	limit := int32(13)
+	pageToken := "k1.after"
+
+	publicationRecorder := httptest.NewRecorder()
+	m.ListDeliveryPublications(publicationRecorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", &limit, &pageToken)
+	if publicationRecorder.Code != http.StatusOK {
+		t.Fatalf("publication status = %d, body = %s", publicationRecorder.Code, publicationRecorder.Body.String())
+	}
+	var publicationResponse deploymentgen.DeliveryPublicationListResponse
+	if err := json.Unmarshal(publicationRecorder.Body.Bytes(), &publicationResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(publicationResponse.Items) != 1 || publicationResponse.Items[0].Id != rows.publication.PublicationID || publicationResponse.Page.NextCursor == nil || *publicationResponse.Page.NextCursor != token {
+		t.Fatalf("publication response = %#v, want existing publication evidence and cursor", publicationResponse)
+	}
+	if reader.publicationIn.project != "finance" || reader.publicationIn.target != "target" || reader.publicationIn.environment != "prod" || reader.publicationIn.limit != limit || reader.publicationIn.token != pageToken {
+		t.Fatalf("publication reader scope = %#v, want project/target/environment/page inputs", reader.publicationIn)
+	}
+
+	generationRecorder := httptest.NewRecorder()
+	m.ListRetainedDeliveryGenerations(generationRecorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", &limit, &pageToken)
+	if generationRecorder.Code != http.StatusOK {
+		t.Fatalf("generation status = %d, body = %s", generationRecorder.Code, generationRecorder.Body.String())
+	}
+	var generationResponse deploymentgen.DeliveryRetainedGenerationListResponse
+	if err := json.Unmarshal(generationRecorder.Body.Bytes(), &generationResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(generationResponse.Items) != 1 || generationResponse.Items[0].Id != rows.generation.GenerationID || generationResponse.Page.NextCursor == nil || *generationResponse.Page.NextCursor != token {
+		t.Fatalf("generation response = %#v, want existing generation status and cursor", generationResponse)
+	}
+	if reader.generationIn.project != "finance" || reader.generationIn.target != "target" || reader.generationIn.environment != "prod" || reader.generationIn.limit != limit || reader.generationIn.token != pageToken {
+		t.Fatalf("generation reader scope = %#v, want project/target/environment/page inputs", reader.generationIn)
 	}
 }

@@ -828,6 +828,21 @@ func buildApplicationSurfaces(
 			}
 			return snapshot.EffectiveCapabilities(subjects)
 		})
+		routes.accessModule.SetEffectiveAccess(func(ctx context.Context, principalID string) ([]access.AuthorizationDecision, error) {
+			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
+			if err != nil {
+				return nil, err
+			}
+			snapshot, err := authorizationSnapshot(ctx)
+			if err != nil {
+				return nil, err
+			}
+			platformAdmin, err := routes.accessModule.IsPlatformAdmin(ctx, principalID)
+			if err != nil {
+				return nil, err
+			}
+			return snapshot.ExplainEffectiveAccess(subjects, platformAdmin)
+		})
 		routes.accessModule.SetCurrentProjectID(runtime.resolveProjectID)
 		if routes.managedDataModule != nil {
 			routes.managedDataModule.SetAuthorizeConnection(manageddatamodule.ConnectionAuthorizer(authorizeConnection))
@@ -1578,15 +1593,23 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return platform.auth.APICredential(r)
 			},
-			CurrentEffectiveCapabilities: routes.accessModule.CurrentEffectiveCapabilities,
-			CurrentProjectID:             runtime.resolveProjectID,
-			Publications:                 routes.dashboardModule,
-			AgentConfigCommand:           routes.agentModule.UICommandBindings().UpdateConfig,
-			PublicationCommands:          routes.dashboardModule.PublicationCommandBindings(),
-			AuthConfigured:               platform.auth != nil,
-			LocalPasswordEnabled:         localPasswordEnabled,
-			AccessConfigured:             accessReader != nil,
-			Storage:                      storageConfig,
+			CurrentInteractiveAuthentication: routes.accessModule.CurrentInteractiveAuthentication,
+			CurrentEffectiveCapabilities:     routes.accessModule.CurrentEffectiveCapabilities,
+			EffectiveAccess:                  routes.accessModule.EffectiveAccess,
+			CurrentProjectID:                 runtime.resolveProjectID,
+			Publications:                     routes.dashboardModule,
+			Delivery:                         routes.deploymentModule.AdminDeliveryData,
+			DeliveryRollback: func(ctx context.Context, project, generation, idempotencyKey, principalID string) error {
+				_, err := routes.deploymentModule.RollbackDeliveryGenerationContext(ctx, project, generation, idempotencyKey, principalID)
+				return err
+			},
+			DeliveryRollbackOperation: deploymentmodule.RollbackDeliveryOperationID(),
+			AgentConfigCommand:        routes.agentModule.UICommandBindings().UpdateConfig,
+			PublicationCommands:       routes.dashboardModule.PublicationCommandBindings(),
+			AuthConfigured:            platform.auth != nil,
+			LocalPasswordEnabled:      localPasswordEnabled,
+			AccessConfigured:          accessReader != nil,
+			Storage:                   storageConfig,
 			Layout: func(r *http.Request) webpage.Provider {
 				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 			},
@@ -1596,11 +1619,17 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			Broker:  runtime.broker,
 			Product: persistence.product, ProductCommands: productCommands, ProductCommandFailure: writeProductCommandFailure, ProductStatus: persistence.productStatus,
-			ProductUICommands: productUICommandContract(),
-			SettingsAccess:    settingsAccess,
-			PersonalAvatar:    routes.accessModule.PersonalAvatar(),
-			AuthoringSessions: routes.accessModule.AuthoringSessions(),
-			CurrentSession:    routes.accessModule.CurrentSessionID,
+			ProductUICommands:              productUICommandContract(),
+			PlatformCommands:               accessmodule.PlatformAdministratorUIActions(),
+			PlatformAdministration:         routes.accessModule.PlatformAdminAuthority(),
+			PlatformWriter:                 routes.accessModule.PlatformAdminWriter(),
+			RequirePlatformRoleApproval:    routes.accessModule.RequirePlatformRoleApproval(),
+			SettingsAccess:                 settingsAccess,
+			AuthorizationPolicyTargetID:    runtimeConfig.InstanceID,
+			AuthorizationPolicyEnvironment: policy.defaultEnvironment,
+			PersonalAvatar:                 routes.accessModule.PersonalAvatar(),
+			AuthoringSessions:              routes.accessModule.AuthoringSessions(),
+			CurrentSession:                 routes.accessModule.CurrentSessionID,
 		})
 		if err != nil {
 			return fmt.Errorf("build admin module: %w", err)
@@ -1706,17 +1735,17 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if nativeReader == nil {
 				return false, fmt.Errorf("native delivery authorization reader is unavailable")
 			}
-			if operationID == "createDeliveryPlan" || operationID == "getDeliveryOperatorSnapshot" {
+			if deliveryProjectScopedOperation(operationID) {
+				var subjects []access.SubjectRef
+				if !principal.DevBypass {
+					subjects, err = routes.accessModule.AuthorizationSubjects(ctx, principal.ID)
+					if err != nil {
+						return false, err
+					}
+				}
 				// Local development skips authored snapshot grants only after the
 				// active runtime identity and target-owned reader are validated.
-				if principal.DevBypass {
-					return true, nil
-				}
-				subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principal.ID)
-				if err != nil {
-					return false, err
-				}
-				return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
+				return deliveryProjectScopedAuthorization(snapshot, subjects, capability, principal.DevBypass), nil
 			}
 			plan, err := nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
 			if err != nil {

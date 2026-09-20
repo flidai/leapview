@@ -100,6 +100,42 @@ func TestPostgresResourceUIDMultiSourceProjectClosure(t *testing.T) {
 	} else if result.Replay || result.Pointer.ActiveGenerationID != second.generationID {
 		t.Fatalf("compatible multi-source activation result=%#v", result)
 	}
+	rollbackUntil, err := repository.GenerationRollbackUntil(t.Context(), first.generationID)
+	if err != nil {
+		t.Fatalf("read predecessor rollback horizon: %v", err)
+	}
+	if !rollbackUntil.After(time.Now().UTC().Add(50 * time.Minute)) {
+		t.Fatalf("predecessor rollback horizon = %s, want approximately one hour", rollbackUntil)
+	}
+	expiredGenerationRoot, err := repository.ExpireRetentionRoot(t.Context(), generationRootID(first.publicationID))
+	if err != nil {
+		t.Fatalf("expire drained predecessor generation root: %v", err)
+	}
+	if expiredGenerationRoot.State != "expired" {
+		t.Fatalf("predecessor generation root = %#v, want expired", expiredGenerationRoot)
+	}
+	rollbackAdmission, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.RequireGenerationRootTx(t.Context(), rollbackAdmission, resourceUIDQualificationInstance, first.generationID); err != nil {
+		_ = rollbackAdmission.Rollback(t.Context())
+		t.Fatalf("rollback admission through explicit window root: %v", err)
+	}
+	if err := rollbackAdmission.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := repository.ListRetainedGenerations(t.Context(), resourceUIDMultiSourceProject, resourceUIDQualificationInstance, "prod", 10, "")
+	if err != nil {
+		t.Fatalf("list retained generations after cutover: %v", err)
+	}
+	retainedFirst := false
+	for _, generation := range retained.Items {
+		retainedFirst = retainedFirst || generation.GenerationID == first.generationID
+	}
+	if !retainedFirst {
+		t.Fatalf("retained generations = %#v, want predecessor %s", retained.Items, first.generationID)
+	}
 	secondBindings, err := projectRepository.ListGenerationResourceUIDs(t.Context(), resourceUIDQualificationInstance, resourceUIDMultiSourceProject, second.generationID)
 	if err != nil {
 		t.Fatalf("list second-generation ResourceUID bindings: %v", err)
@@ -784,6 +820,7 @@ func prepareResourceUIDQualificationGeneration(t *testing.T, r *Repository, spec
 	rich.ServingArtifactDigest = artifactDigest
 	rich.Governance.RequiresApproval = false
 	rich.Governance.ExpiresAt = time.Now().UTC().Add(2 * time.Hour)
+	rich.Evidence.Rollback.RetentionWindow = "1h"
 	rich, err := deploymentdomain.NewDeliveryPlan(rich)
 	if err != nil {
 		t.Fatalf("new resource UID plan: %v", err)

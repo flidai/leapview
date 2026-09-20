@@ -35,6 +35,7 @@ func signalRootEvidenceCatalog() map[string]signalRootEvidence {
 	return map[string]signalRootEvidence{
 		"chatManagement":             {producer: rootMarker("internal/agent/http/chat_management.go", "chatManagement"), reader: rootMarker("web/components/chat/chat-manager.ts", "chatManagement")},
 		"adminAccess":                {producer: rootMarker("internal/admin/http/handler.go", "adminAccess"), reader: rootMarker("web/components/admin/settings-surfaces.ts", "adminAccess")},
+		"adminAccessSettings":        {producer: rootMarker("internal/admin/http/handler.go", "adminAccessSettings"), reader: rootMarker("web/components/admin/access-settings.ts", "adminAccessSettings")},
 		"adminAgentCommand":          {producer: rootMarker("internal/admin/ui/page.go", "adminAgentCommand"), reader: rootMarker("web/components/admin/admin-page.ts", "adminAgentCommand")},
 		"adminAuditLog":              {producer: rootMarker("internal/admin/http/handler.go", "adminAuditLog"), reader: rootMarker("web/components/admin/settings-surfaces.ts", "adminAuditLog")},
 		"adminProjects":              {reader: rootMarker("web/components/admin/settings-surfaces.ts", "adminProjects"), allow: "consumer-only"},

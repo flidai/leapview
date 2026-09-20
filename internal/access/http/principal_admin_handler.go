@@ -144,7 +144,7 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, fmt.Errorf("principal deletion is unavailable"), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationDeletePrincipal(), func(tx access.Repository) (access.AuditEventInput, error) {
 		txDeleter, ok := tx.(interface {
 			DeletePrincipal(context.Context, string) error
 		})
@@ -155,6 +155,9 @@ func (h Handler) DeletePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return auditInput(r, "principal.deleted", h.currentPrincipalID(r), "principal", id, "", "success", map[string]any{"email": existing.Email, "kind": string(existing.Kind), "displayName": existing.DisplayName}), mutationErr
 	})
 	if err != nil {
+		if writeOffboardingError(w, err, "PRINCIPAL_OWNS_OBJECTS") {
+			return
+		}
 		writeAuditedMutationError(w, r, accessgen.GenCommandOperationDeletePrincipal(), err, statusForNotFound(err))
 		return
 	}
@@ -209,7 +212,7 @@ func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	if !disabled {
 		action = "principal.unblocked"
 	}
-	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+	err = executeAuditedMutation(r, repo, operationID, func(tx access.Repository) (access.AuditEventInput, error) {
 		writer, ok := tx.(principalStatusWriter)
 		if !ok {
 			return access.AuditEventInput{}, fmt.Errorf("principal status changes are unavailable")
@@ -223,6 +226,9 @@ func (h Handler) setPrincipalDisabled(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		return auditInput(r, action, h.currentPrincipalID(r), "principal", id, "", "success", map[string]any{"email": existing.Email, "kind": string(existing.Kind), "displayName": existing.DisplayName}), mutationErr
 	})
 	if err != nil {
+		if writeOffboardingError(w, err, "PRINCIPAL_OWNS_OBJECTS") {
+			return
+		}
 		writeAuditedMutationError(w, r, operationID, err, statusForNotFound(err))
 		return
 	}
@@ -330,7 +336,7 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		w.Header().Set("ETag", revision)
 	}
 	var updated access.Principal
-	err = runAuditedMutationWithRevision(r, repo, func(tx access.Repository) (string, error) {
+	err = executeAuditedMutationWithRevision(r, repo, accessgen.GenCommandOperationUpdatePrincipal(), func(tx access.Repository) (string, error) {
 		current, err := tx.PrincipalByID(r.Context(), id)
 		if err != nil {
 			return "", err

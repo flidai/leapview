@@ -156,11 +156,11 @@ func TestProviderUsesAdminNavigationAndBackAction(t *testing.T) {
 		{label: "Access", items: []struct {
 			label string
 			icon  string
-		}{{label: "Principals", icon: "users"}, {label: "Groups", icon: "users-round"}, {label: "Service accounts", icon: "bot"}, {label: "Authentication", icon: "system"}}},
+		}{{label: "Principals", icon: "users"}, {label: "Groups", icon: "users-round"}, {label: "Access settings", icon: "shield-check"}, {label: "Service accounts", icon: "bot"}, {label: "Authentication", icon: "system"}}},
 		{label: "Data & sharing", items: []struct {
 			label string
 			icon  string
-		}{{label: "Storage", icon: "database"}, {label: "Publications", icon: "globe"}}},
+		}{{label: "Storage", icon: "database"}, {label: "Publications", icon: "globe"}, {label: "Delivery", icon: "rocket"}}},
 		{label: "Operations", items: []struct {
 			label string
 			icon  string

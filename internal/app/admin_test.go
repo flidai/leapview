@@ -106,7 +106,7 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 	if err := repo.AddGroupMember(ctx, group.ID, analyst.ID); err != nil {
 		t.Fatalf("seed group member: %v", err)
 	}
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "fake-model"})}))
 
@@ -121,6 +121,7 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`, "/admin/access/command", "resetPrincipalPassword"}},
 		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`, "/admin/access/command", "createGroup"}},
 		{path: "/admin/groups/group_finance", want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=group_finance&amp;route=admin&amp;section=group-detail`, "/admin/access/command", "addGroupMember"}},
+		{path: "/admin/access", want: []string{"<lv-admin-page", `section="access"`, `/updates?route=admin&amp;section=access`, "/admin/access/command?section=access", "createProjectRoleBinding"}},
 		{path: "/admin/agent", want: []string{"<lv-admin-page", `section="agent"`, `/updates?route=admin&amp;section=agent`, "/admin/agent/config", "updateAgentConfig"}},
 		{path: "/admin/storage", want: []string{"<lv-admin-page", `section="storage"`, `/updates?route=admin&amp;section=storage`}},
 		{path: "/admin/queries", want: []string{"<lv-admin-page", `section="queries"`, `/updates?route=admin&amp;section=queries`, "/admin/queries/command"}},
@@ -164,7 +165,7 @@ func TestAdminAccessCommandBlocksPrincipalAndReturnsSignalPatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"block_principal","principalId":"` + target.Principal.ID + `"}}`)
@@ -194,7 +195,7 @@ func TestAdminAccessCommandDeletesPrincipalAndReturnsClientRedirectSignal(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"delete_principal","principalId":"` + target.Principal.ID + `"}}`)
@@ -218,7 +219,7 @@ func TestAdminAccessCommandCreatesGroupAndReturnsDetailRedirectSignal(t *testing
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"create_group","projectId":"test","displayName":"Revenue analysts"}}`)
@@ -256,7 +257,7 @@ func TestAdminAccessCommandAddsMultipleGroupMembers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	body := strings.NewReader(`{"adminAccessCommand":{"action":"add_group_member","projectId":"test","groupId":"` + group.ID + `","principalIds":["` + first.Principal.ID + `","` + second.Principal.ID + `"]}}`)
@@ -281,7 +282,7 @@ func TestAdminQueryHistoryCommandPublishesLoadMorePatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
@@ -349,7 +350,7 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
@@ -411,7 +412,7 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
@@ -469,7 +470,7 @@ func TestAdminQueryHistoryCommandTogglesFilterAndResetsTable(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
@@ -526,7 +527,7 @@ func TestAdminQueryHistoryCommandPublishesDetailPatch(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
@@ -593,7 +594,7 @@ func TestAdminQueryHistoryCommandHidesForeignProjectDetail(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
@@ -697,7 +698,7 @@ func TestAdminQueryHistoryUpdatesForwardsPatches(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
@@ -730,11 +731,11 @@ func TestAdminQueryHistoryUpdatesForwardsPatches(t *testing.T) {
 	}
 }
 
-func TestAdminAccessRouteIsDropped(t *testing.T) {
+func TestAdminAccessRouteRendersProjectBoundSettings(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
@@ -743,8 +744,8 @@ func TestAdminAccessRouteIsDropped(t *testing.T) {
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `section="access"`) {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -752,7 +753,7 @@ func TestAdminPrincipalDetailReturnsNotFoundForMissingPrincipal(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
@@ -770,7 +771,7 @@ func TestAdminGroupDetailReturnsNotFoundForMissingGroup(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	token := testPlatformAPIToken(t, ctx, store, owner.ID, "test")
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 

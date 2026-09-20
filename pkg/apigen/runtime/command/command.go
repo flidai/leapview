@@ -120,7 +120,7 @@ func (c Contract) Validate() error {
 		return fmt.Errorf("%w: operation ID, owner, method, path, and audit action are required", ErrInvalidContract)
 	}
 	switch c.AuthzMode {
-	case "none", "authenticated":
+	case "none", "authenticated", "platform_admin":
 		if strings.TrimSpace(c.Privilege) != "" {
 			return fmt.Errorf("%w: operation %q privilege requires privilege authorization", ErrInvalidContract, c.OperationID)
 		}

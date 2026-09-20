@@ -28,6 +28,25 @@ SELECT request_id::text, publication_id::text, target_id, candidate_id::text,
 FROM delivery.delivery_approval_request
 WHERE request_id = sqlc.arg(request_id)::uuid;
 
+-- name: ListDeliveryApprovalRequestIDs :many
+SELECT r.request_id::text
+FROM delivery.delivery_approval_request r
+JOIN delivery.delivery_target t ON t.target_id=r.target_id
+WHERE r.target_id=sqlc.arg(target_id)
+  AND t.project_id=sqlc.arg(project_id)
+  AND t.environment=sqlc.arg(environment)
+  AND (sqlc.arg(after_id)::text='' OR (r.requested_at,r.request_id) < (
+      SELECT i.requested_at,i.request_id
+      FROM delivery.delivery_approval_request i
+      JOIN delivery.delivery_target it ON it.target_id=i.target_id
+      WHERE i.request_id=NULLIF(sqlc.arg(after_id)::text,'')::uuid
+        AND i.target_id=sqlc.arg(target_id)
+        AND it.project_id=sqlc.arg(project_id)
+        AND it.environment=sqlc.arg(environment)
+  ))
+ORDER BY r.requested_at DESC,r.request_id DESC
+LIMIT sqlc.arg(page_limit);
+
 -- name: LockPublicationForApproval :one
 SELECT publication_id::text, target_id, generation_id::text,
        candidate_id::text, request_digest, expected_target_revision, state

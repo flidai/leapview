@@ -236,6 +236,36 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 			t.Errorf("%s qualification must target the password input without matching its visibility control", name)
 		}
 	}
+	if !strings.Contains(browser, `getByRole('heading', { name: 'Welcome back', exact: true })`) {
+		t.Error("browser qualification must assert the current accessible login heading after invalid credentials")
+	}
+	if !strings.Contains(browser, "gotoWithNetworkRetry") || !strings.Contains(browser, "chrome-error://") {
+		t.Error("browser qualification must retry navigation across disposable Docker network transitions")
+	}
+	if !strings.Contains(browser, "applyStateFilterWithGenerationRetry") ||
+		!strings.Contains(browser, "status.generation > generation") {
+		t.Error("browser qualification must retry a filter only when no new dashboard generation is published")
+	}
+	if !strings.Contains(browser, "/role-bindings") || strings.Contains(browser, "/grants") {
+		t.Error("browser qualification must exercise the current PROJECT_ADMIN role-binding denial route")
+	}
+	if !strings.Contains(browser, "credentials.workloadToken") || strings.Contains(browser, "credentials.publisherToken") {
+		t.Error("browser qualification must prove denial with the dedicated least-privilege workload token")
+	}
+	if !strings.Contains(authoringWorker, "gotoWithNetworkRetry") ||
+		!strings.Contains(authoringWorker, "requestfailed:") {
+		t.Error("authoring qualification must tolerate and diagnose browser network changes during disposable topology attachment")
+	}
+	if !strings.Contains(authoringWorker, "passwordChangeOutcome") ||
+		!strings.Contains(authoringWorker, "net::ERR_NETWORK_CHANGED") {
+		t.Error("authoring qualification must accept only the Compose network transition while proving the replacement login")
+	}
+	if !strings.Contains(performance, "Clear State") || strings.Contains(performance, "All State") {
+		t.Error("performance qualification must reset the current multi-select filter through its accessible clear action")
+	}
+	if !strings.Contains(performance, "text === 'Failed to load resource: net::ERR_NETWORK_CHANGED'") {
+		t.Error("performance qualification must exclude only the exact Docker network-transition console diagnostic")
+	}
 
 	for _, required := range []string{
 		"cp -R deploy/compose/qualification",
@@ -342,7 +372,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	if !strings.Contains(browser, `getByRole('checkbox', { name: 'SP', exact: true })`) ||
 		!strings.Contains(performance, `getByRole('checkbox', { name: value, exact: true })`) ||
-		!strings.Contains(performance, `getByRole('checkbox', { name: 'All State', exact: true })`) {
+		!strings.Contains(performance, `getByRole('button', { name: 'Clear State', exact: true })`) {
 		t.Error("browser qualification must exercise deterministic State multi-select values")
 	}
 	if !strings.Contains(browser, `button.cell-action[aria-label="state: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="state: ${value}"]`) {

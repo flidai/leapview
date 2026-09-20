@@ -18,7 +18,7 @@ beforeAll(async () => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
-      response.end('<!doctype html><main><lv-admin-page data-on:lv-service-account-command="service-account-command" data-on:lv-audit-log-command="audit-log-command"><lv-project-registry></lv-project-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration></lv-admin-page><script type="module" src="/settings-surfaces.js"></script></main>')
+      response.end('<!doctype html><main><lv-admin-page data-on:lv-service-account-command="service-account-command" data-on:lv-audit-log-command="audit-log-command"><lv-project-registry></lv-project-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-access-settings></lv-access-settings><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration></lv-admin-page><script type="module" src="/settings-surfaces.js"></script></main>')
       return
     }
     const file = normalize(join(root, url.pathname))
@@ -60,6 +60,159 @@ test('settings surfaces render typed signals and emit commands', async () => {
     expect(result.text).toContain('CI')
     expect(result.detail).toEqual({ action: 'select', accountId: 'svc-1' })
     expect(result.displayNameLabel).toBe('New account')
+  } finally { await page.close() }
+})
+
+test('access settings preserve policy revision and binding identity in durable commands', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-access-settings'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state: any = {
+        projectId: 'project:active', policyRevision: 7, policyDigest: 'digest-7',
+        roleBindings: [], roles: [{ name: 'viewer', capabilities: ['query:read'] }],
+        grantAdministrationAvailable: false,
+        grantAdministrationLabel: 'Grant administration unavailable in this surface.',
+        loading: false,
+      }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccessSettings: state }, getPath: (path: string) => path === 'adminAccessSettings' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-access-settings') as any
+      element.requestUpdate()
+      await element.updateComplete
+      const details: unknown[] = []
+      element.addEventListener('lv-access-settings-command', (event: CustomEvent) => details.push(event.detail))
+      const shadow = element.shadowRoot as ShadowRoot
+      const value = (name: string) => shadow.querySelector(`[name="${name}"]`) as HTMLInputElement | HTMLSelectElement
+      value('bindingId').value = 'finance-viewers'
+      value('bindingName').value = 'Finance viewers'
+      value('subjectType').value = 'group'
+      value('subjectId').value = 'group-finance'
+      value('role').value = 'viewer'
+      ;(shadow.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+
+      state.policyRevision = 8
+      state.roleBindings = [{ id: 'finance-viewers', name: 'Finance viewers', subjectType: 'group', subjectId: 'group-finance', role: 'viewer', capabilities: ['query:read'] }]
+      element.requestUpdate()
+      await element.updateComplete
+      window.confirm = () => true
+      ;(element.shadowRoot as ShadowRoot).querySelector('tbody button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      return { text: (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim(), details }
+    })
+    expect(result.text).toContain('Grant administration unavailable')
+    expect(result.text).toContain('group-finance')
+    expect(result.details).toEqual([
+      { action: 'create', bindingId: 'finance-viewers', bindingName: 'Finance viewers', subjectType: 'group', subjectId: 'group-finance', role: 'viewer', expectedRevision: 7 },
+      { action: 'delete', bindingId: 'finance-viewers', expectedRevision: 8 },
+    ])
+  } finally { await page.close() }
+})
+
+test('access settings explain direct, inherited, owner, platform, compiled, and denied authority', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-access-settings'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state: any = {
+        projectId: 'project:active', policyRevision: 9, policyDigest: 'digest-9', roleBindings: [], roles: [],
+        grantAdministrationAvailable: false, grantAdministrationLabel: 'Grant administration unavailable in this surface.', loading: false,
+        effectiveAccess: {
+          loading: false,
+          decisions: [
+            { allowed: true, authority: 'Direct', capability: 'RESOURCE_READ', reason: 'direct role binding', resourceKind: 'dashboard', resourceId: 'dashboard-sales', inherited: false, owner: false, platform: false, subjectType: 'principal', subjectId: 'principal-admin' },
+            { allowed: true, authority: 'Group-derived', capability: 'RESOURCE_USE', reason: 'group-inherited role binding', resourceKind: 'dashboard', resourceId: 'dashboard-sales', inherited: true, owner: false, platform: false, subjectType: 'group', subjectId: 'group-sales' },
+            { allowed: true, authority: 'Owner', capability: 'PROJECT_ADMIN', reason: 'owner role binding', resourceKind: 'project', resourceId: 'project:active', inherited: false, owner: true, platform: false, subjectType: 'principal', subjectId: 'principal-admin' },
+            { allowed: true, authority: 'Platform', capability: 'PROJECT_ADMIN', reason: 'platform administrator', resourceKind: 'project', resourceId: 'project:active', inherited: false, owner: false, platform: true, subjectType: 'principal', subjectId: 'principal-admin' },
+            { allowed: true, authority: 'Compiled', capability: 'RESOURCE_READ', reason: 'direct grant', resourceKind: 'dashboard', resourceId: 'dashboard-sales', inherited: false, owner: false, platform: false, grantId: 'compiled-grant', subjectType: 'principal', subjectId: 'principal-admin' },
+            { allowed: false, authority: 'Denied', capability: 'RESOURCE_EDIT', reason: 'no direct, inherited, owner, or platform authority', resourceKind: 'dashboard', resourceId: 'dashboard-sales', inherited: false, owner: false, platform: false },
+          ],
+        },
+      }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccessSettings: state }, getPath: (path: string) => path === 'adminAccessSettings' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-access-settings') as any
+      element.requestUpdate()
+      await element.updateComplete
+      const shadow = element.shadowRoot as ShadowRoot
+      return { text: shadow.textContent?.replace(/\s+/g, ' ').trim(), rows: shadow.querySelectorAll('table tbody tr').length }
+    })
+    expect(result.text).toContain('Effective access explanation')
+    expect(result.text).toContain('Direct')
+    expect(result.text).toContain('Group-derived')
+    expect(result.text).toContain('Owner')
+    expect(result.text).toContain('Platform')
+    expect(result.text).toContain('Compiled')
+    expect(result.text).toContain('Denied')
+    expect(result.text).toContain('no direct, inherited, owner, or platform authority')
+    expect(result.rows).toBe(6)
+  } finally { await page.close() }
+})
+
+test('access settings bound explanation has explicit loading and error states', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-access-settings'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state: any = {
+        projectId: 'project:active', policyRevision: 9, policyDigest: 'digest-9', roleBindings: [], roles: [],
+        grantAdministrationAvailable: false, grantAdministrationLabel: 'Grant administration unavailable in this surface.', loading: false,
+        effectiveAccess: { loading: true, decisions: [] },
+      }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccessSettings: state }, getPath: (path: string) => path === 'adminAccessSettings' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-access-settings') as any
+      element.requestUpdate(); await element.updateComplete
+      const loadingText = (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim()
+      state.effectiveAccess = { loading: false, decisions: [], error: 'Effective access explanation is unavailable.' }
+      element.requestUpdate(); await element.updateComplete
+      const shadow = element.shadowRoot as ShadowRoot
+      return { loadingText, errorText: shadow.textContent?.replace(/\s+/g, ' ').trim(), alert: shadow.querySelector('[role="alert"]')?.textContent }
+    })
+    expect(result.loadingText).toContain('Loading effective access explanation…')
+    expect(result.errorText).toContain('Effective access explanation is unavailable.')
+    expect(result.alert).toBe('Effective access explanation is unavailable.')
+  } finally { await page.close() }
+})
+
+test('access settings describe unauthorized and stale mutation outcomes', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-access-settings'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state: any = {
+        projectId: 'project:active', policyRevision: 11, policyDigest: 'digest-11', roleBindings: [],
+        roles: [{ name: 'viewer', capabilities: ['query:read'] }], grantAdministrationAvailable: false,
+        grantAdministrationLabel: 'Grant administration unavailable in this surface.', loading: false,
+        effectiveAccess: { loading: false, decisions: [] },
+      }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccessSettings: state }, getPath: (path: string) => path === 'adminAccessSettings' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-access-settings') as any
+      element.requestUpdate(); await element.updateComplete
+      const form = (element.shadowRoot as ShadowRoot).querySelector('form') as HTMLFormElement
+      ;(form.elements.namedItem('bindingId') as HTMLInputElement).value = 'finance-viewers'
+      ;(form.elements.namedItem('subjectId') as HTMLInputElement).value = 'group-finance'
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await element.updateComplete
+      const lockedDuringMutation = (form.querySelector('button[type="submit"]') as HTMLButtonElement).disabled
+      state.error = 'Forbidden: project role binding administration is not permitted'
+      element.requestUpdate(); await element.updateComplete
+      const unauthorizedText = (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim() ?? ''
+      state.error = ''
+      ;(element as any).commandError = 'Access settings update conflicted with a newer change. Reload the latest state before retrying.'
+      element.requestUpdate(); await element.updateComplete
+      const staleText = (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim() ?? ''
+      return { lockedDuringMutation, unauthorizedText, staleText }
+    })
+    expect(result.lockedDuringMutation).toBe(true)
+    expect(result.unauthorizedText).toContain('Unauthorized')
+    expect(result.unauthorizedText).toContain('not authorized')
+    expect(result.staleText).toContain('Stale')
+    expect(result.staleText).toContain('Reload the current policy')
   } finally { await page.close() }
 })
 
@@ -106,7 +259,125 @@ test('service account and audit controls unlock when a no-op command finishes', 
         auditUnlocked: !((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
     })
-    expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, auditLabels: ['Project', 'Actor', 'Action', 'Resource kind', 'Resource ID'], accountUnlocked: true, auditUnlocked: true })
+    expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, auditLabels: ['Project', 'Actor', 'Action', 'Resource kind', 'Resource ID', 'From', 'To'], accountUnlocked: true, auditUnlocked: true })
+  } finally { await page.close() }
+})
+
+test('audit filters keep the bound project read-only and emit date timestamps', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-audit-log'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state = { items: [], filters: { projectId: 'project:server-bound' }, loadedCount: 0, loading: false, hasMore: false }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminAuditLog: state }, getPath: (path: string) => path === 'adminAuditLog' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-audit-log') as any
+      element.requestUpdate()
+      await element.updateComplete
+      let detail: any = null
+      element.addEventListener('lv-audit-log-command', (event: CustomEvent) => { detail = event.detail })
+      const shadow = element.shadowRoot as ShadowRoot
+      const project = shadow.querySelector('input[name="projectId"]') as HTMLInputElement
+      const from = shadow.querySelector('input[name="from"]') as HTMLInputElement
+      const to = shadow.querySelector('input[name="to"]') as HTMLInputElement
+      from.value = '2026-09-01T00:00'
+      to.value = '2026-10-01T00:00'
+      ;(shadow.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      return { projectValue: project.value, projectReadOnly: project.readOnly, fromType: from.type, toType: to.type, detail }
+    })
+    expect(result).toEqual({
+      projectValue: 'project:server-bound',
+      projectReadOnly: true,
+      fromType: 'datetime-local',
+      toType: 'datetime-local',
+      detail: { action: 'filter', filters: { projectId: 'project:server-bound', principalId: '', action: '', resourceKind: '', resourceId: '', from: '2026-09-01T00:00:00.000Z', to: '2026-10-01T00:00:00.000Z' } },
+    })
+  } finally { await page.close() }
+})
+
+test('audit clear resets live controls when the cleared signal arrives', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-audit-log'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state: any = {
+        items: [],
+        filters: {
+          projectId: 'project:server-bound', principalId: 'principal-1', action: 'principal.updated',
+          resourceKind: 'principal', resourceId: 'principal-1', from: '2026-09-01T00:00:00.000Z', to: '2026-10-01T00:00:00.000Z',
+        },
+        loadedCount: 0, loading: false, hasMore: false,
+      }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminAuditLog: state }, getPath: (path: string) => path === 'adminAuditLog' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-audit-log') as any
+      element.requestUpdate()
+      await element.updateComplete
+      let detail: unknown = null
+      element.addEventListener('lv-audit-log-command', (event: CustomEvent) => { detail = event.detail })
+      const shadow = element.shadowRoot as ShadowRoot
+      const currentValue = (name: string) => (shadow.querySelector(`[name="${name}"]`) as HTMLInputElement).value
+      const initialValues = { principalId: currentValue('principalId'), action: currentValue('action'), resourceKind: currentValue('resourceKind'), resourceId: currentValue('resourceId'), from: currentValue('from'), to: currentValue('to') }
+      ;(shadow.querySelector('button[type="button"]') as HTMLButtonElement).click()
+      const clearedValuesBeforeResponse = { principalId: currentValue('principalId'), action: currentValue('action'), resourceKind: currentValue('resourceKind'), resourceId: currentValue('resourceId'), from: currentValue('from'), to: currentValue('to') }
+
+      // Datastar's response replaces the signal with the server-bound project
+      // and no user-selected filters. Exercise the live DOM after that patch.
+      state.filters = { projectId: 'project:server-bound' }
+      element.requestUpdate()
+      await element.updateComplete
+      const value = (name: string) => (shadow.querySelector(`[name="${name}"]`) as HTMLInputElement).value
+      return {
+        initialValues,
+        clearedValuesBeforeResponse,
+        values: { principalId: value('principalId'), action: value('action'), resourceKind: value('resourceKind'), resourceId: value('resourceId'), from: value('from'), to: value('to') },
+        detail,
+        signalFilters: state.filters,
+      }
+    })
+    expect(result).toEqual({
+      initialValues: { principalId: 'principal-1', action: 'principal.updated', resourceKind: 'principal', resourceId: 'principal-1', from: '2026-09-01T00:00', to: '2026-10-01T00:00' },
+      clearedValuesBeforeResponse: { principalId: '', action: '', resourceKind: '', resourceId: '', from: '', to: '' },
+      values: { principalId: '', action: '', resourceKind: '', resourceId: '', from: '', to: '' },
+      detail: { action: 'clear', filters: {} },
+      signalFilters: { projectId: 'project:server-bound' },
+    })
+  } finally { await page.close() }
+})
+
+test('service account secret creation exposes the finite default and emits the selected lifetime', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-service-accounts'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state = { items: [{ id: 'svc-1', displayName: 'CI', kind: 'service_principal' }], secrets: [], selectedId: 'svc-1', loading: false, hasMore: false }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminServiceAccounts: state }, getPath: (path: string) => path === 'adminServiceAccounts' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-service-accounts') as any
+      element.requestUpdate()
+      await element.updateComplete
+      let detail: unknown = null
+      element.addEventListener('lv-service-account-command', (event: CustomEvent) => { detail = event.detail })
+      const shadow = element.shadowRoot as ShadowRoot
+      const select = shadow.querySelector('select[name="secretLifetimeDays"]') as HTMLSelectElement
+      const name = shadow.querySelector('input[name="secretName"]') as HTMLInputElement
+      const form = name.closest('form') as HTMLFormElement
+      const initialValue = select.value
+      name.value = 'CI pipeline'
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      const initialDetail = detail
+      select.value = '365'
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      return { initialValue, optionValues: Array.from(select.options).map((option) => option.value), initialDetail, selectedValue: select.value, detail }
+    })
+    expect(result.initialValue).toBe('180')
+    expect(result.optionValues).toEqual(['30', '90', '180', '365'])
+    expect(result.initialDetail).toEqual({ action: 'create_secret', accountId: 'svc-1', secretName: 'CI pipeline', secretLifetimeDays: 180 })
+    expect(result.selectedValue).toBe('365')
+    expect(result.detail).toEqual({ action: 'create_secret', accountId: 'svc-1', secretName: 'CI pipeline', secretLifetimeDays: 365 })
   } finally { await page.close() }
 })
 

@@ -87,6 +87,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 
 - [Authentication and authorization](/docs/enterprise-auth): Understand LeapView identity and authorization boundaries.
 - [Local authentication](/docs/security/local-auth): Configure self-hosted and break-glass local users.
+- [Platform administrator lockout recovery](/docs/security/platform-admin-recovery): Restore platform authorization through the production-only offline operator path.
 - [OIDC](/docs/security/oidc): Connect an enterprise identity provider for browser login.
 - [MFA security decision boundary](/docs/security/mfa-boundary): Understand where MFA is enforced and what application-managed MFA requires.
 - [SCIM provisioning](/docs/security/scim): Provision users, groups, and memberships from a directory.

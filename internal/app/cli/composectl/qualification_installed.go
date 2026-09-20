@@ -95,6 +95,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		"performance-report.json",
 		"policy-validation.json",
 		"qualification-report.json",
+		"recovery-delivery-discovery.json",
 		"recovery-events.json",
 		"recovery-report.json",
 		"runtime-identity.json",
@@ -574,12 +575,32 @@ func (c *Controller) QualifyInstalledCandidate(
 			return err
 		}
 		ctx = phases.Begin(rootContext, "multi-node process", 20*time.Minute)
+		activeSnapshotJSON, snapshotErr := c.qualificationContainers.Existing(containerID).Exec(
+			ctx, nil,
+			"env", "LEAPVIEW_TARGET=http://127.0.0.1:8080", "LEAPVIEW_API_TOKEN="+projectDataToken,
+			"leapview", "api", "call", "getDeliveryOperatorSnapshot",
+			"--path", "project=project:leapview-evaluation",
+		)
+		if snapshotErr != nil {
+			return fmt.Errorf("discover active delivery pointer before multi-node qualification: %w", snapshotErr)
+		}
+		var activeSnapshot struct {
+			TargetID         string  `json:"targetId"`
+			ActiveGeneration *string `json:"activeGeneration"`
+		}
+		if err := json.Unmarshal(activeSnapshotJSON, &activeSnapshot); err != nil {
+			return fmt.Errorf("decode active delivery pointer before multi-node qualification: %w", err)
+		}
+		if activeSnapshot.ActiveGeneration == nil || strings.TrimSpace(activeSnapshot.TargetID) == "" || strings.TrimSpace(*activeSnapshot.ActiveGeneration) == "" {
+			return errors.New("active delivery pointer before multi-node qualification is incomplete")
+		}
 		multiNodeReport, multiNodeErr := c.runQualificationMultiNode(ctx, qualificationMultiNodeOptions{
 			Image:          imageReference,
 			ComposeProject: primaryProject,
 			ComposeNetwork: primaryProject + "_default",
-			TargetID:       authoringReport.Target,
-			GenerationID:   authoringReport.GenerationID,
+			TargetID:       activeSnapshot.TargetID,
+			GenerationID:   *activeSnapshot.ActiveGeneration,
+			WorkloadToken:  workloadToken,
 			Topology:       nativeTopology,
 			Primary:        c.qualificationContainers.Existing(containerID),
 		})
@@ -588,7 +609,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		}
 		if multiNodeReport.NodeCount != 2 || !multiNodeReport.AbruptNodeLoss ||
 			!multiNodeReport.Recovery || !multiNodeReport.RollingRestart ||
-			!multiNodeReport.DurableConvergence {
+			!multiNodeReport.DurableConvergence || !multiNodeReport.DataPlaneQueries {
 			return errors.New("multi-node process qualification report is incomplete")
 		}
 		report.Assertions.MultiNodeProcess = true
@@ -1054,16 +1075,17 @@ func (c *Controller) qualificationDiskUsage(
 ) (int64, error) {
 	output, err := c.qualificationContainers.Existing(appContainer).Exec(
 		ctx, nil,
-		"du",
-		"-sb",
-		"--exclude=*.db-wal",
-		"--exclude=*.db-shm",
+		"find",
 		"/var/lib/leapview",
+		"-type", "f",
+		"!", "-name", "*.db-wal",
+		"!", "-name", "*.db-shm",
+		"-exec", "stat", "-c", "%s", "{}", "+",
 	)
 	if err != nil {
 		return 0, err
 	}
-	return firstQualificationInteger(output, label)
+	return sumQualificationIntegers(output, label)
 }
 
 func verifyQualificationDenialsAndMetrics(

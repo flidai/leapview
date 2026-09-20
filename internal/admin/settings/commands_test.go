@@ -7,8 +7,12 @@ func TestServiceAccountAuditActionUsesTypeSpecVocabulary(t *testing.T) {
 		"create":        "service_principal.created",
 		"update":        "service_principal.updated",
 		"delete":        "service_principal.deleted",
+		"disable":       "service_principal.disabled",
+		"enable":        "service_principal.enabled",
 		"create_secret": "service_principal_secret.created",
 		"revoke_secret": "service_principal_secret.revoked",
+		"rotate_secret": "service_principal_secret.rotated",
+		"revoke_all":    "service_principal_credentials.revoked_all",
 	}
 	for command, want := range tests {
 		got, ok := serviceAccountAuditAction(command)

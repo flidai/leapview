@@ -39,6 +39,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Get("/admin/groups", platformAdmin(guard, h.Groups))
 	r.Get("/admin/groups/search", platformAdmin(guard, h.GroupsSearch))
 	r.Get("/admin/groups/{group}", platformAdmin(guard, h.GroupDetail))
+	r.Get("/admin/access", platformAdmin(guard, h.AccessSettings))
 	r.Post("/admin/access/command", platformAdmin(guard, h.AccessAdministrationCommand))
 	r.Get("/admin/service-accounts", platformAdmin(guard, h.ServiceAccounts))
 	r.Post("/admin/service-accounts/command", platformAdmin(guard, h.ServiceAccountCommand))
@@ -74,6 +75,8 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Post("/admin/audit/command", platformAdmin(guard, h.AuditLogCommand))
 	r.Get("/admin/system", platformAdmin(guard, h.System))
 	r.Get("/admin/publications", platformAdmin(guard, h.Publications))
+	r.Get("/admin/delivery", platformAdmin(guard, h.Delivery))
+	r.Post("/admin/delivery/command", platformAdmin(guard, h.DeliveryCommand))
 	publicationCommand := http.Handler(http.HandlerFunc(h.PublicationCommand))
 	if guard.BrowserMutationMiddleware != nil {
 		publicationCommand = guard.BrowserMutationMiddleware(m.authorizePublicationReplay, publicationCommand)

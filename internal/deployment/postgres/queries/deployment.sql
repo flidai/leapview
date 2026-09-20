@@ -60,6 +60,25 @@ ON CONFLICT(plan_id) DO NOTHING;
 SELECT plan_id::text,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,approval_required,approval_policy_revision,plan_document,evidence,created_at
 FROM delivery.delivery_plan WHERE plan_id=sqlc.arg(plan_id)::uuid;
 
+-- name: ListDeliveryPlanIDs :many
+SELECT p.plan_id::text
+FROM delivery.delivery_plan p
+JOIN delivery.delivery_target t ON t.target_id=p.target_id
+WHERE p.target_id=sqlc.arg(target_id)
+  AND t.project_id=sqlc.arg(project_id)
+  AND t.environment=sqlc.arg(environment)
+  AND (sqlc.arg(after_id)::text='' OR (p.created_at,p.plan_id) < (
+      SELECT i.created_at,i.plan_id
+      FROM delivery.delivery_plan i
+      JOIN delivery.delivery_target it ON it.target_id=i.target_id
+      WHERE i.plan_id=NULLIF(sqlc.arg(after_id)::text,'')::uuid
+        AND i.target_id=sqlc.arg(target_id)
+        AND it.project_id=sqlc.arg(project_id)
+        AND it.environment=sqlc.arg(environment)
+  ))
+ORDER BY p.created_at DESC,p.plan_id DESC
+LIMIT sqlc.arg(page_limit);
+
 -- name: GetCandidatePlan :one
 SELECT plan_id::text FROM delivery.delivery_candidate WHERE candidate_id=sqlc.arg(candidate_id)::uuid;
 
@@ -92,6 +111,27 @@ ON CONFLICT(attempt_id) DO NOTHING;
 -- name: GetBuildAttempt :one
 SELECT attempt_id::text,plan_id::text,COALESCE(candidate_id::text,'')::text AS candidate_id,owner_id,physical_pool_id,catalog_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity,COALESCE(snapshot_id,0)::bigint AS snapshot_id,commit_marker,termination_evidence,created_at,updated_at,finished_at
 FROM delivery.delivery_build_attempt WHERE attempt_id=sqlc.arg(attempt_id)::uuid;
+
+-- name: ListDeliveryBuildAttemptIDs :many
+SELECT a.attempt_id::text
+FROM delivery.delivery_build_attempt a
+JOIN delivery.delivery_plan p ON p.plan_id=a.plan_id
+JOIN delivery.delivery_target t ON t.target_id=p.target_id
+WHERE p.target_id=sqlc.arg(target_id)
+  AND t.project_id=sqlc.arg(project_id)
+  AND t.environment=sqlc.arg(environment)
+  AND (sqlc.arg(after_id)::text='' OR (a.created_at,a.attempt_id) < (
+      SELECT i.created_at,i.attempt_id
+      FROM delivery.delivery_build_attempt i
+      JOIN delivery.delivery_plan ip ON ip.plan_id=i.plan_id
+      JOIN delivery.delivery_target it ON it.target_id=ip.target_id
+      WHERE i.attempt_id=NULLIF(sqlc.arg(after_id)::text,'')::uuid
+        AND ip.target_id=sqlc.arg(target_id)
+        AND it.project_id=sqlc.arg(project_id)
+        AND it.environment=sqlc.arg(environment)
+  ))
+ORDER BY a.created_at DESC,a.attempt_id DESC
+LIMIT sqlc.arg(page_limit);
 
 -- name: LockBuildAttempt :one
 SELECT attempt_id::text FROM delivery.delivery_build_attempt WHERE attempt_id=sqlc.arg(attempt_id)::uuid FOR UPDATE;
@@ -158,12 +198,12 @@ SELECT target_id,plan_id::text,status,artifact_digest FROM delivery.delivery_can
 SELECT plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest FROM delivery.delivery_plan WHERE plan_id=sqlc.arg(plan_id)::uuid;
 
 -- name: InsertSnapshotSeal :exec
-INSERT INTO delivery.delivery_snapshot_seal(seal_id,attempt_id,candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,closure_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,authorization_policy_revision,authorization_policy_digest,request_digest,plan_digest,compatibility_digest,serving_artifact_id,serving_artifact_digest,duckdb_version,runtime_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence)
-VALUES(sqlc.arg(seal_id)::uuid,sqlc.arg(attempt_id)::uuid,sqlc.arg(candidate_id)::uuid,sqlc.arg(physical_pool_id),sqlc.arg(tenant_domain),sqlc.arg(region),sqlc.arg(encryption_domain),sqlc.arg(object_namespace),sqlc.arg(catalog_database),sqlc.arg(catalog_id),sqlc.arg(catalog_uuid),sqlc.arg(catalog_version),sqlc.arg(ducklake_snapshot_id),sqlc.arg(relation_namespace),sqlc.arg(relation_manifest_digest),sqlc.arg(closure_digest),sqlc.arg(object_root),sqlc.arg(object_root_digest),sqlc.arg(artifact_root),sqlc.arg(artifact_root_digest),sqlc.arg(compiled_graph_digest),sqlc.arg(compiled_config_digest),sqlc.arg(security_domain_fingerprint),sqlc.arg(authorization_policy_revision),sqlc.arg(authorization_policy_digest),sqlc.arg(request_digest),sqlc.arg(plan_digest),sqlc.arg(compatibility_digest),sqlc.arg(serving_artifact_id),sqlc.arg(serving_artifact_digest),sqlc.arg(duckdb_version),sqlc.arg(runtime_version),sqlc.arg(ducklake_extension_version),sqlc.arg(ducklake_spec_version),sqlc.arg(catalog_schema_version),sqlc.arg(qualification_evidence)::jsonb)
+INSERT INTO delivery.delivery_snapshot_seal(seal_id,attempt_id,candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,closure_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,authorization_policy_revision,authorization_policy_digest,request_digest,plan_digest,compatibility_digest,serving_artifact_id,serving_artifact_digest,duckdb_version,runtime_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence,resolved_inputs,resolved_inputs_digest)
+VALUES(sqlc.arg(seal_id)::uuid,sqlc.arg(attempt_id)::uuid,sqlc.arg(candidate_id)::uuid,sqlc.arg(physical_pool_id),sqlc.arg(tenant_domain),sqlc.arg(region),sqlc.arg(encryption_domain),sqlc.arg(object_namespace),sqlc.arg(catalog_database),sqlc.arg(catalog_id),sqlc.arg(catalog_uuid),sqlc.arg(catalog_version),sqlc.arg(ducklake_snapshot_id),sqlc.arg(relation_namespace),sqlc.arg(relation_manifest_digest),sqlc.arg(closure_digest),sqlc.arg(object_root),sqlc.arg(object_root_digest),sqlc.arg(artifact_root),sqlc.arg(artifact_root_digest),sqlc.arg(compiled_graph_digest),sqlc.arg(compiled_config_digest),sqlc.arg(security_domain_fingerprint),sqlc.arg(authorization_policy_revision),sqlc.arg(authorization_policy_digest),sqlc.arg(request_digest),sqlc.arg(plan_digest),sqlc.arg(compatibility_digest),sqlc.arg(serving_artifact_id),sqlc.arg(serving_artifact_digest),sqlc.arg(duckdb_version),sqlc.arg(runtime_version),sqlc.arg(ducklake_extension_version),sqlc.arg(ducklake_spec_version),sqlc.arg(catalog_schema_version),sqlc.arg(qualification_evidence)::jsonb,sqlc.arg(resolved_inputs)::jsonb,sqlc.narg(resolved_inputs_digest))
 ON CONFLICT(seal_id) DO NOTHING;
 
 -- name: GetSnapshotSeal :one
-SELECT seal_id::text,attempt_id::text,COALESCE(candidate_id::text,'')::text AS candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,closure_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,COALESCE(authorization_policy_revision,0)::bigint AS authorization_policy_revision,COALESCE(authorization_policy_digest,'')::text AS authorization_policy_digest,request_digest,plan_digest,compatibility_digest,serving_artifact_id,serving_artifact_digest,duckdb_version,runtime_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence,qualified_at
+SELECT seal_id::text,attempt_id::text,COALESCE(candidate_id::text,'')::text AS candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,closure_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,COALESCE(authorization_policy_revision,0)::bigint AS authorization_policy_revision,COALESCE(authorization_policy_digest,'')::text AS authorization_policy_digest,request_digest,plan_digest,compatibility_digest,serving_artifact_id,serving_artifact_digest,duckdb_version,runtime_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence,created_at,resolved_inputs,COALESCE(resolved_inputs_digest,'')::text AS resolved_inputs_digest,qualified_at
 FROM delivery.delivery_snapshot_seal WHERE seal_id=sqlc.arg(seal_id)::uuid;
 
 -- name: GetPlanTarget :one
@@ -177,11 +217,30 @@ ON CONFLICT(candidate_id) DO NOTHING;
 -- name: GetCandidate :one
 SELECT c.candidate_id::text AS candidate_id,c.target_id,c.plan_id::text AS plan_id,
 COALESCE((SELECT s.attempt_id::text FROM delivery.delivery_snapshot_seal s WHERE s.seal_id=c.snapshot_seal_id),'')::text AS attempt_id,
-COALESCE(c.snapshot_seal_id::text,'')::text AS snapshot_seal_id,c.status,c.candidate_revision,c.artifact_digest,COALESCE(c.qualification_digest,'')::text AS qualification_digest,c.created_at,c.qualified_at,c.retired_at
+COALESCE(c.snapshot_seal_id::text,'')::text AS snapshot_seal_id,c.status,c.candidate_revision,c.artifact_digest,COALESCE(c.qualification_digest,'')::text AS qualification_digest,c.resolved_inputs,COALESCE(c.resolved_inputs_digest,'')::text AS resolved_inputs_digest,c.created_at,c.qualified_at,c.retired_at
 FROM delivery.delivery_candidate c WHERE c.candidate_id=sqlc.arg(candidate_id)::uuid;
 
+-- name: ListDeliveryCandidateIDs :many
+SELECT c.candidate_id::text
+FROM delivery.delivery_candidate c
+JOIN delivery.delivery_target t ON t.target_id=c.target_id
+WHERE c.target_id=sqlc.arg(target_id)
+  AND t.project_id=sqlc.arg(project_id)
+  AND t.environment=sqlc.arg(environment)
+  AND (sqlc.arg(after_id)::text='' OR (c.created_at,c.candidate_id) < (
+      SELECT i.created_at,i.candidate_id
+      FROM delivery.delivery_candidate i
+      JOIN delivery.delivery_target it ON it.target_id=i.target_id
+      WHERE i.candidate_id=NULLIF(sqlc.arg(after_id)::text,'')::uuid
+        AND i.target_id=sqlc.arg(target_id)
+        AND it.project_id=sqlc.arg(project_id)
+        AND it.environment=sqlc.arg(environment)
+  ))
+ORDER BY c.created_at DESC,c.candidate_id DESC
+LIMIT sqlc.arg(page_limit);
+
 -- name: QualifyCandidate :execrows
-UPDATE delivery.delivery_candidate SET status='qualified',snapshot_seal_id=sqlc.arg(snapshot_seal_id)::uuid,qualification_digest=sqlc.arg(qualification_digest),qualified_at=clock_timestamp()
+UPDATE delivery.delivery_candidate SET status='qualified',snapshot_seal_id=sqlc.arg(snapshot_seal_id)::uuid,qualification_digest=sqlc.arg(qualification_digest),resolved_inputs=(SELECT s.resolved_inputs FROM delivery.delivery_snapshot_seal s WHERE s.seal_id=sqlc.arg(snapshot_seal_id)::uuid),resolved_inputs_digest=(SELECT s.resolved_inputs_digest FROM delivery.delivery_snapshot_seal s WHERE s.seal_id=sqlc.arg(snapshot_seal_id)::uuid),qualified_at=clock_timestamp()
 WHERE candidate_id=sqlc.arg(candidate_id)::uuid AND status IN ('building','ready');
 
 -- name: RejectCandidate :execrows
@@ -199,6 +258,38 @@ ON CONFLICT(generation_id) DO NOTHING;
 -- name: GetGeneration :one
 SELECT generation_id::text,target_id,candidate_id::text,snapshot_seal_id::text,plan_id::text,plan_digest,artifact_root,artifact_root_digest,serving_artifact_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,generation_revision,created_at
 FROM delivery.delivery_generation WHERE generation_id=sqlc.arg(generation_id)::uuid;
+
+-- Collection reads return only IDs from a bounded SQL page. The repository
+-- rehydrates each ID through the existing detail projection. Cursors identify
+-- the prior immutable row; created_at plus UUID gives deterministic ordering
+-- even when rows share a timestamp.
+-- name: ListRetainedDeliveryGenerationIDs :many
+SELECT g.generation_id::text
+FROM delivery.delivery_generation g
+JOIN delivery.delivery_target t ON t.target_id=g.target_id
+WHERE g.target_id=sqlc.arg(target_id)
+  AND t.project_id=sqlc.arg(project_id)
+  AND t.environment=sqlc.arg(environment)
+  AND EXISTS (
+      SELECT 1
+      FROM delivery.delivery_retention_root rr
+      WHERE rr.generation_id=g.generation_id
+        AND rr.target_id=g.target_id
+        AND rr.root_kind IN ('generation','rollback')
+        AND rr.state IN ('live','retiring')
+        AND (rr.expires_at IS NULL OR rr.expires_at>clock_timestamp())
+  )
+  AND (sqlc.arg(after_id)::text='' OR (g.created_at,g.generation_id) < (
+      SELECT i.created_at,i.generation_id
+      FROM delivery.delivery_generation i
+      JOIN delivery.delivery_target it ON it.target_id=i.target_id
+      WHERE i.generation_id=NULLIF(sqlc.arg(after_id)::text,'')::uuid
+        AND i.target_id=sqlc.arg(target_id)
+        AND it.project_id=sqlc.arg(project_id)
+        AND it.environment=sqlc.arg(environment)
+  ))
+ORDER BY g.created_at DESC,g.generation_id DESC
+LIMIT sqlc.arg(page_limit);
 
 -- name: LockTargetForShare :one
 SELECT t.target_id,t.project_id,t.environment,t.target_revision,
@@ -221,6 +312,25 @@ ON CONFLICT(publication_id) DO NOTHING;
 SELECT publication_id::text,target_id,generation_id::text,COALESCE(expected_base_generation_id::text,'')::text AS expected_base_generation_id,candidate_id::text,snapshot_seal_id::text,expected_target_revision,COALESCE(result_target_revision,0)::bigint AS result_target_revision,actor_id,state,request_digest,created_at,committed_at
 FROM delivery.delivery_publication WHERE publication_id=sqlc.arg(publication_id)::uuid;
 
+-- name: ListDeliveryPublicationIDs :many
+SELECT p.publication_id::text
+FROM delivery.delivery_publication p
+JOIN delivery.delivery_target t ON t.target_id=p.target_id
+WHERE p.target_id=sqlc.arg(target_id)
+  AND t.project_id=sqlc.arg(project_id)
+  AND t.environment=sqlc.arg(environment)
+  AND (sqlc.arg(after_id)::text='' OR (p.created_at,p.publication_id) < (
+      SELECT i.created_at,i.publication_id
+      FROM delivery.delivery_publication i
+      JOIN delivery.delivery_target it ON it.target_id=i.target_id
+      WHERE i.publication_id=NULLIF(sqlc.arg(after_id)::text,'')::uuid
+        AND i.target_id=sqlc.arg(target_id)
+        AND it.project_id=sqlc.arg(project_id)
+        AND it.environment=sqlc.arg(environment)
+  ))
+ORDER BY p.created_at DESC,p.publication_id DESC
+LIMIT sqlc.arg(page_limit);
+
 -- name: FindCommittedPublication :one
 SELECT p.publication_id::text FROM delivery.delivery_publication p
 JOIN delivery.delivery_active_pointer ap ON ap.target_id=p.target_id AND ap.generation_id=p.generation_id AND ap.publication_id=p.publication_id
@@ -235,6 +345,25 @@ ORDER BY p.committed_at DESC,p.publication_id DESC LIMIT 1;
 SELECT p.publication_id::text FROM delivery.delivery_publication p
 WHERE p.generation_id=sqlc.arg(generation_id)::uuid AND p.state='committed'
 ORDER BY p.committed_at DESC,p.publication_id DESC LIMIT 1;
+
+-- name: FindGenerationRetentionRoot :one
+-- Generation roots are immutable activation reachability evidence. Select
+-- the most recently retired root when one exists so historical generation
+-- reads can expose its retirement timestamp; a live root is returned only
+-- when the generation has never been retired.
+SELECT root_id::text AS root_id
+FROM delivery.delivery_retention_root
+WHERE generation_id=sqlc.arg(generation_id)::uuid AND root_kind='generation'
+ORDER BY retired_at DESC NULLS LAST,created_at DESC,root_id DESC LIMIT 1;
+
+-- name: FindGenerationRollbackUntil :one
+-- Rollback retention windows are optional and authority-owned. A deployment
+-- may have no explicit horizon, so callers treat an absent row as unknown.
+SELECT expires_at
+FROM delivery.delivery_retention_root
+WHERE generation_id=sqlc.arg(generation_id)::uuid AND root_kind='rollback'
+  AND state IN ('live','retiring') AND expires_at>clock_timestamp()
+ORDER BY expires_at DESC,root_id DESC LIMIT 1;
 
 -- name: EnsureTargetFence :exec
 INSERT INTO delivery.delivery_target_fence(target_id,next_fencing_epoch)
@@ -333,10 +462,13 @@ JOIN delivery.delivery_generation g
  AND g.snapshot_seal_id=r.snapshot_seal_id
 WHERE r.target_id=sqlc.arg(target_id)
   AND r.generation_id=sqlc.arg(generation_id)::uuid
-  AND r.root_kind='generation'
+  AND r.root_kind IN ('generation','rollback')
   AND r.state IN ('live','retiring')
   AND (r.expires_at IS NULL OR r.expires_at>clock_timestamp())
-ORDER BY CASE r.state WHEN 'live' THEN 0 ELSE 1 END, r.created_at DESC, r.root_id
+ORDER BY CASE WHEN r.root_kind='generation' AND r.state='live' THEN 0
+              WHEN r.root_kind='rollback' AND r.state='live' THEN 1
+              ELSE 2 END,
+         r.created_at DESC, r.root_id
 LIMIT 1;
 
 -- name: FindLiveGenerationRoot :one

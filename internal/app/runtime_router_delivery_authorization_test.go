@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
@@ -22,6 +24,75 @@ type nativeDeliveryAuthorizationReaderFake struct {
 	publication    deploymentpostgres.DeliveryPublication
 	publicationErr error
 	calls          []string
+}
+
+func TestDeliveryProjectScopedCollectionsUseImmutableProjectRoles(t *testing.T) {
+	collectionOperations := []string{
+		"listDeliveryPlans", "listDeliveryBuildAttempts", "listDeliveryCandidates",
+		"listDeliveryApprovalRequests", "listDeliveryPublications", "listRetainedDeliveryGenerations",
+	}
+	for _, operationID := range append([]string{"createDeliveryPlan", "getDeliveryOperatorSnapshot"}, collectionOperations...) {
+		if !deliveryProjectScopedOperation(operationID) {
+			t.Errorf("deliveryProjectScopedOperation(%q) = false, want true", operationID)
+		}
+	}
+	if deliveryProjectScopedOperation("getDeliveryCandidateStatus") {
+		t.Fatal("object-scoped delivery operation unexpectedly uses project-scoped authorization")
+	}
+
+	projectID, err := projectgraph.NewResourceID("project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "project-admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	roleSnapshot := func(role access.ProjectRole) accesssnapshot.AuthorizationSnapshot {
+		t.Helper()
+		snapshot, snapshotErr := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{
+			ID: "binding_" + string(role), Subject: subject, Role: role,
+			Capabilities: access.ProjectRoleCapabilities(role),
+		}}, nil, nil)
+		if snapshotErr != nil {
+			t.Fatal(snapshotErr)
+		}
+		return snapshot
+	}
+	viewer := roleSnapshot(access.ProjectRoleViewer)
+	admin := roleSnapshot(access.ProjectRoleAdmin)
+	noRole, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjects := []access.SubjectRef{subject}
+	for _, operationID := range collectionOperations {
+		t.Run(operationID, func(t *testing.T) {
+			if !deliveryProjectScopedAuthorization(viewer, subjects, access.CapabilityResourceRead, false) {
+				t.Fatal("project viewer role did not authorize collection RESOURCE_READ")
+			}
+			if deliveryProjectScopedAuthorization(noRole, subjects, access.CapabilityResourceRead, false) {
+				t.Fatal("unbound principal authorized collection RESOURCE_READ")
+			}
+			if !deliveryProjectScopedAuthorization(noRole, nil, access.CapabilityResourceRead, true) {
+				t.Fatal("configured development bypass did not authorize collection after runtime validation")
+			}
+		})
+	}
+	if !deliveryProjectScopedAuthorization(admin, subjects, access.CapabilityProjectAdmin, false) {
+		t.Fatal("project admin role did not authorize operator PROJECT_ADMIN")
+	}
+	if deliveryProjectScopedAuthorization(viewer, subjects, access.CapabilityProjectAdmin, false) {
+		t.Fatal("project viewer role authorized operator PROJECT_ADMIN")
+	}
 }
 
 func (r *nativeDeliveryAuthorizationReaderFake) Plan(_ context.Context, id string) (deploymentpostgres.DeliveryPlan, error) {

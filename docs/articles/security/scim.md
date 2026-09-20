@@ -36,7 +36,7 @@ Directory profile changes should update mutable metadata without changing the pr
 
 ## Separate provisioning and authorization
 
-Use the directory as the source of truth for enterprise group membership. Use LeapView role bindings, grants, and policies as the source of product authorization.
+Use the directory as the source of truth for enterprise group membership. Use LeapView role bindings and project-authored grants and policies as the source of product authorization; fine-grained grants are compiled into the immutable serving generation.
 
 This separation means:
 
@@ -46,7 +46,7 @@ This separation means:
 - OIDC group claims do not compete with SCIM membership;
 - service principals remain managed through the LeapView access API.
 
-The administration API therefore exposes SCIM profiles, groups, and memberships as read-only resources. Profile edits, group deletion, and membership changes must be made in the directory, while LeapView role bindings and grants remain writable.
+The administration API therefore exposes SCIM profiles, groups, and memberships as read-only resources. Profile edits, group deletion, and membership changes must be made in the directory. LeapView role bindings remain mutable through the administration API; fine-grained grants have no runtime CRUD surface and change only when a new project access declaration is compiled and delivered.
 
 Prefer binding stable directory groups to roles. Avoid granting every synchronized employee default access to the server-bound Project merely because they exist in the tenant.
 
@@ -62,4 +62,4 @@ Alert on repeated SCIM failures, authentication failures, unexpected mass deacti
 
 Regularly reconcile expected active users and groups. Pay special attention to direct grants that outlive group removal and disabled principals that still own securable objects or scheduled automation.
 
-See [Authentication and authorization](/docs/enterprise-auth), [OIDC](/docs/security/oidc), and [Roles, grants, and policies](/docs/security/authorization). Use the generated [environment variable reference](/docs/configuration) for the exact SCIM runtime contract and the [Access API reference](/docs/api/access) for service-principal and grant operations.
+See [Authentication and authorization](/docs/enterprise-auth), [OIDC](/docs/security/oidc), and [Roles, grants, and policies](/docs/security/authorization). Use the generated [environment variable reference](/docs/configuration) for the exact SCIM runtime contract and the [Access API reference](/docs/api/access) for service-principal and role-binding operations.

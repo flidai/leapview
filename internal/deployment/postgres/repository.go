@@ -264,38 +264,6 @@ type ReconcileBuildAttemptInput struct {
 	State               BuildAttemptState
 }
 
-// SnapshotSeal is immutable qualification evidence.  Every field that can
-// affect execution or routing is relational, never hidden in evidence JSON.
-type SnapshotSeal struct {
-	SealID, AttemptID, CandidateID                                                                                   string
-	PhysicalPoolID, TenantDomain, Region, EncryptionDomain, ObjectNamespace, CatalogDatabase, CatalogID, CatalogUUID string
-	CatalogVersion, DuckLakeSnapshotID                                                                               int64
-	RelationNamespace, ObjectRoot, ObjectRootDigest, ArtifactRoot, ArtifactRootDigest                                string
-	RelationManifestDigest, ClosureDigest                                                                            string
-	CompiledGraphDigest, CompiledConfigDigest, SecurityDomainFingerprint                                             string
-	AuthorizationPolicyRevision                                                                                      int64
-	AuthorizationPolicyDigest                                                                                        string
-	// LegacyAuthorizationPolicy requests nullable policy identity columns while
-	// finalizing a pre-017 indeterminate build. The repository accepts it only
-	// when the persisted plan proves the historical policy shape; the marker is
-	// never authoritative or persisted.
-	LegacyAuthorizationPolicy                                                                          bool
-	RequestDigest, PlanDigest, CompatibilityDigest, ServingArtifactID, ServingArtifactDigest           string
-	DuckDBVersion, RuntimeVersion, DuckLakeExtensionVersion, DuckLakeSpecVersion, CatalogSchemaVersion string
-	QualificationEvidence                                                                              json.RawMessage
-	QualifiedAt                                                                                        time.Time
-}
-type SnapshotSealInput = SnapshotSeal
-
-type DeliveryCandidate struct {
-	CandidateID, TargetID, PlanID, AttemptID, SnapshotSealID string
-	Status                                                   string
-	CandidateRevision                                        int64
-	ArtifactDigest, QualificationDigest                      string
-	CreatedAt, QualifiedAt, RetiredAt                        time.Time
-}
-type CandidateInput = DeliveryCandidate
-
 // CandidateGenerationResolution is the native publish binding resolved from
 // one candidate row. GenerationCount is retained so callers can fail closed
 // when malformed history associates a candidate with more than one generation.
@@ -415,7 +383,9 @@ func (r *Repository) RequireGenerationRootTx(ctx context.Context, tx Tx, targetI
 	if err != nil {
 		return err
 	}
-	if root.TargetID != target || root.GenerationID != generation || root.RootKind != "generation" || (root.State != "live" && root.State != "retiring") {
+	if root.TargetID != target || root.GenerationID != generation ||
+		(root.RootKind != "generation" && root.RootKind != "rollback") ||
+		(root.State != "live" && root.State != "retiring") {
 		return fmt.Errorf("%w: rollback generation retention root is unavailable", ErrConflict)
 	}
 	return nil
@@ -2486,54 +2456,6 @@ func (r *Repository) CreateSnapshotSealTx(ctx context.Context, tx Tx, in Snapsho
 	return createSeal(ctx, tx, in)
 }
 
-func sameSealIdentity(a SnapshotSeal, b SnapshotSeal) bool {
-	return a.AttemptID == b.AttemptID && a.CandidateID == b.CandidateID && a.PhysicalPoolID == b.PhysicalPoolID && a.TenantDomain == b.TenantDomain && a.Region == b.Region && a.EncryptionDomain == b.EncryptionDomain && a.ObjectNamespace == b.ObjectNamespace && a.CatalogDatabase == b.CatalogDatabase && a.CatalogID == b.CatalogID && a.CatalogUUID == b.CatalogUUID && a.CatalogVersion == b.CatalogVersion && a.DuckLakeSnapshotID == b.DuckLakeSnapshotID && a.RelationNamespace == b.RelationNamespace && a.RelationManifestDigest == b.RelationManifestDigest && a.ClosureDigest == b.ClosureDigest && a.ObjectRoot == b.ObjectRoot && a.ObjectRootDigest == b.ObjectRootDigest && a.ArtifactRoot == b.ArtifactRoot && a.ArtifactRootDigest == b.ArtifactRootDigest && a.CompiledGraphDigest == b.CompiledGraphDigest && a.CompiledConfigDigest == b.CompiledConfigDigest && a.SecurityDomainFingerprint == b.SecurityDomainFingerprint && a.AuthorizationPolicyRevision == b.AuthorizationPolicyRevision && a.AuthorizationPolicyDigest == b.AuthorizationPolicyDigest && a.RequestDigest == b.RequestDigest && a.PlanDigest == b.PlanDigest && a.CompatibilityDigest == b.CompatibilityDigest && a.ServingArtifactID == b.ServingArtifactID && a.ServingArtifactDigest == b.ServingArtifactDigest && a.DuckDBVersion == b.DuckDBVersion && a.RuntimeVersion == b.RuntimeVersion && a.DuckLakeExtensionVersion == b.DuckLakeExtensionVersion && a.DuckLakeSpecVersion == b.DuckLakeSpecVersion && a.CatalogSchemaVersion == b.CatalogSchemaVersion && sameCanonical(a.QualificationEvidence, b.QualificationEvidence)
-}
-
-func sameCanonical(a, b []byte) bool {
-	aa, err1 := canonicalObject(a, maxEvidence, true)
-	bb, err2 := canonicalObject(b, maxEvidence, true)
-	return err1 == nil && err2 == nil && bytes.Equal(aa, bb)
-}
-func loadSeal(ctx context.Context, db DBTX, id string) (SnapshotSeal, error) {
-	var s SnapshotSeal
-	row, err := depdb.New(db).GetSnapshotSeal(ctx, dbUUID(id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SnapshotSeal{}, ErrNotFound
-	}
-	if err != nil {
-		return SnapshotSeal{}, err
-	}
-	s.SealID, s.AttemptID, s.CandidateID, s.PhysicalPoolID, s.TenantDomain, s.Region, s.EncryptionDomain, s.ObjectNamespace, s.CatalogDatabase, s.CatalogID, s.CatalogUUID, s.CatalogVersion, s.DuckLakeSnapshotID, s.RelationNamespace, s.RelationManifestDigest, s.ClosureDigest, s.ObjectRoot, s.ObjectRootDigest, s.ArtifactRoot, s.ArtifactRootDigest, s.CompiledGraphDigest, s.CompiledConfigDigest, s.SecurityDomainFingerprint, s.AuthorizationPolicyRevision, s.AuthorizationPolicyDigest, s.RequestDigest, s.PlanDigest, s.CompatibilityDigest, s.ServingArtifactID, s.ServingArtifactDigest, s.DuckDBVersion, s.RuntimeVersion, s.DuckLakeExtensionVersion, s.DuckLakeSpecVersion, s.CatalogSchemaVersion, s.QualificationEvidence, s.QualifiedAt = row.SealID, row.AttemptID, row.CandidateID, row.PhysicalPoolID, row.TenantDomain, row.Region, row.EncryptionDomain, row.ObjectNamespace, row.CatalogDatabase, row.CatalogID, row.CatalogUuid, row.CatalogVersion, row.DucklakeSnapshotID, row.RelationNamespace, row.RelationManifestDigest, row.ClosureDigest, row.ObjectRoot, row.ObjectRootDigest, row.ArtifactRoot, row.ArtifactRootDigest, row.CompiledGraphDigest, row.CompiledConfigDigest, row.SecurityDomainFingerprint, row.AuthorizationPolicyRevision, row.AuthorizationPolicyDigest, row.RequestDigest, row.PlanDigest, row.CompatibilityDigest, row.ServingArtifactID, row.ServingArtifactDigest, row.DuckdbVersion, row.RuntimeVersion, row.DucklakeExtensionVersion, row.DucklakeSpecVersion, row.CatalogSchemaVersion, append([]byte(nil), row.QualificationEvidence...), dbTime(row.QualifiedAt)
-	return s, nil
-}
-func (r *Repository) SnapshotSeal(ctx context.Context, id string) (SnapshotSeal, error) {
-	db, err := requireDB(r)
-	if err != nil {
-		return SnapshotSeal{}, err
-	}
-	id, err = uuidID(id, "seal id", false)
-	if err != nil {
-		return SnapshotSeal{}, err
-	}
-	return loadSeal(ctx, db, id)
-}
-
-// SnapshotSealTx is the transaction-aware immutable seal projection.
-func (r *Repository) SnapshotSealTx(ctx context.Context, tx Tx, id string) (SnapshotSeal, error) {
-	if tx == nil {
-		return SnapshotSeal{}, ErrInvalid
-	}
-	id, err := uuidID(id, "seal id", false)
-	if err != nil {
-		return SnapshotSeal{}, err
-	}
-	return loadSeal(ctx, tx, id)
-}
-func (r *Repository) LoadSnapshotSeal(ctx context.Context, id string) (SnapshotSeal, error) {
-	return r.SnapshotSeal(ctx, id)
-}
-
 func (r *Repository) CreatePublication(ctx context.Context, in PublicationInput) (DeliveryPublication, error) {
 	db, err := requireDB(r)
 	if err != nil {
@@ -3707,6 +3629,9 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 		return ActivationResult{}, err
 	}
 	if currentGeneration != "" && currentGeneration != p.GenerationID {
+		if err := r.ensurePredecessorRollbackWindow(ctx, tx, p, predecessor); err != nil {
+			return ActivationResult{}, err
+		}
 		retired, err := r.RetireRetentionRootTx(ctx, tx, predecessor.RootID)
 		if err != nil {
 			return ActivationResult{}, err

@@ -118,6 +118,54 @@ func TestAuthorizationSnapshotEffectiveCapabilitiesProjectsDirectAndGroupGrants(
 	require.Empty(t, capabilities)
 }
 
+func TestAuthorizationSnapshotExplainsDirectInheritedAndPlatformAccess(t *testing.T) {
+	project := testGraph(t)
+	alice := mustSubject(t, access.SubjectKindPrincipal, "alice")
+	sales := mustSubject(t, access.SubjectKindGroup, "sales")
+	dashboard, err := access.NewResourceRef("dashboard_main", graph.KindDashboard)
+	require.NoError(t, err)
+	grant, err := access.NewCanonicalGrant(project, sales, dashboard, access.CapabilityResourceRead)
+	require.NoError(t, err)
+	snapshot, err := NewAuthorizationSnapshotWithRoleBindings(testIdentity(), project, []RoleBinding{{
+		ID: "binding-direct", Subject: alice, Role: access.ProjectRoleViewer,
+		Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer),
+	}, {
+		ID: "binding-group", Subject: sales, Role: access.ProjectRoleViewer,
+		Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer),
+	}}, []Grant{{ID: "grant-group", Canonical: grant}}, nil)
+	require.NoError(t, err)
+	decisions, err := snapshot.ExplainEffectiveAccess([]access.SubjectRef{alice, sales}, false)
+	require.NoError(t, err)
+	var direct, inheritedGrant, inheritedRole bool
+	for _, decision := range decisions {
+		if decision.ResourceID != dashboard.ID().String() || decision.Capability != access.CapabilityResourceRead {
+			continue
+		}
+		switch decision.GrantID {
+		case "binding-direct":
+			direct = !decision.Inherited && decision.Reason == "direct role binding"
+		case "binding-group":
+			inheritedRole = decision.Inherited && decision.Reason == "group-inherited role binding"
+		case "grant-group":
+			inheritedGrant = decision.Inherited && decision.Reason == "group-inherited grant"
+		}
+	}
+	if !direct || !inheritedRole || !inheritedGrant {
+		t.Fatalf("direct=%v inheritedRole=%v inheritedGrant=%v decisions=%#v", direct, inheritedRole, inheritedGrant, decisions)
+	}
+	decisions, err = snapshot.ExplainEffectiveAccess([]access.SubjectRef{alice}, true)
+	require.NoError(t, err)
+	var platform bool
+	for _, decision := range decisions {
+		if decision.Platform && decision.Capability == access.CapabilityProjectAdmin && decision.ResourceID == testIdentity().ProjectID.String() {
+			platform = true
+		}
+	}
+	if !platform {
+		t.Fatalf("platform explanation missing: %#v", decisions)
+	}
+}
+
 func TestAuthorizationSnapshotEffectiveCapabilitiesFailsClosed(t *testing.T) {
 	_, err := (AuthorizationSnapshot{}).EffectiveCapabilities(nil)
 	require.Error(t, err)

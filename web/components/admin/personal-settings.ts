@@ -450,7 +450,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
       selected: categoryPermissions.filter((permission) => this.tokenPermissionAccess(permission)).length,
       total: categoryPermissions.length,
     }]))
-    const canCreate = Boolean(this.tokenName.trim() && !this.tokenCreatePending)
+    const canCreate = Boolean(this.tokenName.trim() && selected.length && !this.tokenCreatePending)
     return html`
       <section aria-label="API tokens">
         <div class="card token-card">
@@ -520,7 +520,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                   </div>
                 </div>
                 <div class="selected-permissions" aria-live="polite">
-                  ${selected.length ? selected.map((permission) => this.renderSelectedTokenPermission(permission)) : html`<div class="permission-empty">No explicit permissions selected. The token will dynamically follow your current access.</div>`}
+                  ${selected.length ? selected.map((permission) => this.renderSelectedTokenPermission(permission)) : html`<div class="permission-empty">Select at least one explicit permission. Dynamic authority is not issued from Settings.</div>`}
                 </div>
               </div>
               <div class="actions"><button class="primary" type="submit" ?disabled=${!canCreate}>${this.tokenCreatePending ? 'Creating…' : 'Create token'}</button></div>
@@ -645,7 +645,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (!this.tokenName.trim()) return
     const command: Record<string, unknown> = { action: 'create', name: this.tokenName.trim(), expiresAt: localDateTimeToRFC3339(this.tokenExpires) }
     const capabilities = this.selectedTokenCapabilities()
-    if (capabilities.length) command.capabilities = capabilities
+    if (!capabilities.length) return
+    command.capabilities = capabilities
     this.send('lv-personal-token-command', command)
     this.tokenCreatePending = true
   }

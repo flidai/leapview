@@ -91,6 +91,11 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_candidate (
     candidate_revision bigint NOT NULL CHECK (candidate_revision > 0),
     artifact_digest text NOT NULL CHECK (artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
     qualification_digest text CHECK (qualification_digest IS NULL OR qualification_digest ~ '^sha256:[0-9a-f]{64}$'),
+    -- Compact build-time resolution of plan data inputs. Full gate evidence
+    -- remains on the immutable snapshot seal and is joined by its digest.
+    resolved_inputs jsonb NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(resolved_inputs) = 'object' AND octet_length(resolved_inputs::text) <= 32768),
+    resolved_inputs_digest text CHECK (resolved_inputs_digest IS NULL OR resolved_inputs_digest ~ '^sha256:[0-9a-f]{64}$'),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     qualified_at timestamptz,
     retired_at timestamptz,
@@ -103,7 +108,9 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_candidate (
         OR (status IN ('qualified','admitted') AND snapshot_seal_id IS NOT NULL AND qualification_digest IS NOT NULL AND qualified_at IS NOT NULL)
         OR (status = 'rejected')
         OR (status = 'retired' AND retired_at IS NOT NULL)),
-    CHECK (retired_at IS NULL OR status = 'retired')
+    CHECK (retired_at IS NULL OR status = 'retired'),
+    CHECK ((resolved_inputs_digest IS NULL AND resolved_inputs = '{}'::jsonb)
+        OR (resolved_inputs_digest IS NOT NULL AND resolved_inputs <> '{}'::jsonb))
 );
 
 CREATE TABLE IF NOT EXISTS delivery.delivery_build_attempt (
@@ -204,8 +211,16 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_snapshot_seal (
     catalog_schema_version text NOT NULL CHECK (catalog_schema_version = btrim(catalog_schema_version) AND octet_length(catalog_schema_version) BETWEEN 1 AND 128),
     qualification_evidence jsonb NOT NULL DEFAULT '{}'::jsonb
         CHECK (jsonb_typeof(qualification_evidence) = 'object' AND octet_length(qualification_evidence::text) <= 32768),
+    -- qualified_at is retained for qualification lifecycle; created_at is the
+    -- database-authoritative seal insertion timestamp.
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    resolved_inputs jsonb NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(resolved_inputs) = 'object' AND octet_length(resolved_inputs::text) <= 32768),
+    resolved_inputs_digest text CHECK (resolved_inputs_digest IS NULL OR resolved_inputs_digest ~ '^sha256:[0-9a-f]{64}$'),
     qualified_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CHECK ((authorization_policy_revision IS NULL) = (authorization_policy_digest IS NULL)),
+    CHECK ((resolved_inputs_digest IS NULL AND resolved_inputs = '{}'::jsonb)
+        OR (resolved_inputs_digest IS NOT NULL AND resolved_inputs <> '{}'::jsonb)),
     UNIQUE (attempt_id),
     UNIQUE (seal_id, candidate_id),
     UNIQUE (physical_pool_id, catalog_id, catalog_database, catalog_uuid, ducklake_snapshot_id),
@@ -1168,6 +1183,21 @@ BEGIN
     IF to_regclass('managed_data.retention_root') IS NULL THEN
         RETURN;
     END IF;
+	-- Managed-data reachability follows the aggregate delivery roots for the
+	-- generation, not the lifecycle of any one immutable root. A retired
+	-- generation can remain rollback-eligible through a live rollback root,
+	-- and reactivation can establish a fresh generation root before an older
+	-- root finishes draining.
+	IF EXISTS (
+		SELECT 1
+		  FROM delivery.delivery_retention_root root
+		 WHERE root.generation_id = p_generation_id
+		   AND root.root_kind IN ('generation', 'rollback')
+		   AND ((p_state = 'retiring' AND root.state = 'live')
+		     OR (p_state = 'expired' AND root.state IN ('live', 'retiring')))
+	) THEN
+		RETURN;
+	END IF;
     IF p_state = 'retiring' THEN
         UPDATE managed_data.retention_root
            SET state = 'retiring', updated_at = clock_timestamp()
@@ -1179,7 +1209,7 @@ BEGIN
            SET state = 'expired', updated_at = clock_timestamp()
          WHERE evidence->>'generation_id' = p_generation_id::text
            AND evidence->>'kind' = 'serving-generation'
-           AND state = 'retiring';
+		   AND state IN ('live', 'retiring');
     END IF;
 END;
 $$;
@@ -1199,9 +1229,10 @@ DECLARE
     root_generation_id uuid;
     root_snapshot_seal_id uuid;
     root_expires_at timestamptz;
+	root_evidence jsonb;
 BEGIN
-    SELECT r.state, r.root_kind, r.target_id, r.candidate_id, r.generation_id, r.snapshot_seal_id, r.expires_at
-      INTO root_state, root_kind, root_target_id, root_candidate_id, root_generation_id, root_snapshot_seal_id, root_expires_at
+    SELECT r.state, r.root_kind, r.target_id, r.candidate_id, r.generation_id, r.snapshot_seal_id, r.expires_at, r.evidence
+      INTO root_state, root_kind, root_target_id, root_candidate_id, root_generation_id, root_snapshot_seal_id, root_expires_at, root_evidence
       FROM delivery.delivery_retention_root AS r
      WHERE r.root_id = p_root_id
      FOR UPDATE;
@@ -1241,26 +1272,43 @@ BEGIN
        ) THEN
         RAISE EXCEPTION 'retention root lacks activation or expired deadline evidence';
     END IF;
-    -- Rollback roots are keyed by publication ID. Retirement is valid only
-    -- after that exact publication reaches a terminal state and all immutable
-    -- tuple evidence agrees with the root row.
+    -- Pending rollback roots are keyed by publication ID and can retire after
+    -- that publication is terminal. Cutover-created rollback-window roots use
+    -- a disjoint deterministic ID; they can retire only after their DB-owned
+    -- deadline and exact committed cutover evidence proves that this
+    -- generation was the displaced predecessor.
     IF root_kind = 'rollback'
-       AND NOT EXISTS (
-           SELECT 1
-             FROM delivery.delivery_publication publication
-            WHERE publication.publication_id = p_root_id
-              AND publication.target_id = root_target_id
-              AND publication.candidate_id = root_candidate_id
-              AND publication.generation_id = root_generation_id
-              AND publication.snapshot_seal_id = root_snapshot_seal_id
-              AND publication.state IN ('committed', 'rejected', 'indeterminate')
-       ) THEN
+	   AND NOT (
+		EXISTS (
+			SELECT 1
+			  FROM delivery.delivery_publication publication
+			 WHERE publication.publication_id = p_root_id
+			   AND publication.target_id = root_target_id
+			   AND publication.candidate_id = root_candidate_id
+			   AND publication.generation_id = root_generation_id
+			   AND publication.snapshot_seal_id = root_snapshot_seal_id
+			   AND publication.state IN ('committed', 'rejected', 'indeterminate')
+		)
+		OR (
+			root_expires_at IS NOT NULL
+			AND root_expires_at <= clock_timestamp()
+			AND root_evidence->>'purpose' = 'retired generation rollback window'
+			AND EXISTS (
+				SELECT 1
+				  FROM delivery.delivery_publication publication
+				 WHERE publication.publication_id::text = root_evidence->>'publication_id'
+				   AND publication.target_id = root_target_id
+				   AND publication.expected_base_generation_id = root_generation_id
+				   AND publication.state = 'committed'
+			)
+		)
+	   ) THEN
         RAISE EXCEPTION 'rollback retention root lacks terminal publication evidence';
     END IF;
     -- Replaying retirement is a successful no-op after the same evidence
     -- checks above. Terminal roots cannot be moved backwards or re-retired.
     IF root_state = 'retiring' THEN
-        IF root_kind = 'generation' THEN
+		IF root_kind IN ('generation', 'rollback') THEN
             PERFORM delivery.sync_managed_data_generation_root(root_generation_id, 'retiring');
         END IF;
         RETURN true;
@@ -1270,7 +1318,7 @@ BEGIN
     UPDATE delivery.delivery_retention_root
        SET state = 'retiring', retired_at = clock_timestamp()
      WHERE root_id = p_root_id AND state = 'live';
-    IF root_kind = 'generation' THEN
+	IF root_kind IN ('generation', 'rollback') THEN
         PERFORM delivery.sync_managed_data_generation_root(root_generation_id, 'retiring');
     END IF;
     RETURN FOUND;
@@ -1313,7 +1361,7 @@ BEGIN
         RETURN false;
     END IF;
     IF root_state = 'expired' THEN
-        IF root_kind = 'generation' THEN
+		IF root_kind IN ('generation', 'rollback') THEN
             PERFORM delivery.sync_managed_data_generation_root(root_generation_id, 'expired');
         END IF;
         RETURN true;
@@ -1380,7 +1428,7 @@ BEGIN
     UPDATE delivery.delivery_retention_root
        SET state = 'expired', expired_at = clock_timestamp()
      WHERE root_id = p_root_id AND state = 'retiring';
-    IF root_kind = 'generation' THEN
+	IF root_kind IN ('generation', 'rollback') THEN
         PERFORM delivery.sync_managed_data_generation_root(root_generation_id, 'expired');
     END IF;
     RETURN FOUND;
@@ -1427,7 +1475,7 @@ BEGIN
     FOR candidate IN
         SELECT root.root_id
           FROM delivery.delivery_retention_root root
-         WHERE root.root_kind IN ('candidate', 'recovery')
+		 WHERE root.root_kind IN ('candidate', 'rollback', 'recovery')
            AND root.state = 'live'
            AND root.expires_at IS NOT NULL
            AND root.expires_at <= db_now
@@ -1581,9 +1629,13 @@ CREATE INDEX IF NOT EXISTS delivery_lease_active_idx ON delivery.delivery_lease(
 CREATE UNIQUE INDEX IF NOT EXISTS delivery_lease_one_active_idx ON delivery.delivery_lease(target_id) WHERE state = 'active';
 CREATE INDEX IF NOT EXISTS delivery_generation_target_idx ON delivery.delivery_generation(target_id, generation_revision);
 CREATE INDEX IF NOT EXISTS delivery_generation_candidate_idx ON delivery.delivery_generation(candidate_id);
+CREATE INDEX IF NOT EXISTS delivery_plan_target_created_idx ON delivery.delivery_plan(target_id, created_at DESC, plan_id DESC);
+CREATE INDEX IF NOT EXISTS delivery_build_attempt_plan_created_idx ON delivery.delivery_build_attempt(plan_id, created_at DESC, attempt_id DESC);
+CREATE INDEX IF NOT EXISTS delivery_candidate_target_created_idx ON delivery.delivery_candidate(target_id, created_at DESC, candidate_id DESC);
 CREATE INDEX IF NOT EXISTS delivery_seal_attempt_idx ON delivery.delivery_snapshot_seal(attempt_id);
 CREATE INDEX IF NOT EXISTS delivery_root_snapshot_idx ON delivery.delivery_retention_root(snapshot_seal_id, state);
 CREATE INDEX IF NOT EXISTS delivery_approval_request_publication_idx ON delivery.delivery_approval_request(publication_id, requested_at DESC, request_id DESC);
+CREATE INDEX IF NOT EXISTS delivery_approval_request_target_created_idx ON delivery.delivery_approval_request(target_id, requested_at DESC, request_id DESC);
 CREATE INDEX IF NOT EXISTS delivery_approval_decision_request_idx ON delivery.delivery_approval_decision(request_id, decision_revision DESC, decision_id DESC);
 
 -- Delivery authority evidence is never reachable through PUBLIC defaults.  The

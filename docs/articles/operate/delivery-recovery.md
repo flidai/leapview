@@ -14,10 +14,15 @@ operator snapshot remains the supported delivery view:
 GET /api/v1/projects/{project}/delivery/operator
 ```
 
-It reports the target revision, active generation, admitted pools, serving
-roots, leases, GC cycles, delete intents, and degraded reasons. Treat object
-listings, filenames, and dashboard responses as observations only; do not infer
-durable ownership from them.
+It reports only the PostgreSQL delivery authority's target identity, target
+revision, and active generation pointer. The response is marked degraded with
+`detailed_evidence_unavailable` because physical pools, retention roots, query
+or writer leases, GC state, and delete intents are not owned by this bounded
+read surface. The absence of those detail collections is therefore not
+evidence that the target has no pools, roots, or leases; use each owning
+authority's supported diagnostic surface when available. Treat object
+listings, filenames, and dashboard responses as observations only; do not
+infer durable ownership from them.
 
 ## Recovery boundary
 
@@ -43,12 +48,12 @@ be proved and escalate with the captured evidence.
 
 Start the instance only after the native recovery point is restored and the
 configuration matches the target. Verify the instance identity, active target
-revision and generation, admitted physical pool, serving-state identity,
-authorization, managed-data revisions, and one representative governed query
-and dashboard. Use the normal `leapview rollback GENERATION_ID` command only
-when the retained generation is known to be valid and the ordinary rollback
-contract applies; it is not a substitute for database or object-store
-recovery.
+revision and generation, the admitted physical pool from its owning authority,
+serving-state identity, authorization, managed-data revisions, and one
+representative governed query and dashboard. Use the normal
+`leapview rollback GENERATION_ID` command only when the retained generation is
+known to be valid and the ordinary rollback contract applies; it is not a
+substitute for database or object-store recovery.
 
 Preserve readiness responses, operator snapshots, native backup/PITR evidence,
 catalog/object-store restore evidence, and logs with the incident record. If any

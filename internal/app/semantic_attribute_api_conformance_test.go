@@ -37,8 +37,8 @@ func TestSemanticAttributeAPIGenOperationContracts(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s missing generated x-authz extension: %#v", operationID, contract.Extensions["x-authz"])
 			}
-			if got := authz["mode"]; got != "authenticated" {
-				t.Fatalf("%s x-authz mode = %#v, want authenticated", operationID, got)
+			if got := authz["mode"]; got != "platform_admin" {
+				t.Fatalf("%s x-authz mode = %#v, want platform_admin", operationID, got)
 			}
 			if got := contract.Extensions["x-leapview-object-scope"]; got != "platform" {
 				t.Fatalf("%s object scope = %#v, want platform", operationID, got)

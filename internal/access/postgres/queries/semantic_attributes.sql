@@ -76,6 +76,35 @@ SELECT definition_id::text AS definition_id, name, value_type, value_shape,
 FROM access.semantic_attribute_definition
 ORDER BY name;
 
+-- name: ListPrincipalOwnedSemanticAttributes :many
+SELECT definition_id::text AS definition_id, name, owner_kind,
+       COALESCE(owner_id::text, '')::text AS owner_id, enabled,
+       COALESCE(disabled_at::text, '')::text AS disabled_at
+FROM access.semantic_attribute_definition
+WHERE owner_kind = 'principal' AND owner_id = sqlc.arg(owner_id)::uuid
+ORDER BY definition_id;
+
+-- name: SemanticAttributeTransferPrincipalExists :one
+SELECT EXISTS (
+    SELECT 1 FROM access.principal
+    WHERE id = sqlc.arg(principal_id)::uuid
+      AND revoked_at IS NULL
+      AND status = 'active'
+      AND disabled_at IS NULL
+      AND blocked_at IS NULL
+);
+
+-- name: TransferOwnedSemanticAttributes :many
+UPDATE access.semantic_attribute_definition
+SET owner_id = sqlc.arg(target_owner_id)::uuid,
+    definition_version = definition_version + 1,
+    updated_at = clock_timestamp()
+WHERE owner_kind = 'principal'
+  AND owner_id = sqlc.arg(owner_id)::uuid
+RETURNING definition_id::text AS definition_id, name, owner_kind,
+          COALESCE(owner_id::text, '')::text AS owner_id, enabled,
+          COALESCE(disabled_at::text, '')::text AS disabled_at;
+
 -- name: SearchSemanticAttributeDefinitions :many
 SELECT definition_id::text AS definition_id, name, value_type, value_shape,
        profile, definition_version, owner_kind, COALESCE(owner_id::text, '')::text AS owner_id, display_name,

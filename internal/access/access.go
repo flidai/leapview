@@ -78,6 +78,17 @@ type AuthorizationRoleBindingInput struct {
 	IdempotencyKey   string
 }
 
+// AuthorizationRoleBindingDeleteInput removes one binding from the current
+// target-owned policy by sealing a successor immutable revision. The expected
+// revision is a compare-and-swap fence and the idempotency key makes retries
+// after an unknown commit return the original successor revision.
+type AuthorizationRoleBindingDeleteInput struct {
+	Scope            AuthorizationPolicyScope
+	BindingID        string
+	ExpectedRevision int64
+	IdempotencyKey   string
+}
+
 // AuthorizationPolicyReader is intentionally narrow so release planning can
 // consume target policy state without gaining mutation authority.
 type AuthorizationPolicyReader interface {
@@ -89,6 +100,7 @@ type AuthorizationPolicyReader interface {
 // boundary. Implementations must preserve CAS and idempotency semantics.
 type AuthorizationPolicyWriter interface {
 	UpsertAuthorizationRoleBinding(context.Context, AuthorizationRoleBindingInput) (AuthorizationPolicy, error)
+	DeleteAuthorizationRoleBinding(context.Context, AuthorizationRoleBindingDeleteInput) (AuthorizationPolicy, error)
 }
 
 // ValidateAuthorizationRoleBinding applies the same role and capability
@@ -115,6 +127,41 @@ func ValidateAuthorizationRoleBinding(binding RoleBinding) error {
 		if capability != want[index] {
 			return fmt.Errorf("%w: role %q has a non-canonical capability bundle", ErrAuthorizationPolicyInvalidBinding, role)
 		}
+	}
+	return nil
+}
+
+// ValidateAuthorizationRoleBindingRemoval enforces the minimum control-plane
+// safety invariant for deleting a binding: a project must retain at least one
+// binding carrying PROJECT_ADMIN. The check is deliberately capability-based
+// so both canonical administrator roles (owner and admin) receive the same
+// protection, and so persisted canonical snapshots remain the authority.
+func ValidateAuthorizationRoleBindingRemoval(bindings []RoleBinding, bindingID string) error {
+	removed := false
+	removedAdmin := false
+	remainingAdmin := false
+	for _, binding := range bindings {
+		isAdmin := false
+		for _, capability := range binding.Capabilities {
+			if capability == CapabilityProjectAdmin {
+				isAdmin = true
+				break
+			}
+		}
+		if binding.ID == bindingID {
+			removed = true
+			removedAdmin = isAdmin
+			continue
+		}
+		if isAdmin {
+			remainingAdmin = true
+		}
+	}
+	if !removed {
+		return fmt.Errorf("%w: role binding %q", ErrAuthorizationPolicyNotFound, bindingID)
+	}
+	if removedAdmin && !remainingAdmin {
+		return fmt.Errorf("%w: cannot remove the last project administrator", ErrAuthorizationPolicyConflict)
 	}
 	return nil
 }
@@ -296,6 +343,13 @@ type LocalPasswordReset struct {
 	Password  string
 }
 
+// LocalPasswordRecoveryWriter is the narrow capability used by the offline,
+// production-only lockout recovery adapter. It is deliberately separate from
+// Repository so ordinary authenticated request paths cannot assume it exists.
+type LocalPasswordRecoveryWriter interface {
+	RecoverLocalPassword(context.Context, string, string) (LocalPasswordReset, error)
+}
+
 type LocalCredential struct {
 	PrincipalID        string
 	MustChangePassword bool
@@ -349,7 +403,35 @@ type ServicePrincipalSecret struct {
 	Secret             string
 	ExpiresAt          string
 	CreatedAt          string
+	LastUsedAt         string
 	RevokedAt          string
+}
+
+// ServicePrincipalSecretRotation describes a newly issued secret and the
+// metadata of the previous credential. Secret contains one-time material for
+// the new credential only; callers must never persist or return it from a
+// metadata read.
+type ServicePrincipalSecretRotation struct {
+	Secret   string
+	Created  ServicePrincipalSecret
+	Previous ServicePrincipalSecret
+}
+
+type ServicePrincipalSecretRotationInput struct {
+	ServicePrincipalID string
+	PreviousSecretID   string
+	Secret             ServicePrincipalSecretInput
+	RevokePrevious     bool
+}
+
+// ServicePrincipalCredentialRepository owns the closed service-account
+// lifecycle. It is intentionally optional on Repository so callers that only
+// need the shared identity surface do not gain credential mutation authority.
+type ServicePrincipalCredentialRepository interface {
+	DisableServicePrincipal(context.Context, string) (Principal, error)
+	EnableServicePrincipal(context.Context, string) (Principal, error)
+	RotateServicePrincipalSecret(context.Context, ServicePrincipalSecretRotationInput) (ServicePrincipalSecretRotation, error)
+	RevokeAllServicePrincipalCredentials(context.Context, string) error
 }
 
 type ExternalIdentityInput struct {

@@ -173,6 +173,21 @@ func TestContractValidatesAuditPayload(t *testing.T) {
 	}
 }
 
+func TestContractAcceptsPlatformAdministratorAuthorization(t *testing.T) {
+	contract := Contract{
+		OperationID: "updatePlatformSettings", Owner: "Settings", Method: "PATCH", Path: "/settings",
+		AuthzMode: "platform_admin", AuditAction: "settings.updated", Guarantee: GuaranteeBestEffort,
+		AuditPayload: testAuditPayload(),
+	}
+	if err := contract.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	contract.Privilege = "PROJECT_ADMIN"
+	if err := contract.Validate(); !errors.Is(err, ErrInvalidContract) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestGeneratedPolicyDrivesDependenciesAndSurfaces(t *testing.T) {
 	contract, _ := testLookup(GuaranteeTransactional)("createWidget")
 	contract.AdditionalExposures = []Surface{SurfaceUI}

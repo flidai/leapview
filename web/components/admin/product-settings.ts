@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import { DatastarLit } from '../shared/datastar-lit'
-import { browserCommandFailure } from '../shared/command-failure'
+import { browserCommandFailure, ownsBrowserCommandFetch } from '../shared/command-failure'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import type {
   ProductAPIStatusSignal,
@@ -22,6 +22,7 @@ const emptyProductSettings: ProductSettingsSignal = {
     browserEnabled: false, apiTokenOnly: false,
     local: { available: false, enabled: false }, oidc: { available: false, enabled: false },
     azure: { available: false, enabled: false }, scim: { available: false, enabled: false }, managedBy: 'deployment',
+    platformAdministrators: [], platformAdministrationRevision: '', platformAdministrationAvailable: false,
   },
   api: {
     bearerCredentials: { available: false, enabled: false }, servicePrincipals: { available: false, enabled: false },
@@ -47,10 +48,15 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
   @state() private busy = false
   @state() private commandBusy = false
   @state() private commandError = ''
+  @state() private platformCommandBusy = false
+  @state() private platformCommandError = ''
   @state() private message = ''
+  @state() private platformPrincipalDraft = ''
   private lastRevision = -1
   private pendingRevision = -1
   private pendingError = ''
+  private pendingPlatformRevision = ''
+  private pendingPlatformError = ''
 
   override connectedCallback(): void {
     super.connectedCallback()
@@ -117,6 +123,10 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     if (this.commandBusy && (revision !== this.pendingRevision || (settings.error ?? '') !== this.pendingError)) {
       this.commandBusy = false
     }
+    const platformRevision = settings.authentication.platformAdministrationRevision
+    if (this.platformCommandBusy && (platformRevision !== this.pendingPlatformRevision || (settings.error ?? '') !== this.pendingPlatformError)) {
+      this.platformCommandBusy = false
+    }
     const active = settings.active as ProductSection
     if ((active === 'general' || active === 'authentication' || active === 'system') && active !== this.selectedSection) this.selectedSection = active
   }
@@ -127,9 +137,11 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
       <div class="settings" aria-label="Product settings">
         ${settings.error ? html`<div class="notice" role="alert">${settings.error}</div>` : nothing}
         ${this.selectedSection === 'general' ? this.renderGeneral(settings.general, settings.canManage) : nothing}
-        ${this.selectedSection === 'authentication' ? this.renderAuthentication(settings.authentication, settings.api) : nothing}
+        ${this.selectedSection === 'authentication' ? this.renderAuthentication(settings.authentication, settings.api, settings.canManage) : nothing}
         ${this.selectedSection === 'system' ? this.renderSystem(settings.system, settings.api) : nothing}
         ${this.commandError ? html`<div class="notice" role="alert">${this.commandError}</div>` : nothing}
+        ${this.platformCommandError ? html`<div class="notice" role="alert">${this.platformCommandError}</div>` : nothing}
+        ${this.platformCommandBusy ? html`<div class="message" role="status" aria-live="polite">Updating platform authority…</div>` : nothing}
         ${this.message ? html`<div class="message" role="status">${this.message}</div>` : nothing}
       </div>
     `
@@ -191,7 +203,8 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     `
   }
 
-  private renderAuthentication(auth: ProductAuthenticationSignal, api: ProductAPIStatusSignal) {
+  private renderAuthentication(auth: ProductAuthenticationSignal, api: ProductAPIStatusSignal, canManage: boolean) {
+    const platformDisabled = !canManage || this.platformCommandBusy
     return html`
       <section class="panel" aria-label="Authentication settings">
         <h2>Authentication</h2>
@@ -213,6 +226,27 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           ${this.statusCard('MCP', api.mcp.enabled, availabilityLabel(api.mcp))}
           ${this.statusCard('External MCP issuer', api.externalMcpIssuer, api.externalMcpIssuer ? 'Configured' : 'Not configured')}
         </div>
+        <h3>Platform authority</h3>
+        <p class="hint">Current and revoked platform-role bindings are shown without credentials. Changes require a recent interactive browser sign-in; service credentials cannot perform them.</p>
+        ${!auth.platformAdministrationAvailable
+          ? html`<div class="notice" role="alert">${auth.platformAdministrationError || 'Platform authority history is unavailable.'}</div>`
+          : html`
+            <div class="inline">
+              <input id="platform-administrator-principal" aria-label="Principal ID" type="text" placeholder="Principal ID" .value=${this.platformPrincipalDraft} @input=${this.handlePlatformPrincipalInput} ?disabled=${platformDisabled}>
+              <button class="action primary" type="button" ?disabled=${platformDisabled || !this.platformPrincipalDraft.trim()} @click=${this.grantPlatformAdministrator}>${this.platformCommandBusy ? 'Granting…' : 'Grant platform administrator'}</button>
+            </div>
+            <div class="status-grid" aria-label="Platform authority bindings">
+              ${auth.platformAdministrators.length === 0
+                ? html`<div class="notice">No platform authority bindings have been recorded.</div>`
+                : auth.platformAdministrators.map((administrator) => html`
+                  <div class="status-card">
+                    <strong>${administrator.displayName || administrator.email || administrator.principalId}</strong>
+                    <span class="settings-value">${administrator.email || administrator.principalId} · ${administrator.role}</span>
+                    <span class="status ${administrator.revokedAt ? 'disabled' : 'enabled'}">${administrator.revokedAt ? `Revoked ${administrator.revokedAt}` : `Granted ${administrator.grantedAt}`}</span>
+                    ${administrator.revokedAt ? nothing : html`<button class="action danger" type="button" ?disabled=${platformDisabled} @click=${() => this.revokePlatformAdministrator(administrator.principalId)}>${this.platformCommandBusy ? 'Revoking…' : 'Revoke'}</button>`}
+                  </div>
+                `)}
+            </div>`}
       </section>
     `
   }
@@ -288,6 +322,31 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     this.emitCommand({ action: 'reset_identity', revision: this.settings.general.revision })
   }
 
+  private handlePlatformPrincipalInput = (event: Event): void => {
+    this.platformPrincipalDraft = (event.currentTarget as HTMLInputElement).value
+  }
+
+  private grantPlatformAdministrator = (): void => {
+    this.emitPlatformAdministratorCommand('grant_platform_administrator', this.platformPrincipalDraft.trim())
+  }
+
+  private revokePlatformAdministrator = (principalId: string): void => {
+    this.emitPlatformAdministratorCommand('revoke_platform_administrator', principalId)
+  }
+
+  private emitPlatformAdministratorCommand(action: 'grant_platform_administrator' | 'revoke_platform_administrator', principalId: string): void {
+    this.commandError = ''
+    this.platformCommandError = ''
+    this.message = ''
+    this.platformCommandBusy = true
+    this.pendingPlatformRevision = this.settings.authentication.platformAdministrationRevision
+    this.pendingPlatformError = this.settings.error ?? ''
+    this.dispatchEvent(new CustomEvent<ProductSettingsCommand>('lv-platform-administrator-command', {
+      bubbles: true, composed: true,
+      detail: { action, principalId, expectedRevision: this.settings.authentication.platformAdministrationRevision, revision: 0 },
+    }))
+  }
+
   private emitCommand(command: ProductSettingsCommand): void {
     this.commandError = ''
     if (command.action !== 'refresh') {
@@ -300,9 +359,21 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
   }
 
   private handleDatastarFetch = (event: Event): void => {
-    if (!this.commandBusy) return
-    const failure = browserCommandFailure(event, 'Product settings update')
+    if ((!this.commandBusy && !this.platformCommandBusy) || !ownsBrowserCommandFetch(this, event)) return
+    const detail = (event as CustomEvent<{ type?: string }>).detail
+    if (detail?.type === 'finished') {
+      this.commandBusy = false
+      this.platformCommandBusy = false
+      return
+    }
+    const action = this.platformCommandBusy ? 'Platform authority update' : 'Product settings update'
+    const failure = browserCommandFailure(event, action)
     if (!failure) return
+    if (this.platformCommandBusy) {
+      this.platformCommandBusy = false
+      this.platformCommandError = failure.message
+      return
+    }
     this.commandBusy = false
     this.commandError = failure.message
   }

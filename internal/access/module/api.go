@@ -49,6 +49,8 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.UpdatePrincipal(w, r)
 	case "deletePrincipal":
 		m.handler.DeletePrincipal(w, r)
+	case "resolvePrincipalOwnership":
+		m.handler.ResolvePrincipalOwnership(w, r)
 	case "disablePrincipal":
 		m.handler.DisablePrincipal(w, r)
 	case "enablePrincipal":
@@ -59,6 +61,26 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.ListPrincipalSessions(w, r)
 	case "revokePrincipalSession":
 		m.handler.RevokePrincipalSession(w, r)
+	case "listPlatformAdministrators":
+		m.handler.ListPlatformAdministrators(w, r)
+	case "grantPlatformAdministrator":
+		m.handler.GrantPlatformAdministrator(w, r)
+	case "revokePlatformAdministrator":
+		m.handler.RevokePlatformAdministrator(w, r)
+	case "listPlatformRoleApprovals":
+		m.handler.ListPlatformRoleApprovals(w, r)
+	case "getPlatformRoleApproval":
+		m.handler.GetPlatformRoleApproval(w, r)
+	case "requestPlatformRoleApproval":
+		m.handler.RequestPlatformRoleApproval(w, r)
+	case "approvePlatformRoleApproval":
+		m.handler.ApprovePlatformRoleApproval(w, r)
+	case "cancelPlatformRoleApproval":
+		m.handler.CancelPlatformRoleApproval(w, r)
+	case "expirePlatformRoleApproval":
+		m.handler.ExpirePlatformRoleApproval(w, r)
+	case "executePlatformRoleApproval":
+		m.handler.ExecutePlatformRoleApproval(w, r)
 	case "listServicePrincipals":
 		m.handler.ListServicePrincipals(w, r)
 	case "createServicePrincipal":
@@ -69,6 +91,12 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.UpdateServicePrincipal(w, r)
 	case "deleteServicePrincipal":
 		m.handler.DeleteServicePrincipal(w, r)
+	case "revokeAllServicePrincipalCredentials":
+		m.handler.RevokeAllServicePrincipalCredentials(w, r)
+	case "disableServicePrincipal":
+		m.handler.DisableServicePrincipal(w, r)
+	case "enableServicePrincipal":
+		m.handler.EnableServicePrincipal(w, r)
 	case "listServicePrincipalSecrets":
 		m.handler.ListServicePrincipalSecrets(w, r)
 	case "createServicePrincipalSecret":
@@ -77,6 +105,8 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.GetServicePrincipalSecret(w, r)
 	case "revokeServicePrincipalSecret":
 		m.handler.RevokeServicePrincipalSecret(w, r)
+	case "rotateServicePrincipalSecret":
+		m.handler.RotateServicePrincipalSecret(w, r)
 	case "listGroups":
 		m.handler.ListGroups(w, r)
 	case "createGroup":
@@ -97,6 +127,14 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.ListProjectRoleBindings(w, r)
 	case "createProjectRoleBinding":
 		m.handler.CreateProjectRoleBinding(w, r)
+	case "deleteProjectRoleBinding":
+		m.handler.DeleteProjectRoleBinding(w, r)
+	case "listProjectRoles":
+		m.handler.ListProjectRoles(w, r)
+	case "checkAuthorizationBatch":
+		m.handler.CheckAuthorizationBatch(w, r)
+	case "listEffectiveCapabilities":
+		m.handler.ListEffectiveCapabilities(w, r)
 	case "listGroupSemanticAttributeAssignments":
 		m.handler.ListGroupSemanticAttributeAssignments(w, r)
 	case "removeGroupSemanticAttributeAssignment":

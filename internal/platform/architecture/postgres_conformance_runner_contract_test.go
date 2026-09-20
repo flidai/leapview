@@ -122,7 +122,9 @@ func newPostgreSQLConformanceFixture(t *testing.T, testFiles map[string]string) 
 		{"-C", root, "init", "--quiet"},
 		{"-C", root, "add", "--all"},
 	} {
-		if output, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+		command := exec.Command("git", args...)
+		command.Env = withoutGitIndexFile(os.Environ())
+		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("prepare fixture git repository: %v\n%s", err, output)
 		}
 	}
@@ -147,7 +149,7 @@ func (f postgresConformanceFixture) run(t *testing.T, exitCode int) postgresConf
 	t.Helper()
 	stubDir := filepath.Join(f.root, "bin")
 	cmd := exec.Command("bash", f.script, "run")
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(withoutGitIndexFile(os.Environ()),
 		"PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"STUB_ARGS="+f.stubArgs,
 		"STUB_REQUIRED="+f.stubRequire,
@@ -162,4 +164,14 @@ func (f postgresConformanceFixture) run(t *testing.T, exitCode int) postgresConf
 		result.required = string(required)
 	}
 	return result
+}
+
+func withoutGitIndexFile(environment []string) []string {
+	filtered := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, "GIT_INDEX_FILE=") {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }

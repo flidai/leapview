@@ -110,7 +110,16 @@ func TestAccessRemainingPostgreSQL18AuditFiltersCursorAndBootstrapEvidence(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: user.Principal.ID, Role: access.PlatformRoleAdmin}); err != nil {
+	if err := repo.BootstrapAdmin(ctx, user.Principal.Email); err != nil {
+		t.Fatal(err)
+	}
+	// Keep a second usable administrator so the lifecycle assertion below can
+	// disable the token owner without weakening last-administrator protection.
+	safetyAdmin, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "audit-filter-safety@example.com", DisplayName: "Audit Filter Safety", Password: "safety password long enough"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.BootstrapAdmin(ctx, safetyAdmin.Principal.Email); err != nil {
 		t.Fatal(err)
 	}
 	_, token, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{

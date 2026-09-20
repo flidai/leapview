@@ -307,6 +307,34 @@ func deliveryProjectAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjec
 	return false, nil
 }
 
+// deliveryProjectScopedOperation identifies delivery control-plane operations
+// that are scoped by the project path and have no individual delivery object
+// to resolve. These operations authorize from the leased generation's
+// captured project role bundle; they must not fall through to the immutable
+// delivery plan resolver with an empty object ID.
+func deliveryProjectScopedOperation(operationID string) bool {
+	switch operationID {
+	case "createDeliveryPlan", "getDeliveryOperatorSnapshot",
+		"listDeliveryPlans", "listDeliveryBuildAttempts", "listDeliveryCandidates",
+		"listDeliveryApprovalRequests", "listDeliveryPublications", "listRetainedDeliveryGenerations":
+		return true
+	default:
+		return false
+	}
+}
+
+// deliveryProjectScopedAuthorization evaluates a project-scoped delivery
+// operation against the immutable role bindings captured by the active
+// serving generation. The development bypass is explicit and is reached only
+// after the caller has validated the active runtime identity and target-owned
+// delivery reader.
+func deliveryProjectScopedAuthorization(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, capability access.Capability, devBypass bool) bool {
+	if devBypass {
+		return true
+	}
+	return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability)
+}
+
 func deliveryApprovalDecisionOperation(operationID string) bool {
 	switch operationID {
 	case "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
@@ -384,6 +412,16 @@ func projectRootRoleDecision(snapshot accesssnapshot.AuthorizationSnapshot, subj
 }
 
 func deliveryResourceCapability(resource access.ResourceRef, capability access.Capability) access.Capability {
+	if capability == access.CapabilityResourceUse &&
+		!access.SupportsCapability(resource.Kind(), capability) &&
+		access.SupportsCapability(resource.Kind(), access.CapabilityResourceRead) {
+		// Building a delivery plan executes executable graph resources, while
+		// declarative resources such as dashboards are inputs to that build.
+		// Dashboard kinds deliberately do not expose RESOURCE_USE, so require
+		// read authority for those inputs instead of passing an invalid
+		// capability to the canonical snapshot.
+		return access.CapabilityResourceRead
+	}
 	if capability == access.CapabilityResourcePublish &&
 		!access.SupportsCapability(resource.Kind(), capability) &&
 		access.SupportsCapability(resource.Kind(), access.CapabilityResourceEdit) {

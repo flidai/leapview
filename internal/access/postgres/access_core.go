@@ -341,6 +341,12 @@ func (r *Repository) SetPlatformRole(ctx context.Context, input access.PlatformR
 	if err != nil {
 		return access.Principal{}, err
 	}
+	if strings.TrimSpace(input.PrincipalID) == "" {
+		input.PrincipalID, err = newUUID()
+		if err != nil {
+			return access.Principal{}, err
+		}
+	}
 	tx, ownTx, err := r.txOrBegin(ctx)
 	if err != nil {
 		return access.Principal{}, err
@@ -351,6 +357,9 @@ func (r *Repository) SetPlatformRole(ctx context.Context, input access.PlatformR
 		}
 	}()
 	txRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
+	if _, err := r.lockPlatformAdminAuthority(ctx, tx, input.PrincipalID); err != nil {
+		return access.Principal{}, err
+	}
 	p, err := txRepo.UpsertPrincipal(ctx, access.PrincipalInput{ID: input.PrincipalID, Email: input.Email, DisplayName: input.DisplayName, Kind: access.PrincipalKindUser})
 	if err != nil {
 		return access.Principal{}, err
@@ -442,6 +451,16 @@ func (r *Repository) DeleteServicePrincipal(ctx context.Context, id string) erro
 	}()
 	parsedID, err := pgUUID(id)
 	if err != nil {
+		return err
+	}
+	// Check ownership in the deletion transaction before revoking this service
+	// principal.  The owning authority is intentionally queried through the
+	// same tx so a concurrent transfer cannot race the offboarding decision.
+	txRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey, ownership: r.ownership}
+	if err := txRepo.EnsureOffboardingSafe(ctx, id); err != nil {
+		return err
+	}
+	if _, err := accessdb.New(tx).RevokePlatformRole(ctx, parsedID); err != nil {
 		return err
 	}
 	tag, err := accessdb.New(tx).DisableServicePrincipal(ctx, parsedID)
@@ -798,6 +817,16 @@ func (r *Repository) ResetLocalPassword(ctx context.Context, pid string) (access
 	}
 	return r.setPassword(ctx, pid, password, true)
 }
+
+// RecoverLocalPassword installs an operator-supplied emergency password for
+// an existing local principal. It is intentionally absent from the public
+// access.Repository contract: only the offline, production-only recovery
+// adapter may discover this narrow capability. The normal password policy,
+// transaction ownership, and session revocation rules still apply.
+func (r *Repository) RecoverLocalPassword(ctx context.Context, pid, password string) (access.LocalPasswordReset, error) {
+	return r.setPassword(ctx, pid, password, true)
+}
+
 func (r *Repository) ChangeLocalPassword(ctx context.Context, pid, current, newPassword string) (access.LocalCredential, error) {
 	return r.setPasswordCredential(ctx, pid, current, newPassword, false)
 }
@@ -915,21 +944,6 @@ func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Dur
 	}
 	return token, nil
 }
-func (r *Repository) PrincipalForToken(ctx context.Context, token string) (access.Principal, error) {
-	db, err := r.requireDB()
-	if err != nil {
-		return access.Principal{}, err
-	}
-	row, err := accessdb.New(db).FindBrowserSession(ctx, r.secretFingerprint(token))
-	if err != nil {
-		return access.Principal{}, err
-	}
-	if !hmac.Equal(row.TokenFingerprint, r.secretFingerprint(token)) || !verifySecret(token, row.Verifier) {
-		return access.Principal{}, pgx.ErrNoRows
-	}
-	_ = accessdb.New(db).TouchBrowserSession(ctx, row.TokenFingerprint)
-	return r.PrincipalByID(ctx, principalUUID(row.ID))
-}
 func (r *Repository) DeleteSession(ctx context.Context, token string) error {
 	db, err := r.requireDB()
 	if err != nil {
@@ -1036,61 +1050,6 @@ func databaseExpiryValid(ctx context.Context, db DBTX, expiresAt time.Time) (boo
 func (r *Repository) CreateAPIToken(ctx context.Context, pid, name string) (string, error) {
 	t, _, e := r.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: pid, Name: name})
 	return t, e
-}
-func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.APITokenInput) (string, access.APIToken, error) {
-	db, err := r.requireDB()
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	pid, err := uuidID("principal id", in.PrincipalID)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	name, err := bounded(strings.TrimSpace(in.Name), "token name", 255)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	caps, err := capabilitiesJSON(in.Capabilities)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	tok, err := tokenSecret("lv_pat_")
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	ver, err := secretVerifier(tok)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	id, err := newUUID()
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	tokenID, err := pgUUID(id)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	principalID, err := pgUUID(pid)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	tag, err := accessdb.New(db).CreateAPIToken(ctx, accessdb.CreateAPITokenParams{ID: tokenID, PrincipalID: principalID, Name: name,
-		TokenFingerprint: r.secretFingerprint(tok), Verifier: ver, Capabilities: caps, ExpiresAt: pgTimestamp(in.ExpiresAt)})
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	if tag.RowsAffected() == 0 {
-		valid, checkErr := databaseExpiryValid(ctx, db, in.ExpiresAt)
-		if checkErr != nil {
-			return "", access.APIToken{}, checkErr
-		}
-		if !valid {
-			return "", access.APIToken{}, fmt.Errorf("api token expiry is invalid")
-		}
-		return "", access.APIToken{}, pgx.ErrNoRows
-	}
-	row, e := r.apiToken(ctx, id)
-	return tok, row, e
 }
 func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, error) {
 	db, _ := r.requireDB()
@@ -1215,6 +1174,11 @@ func (r *Repository) RevokeAPITokenForPrincipal(ctx context.Context, pid, id str
 }
 
 func (r *Repository) CreateServicePrincipalSecret(ctx context.Context, pid string, in access.ServicePrincipalSecretInput) (string, access.ServicePrincipalSecret, error) {
+	resolvedExpiry, e := access.ResolveServicePrincipalSecretExpiry(in.ExpiresAt, time.Now().UTC())
+	if e != nil {
+		return "", access.ServicePrincipalSecret{}, e
+	}
+	in.ExpiresAt = resolvedExpiry
 	db, e := r.requireDB()
 	if e != nil {
 		return "", access.ServicePrincipalSecret{}, e
@@ -1276,7 +1240,7 @@ func (r *Repository) serviceSecret(ctx context.Context, id string) (access.Servi
 		return access.ServicePrincipalSecret{}, err
 	}
 	return access.ServicePrincipalSecret{ID: principalUUID(row.ID), ServicePrincipalID: principalUUID(row.ServicePrincipalID), Name: row.Name,
-		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), RevokedAt: principalTimestamp(row.RevokedAt)}, nil
+		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}, nil
 }
 func (r *Repository) RevokeServicePrincipalSecret(ctx context.Context, pid, sid string) error {
 	db, e := r.requireDB()
@@ -1325,6 +1289,10 @@ func (r *Repository) PrincipalForServicePrincipalSecret(ctx context.Context, pid
 	if !verifySecret(secret, row.Verifier) {
 		return access.Principal{}, pgx.ErrNoRows
 	}
+	// Authentication is latency-sensitive; evidence is best effort and
+	// coalesced by the SQL predicate. A failed telemetry write must not turn a
+	// valid credential into an authentication failure.
+	r.touchServicePrincipalSecret(ctx, row.ID)
 	p, e := r.PrincipalByID(ctx, principalUUID(row.ServicePrincipalID))
 	if e != nil || p.AccessDisabled() {
 		return access.Principal{}, pgx.ErrNoRows

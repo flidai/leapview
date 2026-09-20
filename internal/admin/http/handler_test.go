@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/admin/ui"
 	"github.com/flidai/leapview/internal/agent/api"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestPublicationMutationStatusPreservesDomainSemantics(t *testing.T) {
@@ -75,6 +76,49 @@ func TestAdminRootRedirectsToDefaultProfile(t *testing.T) {
 	}
 	if location := rec.Header().Get("Location"); location != "/admin/profile" {
 		t.Fatalf("location = %q, want /admin/profile", location)
+	}
+}
+
+type auditCommandRepository struct {
+	access.Repository
+	filter access.AuditEventFilter
+}
+
+func (r *auditCommandRepository) ListAuditEvents(_ context.Context, filter access.AuditEventFilter) ([]access.AuditEvent, error) {
+	r.filter = filter
+	return []access.AuditEvent{}, nil
+}
+
+func (auditCommandRepository) ListServicePrincipals(context.Context) ([]access.Principal, error) {
+	return nil, nil
+}
+
+func (auditCommandRepository) ListServicePrincipalSecrets(context.Context, string) ([]access.ServicePrincipalSecret, error) {
+	return nil, nil
+}
+
+func TestAuditLogCommandBindsServerProjectAndPassesDateFilters(t *testing.T) {
+	repository := &auditCommandRepository{}
+	handler := Handler{
+		ReadModel: ReadModel{CurrentProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return "project:server-bound", nil
+		}},
+		SettingsRepository: repository,
+	}
+	request := httptest.NewRequest(http.MethodPost, "/admin/audit/command", strings.NewReader(`{"adminAuditLogCommand":{"action":"filter","filters":{"projectId":"project:foreign","principalId":"principal-1","from":"2026-09-01T00:00:00Z","to":"2026-10-01T00:00:00Z"},"limit":10},"adminAuditLog":{"items":[]}}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	handler.AuditLogCommand(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if repository.filter.ProjectID != "project:server-bound" || !repository.filter.IncludeUnscoped {
+		t.Fatalf("repository project scope = %#v, want bound project plus unscoped events", repository.filter)
+	}
+	if repository.filter.PrincipalID != "principal-1" || repository.filter.From != "2026-09-01T00:00:00Z" || repository.filter.To != "2026-10-01T00:00:00Z" {
+		t.Fatalf("repository filters = %#v, want command filters preserved", repository.filter)
 	}
 }
 

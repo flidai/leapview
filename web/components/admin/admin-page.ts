@@ -46,6 +46,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   @state() private copiedQueryDetailValue = ''
   @state() private publicationBusy = ''
   @state() private publicationMessage = ''
+  @state() private deliveryBusy = false
+  @state() private deliveryMessage = ''
   @state() private accessCreateDialog: 'principal' | 'group' | '' = ''
   private queryFilterTimer: ReturnType<typeof setTimeout> | null = null
   private lastQueryHistoryKey = ''
@@ -374,6 +376,26 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-default);
     }
 
+    .state-panel {
+      border: var(--lv-border-attention);
+      background: var(--lv-bg-attention-muted);
+      color: var(--lv-fg-default);
+    }
+
+    .state-panel[role="alert"] {
+      border-color: var(--lv-border-danger);
+      background: var(--lv-bg-danger-muted);
+    }
+
+    .technical-details {
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+    }
+
+    .technical-details summary {
+      cursor: pointer;
+    }
+
     .query-audit {
       display: grid;
       min-width: 0;
@@ -663,7 +685,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     if (!page) return html`<slot></slot>`
     const mainClass = [
       'main',
-      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'projects-admin' || page.active === 'storage' || page.active === 'storage-detail' ? 'main-directory' : '',
+      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'access' || page.active === 'projects-admin' || page.active === 'storage' || page.active === 'storage-detail' ? 'main-directory' : '',
       isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
       page.active === 'profile' ? 'main-profile' : '',
     ].filter(Boolean).join(' ')
@@ -671,7 +693,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       <div class="route">
         <section class=${mainClass} aria-label="Admin">
           ${page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'storage-detail' ? nothing : renderPageHeader(page.headerTitle || page.title, page.headerDetail)}
-          ${page.empty ? html`<div class="panel"><div class="empty">${page.empty}</div></div>` : nothing}
+          ${page.empty ? html`<div class="panel state-panel" role=${page.active === 'delivery' ? 'alert' : 'status'}><div class="empty">${page.empty}</div></div>` : nothing}
           ${page.metrics?.length && page.active !== 'queries' && page.active !== 'principal-detail' && page.active !== 'group-detail' && page.active !== 'storage-detail' ? html`
             <div class="metrics">
               ${page.metrics.map((metric) => html`
@@ -705,7 +727,8 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
                 : page.active === 'projects-admin' ? html`<lv-project-registry></lv-project-registry>`
                   : page.active === 'service-accounts' ? html`<lv-service-accounts></lv-service-accounts>`
                     : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
-                      : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-detail' ? this.renderStorageDetail(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map((section) => renderSection(section))}
+                      : page.active === 'access' ? html`<lv-access-settings></lv-access-settings>`
+                      : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-detail' ? this.renderStorageDetail(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'delivery' ? html`<div aria-busy=${this.deliveryBusy ? 'true' : 'false'} @lv-record-table-action=${this.handleDeliveryTableAction}>${this.deliveryMessage ? html`<p class="local-user-result" role="status" aria-live="polite">${this.deliveryMessage}</p>` : nothing}${this.renderDeliverySections(page)}</div>` : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map((section) => renderSection(section))}
         </section>
       </div>
     `
@@ -715,6 +738,17 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     if (page.active === 'principals' || page.active === 'principal-detail') return html`<lv-principal-administration .createOpen=${this.accessCreateDialog === 'principal'} @lv-access-create-close=${this.closeAccessCreateDialog}></lv-principal-administration>`
     if (page.active === 'groups' || page.active === 'group-detail') return html`<lv-group-administration .createOpen=${this.accessCreateDialog === 'group'} @lv-access-create-close=${this.closeAccessCreateDialog}></lv-group-administration>`
     return nothing
+  }
+
+  private renderDeliverySections(page: AdminPageSignal) {
+    return page.sections?.map((section) => {
+      if (!this.deliveryBusy || !section.table) return renderSection(section)
+      const rows = (section.table.rows ?? []).map((row) => {
+        const actions = Array.isArray(row.actions) ? row.actions.map((action) => ({ ...(action as Record<string, unknown>), disabled: true })) : row.actions
+        return actions === row.actions ? row : { ...row, actions }
+      })
+      return renderSection({ ...section, table: { ...section.table, rows } })
+    })
   }
 
   private handleEntityListAction(event: CustomEvent<{ id: string }>): void {
@@ -855,9 +889,9 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
                 <span class="publication-status">${publication.status}</span>
               </div>
               <div class="publication-details">
-                <span>Project <code>${publication.projectId}</code></span>
-                <span>Dashboard <code>${publication.dashboard}${publication.defaultPage ? ` / ${publication.defaultPage}` : ''}</code></span>
-                <span>Generation <code>${publication.generation || '-'}</code></span>
+                <span>Project scope <strong>Server-bound project</strong><details class="technical-details"><summary>Technical identifier</summary><code>${publication.projectId}</code></details></span>
+                <span>Dashboard <strong>${humanizeAdminIdentifier(publication.dashboard)}${publication.defaultPage ? ` / ${humanizeAdminIdentifier(publication.defaultPage)}` : ''}</strong><details class="technical-details"><summary>Technical route</summary><code>${publication.dashboard}${publication.defaultPage ? ` / ${publication.defaultPage}` : ''}</code></details></span>
+                <span>Serving state <strong>${publication.generation ? 'Published generation' : 'Not available'}</strong>${publication.generation ? html`<details class="technical-details"><summary>Technical generation ID</summary><code>${publication.generation}</code></details>` : nothing}</span>
                 <span>Allowed origins <code>${publication.origins.length ? publication.origins.join(', ') : 'Direct view only'}</code></span>
                 <span>Suspended <code>${publication.suspendedAt || '-'}</code></span>
                 <span>Rotated <code>${publication.rotatedAt || '-'}</code></span>
@@ -869,7 +903,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
                 ${publication.status === 'suspended'
                   ? html`<button type="button" ?disabled=${busy} @click=${() => this.mutatePublication(publication, 'resume')}>Resume</button>`
                   : publication.status === 'active'
-                    ? html`<button type="button" ?disabled=${busy} @click=${() => this.mutatePublication(publication, 'suspend')}>Suspend</button>`
+                    ? html`<button type="button" ?disabled=${busy} aria-label=${`Suspend ${publication.name}; public viewers will lose access`} @click=${() => this.confirmPublicationMutation(publication)}>Suspend</button>`
                     : nothing}
                 <button type="button" ?disabled=${busy || publication.status === 'unconfigured'} @click=${() => this.rotatePublication(publication)}>Rotate URL</button>
               </div>
@@ -893,8 +927,14 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   }
 
   private rotatePublication(publication: AdminPublicationSignal): void {
-    if (window.confirm(`Rotate ${publication.name}? The current public URL will stop working immediately.`)) {
+    if (window.confirm(`Rotate ${publication.name}? The current public URL will stop working immediately. Existing embeds and links must be updated to the new URL.`)) {
       void this.mutatePublication(publication, 'rotate')
+    }
+  }
+
+  private confirmPublicationMutation(publication: AdminPublicationSignal): void {
+    if (window.confirm(`Suspend ${publication.name}? Anonymous viewers and embeds will lose access immediately. Resume is available later.`)) {
+      this.mutatePublication(publication, 'suspend')
     }
   }
 
@@ -911,13 +951,30 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
   private handleDatastarFetch = (event: Event): void => {
     // Datastar emits this event for every command on the page. Only consume
-    // terminal failures while a publication mutation is waiting; unrelated
-    // admin surfaces must keep their own state and feedback.
-    if (!this.publicationBusy) return
-    const failure = browserCommandFailure(event, 'Publication update')
-    if (!failure) return
-    this.publicationBusy = ''
-    this.publicationMessage = failure.message
+    // terminal events for the mutation owner; unrelated admin surfaces must
+    // keep their own state and feedback.
+    const detail = (event as CustomEvent<{ type?: string; el?: Element }>).detail
+    if (!(detail?.el instanceof Element) || detail.el !== this) return
+    if (this.publicationBusy) {
+      const failure = browserCommandFailure(event, 'Publication update')
+      if (failure) {
+        this.publicationBusy = ''
+        this.publicationMessage = failure.message
+      } else if (detail.type === 'finished') {
+        this.publicationBusy = ''
+        this.publicationMessage = 'Publication updated. The latest lifecycle state is shown above.'
+      }
+    }
+    if (this.deliveryBusy) {
+      const failure = browserCommandFailure(event, 'Delivery rollback')
+      if (failure) {
+        this.deliveryBusy = false
+        this.deliveryMessage = failure.kind === 'conflict' ? 'Rollback target is stale. Reload delivery state before choosing a retained generation.' : failure.message
+      } else if (detail.type === 'finished') {
+        this.deliveryBusy = false
+        this.deliveryMessage = 'Rollback request completed. Delivery state has been refreshed.'
+      }
+    }
   }
 
   private renderTextFilter(key: keyof AdminQueryHistoryFilters, label: string) {
@@ -998,6 +1055,21 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     if (!eventId) return
     this.copiedQueryDetailValue = ''
     this.emitQueryHistoryCommand('select_detail', this.currentQueryHistory().filters, '', eventId)
+  }
+
+  private handleDeliveryTableAction = (event: CustomEvent) => {
+    if (event.detail?.action !== 'rollback') return
+    const generation = String(event.detail.row?.generationId ?? event.detail.row?.generation ?? '')
+    if (!generation) return
+    const label = String(event.detail.row?.generation ?? 'this retained generation')
+    if (!window.confirm(`Roll back to ${label}? Traffic will switch to this retained serving state, and the current generation will become the previous state. Retry only if the target evidence is complete.`)) return
+    this.deliveryBusy = true
+    this.deliveryMessage = ''
+    this.dispatchEvent(new CustomEvent('lv-delivery-rollback', {
+      bubbles: true,
+      composed: true,
+      detail: { generation },
+    }))
   }
 
   private closeQueryDetail = () => {
@@ -1344,6 +1416,12 @@ function formatQueryJSON(value: string): string {
   } catch {
     return value
   }
+}
+
+function humanizeAdminIdentifier(value: string): string {
+  const normalized = value.replace(/[._-]+/g, ' ').trim()
+  if (!normalized) return 'Unavailable'
+  return normalized.replace(/\b\w/g, (character) => character.toUpperCase())
 }
 
 function renderSection(section: AdminContentSectionSignal, detail = false) {

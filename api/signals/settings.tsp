@@ -72,7 +72,7 @@ model ServiceAccountsSignal {
 }
 
 model ServiceAccountSignal { `id`: string; `displayName`: string; `email`?: string; `kind`: string; `createdAt`?: string; `updatedAt`?: string; `disabledAt`?: string; }
-model ServiceAccountSecretSignal { `id`: string; `servicePrincipalId`: string; `name`: string; `expiresAt`?: string; `createdAt`?: string; `revokedAt`?: string; }
+model ServiceAccountSecretSignal { `id`: string; `servicePrincipalId`: string; `name`: string; `expiresAt`?: string; `createdAt`?: string; `lastUsedAt`?: string; `revokedAt`?: string; }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "settings", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
@@ -147,6 +147,45 @@ model AccessSessionSignal { `id`: string; `kind`: string; `createdAt`?: string; 
 model AccessRoleAssignmentSignal { `projectId`: string; `resourceId`?: string; `resourceKind`?: string; `role`: string; `capabilities`: string[]; `sourceType`: string; `sourceId`: string; `sourceName`: string; }
 model AccessActivitySignal { `id`: string; `action`: string; `actorId`?: string; `actorName`?: string; `status`?: string; `createdAt`: string; }
 
+@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "settings", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
+model AccessSettingsSignal {
+  `projectId`: string;
+  `policyRevision`: int64;
+  `policyDigest`: string;
+  `roleBindings`: AccessSettingsRoleBindingSignal[];
+  `roles`: AccessSettingsRoleSignal[];
+  `effectiveAccess`: AccessEffectiveAccessSignal;
+  `grantAdministrationAvailable`: boolean;
+  `grantAdministrationLabel`: string;
+  `message`?: string;
+  `error`?: string;
+  `loading`: boolean;
+}
+
+model AccessSettingsRoleBindingSignal { `id`: string; `name`?: string; `subjectType`: string; `subjectId`: string; `role`: string; `capabilities`: string[]; }
+model AccessSettingsRoleSignal { `name`: string; `capabilities`: string[]; }
+model AccessEffectiveAccessSignal {
+  `decisions`: AccessEffectiveDecisionSignal[];
+  `loading`: boolean;
+  `error`?: string;
+}
+model AccessEffectiveDecisionSignal {
+  `allowed`: boolean;
+  `authority`: string;
+  `capability`: string;
+  `reason`: string;
+  `resourceKind`: string;
+  `resourceId`: string;
+  `inherited`: boolean;
+  `owner`: boolean;
+  `platform`: boolean;
+  `grantId`?: string;
+  `grantResourceId`?: string;
+  `subjectType`?: string;
+  `subjectId`?: string;
+}
+
 @apigen.contract(#{ kind: "ui-command", tags: #["admin", "settings", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "admin" })
 model AccessAdministrationCommand {
@@ -158,6 +197,18 @@ model AccessAdministrationCommand {
   `email`?: string;
   `displayName`?: string;
   `revision`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-command", tags: #["admin", "settings", "command"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "admin" })
+model AccessSettingsCommand {
+  `action`: string;
+  `bindingId`?: string;
+  `bindingName`?: string;
+  `subjectType`?: string;
+  `subjectId`?: string;
+  `role`?: string;
+  `expectedRevision`?: int64;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "settings", "signal"] })
@@ -183,7 +234,11 @@ model ServiceAccountCommand {
   `secretId`?: string;
   `displayName`?: string;
   `secretName`?: string;
+  @doc("Optional Settings preset for the service-principal secret lifetime, in whole days. Zero or omission uses the 180-day default.")
+  `secretLifetimeDays`?: int32;
   `expiresAt`?: string;
+  `revokePrevious`?: boolean;
+  `reason`?: string;
 }
 
 @apigen.contract(#{ kind: "ui-command", tags: #["admin", "settings", "command"] })

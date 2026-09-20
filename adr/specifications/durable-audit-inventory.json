@@ -12,7 +12,7 @@
       "id": "access.transactional-mutations",
       "owner": "access",
       "kind": "administrative-audit",
-      "events": ["principal", "group", "grant", "policy", "token", "session", "SCIM mutation", "service_principal.created", "service_principal.updated", "service_principal.deleted", "service_principal_secret.created", "service_principal_secret.revoked"],
+      "events": ["principal", "group", "grant", "policy", "token", "session", "SCIM mutation", "service_principal.created", "service_principal.updated", "service_principal.deleted", "service_principal.disabled", "service_principal.enabled", "service_principal_secret.created", "service_principal_secret.revoked", "service_principal_secret.rotated", "service_principal_credentials.revoked_all"],
       "guarantee": "transactional",
       "failureBehavior": "The mutation and one or more audit rows roll back together.",
       "implementation": [

@@ -305,6 +305,11 @@ sections:
         type: how-to
         summary: Configure self-hosted and break-glass local users.
         source: articles/security/local-auth.md
+      - slug: security/platform-admin-recovery
+        title: Platform administrator lockout recovery
+        type: how-to
+        summary: Restore platform authorization through the production-only offline operator path.
+        source: articles/security/platform-admin-recovery.md
       - slug: security/oidc
         title: OIDC
         type: how-to

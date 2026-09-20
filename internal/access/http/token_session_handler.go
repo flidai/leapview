@@ -72,12 +72,17 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	}
 	var expires time.Time
 	var err error
-	if input.ExpiresAt != "" {
-		expires, err = time.Parse(time.RFC3339, input.ExpiresAt)
+	if strings.TrimSpace(input.ExpiresAt) != "" {
+		expires, err = time.Parse(time.RFC3339, strings.TrimSpace(input.ExpiresAt))
 		if err != nil {
 			writeJSONError(w, err, stdhttp.StatusBadRequest)
 			return
 		}
+	}
+	expires, err = access.ResolveAPITokenExpiry(expires, time.Now().UTC())
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
 	}
 	repo, err := h.repository()
 	if err != nil {

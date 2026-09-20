@@ -52,12 +52,16 @@ func authorizationPolicyUpgradeMigrationDB(t *testing.T) (*pgxpool.Pool, *pgxpoo
 	if _, err := provider.UpTo(ctx, 8); err != nil {
 		t.Fatalf("apply migrations through 008: %v", err)
 	}
-	seedAuthorizationPolicyUpgradeFixture(t, admin)
+	// Keep the pre-native evidence rows on the legacy side of the upgrade,
+	// while inserting the seal after migration 022 has added its immutable
+	// evidence columns. Migration 022 must never rewrite a historical seal.
+	seedAuthorizationPolicyUpgradeFixturePrefix(t, admin)
 	// The supported upgrade boundary applies the pending Goose migration and
 	// then reconciles cross-capability role policy before runtime starts.
 	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
 		t.Fatalf("apply migrations 009-010 and product role policy: %v", err)
 	}
+	seedAuthorizationPolicyUpgradeFixtureEvidence(t, admin, `{"roleBindings":{"binding-owner":{"id":"binding-owner","name":"Existing owner","role":"owner","subject":{"kind":"principal","principalId":"70000000-0000-0000-0000-000000000001"}}}}`)
 	runtimeDB, err := pgxpool.New(ctx, database.URL(runtime))
 	if err != nil {
 		t.Fatal(err)

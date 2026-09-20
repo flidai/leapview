@@ -61,18 +61,21 @@ type qualificationRecoveryOptions struct {
 }
 
 type qualificationRecoveryReport struct {
-	SchemaVersion int                          `json:"schemaVersion"`
-	Result        string                       `json:"result"`
-	Stage         string                       `json:"stage"`
-	Image         string                       `json:"image"`
-	Phases        []qualificationPhaseEvidence `json:"phases"`
-	Assertions    struct {
-		ManagedUpload        bool `json:"managedUpload"`
-		ReleaseFinalization  bool `json:"releaseFinalization"`
-		DeploymentActivation bool `json:"deploymentActivation"`
-		RefreshRecovery      bool `json:"refreshRecovery"`
-		QueryStreamReconnect bool `json:"queryStreamReconnect"`
-		BoundedDisk          bool `json:"boundedDisk"`
+	SchemaVersion      int                          `json:"schemaVersion"`
+	Result             string                       `json:"result"`
+	Stage              string                       `json:"stage"`
+	Image              string                       `json:"image"`
+	ActiveTargetID     string                       `json:"activeTargetId"`
+	ActiveGenerationID string                       `json:"activeGenerationId"`
+	Phases             []qualificationPhaseEvidence `json:"phases"`
+	Assertions         struct {
+		ManagedUpload         bool `json:"managedUpload"`
+		ReleaseFinalization   bool `json:"releaseFinalization"`
+		DeploymentActivation  bool `json:"deploymentActivation"`
+		RefreshRecovery       bool `json:"refreshRecovery"`
+		QueryStreamReconnect  bool `json:"queryStreamReconnect"`
+		BoundedDisk           bool `json:"boundedDisk"`
+		FreshOperatorRollback bool `json:"freshOperatorRollback"`
 	} `json:"assertions"`
 	BoundedState struct {
 		DiskBeforeKiB        int64 `json:"diskBeforeKiB"`
@@ -562,7 +565,27 @@ func (c *Controller) runQualificationRecovery(
 	if err := c.clearQualificationActivationBarrier(ctx, options.ContainerID); err != nil {
 		return report, err
 	}
-
+	if err := phases.Finish(nil); err != nil {
+		return report, err
+	}
+	report.Stage = "fresh operator delivery discovery and rollback"
+	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
+	discoveryEvidence, err := runQualificationFreshOperatorDeliveryRecovery(ctx, client, apiRoot, options, deploymentCandidate, pendingPublication, workDir)
+	if err != nil {
+		return report, err
+	}
+	if err := writeQualificationJSON(filepath.Join(options.EvidenceDir, "recovery-delivery-discovery.json"), discoveryEvidence); err != nil {
+		return report, err
+	}
+	if discoveryEvidence.PostRollbackOperator.ActiveGeneration == nil {
+		return report, fmt.Errorf("post-rollback operator snapshot has no active generation")
+	}
+	report.ActiveTargetID = strings.TrimSpace(discoveryEvidence.PostRollbackOperator.TargetId)
+	report.ActiveGenerationID = strings.TrimSpace(*discoveryEvidence.PostRollbackOperator.ActiveGeneration)
+	if report.ActiveTargetID == "" || report.ActiveGenerationID == "" {
+		return report, fmt.Errorf("post-rollback operator snapshot has incomplete active pointer evidence")
+	}
+	report.Assertions.FreshOperatorRollback = true
 	if err := phases.Finish(nil); err != nil {
 		return report, err
 	}

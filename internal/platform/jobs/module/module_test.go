@@ -58,6 +58,23 @@ func TestHandlerExecutionLeaseTimeoutOverridesModuleFallback(t *testing.T) {
 	if got := (&Module{}).riverJobTimeout(); got != river.JobTimeoutDefault {
 		t.Fatalf("default River job timeout = %s, want library default", got)
 	}
+	longRunning, err := m.riverWorkerTiming(jobs.HandlerFunc{JobKind: "release.finalize"})
+	if err != nil || longRunning.executionTimeout != 24*time.Hour || longRunning.rescueAfter != 25*time.Hour {
+		t.Fatalf("long-running worker timing = %#v, %v; want 24h execution and 25h rescue", longRunning, err)
+	}
+	approval, err := m.riverWorkerTiming(jobs.HandlerFunc{
+		JobKind: approvalActivationKind, ExecutionLeaseTimeout: time.Minute,
+	})
+	if err != nil || approval.executionTimeout != approvalActivationRescueAfter || approval.rescueAfter != approvalActivationRescueAfter {
+		t.Fatalf("approval worker timing = %#v, %v; want 2m execution/rescue independent of 1m lease", approval, err)
+	}
+	if _, err := m.riverWorkerTiming(jobs.HandlerFunc{JobKind: approvalActivationKind}); err == nil {
+		t.Fatal("approval worker without a bounded execution lease was accepted")
+	}
+	defaults, err := (&Module{}).riverWorkerTiming(jobs.HandlerFunc{JobKind: "release.finalize"})
+	if err != nil || defaults.executionTimeout != river.JobTimeoutDefault || defaults.rescueAfter != riverDefaultRescueAfter {
+		t.Fatalf("default worker timing = %#v, %v; want River's 1m execution and 1h rescue defaults", defaults, err)
+	}
 }
 
 func TestRiverPostgreSQL18ExecutionAndProductHistory(t *testing.T) {

@@ -79,6 +79,21 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 	if err != nil {
 		return SnapshotSeal{}, fmt.Errorf("%w: qualification evidence required", ErrInvalid)
 	}
+	resolvedInputs := []byte(`{}`)
+	if len(in.ResolvedInputs) > 0 && strings.TrimSpace(string(in.ResolvedInputs)) != "{}" {
+		resolvedInputs, err = canonicalObject(in.ResolvedInputs, maxEvidence, true)
+		if err != nil {
+			return SnapshotSeal{}, fmt.Errorf("%w: resolved input evidence is invalid", ErrInvalid)
+		}
+		if in.ResolvedInputsDigest == "" {
+			return SnapshotSeal{}, fmt.Errorf("%w: resolved input evidence digest is required", ErrInvalid)
+		}
+		if _, err := digest(in.ResolvedInputsDigest, "resolved input evidence digest"); err != nil {
+			return SnapshotSeal{}, err
+		}
+	} else if in.ResolvedInputsDigest != "" {
+		return SnapshotSeal{}, fmt.Errorf("%w: resolved input evidence is missing", ErrInvalid)
+	}
 	at, err := loadAttempt(ctx, db, attempt)
 	if err != nil {
 		return SnapshotSeal{}, err
@@ -144,7 +159,7 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 			return SnapshotSeal{}, fmt.Errorf("%w: persisted plan is not pre-017 authorization evidence", ErrConflict)
 		}
 	}
-	err = depdb.New(db).InsertSnapshotSeal(ctx, depdb.InsertSnapshotSealParams{SealID: dbUUID(id), AttemptID: dbUUID(attempt), CandidateID: dbUUID(candidate), PhysicalPoolID: in.PhysicalPoolID, TenantDomain: in.TenantDomain, Region: in.Region, EncryptionDomain: in.EncryptionDomain, ObjectNamespace: in.ObjectNamespace, CatalogDatabase: in.CatalogDatabase, CatalogID: in.CatalogID, CatalogUuid: in.CatalogUUID, CatalogVersion: in.CatalogVersion, DucklakeSnapshotID: in.DuckLakeSnapshotID, RelationNamespace: in.RelationNamespace, RelationManifestDigest: in.RelationManifestDigest, ClosureDigest: in.ClosureDigest, ObjectRoot: in.ObjectRoot, ObjectRootDigest: in.ObjectRootDigest, ArtifactRoot: in.ArtifactRoot, ArtifactRootDigest: in.ArtifactRootDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, AuthorizationPolicyRevision: pgtype.Int8{Int64: in.AuthorizationPolicyRevision, Valid: !in.LegacyAuthorizationPolicy}, AuthorizationPolicyDigest: pgtype.Text{String: in.AuthorizationPolicyDigest, Valid: !in.LegacyAuthorizationPolicy}, RequestDigest: in.RequestDigest, PlanDigest: in.PlanDigest, CompatibilityDigest: in.CompatibilityDigest, ServingArtifactID: in.ServingArtifactID, ServingArtifactDigest: in.ServingArtifactDigest, DuckdbVersion: in.DuckDBVersion, RuntimeVersion: in.RuntimeVersion, DucklakeExtensionVersion: in.DuckLakeExtensionVersion, DucklakeSpecVersion: in.DuckLakeSpecVersion, CatalogSchemaVersion: in.CatalogSchemaVersion, QualificationEvidence: evidence})
+	err = depdb.New(db).InsertSnapshotSeal(ctx, depdb.InsertSnapshotSealParams{SealID: dbUUID(id), AttemptID: dbUUID(attempt), CandidateID: dbUUID(candidate), PhysicalPoolID: in.PhysicalPoolID, TenantDomain: in.TenantDomain, Region: in.Region, EncryptionDomain: in.EncryptionDomain, ObjectNamespace: in.ObjectNamespace, CatalogDatabase: in.CatalogDatabase, CatalogID: in.CatalogID, CatalogUuid: in.CatalogUUID, CatalogVersion: in.CatalogVersion, DucklakeSnapshotID: in.DuckLakeSnapshotID, RelationNamespace: in.RelationNamespace, RelationManifestDigest: in.RelationManifestDigest, ClosureDigest: in.ClosureDigest, ObjectRoot: in.ObjectRoot, ObjectRootDigest: in.ObjectRootDigest, ArtifactRoot: in.ArtifactRoot, ArtifactRootDigest: in.ArtifactRootDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, AuthorizationPolicyRevision: pgtype.Int8{Int64: in.AuthorizationPolicyRevision, Valid: !in.LegacyAuthorizationPolicy}, AuthorizationPolicyDigest: pgtype.Text{String: in.AuthorizationPolicyDigest, Valid: !in.LegacyAuthorizationPolicy}, RequestDigest: in.RequestDigest, PlanDigest: in.PlanDigest, CompatibilityDigest: in.CompatibilityDigest, ServingArtifactID: in.ServingArtifactID, ServingArtifactDigest: in.ServingArtifactDigest, DuckdbVersion: in.DuckDBVersion, RuntimeVersion: in.RuntimeVersion, DucklakeExtensionVersion: in.DuckLakeExtensionVersion, DucklakeSpecVersion: in.DuckLakeSpecVersion, CatalogSchemaVersion: in.CatalogSchemaVersion, QualificationEvidence: evidence, ResolvedInputs: resolvedInputs, ResolvedInputsDigest: pgtype.Text{String: in.ResolvedInputsDigest, Valid: in.ResolvedInputsDigest != ""}})
 	if err != nil {
 		return SnapshotSeal{}, err
 	}

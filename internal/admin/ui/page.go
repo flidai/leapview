@@ -17,29 +17,32 @@ import (
 )
 
 type AdminData struct {
-	CSRFToken             string
-	AuthConfigured        bool
-	AccessConfigured      bool
-	AccessStatusLabel     string
-	PrincipalCount        int
-	GroupCount            int
-	BindingCount          int
-	RoleCount             int
-	Principals            []AdminPrincipal
-	SelectedPrincipal     *AdminPrincipal
-	Groups                []AdminGroup
-	SelectedGroup         *AdminGroup
-	Agent                 AdminAgentData
-	Storage               AdminStorageData
-	QueryHistory          AdminQueryHistoryData
-	Publications          []AdminPublication
-	CanManagePublications bool
-	AgentConfigCommand    uicommand.Binding
-	PublicationCommands   map[string]uicommand.Binding
-	ProductCommands       map[string]uicommand.Binding
-	Profile               AdminProfile
-	ListFilter            string
-	ListQuery             string
+	CSRFToken                 string
+	AuthConfigured            bool
+	AccessConfigured          bool
+	AccessStatusLabel         string
+	PrincipalCount            int
+	GroupCount                int
+	BindingCount              int
+	RoleCount                 int
+	Principals                []AdminPrincipal
+	SelectedPrincipal         *AdminPrincipal
+	Groups                    []AdminGroup
+	SelectedGroup             *AdminGroup
+	Agent                     AdminAgentData
+	Storage                   AdminStorageData
+	QueryHistory              AdminQueryHistoryData
+	Publications              []AdminPublication
+	CanManagePublications     bool
+	Delivery                  *AdminDeliveryData
+	DeliveryError             string
+	DeliveryRollbackOperation string
+	AgentConfigCommand        uicommand.Binding
+	PublicationCommands       map[string]uicommand.Binding
+	ProductCommands           map[string]uicommand.Binding
+	Profile                   AdminProfile
+	ListFilter                string
+	ListQuery                 string
 }
 
 type AdminProfile struct {
@@ -200,13 +203,30 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 		adminAttrs = append(adminAttrs,
 			g.Attr("data-on:lv-product-settings-command", "$productSettingsCommand = evt.detail; evt.detail.action == 'refresh' ? ("+productRefresh+") : ("+productMutation+")"),
 		)
+		if active == "authentication" {
+			platformCommands := map[string]uicommand.Binding{
+				"grant_platform_administrator":  accessgen.GenUIActionGrantPlatformAdministrator(),
+				"revoke_platform_administrator": accessgen.GenUIActionRevokePlatformAdministrator(),
+			}
+			platformMutation := uiactions.CommandPostSwitchWithRevision(
+				"evt.detail.action", platformCommands, "/admin/product-settings/command?section=authentication",
+				`'"' + $productSettings.authentication.platformAdministrationRevision + '"'`, "productSettingsCommand",
+			)
+			adminAttrs = append(adminAttrs,
+				g.Attr("data-on:lv-platform-administrator-command", "$productSettingsCommand = evt.detail; "+platformMutation),
+			)
+		}
 	}
 	if active == "service-accounts" {
 		serviceAccountCommands := map[string]uicommand.Binding{
 			"create":        accessgen.GenUIActionCreateServicePrincipal(),
 			"delete":        accessgen.GenUIActionDeleteServicePrincipal(),
+			"disable":       accessgen.GenUIActionDisableServicePrincipal(),
+			"enable":        accessgen.GenUIActionEnableServicePrincipal(),
 			"create_secret": accessgen.GenUIActionCreateServicePrincipalSecret(),
 			"revoke_secret": accessgen.GenUIActionRevokeServicePrincipalSecret(),
+			"rotate_secret": accessgen.GenUIActionRotateServicePrincipalSecret(),
+			"revoke_all":    accessgen.GenUIActionRevokeAllServicePrincipalCredentials(),
 		}
 		serviceAccountMutation := uiactions.CommandPostSwitch("evt.detail.action", serviceAccountCommands, "/admin/service-accounts/command", "adminServiceAccountCommand")
 		serviceAccountSelect := uiactions.QueryPost("/admin/service-accounts/command", "adminServiceAccountCommand")
@@ -241,6 +261,12 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 			g.Attr("data-on:lv-access-admin-command", "$adminAccessCommand = evt.detail; $adminAccess.loading = true; $adminAccess.error = ''; "+uiactions.CommandPostSwitch("evt.detail.action", accessCommands, "/admin/access/command?"+commandQuery.Encode(), "adminAccessCommand")),
 		)
 	}
+	if active == "access" {
+		accessSettingsCommands := map[string]uicommand.Binding{"create": accessgen.GenUIActionCreateProjectRoleBinding(), "delete": accessgen.GenUIActionDeleteProjectRoleBinding()}
+		adminAttrs = append(adminAttrs,
+			g.Attr("data-on:lv-access-settings-command", "$adminAccessSettingsCommand = evt.detail; $adminAccessSettings.loading = true; $adminAccessSettings.error = ''; "+uiactions.CommandPostSwitch("evt.detail.action", accessSettingsCommands, "/admin/access/command?section=access", "adminAccessSettingsCommand")),
+		)
+	}
 	if active == "audit" {
 		adminAttrs = append(adminAttrs,
 			g.Attr("data-on:lv-audit-log-command", "$adminAuditLogCommand = evt.detail; "+uiactions.QueryPost("/admin/audit/command", "adminAuditLogCommand", "adminAuditLog")),
@@ -259,6 +285,11 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	if active == "publications" {
 		adminAttrs = append(adminAttrs,
 			g.Attr("data-on:lv-publication-command", "$adminPublicationCommand = evt.detail; "+uiactions.CommandPostSwitchWithRevision("evt.detail.action", data.PublicationCommands, "/admin/publications/command", `'"' + $adminPublicationCommand.expectedRevision + '"'`, "adminPublicationCommand")),
+		)
+	}
+	if active == "delivery" {
+		adminAttrs = append(adminAttrs,
+			g.Attr("data-on:lv-delivery-rollback", ""+uiactions.CommandPostOperation(data.DeliveryRollbackOperation, "'/admin/delivery/command?generation=' + encodeURIComponent(evt.detail.generation)")),
 		)
 	}
 	if active == "principals" || active == "groups" {
@@ -387,6 +418,9 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		page.HeaderDetail = "Organize users and assign access collectively."
 		page.ListFilterOptions = uisignals.OptionalSlice(adminGroupProviders(data.Groups))
 		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{{Title: "Groups", Table: uisignals.Pointer(adminGroupsGrid(filterAdminGroups(data.Groups, data.ListQuery, data.ListFilter)))}})
+	case "access":
+		page.HeaderTitle = "Access settings"
+		page.HeaderDetail = "Manage direct project role bindings for the active project."
 	case "service-accounts":
 		page.HeaderTitle = "Service accounts"
 		page.HeaderDetail = "Manage machine identities and credentials."
@@ -461,6 +495,30 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		if len(data.Publications) == 0 {
 			page.Empty = uisignals.Pointer("No dashboard publications have been configured.")
 		}
+	case "delivery":
+		page.HeaderTitle = "Delivery"
+		page.HeaderDetail = "Inspect the server-bound serving state and recover retained generations."
+		if strings.TrimSpace(data.DeliveryError) != "" {
+			page.Empty = uisignals.Pointer(data.DeliveryError)
+			return page
+		}
+		if data.Delivery == nil {
+			page.Empty = uisignals.Pointer("Delivery status is unavailable.")
+			return page
+		}
+		page.Metrics = uisignals.OptionalSlice([]uisignals.AdminMetricSignal{
+			{Label: "Active generation", Value: optionalDeploymentValue(data.Delivery.Operator.ActiveGeneration)},
+			{Label: "Target revision", Value: fmt.Sprint(data.Delivery.Operator.TargetRevision)},
+			{Label: "Status", Value: deliveryStatusLabel(data.Delivery.Operator)},
+		})
+		if data.Delivery.Operator.Degraded {
+			page.Empty = uisignals.Pointer("Delivery is degraded. Some target-owned evidence is unavailable; do not treat missing rows as proof that no delivery occurred.")
+		}
+		page.Sections = uisignals.OptionalSlice([]uisignals.AdminContentSectionSignal{
+			{Title: "Operator snapshot", Facts: uisignals.Pointer(deliveryOperatorFacts(data.Delivery.Operator))},
+			{Title: "Publication history", Table: uisignals.Pointer(deliveryPublicationTable(data.Delivery.Publications, data.Delivery.Operator.Degraded))},
+			{Title: "Retained generations", Table: uisignals.Pointer(deliveryGenerationTable(data.Delivery.RetainedGenerations, data.DeliveryRollbackOperation, data.Delivery.Operator.Degraded))},
+		})
 	default:
 		page.HeaderTitle = "Profile"
 	}
@@ -992,64 +1050,6 @@ func adminQueryMetrics(events []AdminQueryEvent) []uisignals.AdminMetricSignal {
 		{Label: "Recent events", Value: fmt.Sprint(len(events))},
 		{Label: "Failures", Value: fmt.Sprint(failures)},
 		{Label: "Average duration", Value: fmt.Sprintf("%d ms", avg)},
-	}
-}
-
-func adminGroupHref(groupID string) string {
-	return "/admin/groups/" + url.PathEscape(groupID)
-}
-
-func adminPrincipalHref(principalID string) string {
-	return "/admin/principals/" + url.PathEscape(principalID)
-}
-
-func adminPageTitle(active string) string {
-	switch active {
-	case "api-tokens":
-		return "API tokens"
-	case "security":
-		return "Security & sessions"
-	case "general":
-		return "General"
-	case "principals":
-		return "Principals"
-	case "profile":
-		return "Profile"
-	case "principal-detail":
-		return "Principal"
-	case "groups":
-		return "Groups"
-	case "group-detail":
-		return "Group"
-	case "service-accounts":
-		return "Service accounts"
-	case "authentication":
-		return "Authentication"
-	case "agent":
-		return "Agent"
-	case "storage":
-		return "Storage"
-	case "storage-detail":
-		return "Storage table"
-	case "queries":
-		return "Query history"
-	case "audit":
-		return "Audit log"
-	case "system":
-		return "System"
-	case "publications":
-		return "Publications"
-	default:
-		return "Profile"
-	}
-}
-
-func normalizeAdminSection(active string) string {
-	switch strings.TrimSpace(active) {
-	case "profile", "security", "api-tokens", "general", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "storage-detail", "queries", "audit", "system", "publications":
-		return strings.TrimSpace(active)
-	default:
-		return "profile"
 	}
 }
 

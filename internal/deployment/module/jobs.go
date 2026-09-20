@@ -24,6 +24,7 @@ type ActivateJob struct {
 	ApprovalRevision         int64
 	IdempotencyKey           string
 	Bootstrap                bool
+	NativePublication        bool
 	Rollback                 bool
 	ExpectedBaseGenerationID string
 	ExpectedTargetRevision   int64
@@ -185,6 +186,9 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	}
 	logger.InfoContext(ctx, "deployment activation loaded pending row", "deployment", payload.Deployment, "status", pending.Status, "generation", pending.GenerationID)
 	releaseID := ""
+	if payload.Bootstrap && payload.NativePublication {
+		return deployment.ErrApprovalConflict
+	}
 	if payload.Bootstrap {
 		if !m.protected || m.bootstrapPolicies == nil || m.authorizeBootstrap == nil || payload.Credential.CredentialClass != deployment.CredentialClassAPIToken || payload.Credential.PrincipalID != payload.Actor {
 			return deployment.ErrApprovalRequired
@@ -197,6 +201,11 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 			return deployment.ErrBootstrapPolicyConflict
 		}
 		if err := m.authorizeBootstrap(ctx, policy); err != nil {
+			m.appendEvent(ctx, payload.Deployment, "deployment.authorization_failed", "failed")
+			return err
+		}
+	} else if payload.NativePublication {
+		if err := m.validateNativeUnprotectedActivation(ctx, payload, pending); err != nil {
 			m.appendEvent(ctx, payload.Deployment, "deployment.authorization_failed", "failed")
 			return err
 		}
@@ -282,6 +291,50 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 		row,
 	)
 	return err
+}
+
+// validateNativeUnprotectedActivation distinguishes server-created native
+// publication jobs from the legacy release workflow without trusting the
+// durable job payload as an approval bypass. The worker reloads every
+// immutable identity edge and only accepts a plan that still proves approval
+// was not required when the native publication workflow was recorded.
+func (m *Module) validateNativeUnprotectedActivation(ctx context.Context, payload ActivateJob, pending apiadapter.Deployment) error {
+	if m == nil || m.persistence == nil || m.persistence.Repository == nil {
+		return deployment.ErrApprovalRequired
+	}
+	repository := m.persistence.Repository
+	publication, err := repository.Publication(ctx, payload.Deployment)
+	if err != nil {
+		return err
+	}
+	generation, err := repository.Generation(ctx, publication.GenerationID)
+	if err != nil {
+		return err
+	}
+	plan, err := repository.Plan(ctx, generation.PlanID)
+	if err != nil {
+		return err
+	}
+	target, err := repository.Target(ctx, publication.TargetID)
+	if err != nil {
+		return err
+	}
+	if publication.PublicationID != pending.ID ||
+		publication.GenerationID != pending.GenerationID ||
+		publication.ActorID != payload.Actor ||
+		publication.RequestDigest != pending.RequestDigest ||
+		generation.TargetID != publication.TargetID ||
+		plan.TargetID != publication.TargetID ||
+		target.TargetID != publication.TargetID ||
+		target.ProjectID != payload.Project ||
+		target.ProjectID != pending.Project ||
+		target.Environment != pending.Environment {
+		return deployment.ErrApprovalConflict
+	}
+	if plan.ApprovalRequired {
+		return deployment.ErrApprovalRequired
+	}
+	return nil
 }
 
 func (m *Module) appendEvent(ctx context.Context, deploymentID, event, status string) {

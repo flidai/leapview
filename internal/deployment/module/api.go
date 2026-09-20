@@ -197,6 +197,30 @@ func (h deploymentAPIGenHandler) GetDeliveryOperatorSnapshot(w http.ResponseWrit
 	h.Module.GetDeliveryOperatorSnapshot(w, r, project)
 }
 
+func (h deploymentAPIGenHandler) ListDeliveryPublications(w http.ResponseWriter, r *http.Request, project string, limit *int32, pageToken *string) {
+	h.Module.ListDeliveryPublications(w, r, project, limit, pageToken)
+}
+
+func (h deploymentAPIGenHandler) ListRetainedDeliveryGenerations(w http.ResponseWriter, r *http.Request, project string, limit *int32, pageToken *string) {
+	h.Module.ListRetainedDeliveryGenerations(w, r, project, limit, pageToken)
+}
+
+func (h deploymentAPIGenHandler) ListDeliveryPlans(w http.ResponseWriter, r *http.Request, project string, limit *int32, pageToken *string) {
+	h.Module.ListDeliveryPlans(w, r, project, limit, pageToken)
+}
+
+func (h deploymentAPIGenHandler) ListDeliveryBuildAttempts(w http.ResponseWriter, r *http.Request, project string, limit *int32, pageToken *string) {
+	h.Module.ListDeliveryBuildAttempts(w, r, project, limit, pageToken)
+}
+
+func (h deploymentAPIGenHandler) ListDeliveryCandidates(w http.ResponseWriter, r *http.Request, project string, limit *int32, pageToken *string) {
+	h.Module.ListDeliveryCandidates(w, r, project, limit, pageToken)
+}
+
+func (h deploymentAPIGenHandler) ListDeliveryApprovalRequests(w http.ResponseWriter, r *http.Request, project string, limit *int32, pageToken *string) {
+	h.Module.ListDeliveryApprovalRequests(w, r, project, limit, pageToken)
+}
+
 func (m *Module) principal(r *http.Request) (deploymenthttp.Principal, bool) {
 	if m == nil || m.handler == nil {
 		return deploymenthttp.Principal{}, false
@@ -430,6 +454,13 @@ func nativeApprovalResponse(project, environment string, approval nativepostgres
 			at := approval.LatestDecision.DecidedAt.UTC().Format(time.RFC3339Nano)
 			response.RevokedAt = &at
 		}
+	}
+	// An approved request ceases to be effective at its immutable expiry, but
+	// retain the decision actor/timestamp above as incident evidence. Denied
+	// and revoked decisions remain those terminal lifecycle states.
+	if !approval.ExpiresAt.IsZero() && !approval.ExpiresAt.After(time.Now().UTC()) &&
+		(response.Status == "pending" || response.Status == "approved") {
+		response.Status = "expired"
 	}
 	return response
 }

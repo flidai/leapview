@@ -236,6 +236,7 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 			Items: filterItems([]conditionalItem{
 				{allowed: allowed.ManageIdentity, item: Item{ID: "principals", Label: "Principals", Href: "/admin/principals", Icon: "users"}},
 				{allowed: allowed.ManageIdentity, item: Item{ID: "groups", Label: "Groups", Href: "/admin/groups", Icon: "users-round"}},
+				{allowed: allowed.ManagePlatform, item: Item{ID: "access", Label: "Access settings", Href: "/admin/access", Icon: "shield-check"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "service-accounts", Label: "Service accounts", Href: "/admin/service-accounts", Icon: "bot"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "authentication", Label: "Authentication", Href: "/admin/authentication", Icon: "system"}},
 			}),
@@ -245,6 +246,7 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 			Items: filterItems([]conditionalItem{
 				{allowed: allowed.ManagePlatform, item: Item{ID: "storage", Label: "Storage", Href: "/admin/storage", Icon: "database"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "publications", Label: "Publications", Href: "/admin/publications", Icon: "globe"}},
+				{allowed: allowed.ManagePlatform, item: Item{ID: "delivery", Label: "Delivery", Href: "/admin/delivery", Icon: "rocket"}},
 			}),
 		},
 		{

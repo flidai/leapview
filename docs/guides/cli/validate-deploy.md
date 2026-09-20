@@ -21,7 +21,7 @@ Before authoring:
 
 1. Confirm the intended target is healthy and reachable from both the CLI and browser.
 2. Confirm the source root is `dashboards/` (or the repository directory containing the resource YAML files).
-3. Ask the operator to provision logical connection bindings and representative access grants.
+3. Ask the operator to provision logical connection bindings and ensure the project access declaration contains representative grants; those grants are compiled into the delivered serving generation.
 4. Install a CLI release compatible with the target's advertised API contract.
 5. Keep the source root and target unchanged from login through publication.
 

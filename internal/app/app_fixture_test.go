@@ -170,6 +170,22 @@ func testAPIToken(t *testing.T, ctx context.Context, store *platform.Store, prin
 	return secret
 }
 
+// testPlatformAPIToken issues the explicit attenuation required for a bearer
+// credential to exercise platform-administrator routes. A durable platform
+// role alone must not turn a dynamic PAT into an administrator credential.
+func testPlatformAPIToken(t *testing.T, ctx context.Context, store *platform.Store, principalID, name string) string {
+	t.Helper()
+	secret, _, err := testAccessRepository(store).CreateAPITokenWithMetadata(ctx, access.APITokenInput{
+		PrincipalID:  principalID,
+		Name:         name,
+		Capabilities: []access.Capability{access.CapabilityProjectAdmin},
+	})
+	if err != nil {
+		t.Fatalf("create platform api token: %v", err)
+	}
+	return secret
+}
+
 func assertAPIError(t *testing.T, rec *httptest.ResponseRecorder, wantCode int, messageContains string) {
 	t.Helper()
 	if rec.Code != wantCode {

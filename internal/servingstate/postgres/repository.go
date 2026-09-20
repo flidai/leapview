@@ -381,25 +381,6 @@ func readBundle(ctx context.Context, db DBTX, generation string) (Bundle, error)
 	return bundleFromGetRow(row)
 }
 
-func bundleFromGetRow(row servingdb.GetBundleRow) (Bundle, error) {
-	pid, err := projectgraph.NewResourceID(row.ProjectID)
-	if err != nil {
-		return Bundle{}, err
-	}
-	bundle := Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}
-	if row.CommittedAt.Valid {
-		bundle.ActivatedAt = row.CommittedAt.Time.UTC().Format(time.RFC3339Nano)
-	}
-	return bundle, nil
-}
-
-func bundleFromActiveRow(row servingdb.GetActiveBundleRow) (Bundle, error) {
-	pid, err := projectgraph.NewResourceID(row.ProjectID)
-	if err != nil {
-		return Bundle{}, err
-	}
-	return Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano), ActivatedAt: row.CommittedAt.Time.UTC().Format(time.RFC3339Nano)}, nil
-}
 func bundleToState(b Bundle, status servingstate.Status) servingstate.State {
 	return servingstate.State{ID: servingstate.ID(b.GenerationID), ProjectID: b.ProjectID, Environment: b.Environment, Status: status, Source: servingstate.SourcePublish, Digest: b.ArtifactDigest, ManifestJSON: b.ManifestJSON, ProjectDigest: b.ProjectDigest, AccessPolicyJSON: b.AccessPolicyJSON, DashboardPublicationsJSON: b.DashboardPublicationsJSON, DashboardAppearancesJSON: b.DashboardAppearancesJSON, CreatedBy: b.CreatedBy, CreatedAt: b.CreatedAt, ActivatedAt: b.ActivatedAt, DuckLakeSnapshotID: b.DuckLakeSnapshotID}
 }

@@ -121,6 +121,6 @@ func (r *Repository) GetServicePrincipalSecret(ctx context.Context, principalID,
 func mapServicePrincipalSecret(row platformdb.ServicePrincipalSecret) access.ServicePrincipalSecret {
 	return access.ServicePrincipalSecret{
 		ID: row.ID, ServicePrincipalID: row.ServicePrincipalID, Name: row.Name,
-		ExpiresAt: row.ExpiresAt.String, CreatedAt: row.CreatedAt, RevokedAt: row.RevokedAt.String,
+		ExpiresAt: row.ExpiresAt.String, CreatedAt: row.CreatedAt, LastUsedAt: row.LastUsedAt.String, RevokedAt: row.RevokedAt.String,
 	}
 }
