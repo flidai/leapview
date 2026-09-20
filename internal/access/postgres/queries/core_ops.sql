@@ -43,6 +43,17 @@ SELECT EXISTS (
 -- name: LockPlatformRoleAuthority :exec
 SELECT pg_advisory_xact_lock(hashtextextended('leapview.platform-role-authority', 0));
 
+-- name: CountUsablePlatformAdministrators :one
+SELECT count(DISTINCT p.id)
+FROM access.platform_role_binding b
+JOIN access.principal p ON p.id = b.principal_id
+WHERE b.role = 'platform_admin'
+  AND b.revoked_at IS NULL
+  AND p.status = 'active'
+  AND p.revoked_at IS NULL
+  AND p.disabled_at IS NULL
+  AND p.blocked_at IS NULL;
+
 -- name: ListPlatformAdministrators :many
 SELECT b.id AS binding_id,
        b.role,
@@ -335,6 +346,22 @@ WHERE principal_id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL;
 UPDATE access.service_principal_secret SET revoked_at = clock_timestamp()
 WHERE service_principal_id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL;
 
+-- Desktop authorization codes are bearer grants, not durable sessions. Mark
+-- every outstanding code consumed so a code issued before incident response
+-- cannot mint a new desktop session afterwards.
+-- name: RevokePrincipalDesktopAuthorizationCodes :exec
+UPDATE access.desktop_authorization_code
+SET consumed_at = clock_timestamp()
+WHERE principal_id = sqlc.arg(principal_id)::uuid AND consumed_at IS NULL;
+
+-- An approved device authorization is an outstanding bearer grant until it is
+-- exchanged. Move it to the terminal consumed state so it cannot mint an
+-- authoring credential after revoke-all.
+-- name: RevokePrincipalApprovedDeviceAuthorizations :exec
+UPDATE access.device_authorization
+SET status = 'consumed', consumed_at = clock_timestamp()
+WHERE principal_id = sqlc.arg(principal_id)::uuid AND status = 'approved';
+
 -- name: RevokePrincipalGroups :exec
 UPDATE access.principal_group SET revoked_at = clock_timestamp()
 WHERE principal_id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL;
@@ -529,6 +556,13 @@ SELECT id, principal_id, name, description, capabilities, expires_at, created_at
 FROM access.api_token
 WHERE id = sqlc.arg(id)::uuid;
 
+-- name: LockAPITokenForRotation :one
+SELECT id, principal_id, name, description, capabilities, expires_at, created_at, last_used_at, revoked_at
+FROM access.api_token
+WHERE id = sqlc.arg(id)::uuid
+  AND principal_id = sqlc.arg(principal_id)::uuid
+FOR UPDATE;
+
 -- name: FindAPITokenByFingerprint :one
 SELECT t.id, t.verifier
 FROM access.api_token t
@@ -538,9 +572,12 @@ WHERE t.token_fingerprint = sqlc.arg(token_fingerprint)
   AND p.status = 'active' AND p.revoked_at IS NULL
   AND p.disabled_at IS NULL AND p.blocked_at IS NULL;
 
--- name: TouchAPIToken :exec
+-- Last-used evidence is best effort and coalesced. Successful authentication
+-- never waits on a write more frequently than once per minute per token.
+-- name: TouchAPIToken :execresult
 UPDATE access.api_token SET last_used_at = clock_timestamp()
-WHERE id = sqlc.arg(id)::uuid;
+WHERE id = sqlc.arg(id)::uuid
+  AND (last_used_at IS NULL OR last_used_at < clock_timestamp() - sqlc.arg(min_interval)::interval);
 
 -- name: ListAPITokenIDs :many
 SELECT id FROM access.api_token

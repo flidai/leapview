@@ -141,6 +141,7 @@ WHERE EXISTS (
     SELECT 1 FROM access.principal
     WHERE id = sqlc.arg(principal_id)::uuid AND status = 'active'
       AND revoked_at IS NULL AND disabled_at IS NULL AND blocked_at IS NULL
+    FOR SHARE
 );
 
 -- name: FindAuthorizationCode :one

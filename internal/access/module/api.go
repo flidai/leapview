@@ -21,6 +21,8 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.ListCurrentAPITokens(w, r)
 	case "createCurrentAPIToken":
 		m.handler.CreateCurrentAPIToken(w, r)
+	case "rotateCurrentAPIToken":
+		m.handler.RotateCurrentAPIToken(w, r)
 	case "revokeCurrentAPIToken":
 		m.handler.RevokeCurrentAPIToken(w, r)
 	case "listCurrentSessions":
@@ -61,6 +63,8 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.ListPrincipalSessions(w, r)
 	case "revokePrincipalSession":
 		m.handler.RevokePrincipalSession(w, r)
+	case "revokeAllPrincipalCredentials":
+		m.handler.RevokeAllPrincipalCredentials(w, r)
 	case "listPlatformAdministrators":
 		m.handler.ListPlatformAdministrators(w, r)
 	case "grantPlatformAdministrator":

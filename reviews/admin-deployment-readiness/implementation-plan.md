@@ -26,6 +26,11 @@ FAI-939, FAI-935, FAI-941, FAI-954,
 and FAI-955 need final verification/status updates; FAI-943 remains open until
 the integrated exact candidate passes `task ci:full`, generated checks,
 browser/API journeys, and installed-candidate Docker/Compose qualification.
+FAI-997 covers explicit, request-attenuated PAT issuance and atomic rotation;
+FAI-998 covers audited, all-class administrator incident revocation. Both are
+implemented and await the same exact-candidate gate. Session-only bulk
+revocation is being made set-based so its separate Settings action covers more
+than a single inventory page.
 
 ## Linear delivery breakdown
 
@@ -47,6 +52,8 @@ criteria can be scheduled independently:
 | [FAI-941](https://linear.app/flid/issue/FAI-941/implement-and-drill-platform-administrator-lockout-recovery) | Platform-administrator lockout recovery | Release blocker | 4–7 days | FAI-929 |
 | [FAI-942](https://linear.app/flid/issue/FAI-942/refine-access-and-delivery-administrator-ux) | Access and Delivery UX refinement | Nice to have | 3–5 days | FAI-931 |
 | [FAI-943](https://linear.app/flid/issue/FAI-943/run-final-task-cifull-deployment-readiness-qualification) | Final `task ci:full` qualification | Release blocker | 1 day if green; 2–5 days defect reserve | FAI-929 |
+| [FAI-997](https://linear.app/flid/issue/FAI-997/close-personal-api-token-rotation-and-issuance-gaps) | PAT issuance attenuation, explicit scope, atomic rotation, and observable touch failures | Release blocker | 2–4 days | FAI-927 |
+| [FAI-998](https://linear.app/flid/issue/FAI-998/add-all-class-administrator-incident-revocation) | All-class, transactional administrator incident revocation | Release blocker | 2–4 days | FAI-927 |
 
 The planned execution order was FAI-932/933, FAI-934/935, and FAI-936 in
 parallel; then FAI-939/941 and FAI-937; finally FAI-943. The optional FAI-938,

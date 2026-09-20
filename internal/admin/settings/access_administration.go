@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 )
 
 type AccessAdministrationSignal struct {
@@ -27,12 +28,13 @@ type AccessAdministrationSignal struct {
 }
 
 type AccessPrincipalCapabilitiesSignal struct {
-	CanUpdateProfile  bool `json:"canUpdateProfile"`
-	CanResetPassword  bool `json:"canResetPassword"`
-	CanBlock          bool `json:"canBlock"`
-	CanUnblock        bool `json:"canUnblock"`
-	CanDelete         bool `json:"canDelete"`
-	CanManageSessions bool `json:"canManageSessions"`
+	CanUpdateProfile        bool `json:"canUpdateProfile"`
+	CanResetPassword        bool `json:"canResetPassword"`
+	CanBlock                bool `json:"canBlock"`
+	CanUnblock              bool `json:"canUnblock"`
+	CanDelete               bool `json:"canDelete"`
+	CanManageSessions       bool `json:"canManageSessions"`
+	CanRevokeAllCredentials bool `json:"canRevokeAllCredentials"`
 }
 
 type AccessPrincipalSignal struct {
@@ -131,6 +133,21 @@ type AccessAdministrationResult struct {
 	Deleted             bool
 }
 
+// UserCredentialRevocationRepository is the narrow incident-response write
+// surface consumed by Settings. Implementations must revoke every credential
+// class in one transaction; the command layer supplies the audit boundary.
+type UserCredentialRevocationRepository interface {
+	RevokeAllUserCredentials(context.Context, string) error
+}
+
+// SessionRevocationRepository is the set-based session invalidation boundary
+// used by Settings. Implementations must revoke all active sessions for the
+// principal in one database operation; callers must not page through
+// ListSessions for this command.
+type SessionRevocationRepository interface {
+	RevokeSessionsForPrincipal(context.Context, string) error
+}
+
 func NormalizeAccessAdministrationCommand(command AccessAdministrationCommand) AccessAdministrationCommand {
 	command.Action = strings.TrimSpace(command.Action)
 	command.PrincipalID = strings.TrimSpace(command.PrincipalID)
@@ -220,7 +237,7 @@ func LoadAccessAdministration(ctx context.Context, repository access.Repository,
 			Capabilities: AccessPrincipalCapabilitiesSignal{
 				CanUpdateProfile: isUser && local, CanResetPassword: isUser && management.HasLocalPassword,
 				CanBlock: isUser && !isSelf && principal.BlockedAt == "" && principal.DisabledAt == "", CanUnblock: isUser && principal.BlockedAt != "" && principal.DisabledAt == "",
-				CanDelete: isUser && !isSelf && local, CanManageSessions: isUser,
+				CanDelete: isUser && !isSelf && local, CanManageSessions: isUser, CanRevokeAllCredentials: isUser && !isSelf,
 			},
 		}
 		if row.Groups == nil {
@@ -402,19 +419,35 @@ func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Rep
 			if command.PrincipalID == "" {
 				return event, errors.New("principal is required")
 			}
-			sessions, err := tx.ListSessions(ctx, command.PrincipalID)
-			if err != nil {
-				return event, err
+			revoker, ok := tx.(SessionRevocationRepository)
+			if !ok {
+				return event, errors.New("bulk session revocation is unavailable")
 			}
-			for _, session := range sessions {
-				if session.RevokedAt == "" {
-					if err := tx.RevokeSessionForPrincipal(ctx, command.PrincipalID, session.ID); err != nil {
-						return event, err
-					}
-				}
-			}
+			mutationErr = revoker.RevokeSessionsForPrincipal(ctx, command.PrincipalID)
 			event.Action, event.ResourceKind, event.ResourceID = "principal.sessions.revoked", "principal", command.PrincipalID
 			result.Message = "All active sessions revoked."
+		case "revoke_all_credentials":
+			if command.PrincipalID == "" {
+				return event, errors.New("principal is required")
+			}
+			if command.PrincipalID == strings.TrimSpace(actorID) {
+				return event, errors.New("you cannot revoke your own credentials")
+			}
+			revoker, ok := tx.(UserCredentialRevocationRepository)
+			if !ok {
+				return event, errors.New("credential revocation is unavailable")
+			}
+			mutationErr = revoker.RevokeAllUserCredentials(ctx, command.PrincipalID)
+			event.Action, event.ResourceKind, event.ResourceID = "principal.credentials.revoked_all", "principal", command.PrincipalID
+			metadata, metadataErr := accessgen.EncodeGenRevokeAllPrincipalCredentialsAuditPayload(accessgen.GenSchemaPrincipalCredentialsRevokedAuditPayload{
+				ActorPrincipalId: strings.TrimSpace(actorID), TargetPrincipalId: command.PrincipalID,
+				CredentialClasses: []string{"sessions", "api_tokens", "service_secrets", "desktop_authorization_codes", "device_authorizations", "authoring_sessions", "oauth_sessions"},
+			})
+			if metadataErr != nil {
+				return event, metadataErr
+			}
+			event.MetadataJSON = metadata
+			result.Message = "All credentials revoked; the principal remains enabled."
 		case "create_group":
 			if command.DisplayName == "" {
 				return event, errors.New("group name is required")

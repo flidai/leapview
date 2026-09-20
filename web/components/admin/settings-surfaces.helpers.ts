@@ -52,6 +52,7 @@ export function principalActivityLabel(activity: AccessActivitySignal): string {
     'principal.blocked': 'blocked access',
     'principal.unblocked': 'unblocked access',
     'principal.sessions.revoked': 'revoked all sessions',
+    'principal.credentials.revoked_all': 'revoked all credentials',
   }
   return `${actor} ${labels[activity.action] || humanizeAccessValue(activity.action).toLowerCase()}`
 }

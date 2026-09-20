@@ -237,19 +237,20 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	}
 	if active == "principals" || active == "groups" || active == "principal-detail" || active == "group-detail" {
 		accessCommands := map[string]uicommand.Binding{
-			"create_principal":    accessgen.GenUIActionCreatePrincipal(),
-			"update_principal":    accessgen.GenUIActionUpdatePrincipal(),
-			"delete_principal":    accessgen.GenUIActionDeletePrincipal(),
-			"block_principal":     accessgen.GenUIActionDisablePrincipal(),
-			"unblock_principal":   accessgen.GenUIActionEnablePrincipal(),
-			"reset_password":      accessgen.GenUIActionResetPrincipalPassword(),
-			"revoke_session":      accessgen.GenUIActionRevokePrincipalSession(),
-			"revoke_all_sessions": accessgen.GenUIActionRevokePrincipalSession(),
-			"create_group":        accessgen.GenUIActionCreateGroup(),
-			"update_group":        accessgen.GenUIActionUpdateGroup(),
-			"delete_group":        accessgen.GenUIActionDeleteGroup(),
-			"add_group_member":    accessgen.GenUIActionAddGroupMember(),
-			"remove_group_member": accessgen.GenUIActionRemoveGroupMember(),
+			"create_principal":       accessgen.GenUIActionCreatePrincipal(),
+			"update_principal":       accessgen.GenUIActionUpdatePrincipal(),
+			"delete_principal":       accessgen.GenUIActionDeletePrincipal(),
+			"block_principal":        accessgen.GenUIActionDisablePrincipal(),
+			"unblock_principal":      accessgen.GenUIActionEnablePrincipal(),
+			"reset_password":         accessgen.GenUIActionResetPrincipalPassword(),
+			"revoke_session":         accessgen.GenUIActionRevokePrincipalSession(),
+			"revoke_all_sessions":    accessgen.GenUIActionRevokePrincipalSession(),
+			"revoke_all_credentials": accessgen.GenUIActionRevokeAllPrincipalCredentials(),
+			"create_group":           accessgen.GenUIActionCreateGroup(),
+			"update_group":           accessgen.GenUIActionUpdateGroup(),
+			"delete_group":           accessgen.GenUIActionDeleteGroup(),
+			"add_group_member":       accessgen.GenUIActionAddGroupMember(),
+			"remove_group_member":    accessgen.GenUIActionRemoveGroupMember(),
 		}
 		commandQuery := url.Values{"section": []string{active}}
 		if data.SelectedPrincipal != nil {

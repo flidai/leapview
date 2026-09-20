@@ -296,6 +296,69 @@ func (h Handler) ResetPrincipalPassword(w stdhttp.ResponseWriter, r *stdhttp.Req
 	}
 	writeSecretJSON(w, stdhttp.StatusOK, localPasswordResetDTO(reset))
 }
+
+// RevokeAllPrincipalCredentials is the platform-admin incident-response
+// endpoint. The repository operation is deliberately kept behind a narrow
+// capability interface so credential lifecycle ownership remains in access's
+// PostgreSQL implementation while this handler supplies authorization and
+// the durable audit envelope.
+func (h Handler) RevokeAllPrincipalCredentials(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
+	target := strings.TrimSpace(chi.URLParam(r, "principal"))
+	actor := h.currentPrincipalID(r)
+	operation := accessgen.GenCommandOperationRevokeAllPrincipalCredentials()
+	if target == "" {
+		writeCommandFailure(w, r, operation, errors.New("principal is required"))
+		return
+	}
+	if target == actor {
+		writeCommandFailure(w, r, operation, errors.New("you cannot revoke your own credentials"))
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	_, ok := repo.(interface {
+		RevokeAllUserCredentials(context.Context, string) error
+	})
+	if !ok {
+		writeCommandFailure(w, r, operation, errors.New("credential revocation is unavailable"))
+		return
+	}
+	err = executeAuditedMutation(r, repo, operation, func(tx access.Repository) (access.AuditEventInput, error) {
+		txRevoker, ok := tx.(interface {
+			RevokeAllUserCredentials(context.Context, string) error
+		})
+		if !ok {
+			return access.AuditEventInput{}, errors.New("transactional credential revocation is unavailable")
+		}
+		mutationErr := txRevoker.RevokeAllUserCredentials(r.Context(), target)
+		metadata, metadataErr := accessgen.EncodeGenRevokeAllPrincipalCredentialsAuditPayload(accessgen.GenSchemaPrincipalCredentialsRevokedAuditPayload{
+			ActorPrincipalId:  actor,
+			TargetPrincipalId: target,
+			CredentialClasses: []string{"sessions", "api_tokens", "service_secrets", "desktop_authorization_codes", "device_authorizations", "authoring_sessions", "oauth_sessions"},
+		})
+		if metadataErr != nil {
+			return access.AuditEventInput{}, metadataErr
+		}
+		audit := auditInput(r, "principal.credentials.revoked_all", actor, "principal", target, "", "success", nil)
+		audit.MetadataJSON = metadata
+		return audit, mutationErr
+	})
+	if err != nil {
+		status := statusForNotFound(err)
+		if errors.Is(err, access.ErrPlatformAdminLastAdmin) {
+			status = stdhttp.StatusConflict
+		}
+		writeAuditedMutationError(w, r, operation, err, status)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
+}
 func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !h.requirePlatformAdmin(w, r) {
 		return

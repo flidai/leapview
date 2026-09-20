@@ -56,6 +56,9 @@ func (d *APIGenDispatcher) ListCurrentAPITokens(w stdhttp.ResponseWriter, r *std
 func (d *APIGenDispatcher) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenCreateCurrentAPITokenHeaders) {
 	d.handler.CreateCurrentAPIToken(w, r)
 }
+func (d *APIGenDispatcher) RotateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenRotateCurrentAPITokenHeaders) {
+	d.handler.RotateCurrentAPIToken(w, r)
+}
 func (d *APIGenDispatcher) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
 	d.handler.RevokeCurrentAPIToken(w, r)
 }
@@ -103,6 +106,9 @@ func (d *APIGenDispatcher) ListPrincipalSessions(w stdhttp.ResponseWriter, r *st
 }
 func (d *APIGenDispatcher) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
 	d.handler.RevokePrincipalSession(w, r)
+}
+func (d *APIGenDispatcher) RevokeAllPrincipalCredentials(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
+	d.handler.RevokeAllPrincipalCredentials(w, r)
 }
 func (d *APIGenDispatcher) ListPlatformAdministrators(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListPlatformAdministratorsParams) {
 	d.handler.ListPlatformAdministrators(w, r)

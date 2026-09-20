@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminhttp "github.com/flidai/leapview/internal/admin/http"
 	"github.com/flidai/leapview/internal/admin/personalsettings"
 	"github.com/flidai/leapview/internal/admin/product"
@@ -186,6 +187,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			Repository: config.SettingsAccess, IdentityManagement: config.SettingsAccess,
 			Preferences: config.SettingsAccess,
 			Avatar:      config.PersonalAvatar, Authoring: config.AuthoringSessions,
+			CurrentCredential:            accessmodule.APICredentialFromContext,
 			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 			LocalPasswordEnabled:         config.LocalPasswordEnabled,
 		}

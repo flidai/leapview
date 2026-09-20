@@ -71,6 +71,10 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
+	if input.Capabilities == nil || len(input.Capabilities) == 0 {
+		writeJSONError(w, fmt.Errorf("at least one explicit API token capability is required"), stdhttp.StatusBadRequest)
+		return
+	}
 	var expires time.Time
 	var err error
 	if strings.TrimSpace(input.ExpiresAt) != "" {
@@ -101,11 +105,11 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			}
 			capabilities = append(capabilities, capability)
 		}
-		if h.CurrentEffectiveCapabilities == nil {
-			writeJSONError(w, fmt.Errorf("effective project capabilities are unavailable"), stdhttp.StatusBadRequest)
+		if h.RequestEffectiveCapabilities == nil {
+			writeJSONError(w, fmt.Errorf("request-effective project capabilities are unavailable"), stdhttp.StatusBadRequest)
 			return
 		}
-		effective, effectiveErr := h.CurrentEffectiveCapabilities(r.Context(), principal.ID)
+		effective, effectiveErr := h.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
 		if effectiveErr != nil {
 			writeJSONError(w, effectiveErr, stdhttp.StatusBadRequest)
 			return
@@ -127,6 +131,99 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"token": secret, "apiToken": apiTokenDTO(token)})
+}
+
+func (h Handler) RotateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	principal, ok := h.currentPrincipal(r)
+	if !ok {
+		writeCommandFailure(w, r, accessgen.GenCommandOperationRotateCurrentAPIToken(), errUnauthorized)
+		return
+	}
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	if !principalKindAllowsGenericMutation(principal.Kind) {
+		writeJSONError(w, fmt.Errorf("personal API tokens are only available to user principals"), stdhttp.StatusForbidden)
+		return
+	}
+	var input struct {
+		Name           string   `json:"name"`
+		Description    string   `json:"description"`
+		Capabilities   []string `json:"capabilities"`
+		ExpiresAt      string   `json:"expiresAt"`
+		RevokePrevious bool     `json:"revokePrevious"`
+	}
+	if err := decodeStrictJSON(r, &input); err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	if len(input.Capabilities) == 0 {
+		writeJSONError(w, fmt.Errorf("at least one explicit API token capability is required"), stdhttp.StatusBadRequest)
+		return
+	}
+	var expires time.Time
+	var err error
+	if strings.TrimSpace(input.ExpiresAt) != "" {
+		expires, err = time.Parse(time.RFC3339, strings.TrimSpace(input.ExpiresAt))
+		if err != nil {
+			writeJSONError(w, err, stdhttp.StatusBadRequest)
+			return
+		}
+	}
+	expires, err = access.ResolveAPITokenExpiry(expires, time.Now().UTC())
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	capabilities := make([]access.Capability, 0, len(input.Capabilities))
+	for _, raw := range input.Capabilities {
+		capability, parseErr := access.ParseCapability(strings.TrimSpace(raw))
+		if parseErr != nil {
+			writeJSONError(w, parseErr, stdhttp.StatusBadRequest)
+			return
+		}
+		capabilities = append(capabilities, capability)
+	}
+	if h.RequestEffectiveCapabilities == nil {
+		writeJSONError(w, fmt.Errorf("request-effective project capabilities are unavailable"), stdhttp.StatusBadRequest)
+		return
+	}
+	effective, err := h.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	if err := access.ValidateTokenCapabilities(capabilities, effective); err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	repo, err := h.repository()
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return
+	}
+	var rotation access.APITokenRotation
+	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationRotateCurrentAPIToken(), func(tx access.Repository) (access.AuditEventInput, error) {
+		lifecycle, ok := tx.(access.APITokenCredentialRepository)
+		if !ok {
+			return access.AuditEventInput{}, fmt.Errorf("personal API token rotation is unavailable")
+		}
+		var mutationErr error
+		rotation, mutationErr = lifecycle.RotateAPIToken(r.Context(), access.APITokenRotationInput{
+			PrincipalID: principal.ID, PreviousTokenID: chi.URLParam(r, "token"),
+			Token:          access.APITokenInput{PrincipalID: principal.ID, Name: input.Name, Description: input.Description, Capabilities: capabilities, ExpiresAt: expires},
+			RevokePrevious: input.RevokePrevious,
+		})
+		return auditInput(r, "api_token.rotated", principal.ID, "api_token", rotation.Created.ID, "", "success", map[string]any{
+			"name": rotation.Created.Name, "capabilities": rotation.Created.Capabilities,
+			"previousTokenId": chi.URLParam(r, "token"), "revokePrevious": input.RevokePrevious,
+		}), mutationErr
+	})
+	if err != nil {
+		writeJSONError(w, err, statusForNotFound(err))
+		return
+	}
+	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"token": rotation.Secret, "apiToken": apiTokenDTO(rotation.Created)})
 }
 
 func (h Handler) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {

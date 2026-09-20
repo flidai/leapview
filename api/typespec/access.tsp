@@ -282,6 +282,14 @@ model PrincipalAlreadyExistsFailure {}
 model PrincipalNotFoundFailure {}
 
 @apigen.failureDefinition(#{
+  kind: "conflict",
+  statusCode: 409,
+  code: "PRINCIPAL_CREDENTIAL_REVOCATION_CONFLICT",
+  publicDetail: "The principal's credentials cannot be revoked in the current administrator state.",
+})
+model PrincipalCredentialRevocationConflictFailure {}
+
+@apigen.failureDefinition(#{
   kind: "invalid",
   statusCode: 400,
   code: "SERVICE_PRINCIPAL_INVALID",
@@ -426,6 +434,16 @@ model PrincipalPasswordResetAuditPayload {
 model PrincipalSessionRevokedAuditPayload {
   @apigen.auditPii
   targetPrincipalId: string;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model PrincipalCredentialsRevokedAuditPayload {
+  @apigen.auditPii
+  actorPrincipalId: string;
+  @apigen.auditPii
+  targetPrincipalId: string;
+  @apigen.auditInternal
+  credentialClasses: string[];
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
@@ -923,6 +941,19 @@ interface Principals {
   @apigen.auditPayload(PrincipalSessionRevokedAuditPayload)
   @apigen.ui("principal.session.revoke")
   revokePrincipalSession(@path @apigen.target principal: string, @path session: string): EmptyResponse | CommonErrors;
+
+  @summary("Revoke every credential owned by a principal")
+  @doc("Invalidates all active sessions, personal API tokens, service secrets, desktop authorization codes, approved CLI device authorizations, authoring sessions, and OAuth sessions without disabling the principal. Pending CLI device authorizations are unbound until approval and require blocking the principal to prevent later approval.")
+  @route("/{principal}/credentials/revoke-all")
+  @post
+  @apigen.authz(#{ mode: "platform_admin" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "principal.credentials.revoked_all" })
+  @apigen.failsWith(PrincipalNotFoundFailure)
+  @apigen.failsWith(PrincipalCredentialRevocationConflictFailure)
+  @apigen.auditPayload(PrincipalCredentialsRevokedAuditPayload)
+  @apigen.ui("principal.credentials.revoke-all")
+  revokeAllPrincipalCredentials(@path @apigen.target principal: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): EmptyResponse | CommonErrors;
 }
 
 alias ListServicePrincipalsOK = OkJson<ServicePrincipalListResponse>;

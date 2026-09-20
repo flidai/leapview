@@ -32,6 +32,17 @@ candidate passes `task ci:full` and installed-candidate qualification. The
 reopened Linear acceptance criteria are tracked in FAI-934, FAI-939, FAI-935,
 FAI-941, FAI-954, FAI-955, and FAI-943.
 
+The final credential audit added FAI-997 and FAI-998 to this gate. Newly
+issued personal API tokens now require an explicit nonempty capability set;
+issuance and atomic rotation are constrained by the calling credential, so a
+narrow token cannot mint a broader one. Legacy dynamic tokens remain
+compatible at authentication time. Last-used writes are coalesced and their
+best-effort failures are observable. Administrators have a separate audited,
+transactional all-credential incident action, distinct from session-only
+revocation, and cannot use it on themselves or the last usable platform
+administrator. The exact integrated candidate still requires final
+qualification before this review can close.
+
 ## Prior candidate decision — 2026-09-18
 
 LeapView now has a strong deployment engine and substantially closed
@@ -129,9 +140,9 @@ only deployment and integration-qualification authority.
 | --- | --- | --- |
 | Profile | Upload/change/remove avatar; change display name; select theme; open archived-chat management; archive or delete all chats | Email is IdP-managed. Title and Username are editable inputs but have no persistence command. |
 | Security and sessions | Change a local password; revoke individual browser/desktop sessions; revoke individual CLI/authoring sessions | IdP-managed passwords are read-only. There is no “revoke all my sessions” action in this surface. |
-| Personal API tokens | Create a named, finite token with at least one explicit capability; reveal the new secret once; list and revoke the current user's tokens | No administrator view of another user's individual token material. Dynamic bearer credentials cannot act as platform administrators. |
+| Personal API tokens | Create a named, finite token with at least one explicit capability; reveal the new secret once; list and revoke the current user's tokens; rotate atomically or with deliberate overlap through the API | No administrator view of another user's individual token material. Dynamic bearer credentials cannot act as platform administrators. |
 | General | Change/reset instance display identity; upload/remove logo | Instance ID, canonical origin, and environment are read-only. |
-| Principals | Create local user; rename local user; delete, block, or unblock; reset local password; revoke one or all sessions | External identities are correctly read-only. Project roles are displayed but cannot be assigned or removed. Individual PATs are not visible. |
+| Principals | Create local user; rename local user; delete, block, or unblock; reset local password; revoke one or all sessions; revoke all credentials for incident containment | External identities are correctly read-only. Project roles are displayed but cannot be assigned or removed. Individual PATs are not visible. |
 | Groups | Create, rename, and delete local groups; add/remove members | Directory-managed groups are correctly read-only. Project roles and grants cannot be assigned here. |
 | Service accounts | Create/delete and disable/enable a service principal; create, overlap-rotate, individually revoke, or revoke all secrets; inspect last-used evidence; select a finite 30/90/180/365-day lifetime | Project roles are assigned through the Access role-binding workflow rather than inline. Rename exists in the command service but is not exposed by the component. |
 | Authentication | List current/revoked platform authority; grant/revoke with revision fencing, recent interactive authentication, and optional two-person approval | Authentication-provider configuration remains deployment-managed. Token, service, desktop, and authoring credentials cannot use the browser platform-role mutation path. |

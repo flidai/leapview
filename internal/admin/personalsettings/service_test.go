@@ -109,6 +109,8 @@ func (fakeAvatar) Current(context.Context, string) (avatar.Metadata, error) {
 
 type fakeAuthoring struct{ sessions []access.AuthoringSession }
 
+type credentialContextMarker struct{}
+
 func (f *fakeAuthoring) ListSessions(context.Context, string) ([]access.AuthoringSession, error) {
 	return f.sessions, nil
 }
@@ -227,11 +229,69 @@ func TestServiceMutationsAuditAndValidateIdentity(t *testing.T) {
 	if _, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "Escalating", Capabilities: []string{string(access.CapabilityResourcePublish)}}); err == nil || !errors.Is(err, access.ErrCapabilityNotAllowed) {
 		t.Fatalf("escalating token capability error = %v", err)
 	}
-	if secret, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "Deny all", Capabilities: []string{}}); err != nil || secret == nil {
-		t.Fatalf("explicit deny-all token = %v, %v", secret, err)
+	if secret, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "Deny all", Capabilities: []string{}}); !errors.Is(err, ErrTokenCapabilitiesRequired) || secret != nil {
+		t.Fatalf("explicit deny-all token = %v, %v; want rejection", secret, err)
 	}
 	repo.identity.Source = access.IdentityManagementExternal
 	if err := service.ApplyProfile(context.Background(), "principal-1", ProfileCommand{Action: "save", DisplayName: "Nope"}); !errors.Is(err, ErrDisplayNameManaged) {
 		t.Fatalf("external profile error = %v", err)
+	}
+}
+
+func TestServiceApplyTokenRequiresExplicitCapabilities(t *testing.T) {
+	for name, capabilities := range map[string][]string{
+		"omitted": nil,
+		"empty":   {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &fakeRepository{
+				principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser},
+				effective: []access.Capability{access.CapabilityResourceRead},
+			}
+			service := testService(repo)
+			secret, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{
+				Action: "create", Name: "legacy-scope", Capabilities: capabilities,
+			})
+			if !errors.Is(err, ErrTokenCapabilitiesRequired) || secret != nil {
+				t.Fatalf("token = %v, err = %v; want explicit-capability rejection", secret, err)
+			}
+			if repo.createdToken {
+				t.Fatal("repository created a token for a missing capability allowlist")
+			}
+		})
+	}
+}
+
+func TestServiceApplyTokenAttenuatesCallingCredential(t *testing.T) {
+	repo := &fakeRepository{
+		principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser},
+		effective: []access.Capability{access.CapabilityResourceRead, access.CapabilityResourceEdit},
+	}
+	service := testService(repo)
+	credential := access.APICredential{
+		Principal: repo.principal,
+		Token: access.APIToken{
+			ID:           "narrow-token",
+			PrincipalID:  repo.principal.ID,
+			Capabilities: []access.Capability{access.CapabilityResourceRead},
+		},
+	}
+	service.CurrentCredential = func(ctx context.Context) (access.APICredential, bool) {
+		if _, ok := ctx.Value(credentialContextMarker{}).(bool); !ok {
+			t.Fatal("credential provider did not receive the caller context")
+		}
+		return credential, true
+	}
+	ctx := context.WithValue(context.Background(), credentialContextMarker{}, true)
+
+	if _, err := service.ApplyToken(ctx, repo.principal.ID, TokenCommand{
+		Action: "create", Name: "read-only", Capabilities: []string{string(access.CapabilityResourceRead)},
+	}); err != nil {
+		t.Fatalf("least-privilege token = %v", err)
+	}
+	if _, err := service.ApplyToken(ctx, repo.principal.ID, TokenCommand{
+		Action: "create", Name: "escalating", Capabilities: []string{string(access.CapabilityResourceEdit)},
+	}); err == nil || !errors.Is(err, access.ErrCapabilityNotAllowed) {
+		t.Fatalf("narrow credential escalation error = %v, want ErrCapabilityNotAllowed", err)
 	}
 }

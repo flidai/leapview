@@ -169,6 +169,11 @@ func beginAccessAdministrationInvocation(r *nethttp.Request, command adminsettin
 			ctx, _, err := accessgen.BeginGenRevokePrincipalSessionCommand(r.Context(), accessgen.GenRevokePrincipalSessionCommandInvocation{Surface: apigencommand.SurfaceUI, Principal: command.PrincipalID, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
+	case "revoke_all_credentials":
+		return begin(accessgen.GenUIActionRevokeAllPrincipalCredentials(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenRevokeAllPrincipalCredentialsCommand(r.Context(), accessgen.GenRevokeAllPrincipalCredentialsCommandInvocation{Surface: apigencommand.SurfaceUI, Principal: command.PrincipalID, IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID})
+			return ctx, err
+		})
 	case "create_group":
 		return begin(accessgen.GenUIActionCreateGroup(), func() (context.Context, error) {
 			ctx, _, err := accessgen.BeginGenCreateGroupCommand(r.Context(), accessgen.GenCreateGroupCommandInvocation{Surface: apigencommand.SurfaceUI, IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID})

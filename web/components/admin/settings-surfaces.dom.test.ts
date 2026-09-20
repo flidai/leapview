@@ -494,6 +494,7 @@ test('principal administration exposes local controls and keeps external profile
       { action: 'revoke_all_sessions', principalId: 'local-1' },
     ])
     expect(result.localText).toContain('Reset password')
+    expect(result.localText).toContain('Revoke all credentials')
     expect(result.localText).toContain('Principal ID')
     expect(result.localText).toContain('Sales')
     expect(result.localText).toContain('Via Analysts')

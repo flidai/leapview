@@ -974,6 +974,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		}
 	})
 	platform.telemetry.Register(platformpostgres.NewPoolMetricsCollector(bootstrap.NamedPools()...))
+	platform.telemetry.Register(appaccesspostgres.CredentialMetricsCollector())
 	handler := Routes(routes, runtimeServices, platform, policy)
 
 	// Start/stop ordering is explicit: the bootstrap wrapper starts first and

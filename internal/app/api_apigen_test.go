@@ -27,8 +27,9 @@ import (
 // Current main's generated surface plus the two target-policy operations,
 // four service-principal credential lifecycle operations, and seven
 // platform-role approval operations, excluding
-// unsupported runtime project-grant CRUD operations.
-const expectedAPIGenAggregateOperationCount = 208
+// unsupported runtime project-grant CRUD operations, plus PAT rotation and
+// user credential incident revocation.
+const expectedAPIGenAggregateOperationCount = 210
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -1013,6 +1014,7 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"resolvePrincipalOwnership":            true,
 		"resetProductSettings":                 true,
 		"revokeCurrentAPIToken":                true,
+		"rotateCurrentAPIToken":                true,
 		"revokeCurrentAuthoringSession":        true,
 		"revokeCurrentSession":                 true,
 		"revokePrincipalSession":               true,

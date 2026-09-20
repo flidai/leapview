@@ -16096,6 +16096,328 @@ paths:
         ui:
           action_id: current-user.api-token.revoke
       x-leapview-object-scope: principal
+  /api/v1/me/api-tokens/{token}/rotate:
+    post:
+      operationId: rotateCurrentAPIToken
+      summary: Rotate current API token
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created
+            as a result.
+          headers:
+            location:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APITokenCreateResponse'
+              example:
+                apiToken:
+                  capabilities:
+                    - PROJECT_ADMIN
+                  createdAt: "2026-01-02T15:04:05Z"
+                  description: example
+                  expiresAt: "2026-01-02T15:04:05Z"
+                  id: example
+                  lastUsedAt: "2026-01-02T15:04:05Z"
+                  name: example
+                  revokedAt: "2026-01-02T15:04:05Z"
+                token: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Current User
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/APITokenRotateRequest'
+            example:
+              capabilities:
+                - PROJECT_ADMIN
+              description: example
+              expiresAt: "2026-01-02T15:04:05Z"
+              name: example
+              revokePrevious: true
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: capabilities
+                sensitivity: public
+              - name: name
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: APITokenAuditPayload
+            schema_version: 1
+          required: true
+          success_action: api_token.rotated
+        authz_mode: authenticated
+        failures:
+          - code: API_TOKEN_INVALID
+            kind: invalid
+            public_detail: The API token request is invalid.
+            status_code: 400
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: token
+          type: token
+      x-leapview-object-scope: principal
   /api/v1/me/authoring-sessions:
     get:
       operationId: listCurrentAuthoringSessions
@@ -23588,6 +23910,312 @@ paths:
         - Current User
       x-apigen-operation-kind: query
       x-leapview-object-scope: principal
+  /api/v1/principals/{principal}/credentials/revoke-all:
+    post:
+      operationId: revokeAllPrincipalCredentials
+      summary: Revoke every credential owned by a principal
+      description: Invalidates all active sessions, personal API tokens, service secrets,
+        desktop authorization codes, approved CLI device authorizations, authoring
+        sessions, and OAuth sessions without disabling the principal. Pending CLI
+        device authorizations are unbound until approval and require blocking the
+        principal to prevent later approval.
+      parameters:
+        - name: principal
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers
+            may be useful. '
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: actorPrincipalId
+                sensitivity: pii
+              - name: credentialClasses
+                sensitivity: internal
+              - name: targetPrincipalId
+                sensitivity: pii
+            retention: security
+            schema:
+              ref: PrincipalCredentialsRevokedAuditPayload
+            schema_version: 1
+          required: true
+          success_action: principal.credentials.revoked_all
+        authz_mode: platform_admin
+        failures:
+          - code: PRINCIPAL_CREDENTIAL_REVOCATION_CONFLICT
+            kind: conflict
+            public_detail: The principal's credentials cannot be revoked in the current
+              administrator state.
+            status_code: 409
+          - code: PRINCIPAL_NOT_FOUND
+            kind: not_found
+            public_detail: Principal not found.
+            status_code: 404
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: principal
+          type: principal
+        ui:
+          action_id: principal.credentials.revoke-all
+      x-authz:
+        mode: platform_admin
+      x-leapview-object-scope: platform
   /api/v1/principals/{principal}/disable:
     post:
       operationId: disablePrincipal
@@ -65873,6 +66501,7 @@ components:
       type: object
       required:
         - name
+        - capabilities
       properties:
         name:
           type: string
@@ -65884,9 +66513,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Capability'
-          description: Omit to keep the token dynamically constrained by the principal's
-            effective capabilities at request time. An explicit list must be a subset
-            of the principal's current effective capabilities.
+          description: At least one capability is required for newly issued personal
+            API tokens. Legacy tokens created before this requirement may have a dynamic
+            scope and continue to be evaluated against the principal's effective capabilities
+            at request time.
           example:
             - PROJECT_ADMIN
         expiresAt:
@@ -66009,6 +66639,44 @@ components:
         lastUsedAt: "2026-01-02T15:04:05Z"
         name: example
         revokedAt: "2026-01-02T15:04:05Z"
+    APITokenRotateRequest:
+      type: object
+      required:
+        - name
+        - capabilities
+      properties:
+        name:
+          type: string
+          example: example
+        description:
+          type: string
+          example: example
+        capabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Capability'
+          description: At least one capability is required for the replacement token.
+            The replacement must be a subset of the calling credential's current effective
+            capabilities.
+          example:
+            - PROJECT_ADMIN
+        expiresAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        revokePrevious:
+          type: boolean
+          description: When true, invalidate the previous token in the same transaction
+            as replacement creation. When false, both tokens remain valid for an intentional
+            overlap window.
+          example: true
+      example:
+        capabilities:
+          - PROJECT_ADMIN
+        description: example
+        expiresAt: "2026-01-02T15:04:05Z"
+        name: example
+        revokePrevious: true
     AgentCommandAuditPayload:
       type: object
       required:
@@ -82497,6 +83165,30 @@ components:
           example: example
       example:
         email: example
+    PrincipalCredentialsRevokedAuditPayload:
+      type: object
+      required:
+        - actorPrincipalId
+        - targetPrincipalId
+        - credentialClasses
+      properties:
+        actorPrincipalId:
+          type: string
+          example: example
+        targetPrincipalId:
+          type: string
+          example: example
+        credentialClasses:
+          type: array
+          items:
+            type: string
+          example:
+            - example
+      example:
+        actorPrincipalId: example
+        credentialClasses:
+          - example
+        targetPrincipalId: example
     PrincipalDeletedAuditPayload:
       type: object
       required:

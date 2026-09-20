@@ -316,6 +316,109 @@ func TestPrincipalLifecycleMutationsExecuteGeneratedContracts(t *testing.T) {
 	}
 }
 
+func TestRevokeAllPrincipalCredentialsHTTPExecutesGeneratedContract(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	admin := testPlatformPrincipal(t, ctx, store, "credential-revoke-http-admin@example.com", "Credential Revoke HTTP Admin")
+	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
+		PrincipalID: admin.ID, Name: "credential-revoke-http-admin",
+		Capabilities: []access.Capability{access.CapabilityProjectAdmin},
+	})
+	targetReset, err := testAccessRepository(store).CreateLocalUser(ctx, access.LocalUserInput{
+		Email: "credential-revoke-http-target@example.com", DisplayName: "Credential Revoke HTTP Target",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := targetReset.Principal
+	sessionSecret, err := testAccessRepository(store).CreateSession(ctx, target.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patSecret, _, err := testAccessRepository(store).CreateAPITokenWithMetadata(ctx, access.APITokenInput{
+		PrincipalID: target.ID, Name: "credential-revoke-http-pat", ExpiresAt: time.Now().UTC().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+		Auth: testAuth(store, accessmodule.AuthConfig{APITokenOnly: true}),
+	}))
+	unauthorized := httptest.NewRequest(http.MethodPost, "/api/v1/principals/"+target.ID+"/credentials/revoke-all", nil)
+	unauthorized.Header.Set("Authorization", "Bearer "+patSecret)
+	unauthorized.Header.Set("Accept", "application/json")
+	unauthorized.Header.Set("Idempotency-Key", "credential-revoke-http-unauthorized")
+	unauthorizedResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(unauthorizedResponse, unauthorized)
+	if unauthorizedResponse.Code != http.StatusNotFound && unauthorizedResponse.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized revoke-all status = %d, want concealed 404 or 403 body=%s", unauthorizedResponse.Code, unauthorizedResponse.Body.String())
+	}
+	if _, err := testAccessRepository(store).PrincipalForToken(ctx, sessionSecret); err != nil {
+		t.Fatalf("browser session after unauthorized revoke-all = %v", err)
+	}
+	if _, err := testAccessRepository(store).PrincipalForAPIToken(ctx, patSecret); err != nil {
+		t.Fatalf("PAT after unauthorized revoke-all = %v", err)
+	}
+	revoke := httptest.NewRequest(http.MethodPost, "/api/v1/principals/"+target.ID+"/credentials/revoke-all", nil)
+	revoke.Header.Set("Accept", "application/json")
+	revoke.Header.Set("Idempotency-Key", "credential-revoke-http-1")
+	revoke.Header.Set("X-Request-ID", "credential-revoke-http-request")
+	revoke.Header.Set("X-Correlation-ID", "credential-revoke-http-correlation")
+	revoke.Header.Set("Authorization", "Bearer "+authSecret)
+	revokeResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(revokeResponse, revoke)
+	if revokeResponse.Code != http.StatusNoContent {
+		t.Fatalf("revoke-all status = %d, want %d body=%s", revokeResponse.Code, http.StatusNoContent, revokeResponse.Body.String())
+	}
+
+	if _, err := testAccessRepository(store).PrincipalForToken(ctx, sessionSecret); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("browser session after revoke-all = %v, want pgx.ErrNoRows", err)
+	}
+	if _, err := testAccessRepository(store).PrincipalForAPIToken(ctx, patSecret); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("PAT after revoke-all = %v, want pgx.ErrNoRows", err)
+	}
+	principal, err := testAccessRepository(store).PrincipalByID(ctx, target.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if principal.AccessDisabled() {
+		t.Fatalf("target principal was disabled by revoke-all: %#v", principal)
+	}
+
+	events, err := testAccessRepository(store).ListAuditEvents(ctx, access.AuditEventFilter{
+		Action: "principal.credentials.revoked_all", ResourceID: target.ID, Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("revoke-all audit events = %#v, want one event", events)
+	}
+	event := events[0]
+	if event.PrincipalID != admin.ID || event.ResourceKind != "principal" || event.ResourceID != target.ID || event.Status != "success" || event.RequestID != "credential-revoke-http-request" || event.CorrelationID != "credential-revoke-http-correlation" {
+		t.Fatalf("revoke-all audit event = %#v", event)
+	}
+	var envelope struct {
+		Payload struct {
+			ActorPrincipalID  string   `json:"actorPrincipalId"`
+			TargetPrincipalID string   `json:"targetPrincipalId"`
+			CredentialClasses []string `json:"credentialClasses"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(event.MetadataJSON), &envelope); err != nil {
+		t.Fatalf("decode revoke-all audit metadata: %v", err)
+	}
+	if envelope.Payload.ActorPrincipalID != admin.ID || envelope.Payload.TargetPrincipalID != target.ID {
+		t.Fatalf("revoke-all audit payload principals = %#v", envelope.Payload)
+	}
+	for _, class := range []string{"sessions", "api_tokens", "service_secrets", "desktop_authorization_codes", "device_authorizations", "authoring_sessions", "oauth_sessions"} {
+		if !hasString(envelope.Payload.CredentialClasses, class) {
+			t.Fatalf("revoke-all audit classes = %#v, missing %q", envelope.Payload.CredentialClasses, class)
+		}
+	}
+}
+
 func TestCurrentAPITokenRevocationIsScopedToAuthenticatedPrincipal(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
@@ -419,6 +522,69 @@ func TestCurrentAPITokenCreateAndRevokeRecordsAudit(t *testing.T) {
 	}
 	if len(revokedEvents) != 1 || revokedEvents[0].ResourceID != created.APIToken.ID || revokedEvents[0].PrincipalID != owner.ID {
 		t.Fatalf("api_token.revoked audit = %#v, want target %q actor %q", revokedEvents, created.APIToken.ID, owner.ID)
+	}
+}
+
+func TestCurrentAPITokenCannotMintBeyondRequestCredentialScope(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	owner := testPlatformPrincipal(t, ctx, store, "token-attenuation-owner@example.com", "Token Attenuation Owner")
+	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
+		PrincipalID: owner.ID, Name: "narrow-auth", Capabilities: []access.Capability{access.CapabilityResourceUse},
+	})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})}))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"too-broad","capabilities":["RESOURCE_MANAGE"]}`))
+	request.Header.Set("Authorization", "Bearer "+authSecret)
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "reject-pat-escalation")
+	response := httptest.NewRecorder()
+	server.Routes().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("narrow PAT mint status = %d, want %d body=%s", response.Code, http.StatusBadRequest, response.Body.String())
+	}
+}
+
+func TestCurrentAPITokenRotationRevokesOldMaterialImmediately(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	repo := testAccessRepository(store)
+	owner := testPlatformPrincipal(t, ctx, store, "token-rotation-owner@example.com", "Token Rotation Owner")
+	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
+		PrincipalID: owner.ID, Name: "rotation-auth", Capabilities: []access.Capability{access.CapabilityResourceUse},
+	})
+	oldSecret, oldToken := testScopedAPIToken(t, ctx, store, access.APITokenInput{
+		PrincipalID: owner.ID, Name: "rotation-old", Capabilities: []access.Capability{access.CapabilityResourceUse},
+	})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})}))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens/"+oldToken.ID+"/rotate", strings.NewReader(`{"name":"rotation-new","capabilities":["RESOURCE_USE"],"revokePrevious":true}`))
+	request.Header.Set("Authorization", "Bearer "+authSecret)
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "rotate-current-api-token")
+	response := httptest.NewRecorder()
+	server.Routes().ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("rotation status = %d, want %d body=%s", response.Code, http.StatusCreated, response.Body.String())
+	}
+	var body struct {
+		Token    string `json:"token"`
+		APIToken struct {
+			ID string `json:"id"`
+		} `json:"apiToken"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.Token == "" || body.APIToken.ID == oldToken.ID {
+		t.Fatalf("rotation response = %#v body=%s err=%v", body, response.Body.String(), err)
+	}
+	if _, err := repo.PrincipalForAPIToken(ctx, oldSecret); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("old PAT after revokePrevious = %v, want pgx.ErrNoRows", err)
+	}
+	if _, err := repo.PrincipalForAPIToken(ctx, body.Token); err != nil {
+		t.Fatalf("replacement PAT authentication = %v", err)
+	}
+	rotatedEvents, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{PrincipalID: owner.ID, Action: "api_token.rotated"})
+	if err != nil || len(rotatedEvents) != 1 || rotatedEvents[0].ResourceID != body.APIToken.ID {
+		t.Fatalf("rotation audit = %#v err=%v", rotatedEvents, err)
 	}
 }
 

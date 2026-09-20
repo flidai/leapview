@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ const (
 	defaultServicePrincipalSecretTTL  = 180 * 24 * time.Hour
 	maxSessionTTL                     = 30 * 24 * time.Hour
 	maxRecentSessionAuthenticationAge = 15 * time.Minute
+	apiTokenTouchInterval             = time.Minute
 	maxPageSize                       = 1000
 )
 
@@ -1139,7 +1141,10 @@ func (r *Repository) apiTokenForSecret(ctx context.Context, secret string) (acce
 	if !verifySecret(secret, row.Verifier) {
 		return access.APIToken{}, pgx.ErrNoRows
 	}
-	_ = accessdb.New(db).TouchAPIToken(ctx, row.ID)
+	if _, touchErr := accessdb.New(db).TouchAPIToken(ctx, accessdb.TouchAPITokenParams{ID: row.ID, MinInterval: pgInterval(apiTokenTouchInterval)}); touchErr != nil {
+		slog.Default().WarnContext(ctx, "api token last-used update failed", "credential_class", "api_token", "credential_id", principalUUID(row.ID), "error", touchErr)
+		observeCredentialTouchFailure("api_token")
+	}
 	return r.apiToken(ctx, principalUUID(row.ID))
 }
 func (r *Repository) PrincipalForAPIToken(ctx context.Context, tok string) (access.Principal, error) {

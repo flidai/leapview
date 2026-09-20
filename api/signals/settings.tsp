@@ -104,6 +104,7 @@ model AccessPrincipalCapabilitiesSignal {
   `canUnblock`: boolean;
   `canDelete`: boolean;
   `canManageSessions`: boolean;
+  `canRevokeAllCredentials`: boolean;
 }
 
 model AccessPrincipalSignal {

@@ -260,12 +260,15 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
     const actions = html`
       ${principal.capabilities.canBlock ? html`<button class="primary-detail-action" @click=${() => this.blockPrincipal(principal)}>${lucideIcon(CircleSlash2, { size: 16, strokeWidth: 2 })}<span>Block access</span></button>` : nothing}
       ${principal.capabilities.canUnblock ? html`<button class="primary-detail-action" @click=${() => this.emit({ action: 'unblock_principal', principalId: principal.id })}>Unblock access</button>` : nothing}
-      ${principal.capabilities.canResetPassword || (principal.capabilities.canManageSessions && signal.sessions.length) || principal.capabilities.canDelete ? html`
+      ${principal.capabilities.canResetPassword || principal.capabilities.canManageSessions || principal.capabilities.canDelete ? html`
         <details class="action-menu">
           <summary>More actions</summary>
           <div class="action-menu-popover">
             ${principal.capabilities.canResetPassword ? html`<button @click=${() => this.resetPassword(principal)}>Reset password</button>` : nothing}
-            ${principal.capabilities.canManageSessions && signal.sessions.length ? html`<button @click=${() => this.revokeAllSessions(principal)}>Revoke all sessions</button>` : nothing}
+            ${principal.capabilities.canManageSessions ? html`
+              <button @click=${() => this.revokeAllSessions(principal)}>Revoke all sessions</button>
+              ${principal.capabilities.canRevokeAllCredentials !== false ? html`<button class="danger" @click=${() => this.revokeAllCredentials(principal)}>Revoke all credentials</button>` : nothing}
+            ` : nothing}
             ${principal.capabilities.canDelete ? html`<button class="danger" @click=${() => this.deletePrincipal(principal)}>Delete user</button>` : nothing}
           </div>
         </details>` : nothing}`
@@ -333,6 +336,10 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
   }
   private revokeAllSessions(principal: AccessPrincipalSignal): void {
     if (window.confirm(`Revoke all active sessions for ${principal.displayName || principal.email}?`)) this.emit({ action: 'revoke_all_sessions', principalId: principal.id })
+  }
+  private revokeAllCredentials(principal: AccessPrincipalSignal): void {
+    const label = principal.displayName || principal.email
+    if (window.confirm(`Revoke every active credential for ${label}? This invalidates sessions, API tokens, service secrets, authoring sessions, and OAuth sessions. The principal remains enabled and can sign in again; block access first if re-authentication must stop. This action cannot be undone.`)) this.emit({ action: 'revoke_all_credentials', principalId: principal.id })
   }
   private deletePrincipal(principal: AccessPrincipalSignal): void {
     if (window.confirm(`Delete ${principal.displayName || principal.email}? This cannot be undone.`)) this.emit({ action: 'delete_principal', principalId: principal.id })

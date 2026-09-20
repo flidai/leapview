@@ -10,7 +10,7 @@ import (
 
 func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 	accessContracts := accessgen.GetAPIGenOperationContracts()
-	if got, want := len(accessContracts), 82; got != want {
+	if got, want := len(accessContracts), 84; got != want {
 		t.Fatalf("Access generated operations = %d, want %d", got, want)
 	}
 	allowedTags := map[string]bool{"Access": true, "Audit": true, "Current User": true}

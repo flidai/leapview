@@ -521,6 +521,29 @@ type APIToken struct {
 	RevokedAt    string
 }
 
+// APITokenRotation contains one-time material for the replacement token and
+// metadata for both sides of the rotation. Secret is never populated on
+// metadata reads and must not be persisted by callers.
+type APITokenRotation struct {
+	Secret   string
+	Created  APIToken
+	Previous APIToken
+}
+
+type APITokenRotationInput struct {
+	PrincipalID     string
+	PreviousTokenID string
+	Token           APITokenInput
+	RevokePrevious  bool
+}
+
+// APITokenCredentialRepository owns the atomic personal-token lifecycle.
+// Implementations retain the previous token for overlap unless explicitly
+// asked to revoke it as part of the same transaction.
+type APITokenCredentialRepository interface {
+	RotateAPIToken(context.Context, APITokenRotationInput) (APITokenRotation, error)
+}
+
 // BootstrapAPITokenEvidenceReader is the narrow durable revalidation port
 // used by the protected first-activation path. Implementations must resolve
 // the token by its durable ID (never by request-held capabilities), bind it

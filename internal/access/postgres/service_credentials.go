@@ -66,7 +66,7 @@ func (r *Repository) setServicePrincipalEnabled(ctx context.Context, id string, 
 		return access.Principal{}, pgx.ErrNoRows
 	}
 	if !enabled {
-		if err = revokeServicePrincipalCredentials(ctx, tx, parsedID); err != nil {
+		if err = revokePrincipalCredentials(ctx, tx, parsedID); err != nil {
 			return access.Principal{}, err
 		}
 	}
@@ -92,7 +92,28 @@ func (r *Repository) RevokeAllServicePrincipalCredentials(ctx context.Context, i
 	if ctx == nil {
 		return errors.New("service principal context is nil")
 	}
-	canonical, err := uuidID("service principal id", id)
+	return r.revokeAllPrincipalCredentials(ctx, id, "service")
+}
+
+// RevokeAllUserCredentials invalidates every bearer/session credential class
+// owned by one user principal, plus principal-bound desktop and approved CLI
+// authorization grants. It is deliberately set-based (rather than traversing
+// ListSessions) so incident response is not limited by a page size. The
+// principal remains enabled and its durable platform-admin role is retained,
+// but the last usable platform administrator cannot be stripped of every
+// credential by this operation.
+func (r *Repository) RevokeAllUserCredentials(ctx context.Context, id string) error {
+	if ctx == nil {
+		return errors.New("user credential context is nil")
+	}
+	return r.revokeAllPrincipalCredentials(ctx, id, "user")
+}
+
+func (r *Repository) revokeAllPrincipalCredentials(ctx context.Context, id, kind string) error {
+	if ctx == nil {
+		return errors.New("principal credential context is nil")
+	}
+	canonical, err := uuidID("principal id", id)
 	if err != nil {
 		return err
 	}
@@ -110,16 +131,70 @@ func (r *Repository) RevokeAllServicePrincipalCredentials(ctx context.Context, i
 	if owned {
 		defer func() { _ = tx.Rollback(ctx) }()
 	}
-	if err := ensureServicePrincipal(ctx, tx, parsedID); err != nil {
-		return err
+	if kind == "user" {
+		// Keep authority mutations ordered the same way as platform-admin role
+		// lifecycle operations: authority lock, then the principal row lock.
+		// Tombstone device grants before taking the principal lock: device-code
+		// exchange locks its grant before reading the principal, so reversing
+		// that order here would create a row-lock deadlock during containment.
+		if err := accessdb.New(tx).LockPlatformRoleAuthority(ctx); err != nil {
+			return err
+		}
+		queries := accessdb.New(tx)
+		if err := queries.RevokePrincipalApprovedDeviceAuthorizations(ctx, parsedID); err != nil {
+			return fmt.Errorf("revoke principal approved device authorizations: %w", err)
+		}
+		if err := ensureUserPrincipal(ctx, tx, parsedID); err != nil {
+			return err
+		}
+		if err := queries.RevokePrincipalDesktopAuthorizationCodes(ctx, parsedID); err != nil {
+			return fmt.Errorf("revoke principal desktop authorization codes: %w", err)
+		}
+		isAdmin, err := accessdb.New(tx).IsPlatformAdmin(ctx, parsedID)
+		if err != nil {
+			return err
+		}
+		if isAdmin {
+			count, err := countUsablePlatformAdministrators(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if count <= 1 {
+				return access.ErrPlatformAdminLastAdmin
+			}
+		}
+	} else if kind == "service" {
+		if err := ensureServicePrincipal(ctx, tx, parsedID); err != nil {
+			return err
+		}
+	} else {
+		return errors.New("unsupported principal credential kind")
 	}
-	if err := revokeServicePrincipalCredentials(ctx, tx, parsedID); err != nil {
+	if err := revokePrincipalCredentials(ctx, tx, parsedID); err != nil {
 		return err
 	}
 	if owned {
 		return tx.Commit(ctx)
 	}
 	return nil
+}
+
+func ensureUserPrincipal(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	row, err := accessdb.New(db).LockPrincipalForPlatformRole(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pgx.ErrNoRows
+	}
+	if err != nil {
+		return err
+	}
+	if row.PrincipalType != "user" || !row.ID.Valid {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func countUsablePlatformAdministrators(ctx context.Context, db DBTX) (int64, error) {
+	return accessdb.New(db).CountUsablePlatformAdministrators(ctx)
 }
 
 func ensureServicePrincipal(ctx context.Context, db DBTX, id pgtype.UUID) error {
@@ -136,22 +211,22 @@ func ensureServicePrincipal(ctx context.Context, db DBTX, id pgtype.UUID) error 
 	return nil
 }
 
-func revokeServicePrincipalCredentials(ctx context.Context, db DBTX, principalID pgtype.UUID) error {
+func revokePrincipalCredentials(ctx context.Context, db DBTX, principalID pgtype.UUID) error {
 	queries := accessdb.New(db)
 	if err := queries.RevokePrincipalSessions(ctx, principalID); err != nil {
-		return fmt.Errorf("revoke service principal sessions: %w", err)
+		return fmt.Errorf("revoke principal sessions: %w", err)
 	}
 	if err := queries.RevokePrincipalTokens(ctx, principalID); err != nil {
-		return fmt.Errorf("revoke service principal API tokens: %w", err)
+		return fmt.Errorf("revoke principal API tokens: %w", err)
 	}
 	if err := queries.RevokePrincipalSecrets(ctx, principalID); err != nil {
-		return fmt.Errorf("revoke service principal secrets: %w", err)
+		return fmt.Errorf("revoke principal secrets: %w", err)
 	}
 	if err := queries.RevokePrincipalAuthoringSessions(ctx, principalID); err != nil {
-		return fmt.Errorf("revoke service principal authoring sessions: %w", err)
+		return fmt.Errorf("revoke principal authoring sessions: %w", err)
 	}
 	if err := queries.RevokePrincipalOAuthSessions(ctx, principalID); err != nil {
-		return fmt.Errorf("revoke service principal OAuth sessions: %w", err)
+		return fmt.Errorf("revoke principal OAuth sessions: %w", err)
 	}
 	return nil
 }

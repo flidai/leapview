@@ -1,13 +1,18 @@
 package postgres
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/access/desktopauth"
 	"github.com/flidai/leapview/internal/project/graph"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -352,5 +357,232 @@ func TestServicePrincipalCredentialsPostgreSQL18RevokeAllCredentialClasses(t *te
 	}
 	if principal.AccessDisabled() {
 		t.Fatalf("revoke-all disabled service principal: %#v", principal)
+	}
+}
+
+func TestUserCredentialsPostgreSQL18RevokeAllCredentialClassesWithoutSessionPageLimit(t *testing.T) {
+	db, repo := newServiceCredentialQualification(t)
+	ctx := t.Context()
+	user, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "incident-user@example.com", DisplayName: "Incident user", MustChange: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	browserToken, err := repo.CreateSession(ctx, user.Principal.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 1001; i++ {
+		fingerprint := sha256.Sum256([]byte(fmt.Sprintf("incident-session-%d", i)))
+		if _, err := db.runtime.Exec(ctx, `
+			INSERT INTO access.session(id, principal_id, token_fingerprint, verifier, expires_at)
+			VALUES ($1::uuid, $2::uuid, $3, $4, clock_timestamp() + interval '1 hour')
+		`, uuid.New(), user.Principal.ID, fingerprint[:], []byte(strings.Repeat("v", 32))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apiSecret, apiToken, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: user.Principal.ID, Name: "incident-api", ExpiresAt: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceSecret, err := tokenSecret("lv_sp_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceSecretID, err := newUUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceVerifier, err := secretVerifier(serviceSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.runtime.Exec(ctx, `
+		INSERT INTO access.service_principal_secret(id, service_principal_id, name, secret_fingerprint, verifier, expires_at)
+		VALUES ($1::uuid, $2::uuid, 'incident-service-secret', $3, $4, clock_timestamp() + interval '1 hour')
+	`, serviceSecretID, user.Principal.ID, repo.secretFingerprint(serviceSecret), serviceVerifier); err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := graph.NewResourceID("incident-user-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	authoringAccessHash := strings.Repeat("c", 64)
+	authoringRefreshHash := strings.Repeat("d", 64)
+	tx, err := db.runtime.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := insertAuthoringSessionAndCredential(ctx, tx, "incident-user-authoring-session", access.AuthoringSessionHumanCLI, "incident-cli", user.Principal.ID,
+		access.AuthoringScope{TargetID: "incident-target", ProjectID: projectID, Capabilities: []access.Capability{access.CapabilityResourceRead}}, now, now.Add(time.Hour),
+		"incident-user-authoring-credential", authoringAccessHash, authoringRefreshHash, now.Add(30*time.Minute), now.Add(2*time.Hour)); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	oauthSignature := "incident-user-oauth-signature"
+	if err := CreateOAuthSession(ctx, db.runtime, "access_token", oauthSignature, "incident-user-oauth-request",
+		[]byte(`{"session":{"subject":"`+user.Principal.ID+`"}}`), "incident-user-access-signature"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.PrincipalForToken(ctx, browserToken); err != nil {
+		t.Fatalf("browser credential before revoke-all: %v", err)
+	}
+	if _, err := repo.PrincipalForAPIToken(ctx, apiSecret); err != nil {
+		t.Fatalf("API credential before revoke-all: %v", err)
+	}
+	oauthBefore, err := GetOAuthSession(ctx, db.runtime, "access_token", oauthSignature)
+	if err != nil || !oauthBefore.Active {
+		t.Fatalf("OAuth credential before revoke-all = %#v, %v", oauthBefore, err)
+	}
+
+	if err := repo.RevokeAllUserCredentials(ctx, user.Principal.ID); err != nil {
+		t.Fatalf("revoke all user credentials: %v", err)
+	}
+	if _, err := repo.PrincipalForToken(ctx, browserToken); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("browser credential after revoke-all = %v, want no rows", err)
+	}
+	if _, err := repo.PrincipalForAPIToken(ctx, apiSecret); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("API credential after revoke-all = %v, want no rows", err)
+	}
+	var activeSessions int
+	if err := db.runtime.QueryRow(ctx, `SELECT count(*) FROM access.session WHERE principal_id=$1::uuid AND revoked_at IS NULL`, user.Principal.ID).Scan(&activeSessions); err != nil {
+		t.Fatal(err)
+	}
+	if activeSessions != 0 {
+		t.Fatalf("active sessions after revoke-all = %d, want 0", activeSessions)
+	}
+	var serviceSecretRevoked, authoringSessionRevoked bool
+	if err := db.runtime.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM access.service_principal_secret WHERE id=$1::uuid`, serviceSecretID).Scan(&serviceSecretRevoked); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.runtime.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM access.authoring_session WHERE id='incident-user-authoring-session'`).Scan(&authoringSessionRevoked); err != nil {
+		t.Fatal(err)
+	}
+	if !serviceSecretRevoked || !authoringSessionRevoked {
+		t.Fatalf("service secret/authoring revocation = %t/%t", serviceSecretRevoked, authoringSessionRevoked)
+	}
+	oauthAfter, err := GetOAuthSession(ctx, db.runtime, "access_token", oauthSignature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oauthAfter.Active {
+		t.Fatal("OAuth credential remained active after revoke-all")
+	}
+	principal, err := repo.PrincipalByID(ctx, user.Principal.ID)
+	if err != nil || principal.AccessDisabled() || principal.DisabledAt != "" || principal.BlockedAt != "" {
+		t.Fatalf("principal status after revoke-all = %#v, %v", principal, err)
+	}
+	if apiToken.ID == "" {
+		t.Fatal("API token metadata did not contain durable ID")
+	}
+}
+
+func TestUserCredentialsPostgreSQL18RevokeAllInvalidatesAuthorizationGrants(t *testing.T) {
+	db, repo := newServiceCredentialQualification(t)
+	ctx := t.Context()
+	user, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "incident-grants@example.com", DisplayName: "Incident grants"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "unrelated-pending@example.com", DisplayName: "Unrelated pending"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	instanceID := "instance_0123456789abcdef0123456789abcdef"
+	profileID := "profile_0123456789abcdef0123456789abcdef"
+	redirectURI := "http://127.0.0.1:49152/callback"
+	verifier := strings.Repeat("v", 43)
+	challengeDigest := sha256.Sum256([]byte(verifier))
+	codeChallenge := base64.RawURLEncoding.EncodeToString(challengeDigest[:])
+	desktopCode := strings.Repeat("C", 43)
+	desktopHash := sha256.Sum256([]byte(desktopCode))
+	if err := repo.StoreAuthorizationCode(ctx, desktopauth.AuthorizationCode{
+		CodeHash: desktopHash, PrincipalID: user.Principal.ID, ClientID: desktopauth.DesktopClientID,
+		InstanceID: instanceID, ProfileID: profileID, RedirectURI: redirectURI,
+		CodeChallenge: codeChallenge, ReturnPath: "/", CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("store desktop authorization code: %v", err)
+	}
+
+	projectID, err := graph.NewResourceID("revoke-grants-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := access.AuthoringScope{TargetID: instanceID, ProjectID: projectID, Capabilities: []access.Capability{access.CapabilityResourceRead}}
+	approvedDeviceCode := hashHex("revoke-approved-device")
+	if err := repo.CreateDeviceAuthorization(ctx, access.DeviceAuthorization{
+		ID: "revoke-approved-device", ClientID: access.AuthoringCLIClientID,
+		DeviceCodeHash: approvedDeviceCode, UserCodeHash: hashHex("revoke-approved-user"),
+		Scope: scope, Status: access.DeviceAuthorizationPending, CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour), PollInterval: time.Second,
+	}); err != nil {
+		t.Fatalf("create approved device authorization: %v", err)
+	}
+	if err := repo.ApproveDeviceAuthorization(ctx, "revoke-approved-device", user.Principal.ID, now); err != nil {
+		t.Fatalf("approve device authorization: %v", err)
+	}
+	// Pending device authorizations are intentionally unbound: principal_id is
+	// assigned only after browser approval. Revoke-all for user must leave this
+	// unrelated pending request untouched rather than guessing its owner.
+	pendingDeviceCode := hashHex("unrelated-pending-device")
+	if err := repo.CreateDeviceAuthorization(ctx, access.DeviceAuthorization{
+		ID: "unrelated-pending-device", ClientID: access.AuthoringCLIClientID,
+		DeviceCodeHash: pendingDeviceCode, UserCodeHash: hashHex("unrelated-pending-user"),
+		Scope: scope, Status: access.DeviceAuthorizationPending, CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour), PollInterval: time.Second,
+	}); err != nil {
+		t.Fatalf("create pending device authorization: %v", err)
+	}
+
+	if err := repo.RevokeAllUserCredentials(ctx, user.Principal.ID); err != nil {
+		t.Fatalf("revoke all user credentials: %v", err)
+	}
+
+	desktopService, err := desktopauth.New(repo, desktopauth.Config{InstanceID: instanceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := desktopService.Redeem(ctx, desktopauth.RedeemRequest{
+		ClientID: desktopauth.DesktopClientID, Code: desktopCode, CodeVerifier: verifier,
+		InstanceID: instanceID, ProfileID: profileID, RedirectURI: redirectURI,
+	}); !errors.Is(err, desktopauth.ErrInvalidGrant) {
+		t.Fatalf("desktop authorization code after revoke-all = %v, want ErrInvalidGrant", err)
+	}
+
+	issue := func(deviceCodeHash, sessionID, credentialID string) error {
+		_, issueErr := repo.IssueDeviceCredential(ctx, access.DeviceCredentialIssue{
+			DeviceCodeHash: deviceCodeHash, ClientID: access.AuthoringCLIClientID, Now: now,
+			SessionID: sessionID, CredentialID: credentialID,
+			AccessTokenHash: hashHex(sessionID + "-access"), RefreshTokenHash: hashHex(sessionID + "-refresh"),
+			AccessExpiresAt: now.Add(15 * time.Minute), RefreshExpiresAt: now.Add(time.Hour),
+		})
+		return issueErr
+	}
+	if err := issue(approvedDeviceCode, "revoke-approved-session", "revoke-approved-credential"); !errors.Is(err, access.ErrInvalidAuthoringCredential) {
+		t.Fatalf("approved device authorization after revoke-all = %v, want ErrInvalidAuthoringCredential", err)
+	}
+	if err := issue(pendingDeviceCode, "unrelated-pending-session", "unrelated-pending-credential"); !errors.Is(err, access.ErrDeviceAuthorizationPending) {
+		t.Fatalf("pending device authorization after revoke-all = %v, want ErrDeviceAuthorizationPending", err)
+	}
+
+	var desktopConsumed bool
+	if err := db.runtime.QueryRow(ctx, `SELECT consumed_at IS NOT NULL FROM access.desktop_authorization_code WHERE code_hash=$1`, desktopHash[:]).Scan(&desktopConsumed); err != nil {
+		t.Fatal(err)
+	}
+	if !desktopConsumed {
+		t.Fatal("desktop authorization code was not tombstoned")
+	}
+	var approvedStatus, pendingStatus string
+	if err := db.runtime.QueryRow(ctx, `SELECT status FROM access.device_authorization WHERE id='revoke-approved-device'`).Scan(&approvedStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.runtime.QueryRow(ctx, `SELECT status FROM access.device_authorization WHERE id='unrelated-pending-device'`).Scan(&pendingStatus); err != nil {
+		t.Fatal(err)
+	}
+	if approvedStatus != string(access.DeviceAuthorizationConsumed) || pendingStatus != string(access.DeviceAuthorizationPending) {
+		t.Fatalf("device authorization statuses after revoke-all = approved:%q unrelated pending:%q", approvedStatus, pendingStatus)
 	}
 }
