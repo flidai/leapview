@@ -19,7 +19,6 @@ export const personalSettingsStyles = css`
     .profile-name-form { min-width: 0; justify-self: end; }
     .profile-name-control { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: var(--base-size-8); }
     .profile-name-control input { width: min(13rem, 40vw); min-height: var(--control-medium-size, var(--base-size-32)); text-align: center; font: var(--lv-type-body); }
-    .profile-local-input { width: min(13rem, 40vw); min-height: var(--control-medium-size, var(--base-size-32)); justify-self: end; text-align: center; font: var(--lv-type-body); }
     .muted { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     input, select { min-width: 0; min-height: var(--control-small-size); box-sizing: border-box; border: var(--lv-border-default); border-radius: var(--lv-radius-small); padding: 0 var(--control-small-paddingInline-normal); color: var(--lv-fg-default); background: var(--lv-bg-input); font: var(--lv-type-body-compact); }
     button { min-height: var(--control-small-size); border: var(--lv-border-default); border-radius: var(--lv-radius-small); padding: 0 var(--control-small-paddingInline-normal); color: var(--lv-fg-default); background: var(--lv-button-bg-rest); cursor: pointer; font: var(--lv-type-body-compact); }
@@ -199,7 +198,6 @@ export const personalSettingsStyles = css`
       .profile-name-form { width: 100%; justify-self: stretch; }
       .profile-name-control { justify-content: stretch; }
       .profile-name-control input { width: auto; flex: 1 1 auto; }
-      .profile-local-input { width: 100%; justify-self: stretch; }
       .theme-picker { width: 100%; min-width: 0; justify-self: stretch; }
       .theme-trigger { width: 100%; }
       .theme-menu { right: auto; left: 0; }

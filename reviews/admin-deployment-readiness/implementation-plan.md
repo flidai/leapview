@@ -27,10 +27,12 @@ and FAI-955 need final verification/status updates; FAI-943 remains open until
 the integrated exact candidate passes `task ci:full`, generated checks,
 browser/API journeys, and installed-candidate Docker/Compose qualification.
 FAI-997 covers explicit, request-attenuated PAT issuance and atomic rotation;
-FAI-998 covers audited, all-class administrator incident revocation. Both are
-implemented and await the same exact-candidate gate. Session-only bulk
-revocation is now set-based, so its separate Settings action covers more than
-a single inventory page.
+FAI-998 covers audited, all-class administrator incident revocation. Session-only
+bulk revocation is now set-based, so its separate Settings action covers more
+than a single inventory page. FAI-999 removes the remaining false Settings
+affordances and exposes service-account rename. FAI-1000 rejects unenforced
+scope claims on the legacy service-principal OAuth fallback. These changes are
+implemented and await the same exact-candidate gate.
 
 ## Linear delivery breakdown
 
@@ -54,6 +56,8 @@ criteria can be scheduled independently:
 | [FAI-943](https://linear.app/flid/issue/FAI-943/run-final-task-cifull-deployment-readiness-qualification) | Final `task ci:full` qualification | Release blocker | 1 day if green; 2–5 days defect reserve | FAI-929 |
 | [FAI-997](https://linear.app/flid/issue/FAI-997/close-personal-api-token-rotation-and-issuance-gaps) | PAT issuance attenuation, explicit scope, atomic rotation, and observable touch failures | Release blocker | 2–4 days | FAI-927 |
 | [FAI-998](https://linear.app/flid/issue/FAI-998/add-all-class-administrator-incident-revocation) | All-class, transactional administrator incident revocation | Release blocker | 2–4 days | FAI-927 |
+| [FAI-999](https://linear.app/flid/issue/FAI-999/close-remaining-ga-settings-false-affordances) | Remove inert profile/Projects controls and expose service-account rename | GA Settings closure | 1–2 days | FAI-931 |
+| [FAI-1000](https://linear.app/flid/issue/FAI-1000/reject-unenforced-scope-claims-on-legacy-service-oauth-tokens) | Reject unenforced legacy OAuth scope claims | Release blocker | 1 day | FAI-927 |
 
 The planned execution order was FAI-932/933, FAI-934/935, and FAI-936 in
 parallel; then FAI-939/941 and FAI-937; finally FAI-943. The optional FAI-938,

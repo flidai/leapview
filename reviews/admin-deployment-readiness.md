@@ -43,6 +43,14 @@ revocation, and cannot use it on themselves or the last usable platform
 administrator. The exact integrated candidate still requires final
 qualification before this review can close.
 
+The final Settings pass also removed unsupported editable Profile Title and
+Username fields, exposed the existing audited service-account rename command,
+and removed the orphaned Projects component and signal. The legacy
+service-principal OAuth fallback now rejects a requested `scope` it cannot
+enforce instead of echoing a misleading claim; unscoped exchange remains
+supported. FAI-999 and FAI-1000 track these final corrections. Their combined
+candidate still requires the same exact-commit qualification.
+
 ## Prior candidate decision — 2026-09-18
 
 LeapView now has a strong deployment engine and substantially closed
@@ -637,16 +645,13 @@ Required outcome:
 - add a contract test that compares declared platform scope with handler-level
   requirements.
 
-### P3 — Several Settings controls or filters are false affordances
+### Resolved — Settings false affordances
 
-- Profile Title and Username accept edits but have no save command.
-- The service-account update command exists, but the component has no rename
-  control.
-- `projects-admin` has a component and fixture entry but is not a valid section
-  and has no producer.
-
-These should be implemented or removed before general availability so operators
-can trust that a visible control has a durable effect.
+Profile Title and Username had no durable save path, so the unsupported inputs
+were removed. The existing service-account update command now has a rename
+dialog and browser-tested durable outcome. The inert `projects-admin`
+component, fixture entry, and unused signal contract were removed. Settings no
+longer presents those controls as working administrator operations.
 
 ## Permission and token design assessment
 

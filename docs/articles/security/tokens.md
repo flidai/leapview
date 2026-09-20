@@ -39,6 +39,8 @@ LEAPVIEW_WORKLOAD_PROJECT=analytics
 
 `LEAPVIEW_API_TOKEN` and `--token` remain a discouraged compatibility path. Avoid command-line secrets where process listings or shell history may expose them.
 
+The legacy service-principal `client_credentials` fallback at `/oauth/token` is an identity-only exchange. It does not enforce OAuth scopes, so it rejects a nonempty `scope` instead of claiming that a requested scope narrowed the returned token. Use the dedicated workload or MCP exchange when a bounded action or OAuth scope is required.
+
 For a person, `leapview login <target>` uses browser/device authorization and the person's existing SSO or local browser session. It stores rotating CLI credentials in the OS keychain, never in the target profile. Browser sessions, CLI sessions, Desktop sessions, and workload credentials have independent client IDs and revocation lifecycles.
 
 ## User API tokens

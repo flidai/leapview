@@ -8,7 +8,7 @@ import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import { settingsSurfaceStyles } from './settings-surfaces.styles'
 import { identitySourceLabel, principalInitials, currentPrincipalAvatarUrl, initialsForValue, memberActionLabel, formatAccessDate, humanizeAccessValue, principalActivityLabel, formValue } from './settings-surfaces.helpers'
-import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, ServiceAccountSecretSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
+import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, ServiceAccountSecretSignal, ServiceAccountSignal, ServiceAccountsSignal } from '../../generated/signals'
 import './access-settings'
 import './settings-audit'
 import '../shared/entity-list'
@@ -506,79 +506,6 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
   private deleteGroup(group: AccessGroupSignal): void { if (window.confirm(`Delete ${group.name}? Access granted through this group will be removed.`)) this.emit({ action: 'delete_group', groupId: group.id }) }
 }
 
-class LeapViewProjectRegistry extends DatastarLit(LitElement) {
-  static styles = settingsSurfaceStyles
-  get registry(): ProjectRegistrySignal { return this.signal('adminProjects', { items: [], loading: false, hasMore: false }) }
-  render() {
-    const signal = this.registry
-    return html`<section class="surface" aria-label="Projects">
-      ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
-      ${signal.loading ? html`<p class="muted" aria-live="polite">Loading projects…</p>` : nothing}
-      <lv-entity-list
-        .items=${projectListItems(signal)}
-        .columns=${projectListColumns()}
-        client-filter
-        search-placeholder="Search projects by name, owner, or environment"
-        list-label="Projects"
-        empty-text=${signal.empty || 'No projects are available.'}
-      ></lv-entity-list>
-    </section>`
-  }
-}
-
-function projectListItems(signal: ProjectRegistrySignal): EntityListItem[] {
-  return (signal.items ?? []).map((item) => {
-    const administrators = (item.administrators ?? []).map((administrator) => administrator.displayName).filter(Boolean)
-    const deployment = item.deploymentStatus || item.servingStateStatus || 'Not deployed'
-    return {
-      id: item.id,
-      title: item.title || item.id,
-      description: item.description,
-      href: item.href || item.links.project,
-      icon: 'database',
-      iconTreatment: 'plain',
-      columns: {
-        owner: item.owner?.displayName || 'Unassigned',
-        administrators: administrators.length ? administrators.join(', ') : 'None',
-        environment: item.environment || '—',
-        deployment,
-        updated: formatProjectDate(item.updatedAt),
-      },
-      columnTitles: {
-        owner: item.owner?.email || item.owner?.displayName || '',
-        administrators: administrators.join(', '),
-        deployment: item.currentDeploymentId || deployment,
-        updated: item.updatedAt || '',
-      },
-      sortValues: {
-        updated: projectTimestamp(item.updatedAt),
-      },
-    }
-  })
-}
-
-function projectListColumns(): EntityListColumn[] {
-  return [
-    { id: 'name', label: 'Name', width: '27%' },
-    { id: 'owner', label: 'Owner', width: '18%' },
-    { id: 'administrators', label: 'Administrators', width: '18%' },
-    { id: 'environment', label: 'Environment', width: '13%' },
-    { id: 'deployment', label: 'Deployment', width: '13%' },
-    { id: 'updated', label: 'Updated', width: '11%' },
-  ]
-}
-
-function formatProjectDate(value = ''): string {
-  const timestamp = projectTimestamp(value)
-  if (!timestamp) return '—'
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(timestamp)
-}
-
-function projectTimestamp(value = ''): number {
-  const timestamp = Date.parse(value)
-  return Number.isNaN(timestamp) ? 0 : timestamp
-}
-
 type ServiceSecretExpirationPreset = '30' | '60' | '90' | 'custom'
 
 function serviceAccountListItems(accounts: ServiceAccountSignal[], busy: boolean): EntityListItem[] {
@@ -695,6 +622,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   @state() private busy = false
   @state() private commandError = ''
   @state() private createSecretOpen = false
+  @state() private renameAccountOpen = false
   @state() private deleteAccountOpen = false
   @state() private pendingSecretRevocation: ServiceAccountSecretSignal | null = null
   @state() private secretExpirationPreset: ServiceSecretExpirationPreset = '90'
@@ -721,6 +649,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
     this.pendingSignalKey = key
     this.openDialog('[data-service-account-dialog="create"]', this.createAccountOpen)
     this.openDialog('[data-service-account-dialog="secret"]', this.createSecretOpen)
+    this.openDialog('[data-service-account-dialog="rename"]', this.renameAccountOpen)
     this.openDialog('[data-service-account-dialog="delete"]', this.deleteAccountOpen)
     this.openDialog('[data-service-account-dialog="revoke"]', Boolean(this.pendingSecretRevocation))
   }
@@ -765,6 +694,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
       subtitle: account.id,
       badges: html`<span class="badge" data-service-account-status>${account.disabledAt ? 'Disabled' : 'Active'}</span>`,
       actions: html`
+        <button class="service-detail-action" type="button" ?disabled=${this.busy} @click=${() => { this.renameAccountOpen = true }}>${lucideIcon(Pencil, { size: 15, strokeWidth: 2 })}<span>Rename</span></button>
         ${account.disabledAt
           ? html`<button class="service-detail-action" type="button" ?disabled=${this.busy} @click=${() => this.toggleAccount(account)}>${lucideIcon(Info, { size: 15, strokeWidth: 2 })}<span>Enable access</span></button>`
           : html`<button class="service-detail-action" type="button" ?disabled=${this.busy} @click=${() => this.toggleAccount(account)}>${lucideIcon(CircleSlash2, { size: 15, strokeWidth: 2 })}<span>Disable access</span></button>`}
@@ -801,6 +731,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
       `,
     })}
     ${this.renderCreateSecretDialog(account)}
+    ${this.renderRenameAccountDialog(account)}
     ${this.renderDeleteAccountDialog(account)}
     ${this.renderRevokeSecretDialog(account)}
     `
@@ -852,6 +783,23 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
             ${this.secretExpirationPreset === 'custom' ? html`<input name="customExpiration" aria-label="Custom expiration date" type="date" min=${serviceDateInputValueInDays(1)} max=${serviceDateInputValueInDays(364)} .value=${this.secretCustomExpiration} @input=${this.updateSecretCustomExpiration} required>` : nothing}
           </div>
           <div class="modal-actions"><button type="button" @click=${this.closeCreateSecret}>Cancel</button><button class="primary" type="submit" ?disabled=${this.busy}>${this.busy && this.pendingAction === 'create_secret' ? 'Creating…' : 'Create credential'}</button></div>
+        </form>
+      </section>
+    </dialog>`
+  }
+
+  private renderRenameAccountDialog(account: ServiceAccountSignal) {
+    if (!this.renameAccountOpen) return nothing
+    return html`<dialog data-service-account-dialog="rename" aria-labelledby="rename-service-account-title" @cancel=${this.closeRenameAccount} @click=${this.closeRenameAccountOnBackdrop}>
+      <section class="modal">
+        <header class="modal-header">
+          <div class="modal-title"><h2 id="rename-service-account-title">Rename service account</h2><p class="muted">Change the display name shown throughout LeapView.</p></div>
+          <button class="modal-close" type="button" aria-label="Close" @click=${this.closeRenameAccount}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button>
+        </header>
+        <form class="modal-body" @submit=${(event: SubmitEvent) => this.renameAccount(event, account)}>
+          <label class="service-dialog-field"><span>Display name</span><input id="rename-service-account-display-name" aria-label="Display name" name="displayName" required autocomplete="off" .value=${account.displayName} ?disabled=${this.busy}></label>
+          <p class="muted">Only platform administrators can rename service accounts.</p>
+          <div class="modal-actions"><button type="button" @click=${this.closeRenameAccount}>Cancel</button><button class="primary" type="submit" ?disabled=${this.busy}>${this.busy && this.pendingAction === 'update' ? 'Renaming…' : 'Rename service account'}</button></div>
         </form>
       </section>
     </dialog>`
@@ -934,6 +882,13 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
     this.emit({ action: 'create_secret', accountId: account.id, secretName, expiresAt })
   }
 
+  private renameAccount(event: SubmitEvent, account: ServiceAccountSignal): void {
+    event.preventDefault()
+    const form = event.currentTarget as HTMLFormElement
+    const displayName = (form.elements.namedItem('displayName') as HTMLInputElement).value.trim()
+    if (displayName && displayName !== account.displayName) this.emit({ action: 'update', accountId: account.id, displayName })
+  }
+
   private chooseSecretExpiration = (event: CustomEvent<{ value: ServiceSecretExpirationPreset }>): void => {
     this.secretExpirationPreset = event.detail.value
     if (event.detail.value !== 'custom') this.secretCustomExpiration = ''
@@ -964,6 +919,8 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   private closeCreateAccountOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeCreateAccount(event) }
   private closeCreateSecret = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.createSecretOpen = false }
   private closeCreateSecretOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeCreateSecret(event) }
+  private closeRenameAccount = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.renameAccountOpen = false }
+  private closeRenameAccountOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeRenameAccount(event) }
   private closeDeleteAccount = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.deleteAccountOpen = false }
   private closeDeleteAccountOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeDeleteAccount(event) }
   private closeRevokeSecret = (event?: Event): void => { event?.preventDefault(); if (!this.busy) this.pendingSecretRevocation = null }
@@ -986,6 +943,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
       this.secretExpirationPreset = '90'
       this.secretCustomExpiration = ''
     }
+    if (action === 'update') this.renameAccountOpen = false
     if (action === 'delete') this.deleteAccountOpen = false
     if (action === 'revoke_secret') this.pendingSecretRevocation = null
   }
@@ -1005,10 +963,9 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   }
 }
 
-if (!customElements.get('lv-project-registry')) customElements.define('lv-project-registry', LeapViewProjectRegistry)
 if (!customElements.get('lv-service-accounts')) customElements.define('lv-service-accounts', LeapViewServiceAccounts)
 if (!customElements.get('lv-principal-administration')) customElements.define('lv-principal-administration', LeapViewPrincipalAdministration)
 if (!customElements.get('lv-group-administration')) customElements.define('lv-group-administration', LeapViewGroupAdministration)
 
-export { LeapViewProjectRegistry, LeapViewServiceAccounts, LeapViewPrincipalAdministration, LeapViewGroupAdministration }
+export { LeapViewServiceAccounts, LeapViewPrincipalAdministration, LeapViewGroupAdministration }
 export { setDatastarLitRuntimeForTests } from '../shared/datastar-lit'

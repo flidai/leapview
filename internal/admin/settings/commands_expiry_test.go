@@ -10,7 +10,9 @@ import (
 )
 
 type serviceAccountSecretExpiryMutator struct {
-	input access.ServicePrincipalSecretInput
+	input        access.ServicePrincipalSecretInput
+	updatedID    string
+	updatedInput access.ServicePrincipalInput
 }
 
 type serviceAccountCreationRepository struct {
@@ -31,8 +33,10 @@ func (m *serviceAccountSecretExpiryMutator) CreateServicePrincipal(context.Conte
 	return access.Principal{ID: "svc-1", Kind: access.PrincipalKindServicePrincipal}, nil
 }
 
-func (m *serviceAccountSecretExpiryMutator) UpdateServicePrincipal(context.Context, string, access.ServicePrincipalInput) (access.Principal, error) {
-	return access.Principal{}, nil
+func (m *serviceAccountSecretExpiryMutator) UpdateServicePrincipal(_ context.Context, id string, input access.ServicePrincipalInput) (access.Principal, error) {
+	m.updatedID = id
+	m.updatedInput = input
+	return access.Principal{ID: id, Kind: access.PrincipalKindServicePrincipal, DisplayName: input.DisplayName}, nil
 }
 
 func (m *serviceAccountSecretExpiryMutator) DeleteServicePrincipal(context.Context, string) error {
@@ -91,6 +95,22 @@ func TestApplyServiceAccountCommandPassesResolvedSecretExpiry(t *testing.T) {
 	}
 	if !mutator.input.ExpiresAt.After(time.Now().UTC().Add(89 * 24 * time.Hour)) {
 		t.Fatalf("resolved expiry = %s, want roughly 90 days from now", mutator.input.ExpiresAt)
+	}
+}
+
+func TestApplyServiceAccountCommandUpdatesServiceAccountDisplayName(t *testing.T) {
+	mutator := &serviceAccountSecretExpiryMutator{}
+	secret, targetID, err := applyServiceAccountCommand(context.Background(), mutator, ServiceAccountCommand{
+		Action: "update", AccountID: "svc-1", DisplayName: "  Production deploy  ",
+	})
+	if err != nil {
+		t.Fatalf("apply command: %v", err)
+	}
+	if secret != "" || targetID != "svc-1" {
+		t.Fatalf("update result = secret %q target %q, want empty secret and svc-1", secret, targetID)
+	}
+	if mutator.updatedID != "svc-1" || mutator.updatedInput.ID != "svc-1" || mutator.updatedInput.DisplayName != "Production deploy" {
+		t.Fatalf("updated service account = id %q input %#v, want trimmed display name", mutator.updatedID, mutator.updatedInput)
 	}
 }
 

@@ -1516,6 +1516,7 @@ test('admin sidebar replaces global navigation and provides a back to app action
       { href: '/admin/queries', text: 'Query history', current: 'false' },
       { href: '/admin/publications', text: 'Publications', current: 'false' },
     ]))
+    expect(state.links.some((link) => link.href === '/admin/projects')).toBe(false)
     expect(state.brandAction).toEqual({ href: '/', text: 'Back to app' })
     expect(state.brandItemStyle.brand).toEqual(state.brandItemStyle.nav)
     expect(state.search).toEqual({ display: 'grid', placeholder: 'Search...', ariaLabel: 'Search admin navigation' })

@@ -38,7 +38,6 @@ func signalRootEvidenceCatalog() map[string]signalRootEvidence {
 		"adminAccessSettings":        {producer: rootMarker("internal/admin/http/handler.go", "adminAccessSettings"), reader: rootMarker("web/components/admin/access-settings.ts", "adminAccessSettings")},
 		"adminAgentCommand":          {producer: rootMarker("internal/admin/ui/page.go", "adminAgentCommand"), reader: rootMarker("web/components/admin/admin-page.ts", "adminAgentCommand")},
 		"adminAuditLog":              {producer: rootMarker("internal/admin/http/handler.go", "adminAuditLog"), reader: rootMarker("web/components/admin/settings-audit.ts", "adminAuditLog")},
-		"adminProjects":              {reader: rootMarker("web/components/admin/settings-surfaces.ts", "adminProjects"), allow: "consumer-only"},
 		"adminQueryDetail":           {producer: rootMarker("internal/admin/http/query_history.go", "adminQueryDetail"), reader: rootMarker("web/components/admin/admin-page.ts", "adminQueryDetail")},
 		"adminQueryHistory":          {producer: rootMarker("internal/admin/http/query_history.go", "adminQueryHistory"), reader: rootMarker("web/components/admin/admin-page.ts", "adminQueryHistory")},
 		"adminServiceAccounts":       {producer: rootMarker("internal/admin/http/handler.go", "adminServiceAccounts"), reader: rootMarker("web/components/admin/settings-surfaces.ts", "adminServiceAccounts")},

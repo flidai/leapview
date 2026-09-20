@@ -469,6 +469,10 @@ func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSONError(w, fmt.Errorf("unsupported grant_type %q", input.GrantType), stdhttp.StatusBadRequest)
 		return
 	}
+	if strings.TrimSpace(input.Scope) != "" {
+		writeJSONError(w, fmt.Errorf("scopes are not supported by the legacy service-principal token exchange"), stdhttp.StatusBadRequest)
+		return
+	}
 	principal, err := repo.PrincipalForServicePrincipalSecret(r.Context(), input.ClientID, input.ClientSecret)
 	if err != nil {
 		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
@@ -493,6 +497,5 @@ func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		"access_token": token,
 		"token_type":   "Bearer",
 		"expires_in":   int(ttl.Seconds()),
-		"scope":        input.Scope,
 	})
 }

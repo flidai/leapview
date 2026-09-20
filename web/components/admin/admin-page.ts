@@ -87,7 +87,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     if (!page) return html`<slot></slot>`
     const mainClass = [
       'main',
-      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'access' || page.active === 'projects-admin' || page.active === 'service-accounts' || page.active === 'service-accounts-new' || page.active === 'storage' || page.active === 'storage-detail' || page.active === 'publications' || page.active === 'delivery' ? 'main-directory' : '',
+      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'access' || page.active === 'service-accounts' || page.active === 'service-accounts-new' || page.active === 'storage' || page.active === 'storage-detail' || page.active === 'publications' || page.active === 'delivery' ? 'main-directory' : '',
       isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
       page.active === 'profile' ? 'main-profile' : '',
       page.active === 'security' ? 'main-security' : '',
@@ -128,8 +128,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
             : page.active === 'archived-chats' ? html`<lv-archived-chats></lv-archived-chats>`
               : isPersonalSettings(page.active) ? html`<lv-personal-settings token-view=${page.active === 'api-token-new' ? 'create' : 'list'}></lv-personal-settings>`
               : isProductSettings(page.active) ? html`<lv-product-settings></lv-product-settings>`
-                : page.active === 'projects-admin' ? html`<lv-project-registry></lv-project-registry>`
-                  : page.active === 'service-accounts' || page.active === 'service-accounts-new' ? html`<lv-service-accounts .createAccountOpen=${page.active === 'service-accounts-new'}></lv-service-accounts>`
+                : page.active === 'service-accounts' || page.active === 'service-accounts-new' ? html`<lv-service-accounts .createAccountOpen=${page.active === 'service-accounts-new'}></lv-service-accounts>`
                     : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
                       : page.active === 'access' ? html`<lv-access-settings></lv-access-settings>`
                         : page.active === 'delivery' ? html`<section class="delivery-surface" aria-label="Delivery" aria-busy=${this.deliveryBusy ? 'true' : 'false'} @lv-record-table-action=${this.handleDeliveryTableAction}>${this.deliveryMessage ? html`<p class="local-user-result" role="status" aria-live="polite">${this.deliveryMessage}</p>` : nothing}${this.renderDeliverySections(page)}</section>`

@@ -456,10 +456,6 @@ model AdminPageEnvelope {
   `adminAgentCommand`?: AdminAgentCommandSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminAuditLog", `x-leapview-signal-owner`: "server" })
   `adminAuditLog`?: AuditLogSignal;
-  // The settings surface retains this consumer-only root for contract
-  // compatibility; there is no producer anywhere in the canonical app.
-  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminProjects", `x-leapview-signal-owner`: "consumer-only" })
-  `adminProjects`?: ProjectRegistrySignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminQueryDetail", `x-leapview-signal-owner`: "server" })
   `adminQueryDetail`?: AdminQueryDetailSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminQueryHistory", `x-leapview-signal-owner`: "server" })

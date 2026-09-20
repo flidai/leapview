@@ -996,6 +996,7 @@ interface ServicePrincipals {
   @apigen.command(#{ auditAction: "service_principal.updated" })
   @apigen.failsWith(ServicePrincipalNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
+  @apigen.ui("service-account.update")
   updateServicePrincipal(@path servicePrincipal: string, @header("If-Match") ifMatch: string, @body body: ServicePrincipalPatchRequest): UpdateServicePrincipalOK | CommonErrors;
 
   @summary("Delete a service principal")

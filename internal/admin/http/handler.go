@@ -461,6 +461,13 @@ func beginServiceAccountInvocation(r *nethttp.Request, command adminsettings.Ser
 			})
 			return ctx, err
 		})
+	case "update":
+		return begin(accessgen.GenUIActionUpdateServicePrincipal(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenUpdateServicePrincipalCommand(r.Context(), accessgen.GenUpdateServicePrincipalCommandInvocation{
+				Surface: apigencommand.SurfaceUI, ServicePrincipal: strings.TrimSpace(command.AccountID), ConcurrencyToken: "*", RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
 	case "delete":
 		return begin(accessgen.GenUIActionDeleteServicePrincipal(), func() (context.Context, error) {
 			ctx, _, err := accessgen.BeginGenDeleteServicePrincipalCommand(r.Context(), accessgen.GenDeleteServicePrincipalCommandInvocation{

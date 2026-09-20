@@ -221,6 +221,7 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	if active == "service-accounts" || active == "service-accounts-new" {
 		serviceAccountCommands := map[string]uicommand.Binding{
 			"create":        accessgen.GenUIActionCreateServicePrincipal(),
+			"update":        accessgen.GenUIActionUpdateServicePrincipal(),
 			"delete":        accessgen.GenUIActionDeleteServicePrincipal(),
 			"disable":       accessgen.GenUIActionDisableServicePrincipal(),
 			"enable":        accessgen.GenUIActionEnableServicePrincipal(),

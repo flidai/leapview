@@ -64040,6 +64040,8 @@ paths:
               displayName: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -64063,6 +64065,8 @@ paths:
         target:
           parameter: servicePrincipal
           type: servicePrincipal
+        ui:
+          action_id: service-account.update
       x-authz:
         mode: platform_admin
       x-leapview-object-scope: platform

@@ -1,62 +1,10 @@
 // Settings surfaces are kept in a separate contract so they can evolve
 // independently from the shared admin page envelope. The admin stream
 // publishes service-account and audit signals without introducing ad-hoc
-// browser fetches. `adminProjects` is a retained consumer-only root and has no
-// producer in the canonical app.
+// browser fetches.
 import "@yacobolo/apigen";
 
 namespace LeapViewUISignals;
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "settings", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
-model ProjectRegistrySignal {
-  `items`: ProjectRegistryItemSignal[];
-  `empty`?: string;
-  `loading`: boolean;
-  `error`?: string;
-  `nextCursor`?: string;
-  `hasMore`: boolean;
-}
-
-model ProjectRegistryItemSignal {
-  `id`: string;
-  `title`: string;
-  `description`?: string;
-  `href`: string;
-  `createdAt`?: string;
-  `updatedAt`?: string;
-  `owner`?: ProjectSubjectSignal;
-  `administrators`: ProjectSubjectSignal[];
-  `environment`?: string;
-  `activeServingStateId`?: string;
-  `servingStateStatus`?: string;
-  `servingStateSince`?: string;
-  `projectId`?: string;
-  `currentDeploymentId`?: string;
-  `deploymentStatus`?: string;
-  `deploymentSince`?: string;
-  `currentReleaseId`?: string;
-  `links`: ProjectLinksSignal;
-}
-
-model ProjectSubjectSignal {
-  `subjectType`: string;
-  `subjectId`: string;
-  `email`?: string;
-  `displayName`: string;
-  `role`?: string;
-}
-
-model ProjectLinksSignal {
-  `self`: string;
-  `project`: string;
-  `release`?: string;
-  `deployment`?: string;
-  `deployments`?: string;
-  `connections`?: string;
-  `publications`?: string;
-  `agent`?: string;
-}
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "settings", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
