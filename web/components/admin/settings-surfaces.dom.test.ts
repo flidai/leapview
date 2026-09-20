@@ -195,6 +195,7 @@ test('service account and audit controls unlock when a no-op command finishes', 
       ;((audit.shadowRoot as ShadowRoot).querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await audit.updateComplete
       const auditDisabled = ((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled
+      const projectInput = (audit.shadowRoot as ShadowRoot).querySelector<HTMLInputElement>('#audit-project-id')
       const auditLabels = Array.from((audit.shadowRoot as ShadowRoot).querySelectorAll('input')).map((input) => input.getAttribute('aria-label'))
       const unrelatedOwner = document.createElement('lv-other-page')
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: unrelatedOwner } }))
@@ -210,11 +211,13 @@ test('service account and audit controls unlock when a no-op command finishes', 
         accountStillDisabled,
         auditStillDisabled,
         auditLabels,
+        projectReadOnly: projectInput?.readOnly,
+        projectHelp: audit.shadowRoot?.querySelector('#audit-project-help')?.textContent?.trim(),
         accountUnlocked: !((accounts.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).disabled,
         auditUnlocked: !((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
     })
-    expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, auditLabels: ['Project', 'Actor', 'Resource ID', 'From', 'To'], accountUnlocked: true, auditUnlocked: true })
+    expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, auditLabels: ['Project', 'Actor', 'Resource ID', 'From', 'To'], projectReadOnly: true, projectHelp: 'The active project is selected by the server and cannot be changed here.', accountUnlocked: true, auditUnlocked: true })
   } finally { await page.close() }
 })
 

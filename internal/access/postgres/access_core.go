@@ -974,14 +974,10 @@ func (r *Repository) createSession(ctx context.Context, pid string, ttl time.Dur
 		// The session identity trigger intentionally rejects post-insert
 		// created_at changes. Insert the verified IdP authentication time in
 		// the same statement instead, while retaining callback-time expiry.
-		tag, err = db.Exec(ctx, `
-			INSERT INTO access.session(id, principal_id, token_fingerprint, verifier, expires_at, created_at, kind)
-			SELECT $1::uuid, $2::uuid, $3, $4, clock_timestamp() + $6::interval, $5, 'browser'
-			WHERE EXISTS (
-				SELECT 1 FROM access.principal
-				WHERE id = $2::uuid AND status = 'active'
-				  AND disabled_at IS NULL AND blocked_at IS NULL
-			)`, parsedID, principalID, r.secretFingerprint(token), ver, authenticatedAt.UTC(), pgInterval(ttl))
+		tag, err = accessdb.New(db).CreateBrowserSessionAt(ctx, accessdb.CreateBrowserSessionAtParams{
+			ID: parsedID, PrincipalID: principalID, TokenFingerprint: r.secretFingerprint(token),
+			Verifier: ver, Ttl: pgInterval(ttl), CreatedAt: pgTimestamp(authenticatedAt),
+		})
 	}
 	if err != nil {
 		return "", err

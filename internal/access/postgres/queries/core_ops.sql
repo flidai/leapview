@@ -450,6 +450,17 @@ WHERE EXISTS (
       AND disabled_at IS NULL AND blocked_at IS NULL
 );
 
+-- name: CreateBrowserSessionAt :execresult
+INSERT INTO access.session(id, principal_id, token_fingerprint, verifier, expires_at, created_at, kind)
+SELECT sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, sqlc.arg(token_fingerprint),
+       sqlc.arg(verifier), clock_timestamp() + sqlc.arg(ttl)::interval,
+       sqlc.arg(created_at)::timestamptz, 'browser'
+WHERE EXISTS (
+    SELECT 1 FROM access.principal
+    WHERE id = sqlc.arg(principal_id)::uuid AND status = 'active'
+      AND disabled_at IS NULL AND blocked_at IS NULL
+);
+
 -- name: FindBrowserSession :one
 SELECT p.id, s.token_fingerprint, s.verifier
 FROM access.session s

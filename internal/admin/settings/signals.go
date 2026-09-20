@@ -93,11 +93,6 @@ type AuditEventSignal struct {
 	CreatedAt      string         `json:"createdAt"`
 }
 
-type AuditLogReader interface {
-	ListAuditEvents(context.Context, access.AuditEventFilter) ([]access.AuditEvent, error)
-	ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error)
-}
-
 type auditLogResourceReader interface {
 	ListAllGroups(context.Context) ([]access.Group, error)
 	ListServicePrincipals(context.Context) ([]access.Principal, error)
