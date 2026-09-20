@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   inspect:
-    name: Inspect CFO build failure
+    name: Repair CFO runtime data view
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: leapview-demo
@@ -39,14 +39,14 @@ jobs:
           project-slug: leapview
           env-slug: prod
           secret-path: /demo/deployment
-      - name: Inspect failed CFO build
+      - name: Restore verified CFO runtime data view
         env:
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
         run: |
           export DEMO_RUNNER_IP="$(curl -4fsS --max-time 10 https://api.ipify.org)"
           bash scripts/inspect_cfo_demo.sh
   deploy:
-    if: false
+    needs: inspect
     name: Publish CFO Command Center
     runs-on: ubuntu-24.04
     timeout-minutes: 30

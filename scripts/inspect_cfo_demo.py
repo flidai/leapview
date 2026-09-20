@@ -1,18 +1,28 @@
-import hashlib, json, os, subprocess
+import hashlib, json, os, subprocess, tempfile, time
 from pathlib import Path
-pid=subprocess.check_output(['systemctl','show','leapview-demo-current.service','--property=MainPID','--value'],text=True).strip()
-e=dict(item.decode().split('=',1) for item in Path('/proc',pid,'environ').read_bytes().split(b'\0') if b'=' in item)
-for k,v in e.items():
- if k=='LEAPVIEW_HOME' or ('MANAGED' in k and any(x in k for x in ('DIR','ROOT','BACKEND'))): print(k,v)
-print('runtime uid',Path('/proc',pid).stat().st_uid)
-container='leapview-postgres-3948794932-demo-current-postgres-1'
-query="select json_agg(row_to_json(x)) from (select c.connection_id,r.digest,r.manifest from managed_data.revision r join managed_data.collection c using(collection_id) where c.project_id='lvproject_fI7xfxRH2qubXpUe5KcU7o6T5MOt7tHz' and r.status='ready') x"
-s=subprocess.check_output(['docker','exec',container,'sh','-c','exec psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control -Atc "$1"','query',query],text=True)
 root=Path('/tmp/leapview-demo-host-state/managed-data/objects')
-for item in json.loads(s):
- print('REVISION',item['connection_id'],item['digest'])
- for f in item['manifest']['files']:
-  p=root/'blobs/sha256'/f['sha256'][:2]/f['sha256']; view=root/'revisions'/item['digest']/'data'/f['path']
-  print(f['path'],'expected',f['sha256'],'size',f['size'],'blob',p.exists(),'view',view.exists())
-  for x in (p,view):
-   if x.exists(): print(str(x),'uid',x.stat().st_uid,'mode',oct(x.stat().st_mode),'size',x.stat().st_size,'digest',hashlib.sha256(x.read_bytes()).hexdigest())
+revision='sha256:dd21088c521f9b0900d9eeceff5859598d2cb1ce511832fe972ce6f87f28e530'
+digest='131af03496fc84d351bffcf4a170f5da0f25204e51ce33d5d41589b4e0191d14'
+manifest={'files':[{'path':'financial-sample.csv','size':75083,'sha256':digest}]}
+assert 'sha256:'+hashlib.sha256(json.dumps(manifest,separators=(',',':')).encode()).hexdigest()==revision
+blob=root/'blobs/sha256'/digest[:2]/digest
+assert blob.is_file() and not blob.is_symlink()
+assert blob.stat().st_size==75083 and hashlib.sha256(blob.read_bytes()).hexdigest()==digest
+container=root/'revisions'/revision
+view=container/'data'/'financial-sample.csv'
+if view.exists():
+ assert view.stat().st_size==75083 and hashlib.sha256(view.read_bytes()).hexdigest()==digest
+ print('Verified existing CFO runtime view')
+else:
+ assert not container.is_symlink()
+ print('Recovering incomplete CFO runtime view',list(str(p.relative_to(container)) for p in container.rglob('*')) if container.exists() else 'absent')
+ staging=Path(tempfile.mkdtemp(prefix='.cfo-recovery-',dir=root/'revisions'))
+ (staging/'data').mkdir(mode=0o700)
+ os.link(blob,staging/'data'/'financial-sample.csv')
+ (staging/'data').chmod(0o500)
+ if container.exists():
+  backup=root/('cfo-incomplete-backup-'+time.strftime('%Y%m%dT%H%M%SZ',time.gmtime()))
+  container.rename(backup)
+  print('Preserved incomplete view at',backup)
+ staging.rename(container)
+ print('Restored verified CFO runtime view',revision)
