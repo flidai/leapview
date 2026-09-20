@@ -374,6 +374,7 @@ tasks:
       - bun run test:data-explorer
       - bun run test:project-page
       - bun run test:admin-page
+      - bun run test:settings
       - bun run test:code-editor
       - bun run test:login-page
       - bun run test:asset-lineage

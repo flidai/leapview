@@ -132,6 +132,32 @@ if (( available_kb <= 7000000 )) && command -v go >/dev/null && [[ -d /root/go/p
   available_kb="$(df --output=avail /opt | tail -1 | tr -d ' ')"
 fi
 if (( available_kb <= 7000000 )); then
+  active_revision="$("/proc/$active_pid/exe" version --json | jq -er '.revision')"
+  predecessor_file="$(printf '%s\n' /opt/leapview-demo/rollbacks/*-"${active_revision:0:12}"/predecessor.json | sort | tail -1)"
+  # Retain both live and immediate predecessor images, plus every container's
+  # image. Only older, retrievable OCI cache entries are eligible; extracted
+  # releases, database volumes, runtime files, and rollback backups stay intact.
+  if [[ -f "$predecessor_file" ]]; then
+    predecessor_revision="$(jq -er '.revision' "$predecessor_file")"
+    mapfile -t cached_images < <(docker image ls ghcr.io/flidai/leapview --quiet --no-trunc | sort -u)
+    for cached_image in "${cached_images[@]}"; do
+      metadata="$(docker image inspect "$cached_image")"
+      cached_revision="$(jq -r '.[0].Config.Labels["org.opencontainers.image.revision"] // empty' <<<"$metadata")"
+      [[ "$cached_revision" =~ ^[0-9a-f]{40}$ ]] || continue
+      [[ "$cached_revision" != "$active_revision" && "$cached_revision" != "$predecessor_revision" && "$cached_revision" != "$revision" ]] || continue
+      [[ -z "$(docker ps -aq --filter "ancestor=$cached_image")" ]] || continue
+      cached_reference="$(jq -r '[.[0].RepoDigests[]? | select(startswith("ghcr.io/flidai/leapview@sha256:"))][0] // empty' <<<"$metadata")"
+      [[ -n "$cached_reference" ]] || continue
+      docker manifest inspect "$cached_reference" >/dev/null 2>&1 || continue
+      echo "Reclaiming unused retrievable runtime image $cached_revision"
+      if docker image rm "$cached_image"; then
+        available_kb="$(df --output=avail /opt | tail -1 | tr -d ' ')"
+        (( available_kb > 7000000 )) && break
+      fi
+    done
+  fi
+fi
+if (( available_kb <= 7000000 )); then
   df -h /opt
   docker system df
   du -xhd1 /opt /var/lib /root /tmp /var/log 2>/dev/null | sort -h | tail -35

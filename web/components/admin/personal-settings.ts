@@ -15,6 +15,7 @@ import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/one-time-secret'
 import '../shared/select-menu'
 import type { SelectMenu } from '../shared/select-menu'
+import { renderSettingsActions, renderSettingsRow, renderSettingsSection, settingsLayoutStyles } from '../shared/settings-layout'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import { avatarResponseError } from './avatar-response'
 import { formatDate, formatRelativeActivity, humanizeCapability, humanizeSessionKind, sessionFact } from './personal-settings-format'
@@ -124,7 +125,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private observedProfileID = ''
   private observedTheme = ''
 
-  static styles = [settingsFieldStyles, emptyStateStyles, personalSettingsStyles]
+  static styles = [settingsFieldStyles, settingsLayoutStyles, emptyStateStyles, personalSettingsStyles]
 
   override connectedCallback(): void {
     super.connectedCallback()
@@ -202,13 +203,11 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     const profileNameDirty = profileNameDraft.trim() !== settings.profile.displayName
     const profileNameValid = profileNameDraft.trim().length > 0
     return html`
-      <div class="settings" aria-label="Personal settings">
+      <div class="settings-stack" aria-label="Personal settings">
         ${this.renderNotice(settings)}
-        ${settings.active === 'profile' ? html`<section aria-label="Profile">
-          <div class="card profile-card">
-            <div class="row profile-row">
-              <div class="settings-field"><span class="settings-label">Profile picture</span><span class="settings-description">Shown across LeapView.</span></div>
-              <div class="avatar-control">
+        ${settings.active === 'profile' ? renderSettingsSection({ label: 'Profile', appearance: 'plain', content: html`
+          ${renderSettingsSection({ label: 'Profile details', appearance: 'card', className: 'card profile-card', content: html`
+            ${renderSettingsRow({ label: 'Profile picture', layout: 'action', className: 'row profile-row', description: 'Shown across LeapView.', control: html`<div class="avatar-control">
                 <button
                   class="avatar-trigger"
                   type="button"
@@ -241,39 +240,25 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                     ` : nothing}
                   </div>
                 ` : nothing}
-              </div>
-            </div>
-            <div class="row profile-row"><div class="settings-field"><span class="settings-label">Email</span><span class="settings-description">Managed by your identity provider.</span></div><span class="settings-value profile-email">${settings.profile.email || 'Not set'}</span></div>
-            <div class="row profile-row">
-              <div class="settings-field"><label class="settings-label" for="personal-display-name">Display name</label><span class="settings-description">How your name appears to collaborators.</span></div>
-              <form class="profile-name-form" @submit=${this.saveProfile}>
-                <div class="profile-name-control">
-                  <input id="personal-display-name" .value=${profileNameDraft} ?disabled=${!settings.profile.canEditDisplayName} @input=${this.onProfileNameInput}>
-                  ${profileNameDirty ? html`<button class="primary" data-profile-save type="submit" ?disabled=${!settings.profile.canEditDisplayName || !profileNameValid}>Save</button>` : nothing}
-                </div>
-              </form>
-            </div>
-            <div class="row profile-row">
-              <div class="settings-field"><label class="settings-label" for="personal-title">Title</label><span class="settings-description">Your job title or role.</span></div>
-              <input id="personal-title" class="profile-local-input profile-title-input" maxlength="120" placeholder="Software engineer" .value=${this.profileTitle} @input=${this.onProfileTitleInput}>
-            </div>
-            <div class="row profile-row">
-              <div class="settings-field"><label class="settings-label" for="personal-username">Username</label><span class="settings-description">One word, like a nickname or first name.</span></div>
-              <input id="personal-username" class="profile-local-input profile-username-input" maxlength="64" autocomplete="off" .value=${this.profileUsername} @input=${this.onProfileUsernameInput}>
-            </div>
-            <div class="row profile-row">
-              <div class="settings-field"><span class="settings-label" id="personal-theme-label">Theme</span><span class="settings-description">Choose how LeapView appears on your devices.</span></div>
-              ${this.renderThemePicker(this.selectedTheme || settings.profile.theme || 'system')}
-            </div>
-          </div>
-          <section class="account-section" aria-label="Account">
-            <div class="security-section-heading-copy"><h2>Account</h2><p class="settings-description">Use this ID when support or administration needs to identify your account.</p></div>
-            <div class="card account-card">
-              <div class="row account-row"><div class="settings-field"><span class="settings-label">Account ID</span><span class="settings-description">Your LeapView principal identifier.</span></div><code class="account-id">${settings.profile.id}</code></div>
-              <div class="row account-row"><div class="settings-field"><span class="settings-label">Sign out</span><span class="settings-description">End this browser session and return to sign-in.</span></div><button type="button" class="danger" data-sign-out @click=${this.signOutCurrentSession}>Sign out</button></div>
-            </div>
-          </section>
-        </section>` : nothing}
+              </div>` })}
+            ${renderSettingsRow({ label: 'Email', layout: 'action', className: 'row profile-row', description: 'Managed by your identity provider.', control: html`<span class="settings-value profile-email">${settings.profile.email || 'Not set'}</span>` })}
+            ${renderSettingsRow({ label: 'Display name', layout: 'action', className: 'row profile-row', controlId: 'personal-display-name', description: 'How your name appears to collaborators.', control: html`<form class="profile-name-form" @submit=${this.saveProfile}>
+                ${renderSettingsActions(html`
+                  <input class="settings-input" id="personal-display-name" .value=${profileNameDraft} ?disabled=${!settings.profile.canEditDisplayName} @input=${this.onProfileNameInput}>
+                  ${profileNameDirty ? html`<button class="settings-button primary" data-profile-save type="submit" ?disabled=${!settings.profile.canEditDisplayName || !profileNameValid}>Save</button>` : nothing}
+                `, { className: 'profile-name-control' })}
+              </form>` })}
+            ${renderSettingsRow({ label: 'Title', layout: 'action', className: 'row profile-row', controlId: 'personal-title', description: 'Your job title or role.', control: html`<input id="personal-title" class="settings-input profile-local-input profile-title-input" maxlength="120" placeholder="Software engineer" .value=${this.profileTitle} @input=${this.onProfileTitleInput}>` })}
+            ${renderSettingsRow({ label: 'Username', layout: 'action', className: 'row profile-row', controlId: 'personal-username', description: 'One word, like a nickname or first name.', control: html`<input id="personal-username" class="settings-input profile-local-input profile-username-input" maxlength="64" autocomplete="off" .value=${this.profileUsername} @input=${this.onProfileUsernameInput}>` })}
+            ${renderSettingsRow({ label: 'Theme', layout: 'action', className: 'row profile-row', labelId: 'personal-theme-label', description: 'Choose how LeapView appears on your devices.', control: html`${this.renderThemePicker(this.selectedTheme || settings.profile.theme || 'system')}` })}
+          ` })}
+          ${renderSettingsSection({ label: 'Account', heading: 'Account', description: 'Use this ID when support or administration needs to identify your account.', appearance: 'plain', className: 'account-section', content: html`
+            ${renderSettingsSection({ label: 'Account actions', appearance: 'card', className: 'card account-card', content: html`
+              ${renderSettingsRow({ label: 'Account ID', layout: 'action', className: 'row account-row', description: 'Your LeapView principal identifier.', control: html`<code class="account-id">${settings.profile.id}</code>` })}
+              ${renderSettingsRow({ label: 'Sign out', layout: 'action', className: 'row account-row', description: 'End this browser session and return to sign-in.', control: html`<button type="button" class="settings-button danger" data-sign-out @click=${this.signOutCurrentSession}>Sign out</button>` })}
+            ` })}
+          ` })}
+        ` }) : nothing}
         ${settings.active === 'security' ? this.renderSecurity(settings) : nothing}
         ${settings.active === 'api-tokens' ? this.renderTokens(settings.tokens) : nothing}
       </div>

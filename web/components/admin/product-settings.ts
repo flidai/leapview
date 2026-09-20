@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import { DatastarLit } from '../shared/datastar-lit'
 import { browserCommandFailure } from '../shared/command-failure'
+import { renderSettingsActions, renderSettingsRow, renderSettingsSection, settingsLayoutStyles } from '../shared/settings-layout'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import type {
   ProductAPIStatusSignal,
@@ -63,24 +64,9 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     super.disconnectedCallback()
   }
 
-  static styles = [settingsFieldStyles, css`
+  static styles = [settingsFieldStyles, settingsLayoutStyles, css`
     :host { display: block; min-width: 0; color: var(--lv-fg-default); font: var(--lv-type-body); }
-    .settings { display: grid; min-width: 0; gap: var(--base-size-24); max-width: var(--lv-page-content-max-width); }
-    .panel { display: grid; min-width: 0; gap: var(--base-size-16); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); padding: var(--base-size-20); }
-    .panel h2, .panel h3, .panel p { margin: 0; }
-    .panel h2 { font: var(--lv-type-section-title); }
-    .panel h3 { font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
-    .panel-heading { display: grid; min-width: 0; gap: var(--base-size-4); }
     .hint { color: var(--lv-fg-muted); font: var(--lv-type-caption); line-height: var(--base-text-lineHeight-snug); }
-    .settings-rows { display: grid; min-width: 0; }
-    .settings-row, .row { display: grid; grid-template-columns: minmax(11rem, .7fr) minmax(0, 1.3fr); gap: var(--base-size-16); align-items: center; border-top: var(--lv-border-muted); padding-top: var(--base-size-12); }
-    .settings-row:first-child, .row:first-of-type { border-top: 0; padding-top: 0; }
-    input[type="text"] { box-sizing: border-box; width: min(100%, 32rem); border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-bg-control); color: inherit; padding: .45rem .6rem; font: var(--lv-type-body-compact); }
-    button.action { border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-button-bg-rest); color: var(--lv-button-fg-rest); cursor: pointer; padding: .42rem .7rem; font: var(--lv-type-body-compact); }
-    button.action.primary { border-color: var(--lv-bg-accent); background: var(--lv-bg-accent); color: var(--lv-fg-on-accent); }
-    button.action.danger { border-color: var(--lv-border-danger); color: var(--lv-fg-danger); }
-    button.action:disabled { cursor: not-allowed; opacity: .55; }
-    .inline { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
     .logo { display: flex; align-items: center; gap: .75rem; }
     .logo img { width: 3.25rem; height: 3.25rem; border: var(--lv-border-muted); border-radius: var(--lv-radius-small); object-fit: contain; background: var(--lv-bg-panel); }
     .identity-preview { display: flex; min-width: 0; align-items: center; gap: var(--base-size-12); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); padding: var(--base-size-12); }
@@ -89,9 +75,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     .identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
     .attribution { color: var(--lv-fg-muted); text-decoration: none; font: var(--lv-type-caption); }
     .attribution:hover, .attribution:focus-visible { color: var(--lv-fg-default); text-decoration: underline; }
-    .file-action { box-sizing: border-box; position: relative; display: inline-flex; align-items: center; border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-button-bg-rest); color: var(--lv-button-fg-rest); cursor: pointer; padding: .42rem .7rem; font: var(--lv-type-body-compact); }
-    .file-action:focus-within { outline: var(--borderWidth-thick) solid var(--focus-outlineColor); outline-offset: -1px; }
-    .file-action.disabled { cursor: not-allowed; opacity: .55; }
+    .file-action { position: relative; }
     .file-action input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
     .about-links { display: flex; flex-wrap: wrap; gap: var(--base-size-16); }
     .about-links a { color: var(--lv-fg-accent); }
@@ -105,19 +89,8 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     .status-negative { color: var(--lv-fg-danger); }
     .notice { border-radius: var(--lv-radius-small); background: var(--lv-bg-panel-muted); color: var(--lv-fg-muted); padding: var(--base-size-8) var(--base-size-12); font: var(--lv-type-caption); }
     .message { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-    @media (max-width: 760px) {
-      .settings { gap: var(--base-size-16); }
-      .panel { padding: var(--base-size-16); }
-      .settings-row, .row { grid-template-columns: 1fr; gap: var(--base-size-6); align-items: start; }
-      .inline { align-items: stretch; }
-      .inline input[type="text"] { flex: 1 1 12rem; min-width: 0; }
-    }
     @media (max-width: 480px) {
-      .panel { padding: var(--base-size-12); }
       .status-grid { grid-template-columns: 1fr; }
-      .inline { align-items: stretch; flex-direction: column; }
-      .inline input[type="text"] { flex: 0 1 auto; }
-      .inline input[type="text"], .inline .file-action, .inline button { width: 100%; }
       .logo { align-items: flex-start; }
     }
   `]
@@ -143,7 +116,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
   render() {
     const settings = this.settings
     return html`
-      <div class="settings" aria-label="Product settings">
+      <div class="settings-stack" aria-label="Product settings">
         ${settings.error ? html`<div class="notice" role="alert">${settings.error}</div>` : nothing}
         ${this.selectedSection === 'general' ? this.renderGeneral(settings.general, settings.canManage) : nothing}
         ${this.selectedSection === 'authentication' ? this.renderAuthentication(settings.authentication, settings.api) : nothing}
@@ -163,11 +136,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     // remain disabled until its signal patch or failure arrives.
     const resetDisabled = !canManage || this.busy || (general.displayName === 'LeapView' && !general.logo)
     return html`
-      <section class="panel" aria-label="Instance identity settings">
-        <div class="panel-heading">
-          <h2>Instance identity</h2>
-          <p class="hint">Choose the name and logo shown in the application. Customized instances retain a subtle link back to LeapView.</p>
-        </div>
+      ${renderSettingsSection({ label: 'Instance identity settings', className: 'panel', appearance: 'panel', heading: 'Instance identity', description: 'Choose the name and logo shown in the application. Customized instances retain a subtle link back to LeapView.', content: html`
         <div class="identity-preview" aria-label="Instance identity preview">
           ${general.logo
             ? html`<img src=${general.logo.url} alt="">`
@@ -178,53 +147,36 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           </span>
         </div>
         <div class="settings-rows">
-          <div class="settings-row row">
-            <div class="settings-field"><label class="settings-label" for="product-instance-name">Instance name</label><span class="settings-description">Used in navigation and browser titles · 120 characters maximum</span></div>
-            <div class="inline">
-              <input id="product-instance-name" aria-label="Instance name" type="text" maxlength="120" .value=${this.displayNameDraft} ?disabled=${!canManage || disabled} @input=${this.handleDisplayNameInput}>
-              <button class="action primary" type="button" ?disabled=${!canManage || disabled || this.displayNameDraft.trim() === general.displayName} @click=${this.saveDisplayName}>Save</button>
-            </div>
-          </div>
-          <div class="settings-row row">
-            <div class="settings-field"><span class="settings-label">Instance logo</span><span class="settings-description">JPEG, PNG, or WebP · 5 MB maximum</span></div>
-            <div class="inline">
+          ${renderSettingsRow({ label: 'Instance name', layout: 'field', className: 'row', controlId: 'product-instance-name', description: 'Used in navigation and browser titles · 120 characters maximum', control: html`${renderSettingsActions(html`
+              <input class="settings-input" id="product-instance-name" aria-label="Instance name" type="text" maxlength="120" .value=${this.displayNameDraft} ?disabled=${!canManage || disabled} @input=${this.handleDisplayNameInput}>
+              <button class="settings-button action primary" type="button" ?disabled=${!canManage || disabled || this.displayNameDraft.trim() === general.displayName} @click=${this.saveDisplayName}>Save</button>
+            `, { className: 'inline', stack: true })}` })}
+          ${renderSettingsRow({ label: 'Instance logo', layout: 'field', className: 'row', description: 'JPEG, PNG, or WebP · 5 MB maximum', control: html`${renderSettingsActions(html`
               ${general.logo ? html`<div class="logo"><img src=${general.logo.url} alt="Product logo"><span class="hint">${general.logo.width} × ${general.logo.height}</span></div>` : html`<span class="settings-value">No logo configured</span>`}
-              <label class=${`file-action ${!canManage || disabled ? 'disabled' : ''}`}>
+              <label class=${`settings-button file-action ${!canManage || disabled ? 'disabled' : ''}`}>
                 <span>${general.logo ? 'Change logo' : 'Upload logo'}</span>
                 <input id="product-logo-upload" aria-label=${general.logo ? 'Change logo' : 'Upload logo'} type="file" accept="image/jpeg,image/png,image/webp" ?disabled=${!canManage || disabled} @change=${this.handleLogoFile}>
               </label>
-              ${general.logo ? html`<button class="action danger" type="button" ?disabled=${!canManage || disabled} @click=${this.removeLogo}>Remove</button>` : nothing}
-            </div>
-          </div>
-          <div class="settings-row row">
-            <div class="settings-field"><span class="settings-label">LeapView defaults</span><span class="settings-description">Restore the default name and remove the custom logo</span></div>
-            <button class="action" type="button" ?disabled=${resetDisabled} @click=${this.resetIdentity}>Reset to LeapView</button>
-          </div>
+              ${general.logo ? html`<button class="settings-button action danger" type="button" ?disabled=${!canManage || disabled} @click=${this.removeLogo}>Remove</button>` : nothing}
+            `, { className: 'inline', stack: true })}` })}
+          ${renderSettingsRow({ label: 'LeapView defaults', layout: 'field', className: 'row', description: 'Restore the default name and remove the custom logo', control: html`<button class="settings-button action" type="button" ?disabled=${resetDisabled} @click=${this.resetIdentity}>Reset to LeapView</button>` })}
         </div>
         ${!canManage ? html`<div class="notice">You have read-only access. Platform administrator access is required to change product identity.</div>` : nothing}
-      </section>
-      <section class="panel" aria-label="Instance details">
-        <div class="panel-heading">
-          <h2>Instance details</h2>
-          <p class="hint">Read-only deployment metadata for this installation.</p>
-        </div>
+      ` })}
+      ${renderSettingsSection({ label: 'Instance details', className: 'panel', appearance: 'panel', heading: 'Instance details', description: 'Read-only deployment metadata for this installation.', content: html`
         <div class="settings-rows">
           ${this.settingsRow('Instance ID', general.instanceId || 'Unknown')}
           ${this.settingsRow('Canonical origin', general.canonicalOrigin || 'Unknown')}
           ${this.settingsRow('Environment', general.environment || 'Unknown')}
           ${this.settingsRow('Last updated', `${general.updatedAt || 'Unknown'} · revision ${general.revision || 'unknown'}`)}
         </div>
-      </section>
+      ` })}
     `
   }
 
   private renderAuthentication(auth: ProductAuthenticationSignal, api: ProductAPIStatusSignal) {
     return html`
-      <section class="panel" aria-label="Sign-in and provisioning settings">
-        <div class="panel-heading">
-          <h2>Sign-in &amp; provisioning</h2>
-          <p class="hint">Review deployment-managed sign-in and provisioning capabilities. Secrets, issuer URLs, tenant IDs, and callback URLs are never exposed here.</p>
-        </div>
+      ${renderSettingsSection({ label: 'Sign-in and provisioning settings', className: 'panel', appearance: 'panel', heading: 'Sign-in & provisioning', description: 'Review deployment-managed sign-in and provisioning capabilities. Secrets, issuer URLs, tenant IDs, and callback URLs are never exposed here.', content: html`
         <div class="notice">Managed by <strong>${auth.managedBy || 'deployment'}</strong>; configuration changes are made through deployment settings.</div>
         <div class="status-grid">
           ${this.statusCard('Browser sign-in', statusTone(auth.browserEnabled), auth.browserEnabled ? 'Enabled' : 'Disabled')}
@@ -234,12 +186,8 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           ${this.statusCard('Azure', availabilityTone(auth.azure), availabilityLabel(auth.azure))}
           ${this.statusCard('SCIM provisioning', availabilityTone(auth.scim), availabilityLabel(auth.scim))}
         </div>
-      </section>
-      <section class="panel" aria-label="API and protocols settings">
-        <div class="panel-heading">
-          <h2>API &amp; protocols</h2>
-          <p class="hint">Review deployment-managed API credentials, service identities, and protocol endpoints.</p>
-        </div>
+      ` })}
+      ${renderSettingsSection({ label: 'API and protocols settings', className: 'panel', appearance: 'panel', heading: 'API & protocols', description: 'Review deployment-managed API credentials, service identities, and protocol endpoints.', content: html`
         <div class="status-grid">
           ${this.statusCard('Bearer credentials', availabilityTone(api.bearerCredentials), availabilityLabel(api.bearerCredentials))}
           ${this.statusCard('Service principals', availabilityTone(api.servicePrincipals), availabilityLabel(api.servicePrincipals))}
@@ -247,7 +195,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           ${this.statusCard('MCP', availabilityTone(api.mcp), availabilityLabel(api.mcp))}
           ${this.statusCard('External MCP issuer', statusTone(api.externalMcpIssuer), api.externalMcpIssuer ? 'Configured' : 'Not configured')}
         </div>
-      </section>
+      ` })}
     `
   }
 
@@ -256,11 +204,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     const limits = system.limits
     const agent = system.agent
     return html`
-      <section class="panel" aria-label="Runtime health settings">
-        <div class="panel-heading">
-          <h2>Runtime health</h2>
-          <p class="hint">Runtime health and safe operational metadata for this instance.</p>
-        </div>
+      ${renderSettingsSection({ label: 'Runtime health settings', className: 'panel', appearance: 'panel', heading: 'Runtime health', description: 'Runtime health and safe operational metadata for this instance.', content: html`
         <div class="status-grid">
           ${this.statusCard('Runtime health', runtimeTone(system.runtime.health), system.runtime.health || 'Unknown')}
           ${this.statusCard('Control plane', runtimeTone(system.runtime.controlPlane, 'available'), system.runtime.controlPlane || 'Unknown')}
@@ -272,24 +216,16 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           ${this.settingsRow('Canonical origin', system.canonicalOrigin || 'Unknown')}
           ${this.settingsRow('Environment', system.environment || 'Unknown')}
         </div>
-      </section>
-      <section class="panel" aria-label="Build settings">
-        <div class="panel-heading">
-          <h2>Build</h2>
-          <p class="hint">Version and release metadata reported by the running instance.</p>
-        </div>
+      ` })}
+      ${renderSettingsSection({ label: 'Build settings', className: 'panel', appearance: 'panel', heading: 'Build', description: 'Version and release metadata reported by the running instance.', content: html`
         <div class="status-grid">
           ${this.statusCard('Version', build.version ? 'neutral' : 'warning', build.version || 'Unknown')}
           ${this.statusCard('Revision', build.revision ? 'neutral' : 'warning', build.revision || 'Unknown')}
           ${this.statusCard('Build time', build.buildTime ? 'neutral' : 'warning', build.buildTime || 'Unknown')}
           ${this.statusCard('Build state', build.dirty ? 'negative' : build.development ? 'warning' : 'positive', build.dirty ? 'Dirty' : build.development ? 'Development' : 'Release')}
         </div>
-      </section>
-      <section class="panel" aria-label="Limits settings">
-        <div class="panel-heading">
-          <h2>Limits</h2>
-          <p class="hint">Configured query and managed-data budgets for this instance.</p>
-        </div>
+      ` })}
+      ${renderSettingsSection({ label: 'Limits settings', className: 'panel', appearance: 'panel', heading: 'Limits', description: 'Configured query and managed-data budgets for this instance.', content: html`
         <div class="status-grid">
           ${this.limitCard('Query result rows', limits.queryResultMaxRows, 'count')}
           ${this.limitCard('Query result bytes', limits.queryResultMaxBytes)}
@@ -297,8 +233,8 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           ${this.limitCard('Managed-data file bytes', limits.managedDataMaxFileBytes)}
           ${this.limitCard('Managed-data revision bytes', limits.managedDataMaxRevisionBytes)}
         </div>
-      </section>
-      <section class="panel" aria-label="About LeapView">
+      ` })}
+      ${renderSettingsSection({ label: 'About LeapView', className: 'panel', appearance: 'panel', content: html`
         <div class="panel-heading">
           <h2>About LeapView</h2>
           <p>Powered by LeapView, open-source dashboards-as-code business intelligence.</p>
@@ -308,12 +244,12 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           <a href="https://github.com/flidai/leapview" target="_blank" rel="noreferrer">View source</a>
         </div>
         <p class="hint">Build ${build.version || 'development'}${build.revision ? ` · ${build.revision}` : ''}</p>
-      </section>
+      ` })}
     `
   }
 
   private settingsRow(label: string, value: string) {
-    return html`<div class="settings-row"><div class="settings-field"><span class="settings-label">${label}</span></div><span class="settings-value">${value}</span></div>`
+    return renderSettingsRow({ label, control: html`<span class="settings-value">${value}</span>` })
   }
 
   private statusCard(label: string, tone: StatusTone, value: string) {

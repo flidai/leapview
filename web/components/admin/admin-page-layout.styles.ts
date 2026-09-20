@@ -45,12 +45,8 @@ export const adminPageLayoutStyles = css`
       padding: var(--base-size-64) 0;
     }
 
-    .main-profile {
-      width: min(calc(100% - var(--base-size-48)), 40rem);
-    }
-
     .main-security {
-      width: min(calc(100% - var(--base-size-48)), 52rem);
+      --lv-settings-content-max-width: 52rem;
     }
 
     .main-settings .page-title-block {
