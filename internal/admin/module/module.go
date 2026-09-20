@@ -7,7 +7,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
-	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminhttp "github.com/flidai/leapview/internal/admin/http"
 	"github.com/flidai/leapview/internal/admin/personalsettings"
 	"github.com/flidai/leapview/internal/admin/product"
@@ -90,6 +89,7 @@ type Config struct {
 	CSRFToken                        func(*http.Request) string
 	CurrentPrincipal                 func(*http.Request) (Principal, bool)
 	CurrentCredential                func(*http.Request) (access.APICredential, bool)
+	CurrentCredentialContext         func(context.Context) (access.APICredential, bool)
 	CurrentInteractiveAuthentication func(*http.Request) (time.Time, bool)
 	Publications                     PublicationService
 	AgentConfigCommand               uicommand.Binding
@@ -187,7 +187,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			Repository: config.SettingsAccess, IdentityManagement: config.SettingsAccess,
 			Preferences: config.SettingsAccess,
 			Avatar:      config.PersonalAvatar, Authoring: config.AuthoringSessions,
-			CurrentCredential:            accessmodule.APICredentialFromContext,
+			CurrentCredential:            config.CurrentCredentialContext,
 			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 			LocalPasswordEnabled:         config.LocalPasswordEnabled,
 		}

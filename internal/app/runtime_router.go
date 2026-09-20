@@ -1592,6 +1592,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return platform.auth.APICredential(r)
 			},
+			CurrentCredentialContext:         accessmodule.APICredentialFromContext,
 			CurrentInteractiveAuthentication: routes.accessModule.CurrentInteractiveAuthentication,
 			CurrentEffectiveCapabilities:     routes.accessModule.CurrentEffectiveCapabilities,
 			EffectiveAccess:                  routes.accessModule.EffectiveAccess,
