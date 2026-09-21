@@ -255,7 +255,10 @@ test('custom sidebar identity has a full row below the header controls', async (
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   try {
     await page.goto(`${baseURL}/sidebar-history`)
-    await page.waitForFunction(() => customElements.get('lv-sidebar'))
+    await page.waitForFunction(() => {
+      const sidebar = document.querySelector('lv-app-shell')?.shadowRoot?.querySelector('lv-sidebar')
+      return customElements.get('lv-app-shell') && customElements.get('lv-sidebar') && sidebar?.shadowRoot?.querySelector('.brand-identity')
+    })
     const layout = await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
       sidebar.config = { ...sidebar.config, productName: 'Micro Matic', productLogoUrl: '/micro-matic.svg' }
       await sidebar.updateComplete
@@ -274,4 +277,4 @@ test('custom sidebar identity has a full row below the header controls', async (
   } finally {
     await page.close()
   }
-})
+}, 15_000)
