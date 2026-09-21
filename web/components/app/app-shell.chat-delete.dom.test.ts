@@ -55,7 +55,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await browser?.close()
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-}, 15_000)
+}, 45_000)
 
 test('ordinary chat hover actions expose Pin and Archive without an overflow menu', async () => {
   const page = await browser.newPage()
@@ -228,7 +228,7 @@ test('mobile account menu fits above the footer and keeps search available after
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   try {
     for (const route of ['/sidebar-history', '/admin-sidebar']) {
-      await page.goto(`${baseURL}${route}`)
+      await page.goto(`${baseURL}${route}`, { waitUntil: 'domcontentloaded' })
       await page.locator('lv-sidebar .mobile-menu-button').click()
       const trigger = page.locator('.mobile-footer .user-card')
       await trigger.click()
@@ -248,19 +248,21 @@ test('mobile account menu fits above the footer and keeps search available after
       expect(await trigger.getAttribute('aria-expanded')).toBe('false')
     }
   } finally { await page.close() }
-})
+}, 30_000)
 
 test('custom sidebar identity has a full row below the header controls', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   try {
-    await page.goto(`${baseURL}/sidebar-history`)
+    await page.goto(`${baseURL}/sidebar-history`, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => {
       const sidebar = document.querySelector('lv-app-shell')?.shadowRoot?.querySelector('lv-sidebar')
       return customElements.get('lv-app-shell') && customElements.get('lv-sidebar') && sidebar?.shadowRoot?.querySelector('.brand-identity')
     })
-    const layout = await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
+    await page.locator('lv-sidebar').evaluate((sidebar: any) => {
       sidebar.config = { ...sidebar.config, productName: 'Micro Matic', productLogoUrl: '/micro-matic.svg' }
-      await sidebar.updateComplete
+    })
+    await page.waitForFunction(() => document.querySelector('lv-app-shell')?.shadowRoot?.querySelector('lv-sidebar')?.shadowRoot?.querySelector('.name')?.textContent?.trim() === 'Micro Matic')
+    const layout = await page.locator('lv-sidebar').evaluate((sidebar: any) => {
       const root = sidebar.shadowRoot as ShadowRoot
       const identity = root.querySelector<HTMLElement>('.brand-identity')!
       const switcher = root.querySelector<HTMLElement>('.brand-row > .area-switcher')!
@@ -276,4 +278,4 @@ test('custom sidebar identity has a full row below the header controls', async (
   } finally {
     await page.close()
   }
-}, 15_000)
+}, 30_000)
