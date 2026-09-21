@@ -8,7 +8,7 @@ on:
         required: true
         type: choice
         default: prepare
-        options: [prepare, deploy, verify]
+        options: [prepare, deploy, verify, diagnose]
 
 permissions:
   contents: read
@@ -27,6 +27,7 @@ env:
 jobs:
   validate:
     name: Validate exact source revision
+    if: inputs.action != 'diagnose'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -47,6 +48,46 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - name: Run the pull-request contract
         run: task ci:pr
+
+  diagnose:
+    name: Diagnose hosted login safely
+    if: inputs.action == 'diagnose'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: leapview-demo
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out dispatched source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+      - name: Fetch infrastructure credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /hetzner-qualification/infrastructure
+      - name: Fetch demo deployment credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /demo/deployment
+      - name: Inspect non-secret hosted auth state
+        run: |
+          set -euo pipefail
+          export DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
+          ./scripts/direct_demo_auth_diagnose.sh
 
   build:
     name: Build and attest exact OCI image
