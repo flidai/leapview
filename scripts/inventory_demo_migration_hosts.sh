@@ -193,17 +193,20 @@ while IFS= read -r database_container; do
   [[ -n "$database_container" ]] || continue
   echo "container=$database_container"
   docker inspect "$database_container" --format "mounts={{json .Mounts}}"
-  docker exec "$database_container" sh -c '\''
-    set -eu
-    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control -Atc \
-      "SELECT datname || chr(124) || pg_database_size(oid) FROM pg_database ORDER BY datname"
-    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control -Atc \
-      "SELECT '\''schema_version|'\'' || max(version_id) FROM public.goose_db_version WHERE is_applied"
-    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control -Atc \
-      "SELECT '\''schema|'\'' || schema_name FROM information_schema.schemata ORDER BY schema_name"
-    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control -Atc \
-      "SELECT '\''role|'\'' || rolname FROM pg_roles ORDER BY rolname"
-  '\''
+  postgres_user=$(docker exec "$database_container" printenv POSTGRES_USER)
+  docker exec "$database_container" psql -v ON_ERROR_STOP=1 -U "$postgres_user" -d leapview_control -Atc \
+    "SELECT datname || chr(124) || pg_database_size(oid) FROM pg_database ORDER BY datname"
+  printf "schema_version|"
+  docker exec "$database_container" psql -v ON_ERROR_STOP=1 -U "$postgres_user" -d leapview_control -Atc \
+    "SELECT max(version_id) FROM public.goose_db_version WHERE is_applied"
+  while IFS= read -r schema; do echo "schema|$schema"; done < <(
+    docker exec "$database_container" psql -v ON_ERROR_STOP=1 -U "$postgres_user" -d leapview_control -Atc \
+      "SELECT schema_name FROM information_schema.schemata ORDER BY schema_name"
+  )
+  while IFS= read -r role; do echo "role|$role"; done < <(
+    docker exec "$database_container" psql -v ON_ERROR_STOP=1 -U "$postgres_user" -d leapview_control -Atc \
+      "SELECT rolname FROM pg_roles ORDER BY rolname"
+  )
 done < <(docker ps --format "{{.Names}}" | grep -- "-demo-current-postgres-1$" || true)
 echo "== rollback recovery sets =="
 if [[ -d /opt/leapview-demo/rollbacks ]]; then
