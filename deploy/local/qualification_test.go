@@ -23,7 +23,7 @@ func TestReleasedAuthoringQualificationStaticJourney(t *testing.T) {
 	root := repositoryRoot(t)
 	binary := filepath.Join(t.TempDir(), "leapview")
 	version := `{"version":"1.2.3","revision":"` + strings.Repeat("a", 40) + `","buildTime":"2026-09-15T12:00:00Z","dirty":false,"development":false}`
-	requireWriteFile(t, binary, "#!/bin/sh\nif [ \"$1\" = version ]; then printf '%s\\n' '"+version+"'; elif [ \"$2\" = --help ]; then case \"$1\" in init) printf '%s\\n' 'Usage: leapview init [flags]' 'credentials: {\"username\":\"demo\",\"password\":\"qualification-secret\"} https://user:url-secret@example.test/?token=query-secret' \"env-probe=${QUALIFICATION_UNSAFE:-unset}\";; dev) printf '%s\\n' 'Usage: leapview dev [flags]';; plan) printf '%s\\n' 'Usage: leapview plan [flags]';; build) printf '%s\\n' 'Usage: leapview build [flags]';; publish) printf '%s\\n' 'Usage: leapview publish [flags]';; deploy) printf '%s\\n' 'Usage: leapview deploy [flags]';; esac; fi\nexit 0\n", 0o755)
+	requireWriteFile(t, binary, "#!/bin/sh\nif [ \"$1\" = version ]; then printf '%s\\n' '"+version+"'; elif [ \"$2\" = --help ]; then case \"$1\" in init) printf '%s\\n' 'Usage:' '  leapview init [flags]' 'credentials: {\"username\":\"demo\",\"password\":\"qualification-secret\"} https://user:url-secret@example.test/?token=query-secret' \"env-probe=${QUALIFICATION_UNSAFE:-unset}\";; dev) printf '%s\\n' 'Usage: leapview dev [flags]';; plan) printf '%s\\n' 'Usage: leapview plan [flags]';; build) printf '%s\\n' 'Usage: leapview build [flags]';; publish) printf '%s\\n' 'Usage: leapview publish [flags]';; deploy) printf '%s\\n' 'Usage: leapview deploy [flags]';; esac; fi\nexit 0\n", 0o755)
 	output := t.TempDir()
 	packageCommand := exec.Command(filepath.Join(root, "scripts", "package-authoring-cli.sh"), binary, output, runtime.GOOS, runtime.GOARCH)
 	packageCommand.Dir = root
@@ -33,12 +33,12 @@ func TestReleasedAuthoringQualificationStaticJourney(t *testing.T) {
 		"BUILD_TIME=2026-09-15T12:00:00Z",
 		"BUILD_RELEASE=true",
 		"IMAGE_REFERENCE=ghcr.io/flidai/leapview@sha256:"+strings.Repeat("b", 64),
-		"RELEASE_TAG=v1.2.3",
+		"RELEASE_TAG=candidate-12345-1",
 	)
 	if combined, err := packageCommand.CombinedOutput(); err != nil {
 		t.Fatalf("package authoring CLI: %v\n%s", err, combined)
 	}
-	archive := filepath.Join(output, "leapview-cli-v1.2.3-"+runtime.GOOS+"-"+runtime.GOARCH+".tar.gz")
+	archive := filepath.Join(output, "leapview-cli-candidate-12345-1-"+runtime.GOOS+"-"+runtime.GOARCH+".tar.gz")
 	evidenceDir := filepath.Join(t.TempDir(), "evidence")
 	qualify := exec.Command(filepath.Join(root, "deploy", "local", "qualification", "qualify.sh"),
 		"--archive", archive, "--required", "--evidence-dir", evidenceDir)
@@ -108,6 +108,48 @@ func TestReleasedAuthoringQualificationRejectsArchiveChecksumDrift(t *testing.T)
 	}
 	if !bytes.Contains(encoded, []byte(`"result": "failed"`)) {
 		t.Fatalf("checksum drift evidence did not fail: %s", encoded)
+	}
+}
+
+func TestReleasedAuthoringQualificationStreamsInteractiveOutputAndRetainsEvidence(t *testing.T) {
+	root := repositoryRoot(t)
+	python := `
+import importlib.util
+import pathlib
+import sys
+import tempfile
+
+spec = importlib.util.spec_from_file_location("leapview_qualify", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory() as temporary:
+    result = module.run_command(
+        "interactive-test",
+        [sys.executable, "-c", "print('Open http://127.0.0.1/device and enter code ABCD-EFGH')"],
+        [],
+        10,
+        pathlib.Path(temporary),
+        live_output=True,
+    )
+if result["status"] != "passed" or "ABCD-EFGH" not in result["output"]:
+    raise SystemExit("interactive output was not retained")
+print("retained")
+`
+	command := exec.Command("python3", "-c", python, filepath.Join(root, "deploy", "local", "qualification", "qualify.py"))
+	command.Dir = root
+	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("stream interactive qualification output: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "retained" {
+		t.Fatalf("retained result = %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "Open http://127.0.0.1/device and enter code ABCD-EFGH") {
+		t.Fatalf("live output = %q", stderr.String())
 	}
 }
 

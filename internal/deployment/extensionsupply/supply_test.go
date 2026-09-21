@@ -111,7 +111,7 @@ func TestSupplyRejectsAdversarialManifestAndBytes(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			config := Config{DuckDBVersion: "v1.4.0", GOOS: "linux", GOARCH: "amd64", Platform: "linux-amd64", SupportProfile: "stable-v1", CacheDir: filepath.Join(t.TempDir(), "extensions"), Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{testArtifact("httpfs", digest, "linux-amd64")}}, Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/httpfs", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+			config := Config{DuckDBVersion: "v1.4.0", GOOS: "linux", GOARCH: "amd64", Platform: "linux-amd64", SupportProfile: "stable-v1", CacheDir: filepath.Join(privateTestTempDir(t), "extensions"), Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{testArtifact("httpfs", digest, "linux-amd64")}}, Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/httpfs", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
 				return io.NopCloser(bytes.NewReader(content)), nil
 			}}}, VerifySignature: verifyOK}
 			config.Manifest.DuckDBVersion, config.Manifest.GOOS, config.Manifest.GOARCH = config.DuckDBVersion, config.GOOS, config.GOARCH
@@ -135,7 +135,7 @@ func TestSupplyRejectsAdversarialManifestAndBytes(t *testing.T) {
 func TestSupplyDoesNotLeakConfiguredOriginSecrets(t *testing.T) {
 	secret := "access_key=do-not-leak"
 	content := []byte("bytes")
-	config := Config{DuckDBVersion: "v1.4.0", GOOS: "linux", GOARCH: "amd64", Platform: "linux-amd64", SupportProfile: "stable-v1", CacheDir: filepath.Join(t.TempDir(), "extensions"), Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{testArtifact("httpfs", digestFor(content), "linux-amd64")}}, Origins: []Origin{{ID: "vendor", URL: "https://reviewed.invalid", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) { return nil, errors.New(secret) }}}, VerifySignature: verifyOK}
+	config := Config{DuckDBVersion: "v1.4.0", GOOS: "linux", GOARCH: "amd64", Platform: "linux-amd64", SupportProfile: "stable-v1", CacheDir: filepath.Join(privateTestTempDir(t), "extensions"), Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{testArtifact("httpfs", digestFor(content), "linux-amd64")}}, Origins: []Origin{{ID: "vendor", URL: "https://reviewed.invalid", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) { return nil, errors.New(secret) }}}, VerifySignature: verifyOK}
 	config.Manifest.DuckDBVersion, config.Manifest.GOOS, config.Manifest.GOARCH = config.DuckDBVersion, config.GOOS, config.GOARCH
 	config.Manifest.Platform, config.Manifest.SupportProfile = config.Platform, config.SupportProfile
 	supply := newSupply(t, config)
@@ -146,7 +146,7 @@ func TestSupplyDoesNotLeakConfiguredOriginSecrets(t *testing.T) {
 }
 
 func TestSupplyRejectsOversizedCachedArtifact(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "extensions")
+	root := filepath.Join(privateTestTempDir(t), "extensions")
 	content := []byte("unused")
 	artifact := testArtifact("httpfs", digestFor(content), "linux-amd64")
 	supply := newSupply(t, Config{CacheDir: root, Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}}, Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/httpfs", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
@@ -242,6 +242,21 @@ func TestSupplyMemoizedAdmissionRechecksCacheIntegrity(t *testing.T) {
 	}
 }
 
+func TestSupplyRejectsSymlinkInsideConfiguredCachePath(t *testing.T) {
+	root := privateTestTempDir(t)
+	realParent := filepath.Join(root, "real")
+	if err := os.Mkdir(realParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linkParent := filepath.Join(root, "link")
+	if err := os.Symlink(realParent, linkParent); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	if err := ensurePrivateCacheRoot(filepath.Join(linkParent, "extensions")); !errors.Is(err, extension.ErrExtensionIntegrity) {
+		t.Fatalf("ensurePrivateCacheRoot() error = %v, want symlink integrity error", err)
+	}
+}
+
 func newSupply(t *testing.T, config Config) *Supply {
 	t.Helper()
 	if config.DuckDBVersion == "" {
@@ -260,7 +275,7 @@ func newSupply(t *testing.T, config Config) *Supply {
 		config.SupportProfile = "stable-v1"
 	}
 	if config.CacheDir == "" {
-		config.CacheDir = filepath.Join(t.TempDir(), "extensions")
+		config.CacheDir = filepath.Join(privateTestTempDir(t), "extensions")
 	}
 	config.Manifest.DuckDBVersion, config.Manifest.GOOS, config.Manifest.GOARCH = config.DuckDBVersion, config.GOOS, config.GOARCH
 	config.Manifest.Platform, config.Manifest.SupportProfile = config.Platform, config.SupportProfile
@@ -269,6 +284,15 @@ func newSupply(t *testing.T, config Config) *Supply {
 		t.Fatal(err)
 	}
 	return supply
+}
+
+func privateTestTempDir(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve platform temporary directory: %v", err)
+	}
+	return root
 }
 
 func testArtifact(name, digest, platform string) Artifact {

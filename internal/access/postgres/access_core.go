@@ -401,6 +401,21 @@ func (r *Repository) IsPlatformAdmin(ctx context.Context, principalID string) (b
 	return accessdb.New(db).IsPlatformAdmin(ctx, parsed)
 }
 
+// PrincipalByEmail resolves the durable principal identity for a normalized
+// email address. Callers that need to authorize an initialized local account
+// must use this identity rather than deriving an identifier from the email.
+func (r *Repository) PrincipalByEmail(ctx context.Context, email string) (access.Principal, error) {
+	db, err := r.requireDB()
+	if err != nil {
+		return access.Principal{}, err
+	}
+	id, err := accessdb.New(db).FindPrincipalByEmail(ctx, access.NormalizeEmail(email))
+	if err != nil {
+		return access.Principal{}, err
+	}
+	return r.PrincipalByID(ctx, principalUUID(id))
+}
+
 func (r *Repository) CreateServicePrincipal(ctx context.Context, input access.ServicePrincipalInput) (access.Principal, error) {
 	return r.UpsertPrincipal(ctx, access.PrincipalInput{ID: input.ID, Kind: access.PrincipalKindServicePrincipal, DisplayName: input.DisplayName})
 }

@@ -385,11 +385,10 @@ func (c *Controller) runQualificationRecovery(
 	}
 	releaseCommand, err := c.startQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken, options.Target, releaseLog,
-		"leapview", "dev", "--once", "--no-browser",
-		"--source-root", "/work/project-a",
-		"--project-id", options.ProjectID,
-		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
-		"--format", "json",
+		qualificationRecoveryDevArguments(
+			options.Target, "/work/project-a", options.ProjectID,
+			qualificationRecoveryReleaseCandidateKey,
+		)...,
 	)
 	if err != nil {
 		return report, err
@@ -409,11 +408,10 @@ func (c *Controller) runQualificationRecovery(
 	_ = releaseCommand.Stop()
 	releaseOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken, options.Target,
-		"leapview", "dev", "--once", "--no-browser",
-		"--source-root", "/work/project-a",
-		"--project-id", options.ProjectID,
-		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
-		"--format", "json",
+		qualificationRecoveryDevArguments(
+			options.Target, "/work/project-a", options.ProjectID,
+			qualificationRecoveryReleaseCandidateKey,
+		)...,
 	)
 	if err != nil {
 		return report, err
@@ -445,11 +443,10 @@ func (c *Controller) runQualificationRecovery(
 	}
 	deploymentCandidateOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken, options.Target,
-		"leapview", "dev", "--once", "--no-browser",
-		"--source-root", "/work/project-b",
-		"--project-id", options.ProjectID,
-		"--candidate-key", qualificationRecoveryDeploymentCandidateKey,
-		"--format", "json",
+		qualificationRecoveryDevArguments(
+			options.Target, "/work/project-b", options.ProjectID,
+			qualificationRecoveryDeploymentCandidateKey,
+		)...,
 	)
 	if err != nil {
 		return report, err
@@ -720,6 +717,17 @@ func (c *Controller) runQualificationRecovery(
 	}
 	_, err = fmt.Fprintln(c.stdout, "installed-candidate recovery qualification passed")
 	return report, err
+}
+
+func qualificationRecoveryDevArguments(target, sourceRoot, projectID, candidateKey string) []string {
+	return []string{
+		"leapview", "dev", "--once", "--no-browser",
+		"--target", target,
+		"--source-root", sourceRoot,
+		"--project-id", projectID,
+		"--candidate-key", candidateKey,
+		"--format", "json",
+	}
 }
 
 // waitForQualificationRefreshCreation allows the post-commit runtime cutover

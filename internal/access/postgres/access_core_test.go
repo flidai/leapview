@@ -357,6 +357,13 @@ func TestAccessCoreCleanTargetInvariants(t *testing.T) {
 	if err != nil || !admin {
 		t.Fatalf("bootstrap admin status=%v err=%v", admin, err)
 	}
+	bootstrapPrincipal, err := repo.PrincipalByEmail(t.Context(), "BOOTSTRAP@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bootstrapPrincipal.ID != bootstrapID {
+		t.Fatalf("bootstrap principal ID = %q, want %q", bootstrapPrincipal.ID, bootstrapID)
+	}
 
 	// Pending principals cannot mint or authenticate credentials.
 	pendingID := "10000000-0000-0000-0000-000000000099"
