@@ -113,7 +113,7 @@ if (( available_kb < 1048576 )); then
   if (( available_kb < 1048576 )); then
     echo 'Inspecting and reclaiming package caches only:'
     du -h --max-depth=2 /root/.bun /root/.cache 2>/dev/null | sort -h | tail -30 || true
-    for cache in /root/.bun/install/cache /root/.cache/pip /root/.cache/uv /root/.cache/bun /root/.npm/_cacache; do
+    for cache in /root/.bun/install/cache /root/.cache/pip /root/.cache/uv /root/.cache/bun /root/.npm/_cacache /root/.cache/leapview/dev-assets /root/.cache/leapview/ci-duckdb-extensions /root/.cache/apigen/typespec; do
       if [[ -d "$cache" && ! -L "$cache" ]]; then
         du -sh "$cache"
         rm -rf -- "$cache"
@@ -122,7 +122,7 @@ if (( available_kb < 1048576 )); then
     df -h /
     available_kb="$(df --output=avail / | tail -1 | tr -d ' ')"
   fi
-  if (( available_kb < 1048576 )); then
+  if (( available_kb < 262144 )); then
     echo 'Largest top-level paths after safe cache cleanup:'
     du -x -h --max-depth=1 /opt /var /root 2>/dev/null | sort -h | tail -30
     echo 'Root filesystem accounting:'
