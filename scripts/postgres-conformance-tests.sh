@@ -13,7 +13,9 @@ if [[ -z "$module" ]]; then
 fi
 
 inventory() {
-  git -C "$root" ls-files '*_test.go' |
+  # Include newly authored, not-yet-staged tests in local CI as well as files
+  # already tracked in Git. Ignore files excluded by the repository's rules.
+  git -C "$root" ls-files --cached --others --exclude-standard -- '*_test.go' |
     while IFS= read -r file; do
       # A concurrent worktree may retain a tracked deletion in its index;
       # only authored files present on disk can contribute a test package.
@@ -41,14 +43,23 @@ case "${1:-list}" in
       printf '%s\n' 'PostgreSQL conformance inventory is empty' >&2
       exit 1
     fi
-    # Bound this conformance lane at four package workers while retaining one
-    # fail-closed inventory. Include integration and DuckDB build tags so
+    # Go runs each package in its own test process. The -exec wrapper owns one
+    # disposable server for that process; the harness still creates a fresh
+    # database for each test and the wrapper terminates the server on exit.
+    exec_dir="$(mktemp -d)"
+    trap 'rm -r -- "$exec_dir"' EXIT
+    go build -o "$exec_dir/postgres-package-exec" ./internal/platform/postgres/postgrestest/cmd/packageexec
+    # Bound this conformance lane at four package workers. Tests within each
+    # package must stay serial because PostgreSQL roles are cluster-wide and
+    # some conformance tests require exact production role names. The wrapper
+    # enforces this again at the binary boundary. Include integration and
+    # DuckDB build tags so
     # source-inventoried DuckLake PostgreSQL suites are actually compiled and
     # executed in this lane. MinIO has its own external lane. The application
     # package contains many container-backed tests; allow it more than Go's
     # default ten-minute package timeout on slower hosted runners.
     LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1 \
-      go test -tags 'integration duckdb_arrow' -p 4 -count=1 -timeout=30m -v -skip '^TestMinIOParquetSourceRefreshContract$' "${packages[@]}"
+      go test -exec "$exec_dir/postgres-package-exec" -tags 'integration duckdb_arrow' -p 4 -parallel 1 -count=1 -timeout=30m -v -skip '^TestMinIOParquetSourceRefreshContract$' "${packages[@]}"
     ;;
   *)
     printf 'usage: %s [list|run]\n' "$0" >&2
