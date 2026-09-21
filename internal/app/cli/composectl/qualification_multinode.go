@@ -27,17 +27,18 @@ type qualificationMultiNodeOptions struct {
 	ComposeProject string
 	ComposeNetwork string
 	TargetID       string
-	GenerationID   string
+	APIToken       string
 	Topology       *qualificationNativePostgresTopology
 	Primary        qualificationContainer
 }
 
 type qualificationMultiNodeReport struct {
-	NodeCount          int  `json:"nodeCount"`
-	AbruptNodeLoss     bool `json:"abruptNodeLoss"`
-	Recovery           bool `json:"recovery"`
-	RollingRestart     bool `json:"rollingRestart"`
-	DurableConvergence bool `json:"durableConvergence"`
+	NodeCount          int    `json:"nodeCount"`
+	GenerationID       string `json:"generationId"`
+	AbruptNodeLoss     bool   `json:"abruptNodeLoss"`
+	Recovery           bool   `json:"recovery"`
+	RollingRestart     bool   `json:"rollingRestart"`
+	DurableConvergence bool   `json:"durableConvergence"`
 }
 
 type qualificationMultiNodeInstance struct {
@@ -70,33 +71,44 @@ func (c *Controller) runQualificationMultiNode(
 	if err != nil {
 		return report, err
 	}
-	stateDir, err := os.MkdirTemp("", "leapview-qualification-node-")
+	runtimeUID, err := c.qualificationImageIdentity(ctx, options.Image, "-u")
 	if err != nil {
-		return report, fmt.Errorf("create second qualification node state directory: %w", err)
+		return report, err
 	}
-	defer func() {
-		if removeErr := os.RemoveAll(stateDir); removeErr != nil {
-			runErr = errors.Join(runErr, fmt.Errorf("remove second qualification node state directory: %w", removeErr))
-		}
-	}()
-	// The container runs as the non-root image user. A temporary bind mount
-	// starts root-owned, so make only this disposable qualification directory
-	// writable; application-created descendants retain the image user's umask.
-	if err := os.Chmod(stateDir, 0o777); err != nil {
-		return report, fmt.Errorf("make second qualification node state directory writable: %w", err)
+	runtimeGID, err := c.qualificationImageIdentity(ctx, options.Image, "-g")
+	if err != nil {
+		return report, err
 	}
-
+	sharedVolume := strings.TrimSpace(options.ComposeProject) + "_leapview-state"
+	volumes := make([]qualificationContainerVolume, 0, 3)
+	if strings.EqualFold(strings.TrimSpace(environment["LEAPVIEW_MANAGED_DATA_BACKEND"]), "local") {
+		volumes = append(volumes, qualificationContainerVolume{
+			Source: sharedVolume, Target: "/var/lib/leapview/home/managed-data", Subpath: "home/managed-data",
+		})
+	}
+	objectStoreBackend := strings.ToLower(strings.TrimSpace(environment["LEAPVIEW_OBJECT_STORE_BACKEND"]))
+	if objectStoreBackend == "" || objectStoreBackend == "filesystem" {
+		volumes = append(volumes, qualificationContainerVolume{
+			Source: sharedVolume, Target: "/var/lib/leapview/home/artifacts/object-store", Subpath: "home/artifacts/object-store",
+		})
+	}
+	volumes = append(volumes, qualificationContainerVolume{
+		Source: filepath.Join(options.Topology.secretDir, "ca.pem"), Target: qualificationMultiNodeRootCertificate, ReadOnly: true,
+	})
 	nodeName := qualificationMultiNodeContainerName(options.ComposeProject)
 	secondary, err := c.qualificationContainers.Start(ctx, qualificationContainerRequest{
 		Name:        nodeName,
 		Image:       strings.TrimSpace(options.Image),
 		NetworkMode: strings.TrimSpace(options.ComposeNetwork),
 		ReadOnly:    true,
-		Volumes: []qualificationContainerVolume{
-			{Source: stateDir, Target: "/var/lib/leapview"},
-			{Source: filepath.Join(options.Topology.secretDir, "ca.pem"), Target: qualificationMultiNodeRootCertificate, ReadOnly: true},
-		},
+		// Process-local state remains isolated on a tmpfs owned by the image's
+		// runtime identity. Only the configured filesystem-backed data providers
+		// are mounted from the primary volume, at their original paths so
+		// path-derived security identities stay exact.
+		Volumes: volumes,
 		Tmpfs: []string{
+			"/var/lib/leapview/home:rw,exec,nosuid,nodev,mode=0700,uid=" + runtimeUID + ",gid=" + runtimeGID + ",size=512m",
+			"/var/lib/leapview/home/artifacts:rw,exec,nosuid,nodev,mode=0700,uid=" + runtimeUID + ",gid=" + runtimeGID + ",size=128m",
 			"/tmp:rw,nosuid,nodev,mode=1777,size=64m",
 		},
 		Environment: environment,
@@ -120,13 +132,15 @@ func (c *Controller) runQualificationMultiNode(
 	if err := qualificationWaitMultiNodeReady(ctx, secondary, "secondary node startup"); err != nil {
 		return report, err
 	}
-	if err := assertQualificationMultiNodeIdentity(ctx, options.Primary, secondary); err != nil {
+	if err := assertQualificationMultiNodeIdentity(ctx, options.Primary, secondary, options.APIToken); err != nil {
 		return report, err
 	}
-	if err := options.Topology.AssertDurableActivePointer(ctx, options.TargetID, options.GenerationID); err != nil {
-		return report, fmt.Errorf("verify durable active pointer before multi-node fault: %w", err)
+	activeGenerationID, err := options.Topology.DurableActiveGeneration(ctx, options.TargetID)
+	if err != nil {
+		return report, fmt.Errorf("read durable active pointer before multi-node fault: %w", err)
 	}
 	report.NodeCount = 2
+	report.GenerationID = activeGenerationID
 
 	// Compose's service has an unless-stopped policy. Disable it for the
 	// faulted process before sending SIGKILL; otherwise Docker could recreate
@@ -143,7 +157,7 @@ func (c *Controller) runQualificationMultiNode(
 	if err := qualificationWaitMultiNodeReady(ctx, secondary, "secondary node after primary loss"); err != nil {
 		return report, fmt.Errorf("secondary qualification node did not survive primary loss: %w", err)
 	}
-	if err := options.Topology.AssertDurableActivePointer(ctx, options.TargetID, options.GenerationID); err != nil {
+	if err := options.Topology.AssertDurableActivePointer(ctx, options.TargetID, activeGenerationID); err != nil {
 		return report, fmt.Errorf("verify durable active pointer after primary loss: %w", err)
 	}
 	report.AbruptNodeLoss = true
@@ -157,7 +171,7 @@ func (c *Controller) runQualificationMultiNode(
 	if err := qualificationWaitMultiNodeReady(ctx, secondary, "secondary node during primary recovery"); err != nil {
 		return report, err
 	}
-	if err := options.Topology.AssertDurableActivePointer(ctx, options.TargetID, options.GenerationID); err != nil {
+	if err := options.Topology.AssertDurableActivePointer(ctx, options.TargetID, activeGenerationID); err != nil {
 		return report, fmt.Errorf("verify durable active pointer after primary recovery: %w", err)
 	}
 	report.Recovery = true
@@ -174,7 +188,7 @@ func (c *Controller) runQualificationMultiNode(
 	if err := qualificationWaitMultiNodeReady(ctx, secondary, "secondary node during primary rolling restart"); err != nil {
 		return report, err
 	}
-	if err := options.Topology.AssertDurableActivePointer(ctx, options.TargetID, options.GenerationID); err != nil {
+	if err := options.Topology.AssertDurableActivePointer(ctx, options.TargetID, activeGenerationID); err != nil {
 		return report, fmt.Errorf("verify durable active pointer after primary rolling restart: %w", err)
 	}
 
@@ -187,10 +201,10 @@ func (c *Controller) runQualificationMultiNode(
 	if err := qualificationWaitMultiNodeReady(ctx, options.Primary, "primary node during secondary rolling restart"); err != nil {
 		return report, err
 	}
-	if err := assertQualificationMultiNodeIdentity(ctx, options.Primary, secondary); err != nil {
+	if err := assertQualificationMultiNodeIdentity(ctx, options.Primary, secondary, options.APIToken); err != nil {
 		return report, err
 	}
-	if err := options.Topology.AssertDurableActivePointer(ctx, options.TargetID, options.GenerationID); err != nil {
+	if err := options.Topology.AssertDurableActivePointer(ctx, options.TargetID, activeGenerationID); err != nil {
 		return report, fmt.Errorf("verify durable active pointer after secondary rolling restart: %w", err)
 	}
 	report.RollingRestart = true
@@ -204,7 +218,6 @@ func validateQualificationMultiNodeOptions(options qualificationMultiNodeOptions
 		"Compose project": options.ComposeProject,
 		"Compose network": options.ComposeNetwork,
 		"target ID":       options.TargetID,
-		"generation ID":   options.GenerationID,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("multi-node qualification %s is required", label)
@@ -213,8 +226,8 @@ func validateQualificationMultiNodeOptions(options qualificationMultiNodeOptions
 	if !qualificationMultiNodeScopeIdentifier.MatchString(strings.TrimSpace(options.TargetID)) {
 		return errors.New("multi-node qualification target ID contains unsupported characters")
 	}
-	if !qualificationMultiNodeScopeIdentifier.MatchString(strings.TrimSpace(options.GenerationID)) {
-		return errors.New("multi-node qualification generation ID contains unsupported characters")
+	if strings.TrimSpace(options.APIToken) == "" {
+		return errors.New("multi-node qualification API token is required")
 	}
 	if err := validateQualificationNativePostgresIdentifier(options.ComposeProject, "qualification Compose project"); err != nil {
 		return err
@@ -262,9 +275,9 @@ func qualificationMultiNodeEnvironment(path string) (map[string]string, error) {
 			}
 		}
 	}
-	// The separate bind mount isolates the process's local state while keeping
-	// the configured nested home directory writable by the non-root image user.
-	// The certificate itself is mounted read-only below /etc.
+	// The separate tmpfs isolates process-local state while the provider-backed
+	// data subpaths are mounted independently. The certificate itself is
+	// mounted read-only below /etc.
 	values["LEAPVIEW_ADDR"] = ":8080"
 	return values, nil
 }
@@ -303,12 +316,12 @@ func qualificationWaitMultiNodeReady(ctx context.Context, container qualificatio
 	return nil
 }
 
-func assertQualificationMultiNodeIdentity(ctx context.Context, first, second qualificationContainer) error {
-	firstIdentity, err := qualificationMultiNodeIdentity(ctx, first)
+func assertQualificationMultiNodeIdentity(ctx context.Context, first, second qualificationContainer, apiToken string) error {
+	firstIdentity, err := qualificationMultiNodeIdentity(ctx, first, apiToken)
 	if err != nil {
 		return fmt.Errorf("read primary node identity: %w", err)
 	}
-	secondIdentity, err := qualificationMultiNodeIdentity(ctx, second)
+	secondIdentity, err := qualificationMultiNodeIdentity(ctx, second, apiToken)
 	if err != nil {
 		return fmt.Errorf("read secondary node identity: %w", err)
 	}
@@ -324,14 +337,17 @@ func assertQualificationMultiNodeIdentity(ctx context.Context, first, second qua
 	return nil
 }
 
-func qualificationMultiNodeIdentity(ctx context.Context, container qualificationContainer) (qualificationMultiNodeInstance, error) {
+func qualificationMultiNodeIdentity(ctx context.Context, container qualificationContainer, apiToken string) (qualificationMultiNodeInstance, error) {
 	if container == nil {
 		return qualificationMultiNodeInstance{}, errors.New("qualification application container is required")
+	}
+	if strings.TrimSpace(apiToken) == "" {
+		return qualificationMultiNodeInstance{}, errors.New("qualification application API token is required")
 	}
 	output, err := container.Exec(
 		ctx,
 		nil,
-		"env", "LEAPVIEW_TARGET=http://127.0.0.1:8080",
+		"env", "LEAPVIEW_API_TOKEN="+apiToken, "LEAPVIEW_TARGET=http://127.0.0.1:8080",
 		"leapview", "api", "call", "getInstance",
 	)
 	if err != nil {

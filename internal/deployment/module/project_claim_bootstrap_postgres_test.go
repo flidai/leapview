@@ -43,6 +43,11 @@ func TestBootstrapProjectClaimPostgresAtomicReplayConflictAndEnvironment(t *test
 	require.NoError(t, err)
 	require.Equal(t, projectgraph.ResourceID("project:one"), claim.ProjectID)
 	require.Equal(t, "instance-admin", claim.ClaimedBy)
+	target, err := repo.Target(t.Context(), "lvinst_test")
+	require.NoError(t, err)
+	require.Equal(t, "project:one", target.ProjectID)
+	require.Equal(t, "prod", target.Environment)
+	require.Equal(t, int64(1), target.TargetRevision)
 
 	audits, err := accesspostgres.New().ListAuditEvents(t.Context(), db, 10)
 	require.NoError(t, err)
@@ -70,6 +75,8 @@ func TestBootstrapProjectClaimPostgresForeignEnvironmentFirstIsIdempotent(t *tes
 	require.Equal(t, http.StatusConflict, replay.Code, replay.Body.String())
 	_, err := repo.GetProjectClaim(t.Context())
 	require.ErrorIs(t, err, deployment.ErrProjectClaimNotFound)
+	_, err = repo.Target(t.Context(), "lvinst_test")
+	require.ErrorIs(t, err, deploymentnative.ErrNotFound)
 	audits, err := accesspostgres.New().ListAuditEvents(t.Context(), db, 10)
 	require.NoError(t, err)
 	require.Len(t, audits, 1)
@@ -112,6 +119,8 @@ func TestBootstrapProjectClaimPostgresAuditFailureRollsBackClaim(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 	_, err := repo.GetProjectClaim(t.Context())
 	require.ErrorIs(t, err, deployment.ErrProjectClaimNotFound)
+	_, err = repo.Target(t.Context(), "lvinst_test")
+	require.ErrorIs(t, err, deploymentnative.ErrNotFound)
 }
 
 func TestBootstrapProjectClaimPostgresCompletesGeneratedCommandGuard(t *testing.T) {
@@ -149,10 +158,20 @@ func TestBootstrapProjectClaimNativeReusesTransactionalAuditAuthority(t *testing
 	}
 	first, err := BootstrapProjectClaimNative(t.Context(), persistence, audit, "lvinst_native", "dev", input)
 	require.NoError(t, err)
+	// Simulate the short-lived claim-only bootstrap state. An exact replay of
+	// the retained success audit must repair the missing half of the durable
+	// readiness tuple rather than returning a permanently partial instance.
+	_, err = db.Exec(t.Context(), `TRUNCATE delivery.delivery_target CASCADE`)
+	require.NoError(t, err)
 	replay, err := BootstrapProjectClaimNative(t.Context(), persistence, audit, "lvinst_native", "dev", input)
 	require.NoError(t, err)
 	require.Equal(t, first.Claim, replay.Claim)
 	require.False(t, first.Conflict)
+	target, err := repo.Target(t.Context(), "lvinst_native")
+	require.NoError(t, err)
+	require.Equal(t, "project:native", target.ProjectID)
+	require.Equal(t, "dev", target.Environment)
+	require.Equal(t, int64(1), target.TargetRevision)
 
 	audits, err := accesspostgres.New().ListAuditEvents(t.Context(), db, 10)
 	require.NoError(t, err)
@@ -177,6 +196,10 @@ func projectClaimBootstrapPostgresDB(t *testing.T) (*pgxpool.Pool, *deploymentna
 		t.Fatal(err)
 	}
 	if err := platformbootstrappostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := deploymentnative.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
