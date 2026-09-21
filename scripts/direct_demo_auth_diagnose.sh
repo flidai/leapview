@@ -109,6 +109,16 @@ if (( available_kb < 1048576 )); then
   docker builder prune --force
   docker image prune --force
   df -h /
+  available_kb="$(df --output=avail / | tail -1 | tr -d ' ')"
+  if (( available_kb < 1048576 )); then
+    echo 'Largest top-level paths after safe cache cleanup:'
+    du -x -h --max-depth=1 /opt /var /root 2>/dev/null | sort -h | tail -30
+    echo 'Docker disk accounting:'
+    docker system df || true
+    echo 'Journal disk accounting:'
+    journalctl --disk-usage || true
+    exit 1
+  fi
 fi
 
 for _ in $(seq 1 60); do
