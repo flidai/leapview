@@ -60,3 +60,12 @@ test('hosted demo generates build-only packages before publishing', () => {
   expect(generateIndex).toBeGreaterThan(setupIndex)
   expect(publishIndex).toBeGreaterThan(generateIndex)
 })
+
+test('production image qualification generates SQL packages before compiling the qualifier', () => {
+  const commands = tasks['image:qualify:production'].cmds
+  expect(commands.slice(0, 2)).toEqual([
+    { task: 'db:generate' },
+    { task: 'api:generate' },
+  ])
+  expect(commands.at(-1)).toContain('go run ./cmd/leapviewctl qualify image')
+})
