@@ -62,6 +62,34 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 45_000)
 
+test('app shell renders a custom logo and name without sidebar attribution', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/upgraded-shell`, { waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    const identity = await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
+      sidebar.config = { ...sidebar.config, productName: 'Northstar Analytics', productLogoUrl: '/instance-logo.png' }
+      await sidebar.updateComplete
+      const root = (sidebar.shadowRoot as ShadowRoot)!
+      return {
+        navigationLabel: root.querySelector('aside')?.getAttribute('aria-label'),
+        name: root.querySelector('.brand .name')?.textContent?.trim(),
+        logo: root.querySelector('.product-logo')?.getAttribute('src'),
+        attributionCount: root.querySelectorAll('.powered-by').length,
+      }
+    })
+    expect(identity).toEqual({
+      navigationLabel: 'Northstar Analytics navigation',
+      name: 'Northstar Analytics',
+      logo: '/instance-logo.png',
+      attributionCount: 0,
+    })
+  } finally {
+    await page.close()
+  }
+}, 30_000)
+
 test('ordinary chat hover actions expose Pin, Archive, and Delete without an overflow menu', async () => {
   const page = await browser.newPage()
   try {
@@ -256,32 +284,4 @@ test('mobile account menu fits above the footer and keeps search available after
       expect(await trigger.getAttribute('aria-expanded')).toBe('false')
     }
   } finally { await page.close() }
-}, 30_000)
-
-test('app shell renders a custom logo and name without sidebar attribution', async () => {
-  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
-  try {
-    await page.goto(`${baseURL}/upgraded-shell`, { waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
-    const identity = await page.locator('lv-app-shell').evaluate(async (element: any) => {
-      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
-      sidebar.config = { ...sidebar.config, productName: 'Northstar Analytics', productLogoUrl: '/instance-logo.png' }
-      await sidebar.updateComplete
-      const root = (sidebar.shadowRoot as ShadowRoot)!
-      return {
-        navigationLabel: root.querySelector('aside')?.getAttribute('aria-label'),
-        name: root.querySelector('.brand .name')?.textContent?.trim(),
-        logo: root.querySelector('.product-logo')?.getAttribute('src'),
-        attributionCount: root.querySelectorAll('.powered-by').length,
-      }
-    })
-    expect(identity).toEqual({
-      navigationLabel: 'Northstar Analytics navigation',
-      name: 'Northstar Analytics',
-      logo: '/instance-logo.png',
-      attributionCount: 0,
-    })
-  } finally {
-    await page.close()
-  }
 }, 30_000)
