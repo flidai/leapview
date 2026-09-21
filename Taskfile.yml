@@ -1279,6 +1279,7 @@ tasks:
     requires:
       vars: [IMAGE]
     cmds:
+      - task: db:generate
       - task: api:generate
       - mkdir -p {{.ROOT_DIR}}/.tmp/qualification/tmp
       - >-
