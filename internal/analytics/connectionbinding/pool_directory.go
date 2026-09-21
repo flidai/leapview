@@ -69,7 +69,7 @@ func (directory *PoolDirectory) Pool(binding TargetBinding) (AdministrationPool,
 		if evidence.BindingRevision == binding.Revision {
 			return current, nil
 		}
-		if err := current.manager.Retire(); err != nil {
+		if err := current.manager.RetireBounded(context.Background(), time.Now().Add(directory.refreshTimeout)); err != nil {
 			return nil, err
 		}
 		delete(directory.pools, binding.ID)
@@ -141,7 +141,7 @@ func (directory *PoolDirectory) Close() error {
 
 	var errs []error
 	for _, pool := range pools {
-		errs = append(errs, pool.manager.Retire())
+		errs = append(errs, pool.manager.RetireBounded(context.Background(), time.Now().Add(directory.refreshTimeout)))
 	}
 	return errors.Join(errs...)
 }
@@ -171,7 +171,7 @@ func (pool *boundedAdministrationPool) Disable(ctx context.Context, now time.Tim
 	if pool == nil || pool.manager == nil {
 		return ErrProviderUnavailable
 	}
-	return pool.manager.Disable(ctx, now)
+	return pool.manager.DisableBounded(ctx, now, time.Now().Add(pool.timeout))
 }
 
 func (pool *boundedAdministrationPool) HealthStatus() BindingHealthStatus {

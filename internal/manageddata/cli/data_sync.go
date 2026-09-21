@@ -22,7 +22,6 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/localplan"
 	"github.com/flidai/leapview/internal/manageddata/qualificationbarrier"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	"github.com/spf13/cobra"
 )
 
 const (
@@ -48,60 +47,6 @@ type SyncRequest struct {
 }
 
 type dataSyncRequest = SyncRequest
-
-func dataSyncCommand(ctx context.Context, planner dataPlanner, dependencies Dependencies, opts *options) *cobra.Command {
-	sourceRoot := "dashboards"
-	var connection string
-	var from string
-	format := "text"
-	command := &cobra.Command{
-		Use:   "sync",
-		Short: "Stage a managed data revision",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if strings.TrimSpace(connection) == "" {
-				return fmt.Errorf("connection is required")
-			}
-			if strings.TrimSpace(from) == "" {
-				return fmt.Errorf("from is required")
-			}
-			if dependencies.Client == nil {
-				return fmt.Errorf("Managed Data CLI API client is required")
-			}
-			credentials, err := dependencies.Client.Resolve(ctx, opts.remote.Credentials())
-			if err != nil {
-				return err
-			}
-			projectID := strings.TrimSpace(credentials.ProjectID)
-			if strings.TrimSpace(projectID) == "" {
-				return fmt.Errorf("target-bound Project identity is required; provide --project-id or use a target profile")
-			}
-			plan, err := planner.Plan(ctx, localplan.Request{SourceRoot: sourceRoot, Connection: connection, From: from})
-			if err != nil {
-				return err
-			}
-			if _, err := dependencies.Client.Environment(ctx, credentials, opts.environment); err != nil {
-				return err
-			}
-			httpClient := dependencies.HTTPClient
-			if httpClient == nil {
-				httpClient = http.DefaultClient
-			}
-			return runDataSync(ctx, dataSyncRequest{
-				SourceRoot: sourceRoot, ProjectID: projectID, Connection: connection, ConnectionID: plan.Connection, Root: plan.Root,
-				Target: credentials.Target, Token: credentials.Token, Plan: plan, Out: cmd.OutOrStdout(), HTTPClient: httpClient,
-				Format: format,
-			})
-		},
-	}
-	command.Flags().StringVar(&sourceRoot, "source-root", sourceRoot, "analytics source root")
-	command.Flags().StringVar(&connection, "connection", "", "project-global managed connection")
-	command.Flags().StringVar(&from, "from", "", "local filesystem root to ingest")
-	command.Flags().StringVar(&format, "format", format, "output format: text or json")
-	command.Flags().StringVar(&opts.environment, "environment", "", "assert the target instance environment")
-	opts.remote.AddFlags(command)
-	return command
-}
 
 // RunSync stages one planned Managed Data revision.
 func RunSync(ctx context.Context, request SyncRequest) error {

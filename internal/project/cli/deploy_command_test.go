@@ -1,13 +1,43 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"testing"
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 )
+
+func TestDeployCommandRejectsAmbiguousHeadlessSelectionAsStructuredError(t *testing.T) {
+	for _, args := range [][]string{
+		{"--new", "--resume", "--format", "json"},
+		{"--operation", "release-42", "--format", "json"},
+	} {
+		command := DeployCommand(context.Background(), deployClient{}, &deployOperations{})
+		var output bytes.Buffer
+		command.SetOut(&output)
+		command.SetErr(io.Discard)
+		command.SetArgs(args)
+		if err := command.Execute(); err == nil {
+			t.Fatalf("Execute(%v) succeeded", args)
+		}
+		var selection DeploymentSelectionError
+		jsonOutput := output.Bytes()
+		if start := bytes.IndexByte(jsonOutput, '{'); start >= 0 {
+			jsonOutput = jsonOutput[start:]
+		}
+		decoder := json.NewDecoder(bytes.NewReader(jsonOutput))
+		if err := decoder.Decode(&selection); err != nil {
+			t.Fatalf("selection output for %v = %q: %v", args, output.String(), err)
+		}
+		if selection.SchemaVersion != 1 || selection.Code == "" || selection.Detail == "" {
+			t.Fatalf("selection error for %v = %#v", args, selection)
+		}
+	}
+}
 
 type deployClient struct{}
 

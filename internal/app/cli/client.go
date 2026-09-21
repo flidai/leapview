@@ -237,6 +237,21 @@ func (client capabilityAPIClient) Environment(ctx context.Context, credentials c
 	return targetEnvironment(ctx, http.DefaultClient, resolved.Target, resolved.Token, asserted)
 }
 
+// TargetIdentity is an optional read-only preflight used by deployment
+// operation persistence. It obtains the target instance identity before any
+// source synchronization or delivery mutation.
+func (client capabilityAPIClient) TargetIdentity(ctx context.Context, credentials cliapi.Credentials) (string, string, string, error) {
+	resolved, err := client.Resolve(ctx, credentials)
+	if err != nil {
+		return "", "", "", err
+	}
+	instance, err := newDeploymentCLIClient(client.http(), resolved.Target, resolved.Token).instance(ctx)
+	if err != nil {
+		return "", "", "", fmt.Errorf("read target identity: %w", err)
+	}
+	return strings.TrimSpace(instance.Id), strings.TrimRight(strings.TrimSpace(instance.CanonicalOrigin), "/"), strings.TrimSpace(instance.Environment), nil
+}
+
 func (client capabilityAPIClient) Transport(ctx context.Context, credentials cliapi.Credentials) (apigenclient.Transport, error) {
 	resolved, err := client.Resolve(ctx, credentials)
 	if err != nil {
@@ -255,6 +270,10 @@ func (client capabilityAPIClient) http() *http.Client {
 	}
 	return http.DefaultClient
 }
+
+// HTTPClient exposes the already configured transport to optional local
+// capability adapters. It does not broaden cliapi.Client's core port.
+func (client capabilityAPIClient) HTTPClient() *http.Client { return client.http() }
 
 type capabilityAPITransport struct {
 	target string

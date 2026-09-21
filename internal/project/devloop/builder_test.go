@@ -176,12 +176,15 @@ func TestFilesystemBuilderProducesDeterministicProjectArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	second, err := builder.Build(t.Context())
 	require.NoError(t, err)
-	if first.ProjectID != "project:leapview-showcase" || first.Digest != second.Digest {
+	if first.ProjectID != "project:leapview-showcase" || first.Digest != second.Digest || first.GraphDigest == "" || first.GraphDigest != second.GraphDigest {
 		t.Fatalf(
 			"candidate identities = (%q, %q) and (%q, %q)",
 			first.ProjectID, first.Digest, second.ProjectID, second.Digest,
 		)
 	}
+	compiled, err := projectcompiler.Compile(projectPath)
+	require.NoError(t, err)
+	require.Equal(t, compiled.Graph().Digest(), first.GraphDigest)
 	if len(first.Artifacts) < 2 {
 		t.Fatalf("content artifacts = %d, want reachable project sources", len(first.Artifacts))
 	}

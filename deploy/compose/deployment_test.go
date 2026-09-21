@@ -248,7 +248,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 		"args=(qualify installed-candidate",
 		"--multi-node-process",
 		"gh release create",
-		"needs: [image, qualify, minio-conformance, plan-gc-conformance]",
+		"needs: [image, authoring-cli, qualify, minio-conformance, plan-gc-conformance]",
 	} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing %q", required)

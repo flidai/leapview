@@ -373,6 +373,38 @@ jobs:
             "dist/$package/qualification/validate-bundle.sh" "dist/$package"
             sed "s|ghcr.io/flidai/leapview@sha256:<release-digest>|$IMAGE_REFERENCE|" deploy/compose/deployment.env.example > "dist/$package/deployment.env.example"
             cp image-reference.txt release-identity.json "dist/$package/"
+            local_runtime_dir="dist/$package/local-runtime"
+            mkdir -p "$local_runtime_dir"
+            cp deploy/local/compose.yaml deploy/local/README.md deploy/local/runtime-package.schema.json "$local_runtime_dir/"
+            cp deploy/postgres/init.sh "$local_runtime_dir/postgres-init.sh"
+            chmod 0644 "$local_runtime_dir/compose.yaml" "$local_runtime_dir/README.md" "$local_runtime_dir/runtime-package.schema.json"
+            chmod 0755 "$local_runtime_dir/postgres-init.sh"
+            test "$(sha256sum "$local_runtime_dir/postgres-init.sh" | awk '{print $1}')" = "$canonical_postgres_init_sha256"
+            postgres_image="$(awk '/^[[:space:]]+image: docker.io\/library\/postgres:/{print $2; exit}' deploy/local/compose.yaml)"
+            test -n "$postgres_image"
+            POSTGRES_IMAGE="$postgres_image" python3 - "$local_runtime_dir/runtime-package.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          with open(sys.argv[1], "w", encoding="utf-8") as target:
+              json.dump({
+                  "schemaVersion": 1,
+                  "persistentStateSchemaVersion": 1,
+                  "composeMinimumVersion": "2.17.0",
+                  "leapview": {
+                      "version": os.environ["BUILD_VERSION"],
+                      "revision": os.environ["BUILD_REVISION"],
+                      "image": os.environ["IMAGE_REFERENCE"],
+                  },
+                  "postgres": {
+                      "major": 18,
+                      "image": os.environ["POSTGRES_IMAGE"],
+                  },
+              }, target, indent=2)
+              target.write("\n")
+          PY
+            chmod 0644 "$local_runtime_dir/runtime-package.json"
             if [ "$os" = linux ] && [ "$arch" = amd64 ]; then
               (
                 cd "dist/$package"
@@ -417,6 +449,177 @@ jobs:
 
       - name: Record immutable reference
         run: echo '${{ steps.assembled_admission.outputs.image }}' >> "$GITHUB_STEP_SUMMARY"
+
+  authoring-cli:
+    name: Build and qualify authoring CLI (${{ matrix.os }}-${{ matrix.arch }})
+    needs: [identity, image]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            runner: ubuntu-24.04
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - os: darwin
+            arch: amd64
+            runner: macos-15-intel
+          - os: darwin
+            arch: arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Check out the exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.image.outputs.revision }}
+
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Generate release build inputs
+        run: task generate
+
+      - name: Build native authoring command and package
+        env:
+          BUILD_VERSION: ${{ needs.identity.outputs.version }}
+          BUILD_REVISION: ${{ needs.image.outputs.revision }}
+          BUILD_TIME: ${{ needs.identity.outputs.build_time }}
+          BUILD_DIRTY: "false"
+          BUILD_RELEASE: ${{ needs.identity.outputs.release }}
+          IMAGE_REFERENCE: ${{ needs.image.outputs.image_reference }}
+          RELEASE_TAG: ${{ needs.image.outputs.release_tag }}
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          test "$(go env GOOS)" = "$TARGET_OS"
+          test "$(go env GOARCH)" = "$TARGET_ARCH"
+          build_ldflags="-s -w -X github.com/flidai/leapview/internal/platform/buildinfo.version=$BUILD_VERSION -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$BUILD_REVISION -X github.com/flidai/leapview/internal/platform/buildinfo.buildTime=$BUILD_TIME -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=$BUILD_DIRTY -X github.com/flidai/leapview/internal/platform/buildinfo.release=$BUILD_RELEASE"
+          mkdir -p dist/bin
+          CGO_ENABLED=1 go build -trimpath -tags duckdb_arrow -ldflags="$build_ldflags" -o dist/bin/leapview ./cmd/leapview
+          scripts/package-authoring-cli.sh dist/bin/leapview dist "$TARGET_OS" "$TARGET_ARCH"
+
+      - name: Verify installed archive without repository execution
+        env:
+          EXPECTED_VERSION: ${{ needs.identity.outputs.version }}
+          EXPECTED_REVISION: ${{ needs.image.outputs.revision }}
+          EXPECTED_IMAGE: ${{ needs.image.outputs.image_reference }}
+          RELEASE_TAG: ${{ needs.image.outputs.release_tag }}
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          package="leapview-cli-${RELEASE_TAG}-${TARGET_OS}-${TARGET_ARCH}"
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum --check "$package.tar.gz.sha256"
+          else
+            shasum -a 256 --check "$package.tar.gz.sha256"
+          fi
+          mkdir extracted
+          tar -C extracted -xzf "$package.tar.gz"
+          package_root="$PWD/extracted/$package"
+          (
+            cd "$package_root"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum --check SHA256SUMS
+            else
+              shasum -a 256 --check SHA256SUMS
+            fi
+          )
+          PACKAGE_ROOT="$package_root" python3 - <<'PY'
+          import json
+          import os
+
+          root = os.environ["PACKAGE_ROOT"]
+          with open(os.path.join(root, "authoring-package.json"), encoding="utf-8") as source:
+              package = json.load(source)
+          with open(os.path.join(root, "release-identity.json"), encoding="utf-8") as source:
+              release = json.load(source)
+          with open(os.path.join(root, "local-runtime", "runtime-package.json"), encoding="utf-8") as source:
+              runtime = json.load(source)
+          expected = {
+              "version": os.environ["EXPECTED_VERSION"],
+              "revision": os.environ["EXPECTED_REVISION"],
+              "image": os.environ["EXPECTED_IMAGE"],
+              "os": os.environ["TARGET_OS"],
+              "arch": os.environ["TARGET_ARCH"],
+          }
+          if package["identity"]["version"] != expected["version"] or package["identity"]["revision"] != expected["revision"]:
+              raise SystemExit("authoring package build identity mismatch")
+          if package["host"]["os"] != expected["os"] or package["host"]["architecture"] != expected["arch"]:
+              raise SystemExit("authoring package host identity mismatch")
+          if package["applicationImage"] != expected["image"] or release["image"] != expected["image"] or runtime["leapview"]["image"] != expected["image"]:
+              raise SystemExit("authoring package application image mismatch")
+          PY
+          "$package_root/leapview" version --json > installed-version.json
+          PACKAGE_ROOT="$package_root" python3 - <<'PY'
+          import json
+          import os
+
+          with open("installed-version.json", encoding="utf-8") as source:
+              actual = json.load(source)
+          with open(os.path.join(os.environ["PACKAGE_ROOT"], "release-identity.json"), encoding="utf-8") as source:
+              expected = json.load(source)
+          for field in ("version", "revision", "buildTime", "dirty", "development"):
+              if actual[field] != expected[field]:
+                  raise SystemExit(f"installed authoring CLI {field} mismatch")
+          PY
+          "$package_root/leapview" --help >/dev/null
+          for command in dev plan build publish deploy; do
+            "$package_root/leapview" "$command" --help >/dev/null
+          done
+          if [ "$TARGET_OS" = linux ]; then
+            checkout="$RUNNER_TEMP/installed-authoring-checkout"
+            mkdir -p "$checkout/dashboards"
+            git -C "$checkout" init --quiet
+            (
+              cd "$checkout"
+              "$package_root/leapview" dev status --format json > "$RUNNER_TEMP/installed-authoring-status.json"
+            )
+          fi
+
+      - name: Record native dependency boundary
+        run: |
+          mkdir -p dist/evidence
+          {
+            printf 'runner=%s\n' '${{ matrix.runner }}'
+            printf 'goos=%s\n' "$(go env GOOS)"
+            printf 'goarch=%s\n' "$(go env GOARCH)"
+            printf 'cgo_enabled=%s\n' "$(go env CGO_ENABLED)"
+            if command -v ldd >/dev/null 2>&1; then
+              ldd dist/bin/leapview
+            else
+              otool -L dist/bin/leapview
+            fi
+          } > "dist/evidence/native-${{ matrix.os }}-${{ matrix.arch }}.txt"
+
+      - name: Attest authoring archive provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/leapview-cli-*.tar.gz
+
+      - name: Upload qualified authoring archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: authoring-cli-${{ needs.image.outputs.release_tag }}-${{ matrix.os }}-${{ matrix.arch }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            dist/leapview-cli-*.tar.gz
+            dist/leapview-cli-*.tar.gz.sha256
+            dist/evidence/native-*.txt
 
   qualify:
     name: Pre-publication qualification (${{ matrix.arch }})
@@ -640,7 +843,7 @@ jobs:
   publish:
     name: Publish qualified release
     if: github.event_name == 'push'
-    needs: [image, qualify, minio-conformance, plan-gc-conformance]
+    needs: [image, authoring-cli, qualify, minio-conformance, plan-gc-conformance]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -678,6 +881,13 @@ jobs:
         with:
           name: release-candidate-${{ needs.image.outputs.release_tag }}
           path: candidate
+
+      - name: Download qualified authoring archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: authoring-cli-${{ needs.image.outputs.release_tag }}-*
+          path: candidate/authoring
+          merge-multiple: true
 
       - name: Publish qualified image tags
         env:
@@ -727,4 +937,6 @@ jobs:
             candidate/release-identity.json \
             candidate/assembled-image-admission.json \
             candidate/dist/*.tar.gz \
-            candidate/dist/*.tar.gz.sha256
+            candidate/dist/*.tar.gz.sha256 \
+            candidate/authoring/*.tar.gz \
+            candidate/authoring/*.tar.gz.sha256

@@ -1,0 +1,20 @@
+apiVersion: leapview.dev/v1
+kind: Source
+metadata:
+  id: source:sample.sales
+  name: sample.sales
+  displayName: Synthetic sales
+spec:
+  connection: sample
+  location:
+    type: path
+    path: sales.csv
+    format: csv
+  schema:
+    mode: strict
+  fields:
+    - {name: sale_id, datatype: String}
+    - {name: sale_date, datatype: String}
+    - {name: region, datatype: String}
+    - {name: category, datatype: String}
+    - {name: amount, datatype: Decimal}

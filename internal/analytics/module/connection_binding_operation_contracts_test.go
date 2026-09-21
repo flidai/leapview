@@ -17,12 +17,13 @@ func TestConnectionBindingOperationClassifications(t *testing.T) {
 		idempotency string
 		uiAction    string
 	}{
-		"createTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingCreated), privilege: "PROJECT_ADMIN", idempotency: "required", uiAction: "connection.binding.configure"},
+		"createTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingCreated), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.configure"},
 		"updateTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingUpdated), privilege: "RESOURCE_MANAGE", uiAction: "connection.binding.update"},
 		"testTargetConnectionBinding":    {auditAction: string(connectionbinding.RefreshTest), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.test"},
 		"refreshTargetConnectionBinding": {auditAction: string(connectionbinding.RefreshRequested), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.refresh"},
 		"enableTargetConnectionBinding":  {auditAction: string(connectionbinding.AuditBindingEnabled), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.enable"},
 		"disableTargetConnectionBinding": {auditAction: string(connectionbinding.AuditBindingDisabled), privilege: "RESOURCE_MANAGE", idempotency: "required", uiAction: "connection.binding.disable"},
+		"applyDevelopmentProfile":        {auditAction: "development.profile.applied", privilege: "RESOURCE_MANAGE", idempotency: "required"},
 	}
 	for operationID, expected := range commands {
 		contract, ok := contracts[operationID]
@@ -30,9 +31,10 @@ func TestConnectionBindingOperationClassifications(t *testing.T) {
 			t.Fatalf("command contract %q = %#v", operationID, contract)
 		}
 		wantTargetParameter, wantTargetType := "connection", "connection"
-		if operationID == "createTargetConnectionBinding" {
+		if operationID == "createTargetConnectionBinding" || operationID == "applyDevelopmentProfile" {
 			wantTargetParameter, wantTargetType = "project", "project"
 		}
+		uiMatches := contract.Command.UI == nil && expected.uiAction == "" || contract.Command.UI != nil && contract.Command.UI.ActionID == expected.uiAction
 		if analyticsGeneratedOperationKind(contract) != "command" ||
 			contract.Command.Owner != "LeapViewAPI.Analytics" ||
 			contract.Command.Audit.SuccessAction != expected.auditAction ||
@@ -42,8 +44,7 @@ func TestConnectionBindingOperationClassifications(t *testing.T) {
 			contract.Command.Target.Type != wantTargetType ||
 			contract.Command.Privilege != expected.privilege ||
 			contract.Command.Idempotency != expected.idempotency ||
-			contract.Command.UI == nil ||
-			contract.Command.UI.ActionID != expected.uiAction {
+			!uiMatches {
 			t.Errorf("command contract %q = %#v", operationID, contract)
 		}
 	}
@@ -56,6 +57,7 @@ func TestConnectionBindingOperationClassifications(t *testing.T) {
 		"getTargetConnectionBinding",
 		"planTargetConnectionBindingChange",
 		"getTargetConnectionBindingHealth",
+		"getDevelopmentProfileApplication",
 	} {
 		contract, ok := contracts[operationID]
 		if !ok || contract.Command != nil || analyticsGeneratedOperationKind(contract) != "query" {

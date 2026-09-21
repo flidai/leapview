@@ -14,8 +14,8 @@ func TestTargetConnectionBindingAPIContract(t *testing.T) {
 		id        string
 		privilege string
 	}{
-		{base, "get", "listTargetConnectionBindings", "PROJECT_ADMIN"},
-		{base, "post", "createTargetConnectionBinding", "PROJECT_ADMIN"},
+		{base, "get", "listTargetConnectionBindings", "RESOURCE_MANAGE"},
+		{base, "post", "createTargetConnectionBinding", "RESOURCE_MANAGE"},
 		{item, "get", "getTargetConnectionBinding", "RESOURCE_MANAGE"},
 		{item + "/plan", "post", "planTargetConnectionBindingChange", "RESOURCE_MANAGE"},
 		{item, "put", "updateTargetConnectionBinding", "RESOURCE_MANAGE"},
@@ -55,6 +55,9 @@ func TestTargetConnectionBindingAPIContract(t *testing.T) {
 			t.Fatalf("connection binding response exposes forbidden field %q", forbidden)
 		}
 	}
+	if _, exists := openAPIMap(t, binding, "properties")["validatedVersion"]; exists {
+		t.Fatal("connection binding response exposes credential comparison material")
+	}
 
 	health := openAPISchema(t, schemas, "TargetConnectionBindingHealthResponse")
 	for _, field := range []string{
@@ -66,6 +69,33 @@ func TestTargetConnectionBindingAPIContract(t *testing.T) {
 	for _, forbidden := range []string{"credential", "secret", "providerError", "rawError"} {
 		if _, exists := openAPIMap(t, health, "properties")[forbidden]; exists {
 			t.Fatalf("connection health response exposes forbidden field %q", forbidden)
+		}
+	}
+	if _, exists := openAPIMap(t, health, "properties")["validatedVersion"]; exists {
+		t.Fatal("connection health response exposes credential comparison material")
+	}
+
+	profilePath := "/api/v1/projects/{project}/targets/{target}/development-profile-application"
+	for _, want := range []struct {
+		method string
+		id     string
+	}{{"get", "getDevelopmentProfileApplication"}, {"post", "applyDevelopmentProfile"}} {
+		operation := openAPIOperation(t, paths, profilePath, want.method)
+		if operation["operationId"] != want.id {
+			t.Fatalf("%s %s operation = %#v", want.method, profilePath, operation)
+		}
+		if privilege := openAPIMap(t, operation, "x-authz")["privilege"]; privilege != "RESOURCE_MANAGE" {
+			t.Fatalf("%s privilege = %#v, want RESOURCE_MANAGE", want.id, privilege)
+		}
+	}
+	if operation := openAPIOperation(t, paths, profilePath, "post"); !operationHasParameter(operation, "header", "Idempotency-Key") {
+		t.Fatal("applyDevelopmentProfile operation is missing Idempotency-Key")
+	}
+	profileRequest := openAPISchema(t, schemas, "DevelopmentProfileApplicationRequest")
+	encoded := openAPIMap(t, profileRequest, "properties")
+	for _, forbidden := range []string{"credentialValue", "secretValue", "providerVersion", "validatedVersion"} {
+		if _, exists := encoded[forbidden]; exists {
+			t.Fatalf("development profile request exposes forbidden field %q", forbidden)
 		}
 	}
 }

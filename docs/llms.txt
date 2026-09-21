@@ -71,6 +71,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 
 - [Deploy and operate LeapView](/docs/guides/operate): Understand the production delivery and operations workflow.
 - [Develop, review, and publish](/docs/cli/validate-deploy): Preview a private target candidate and publish that exact revision.
+- [Analytics development workflow](/docs/cli/analytics-development): Initialize a project, run local or remote development, and deliver with explicit profile and operation boundaries.
 - [Targets and environments](/docs/cli/targets): Keep local, staging, and production changes explicit.
 - [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring): Move private dashboard drafts through development, review, and production with explicit ownership boundaries.
 - [Production configuration](/docs/guides/operate/production-configuration): Configure secrets, storage, auth, and runtime boundaries.
@@ -167,9 +168,10 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview config](/docs/cli/config): Inspect and validate process-global configuration
 - [leapview dashboards](/docs/cli/dashboards): Inspect dashboards
 - [leapview data](/docs/cli/data): Manage project-global data revisions
-- [leapview deploy](/docs/cli/deploy): Deprecated composition of plan, build, and publish
+- [leapview deploy](/docs/cli/deploy): Review and deliver an exact target-owned deployment operation
 - [leapview dev](/docs/cli/dev): Synchronize a source root into your private target candidate
 - [leapview healthcheck](/docs/cli/healthcheck): Check the local LeapView readiness endpoint
+- [leapview init](/docs/cli/init): Create a portable analytics project with reproducible sample data
 - [leapview login](/docs/cli/login): Sign in to a LeapView target for project authoring
 - [leapview logout](/docs/cli/logout): Revoke a LeapView authoring session and remove local credentials
 - [leapview plan](/docs/cli/plan): Capture an exact source snapshot and create a target-owned delivery plan

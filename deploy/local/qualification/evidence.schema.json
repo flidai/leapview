@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://leapview.flid.ai/schemas/released-authoring-package-qualification-v1.json",
+  "title": "LeapView released authoring package qualification evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "evidenceKind",
+    "qualification",
+    "scope",
+    "result",
+    "required",
+    "startedAt",
+    "finishedAt",
+    "metadata",
+    "package",
+    "scenarios",
+    "rawResults",
+    "skipped",
+    "failures"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "evidenceKind": { "const": "released-authoring-package-qualification" },
+    "qualification": { "const": "milestone-5-static" },
+    "scope": { "const": "static" },
+    "result": { "enum": ["running", "partial", "skipped", "failed"] },
+    "required": { "type": "boolean" },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": ["string", "null"], "format": "date-time" },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "package": {
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/package" }
+      ]
+    },
+    "scenarios": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["semantic", "model", "dashboard", "presentation", "invalid"],
+      "properties": {
+        "semantic": { "$ref": "#/$defs/measurement" },
+        "model": { "$ref": "#/$defs/measurement" },
+        "dashboard": { "$ref": "#/$defs/measurement" },
+        "presentation": { "$ref": "#/$defs/measurement" },
+        "invalid": { "$ref": "#/$defs/measurement" }
+      }
+    },
+    "rawResults": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/rawResult" }
+    },
+    "skipped": { "type": "array", "maxItems": 32, "items": { "type": "string", "maxLength": 500 } },
+    "failures": { "type": "array", "maxItems": 32, "items": { "type": "string", "maxLength": 500 } }
+  },
+  "$defs": {
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "planned", "executed", "samplesMs", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "not-run", "skipped"] },
+        "planned": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "executed": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "samplesMs": { "type": "array", "maxItems": 100, "items": { "type": "number", "minimum": 0 } },
+        "reason": { "type": "string", "maxLength": 500 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "passed" } } },
+          "then": {
+            "properties": {
+              "executed": { "minimum": 1 },
+              "samplesMs": { "minItems": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "not-run" } } },
+          "then": {
+            "properties": {
+              "executed": { "const": 0 },
+              "samplesMs": { "maxItems": 0 }
+            }
+          }
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "toolchain", "docker", "compose", "hardware", "fixture", "network", "warmup", "repetitions"],
+      "properties": {
+        "os": { "$ref": "#/$defs/os" },
+        "toolchain": { "$ref": "#/$defs/toolchain" },
+        "docker": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/docker" }] },
+        "compose": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/compose" }] },
+        "hardware": { "$ref": "#/$defs/hardware" },
+        "fixture": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/fixture" }] },
+        "network": { "$ref": "#/$defs/network" },
+        "warmup": { "$ref": "#/$defs/warmup" },
+        "repetitions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["coldUncached", "coldCached", "warmRestart", "editToVisible"],
+          "properties": {
+            "coldUncached": { "$ref": "#/$defs/measurement" },
+            "coldCached": { "$ref": "#/$defs/measurement" },
+            "warmRestart": { "$ref": "#/$defs/measurement" },
+            "editToVisible": { "$ref": "#/$defs/measurement" }
+          }
+        }
+      }
+    },
+    "os": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "release", "machine", "architecture", "supportedTarget"],
+      "properties": {
+        "name": { "type": "string" },
+        "release": { "type": "string" },
+        "machine": { "type": "string" },
+        "architecture": { "type": "string" },
+        "supportedTarget": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["os", "architecture"],
+              "properties": {
+                "os": { "enum": ["linux", "darwin"] },
+                "architecture": { "enum": ["amd64", "arm64"] }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python", "tar", "checksum"],
+      "properties": {
+        "python": { "type": "string" },
+        "tar": { "type": "string" },
+        "checksum": { "type": "string" }
+      }
+    },
+    "docker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cli", "endpoint", "transport", "server", "composeVersion", "endpointPinned", "pinState"],
+      "properties": {
+        "cli": { "type": "string" },
+        "endpoint": { "type": "string", "pattern": "^(unix://<local-socket>|<redacted-endpoint>)$" },
+        "transport": { "const": "unix" },
+        "server": { "type": "object", "additionalProperties": { "type": "string" } },
+        "composeVersion": { "type": "string" },
+        "endpointPinned": { "type": "boolean" },
+        "pinState": { "enum": ["not-proven", "verified-pre-post"] },
+        "serverPost": { "type": "object", "additionalProperties": { "type": "string" } }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "endpointPinned": { "const": true } } },
+          "then": {
+            "required": ["serverPost"],
+            "properties": { "pinState": { "const": "verified-pre-post" } }
+          }
+        },
+        {
+          "if": { "properties": { "endpointPinned": { "const": false } } },
+          "then": { "properties": { "pinState": { "const": "not-proven" } } }
+        }
+      ]
+    },
+    "compose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "minimum", "satisfied"],
+      "properties": {
+        "version": { "type": "string" },
+        "minimum": { "const": "2.17.0" },
+        "satisfied": { "const": true }
+      }
+    },
+    "hardware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logicalCpuCount", "memoryBytes"],
+      "properties": {
+        "logicalCpuCount": { "type": ["integer", "null"], "minimum": 1 },
+        "memoryBytes": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "checkout", "fileCount", "bytes", "digest", "files"],
+      "properties": {
+        "name": { "const": "init-sample" },
+        "checkout": { "const": "temporary" },
+        "fileCount": { "type": "integer", "minimum": 0 },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "files": { "type": "array", "maxItems": 1000, "items": { "type": "string" } }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "endpoint", "conditions"],
+      "properties": {
+        "mode": { "type": "string" },
+        "endpoint": { "type": ["string", "null"] },
+        "conditions": { "type": ["string", "null"] }
+      }
+    },
+    "warmup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "requested", "completed", "samplesMs", "reason"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "not-run", "skipped"] },
+        "requested": { "type": "integer", "minimum": 0 },
+        "completed": { "type": "integer", "minimum": 0 },
+        "samplesMs": { "type": "array", "maxItems": 100, "items": { "type": "number", "minimum": 0 } },
+        "reason": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["archiveSha256", "package", "releaseTag", "host", "identity", "applicationImage", "runtime", "manifest"],
+      "properties": {
+        "archiveSha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "package": { "type": "string" },
+        "releaseTag": { "type": "string" },
+        "host": { "type": "object" },
+        "identity": { "type": "object" },
+        "applicationImage": { "type": "string", "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$" },
+        "runtime": { "type": "object" },
+        "manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fileCount", "verified", "files"],
+          "properties": {
+            "fileCount": { "type": "integer", "minimum": 1 },
+            "verified": { "const": true },
+            "files": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "cliIdentity": { "type": "object" }
+      }
+    },
+    "rawResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "command", "status", "exitCode", "output", "durationMs"],
+      "properties": {
+        "name": { "type": "string" },
+        "command": { "type": "string" },
+        "status": { "enum": ["passed", "failed", "timed-out"] },
+        "exitCode": { "type": ["integer", "null"] },
+        "output": { "type": "string", "maxLength": 4100 },
+        "durationMs": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

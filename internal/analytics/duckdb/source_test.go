@@ -955,17 +955,17 @@ func TestCompileConnectionSecret(t *testing.T) {
 		t.Fatalf("azure secret = %q ok=%v, want %q ok=true", stmt, ok, want)
 	}
 
-	t.Setenv("LEAPVIEW_TEST_AZURE_CREDENTIALS", `{"connection_string":"DefaultEndpointsProtocol=https;AccountName=envstorage"}`)
+	t.Setenv("LEAPVIEW_DEV_CONNECTION_AZURE", `{"connection_string":"DefaultEndpointsProtocol=https;AccountName=envstorage"}`)
 	azureConnection := semanticmodel.Connection{
 		Kind:        "azure_blob",
-		Credentials: semanticmodel.ConnectionCredentials{Provider: "env", Secret: "LEAPVIEW_TEST_AZURE_CREDENTIALS"},
+		Credentials: semanticmodel.ConnectionCredentials{Provider: "env", Secret: "LEAPVIEW_DEV_CONNECTION_AZURE"},
 	}
 	selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
 		TargetID: "test-target", ProjectID: "test", Environment: "test", TargetClass: connectionbinding.TargetDevelopment,
 		Kind: connectionbinding.ResolverEnvironment,
 	})
 	require.NoError(t, err)
-	developmentResolver, err := NewDevelopmentEnvironmentCredentialResolver(selection)
+	developmentResolver, err := NewDevelopmentEnvironmentCredentialResolver(selection, []string{"LEAPVIEW_DEV_CONNECTION_AZURE"})
 	require.NoError(t, err)
 	azureConnection.Auth, err = developmentResolver.Resolve(context.Background(), "azure_lake", azureConnection)
 	require.NoError(t, err)

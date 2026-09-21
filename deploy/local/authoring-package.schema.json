@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://leapview.flid.ai/schemas/authoring-package-v1.json",
+  "title": "LeapView authoring CLI package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "product", "identity", "host", "applicationImage"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "product": { "const": "leapview" },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "revision", "buildTime", "dirty", "development"],
+      "properties": {
+        "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)([-+][0-9A-Za-z.-]+)?$" },
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "buildTime": { "type": "string", "format": "date-time" },
+        "dirty": { "const": false },
+        "development": { "type": "boolean" }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture", "supportProfile"],
+      "properties": {
+        "os": { "enum": ["linux", "darwin"] },
+        "architecture": { "enum": ["amd64", "arm64"] },
+        "supportProfile": {
+          "enum": ["ubuntu-24.04-docker-engine", "macos-15-docker-desktop"]
+        }
+      }
+    },
+    "applicationImage": {
+      "type": "string",
+      "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "host": { "properties": { "os": { "const": "linux" } } } } },
+      "then": { "properties": { "host": { "properties": { "supportProfile": { "const": "ubuntu-24.04-docker-engine" } } } } }
+    },
+    {
+      "if": { "properties": { "host": { "properties": { "os": { "const": "darwin" } } } } },
+      "then": { "properties": { "host": { "properties": { "supportProfile": { "const": "macos-15-docker-desktop" } } } } }
+    }
+  ]
+}
