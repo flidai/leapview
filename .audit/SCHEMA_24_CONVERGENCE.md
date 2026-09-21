@@ -54,11 +54,19 @@ The following local validation passed on the focused branch:
 - `task deploy:check`
 - `task ci`, including the real PostgreSQL 18 conformance inventory and generated-contract checks
 
-The GitHub Main artifacts workflow result is recorded below after it completes.
+GitHub PR checks also passed, including the Go application and package lanes, PostgreSQL topology isolation, every frontend shard, APIGen, dbt physical contracts, CodeQL, and the security and IaC gates. The Main artifacts workflow then qualified the exact open-PR candidate revision recorded below.
 
 ## Qualified Artifact
 
-Pending the normal Main artifacts workflow. The exact source revision, immutable image digest, provenance, admission, and qualification result will be recorded here after success.
+- Source revision: `c92666bedfae184906e127ed736a6874ba12a6df`
+- Image: `ghcr.io/flidai/leapview@sha256:f756313d592f1548b6167dbdaa54aff607d528ac10c6769d458c85c7284c9701`
+- Workflow: [Main artifacts run 35598106545](https://github.com/flidai/leapview/actions/runs/35598106545)
+- Build and publication: passed, including the production SBOM
+- Provenance attestation: passed
+- OCI artifact admission: passed for the immutable digest
+- Final production image qualification: passed
+
+The published image reports version `0.2.0-rc.2+candidate.c92666bedfae`, exact revision `c92666bedfae184906e127ed736a6874ba12a6df`, and a clean build. Qualification logs prove `db:generate` ran before `leapviewctl qualify image` and ended with `production image passed enterprise qualification`. Direct inspection of the published binary also finds the embedded `024_schema_23_convergence.sql` migration and its forward-only guard. This evidence-recording commit follows the qualified source revision and changes documentation only.
 
 ## Remaining Limitations
 
