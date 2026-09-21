@@ -100,7 +100,7 @@ jobs:
         run: task generate
 
       - name: Fetch demo deployment credentials
-        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
@@ -159,7 +159,7 @@ jobs:
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
           source-revision: 2e228ec6b42ab5c18bea04ce037695642aaf8019
       - name: Fetch infrastructure credentials
-        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
@@ -169,7 +169,7 @@ jobs:
           env-slug: prod
           secret-path: /hetzner-qualification/infrastructure
       - name: Fetch demo deployment credentials
-        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
@@ -210,7 +210,7 @@ jobs:
           test "$(jq -r .conclusion <<<"$run_json")" = success
           test "$(jq -r .head_sha <<<"$run_json")" = 2e228ec6b42ab5c18bea04ce037695642aaf8019
       - name: Fetch infrastructure credentials
-        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
@@ -220,7 +220,7 @@ jobs:
           env-slug: prod
           secret-path: /hetzner-qualification/infrastructure
       - name: Fetch demo deployment credentials
-        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
