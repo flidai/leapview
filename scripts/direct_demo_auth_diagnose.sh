@@ -119,6 +119,12 @@ if (( available_kb < 1048576 )); then
         rm -rf -- "$cache"
       fi
     done
+    for cache in /tmp/leapview-main/node_modules /tmp/leapview-main/.demo-image-context /tmp/leapview-chat-ui-*/node_modules; do
+      if [[ -d "$cache" && ! -L "$cache" ]]; then
+        du -sh "$cache"
+        rm -rf -- "$cache"
+      fi
+    done
     df -h /
     available_kb="$(df --output=avail / | tail -1 | tr -d ' ')"
   fi
