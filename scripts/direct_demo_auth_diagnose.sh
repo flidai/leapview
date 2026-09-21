@@ -197,4 +197,6 @@ if ! curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8132/readyz
   exit 1
 fi
 echo 'Application ready after database recovery'
+echo 'Hosted-demo temporary/build disk footprint:'
+du -x -h --max-depth=2 /tmp/leapview-main /tmp/leapview-chat-ui-* /tmp/leapview-demo-runtime /home 2>/dev/null | sort -h | tail -40 || true
 REMOTE
