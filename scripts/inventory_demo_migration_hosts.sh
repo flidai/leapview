@@ -2,19 +2,26 @@
 set -euo pipefail
 
 scope="${MIGRATION_INVENTORY_SCOPE:-both}"
-new_host="${NEW_DEMO_HOST:?Set NEW_DEMO_HOST}"
 runner_ip="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
 temporary_directory="$(mktemp -d)"
 original_firewall_rules="$temporary_directory/original-firewall-rules.json"
 firewall_changed=false
+old_host=
+new_host=
 
 case "$scope" in
   both)
+    new_host="${NEW_DEMO_HOST:?Set NEW_DEMO_HOST}"
     old_host="${DEMO_HOST:?Set DEMO_HOST}"
     firewall_id="${DEMO_FIREWALL_ID:?Set DEMO_FIREWALL_ID}"
     hcloud_token="${HCLOUD_TOKEN:?Set HCLOUD_TOKEN}"
     ;;
-  new) ;;
+  old)
+    old_host="${DEMO_HOST:?Set DEMO_HOST}"
+    firewall_id="${DEMO_FIREWALL_ID:?Set DEMO_FIREWALL_ID}"
+    hcloud_token="${HCLOUD_TOKEN:?Set HCLOUD_TOKEN}"
+    ;;
+  new) new_host="${NEW_DEMO_HOST:?Set NEW_DEMO_HOST}" ;;
   *) echo "Unsupported migration inventory scope: $scope" >&2; exit 64 ;;
 esac
 
@@ -76,7 +83,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ "$scope" == both ]]; then
+if [[ "$scope" == both || "$scope" == old ]]; then
   firewall="$(hcloud_request GET "/firewalls/$firewall_id")"
   jq '.firewall.rules' <<<"$firewall" >"$original_firewall_rules"
   runner_cidr="$runner_ip/32"
@@ -118,9 +125,13 @@ pin_host() {
   echo "host key did not match the reviewed fingerprint for $host" >&2
   return 1
 }
-pin_host "$new_host" "$NEW_EXPECTED_FINGERPRINT"
 if [[ "$scope" == both ]]; then
   pin_host "$old_host" "$OLD_EXPECTED_FINGERPRINT"
+  pin_host "$new_host" "$NEW_EXPECTED_FINGERPRINT"
+elif [[ "$scope" == old ]]; then
+  pin_host "$old_host" "$OLD_EXPECTED_FINGERPRINT"
+else
+  pin_host "$new_host" "$NEW_EXPECTED_FINGERPRINT"
 fi
 
 inventory='set -euo pipefail
@@ -153,10 +164,11 @@ du -sh /opt/leapview-demo /tmp/leapview-demo-host-state /tmp/leapview-main 2>/de
 find /opt/leapview-demo -maxdepth 2 -mindepth 1 -printf "%y %p\n" 2>/dev/null | sort || true
 '
 
-hosts=("$new_host")
-if [[ "$scope" == both ]]; then
-  hosts=("$old_host" "$new_host")
-fi
+case "$scope" in
+  both) hosts=("$old_host" "$new_host") ;;
+  old) hosts=("$old_host") ;;
+  new) hosts=("$new_host") ;;
+esac
 for host in "${hosts[@]}"; do
   echo "===== HOST $host ====="
   ssh_options=(
@@ -167,7 +179,7 @@ for host in "${hosts[@]}"; do
     -o "UserKnownHostsFile=$known_hosts"
   )
   users=(root)
-  if [[ "$host" == "$new_host" ]]; then
+  if [[ "$scope" != old && "$host" == "$new_host" ]]; then
     users=(root ganesh anand ubuntu)
   fi
   remote_user=
