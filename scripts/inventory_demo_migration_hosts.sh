@@ -159,7 +159,32 @@ if [[ "$scope" == both ]]; then
 fi
 for host in "${hosts[@]}"; do
   echo "===== HOST $host ====="
-  printf '%s\n' "$inventory" | ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
-    -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known_hosts" \
-    "root@$host" 'bash -se'
+  ssh_options=(
+    -i "$identity_file"
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o StrictHostKeyChecking=yes
+    -o "UserKnownHostsFile=$known_hosts"
+  )
+  users=(root)
+  if [[ "$host" == "$new_host" ]]; then
+    users=(root ganesh anand ubuntu)
+  fi
+  remote_user=
+  for candidate in "${users[@]}"; do
+    if ssh "${ssh_options[@]}" "$candidate@$host" true >/dev/null 2>&1; then
+      remote_user="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$remote_user" ]]; then
+    echo "deployment SSH identity is not authorized for any reviewed operator account on $host" >&2
+    exit 77
+  fi
+  remote_shell='bash -se'
+  if [[ "$remote_user" != root ]]; then
+    remote_shell='sudo -n bash -se'
+  fi
+  echo "access=$remote_user"
+  printf '%s\n' "$inventory" | ssh "${ssh_options[@]}" "$remote_user@$host" "$remote_shell"
 done
