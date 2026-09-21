@@ -738,6 +738,6 @@ test('side agent keeps the composer visible and starter prompts never submit aut
       mergePatch({ agentTurnPending: true })
     }))
     expect(await drawer.getByRole('button', { name: 'New chat', exact: true }).isDisabled()).toBe(true)
-    await drawer.getByRole('status').filter({ hasText: 'Working' }).waitFor()
+    await drawer.getByRole('status', { name: 'Working' }).waitFor()
   } finally { await page.close() }
 })
