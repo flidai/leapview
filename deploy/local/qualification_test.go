@@ -153,6 +153,37 @@ print("retained")
 	}
 }
 
+func TestReleasedAuthoringQualificationForwardsNativeKeyringSessionOnly(t *testing.T) {
+	root := repositoryRoot(t)
+	python := `
+import importlib.util
+import os
+import pathlib
+import sys
+import tempfile
+
+spec = importlib.util.spec_from_file_location("leapview_qualify", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory() as temporary:
+    environment = module.command_environment(None, pathlib.Path(temporary))
+if environment.get("DBUS_SESSION_BUS_ADDRESS") != "unix:path=/tmp/qualification-bus":
+    raise SystemExit("native keyring session was not forwarded")
+if "QUALIFICATION_UNSAFE" in environment:
+    raise SystemExit("unsafe environment variable was forwarded")
+`
+	command := exec.Command("python3", "-c", python, filepath.Join(root, "deploy", "local", "qualification", "qualify.py"))
+	command.Dir = root
+	command.Env = append(os.Environ(),
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/qualification-bus",
+		"QUALIFICATION_UNSAFE=must-not-forward",
+		"PYTHONDONTWRITEBYTECODE=1",
+	)
+	if combined, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("inspect qualification environment: %v\n%s", err, combined)
+	}
+}
+
 func TestReleasedAuthoringQualificationRejectsMissingOrWrongCommandHelp(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("authoring archives support Linux and macOS")
