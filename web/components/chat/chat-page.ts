@@ -131,7 +131,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: var(--lv-space-sm);
+      gap: var(--lv-space-md);
       overflow-y: auto;
       padding: calc(var(--lv-space-lg) * 3) 0 var(--lv-space-lg);
       background: var(--lv-bg-app);
@@ -153,34 +153,25 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
 
     .new-chat-heading {
-      display: grid;
-      justify-items: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       gap: var(--lv-space-sm);
       text-align: center;
     }
 
-    .new-chat-kicker {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--lv-space-sm);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
-    }
-
     .agent-mark {
       display: grid;
-      width: var(--lv-control-medium);
-      height: var(--lv-control-medium);
+      width: var(--base-size-24);
+      height: var(--base-size-24);
+      flex: 0 0 var(--base-size-24);
       place-items: center;
-      border-radius: var(--lv-radius-large);
-      background: var(--lv-bg-accent-muted);
       color: var(--lv-accent);
     }
 
     .agent-mark svg {
-      width: var(--base-size-16);
-      height: var(--base-size-16);
+      width: var(--base-size-20);
+      height: var(--base-size-20);
     }
 
     .new-chat-title {
@@ -188,45 +179,35 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       font: var(--lv-type-page-title);
     }
 
-    .new-chat-description {
-      max-width: 520px;
-      margin: calc(var(--lv-space-lg) + var(--lv-space-xs)) 0 0;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-body);
-    }
-
     .prompt-starters {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      box-sizing: border-box;
+      display: flex;
+      width: min(100%, var(--lv-chat-stack-width));
+      flex-wrap: wrap;
+      justify-content: center;
       gap: var(--lv-space-sm);
-      margin-top: var(--lv-space-xs);
+      padding-inline: var(--lv-space-lg);
     }
 
     .prompt-starter {
-      display: grid;
-      min-width: 0;
-      min-height: 92px;
-      grid-template-columns: var(--lv-control-medium) minmax(0, 1fr);
-      align-content: start;
-      align-items: start;
-      gap: var(--lv-space-sm);
+      display: inline-flex;
+      min-height: var(--lv-control-medium);
+      align-items: center;
+      gap: var(--lv-space-xs);
       border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-large);
+      border-radius: var(--lv-radius-full);
       background: var(--lv-bg-panel);
       color: var(--lv-fg-default);
-      padding: var(--lv-space-md);
-      text-align: left;
+      padding: 0 var(--lv-space-md);
       cursor: pointer;
       transition:
         background var(--lv-transition-fast),
-        border-color var(--lv-transition-fast),
-        transform var(--lv-transition-fast);
+        border-color var(--lv-transition-fast);
     }
 
     .prompt-starter:hover:not(:disabled) {
       border-color: var(--lv-line-accent-muted);
       background: var(--lv-bg-control-hover);
-      transform: translateY(-1px);
     }
 
     .prompt-starter:focus-visible {
@@ -242,11 +223,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
     .prompt-starter-icon {
       display: grid;
-      width: var(--lv-control-medium);
-      height: var(--lv-control-medium);
+      width: var(--base-size-16);
+      height: var(--base-size-16);
       place-items: center;
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-control);
       color: var(--lv-accent);
     }
 
@@ -255,25 +234,14 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       height: var(--base-size-16);
     }
 
-    .prompt-starter-copy {
-      display: grid;
-      min-width: 0;
-      gap: var(--lv-space-xs);
-    }
-
     .prompt-starter-label {
-      font: var(--lv-type-body);
+      font: var(--lv-type-body-compact);
       font-weight: var(--base-text-weight-medium);
     }
 
-    .prompt-starter-prompt {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      line-height: var(--base-text-lineHeight-normal);
-    }
-
     .new-chat-context-hint {
-      margin: var(--lv-space-md) 0 0;
+      margin: 0;
+      padding-inline: var(--lv-space-lg);
       color: var(--lv-fg-muted);
       text-align: center;
       font: var(--lv-type-caption);
@@ -335,13 +303,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         padding-top: calc(var(--lv-space-lg) * 2);
       }
 
-      .prompt-starters {
-        grid-template-columns: 1fr;
-      }
-
-      .prompt-starter {
-        min-height: 0;
-      }
+      .prompt-starters { gap: var(--lv-space-xs); }
     }
   `
 
@@ -482,24 +444,20 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       <div class="new-chat-stage">
         <section class="new-chat-intro" aria-labelledby="new-chat-title">
           <div class="new-chat-heading">
-            <div class="new-chat-kicker"><span class="agent-mark" aria-hidden="true">${agentIcon()}</span><span>LeapView Agent</span></div>
+            <span class="agent-mark" aria-hidden="true">${agentIcon()}</span>
             <h1 id="new-chat-title" class="new-chat-title">Ask about your data</h1>
-            <p class="new-chat-description">Get clear answers grounded in the dashboards, metrics, and models you can access.</p>
           </div>
-          <div class="prompt-starters" aria-label="Example questions">
-            ${promptStarters.map((starter) => html`
-              <button class="prompt-starter" type="button" ?disabled=${disabled} @click=${() => this.selectPromptStarter(starter.prompt)}>
-                <span class="prompt-starter-icon" aria-hidden="true">${lucideIcon(starter.icon, { size: 16, strokeWidth: 2 })}</span>
-                <span class="prompt-starter-copy">
-                  <span class="prompt-starter-label">${starter.label}</span>
-                  <span class="prompt-starter-prompt">${starter.prompt}</span>
-                </span>
-              </button>
-            `)}
-          </div>
-          <p class="new-chat-context-hint">Type <kbd>@</kbd> to attach a dashboard, metric, model, page, or visual.</p>
         </section>
         ${this.renderComposer(composer, status, true)}
+        <div class="prompt-starters" aria-label="Example questions">
+          ${promptStarters.map((starter) => html`
+            <button class="prompt-starter" type="button" title=${starter.prompt} aria-label=${`${starter.label}: ${starter.prompt}`} ?disabled=${disabled} @click=${() => this.selectPromptStarter(starter.prompt)}>
+              <span class="prompt-starter-icon" aria-hidden="true">${lucideIcon(starter.icon, { size: 16, strokeWidth: 2 })}</span>
+              <span class="prompt-starter-label">${starter.label}</span>
+            </button>
+          `)}
+        </div>
+        <p class="new-chat-context-hint">Type <kbd>@</kbd> to attach a dashboard, metric, model, page, or visual.</p>
       </div>
     `
   }

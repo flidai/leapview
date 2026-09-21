@@ -181,21 +181,20 @@ for (const viewport of [
         const title = root.querySelector('h1') as HTMLElement
         const stage = root.querySelector('.new-chat-stage') as HTMLElement
         const intro = root.querySelector('.new-chat-intro') as HTMLElement
-        const description = root.querySelector('.new-chat-description') as HTMLElement
         const hint = root.querySelector('.new-chat-context-hint') as HTMLElement
         const starters = Array.from(root.querySelectorAll('.prompt-starter')) as HTMLButtonElement[]
-        const starterGrid = root.querySelector('.prompt-starters') as HTMLElement
+        const starterGroup = root.querySelector('.prompt-starters') as HTMLElement
         const composer = root.querySelector('lv-chat-composer') as any
         const composerRoot = composer?.shadowRoot
         const composerSurface = composerRoot?.querySelector('.composer-surface') as HTMLElement
-        const titleRect = title.getBoundingClientRect()
+        const headingRect = root.querySelector('.new-chat-heading')!.getBoundingClientRect()
         const stageRect = stage.getBoundingClientRect()
         const composerRect = composer.getBoundingClientRect()
         const surfaceRect = composerSurface.getBoundingClientRect()
         const introStyle = getComputedStyle(intro)
         const composerStyle = getComputedStyle(composer)
         const clusterTop = intro.getBoundingClientRect().top
-        const clusterBottom = composerRect.bottom
+        const clusterBottom = hint.getBoundingClientRect().bottom
         let submits = 0
         composer.addEventListener('lv-chat-submit', () => submits += 1)
         starters[0]?.click()
@@ -211,17 +210,19 @@ for (const viewport of [
           hasNewStage: Boolean(stage),
           hasComposer: Boolean(composer),
           composerDisabled: composer?.disabled,
-          kicker: root.querySelector('.new-chat-kicker')?.textContent?.trim(),
-          description: description.textContent?.trim(),
+          hasAgentMark: Boolean(root.querySelector('.new-chat-heading .agent-mark')),
+          descriptionCount: root.querySelectorAll('.new-chat-description').length,
           contextHint: hint.textContent?.replace(/\s+/g, ' ').trim(),
           starters: starters.map((button) => ({
             label: button.querySelector('.prompt-starter-label')?.textContent?.trim(),
-            prompt: button.querySelector('.prompt-starter-prompt')?.textContent?.trim(),
+            prompt: button.getAttribute('title'),
           })),
+          promptsFollowComposer: starterGroup.getBoundingClientRect().top >= composerRect.bottom,
+          promptsAreCompact: starters.every((button) => button.getBoundingClientRect().height <= 40),
           starterDraft: textarea.value,
           starterFocused: composerRoot?.activeElement === textarea,
           starterSubmits: submits,
-          titleCenterOffset: Math.round(Math.abs((titleRect.left + titleRect.width / 2) - window.innerWidth / 2)),
+          titleCenterOffset: Math.round(Math.abs((headingRect.left + headingRect.width / 2) - window.innerWidth / 2)),
           composerBottomDistance: Math.round(window.innerHeight - composerRect.bottom),
           composerBorderTopWidth: getComputedStyle(composer).borderTopWidth,
           composerSurfaceWidth: Math.round(surfaceRect.width),
@@ -233,7 +234,7 @@ for (const viewport of [
           composerAnimationName: composerStyle.animationName,
           composerAnimationDelay: composerStyle.animationDelay,
           stageJustifyContent: getComputedStyle(stage).justifyContent,
-          promptColumns: getComputedStyle(starterGrid).gridTemplateColumns.split(' ').length,
+          promptLayout: getComputedStyle(starterGroup).display,
           contextActionDisplay: getComputedStyle(composerRoot.querySelector('.context-button')).display,
           hasVerticalOverflow: document.documentElement.scrollHeight > window.innerHeight,
           hasHorizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
@@ -250,8 +251,8 @@ for (const viewport of [
         hasNewStage: true,
         hasComposer: true,
         composerDisabled: false,
-        kicker: 'LeapView Agent',
-        description: 'Get clear answers grounded in the dashboards, metrics, and models you can access.',
+        hasAgentMark: true,
+        descriptionCount: 0,
         contextHint: 'Type @ to attach a dashboard, metric, model, page, or visual.',
         starters: [
           { label: 'Spot a change', prompt: 'What changed most in the last 30 days?' },
@@ -261,6 +262,8 @@ for (const viewport of [
         starterDraft: 'What changed most in the last 30 days?',
         starterFocused: true,
         starterSubmits: 0,
+        promptsFollowComposer: true,
+        promptsAreCompact: true,
         titleCenterOffset: 0,
         composerBorderTopWidth: '0px',
         composerSurfaceWidth: viewport.expectedSurfaceWidth,
@@ -271,7 +274,7 @@ for (const viewport of [
         composerAnimationName: 'new-chat-enter',
         composerAnimationDelay: '0.07s',
         stageJustifyContent: viewport.name === 'desktop' ? 'center' : 'flex-start',
-        promptColumns: viewport.name === 'desktop' ? 3 : 1,
+        promptLayout: 'flex',
         contextActionDisplay: 'none',
         hasVerticalOverflow: false,
         hasHorizontalOverflow: false,
@@ -628,7 +631,7 @@ test('unconfigured agent uses intentional unavailable states', async () => {
       await composer.updateComplete
       return {
         title: root.querySelector('.new-chat-title')?.textContent?.trim(),
-        description: root.querySelector('.new-chat-description')?.textContent?.trim(),
+        descriptionCount: root.querySelectorAll('.new-chat-description').length,
         starterCount: root.querySelectorAll('.prompt-starter').length,
         startersDisabled: Array.from(root.querySelectorAll<HTMLButtonElement>('.prompt-starter')).every((button) => button.disabled),
         composerDisabled: composer.disabled,
@@ -637,7 +640,7 @@ test('unconfigured agent uses intentional unavailable states', async () => {
     })
     expect(newState).toEqual({
       title: 'Ask about your data',
-      description: 'Get clear answers grounded in the dashboards, metrics, and models you can access.',
+      descriptionCount: 0,
       starterCount: 3,
       startersDisabled: true,
       composerDisabled: true,

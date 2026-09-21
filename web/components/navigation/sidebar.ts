@@ -452,18 +452,15 @@ class LeapViewSidebar extends LitElement {
     }
 
     .brand-identity {
-      display: grid;
       min-width: 0;
       flex: 1 1 auto;
-      gap: var(--base-size-2);
     }
 
     .brand-home {
-      display: grid;
+      display: flex;
       min-width: 0;
-      grid-template-columns: auto minmax(0, 1fr);
       align-items: center;
-      gap: var(--base-size-8);
+      gap: var(--base-size-4);
       border-radius: var(--lv-radius-default);
       color: inherit;
       text-decoration: none;
@@ -475,26 +472,11 @@ class LeapViewSidebar extends LitElement {
     }
 
     .product-logo {
-      width: var(--control-small-size);
-      height: var(--control-small-size);
-      grid-row: 1 / span 2;
+      width: var(--base-size-20);
+      height: var(--base-size-20);
+      flex: 0 0 var(--base-size-20);
       border-radius: var(--lv-radius-small);
       object-fit: contain;
-    }
-
-    .powered-by {
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      text-decoration: none;
-      font: var(--lv-type-caption);
-    }
-
-    .powered-by:hover,
-    .powered-by:focus-visible {
-      color: var(--lv-fg-default);
-      text-decoration: underline;
     }
 
     .footer-actions {
@@ -1261,7 +1243,6 @@ class LeapViewSidebar extends LitElement {
     const groups = this.filteredGroups()
     const productName = this.config.productName?.trim() || leapViewBrandName
     const productLogoUrl = this.config.productLogoUrl?.trim()
-    const hasCustomIdentity = productName !== leapViewBrandName || Boolean(productLogoUrl)
     return html`
       <aside
         aria-label="${productName} navigation"
@@ -1332,7 +1313,6 @@ class LeapViewSidebar extends LitElement {
                   ${productLogoUrl ? html`<img class="product-logo" src=${productLogoUrl} alt="">` : null}
                   <span class="name">${productName}</span>
                 </a>
-                ${hasCustomIdentity ? html`<a class="powered-by" href="https://leapview.dev" target="_blank" rel="noreferrer">Powered by LeapView</a>` : null}
               </span>
             `}
             ${this.config.admin ? null : this.renderAreaSwitcher()}

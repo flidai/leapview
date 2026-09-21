@@ -201,7 +201,7 @@ test('app shell renders a restrained text-only LeapView identity', async () => {
   }
 })
 
-test('app shell renders custom identity with permanent LeapView attribution', async () => {
+test('app shell renders a custom logo and name without sidebar attribution', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
     await page.goto(`${baseURL}/upgraded-shell`)
@@ -215,16 +215,14 @@ test('app shell renders custom identity with permanent LeapView attribution', as
         navigationLabel: root.querySelector('aside')?.getAttribute('aria-label'),
         name: root.querySelector('.brand .name')?.textContent?.trim(),
         logo: root.querySelector('.product-logo')?.getAttribute('src'),
-        attribution: root.querySelector('.powered-by')?.textContent?.trim(),
-        attributionHref: root.querySelector('.powered-by')?.getAttribute('href'),
+        attributionCount: root.querySelectorAll('.powered-by').length,
       }
     })
     expect(identity).toEqual({
       navigationLabel: 'Northstar Analytics navigation',
       name: 'Northstar Analytics',
       logo: '/instance-logo.png',
-      attribution: 'Powered by LeapView',
-      attributionHref: 'https://leapview.dev',
+      attributionCount: 0,
     })
   } finally {
     await page.close()
@@ -311,7 +309,7 @@ test('main sidebar keeps the product toggle in the upper-right and utility actio
         searchHasPopup: search.getAttribute('aria-haspopup'),
         collapseLabel: collapse.getAttribute('aria-label'),
         toggleInHeader: Boolean(areaSwitcher && root.querySelector('.brand-row')?.contains(areaSwitcher)),
-        toggleAboveIdentity: Boolean(areaSwitcher && areaSwitcher.getBoundingClientRect().bottom <= identity.getBoundingClientRect().top),
+        controlsShareRow: Boolean(areaSwitcher && Math.abs((areaSwitcher.getBoundingClientRect().top + areaSwitcher.getBoundingClientRect().height / 2) - (identity.getBoundingClientRect().top + identity.getBoundingClientRect().height / 2)) <= 2),
         toggleLabelsHidden: areaSwitcher
           ? Array.from(areaSwitcher.querySelectorAll('.area-label')).every(label => getComputedStyle(label).display === 'none')
           : false,
@@ -344,7 +342,7 @@ test('main sidebar keeps the product toggle in the upper-right and utility actio
       searchHasPopup: 'dialog',
       collapseLabel: 'Collapse navigation',
       toggleInHeader: true,
-      toggleAboveIdentity: true,
+      controlsShareRow: true,
       toggleLabelsHidden: true,
       toggleGeometry: {
         width: 58,

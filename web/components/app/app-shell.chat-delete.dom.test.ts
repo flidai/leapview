@@ -255,7 +255,7 @@ test('mobile account menu fits above the footer and keeps search available after
   } finally { await page.close() }
 }, 30_000)
 
-test('custom sidebar identity has a full row below the header controls', async () => {
+test('custom sidebar logo and name share the header row without overlapping controls', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   try {
     await page.goto(`${baseURL}/sidebar-custom-brand`, { waitUntil: 'domcontentloaded' })
@@ -265,14 +265,31 @@ test('custom sidebar identity has a full row below the header controls', async (
       const identity = root.querySelector<HTMLElement>('.brand-identity')!
       const switcher = root.querySelector<HTMLElement>('.brand-row > .area-switcher')!
       const name = root.querySelector<HTMLElement>('.name')!
-      const attribution = root.querySelector<HTMLElement>('.powered-by')!
+      const logo = root.querySelector<HTMLElement>('.product-logo')!
       return {
-        controlsAboveIdentity: switcher.getBoundingClientRect().bottom <= identity.getBoundingClientRect().top,
+        controlsShareRow: Math.abs((switcher.getBoundingClientRect().top + switcher.getBoundingClientRect().height / 2) - (identity.getBoundingClientRect().top + identity.getBoundingClientRect().height / 2)) <= 2,
+        identityEndsBeforeSwitcher: identity.getBoundingClientRect().right <= switcher.getBoundingClientRect().left,
+        logoBeforeName: logo.getBoundingClientRect().right <= name.getBoundingClientRect().left,
         nameFits: name.scrollWidth <= name.clientWidth,
-        attributionFits: attribution.scrollWidth <= attribution.clientWidth,
+        attributionCount: root.querySelectorAll('.powered-by').length,
       }
     })
-    expect(layout).toEqual({ controlsAboveIdentity: true, nameFits: true, attributionFits: true })
+    expect(layout).toEqual({ controlsShareRow: true, identityEndsBeforeSwitcher: true, logoBeforeName: true, nameFits: true, attributionCount: 0 })
+    const narrow = await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
+      sidebar.style.setProperty('--lv-sidebar-resized-width', '160px')
+      sidebar.config = { ...sidebar.config, productName: 'An exceptionally long workspace name' }
+      await sidebar.updateComplete
+      const root = sidebar.shadowRoot as ShadowRoot
+      const identity = root.querySelector<HTMLElement>('.brand-identity')!
+      const switcher = root.querySelector<HTMLElement>('.brand-row > .area-switcher')!
+      const name = root.querySelector<HTMLElement>('.name')!
+      return {
+        noOverlap: identity.getBoundingClientRect().right <= switcher.getBoundingClientRect().left,
+        nameTruncates: name.scrollWidth > name.clientWidth,
+        fullNameAccessible: root.querySelector('.brand-home')?.getAttribute('aria-label'),
+      }
+    })
+    expect(narrow).toEqual({ noOverlap: true, nameTruncates: true, fullNameAccessible: 'An exceptionally long workspace name home' })
   } finally {
     await page.close()
   }
