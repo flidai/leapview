@@ -212,6 +212,11 @@ func (m *Module) bootstrapProjectClaimTransaction(ctx context.Context, input Pro
 			if claimErr != nil {
 				return ProjectClaimBootstrapResult{}, claimErr
 			}
+			if result == "claimed" {
+				if err := m.ensureProjectClaimTarget(ctx, tx, claim); err != nil {
+					return ProjectClaimBootstrapResult{}, err
+				}
+			}
 			return ProjectClaimBootstrapResult{Claim: claim, Conflict: result == "conflict", AuditID: auditID, AuditInput: auditInput}, tx.Commit(ctx)
 		} else if !errors.Is(readErr, ErrProjectClaimAuditNotFound) {
 			return ProjectClaimBootstrapResult{}, readErr
@@ -251,6 +256,11 @@ func (m *Module) bootstrapProjectClaimTransaction(ctx context.Context, input Pro
 			return ProjectClaimBootstrapResult{}, err
 		}
 	}
+	if !conflict {
+		if err := m.ensureProjectClaimTarget(ctx, tx, claim); err != nil {
+			return ProjectClaimBootstrapResult{}, err
+		}
+	}
 	resultName, outcome := "claimed", "success"
 	if conflict {
 		resultName, outcome = "conflict", "failure"
@@ -269,6 +279,21 @@ func (m *Module) bootstrapProjectClaimTransaction(ctx context.Context, input Pro
 		return ProjectClaimBootstrapResult{}, err
 	}
 	return ProjectClaimBootstrapResult{Claim: claim, Conflict: conflict, AuditID: auditID, AuditInput: auditInput}, nil
+}
+
+// ensureProjectClaimTarget keeps the durable claim and its instance-owned
+// delivery target in one transaction. Readiness treats a one-sided tuple as a
+// partial bootstrap, so committing only the claim would make a fresh local
+// runtime permanently unable to become healthy before its first plan.
+// CreateTargetTx is an exact replay and also repairs claims written by the
+// short-lived claim-only bootstrap implementation.
+func (m *Module) ensureProjectClaimTarget(ctx context.Context, tx deploymentpostgres.Tx, claim deployment.ProjectClaim) error {
+	if _, err := m.persistence.Repository.CreateTargetTx(ctx, tx, deploymentpostgres.TargetInput{
+		TargetID: m.instanceID, ProjectID: claim.ProjectID.String(), Environment: string(claim.Environment), TargetRevision: 1,
+	}); err != nil {
+		return fmt.Errorf("bootstrap Project-claim delivery target: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) executeProjectClaimBootstrapCommand(ctx context.Context, input ProjectClaimBootstrapInput) (ProjectClaimBootstrapResult, error) {

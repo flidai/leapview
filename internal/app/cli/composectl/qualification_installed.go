@@ -579,7 +579,7 @@ func (c *Controller) QualifyInstalledCandidate(
 			ComposeProject: primaryProject,
 			ComposeNetwork: primaryProject + "_default",
 			TargetID:       authoringReport.Target,
-			GenerationID:   authoringReport.GenerationID,
+			APIToken:       credentials.PublisherToken,
 			Topology:       nativeTopology,
 			Primary:        c.qualificationContainers.Existing(containerID),
 		})
