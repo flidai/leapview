@@ -2,6 +2,9 @@
 
 admin_email = "admin@example.com"
 
+# Existing authoritative deployment target identity used by release preflight.
+target_id = "<deployment-target-id>"
+
 # Release image from the LeapView release notes. Immutable digests are required.
 leapview_image = "ghcr.io/flidai/leapview@sha256:<digest-from-release>"
 
