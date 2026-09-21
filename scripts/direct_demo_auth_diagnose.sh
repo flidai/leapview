@@ -125,6 +125,12 @@ if (( available_kb < 1048576 )); then
   if (( available_kb < 1048576 )); then
     echo 'Largest top-level paths after safe cache cleanup:'
     du -x -h --max-depth=1 /opt /var /root 2>/dev/null | sort -h | tail -30
+    echo 'Root filesystem accounting:'
+    du -x -h --max-depth=1 / 2>/dev/null | sort -h | tail -22
+    echo 'Temporary directories and legacy installation:'
+    du -x -h --max-depth=1 /tmp /opt/leapview 2>/dev/null | sort -h | tail -35
+    echo 'Open deleted files:'
+    lsof +L1 2>/dev/null | awk 'NR == 1 || $7 > 104857600 {print $1, $2, $7, $9}' | head -20 || true
     echo 'Docker disk accounting:'
     docker system df || true
     echo 'Journal disk accounting:'
