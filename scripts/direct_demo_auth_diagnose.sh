@@ -95,7 +95,23 @@ set -euo pipefail
 container="$(docker ps --format '{{.Names}}' | awk '/-demo-current-postgres-1$/ { print }')"
 [[ -n "$container" && "$(wc -l <<<"$container")" -eq 1 ]] || { echo 'expected one hosted-demo PostgreSQL container' >&2; exit 1; }
 
-for _ in $(seq 1 20); do
+available_kb="$(df --output=avail / | tail -1 | tr -d ' ')"
+if (( available_kb < 1048576 )); then
+  echo 'Hosted demo disk is critically full; reclaiming regenerable caches and unused Docker data'
+  if [[ -d /root/.cache/go-build && ! -L /root/.cache/go-build ]]; then
+    du -sh /root/.cache/go-build || true
+    rm -rf /root/.cache/go-build/*
+  fi
+  if [[ -d /root/go/pkg/mod && ! -L /root/go/pkg/mod ]]; then
+    du -sh /root/go/pkg/mod || true
+    rm -rf /root/go/pkg/mod/*
+  fi
+  docker builder prune --force
+  docker image prune --force
+  df -h /
+fi
+
+for _ in $(seq 1 60); do
   if [[ "$(docker inspect --format '{{.State.Running}} {{.State.Restarting}}' "$container")" == 'true false' ]]; then
     break
   fi
