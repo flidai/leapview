@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-old_host="${DEMO_HOST:?Set DEMO_HOST}"
+scope="${MIGRATION_INVENTORY_SCOPE:-both}"
 new_host="${NEW_DEMO_HOST:?Set NEW_DEMO_HOST}"
-firewall_id="${DEMO_FIREWALL_ID:?Set DEMO_FIREWALL_ID}"
-hcloud_token="${HCLOUD_TOKEN:?Set HCLOUD_TOKEN}"
 runner_ip="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
 temporary_directory="$(mktemp -d)"
 original_firewall_rules="$temporary_directory/original-firewall-rules.json"
 firewall_changed=false
+
+case "$scope" in
+  both)
+    old_host="${DEMO_HOST:?Set DEMO_HOST}"
+    firewall_id="${DEMO_FIREWALL_ID:?Set DEMO_FIREWALL_ID}"
+    hcloud_token="${HCLOUD_TOKEN:?Set HCLOUD_TOKEN}"
+    ;;
+  new) ;;
+  *) echo "Unsupported migration inventory scope: $scope" >&2; exit 64 ;;
+esac
 
 hcloud_request() {
   local method="$1"
@@ -68,22 +76,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-firewall="$(hcloud_request GET "/firewalls/$firewall_id")"
-jq '.firewall.rules' <<<"$firewall" >"$original_firewall_rules"
-runner_cidr="$runner_ip/32"
-if ! jq -e --arg cidr "$runner_cidr" '
-  any(.[]; .direction == "in" and .protocol == "tcp" and .port == "22" and any(.source_ips[]?; . == $cidr))
-' "$original_firewall_rules" >/dev/null; then
-  open_payload="$temporary_directory/open-firewall.json"
-  jq --arg cidr "$runner_cidr" '{rules: (. + [{
-    direction: "in",
-    protocol: "tcp",
-    port: "22",
-    source_ips: [$cidr],
-    description: "Temporary hosted-demo migration inventory access"
-  }])}' "$original_firewall_rules" >"$open_payload"
-  firewall_changed=true
-  set_firewall_rules "$open_payload"
+if [[ "$scope" == both ]]; then
+  firewall="$(hcloud_request GET "/firewalls/$firewall_id")"
+  jq '.firewall.rules' <<<"$firewall" >"$original_firewall_rules"
+  runner_cidr="$runner_ip/32"
+  if ! jq -e --arg cidr "$runner_cidr" '
+    any(.[]; .direction == "in" and .protocol == "tcp" and .port == "22" and any(.source_ips[]?; . == $cidr))
+  ' "$original_firewall_rules" >/dev/null; then
+    open_payload="$temporary_directory/open-firewall.json"
+    jq --arg cidr "$runner_cidr" '{rules: (. + [{
+      direction: "in",
+      protocol: "tcp",
+      port: "22",
+      source_ips: [$cidr],
+      description: "Temporary hosted-demo migration inventory access"
+    }])}' "$original_firewall_rules" >"$open_payload"
+    firewall_changed=true
+    set_firewall_rules "$open_payload"
+  fi
 fi
 
 identity_file="$temporary_directory/operator-identity"
@@ -108,8 +118,10 @@ pin_host() {
   echo "host key did not match the reviewed fingerprint for $host" >&2
   return 1
 }
-pin_host "$old_host" "$OLD_EXPECTED_FINGERPRINT"
 pin_host "$new_host" "$NEW_EXPECTED_FINGERPRINT"
+if [[ "$scope" == both ]]; then
+  pin_host "$old_host" "$OLD_EXPECTED_FINGERPRINT"
+fi
 
 inventory='set -euo pipefail
 echo "== identity =="
@@ -141,7 +153,11 @@ du -sh /opt/leapview-demo /tmp/leapview-demo-host-state /tmp/leapview-main 2>/de
 find /opt/leapview-demo -maxdepth 2 -mindepth 1 -printf "%y %p\n" 2>/dev/null | sort || true
 '
 
-for host in "$old_host" "$new_host"; do
+hosts=("$new_host")
+if [[ "$scope" == both ]]; then
+  hosts=("$old_host" "$new_host")
+fi
+for host in "${hosts[@]}"; do
   echo "===== HOST $host ====="
   printf '%s\n' "$inventory" | ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
     -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known_hosts" \
