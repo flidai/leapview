@@ -36,11 +36,9 @@ func run(ctx context.Context, args []string) (runErr error) {
 		return fmt.Errorf("start disposable PostgreSQL package server: %w", err)
 	}
 	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := container.Terminate(cleanupCtx); err != nil {
-			runErr = errors.Join(runErr, fmt.Errorf("terminate PostgreSQL package server: %w", err))
-		}
+		runErr = finishPackageServer(runErr, func(cleanupCtx context.Context) error {
+			return container.Terminate(cleanupCtx)
+		})
 	}()
 
 	command := exec.CommandContext(ctx, args[0], packageTestArguments(args[1:])...)
@@ -52,6 +50,15 @@ func run(ctx context.Context, args []string) (runErr error) {
 		return fmt.Errorf("run PostgreSQL package tests: %w", err)
 	}
 	return nil
+}
+
+func finishPackageServer(runErr error, terminate func(context.Context) error) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := terminate(cleanupCtx); err != nil {
+		return errors.Join(runErr, fmt.Errorf("terminate PostgreSQL package server: %w", err))
+	}
+	return runErr
 }
 
 // PostgreSQL roles are cluster-wide and several conformance tests assert

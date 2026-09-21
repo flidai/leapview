@@ -13,6 +13,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -86,10 +87,11 @@ type Harness struct {
 // are cluster-wide, so a package-shared server drops them only after every
 // database opened by that test has been removed.
 type sharedTestState struct {
-	admin     *pgxpool.Pool
 	mu        sync.Mutex
 	roles     []string
 	roleSpecs map[string]Role
+	fixtures  int
+	closing   bool
 }
 
 var sharedTestStates sync.Map // map[top-level test name]*sharedTestState
@@ -106,26 +108,43 @@ func topLevelTestName(t *testing.T) string {
 
 func sharedStateFor(t *testing.T, admin *pgxpool.Pool) *sharedTestState {
 	key := topLevelTestName(t)
-	candidate := &sharedTestState{admin: admin, roleSpecs: make(map[string]Role)}
-	actual, loaded := sharedTestStates.LoadOrStore(key, candidate)
-	if loaded {
-		return actual.(*sharedTestState)
-	}
-	t.Cleanup(func() {
-		defer sharedTestStates.Delete(key)
-		candidate.mu.Lock()
-		roles := append([]string(nil), candidate.roles...)
-		candidate.mu.Unlock()
-		for i := len(roles) - 1; i >= 0; i-- {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_, err := candidate.admin.Exec(ctx, "DROP ROLE IF EXISTS "+quoteIdentifier(roles[i]))
-			cancel()
-			if err != nil {
-				t.Errorf("drop PostgreSQL role %q: %v", roles[i], err)
-			}
+	for {
+		candidate := &sharedTestState{roleSpecs: make(map[string]Role)}
+		actual, _ := sharedTestStates.LoadOrStore(key, candidate)
+		shared := actual.(*sharedTestState)
+		shared.mu.Lock()
+		if shared.closing {
+			shared.mu.Unlock()
+			continue
 		}
-	})
-	return candidate
+		shared.fixtures++
+		shared.mu.Unlock()
+		t.Cleanup(func() { releaseSharedState(t, key, shared, admin) })
+		return shared
+	}
+}
+
+func releaseSharedState(t *testing.T, key string, shared *sharedTestState, admin *pgxpool.Pool) {
+	shared.mu.Lock()
+	defer shared.mu.Unlock()
+	shared.fixtures--
+	if shared.fixtures > 0 {
+		return
+	}
+	if shared.fixtures < 0 {
+		t.Errorf("PostgreSQL shared test state %q released too many times", key)
+		return
+	}
+	shared.closing = true
+	for i := len(shared.roles) - 1; i >= 0; i-- {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, err := admin.Exec(ctx, "DROP ROLE IF EXISTS "+quoteIdentifier(shared.roles[i]))
+		cancel()
+		if err != nil {
+			t.Errorf("drop PostgreSQL role %q: %v", shared.roles[i], err)
+		}
+	}
+	sharedTestStates.CompareAndDelete(key, shared)
 }
 
 func reservePackageDatabase(adminURL, name, testName string) string {
@@ -275,21 +294,31 @@ func RunPackageServer(ctx context.Context) (*tcpostgres.PostgresContainer, strin
 	)
 	container, err := tcpostgres.Run(ctx, PostgreSQL18Image, options...)
 	if err != nil {
-		if container != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			_ = container.Terminate(cleanupCtx)
-			cancel()
-		}
-		return nil, "", "", err
+		return nil, "", "", packageServerStartupError(container, err)
 	}
 	adminURL, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		_ = container.Terminate(cleanupCtx)
-		cancel()
-		return nil, "", "", err
+		return nil, "", "", packageServerStartupError(container, err)
 	}
 	return container, adminURL, token, nil
+}
+
+func packageServerStartupError(container *tcpostgres.PostgresContainer, startupErr error) error {
+	return packageServerStartupErrorWithTerminate(container, startupErr, func(ctx context.Context, container *tcpostgres.PostgresContainer) error {
+		return container.Terminate(ctx)
+	})
+}
+
+func packageServerStartupErrorWithTerminate(container *tcpostgres.PostgresContainer, startupErr error, terminate func(context.Context, *tcpostgres.PostgresContainer) error) error {
+	if container == nil {
+		return startupErr
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := terminate(cleanupCtx, container); err != nil {
+		return errors.Join(startupErr, fmt.Errorf("terminate PostgreSQL package server after startup failure: %w", err))
+	}
+	return startupErr
 }
 
 // RootCertPath returns the host path to the disposable CA that signed the

@@ -1,11 +1,16 @@
 package postgrestest
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
 func TestValidateIdentifier(t *testing.T) {
@@ -75,6 +80,33 @@ func TestRequiredOverridesConformanceSkip(t *testing.T) {
 	t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED", "1")
 	if shouldSkipConformance() {
 		t.Fatal("required conformance lane would be suppressed by skip flag")
+	}
+}
+
+func TestPackageServerStartupErrorJoinsTerminationFailure(t *testing.T) {
+	startupErr := errors.New("package server startup failed")
+	terminationErr := errors.New("package server termination failed")
+	called := false
+
+	err := packageServerStartupErrorWithTerminate(&tcpostgres.PostgresContainer{}, startupErr, func(ctx context.Context, container *tcpostgres.PostgresContainer) error {
+		called = true
+		if container == nil {
+			t.Fatal("termination received a nil package server")
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) <= 0 {
+			t.Fatal("termination did not receive a live cleanup deadline")
+		}
+		return terminationErr
+	})
+	if !called {
+		t.Fatal("package server termination was not attempted")
+	}
+	if !errors.Is(err, startupErr) {
+		t.Fatalf("startup error was not preserved: %v", err)
+	}
+	if !errors.Is(err, terminationErr) {
+		t.Fatalf("termination error was not surfaced: %v", err)
 	}
 }
 

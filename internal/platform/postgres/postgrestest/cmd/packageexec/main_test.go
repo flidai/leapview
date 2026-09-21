@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 )
@@ -32,5 +35,41 @@ func TestPackageTestEnvironmentEnforcesDisposableServer(t *testing.T) {
 	}
 	if os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED") != "0" {
 		t.Fatal("package environment changed the parent process")
+	}
+}
+
+func TestFinishPackageServerPreservesRunAndTerminationErrors(t *testing.T) {
+	runErr := errors.New("package tests failed")
+	terminationErr := errors.New("package server termination failed")
+	called := false
+	err := finishPackageServer(runErr, func(ctx context.Context) error {
+		called = true
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) <= 0 {
+			t.Fatal("termination did not receive a live cleanup deadline")
+		}
+		return terminationErr
+	})
+	if !called {
+		t.Fatal("package server termination was not attempted")
+	}
+	if !errors.Is(err, runErr) {
+		t.Fatalf("test run error was not preserved: %v", err)
+	}
+	if !errors.Is(err, terminationErr) {
+		t.Fatalf("termination error was not surfaced: %v", err)
+	}
+}
+
+func TestFinishPackageServerReturnsSuccessfulRun(t *testing.T) {
+	called := false
+	if err := finishPackageServer(nil, func(context.Context) error {
+		called = true
+		return nil
+	}); err != nil {
+		t.Fatalf("successful package server lifecycle: %v", err)
+	}
+	if !called {
+		t.Fatal("successful package server lifecycle did not terminate the server")
 	}
 }

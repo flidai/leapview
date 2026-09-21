@@ -107,6 +107,34 @@ func TestPackageServerKeepsTestDatabasesIsolated(t *testing.T) {
 	})
 }
 
+func TestPackageServerNestedParallelFixtureKeepsSharedRoleAlive(t *testing.T) {
+	if os.Getenv(postgrestest.PackageServerURLEnv) == "" {
+		t.Skip("requires the PostgreSQL conformance package runner")
+	}
+	role := postgrestest.Role{Name: "package_nested_parallel_role", Password: "nested-parallel-password", Login: true}
+
+	t.Run("child A", func(t *testing.T) {
+		child := postgrestest.Start(t)
+		childRole := child.EnsureRole(t, role)
+		childDB := child.NewDatabase(t, "package_nested_parallel_child")
+		child.GrantDatabase(t, childDB.Name, childRole, "CONNECT")
+		childPool := openPackageTestDatabase(t, childDB.URL(childRole))
+
+		// Pause only after the fixture exists. The parent continues and creates
+		// another fixture that must keep the same shared role alive until both
+		// fixture cleanups have dropped their databases.
+		t.Parallel()
+		assertPackageTestCurrentUser(t, childPool, childRole.Name)
+	})
+
+	parent := postgrestest.Start(t)
+	parentRole := parent.EnsureRole(t, role)
+	parentDB := parent.NewDatabase(t, "package_nested_parallel_parent")
+	parent.GrantDatabase(t, parentDB.Name, parentRole, "CONNECT")
+	parentPool := openPackageTestDatabase(t, parentDB.URL(parentRole))
+	assertPackageTestCurrentUser(t, parentPool, parentRole.Name)
+}
+
 func openPackageTestDatabase(t *testing.T, databaseURL string) *pgxpool.Pool {
 	t.Helper()
 	pool, err := pgxpool.New(t.Context(), databaseURL)
@@ -115,4 +143,15 @@ func openPackageTestDatabase(t *testing.T, databaseURL string) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 	return pool
+}
+
+func assertPackageTestCurrentUser(t *testing.T, pool *pgxpool.Pool, want string) {
+	t.Helper()
+	var currentUser string
+	if err := pool.QueryRow(t.Context(), "SELECT current_user").Scan(&currentUser); err != nil {
+		t.Fatalf("query package role: %v", err)
+	}
+	if currentUser != want {
+		t.Fatalf("current user = %q, want %q", currentUser, want)
+	}
 }
