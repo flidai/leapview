@@ -496,8 +496,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     const categories = groupTokenPermissions(this.filteredTokenPermissions(permissions))
     const categoryStats = new Map(groupTokenPermissions(permissions).map(([category, categoryPermissions]) => [category, {
       selected: categoryPermissions.filter((permission) => this.tokenPermissionAccess(permission)).length,
-      total: categoryPermissions.length,
     }]))
+    const selectedPairs = uniquePermissionPairs(selected.flatMap((permission) => this.tokenPermissionAccess(permission)?.permissions ?? []))
     const expirationOptions = tokenExpirationOptions()
     const canCreate = Boolean(this.tokenName.trim() && this.tokenExpirationIsValid() && !this.tokenCreatePending)
     return html`
@@ -538,7 +538,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
           <div class="permissions">
             <div class="permissions-heading">
               <h3>Permissions</h3>
-              <p class="token-page-intro">Choose the minimal permissions necessary for your needs.</p>
+              <p class="token-page-intro">Choose only what this token needs. Each selection grants one exact permission for a specific scope or resource.</p>
             </div>
             <div class="permissions-card">
               <div class="permissions-header">
@@ -558,6 +558,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                             </div>
                             <button class="permission-menu-close" type="button" aria-label="Close permission picker" @click=${() => this.closePermissionMenu(true)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button>
                           </div>
+                          <p class="permission-menu-help">Select the specific actions and resources this token can use.</p>
                           <label class="permission-search">
                             ${lucideIcon(Search, { size: 16, strokeWidth: 2 })}
                             <input type="search" aria-label="Search permissions" placeholder="Search permissions" .value=${this.tokenPermissionSearch} @input=${this.onTokenPermissionSearch}>
@@ -568,7 +569,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                             <div class="permission-group" role="group" aria-labelledby=${`token-permission-category-${categoryIndex}`}>
                               <div class="permission-category" id=${`token-permission-category-${categoryIndex}`}>
                                 <span>${category}</span>
-                                <span class="permission-category-count">${categoryStats.get(category)?.selected ?? 0} / ${categoryStats.get(category)?.total ?? categoryPermissions.length}</span>
+                                <span class="permission-category-count">${categoryStats.get(category)?.selected ?? 0} selected</span>
                               </div>
                               ${categoryPermissions.map((permission) => {
                                 const permissionSelected = Boolean(this.tokenPermissionAccess(permission))
@@ -588,7 +589,17 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                 </div>
               </div>
               <div class="selected-permissions" aria-live="polite">
-                ${selected.length ? selected.map((permission) => this.renderSelectedTokenPermission(permission)) : html`
+                ${selected.length ? html`
+                  ${selected.map((permission) => this.renderSelectedTokenPermission(permission))}
+                  <details class="permission-technical-details">
+                    <summary>Technical details <span>${selectedPairs.length} exact ${selectedPairs.length === 1 ? 'permission' : 'permissions'}</span></summary>
+                    <div class="permission-technical-list">
+                      ${selectedPairs.map((pair) => html`
+                        <div class="permission-technical-row"><code>${pair.action}</code><span>${formatTechnicalPermissionTarget(pair)}</span></div>
+                      `)}
+                    </div>
+                  </details>
+                ` : html`
                   <div class="selected-permissions-empty">
                     ${lucideIcon(KeyRound, { size: 28, strokeWidth: 1.8 })}
                     <div class="settings-field"><span class="settings-label">No permissions added yet</span><span class="settings-description">This token will have no project or resource authority.</span></div>
@@ -667,8 +678,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
       <div class="selected-permission" data-permission=${permission.id}>
         <div class="settings-field"><span class="settings-label">${permission.label}</span><span class="settings-description">${permission.description}</span></div>
         <div class="permission-row-actions">
-          <div class="permission-access-picker">
-            ${permission.access.length > 1 ? html`
+          ${permission.access.length > 1 ? html`
+            <div class="permission-access-picker">
               <button
                 class="permission-access-trigger"
                 type="button"
@@ -683,29 +694,25 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                 <span><span class="permission-access-prefix">Access: </span><span class="permission-access-value">${access.label}</span></span>
                 ${lucideIcon(ChevronDown, { size: 16, strokeWidth: 2 })}
               </button>
-            ` : html`
-              <span class="permission-access-fixed" data-permission=${permission.id} aria-label=${`Permission: ${access.label}`}>
-                <span class="permission-access-prefix">Permission: </span><span class="permission-access-value">${access.label}</span>
-              </span>
-            `}
-            ${accessMenuOpen ? html`
-              <div id=${accessControlID} class="permission-access-menu" role="listbox" aria-label=${`Access for ${permission.label}`} @keydown=${this.handleTokenPermissionAccessOptionKeydown}>
-                ${permission.access.map((option) => html`
-                  <button
-                    class="permission-access-option"
-                    type="button"
-                    role="option"
-                    aria-selected=${String(option.value === access.value)}
-                    data-access=${option.value}
-                    @click=${() => this.chooseTokenPermissionAccess(permission, option)}
-                  >
-                    <span>${option.label}</span>
-                    <span class="permission-access-check" aria-hidden="true">${option.value === access.value ? lucideIcon(Check, { size: 16, strokeWidth: 2 }) : nothing}</span>
-                  </button>
-                `)}
-              </div>
-            ` : nothing}
-          </div>
+              ${accessMenuOpen ? html`
+                <div id=${accessControlID} class="permission-access-menu" role="listbox" aria-label=${`Access for ${permission.label}`} @keydown=${this.handleTokenPermissionAccessOptionKeydown}>
+                  ${permission.access.map((option) => html`
+                    <button
+                      class="permission-access-option"
+                      type="button"
+                      role="option"
+                      aria-selected=${String(option.value === access.value)}
+                      data-access=${option.value}
+                      @click=${() => this.chooseTokenPermissionAccess(permission, option)}
+                    >
+                      <span>${option.label}</span>
+                      <span class="permission-access-check" aria-hidden="true">${option.value === access.value ? lucideIcon(Check, { size: 16, strokeWidth: 2 }) : nothing}</span>
+                    </button>
+                  `)}
+                </div>
+              ` : nothing}
+            </div>
+          ` : nothing}
           <button class="permission-remove" type="button" aria-label=${`Remove ${permission.label}`} @click=${() => this.removeTokenPermission(permission)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button>
         </div>
       </div>
@@ -714,8 +721,9 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
 
   private renderToken(token: PersonalTokenSignal, capabilities: PersonalCapabilityOptionSignal[], newToken?: string) {
     const options = new Map(capabilities.map((capability) => [capability.value, capability.label]))
+    const permissionLabels = permissionLabelsByPair(capabilities)
     const labels = token.permissionProfile
-      ? token.permissions.map((permission) => formatPermissionPair(permission))
+      ? token.permissions.map((permission) => permissionLabels.get(permissionPairKey(permission)) ?? formatPermissionPair(permission))
       : token.capabilities.map((capability) => options.get(capability) ?? humanizeCapability(capability))
     const usage = token.lastUsedAt ? `Last used ${formatDateOnly(token.lastUsedAt)}` : 'Never used'
     return html`
@@ -1189,6 +1197,31 @@ function uniquePermissionPairs(permissions: PersonalPermissionPairSignal[]): Per
     seen.add(key)
     return true
   })
+}
+
+function permissionPairKey(permission: PersonalPermissionPairSignal): string {
+  const target = permission.target
+  return [permission.profile, permission.action, target.scope, target.instanceId ?? '', target.projectId ?? '', target.resourceKind ?? '', target.resourceId ?? '', String(target.includeFuture ?? false)].join('|')
+}
+
+function permissionLabelsByPair(capabilities: PersonalCapabilityOptionSignal[]): Map<string, string> {
+  const labels = new Map<string, string>()
+  for (const capability of capabilities) {
+    for (const permission of capability.permissions ?? []) {
+      const key = permissionPairKey(permission)
+      if (!labels.has(key)) labels.set(key, `${capability.label} · ${capability.description}`)
+    }
+  }
+  return labels
+}
+
+function formatTechnicalPermissionTarget(permission: PersonalPermissionPairSignal): string {
+  const target = permission.target
+  if (target.resourceId) return `${target.resourceKind ?? 'resource'} ${target.resourceId} · project ${target.projectId ?? 'unknown'}`
+  if (target.includeFuture) return `${target.resourceKind ?? 'resource'} · current and future resources · project ${target.projectId ?? 'unknown'}`
+  if (target.projectId) return `project ${target.projectId}`
+  if (target.instanceId) return `instance ${target.instanceId}`
+  return target.scope
 }
 
 function formatPermissionPair(permission: PersonalPermissionPairSignal): string {

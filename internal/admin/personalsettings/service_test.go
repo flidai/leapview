@@ -186,8 +186,12 @@ func TestServiceLoadProjectsExactTypedPermissionOptions(t *testing.T) {
 	if got := (*state.Tokens.Capabilities[0].Permissions)[0].Action; got != string(pair.Action) {
 		t.Fatalf("typed option action = %q, want %q", got, pair.Action)
 	}
-	if state.Tokens.Capabilities[0].Label == "" || !strings.Contains(state.Tokens.Capabilities[0].Label, "Project project-1") {
-		t.Fatalf("typed option label = %q", state.Tokens.Capabilities[0].Label)
+	option := state.Tokens.Capabilities[0]
+	if option.Label != "View project settings" || option.Description != "Current project" || option.Category != "Project administration" {
+		t.Fatalf("typed option presentation = %#v", option)
+	}
+	if strings.Contains(option.Label, "project-1") || strings.Contains(option.Description, "project-1") {
+		t.Fatalf("typed option leaks raw project ID in default presentation: %#v", option)
 	}
 }
 

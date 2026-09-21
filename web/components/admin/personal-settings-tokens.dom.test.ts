@@ -126,7 +126,8 @@ test('personal API token UI submits action-target pairs without a Cartesian expa
     })
     expect(typeof command.expiresAt).toBe('string')
     expect(Date.parse(command.expiresAt)).toBeGreaterThan(Date.now())
-    expect(state.summary).toContain('dashboard.read · dashboard dashboard_1')
+    expect(state.summary).toContain('Use dashboard · Use this dashboard.')
+    expect(state.summary).not.toContain('dashboard.read')
   } finally {
     await page.close()
   }

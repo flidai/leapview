@@ -427,6 +427,7 @@ test('personal API tokens use exact typed permission selectors', async () => {
         title: menuTitle.textContent?.trim(),
         labelledByTitle: menu.getAttribute('aria-labelledby') === menuTitle.id,
         selectedCount: root.querySelector('.permission-menu-count')?.textContent?.replace(/\s+/g, ' ').trim(),
+        help: root.querySelector('.permission-menu-help')?.textContent?.replace(/\s+/g, ' ').trim(),
         categorySummaries: Array.from(root.querySelectorAll('.permission-category')).map((category) => category.textContent?.replace(/\s+/g, ' ').trim()),
       }
       search.value = 'read resource'
@@ -447,6 +448,14 @@ test('personal API tokens use exact typed permission selectors', async () => {
       await personal.updateComplete
       await Promise.resolve()
       const selectedPermissions = Array.from(root.querySelectorAll('.selected-permission .settings-label')).map((label) => label.textContent?.trim())
+      const technicalDetails = root.querySelector('.permission-technical-details') as HTMLDetailsElement
+      const selectedPresentation = {
+        fixedPermissionVisible: Boolean(root.querySelector('.permission-access-fixed')),
+        technicalOpen: technicalDetails.open,
+        technicalSummary: technicalDetails.querySelector('summary')?.textContent?.replace(/\s+/g, ' ').trim(),
+        technicalAction: technicalDetails.querySelector('code')?.textContent?.trim(),
+        technicalTarget: technicalDetails.querySelector('.permission-technical-row span')?.textContent?.replace(/\s+/g, ' ').trim(),
+      }
       const triggerFocused = root.activeElement === add
 
       let command: any = null
@@ -512,6 +521,7 @@ test('personal API tokens use exact typed permission selectors', async () => {
         readDescribedBy,
         selectedMenuState,
         selectedPermissions,
+        selectedPresentation,
         menuClosed: !root.querySelector('.permission-menu'),
         searchFocused,
         triggerFocused,
@@ -581,12 +591,20 @@ test('personal API tokens use exact typed permission selectors', async () => {
       title: 'Select token permissions',
       labelledByTitle: true,
       selectedCount: '0 selected',
-      categorySummaries: ['Administration 0 / 1', 'Resource 0 / 4'],
+      help: 'Select the specific actions and resources this token can use.',
+      categorySummaries: ['Administration 0 selected', 'Resource 0 selected'],
     })
     expect(state.filteredPermissions).toEqual(['Read resource'])
     expect(state.readDescribedBy).toBe(true)
-    expect(state.selectedMenuState).toEqual({ count: '1 selected', selected: 'true', categorySummary: 'Resource 1 / 4' })
+    expect(state.selectedMenuState).toEqual({ count: '1 selected', selected: 'true', categorySummary: 'Resource 1 selected' })
     expect(state.selectedPermissions).toEqual(['Read resource'])
+    expect(state.selectedPresentation).toEqual({
+      fixedPermissionVisible: false,
+      technicalOpen: false,
+      technicalSummary: 'Technical details 1 exact permission',
+      technicalAction: 'dashboard.read',
+      technicalTarget: 'dashboard dashboard-read · project project_1',
+    })
     expect(state.menuClosed).toBe(true)
     expect(state.searchFocused).toBe(true)
     expect(state.triggerFocused).toBe(true)

@@ -121,11 +121,12 @@ export const personalSettingsStyles = css`
     .permission-trigger:hover, .permission-trigger:focus-visible, .permission-trigger[aria-expanded="true"] { border-color: var(--lv-border-accent); outline: 0; }
     .permission-trigger svg, .permission-remove svg, .permission-search svg, .permission-access-trigger svg { width: var(--base-size-16); height: var(--base-size-16); }
     .permission-backdrop { display: none; }
-    .permission-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: min(28rem, calc(100vw - var(--base-size-32))); max-height: min(32rem, var(--permission-menu-max-height, calc(100svh - var(--base-size-64)))); box-sizing: border-box; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); }
+    .permission-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: min(40rem, calc(100vw - var(--base-size-32))); max-height: min(32rem, var(--permission-menu-max-height, calc(100svh - var(--base-size-64)))); box-sizing: border-box; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); }
     .permission-menu-header { display: grid; gap: var(--base-size-12); padding: var(--base-size-16); border-bottom: var(--lv-border-muted); }
     .permission-menu-title { display: flex; align-items: center; justify-content: space-between; gap: var(--base-size-8); }
     .permission-menu-heading { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--base-size-8); }
     .permission-menu-count { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .permission-menu-help { margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
     .permission-menu-close { display: none; width: var(--control-small-size); min-height: var(--control-small-size); place-items: center; padding: 0; color: var(--lv-fg-muted); background: transparent; }
     .permission-search { position: relative; display: grid; align-items: center; }
     .permission-search svg { position: absolute; left: var(--base-size-12); z-index: 1; color: var(--lv-fg-muted); pointer-events: none; }
@@ -142,7 +143,7 @@ export const personalSettingsStyles = css`
     .permission-option input[type="checkbox"] { width: var(--base-size-16); height: var(--base-size-16); min-height: 0; margin: var(--base-size-2) 0 0; padding: 0; accent-color: var(--lv-bg-accent); }
     .selected-permissions { display: grid; }
     .selected-permission { position: relative; display: grid; min-height: var(--base-size-64); grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-12); padding: var(--base-size-12) var(--base-size-16); border-bottom: var(--lv-border-muted); }
-    .selected-permission:last-child { border-bottom: 0; }
+    .selected-permission:last-of-type { border-bottom: 0; }
     .permission-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--base-size-8); }
     .permission-access-picker { position: relative; }
     .permission-access-trigger, .permission-access-fixed { min-width: 10.5rem; box-sizing: border-box; padding-inline: var(--base-size-12); }
@@ -158,6 +159,14 @@ export const personalSettingsStyles = css`
     .permission-access-check { display: inline-grid; width: var(--base-size-16); height: var(--base-size-16); place-items: center; color: var(--lv-fg-accent); }
     .permission-remove { display: grid; width: var(--control-small-size); min-height: var(--control-small-size); place-items: center; padding: 0; color: var(--lv-fg-muted); background: transparent; }
     .permission-remove:hover, .permission-remove:focus-visible { color: var(--lv-fg-danger); border-color: var(--lv-fg-danger); outline: 0; }
+    .permission-technical-details { border-top: var(--lv-border-muted); color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
+    .permission-technical-details summary { display: flex; min-height: var(--base-size-40); align-items: center; justify-content: space-between; gap: var(--base-size-12); padding: 0 var(--base-size-16); cursor: pointer; }
+    .permission-technical-details summary:hover { color: var(--lv-fg-default); background: var(--lv-bg-control-hover); }
+    .permission-technical-details summary:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+    .permission-technical-details summary span { font: var(--lv-type-caption); }
+    .permission-technical-list { display: grid; gap: var(--base-size-8); padding: 0 var(--base-size-16) var(--base-size-12); }
+    .permission-technical-row { display: grid; min-width: 0; grid-template-columns: minmax(10rem, auto) minmax(0, 1fr); gap: var(--base-size-12); }
+    .permission-technical-row code, .permission-technical-row span { min-width: 0; overflow-wrap: anywhere; }
     .permission-empty { display: grid; min-height: var(--base-size-48); place-items: center start; padding: var(--base-size-8) var(--base-size-12); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .selected-permissions-empty { display: grid; min-height: 10rem; place-content: center; justify-items: center; gap: var(--base-size-8); padding: var(--base-size-24); text-align: center; }
     .selected-permissions-empty svg { color: var(--lv-fg-muted); }
