@@ -162,6 +162,69 @@ ss -lntp
 echo "== leapview paths =="
 du -sh /opt/leapview-demo /tmp/leapview-demo-host-state /tmp/leapview-main 2>/dev/null || true
 find /opt/leapview-demo -maxdepth 2 -mindepth 1 -printf "%y %p\n" 2>/dev/null | sort || true
+echo "== leapview runtime =="
+systemctl show leapview-demo-current.service \
+  --property=ActiveState,SubState,MainPID,NRestarts,FragmentPath,ExecMainStartTimestamp --no-pager || true
+pid=$(systemctl show leapview-demo-current.service --property=MainPID --value 2>/dev/null || true)
+if [[ "$pid" =~ ^[1-9][0-9]*$ && -e "/proc/$pid/exe" ]]; then
+  executable=$(readlink -f "/proc/$pid/exe")
+  echo "executable=$executable"
+  "$executable" version --json || true
+  echo "environment keys:"
+  tr "\0" "\n" <"/proc/$pid/environ" | sed -n "s/=.*//p" | sort
+fi
+echo "== releases =="
+if [[ -d /opt/leapview-demo/releases ]]; then
+  for release in /opt/leapview-demo/releases/*; do
+    [[ -d "$release" ]] || continue
+    du -sh "$release"
+    if [[ -x "$release/leapview" ]]; then
+      "$release/leapview" version --json || true
+      (cd "$release" && sha256sum --check leapview.sha256) 2>/dev/null || true
+    fi
+    if [[ -f "$release/immutable-image.txt" ]]; then
+      printf "image="
+      cat "$release/immutable-image.txt"
+    fi
+  done
+fi
+echo "== database state =="
+while IFS= read -r database_container; do
+  [[ -n "$database_container" ]] || continue
+  echo "container=$database_container"
+  docker inspect "$database_container" --format "mounts={{json .Mounts}}"
+  docker exec "$database_container" sh -c '\''
+    set -eu
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control -Atc \
+      "SELECT datname || chr(124) || pg_database_size(oid) FROM pg_database ORDER BY datname"
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control -Atc \
+      "SELECT '\''schema_version|'\'' || max(version_id) FROM public.goose_db_version WHERE is_applied"
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control -Atc \
+      "SELECT '\''schema|'\'' || schema_name FROM information_schema.schemata ORDER BY schema_name"
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control -Atc \
+      "SELECT '\''role|'\'' || rolname FROM pg_roles ORDER BY rolname"
+  '\''
+done < <(docker ps --format "{{.Names}}" | grep -- "-demo-current-postgres-1$" || true)
+echo "== rollback recovery sets =="
+if [[ -d /opt/leapview-demo/rollbacks ]]; then
+  find /opt/leapview-demo/rollbacks -mindepth 1 -maxdepth 2 -type f \
+    -printf "%TY-%Tm-%TdT%TH:%TM:%TSZ|%s|%m|%p\n" | sort
+  while IFS= read -r dump; do
+    database_container=$(docker ps --format "{{.Names}}" | grep -- "-demo-current-postgres-1$" | head -1)
+    docker exec -i "$database_container" pg_restore --list <"$dump" >/dev/null
+    echo "verified_dump=$dump"
+  done < <(find /opt/leapview-demo/rollbacks -type f -name "*.dump" | sort)
+  while IFS= read -r archive; do
+    tar -tf "$archive" >/dev/null
+    echo "verified_archive=$archive"
+  done < <(find /opt/leapview-demo/rollbacks -type f -name "*.tar" | sort)
+fi
+echo "== scheduled backup =="
+systemctl show leapview-backup.service \
+  --property=LoadState,ActiveState,SubState,Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp --no-pager || true
+systemctl list-timers --all --no-pager | grep -Ei "leapview|backup" || true
+find /opt/leapview-backups /var/backups/leapview /opt/leapview-demo/backups \
+  -maxdepth 2 -type f -printf "%TY-%Tm-%TdT%TH:%TM:%TSZ|%s|%m|%p\n" 2>/dev/null | sort || true
 '
 
 case "$scope" in
