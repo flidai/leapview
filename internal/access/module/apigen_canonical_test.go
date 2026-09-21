@@ -5,15 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -33,9 +30,10 @@ func (l mutableAPIGenLease) AuthorizationSnapshot() accesssnapshot.Authorization
 }
 
 type apigenRuntimeFake struct {
-	project projectgraph.ResourceID
-	lease   runtimehost.Lease
-	err     error
+	project   projectgraph.ResourceID
+	lease     runtimehost.Lease
+	err       error
+	fenceHeld *bool
 }
 
 func (r apigenRuntimeFake) ProjectID() projectgraph.ResourceID { return r.project }
@@ -44,6 +42,16 @@ func (r apigenRuntimeFake) Acquire(context.Context) (runtimehost.Lease, error) {
 		return nil, r.err
 	}
 	return r.lease, nil
+}
+func (r apigenRuntimeFake) AcquireCutoverFence(context.Context) (func(), error) {
+	if r.fenceHeld == nil {
+		return func() {}, nil
+	}
+	if *r.fenceHeld {
+		return nil, errors.New("cutover fence already held")
+	}
+	*r.fenceHeld = true
+	return func() { *r.fenceHeld = false }, nil
 }
 
 type apigenLeaseFake struct {
@@ -297,13 +305,8 @@ func TestAPIGenServerBoundResourceRouteUsesActiveProject(t *testing.T) {
 }
 
 func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
-	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{ID: "principal_alice", Email: "alice@example.test", DisplayName: "Alice"})
+	repository := testStore(t).repository
+	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "alice@example.test", DisplayName: "Alice"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -981,12 +984,7 @@ func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 
 func TestAPIGenPublicationApprovalBootstrapUsesReviewerCredential(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_demo")
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	authoringRepository := accesssqlite.NewRepository(store.SQLDB())
+	authoringRepository := testStore(t).repository
 	authoringAuth, err := access.NewAuthoringAuthService(authoringRepository, access.AuthoringAuthConfig{
 		InstanceID: "instance-prod", CanonicalOrigin: "https://example.test",
 		AccessTokenTTL: time.Hour, RefreshTokenTTL: 2 * time.Hour,

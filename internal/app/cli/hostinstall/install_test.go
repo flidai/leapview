@@ -36,6 +36,7 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 		AdminEmail:    "admin@example.com",
 		Environment:   "prod",
 		Image:         "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64),
+		TargetID:      "deployment-target-1",
 		HTTPS:         boolPointer(true),
 	}
 	writeConfig(t, paths.Config, config)
@@ -78,6 +79,9 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 		require.NoError(t, statErr, target)
 		require.False(t, info.IsDir(), target)
 	}
+	marker, _, err := readAndValidateConfig(filepath.Join(paths.Root, installMarkerName))
+	require.NoError(t, err)
+	require.Equal(t, config.TargetID, marker.TargetID)
 	current, err := os.Readlink(filepath.Join(paths.Root, "current"))
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join("releases", "sha256-"+strings.Repeat("a", 64)), current)

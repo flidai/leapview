@@ -71,7 +71,7 @@ model ServiceAccountsSignal {
   `hasMore`: boolean;
 }
 
-model ServiceAccountSignal { `id`: string; `displayName`: string; `email`?: string; `kind`: string; `createdAt`?: string; `updatedAt`?: string; `disabledAt`?: string; }
+model ServiceAccountSignal { `id`: string; `displayName`: string; `email`?: string; `kind`: string; `secretCount`: int32; `createdAt`?: string; `updatedAt`?: string; `disabledAt`?: string; }
 model ServiceAccountSecretSignal { `id`: string; `servicePrincipalId`: string; `name`: string; `expiresAt`?: string; `createdAt`?: string; `revokedAt`?: string; }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "settings", "signal"] })
@@ -172,7 +172,7 @@ model AuditLogSignal {
   `error`?: string;
 }
 
-model AuditEventSignal { `id`: string; `projectId`?: string; `principalId`?: string; `action`: string; `resourceKind`: string; `resourceId`: string; `capability`?: string; `status`?: string; `requestId`?: string; `correlationId`?: string; `metadata`?: Record<unknown>; `createdAt`: string; }
+model AuditEventSignal { `id`: string; `projectId`?: string; `principalId`?: string; `principalName`?: string; `principalEmail`?: string; `action`: string; `resourceKind`: string; `resourceId`: string; `resourceLabel`?: string; `capability`?: string; `status`?: string; `requestId`?: string; `correlationId`?: string; `metadata`?: Record<unknown>; `createdAt`: string; }
 model AuditLogFilters { `projectId`?: string; `principalId`?: string; `action`?: string; `resourceKind`?: string; `resourceId`?: string; `from`?: string; `to`?: string; }
 
 @apigen.contract(#{ kind: "ui-command", tags: #["admin", "settings", "command"] })

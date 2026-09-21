@@ -84,6 +84,7 @@ model PersonalCapabilityOptionSignal {
 model PersonalTokenSignal {
   `id`: string;
   `name`: string;
+  `description`: string;
   `capabilities`: string[];
   `createdAt`: string;
   `lastUsedAt`: string;
@@ -132,6 +133,7 @@ model PersonalTokenCommand {
   `action`: string;
   `tokenId`: string;
   `name`: string;
+  `description`: string;
   `capabilities`: string[];
   `expiresAt`: string;
 }

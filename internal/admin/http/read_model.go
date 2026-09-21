@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -56,6 +57,7 @@ type ReadModel struct {
 	AgentConfigCommand           uicommand.Binding
 	PublicationCommands          map[string]uicommand.Binding
 	ProductCommands              map[string]uicommand.Binding
+	Logger                       *slog.Logger
 	AuthConfigured               bool
 	AccessConfigured             bool
 }
@@ -211,6 +213,7 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 			Defaults:     tool.Defaults,
 			InputSchema:  tool.InputSchema,
 			OutputSchema: tool.OutputSchema,
+			Tags:         append([]string(nil), tool.Tags...),
 		})
 	}
 	if !m.AuthConfigured {
@@ -307,7 +310,9 @@ type adminRoleBindingView struct {
 func (m ReadModel) QueryHistoryData(r *http.Request, filters uisignals.AdminQueryHistoryFilters, pageToken string, limit int) ui.AdminQueryHistoryData {
 	projectID, err := m.projectID(r.Context())
 	if err != nil {
-		return ui.AdminQueryHistoryData{Filters: filters, Limit: normalizeQueryHistoryLimit(limit), Error: err.Error()}
+		// Query history is global to the admin surface. A missing or stale
+		// serving project must not turn a clear filter into a permanent error.
+		projectID = ""
 	}
 	repo, err := m.queryAuditReader()
 	if err != nil || repo == nil {

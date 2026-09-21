@@ -15,9 +15,54 @@ func TestNormalizeAuditLogCommandResetsCursorAndBoundsLimit(t *testing.T) {
 }
 
 func TestAuditEventSignalParsesMetadataWithoutRawSecret(t *testing.T) {
-	event := AuditEventSignalFromDomain(access.AuditEvent{ID: "a1", Action: "service_principal_secret.created", MetadataJSON: `{"secretId":"s1"}`})
+	event := AuditEventSignalFromDomain(access.AuditEvent{ID: "a1", ProjectID: "sales", Action: "service_principal_secret.created", MetadataJSON: `{"secretId":"s1"}`})
 	if event.Metadata["secretId"] != "s1" || event.Metadata == nil {
 		t.Fatalf("metadata = %#v", event.Metadata)
+	}
+	if event.ProjectID != "sales" {
+		t.Fatalf("project id = %q, want sales", event.ProjectID)
+	}
+}
+
+type testAuditLogReader struct {
+	filter access.AuditEventFilter
+}
+
+func (r *testAuditLogReader) ListAuditEvents(_ context.Context, filter access.AuditEventFilter) ([]access.AuditEvent, error) {
+	r.filter = filter
+	return []access.AuditEvent{{
+		ID: "event-1", PrincipalID: "principal-1", Action: "agent_tool.called", ResourceKind: "agent_tool",
+		ResourceID: "querySemanticModel", Status: "success", CreatedAt: "2026-09-17T14:17:04Z",
+	}}, nil
+}
+
+func (*testAuditLogReader) ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error) {
+	return []access.Principal{{ID: "principal-1", DisplayName: "Platform Admin", Email: "admin@example.com"}}, nil
+}
+
+func TestLoadAuditLogEnrichesActorIdentity(t *testing.T) {
+	reader := &testAuditLogReader{}
+	signal, err := LoadAuditLog(context.Background(), reader, AuditLogFilters{}, "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(signal.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(signal.Items))
+	}
+	event := signal.Items[0]
+	if event.PrincipalName != "Platform Admin" || event.PrincipalEmail != "admin@example.com" {
+		t.Fatalf("actor identity = %q <%s>", event.PrincipalName, event.PrincipalEmail)
+	}
+}
+
+func TestLoadAuditLogPassesInclusiveDateRangeToRepository(t *testing.T) {
+	reader := &testAuditLogReader{}
+	filters := AuditLogFilters{From: "2026-09-01", To: "2026-09-18"}
+	if _, err := LoadAuditLog(context.Background(), reader, filters, "", 50); err != nil {
+		t.Fatal(err)
+	}
+	if reader.filter.From != "2026-09-01T00:00:00Z" || reader.filter.To != "2026-09-19T00:00:00Z" {
+		t.Fatalf("repository range = %q to %q, want inclusive Sep 1-18", reader.filter.From, reader.filter.To)
 	}
 }
 
@@ -29,13 +74,16 @@ func (testServiceAccountReader) ListServicePrincipals(context.Context) ([]access
 func (testServiceAccountReader) ListServicePrincipalSecrets(context.Context, string) ([]access.ServicePrincipalSecret, error) {
 	return []access.ServicePrincipalSecret{{ID: "secret-1", ServicePrincipalID: "svc-1", Name: "ci"}}, nil
 }
+func (testServiceAccountReader) CountServicePrincipalSecrets(context.Context) (map[string]int, error) {
+	return map[string]int{"svc-1": 1}, nil
+}
 
 func TestLoadServiceAccountsSortsAndSelectsMetadata(t *testing.T) {
 	signal, err := LoadServiceAccounts(context.Background(), testServiceAccountReader{}, "svc-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if signal.Items[0].ID != "svc-1" || signal.SelectedID != "svc-1" || len(signal.Secrets) != 1 {
+	if signal.Items[0].ID != "svc-1" || signal.Items[0].SecretCount != 1 || signal.SelectedID != "svc-1" || len(signal.Secrets) != 1 {
 		t.Fatalf("signal = %#v", signal)
 	}
 }

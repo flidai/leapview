@@ -1,4 +1,5 @@
-export function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false, admin = false): string {
+export function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false, admin = false, removedHistoryIDs: readonly string[] = []): string {
+  const removedHistory = new Set(removedHistoryIDs)
   const chromeConfig = compact || history || nav || admin ? {
     sidebar: {
       productName: 'LeapView',
@@ -27,7 +28,7 @@ export function testDocument(includeShellScript: boolean, compact = false, histo
           { id: 'c1', title: 'Revenue check', href: '/chats/c1', active: true, pending: true },
           { id: 'c2', title: 'Inventory status', href: '/chats/c2' },
           { id: 'c3', title: 'Pinned title loading', href: '/chats/c3', pending: true, pinned: true },
-        ],
+        ].filter(item => !removedHistory.has(item.id)),
       } : undefined,
       groups: admin ? [
         {
@@ -36,6 +37,12 @@ export function testDocument(includeShellScript: boolean, compact = false, histo
             { id: 'profile', label: 'Profile', href: '/admin/profile', icon: 'user' },
             { id: 'security', label: 'Security & sessions', href: '/admin/security', icon: 'activity' },
             { id: 'api-tokens', label: 'API tokens', href: '/admin/api-tokens', icon: 'data' },
+          ],
+        },
+        {
+          label: 'Chats',
+          items: [
+            { id: 'archived-chats', label: 'Archived chats', href: '/admin/archived-chats', icon: 'history' },
           ],
         },
         {
@@ -48,7 +55,7 @@ export function testDocument(includeShellScript: boolean, compact = false, histo
         {
           label: 'Access',
           items: [
-            { id: 'principals', label: 'Principals', href: '/admin/principals', icon: 'users' },
+            { id: 'principals', label: 'Users', href: '/admin/principals', icon: 'users' },
             { id: 'groups', label: 'Groups', href: '/admin/groups', icon: 'users-round' },
             { id: 'service-accounts', label: 'Service accounts', href: '/admin/service-accounts', icon: 'bot' },
             { id: 'authentication', label: 'Authentication', href: '/admin/authentication', icon: 'system' },
@@ -132,6 +139,7 @@ export function testDocument(includeShellScript: boolean, compact = false, histo
           </lv-app-shell>
         </main>
         ${includeShellScript ? '<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script><script type="module" src="/tmp/app-shell-under-test.js"></script>' : ''}
+        ${history ? '<script type="module">import { mergePatch } from "/static/vendor/datastar-1.0.2.js?v=dev"; window.testMergePatch = mergePatch</script>' : ''}
       </body>
     </html>
   `

@@ -1,5 +1,5 @@
 import { LitElement, css, html } from 'lit'
-import { Blocks, Bot, Boxes, ChartNoAxesCombined, Check, CodeXml, Copy, Database, GitBranch, Radio, Server, SquareMousePointer, SquareTerminal, type IconNode } from 'lucide'
+import { Blocks, Bot, Boxes, ChartNoAxesCombined, Check, CircleAlert, CodeXml, Copy, Database, Ellipsis, FileCode2, GitBranch, Pencil, Radio, Server, SquareMousePointer, SquareTerminal, type IconNode } from 'lucide'
 import { DatastarLit } from '../../web/components/shared/datastar-lit'
 import { lucideIcon } from '../../web/components/shared/lucide-icons'
 import '../../web/components/shared/brand-mark'
@@ -12,74 +12,169 @@ import { visualExampleHighlightLines } from './visual-example-highlights'
 import type { VisualPayload } from './site-types'
 import './site-shell'
 import './site-docs-navigation'
-import './site-article'
 import './site-responsive-reference'
 import './site-visual-showcase'
 
 
 
-class SiteMarkdownCopy extends LitElement {
+class SiteDocsPageActions extends LitElement {
   static properties = {
     markdown: { type: String },
+    markdownHref: { type: String, attribute: 'markdown-href' },
+    sourceHref: { type: String, attribute: 'source-href' },
+    sourceLabel: { type: String, attribute: 'source-label' },
+    issueHref: { type: String, attribute: 'issue-href' },
   }
 
   declare markdown: string
+  declare markdownHref: string
+  declare sourceHref: string
+  declare sourceLabel: string
+  declare issueHref: string
 
   private copied = false
   private resetTimer?: number
 
   static styles = css`
     :host {
-      display: inline-block;
-    }
-
-    button {
       display: inline-flex;
-      box-sizing: border-box;
-      height: 33px;
       align-items: center;
-      flex-shrink: 0;
-      gap: var(--base-size-6);
       border: var(--lv-border-default);
       border-radius: var(--lv-radius-default);
       background: transparent;
+    }
+
+    details {
+      position: relative;
+    }
+
+    :is(.copy, summary) {
+      display: inline-flex;
+      box-sizing: border-box;
+      width: 32px;
+      height: 32px;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      border: 0;
+      background: transparent;
       color: var(--lv-fg-muted);
       cursor: pointer;
-      font: inherit;
-      font-size: var(--text-body-size-small);
-      line-height: 1.3;
-      padding: 0 var(--base-size-12);
-      transition: border-color var(--motion-duration-medium);
+      list-style: none;
+      padding: 0;
+      transition: background-color var(--motion-duration-medium);
     }
 
-    button:hover,
-    button:focus-visible {
-      border-color: var(--lv-button-border-hover);
+    .copy {
+      border-right: var(--lv-border-default);
+      border-radius: var(--lv-radius-default) 0 0 var(--lv-radius-default);
     }
 
-    button:focus-visible {
+    summary {
+      border-radius: 0 var(--lv-radius-default) var(--lv-radius-default) 0;
+    }
+
+    summary::-webkit-details-marker {
+      display: none;
+    }
+
+    :is(.copy, summary):hover,
+    :is(.copy, summary):focus-visible,
+    details[open] summary {
+      background: var(--lv-bg-control-hover);
+      color: var(--lv-fg-default);
+    }
+
+    :is(.copy, summary):focus-visible,
+    :is(button, a):focus-visible {
       outline: var(--focus-outline);
       outline-offset: var(--focus-outline-offset);
     }
 
+    .menu {
+      position: absolute;
+      z-index: var(--zIndex-overlay);
+      top: calc(100% + var(--base-size-6));
+      right: 0;
+      box-sizing: border-box;
+      width: max-content;
+      min-width: 190px;
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+      box-shadow: var(--shadow-floating-medium);
+      padding: var(--base-size-6);
+    }
+
+    .menu a {
+      display: flex;
+      box-sizing: border-box;
+      width: 100%;
+      align-items: center;
+      gap: var(--base-size-8);
+      border: 0;
+      border-radius: var(--lv-radius-default);
+      background: transparent;
+      color: var(--lv-fg-default);
+      cursor: pointer;
+      font: inherit;
+      font-size: var(--text-body-size-small);
+      padding: var(--base-size-8);
+      text-align: left;
+      text-decoration: none;
+    }
+
+    .menu a:hover {
+      background: var(--lv-bg-control-hover);
+    }
+
     @media (prefers-reduced-motion: reduce) {
-      button {
+      :is(.copy, summary) {
         transition: none;
       }
     }
   `
 
+  connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('pointerdown', this.onDocumentPointerDown)
+  }
+
   disconnectedCallback(): void {
+    document.removeEventListener('pointerdown', this.onDocumentPointerDown)
     window.clearTimeout(this.resetTimer)
     super.disconnectedCallback()
   }
 
   render() {
-    const label = this.copied ? 'Markdown copied' : 'Copy Markdown'
-    return html`<button type="button" aria-label=${label} @click=${this.copyMarkdown}>
+    const sourceIcon = this.sourceLabel?.startsWith('Edit') ? Pencil : FileCode2
+    return html`<button class="copy" type="button" aria-label=${this.copied ? 'Markdown copied' : 'Copy Markdown'} title=${this.copied ? 'Markdown copied' : 'Copy Markdown'} @click=${this.copyMarkdown}>
       ${lucideIcon(this.copied ? Check : Copy, { size: 16, strokeWidth: 2 })}
-      <span>${this.copied ? 'Copied' : 'Copy Markdown'}</span>
-    </button>`
+    </button>
+    <details @keydown=${this.onKeyDown}>
+      <summary aria-label="More page actions" title="More page actions">${lucideIcon(Ellipsis, { size: 18, strokeWidth: 2 })}</summary>
+      <div class="menu">
+        <a href=${this.markdownHref} rel="external">${lucideIcon(FileCode2, { size: 16, strokeWidth: 2 })}<span>View Markdown</span></a>
+        <a href=${this.sourceHref} rel="external">${lucideIcon(sourceIcon, { size: 16, strokeWidth: 2 })}<span>${this.sourceLabel}</span></a>
+        <a href=${this.issueHref} rel="external">${lucideIcon(CircleAlert, { size: 16, strokeWidth: 2 })}<span>Report an issue</span></a>
+      </div>
+    </details>`
+  }
+
+  private onDocumentPointerDown = (event: PointerEvent): void => {
+    if (!event.composedPath().includes(this)) this.closeMenu()
+  }
+
+  private onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape') return
+    this.closeMenu()
+    this.renderRoot.querySelector<HTMLElement>('summary')?.focus()
+    event.preventDefault()
+  }
+
+  private closeMenu(): void {
+    const details = this.renderRoot.querySelector<HTMLDetailsElement>('details')
+    if (details) details.open = false
   }
 
   private copyMarkdown = async (): Promise<void> => {
@@ -101,8 +196,8 @@ class SiteMarkdownCopy extends LitElement {
   }
 }
 
-if (!customElements.get('lv-site-markdown-copy')) {
-  customElements.define('lv-site-markdown-copy', SiteMarkdownCopy)
+if (!customElements.get('lv-site-docs-page-actions')) {
+  customElements.define('lv-site-docs-page-actions', SiteDocsPageActions)
 }
 
 type ResolvedThemeMode = 'light' | 'dark'

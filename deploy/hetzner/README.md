@@ -26,12 +26,14 @@ terraform init
 terraform apply
 ```
 
-Set `admin_email`, `leapview_image`, and `ssh_allowed_cidrs` in
+Set `admin_email`, `target_id`, `leapview_image`, and `ssh_allowed_cidrs` in
 `terraform.tfvars`. Use your public address with a `/32` suffix for SSH. The
-module deliberately rejects world-open SSH and mutable image tags.
+module deliberately rejects world-open SSH and mutable image tags. Set
+`target_id` to the same authoritative deployment target ID used by release
+preflight; it is persisted in the installed host marker.
 
 Provisioning renders the provider-neutral Ubuntu host bootstrap with the
-domain, administrator email, environment, and immutable image digest. The
+domain, administrator email, target identity, environment, and immutable image digest. The
 bootstrap pulls that image, extracts its matching deployment payload, and
 delegates installation to the Go `leapviewctl host install` command. The
 Hetzner module contains no separate Compose, initialization, backup-retention,

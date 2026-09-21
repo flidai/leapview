@@ -146,6 +146,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	} else if config.Persistence != nil && config.Persistence.isNative() {
 		return nil, errors.New("native PostgreSQL refresh persistence requires production refresh mode")
 	}
+	if config.RecoveryLifecycle != nil && config.Persistence != nil && config.Persistence.Recovery != nil {
+		config.RecoveryLifecycle.Repository = config.Persistence.Recovery
+	}
 	if config.RecoveryLifecycle != nil {
 		if err := config.RecoveryLifecycle.Validate(); err != nil {
 			return nil, fmt.Errorf("configure scheduled recovery qualification: %w", err)
@@ -303,25 +306,7 @@ func (m *Module) JobHandlers() []jobs.Handler {
 	if m == nil || m.runs == nil {
 		return nil
 	}
-	run := func(ctx context.Context, job jobs.Job) error {
-		persistence, ok := m.runs.(*postgresRunPersistence)
-		if !ok || persistence == nil || persistence.jobs == nil {
-			return errors.New("River refresh persistence is unavailable")
-		}
-		claimed, err := persistence.jobs.ClaimRiverJob(ctx, job, m.leaseTimeout)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if m.runFinishedCallback != nil {
-				m.runFinishedCallback(context.Background(), claimed)
-			}
-		}()
-		return executeWithLeaseHeartbeat(ctx, claimed, m.leaseTimeout, m.runs.RenewJobLease, m.service.ExecuteClaimedJob)
-	}
-	return []jobs.Handler{
-		jobs.HandlerFunc{JobKind: refreshrun.JobKindRefreshPipeline, Run: run, ExecutionLeaseTimeout: m.leaseTimeout},
-	}
+	return []jobs.Handler{m.refreshPipelineJobHandler()}
 }
 
 func (m *Module) QueuePipelineRefresh(ctx context.Context, input refreshrun.QueuePipelineInput) (refreshrun.QueueAssetResult, error) {

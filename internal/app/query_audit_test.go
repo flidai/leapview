@@ -8,17 +8,12 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
-	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestAuditedQueryMetricsRecordsSuccessWithoutRows(t *testing.T) {
 	ctx := context.Background()
-	store, err := platform.Open(ctx, t.TempDir()+"/leapview.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store := testStore(t)
 
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{}))
 	request := dataquery.ModelRows("test", "orders", []string{"order_id", "status"}, nil, 0, 2, false)
@@ -60,11 +55,7 @@ func TestAuditedQueryMetricsRecordsSuccessWithoutRows(t *testing.T) {
 
 func TestAuditedQueryMetricsRecordsExecutionError(t *testing.T) {
 	ctx := context.Background()
-	store, err := platform.Open(ctx, t.TempDir()+"/leapview.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store := testStore(t)
 
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{}))
 	ctx = accessmodule.WithPrincipal(ctx, accessmodule.Principal{ID: "principal_admin@example.test"})

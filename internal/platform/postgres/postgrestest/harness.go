@@ -1,6 +1,7 @@
 // Package postgrestest provides a bounded, real PostgreSQL 18 conformance
-// environment for tests.  Each harness owns one disposable container and can
-// create isolated databases and explicitly provisioned roles within it.
+// environment for tests. A standalone harness owns a disposable container;
+// the conformance runner shares one container per package while retaining
+// per-test database and role cleanup.
 package postgrestest
 
 import (
@@ -12,6 +13,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -24,6 +26,7 @@ import (
 	"time"
 
 	platformdb "github.com/flidai/leapview/internal/platform/postgres/internal/db"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/log"
@@ -34,6 +37,15 @@ import (
 // PostgreSQL18Image is the pinned image used by every PostgreSQL conformance
 // lane.  Changing it requires re-qualifying the supported PostgreSQL major.
 const PostgreSQL18Image = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
+
+// PackageServerURLEnv is set only by the PostgreSQL conformance package
+// runner. It supplies one disposable server to the tests in a Go test binary;
+// each harness still owns its own database, roles, and administrator pool.
+const PackageServerURLEnv = "LEAPVIEW_POSTGRES_CONFORMANCE_PACKAGE_URL"
+
+// PackageServerTokenEnv proves that the URL belongs to the disposable server
+// started by the package runner, rather than an unrelated PostgreSQL instance.
+const PackageServerTokenEnv = "LEAPVIEW_POSTGRES_CONFORMANCE_PACKAGE_TOKEN"
 
 const (
 	defaultPassword       = "leapview-conformance-secret"
@@ -51,14 +63,17 @@ type Role struct {
 	Login    bool
 }
 
-// Harness owns one PostgreSQL container and an administrator connection to its
-// bootstrap database.  Use NewDatabase for a per-test database, and close
-// application pools before t.Cleanup runs so DROP DATABASE can be deterministic.
+// Harness owns an administrator connection to its bootstrap database. A
+// standalone harness also owns a PostgreSQL container; the package runner
+// owns the container for shared harnesses. Use NewDatabase for a per-test
+// database, and close application pools before t.Cleanup runs so DROP
+// DATABASE can be deterministic.
 type Harness struct {
 	container *tcpostgres.PostgresContainer
 	adminURL  string
 	rootCert  string
 	admin     *pgxpool.Pool
+	shared    *sharedTestState
 
 	mu    sync.Mutex
 	roles map[string]Role
@@ -66,6 +81,89 @@ type Harness struct {
 	// roles to be registered before databases so LIFO cleanup always drops the
 	// database before its owners.
 	databaseCreated bool
+}
+
+// A test may open multiple harnesses before its cleanup runs. PostgreSQL roles
+// are cluster-wide, so a package-shared server drops them only after every
+// database opened by that test has been removed.
+type sharedTestState struct {
+	mu        sync.Mutex
+	roles     []string
+	roleSpecs map[string]Role
+	fixtures  int
+	closing   bool
+}
+
+var sharedTestStates sync.Map // map[top-level test name]*sharedTestState
+
+var activePackageDatabases = struct {
+	sync.Mutex
+	names map[string]struct{}
+}{names: make(map[string]struct{})}
+
+func topLevelTestName(t *testing.T) string {
+	name, _, _ := strings.Cut(t.Name(), "/")
+	return name
+}
+
+func sharedStateFor(t *testing.T, admin *pgxpool.Pool) *sharedTestState {
+	key := topLevelTestName(t)
+	for {
+		candidate := &sharedTestState{roleSpecs: make(map[string]Role)}
+		actual, _ := sharedTestStates.LoadOrStore(key, candidate)
+		shared := actual.(*sharedTestState)
+		shared.mu.Lock()
+		if shared.closing {
+			shared.mu.Unlock()
+			continue
+		}
+		shared.fixtures++
+		shared.mu.Unlock()
+		t.Cleanup(func() { releaseSharedState(t, key, shared, admin) })
+		return shared
+	}
+}
+
+func releaseSharedState(t *testing.T, key string, shared *sharedTestState, admin *pgxpool.Pool) {
+	shared.mu.Lock()
+	defer shared.mu.Unlock()
+	shared.fixtures--
+	if shared.fixtures > 0 {
+		return
+	}
+	if shared.fixtures < 0 {
+		t.Errorf("PostgreSQL shared test state %q released too many times", key)
+		return
+	}
+	shared.closing = true
+	for i := len(shared.roles) - 1; i >= 0; i-- {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, err := admin.Exec(ctx, "DROP ROLE IF EXISTS "+quoteIdentifier(shared.roles[i]))
+		cancel()
+		if err != nil {
+			t.Errorf("drop PostgreSQL role %q: %v", shared.roles[i], err)
+		}
+	}
+	sharedTestStates.CompareAndDelete(key, shared)
+}
+
+func reservePackageDatabase(adminURL, name, testName string) string {
+	activePackageDatabases.Lock()
+	defer activePackageDatabases.Unlock()
+	for {
+		key := adminURL + "\x00" + name
+		if _, exists := activePackageDatabases.names[key]; !exists {
+			activePackageDatabases.names[key] = struct{}{}
+			return name
+		}
+		name = generatedDatabaseName(testName + "/" + name)
+	}
+}
+
+func releasePackageDatabase(adminURL, name string) {
+	activePackageDatabases.Lock()
+	delete(activePackageDatabases.names, adminURL+"\x00"+name)
+	activePackageDatabases.Unlock()
 }
 
 // Required reports whether the real PostgreSQL conformance lane is mandatory.
@@ -106,40 +204,46 @@ func start(t *testing.T, tls bool) *Harness {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), defaultHarnessTimeout)
 	defer cancel()
-	if !Required() {
-		testcontainers.SkipIfProviderIsNotHealthy(t)
-	}
-
-	containerOptions := []testcontainers.ContainerCustomizer{
-		tcpostgres.WithDatabase("postgres"),
-		tcpostgres.WithUsername("postgres"),
-		tcpostgres.WithPassword(defaultPassword),
-		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(defaultStartupTimeout)),
-		testcontainers.WithLogger(log.TestLogger(t)),
-	}
-	var rootCert string
-	if tls {
-		caCert, cert, key := tlsCertificateFiles(t)
-		rootCert = caCert
-		containerOptions = append(containerOptions,
-			tcpostgres.WithSSLCert(caCert, cert, key),
-			testcontainers.WithCmd("postgres", "-c", "fsync=off", "-c", "ssl=on", "-c", "ssl_ca_file=/tmp/testcontainers-go/postgres/ca_cert.pem", "-c", "ssl_cert_file=/tmp/testcontainers-go/postgres/server.cert", "-c", "ssl_key_file=/tmp/testcontainers-go/postgres/server.key"),
-		)
-	}
-	container, err := tcpostgres.Run(ctx, PostgreSQL18Image, containerOptions...)
-	if err != nil {
-		if Required() {
-			t.Fatalf("required PostgreSQL 18 conformance container: %v", err)
+	var container *tcpostgres.PostgresContainer
+	var rootCert, adminURL, packageToken string
+	if packageURL, supplied := os.LookupEnv(PackageServerURLEnv); supplied && !tls {
+		if strings.TrimSpace(packageURL) == "" {
+			t.Fatalf("%s must not be empty", PackageServerURLEnv)
 		}
-		t.Skipf("PostgreSQL 18 conformance container unavailable: %v", err)
-	}
-	// Register cleanup immediately after Run, as recommended by testcontainers;
-	// later cleanup callbacks (pools, databases, and roles) run first.
-	testcontainers.CleanupContainer(t, container)
+		packageToken = os.Getenv(PackageServerTokenEnv)
+		if packageToken == "" {
+			t.Fatalf("%s must be set with %s", PackageServerTokenEnv, PackageServerURLEnv)
+		}
+		adminURL = packageURL
+	} else {
+		if !Required() {
+			testcontainers.SkipIfProviderIsNotHealthy(t)
+		}
+		containerOptions := postgresContainerOptions(log.TestLogger(t))
+		if tls {
+			caCert, cert, key := tlsCertificateFiles(t)
+			rootCert = caCert
+			containerOptions = append(containerOptions,
+				tcpostgres.WithSSLCert(caCert, cert, key),
+				testcontainers.WithCmd("postgres", "-c", "fsync=off", "-c", "ssl=on", "-c", "ssl_ca_file=/tmp/testcontainers-go/postgres/ca_cert.pem", "-c", "ssl_cert_file=/tmp/testcontainers-go/postgres/server.cert", "-c", "ssl_key_file=/tmp/testcontainers-go/postgres/server.key"),
+			)
+		}
+		var err error
+		container, err = tcpostgres.Run(ctx, PostgreSQL18Image, containerOptions...)
+		if err != nil {
+			if Required() {
+				t.Fatalf("required PostgreSQL 18 conformance container: %v", err)
+			}
+			t.Skipf("PostgreSQL 18 conformance container unavailable: %v", err)
+		}
+		// Register cleanup immediately after Run. Later pool, database, and
+		// role callbacks run first, while this test's container is still alive.
+		testcontainers.CleanupContainer(t, container)
 
-	adminURL, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("PostgreSQL conformance connection string: %v", err)
+		adminURL, err = container.ConnectionString(ctx, "sslmode=disable")
+		if err != nil {
+			t.Fatalf("PostgreSQL conformance connection string: %v", err)
+		}
 	}
 	admin, err := pgxpool.New(ctx, adminURL)
 	if err != nil {
@@ -149,9 +253,72 @@ func start(t *testing.T, tls bool) *Harness {
 		admin.Close()
 		t.Fatalf("ping PostgreSQL conformance administrator pool: %v", err)
 	}
+	if packageToken != "" {
+		serverToken, err := platformdb.New(admin).ConformanceServerToken(ctx)
+		if err != nil || serverToken != packageToken {
+			admin.Close()
+			t.Fatalf("PostgreSQL conformance package URL is not the runner-owned disposable server")
+		}
+	}
 	h := &Harness{container: container, adminURL: adminURL, rootCert: rootCert, admin: admin, roles: make(map[string]Role)}
 	t.Cleanup(func() { admin.Close() })
+	if container == nil {
+		h.shared = sharedStateFor(t, admin)
+	}
 	return h
+}
+
+func postgresContainerOptions(logger log.Logger) []testcontainers.ContainerCustomizer {
+	return []testcontainers.ContainerCustomizer{
+		tcpostgres.WithDatabase("postgres"),
+		tcpostgres.WithUsername("postgres"),
+		tcpostgres.WithPassword(defaultPassword),
+		// PostgreSQL 18 stores its major-version-specific cluster beneath this
+		// parent directory. Keep disposable conformance data off the host disk.
+		testcontainers.WithTmpfs(map[string]string{"/var/lib/postgresql": "rw,size=512m"}),
+		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(defaultStartupTimeout)),
+		testcontainers.WithLogger(logger),
+	}
+}
+
+// RunPackageServer starts the same pinned PostgreSQL server as Start, but
+// transfers its lifetime to the conformance runner for one Go test package.
+func RunPackageServer(ctx context.Context) (*tcpostgres.PostgresContainer, string, string, error) {
+	tokenBytes := make([]byte, 16)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return nil, "", "", fmt.Errorf("generate PostgreSQL conformance package token: %w", err)
+	}
+	token := hex.EncodeToString(tokenBytes)
+	options := append(postgresContainerOptions(log.Default()),
+		testcontainers.WithCmd("postgres", "-c", "fsync=off", "-c", "leapview.conformance_token="+token),
+	)
+	container, err := tcpostgres.Run(ctx, PostgreSQL18Image, options...)
+	if err != nil {
+		return nil, "", "", packageServerStartupError(container, err)
+	}
+	adminURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		return nil, "", "", packageServerStartupError(container, err)
+	}
+	return container, adminURL, token, nil
+}
+
+func packageServerStartupError(container *tcpostgres.PostgresContainer, startupErr error) error {
+	return packageServerStartupErrorWithTerminate(container, startupErr, func(ctx context.Context, container *tcpostgres.PostgresContainer) error {
+		return container.Terminate(ctx)
+	})
+}
+
+func packageServerStartupErrorWithTerminate(container *tcpostgres.PostgresContainer, startupErr error, terminate func(context.Context, *tcpostgres.PostgresContainer) error) error {
+	if container == nil {
+		return startupErr
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := terminate(cleanupCtx, container); err != nil {
+		return errors.Join(startupErr, fmt.Errorf("terminate PostgreSQL package server after startup failure: %w", err))
+	}
+	return startupErr
 }
 
 // RootCertPath returns the host path to the disposable CA that signed the
@@ -241,6 +408,17 @@ func (h *Harness) EnsureRole(t *testing.T, role Role) Role {
 	if existing, ok := h.roles[role.Name]; ok {
 		return existing
 	}
+	if h.shared != nil {
+		h.shared.mu.Lock()
+		defer h.shared.mu.Unlock()
+		if existing, ok := h.shared.roleSpecs[role.Name]; ok {
+			if existing != role {
+				t.Fatalf("PostgreSQL role %q has incompatible definitions in one test", role.Name)
+			}
+			h.roles[role.Name] = role
+			return role
+		}
+	}
 	if h.databaseCreated {
 		t.Fatalf("PostgreSQL role %q must be provisioned before creating databases", role.Name)
 	}
@@ -265,6 +443,11 @@ func (h *Harness) EnsureRole(t *testing.T, role Role) Role {
 		}
 	}
 	h.roles[role.Name] = role
+	if h.shared != nil {
+		h.shared.roleSpecs[role.Name] = role
+		h.shared.roles = append(h.shared.roles, role.Name)
+		return role
+	}
 	// Register after the role exists.  Role cleanup runs after databases (which
 	// are registered later), allowing ownership and memberships to disappear.
 	t.Cleanup(func() {
@@ -333,11 +516,47 @@ type Database struct {
 	admin *pgxpool.Pool
 }
 
+// Schema applies one capability-owned schema inside the fixture transaction.
+// Keeping the callback shape here lets tests compose only the PostgreSQL
+// authorities they exercise without rebuilding a shared control-plane store.
+type Schema func(context.Context, pgx.Tx) error
+
+// Open starts an isolated PostgreSQL database, applies the supplied capability
+// schemas atomically, and returns its administrator pool. Tests that need role
+// qualification should continue to provision explicit roles and pools instead.
+func Open(t *testing.T, schemas ...Schema) *pgxpool.Pool {
+	t.Helper()
+	h := Start(t)
+	database := h.NewDatabase(t, "")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatalf("open PostgreSQL test pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatalf("begin PostgreSQL test schema transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	for _, apply := range schemas {
+		if apply == nil {
+			t.Fatal("nil PostgreSQL test schema")
+		}
+		if err := apply(t.Context(), tx); err != nil {
+			t.Fatalf("apply PostgreSQL test schema: %v", err)
+		}
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatalf("commit PostgreSQL test schema transaction: %v", err)
+	}
+	return pool
+}
+
 // NewDatabase creates one isolated database and arranges deterministic FORCE
 // cleanup.  Roles must be provisioned with EnsureRole before the first
 // database; this ordering guarantees role cleanup runs after database cleanup.
-// An empty name derives a test-specific name with a digest suffix, while an
-// explicit name is retained when valid.
+// An empty name derives a test-specific name with a digest suffix. An explicit
+// name is retained unless another live database in the package already uses it.
 func (h *Harness) NewDatabase(t *testing.T, name string) *Database {
 	t.Helper()
 	if h == nil || h.admin == nil {
@@ -349,14 +568,31 @@ func (h *Harness) NewDatabase(t *testing.T, name string) *Database {
 	if err := validateIdentifier(name); err != nil {
 		t.Fatalf("invalid PostgreSQL database: %v", err)
 	}
+	if h.shared != nil {
+		name = reservePackageDatabase(h.adminURL, name, t.Name())
+	}
 	h.mu.Lock()
 	h.databaseCreated = true
 	h.mu.Unlock()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	if _, err := h.admin.Exec(ctx, "CREATE DATABASE "+quoteIdentifier(name)); err != nil {
+		if h.shared != nil {
+			releasePackageDatabase(h.adminURL, name)
+		}
 		t.Fatalf("create PostgreSQL database %q: %v", name, err)
 	}
+	// Register database cleanup before opening the target pool so a connection
+	// failure cannot leave a database behind on the shared package server.
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, err := h.admin.Exec(cleanupCtx, "DROP DATABASE IF EXISTS "+quoteIdentifier(name)+" WITH (FORCE)"); err != nil {
+			t.Errorf("drop PostgreSQL database %q: %v", name, err)
+		} else if h.shared != nil {
+			releasePackageDatabase(h.adminURL, name)
+		}
+	})
 	targetAdmin, err := pgxpool.New(ctx, h.urlFor(name, "postgres", defaultPassword))
 	if err != nil {
 		t.Fatalf("open PostgreSQL database administrator pool %q: %v", name, err)
@@ -366,13 +602,6 @@ func (h *Harness) NewDatabase(t *testing.T, name string) *Database {
 		t.Fatalf("ping PostgreSQL database administrator pool %q: %v", name, err)
 	}
 	db := &Database{h: h, Name: name, admin: targetAdmin}
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		if _, err := h.admin.Exec(cleanupCtx, "DROP DATABASE IF EXISTS "+quoteIdentifier(name)+" WITH (FORCE)"); err != nil {
-			t.Errorf("drop PostgreSQL database %q: %v", name, err)
-		}
-	})
 	// Close target connections before DROP DATABASE.  This callback is
 	// registered second so it runs first under LIFO cleanup; FORCE remains a
 	// deterministic fallback for leaked application connections.

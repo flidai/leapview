@@ -247,6 +247,7 @@ type PostgresJobsAuthority interface {
 	PostgresQueueLifecycle
 	PostgresJobHistory
 	ClaimRiverJob(context.Context, jobs.Job, time.Duration) (refreshrun.JobRecord, error)
+	RecoverExpiredRefreshJobs(context.Context, int) error
 }
 
 func (a *PostgresJobsAdapter) CompleteJobTx(ctx context.Context, tx refreshpostgres.Tx, job refreshrun.JobRecord) error {

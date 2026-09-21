@@ -5,28 +5,79 @@ on:
     workflows: [Main artifacts]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      action:
+        description: Hosted demo operation
+        type: choice
+        required: true
+        default: publish
+        options: [publish, stage, prepare, deploy]
 
 permissions:
   contents: read
   id-token: write
+  packages: read
+  actions: read
+  attestations: read
 
 concurrency:
   group: leapview-hosted-demo
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy Olist showcase
+  publication-source:
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action == 'publish')
+    name: Resolve demo publication source
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.resolve.outputs.publish }}
+      revision: ${{ steps.resolve.outputs.revision }}
+    steps:
+      - name: Check out the deployment policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+      - name: Resolve the pinned runtime revision
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          extract_revision() {
+            sed -nE "s/^REVISION = '([0-9a-f]{40})'$/\1/p"
+          }
+          revision="$(extract_revision < scripts/rollout_demo_runtime.py)"
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          publish=false
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            publish=true
+          else
+            previous_revision="$(git show HEAD^:scripts/rollout_demo_runtime.py | extract_revision)"
+            [[ "$previous_revision" =~ ^[0-9a-f]{40}$ ]]
+            if [[ "$revision" != "$previous_revision" ]]; then
+              publish=true
+            fi
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          if [[ "$publish" == false ]]; then
+            echo "Skipping content publication because the pinned demo runtime did not change." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  deploy:
+    name: Deploy Olist showcase
+    needs: publication-source
+    if: needs.publication-source.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: leapview-demo
     env:
-      SOURCE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+      SOURCE_REVISION: ${{ needs.publication-source.outputs.revision }}
 
     steps:
       - name: Check out the qualified revision
@@ -63,6 +114,9 @@ jobs:
         env:
           DEMO_SOURCE_REVISION: ${{ env.SOURCE_REVISION }}
           DEMO_TARGET: https://demo.leapview.dev
+          DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
+          DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
+          DEMO_RELEASE_CLIENT_ID: ${{ vars.DEMO_RELEASE_PRINCIPAL_ID }}
         run: ./scripts/deploy_demo.sh
 
       - name: Record deployed product routes
@@ -71,7 +125,116 @@ jobs:
           {
             echo '### Hosted demo'
             echo
+            echo '- [Sign in](https://demo.leapview.dev/login)'
+            echo '- Product dashboards (sign-in required):'
             echo '- [Visual Showcase](https://demo.leapview.dev/dashboards/visual-showcase/pages/overview)'
             echo '- [Executive Sales](https://demo.leapview.dev/dashboards/executive-sales/pages/overview)'
             echo '- [Fulfillment Operations](https://demo.leapview.dev/dashboards/fulfillment-operations/pages/overview)'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  stage:
+    if: inputs.action == 'stage' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: leapview-demo-operator
+      cancel-in-progress: false
+    name: Stage qualified demo runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: leapview-demo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Require the exact qualified main image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35517262458)"
+          test "$(jq -r .conclusion <<<"$run_json")" = success
+          test "$(jq -r .head_sha <<<"$run_json")" = 2e228ec6b42ab5c18bea04ce037695642aaf8019
+      - name: Admit exact image provenance
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ghcr.io/flidai/leapview@sha256:29d832a2504ccb39b4b7a4d55defa2c9968116d228449ca6adc981d6adcd1bc2
+          repository: ghcr.io/flidai/leapview
+          expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
+          source-revision: 2e228ec6b42ab5c18bea04ce037695642aaf8019
+      - name: Fetch infrastructure credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /hetzner-qualification/infrastructure
+      - name: Fetch demo deployment credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /demo/deployment
+      - name: Stage immutable image with pinned SSH identity
+        env:
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+        run: |
+          set -euo pipefail
+          DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
+          export DEMO_RUNNER_IP
+          bash scripts/stage_demo_runtime.sh
+
+  rollout:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (inputs.action == 'prepare' || inputs.action == 'deploy')
+    concurrency:
+      group: leapview-demo-operator
+      cancel-in-progress: false
+    name: Prepare or deploy qualified demo runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: leapview-demo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Require the exact qualified main image
+        if: inputs.action == 'deploy'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35517262458)"
+          test "$(jq -r .conclusion <<<"$run_json")" = success
+          test "$(jq -r .head_sha <<<"$run_json")" = 2e228ec6b42ab5c18bea04ce037695642aaf8019
+      - name: Fetch infrastructure credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /hetzner-qualification/infrastructure
+      - name: Fetch demo deployment credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /demo/deployment
+      - name: Run checked rollout with pinned SSH identity
+        env:
+          DEMO_ROLLOUT_ACTION: ${{ inputs.action }}
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+        run: |
+          set -euo pipefail
+          DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
+          export DEMO_RUNNER_IP
+          bash scripts/rollout_demo_runtime.sh

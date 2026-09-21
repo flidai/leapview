@@ -1,0 +1,122 @@
+/* The architecture diagram belongs to the homepage, not the shared site shell. */
+@scope (.site-home) {
+.architecture {
+  position: relative;
+  overflow: hidden;
+  scroll-margin-top: 72px;
+  padding: 96px 0 105px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 96%, var(--ink));
+  color: var(--ink);
+}
+.architecture-heading { max-width: 850px; margin: 0 0 48px; }
+.architecture-heading h2 { margin: 0; font-size: var(--section-title-size); font-weight: 600; letter-spacing: -.055em; line-height: 1.04; }
+.architecture-heading > p:last-child { max-width: 720px; margin: 20px 0 0; color: var(--muted); font-size: clamp(15px, 1.3vw, 18px); line-height: 1.55; }
+
+.architecture-board { position: relative; min-height: 590px; isolation: isolate; }
+.architecture-wires { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.architecture-wire path { fill: none; stroke: color-mix(in srgb, var(--border) 55%, var(--muted)); stroke-width: 1.5; vector-effect: non-scaling-stroke; transition: stroke .25s, stroke-width .25s; }
+.architecture-wire circle { fill: color-mix(in srgb, var(--border) 55%, var(--muted)); transition: fill .25s; }
+.architecture-wire.is-active path { stroke: var(--tone-fg); stroke-width: 2; }
+.architecture-wire.is-active circle { fill: var(--tone-fg); }
+
+:is(.slab-piece, .architecture-callout, .architecture-wire)[data-detail="dashboards"] { --tone-fg: var(--fgColor-accent); --tone-bg: var(--bgColor-accent-muted); --tone-border: var(--borderColor-accent-emphasis); }
+:is(.slab-piece, .architecture-callout, .architecture-wire)[data-detail="agents"] { --tone-fg: var(--fgColor-done); --tone-bg: var(--bgColor-done-muted); --tone-border: var(--borderColor-done-emphasis); }
+.layer-slab[data-layer="serving"] .slab-piece, :is(.architecture-callout, .architecture-wire)[data-layer="serving"] { --tone-fg: var(--fgColor-success); --tone-bg: var(--bgColor-success-muted); --tone-border: var(--borderColor-success-emphasis); }
+.layer-slab[data-layer="compute"] .slab-piece, :is(.architecture-callout, .architecture-wire)[data-layer="compute"] { --tone-fg: var(--fgColor-severe); --tone-bg: var(--bgColor-severe-muted); --tone-border: var(--borderColor-severe-emphasis); }
+:is(.slab-piece, .architecture-callout, .architecture-wire)[data-detail="postgres"] { --tone-fg: var(--fgColor-attention); --tone-bg: var(--bgColor-attention-muted); --tone-border: var(--borderColor-attention-emphasis); }
+:is(.slab-piece, .architecture-callout, .architecture-wire)[data-detail="ducklake"] { --tone-fg: var(--fgColor-sponsors); --tone-bg: var(--bgColor-sponsors-muted); --tone-border: var(--borderColor-sponsors-emphasis); }
+
+.architecture-stack { position: absolute; z-index: 2; top: 56px; left: 50%; width: min(46%, 530px); aspect-ratio: 570 / 545; transform: translateX(-50%); }
+.layer-slab { position: absolute; left: 50%; display: block; width: 48.8%; aspect-ratio: 278 / 149; padding: 0; color: var(--ink); transform: translateX(-50%); --slab-top: var(--bgColor-inverse); --slab-side: color-mix(in srgb, var(--bgColor-inverse) 77%, var(--borderColor-emphasis)); --slab-stroke: var(--borderColor-emphasis); --slab-ink: var(--fgColor-onInverse); }
+:scope.is-light .layer-slab { --slab-top: var(--borderColor-emphasis); --slab-side: var(--bgColor-neutral-emphasis); --slab-stroke: var(--bgColor-emphasis); --slab-ink: var(--fgColor-onEmphasis); }
+.slab-piece:hover, .slab-piece:focus-visible, .slab-piece.is-active { --slab-top: color-mix(in srgb, var(--tone-fg) 82%, var(--bgColor-inverse)); --slab-side: color-mix(in srgb, var(--tone-fg) 72%, var(--bgColor-inverse)); --slab-stroke: var(--tone-border); --slab-ink: var(--fgColor-onInverse); transform: translateY(-5px); filter: drop-shadow(0 10px 18px color-mix(in srgb, var(--tone-fg) 20%, transparent)); }
+:scope.is-light .slab-piece:hover, :scope.is-light .slab-piece:focus-visible, :scope.is-light .slab-piece.is-active { --slab-top: color-mix(in srgb, var(--tone-fg) 80%, var(--bgColor-neutral-emphasis)); --slab-side: color-mix(in srgb, var(--tone-fg) 85%, var(--bgColor-emphasis)); --slab-ink: var(--fgColor-onEmphasis); }
+.slab-piece:focus-visible { outline: 2px solid var(--tone-border); outline-offset: 2px; border-radius: 4px; }
+.layer-slab--split { display: flex; gap: 2.1%; width: 100%; aspect-ratio: 570 / 149; }
+.layer-slab--split .slab-piece { flex: 1 1 0; min-width: 0; }
+.layer-slab[data-layer="interfaces"] { z-index: 4; top: 16.3%; }
+.layer-slab[data-layer="serving"] { z-index: 3; top: 32.5%; }
+.layer-slab[data-layer="compute"] { z-index: 2; top: 48.7%; }
+.layer-slab[data-layer="foundation"] { z-index: 1; top: 64.9%; }
+.slab-piece { position: relative; display: block; width: 100%; height: 100%; cursor: default; user-select: none; transition: transform .28s, filter .28s; }
+.slab-piece svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.slab-piece svg path { stroke: var(--slab-stroke); stroke-width: 2; stroke-linejoin: round; transition: fill .28s, stroke .28s; }
+.slab-body { fill: var(--slab-side); }
+.slab-top { fill: var(--slab-top); }
+.slab-face { position: absolute; z-index: 1; display: flex; align-items: center; justify-content: center; height: 36%; color: var(--slab-ink); font-family: var(--fontStack-system); font-size: clamp(9px, 1.04vw, 15px); font-weight: 700; letter-spacing: .025em; line-height: 1; text-align: center; pointer-events: none; }
+.slab-face > span { display: block; white-space: nowrap; }
+.slab-face--left { top: 55%; left: 11%; width: 38%; }
+.slab-face--right { top: 53%; right: 10%; width: 39%; height: 39%; }
+.slab-face--left > span { transform: rotate(20.7deg) skewX(18.15deg) scaleY(.95); }
+.slab-face--right > span { transform: rotate(-20.7deg) skewX(-23.24deg) scaleY(.92); }
+
+.architecture-callouts { display: contents; }
+.architecture-callout { position: absolute; z-index: 2; width: 25%; min-height: 112px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 2px; background: var(--frame-bg); transition: border-color .25s, background-color .25s, transform .25s; }
+.architecture-callout[data-detail="dashboards"] { top: 0; left: 0; }
+.architecture-callout[data-detail="agents"] { top: 0; right: 0; }
+.architecture-callout[data-layer="serving"] { top: 162px; right: 0; }
+.architecture-callout[data-layer="compute"] { top: 288px; left: 0; }
+.architecture-callout[data-detail="postgres"] { top: 448px; left: 0; }
+.architecture-callout[data-detail="ducklake"] { top: 448px; right: 0; }
+.architecture-callout.is-active { border-color: var(--tone-border); background: color-mix(in srgb, var(--frame-bg) 55%, var(--tone-bg)); transform: translateY(-3px); }
+.architecture-callout.is-active .architecture-callout-kicker { color: var(--tone-fg); }
+.architecture-callout-kicker { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--accent); font-family: var(--fontStack-system); font-size: 10px; font-weight: 750; letter-spacing: .09em; }
+.architecture-callout-kicker i { width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
+.architecture-callout h3 { margin: 0; font-size: clamp(16px, 1.5vw, 20px); font-weight: 650; letter-spacing: -.035em; line-height: 1.2; }
+.architecture-callout > p:not(.architecture-callout-kicker) { margin: 9px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.architecture-callout-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.architecture-callout-tags span { padding: 5px 7px; border: 1px solid var(--border); border-radius: 2px; color: var(--ink); font-size: 10px; font-weight: 650; line-height: 1; }
+
+@media (max-width: 1000px) and (min-width: 801px) {
+  .architecture { padding-block: 82px 85px; }
+  .architecture-heading { margin-bottom: 50px; }
+  .architecture-board { min-height: 570px; }
+  .architecture-stack { top: 100px; width: min(46%, 340px); }
+  .architecture-callout { width: 26%; min-height: 112px; padding: 12px 13px; }
+  .architecture-callout[data-layer="serving"] { top: 190px; }
+  .architecture-callout[data-layer="compute"] { top: 305px; }
+  .architecture-callout[data-detail="postgres"], .architecture-callout[data-detail="ducklake"] { top: 445px; }
+  .architecture-callout h3 { font-size: 16px; }
+  .architecture-callout > p:not(.architecture-callout-kicker) { font-size: 11px; }
+  .architecture-callout-tags { gap: 4px; }
+  .architecture-callout-tags span { padding-inline: 5px; }
+  .slab-face { font-size: clamp(8px, 1.25vw, 11px); }
+}
+@media (max-width: 800px) {
+  .architecture { padding-block: 70px 72px; }
+  .architecture-heading { margin-bottom: 32px; }
+  .architecture-heading > p:last-child { max-width: 380px; margin-top: 16px; font-size: 13px; }
+  .architecture-board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; min-height: 0; }
+  .architecture-wires { z-index: 0; }
+  .architecture-callout { position: relative; z-index: 1; top: auto !important; right: auto !important; bottom: auto !important; left: auto !important; width: 100%; min-height: 112px; padding: 12px 11px; }
+  .architecture-callout[data-detail="dashboards"] { grid-column: 1; grid-row: 1; }
+  .architecture-callout[data-detail="agents"] { grid-column: 2; grid-row: 1; }
+  .architecture-callout[data-layer="serving"] { grid-column: 1; grid-row: 2; }
+  .architecture-callout[data-layer="compute"] { grid-column: 2; grid-row: 2; }
+  .architecture-stack { position: relative; grid-column: 1 / -1; grid-row: 3; top: auto; left: auto; width: min(100%, 480px); margin: 8px auto; transform: none; }
+  .architecture-callout[data-detail="postgres"] { grid-column: 1; grid-row: 4; }
+  .architecture-callout[data-detail="ducklake"] { grid-column: 2; grid-row: 4; }
+  .slab-face { font-size: clamp(8px, 2.2vw, 11px); letter-spacing: 0; }
+  .architecture-callout-kicker { gap: 5px; margin-bottom: 8px; font-size: 8px; letter-spacing: .025em; }
+  .architecture-callout-kicker i { width: 5px; height: 5px; }
+  .architecture-callout h3 { font-size: 15px; }
+  .architecture-callout > p:not(.architecture-callout-kicker) { margin-top: 7px; font-size: 10px; line-height: 1.35; }
+  .architecture-callout-tags { gap: 4px; margin-top: 9px; }
+  .architecture-callout-tags span { padding: 4px 5px; font-size: 8px; }
+}
+@media (max-width: 360px) {
+  .architecture-board { grid-template-columns: 1fr; }
+  .architecture-callout { min-height: 0; }
+  .architecture-callout[data-detail="dashboards"] { grid-column: 1; grid-row: 1; }
+  .architecture-callout[data-detail="agents"] { grid-column: 1; grid-row: 2; }
+  .architecture-callout[data-layer="serving"] { grid-column: 1; grid-row: 3; }
+  .architecture-callout[data-layer="compute"] { grid-column: 1; grid-row: 4; }
+  .architecture-stack { grid-column: 1; grid-row: 5; }
+  .architecture-callout[data-detail="postgres"] { grid-column: 1; grid-row: 6; }
+  .architecture-callout[data-detail="ducklake"] { grid-column: 1; grid-row: 7; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .slab-piece, .slab-piece svg path, .architecture-callout, .architecture-wire path, .architecture-wire circle { transition: none; }
+}
+}

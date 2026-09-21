@@ -236,7 +236,12 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 			t.Errorf("%s qualification must target the password input without matching its visibility control", name)
 		}
 	}
-
+	if !strings.Contains(browser, `getByRole('heading', { name: 'Welcome back', exact: true })`) {
+		t.Error("browser qualification must assert the rendered login heading after invalid authentication")
+	}
+	if !strings.Contains(browser, "Authorization: `Bearer ${credentials.workloadToken}`") || strings.Contains(browser, "Authorization: `Bearer ${credentials.publisherToken}`") {
+		t.Error("browser qualification must prove PROJECT_ADMIN denial with the project-bound restricted workload credential")
+	}
 	for _, required := range []string{
 		"cp -R deploy/compose/qualification",
 		`cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"`,
@@ -342,7 +347,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	if !strings.Contains(browser, `getByRole('checkbox', { name: 'SP', exact: true })`) ||
 		!strings.Contains(performance, `getByRole('checkbox', { name: value, exact: true })`) ||
-		!strings.Contains(performance, `getByRole('checkbox', { name: 'All State', exact: true })`) {
+		!strings.Contains(performance, `getByRole('button', { name: 'Clear State', exact: true })`) || strings.Contains(performance, "All State") {
 		t.Error("browser qualification must exercise deterministic State multi-select values")
 	}
 	if !strings.Contains(browser, `button.cell-action[aria-label="state: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="state: ${value}"]`) {
@@ -443,6 +448,12 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 		if !strings.Contains(worker, required) {
 			t.Errorf("browser worker must create exact-scope API tokens through the stable UI command contract: missing %q", required)
 		}
+	}
+	if !strings.Contains(worker, "new URL('/admin/api-tokens/new', baseURL)") || strings.Contains(worker, "new URL('/admin/api-tokens', baseURL)") || strings.Contains(worker, "#token-expiry") {
+		t.Error("browser worker must open the token creation route and avoid the removed raw-expiry control")
+	}
+	if !strings.Contains(worker, "locator('lv-one-time-secret').evaluate") || strings.Contains(worker, "getByRole('status').locator('code')") {
+		t.Error("browser worker must read the generated token from the current one-time-secret contract")
 	}
 	if strings.Contains(worker, `input[type="checkbox"][value="${capability}"]`) {
 		t.Error("browser worker must not couple exact token scopes to grouped permission-picker checkbox values")

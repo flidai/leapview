@@ -17,6 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/strictjson"
+	"github.com/google/uuid"
 )
 
 const (
@@ -38,6 +39,9 @@ var _ Coordinator = (*Service)(nil)
 func New(repo Repository, store MultipartStore, config Config) (*Service, error) {
 	if repo == nil || store == nil {
 		return nil, fmt.Errorf("%w: multipart repository and store are required", control.ErrInvalid)
+	}
+	if _, ok := repo.(multipartClaimer); !ok {
+		return nil, fmt.Errorf("%w: multipart repository must provide durable digest claims", control.ErrInvalid)
 	}
 	if err := validateIdentity("storage backend", config.Backend, 128); err != nil {
 		return nil, err
@@ -370,7 +374,16 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest) (Upload
 			return UploadResult{}, err
 		}
 	}
-	claim, err := s.repo.BeginS3MultipartCompletion(ctx, manageddata.BeginS3MultipartCompletionInput{
+	claimCtx := ctx
+	release := func() {}
+	if upload.Status != manageddata.S3MultipartStatusCompleted {
+		claimCtx, release, err = acquireMultipartClaim(ctx, s.repo, upload.SHA256, "complete:"+uuid.NewString())
+		if err != nil {
+			return UploadResult{}, err
+		}
+		defer release()
+	}
+	claim, err := s.repo.BeginS3MultipartCompletion(claimCtx, manageddata.BeginS3MultipartCompletionInput{
 		ID: upload.ID, IdempotencyIdentity: identityHash("complete", upload.ID.String(), request.IdempotencyKey), RequestHash: requestHash,
 		AuditIntent: request.AuditIntent,
 	})
@@ -384,19 +397,19 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest) (Upload
 	for index, part := range ordered {
 		providerParts[index] = storage.CompletedMultipartPart{Number: part.PartNumber, ETag: part.ETag, SHA256: part.SHA256}
 	}
-	blob, err := s.store.CompleteMultipart(ctx, providerUpload(claim.Upload), providerParts)
+	blob, err := s.store.CompleteMultipart(claimCtx, providerUpload(claim.Upload), providerParts)
 	if err != nil {
 		if errors.Is(err, storage.ErrIntegrity) {
-			_, _ = s.repo.FailS3MultipartUpload(ctx, upload.ID, integrityTerminalError)
+			_, _ = s.repo.FailS3MultipartUpload(claimCtx, upload.ID, integrityTerminalError)
 			return UploadResult{}, control.ErrIntegrity
 		}
 		return UploadResult{}, storageError(err)
 	}
 	if blob.SHA256 != file.SHA256 || blob.Size != file.Size {
-		_, _ = s.repo.FailS3MultipartUpload(ctx, upload.ID, integrityTerminalError)
+		_, _ = s.repo.FailS3MultipartUpload(claimCtx, upload.ID, integrityTerminalError)
 		return UploadResult{}, control.ErrIntegrity
 	}
-	completed, err := s.repo.FinishS3MultipartCompletion(ctx, upload.ID)
+	completed, err := s.repo.FinishS3MultipartCompletion(claimCtx, upload.ID)
 	if err != nil {
 		return UploadResult{}, repositoryError(err)
 	}
@@ -443,32 +456,43 @@ func (s *Service) RecoverOrphaned(ctx context.Context, before time.Time, limit i
 	result := RecoveryResult{}
 	for _, upload := range uploads {
 		if upload.Status == manageddata.S3MultipartStatusCompleting {
-			parts, partsErr := s.repo.ListS3MultipartParts(ctx, upload.ID)
-			if partsErr != nil {
-				return result, repositoryError(partsErr)
-			}
-			providerParts := make([]storage.CompletedMultipartPart, len(parts))
-			for i, part := range parts {
-				providerParts[i] = storage.CompletedMultipartPart{Number: part.PartNumber, SHA256: part.SHA256}
-			}
-			blob, completeErr := s.store.CompleteMultipart(ctx, providerUpload(upload), providerParts)
-			if completeErr != nil {
-				return result, storageError(completeErr)
-			}
-			if blob.SHA256 != upload.SHA256 || blob.Size != upload.SizeBytes {
-				_, _ = s.repo.FailS3MultipartUpload(ctx, upload.ID, integrityTerminalError)
-				result.Failed++
-				continue
-			}
-			if _, finishErr := s.repo.FinishS3MultipartCompletion(ctx, upload.ID); finishErr != nil {
-				current, lookupErr := s.repo.S3MultipartUploadByID(ctx, upload.ID)
-				if lookupErr == nil && current.Status == manageddata.S3MultipartStatusCompleted {
-					result.Completed++
-					continue
+			completionErr := func() error {
+				claimCtx, release, claimErr := acquireMultipartClaim(ctx, s.repo, upload.SHA256, "recover-complete:"+uuid.NewString())
+				if claimErr != nil {
+					return claimErr
 				}
-				return result, repositoryError(finishErr)
+				defer release()
+				parts, partsErr := s.repo.ListS3MultipartParts(claimCtx, upload.ID)
+				if partsErr != nil {
+					return repositoryError(partsErr)
+				}
+				providerParts := make([]storage.CompletedMultipartPart, len(parts))
+				for i, part := range parts {
+					providerParts[i] = storage.CompletedMultipartPart{Number: part.PartNumber, SHA256: part.SHA256}
+				}
+				blob, completeErr := s.store.CompleteMultipart(claimCtx, providerUpload(upload), providerParts)
+				if completeErr != nil {
+					return storageError(completeErr)
+				}
+				if blob.SHA256 != upload.SHA256 || blob.Size != upload.SizeBytes {
+					_, _ = s.repo.FailS3MultipartUpload(claimCtx, upload.ID, integrityTerminalError)
+					result.Failed++
+					return nil
+				}
+				if _, finishErr := s.repo.FinishS3MultipartCompletion(claimCtx, upload.ID); finishErr != nil {
+					current, lookupErr := s.repo.S3MultipartUploadByID(claimCtx, upload.ID)
+					if lookupErr == nil && current.Status == manageddata.S3MultipartStatusCompleted {
+						result.Completed++
+						return nil
+					}
+					return repositoryError(finishErr)
+				}
+				result.Completed++
+				return nil
+			}()
+			if completionErr != nil {
+				return result, completionErr
 			}
-			result.Completed++
 			continue
 		}
 		if upload.Status == manageddata.S3MultipartStatusCreating && upload.ProviderUploadID == "" {

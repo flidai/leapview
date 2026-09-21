@@ -114,6 +114,68 @@ mutate release or recovery state. FAI-519 must revalidate the same immutable
 evidence at its execution boundary. Preflight evidence does not execute a
 release transition.
 
+### Forward-only transition qualification
+
+The build-tagged qualification lane is the bounded end-to-end check for the
+forward-only execution boundary that follows preflight. Run it from a checkout
+with the qualification PostgreSQL service available:
+
+```sh
+task qualify:ubdr:release-transition
+```
+
+The lane resolves the exact predecessor, candidate, target, policy, migration
+capabilities, and published recovery frontier through the authoritative
+production preflight composition. It then applies the real PostgreSQL Goose
+and River migration runners against an already-current disposable schema,
+stages and activates the immutable host-install generation through the
+production primitives, launches a fresh qualification process, and checks its
+candidate-image/target-identity handshake. The operation is also exercised
+through its concurrency and injected-failure matrix. A separate PostgreSQL
+connection and release repository read the durable state back, proving that
+the operation identity and phase evidence are not held only in process memory.
+
+The report directory is supplied by the task and is bounded to the run's
+evidence. A success report is published with an atomic rename only after every
+phase and readback check passes; failed or interrupted runs must not publish a
+success report. Preserve the resulting report with the release evidence and
+the exact immutable image references.
+
+For the real predecessor/candidate artifact lane, run
+`task qualify:ubdr:release-transition-artifact` with the exact image and source
+revision inputs required by `scripts/qualify_fai518_real_artifact.sh`. Both
+images must pass live artifact admission. The lane loads the complete Goose
+migration set from each admitted artifact's attested source revision. The
+selected predecessor must contain exactly revisions 001–019; the candidate
+must contain exactly 001–020. Checkout migrations are never supplied to this
+candidate migration provider. An extra candidate migration, including 021,
+fails before migration execution rather than being filtered away.
+
+The existing signed Goose capability binds the candidate admission and target
+to the migration-set digest. Migration execution runs under the existing
+migration fence. Post-validation requires observed database revision 020;
+it does not use the checkout's current revision. The durable migration-phase
+result and `transition-report.json` retain both admission digests, target
+identity, candidate image/source, capability and migration-set digests, and
+the observed revision. Regressions cover a checkout containing 021, an extra
+candidate migration, inconsistent bindings, and rejection of a database or
+success report at revision 021. This evidence does not qualify host upgrades
+or rollback.
+
+This qualification is a local disposable-PostgreSQL and host-install
+simulation: it does not prove provider-specific image rollout, cloud recovery,
+or production systemd/container orchestration. The disposable database is
+already at the current schema, so the lane does not qualify a real
+predecessor-to-candidate schema delta. It is forward-only and does not qualify
+binary rollback or restore a recovery provider; those remain separate
+operational procedures.
+The restart gate launches the qualification test process with the exact
+admitted image and target identities from the staged generation; it verifies
+the orchestration and identity handshake, not execution of that OCI image by a
+production container or systemd runtime.
+
+Forward transition qualification does not prove rollback or physical disaster recovery.
+
 The release-owned PostgreSQL policy authority stores one immutable policy for
 each exact predecessor/candidate artifact-digest pair. Policy publication is a
 controlled maintenance operation; the application runtime has read-only

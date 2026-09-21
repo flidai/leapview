@@ -307,6 +307,12 @@ func (m *Module) Environment() servingstate.Environment {
 func (m *Module) Acquire(ctx context.Context) (runtimehost.Lease, error) {
 	return m.registry.Acquire(ctx)
 }
+func (m *Module) AcquireCutoverFence(ctx context.Context) (func(), error) {
+	if m == nil || m.registry == nil {
+		return nil, runtimehost.ErrRegistryClosed
+	}
+	return m.registry.AcquireCutoverFence(ctx)
+}
 func (m *Module) LeasedSnapshots() []int64 { return m.registry.LeasedSnapshots() }
 func (m *Module) LeaseRenewalError() error {
 	if m == nil || m.registry == nil {

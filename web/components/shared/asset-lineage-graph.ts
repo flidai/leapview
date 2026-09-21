@@ -47,6 +47,9 @@ type LineageEdge = {
 type LineageLayout = {
   rankIndex: Map<number, number>
   nodeIndex: Map<string, number>
+  rankNodeCount: Map<number, number>
+  maxNodeCount: number
+  nodeGapY: number
 }
 
 type LineagePathState = {
@@ -63,8 +66,11 @@ type LineageNodeData = LineageNode & {
 
 const NODE_GAP_X = 260
 const NODE_GAP_Y = 124
+const DENSE_NODE_GAP_Y = 88
 const NODE_OFFSET_X = 96
 const NODE_MIN_Y = 48
+const READABLE_FIT_MIN_ZOOM = 0.55
+const DENSE_FIT_MIN_ZOOM = 0.45
 
 class AssetLineageGraph extends LitElement {
   @property({ type: Object }) graph: LineageGraph | null = null
@@ -110,6 +116,8 @@ class AssetLineageGraph extends LitElement {
     if (!this.root) return
     const graph = this.resolvedGraph
     const layout = createLineageLayout(graph.nodes)
+    const nodeRanks = new Map(graph.nodes.map((node) => [node.id, nodeRank(node)]))
+    const fitMinZoom = layout.maxNodeCount >= 8 ? DENSE_FIT_MIN_ZOOM : READABLE_FIT_MIN_ZOOM
     const selectedNode = this.selectionCleared ? undefined : selectedLineageNode(graph.nodes, this.selectedNodeID)
     this.selectedNodeID = selectedNode?.id
     const pathState = createPathState(graph, this.selectedNodeID)
@@ -146,11 +154,11 @@ class AssetLineageGraph extends LitElement {
               this.selectionCleared = false
               this.renderFlow()
             })),
-            edges: graph.edges.map((edge) => toFlowEdge(edge, pathState)),
+            edges: graph.edges.map((edge) => toFlowEdge(edge, pathState, nodeRanks)),
             nodeTypes: { lineageNode: LineageNodeComponent },
             fitView: true,
-            fitViewOptions: { padding: 0.12 },
-            minZoom: 0.15,
+            fitViewOptions: { padding: 0.12, minZoom: fitMinZoom },
+            minZoom: fitMinZoom,
             maxZoom: 1.35,
             nodesDraggable: false,
             nodesConnectable: false,
@@ -450,7 +458,7 @@ function toFlowNode(node: LineageNode, layout: LineageLayout, pathState: Lineage
   }
 }
 
-function toFlowEdge(edge: LineageEdge, pathState: LineagePathState): Edge {
+function toFlowEdge(edge: LineageEdge, pathState: LineagePathState, nodeRanks: Map<string, number>): Edge {
   const context = edge.kind === 'contains'
   const connected = edge.source === pathState.selectedID || edge.target === pathState.selectedID || pathState.connectedEdges.has(edge.id)
   const muted = pathState.selectedID ? !connected : false
@@ -458,8 +466,11 @@ function toFlowEdge(edge: LineageEdge, pathState: LineagePathState): Edge {
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    label: context ? '' : edge.label ?? '',
-    type: context ? 'smoothstep' : 'default',
+    // Node titles and the relationship tables carry the useful explanation.
+    // Raw backend relationship labels make projected graphs noisy and can
+    // describe the inverse data direction (for example, "Feeds model").
+    label: '',
+    type: nodeRanks.get(edge.source) === nodeRanks.get(edge.target) ? 'default' : 'smoothstep',
     markerEnd: context ? undefined : { type: MarkerType.ArrowClosed },
     interactionWidth: context ? 8 : 14,
     style: {
@@ -533,26 +544,38 @@ function createLineageLayout(nodes: LineageNode[]): LineageLayout {
   const ranks = Array.from(new Set(nodes.map(nodeRank))).sort((left, right) => left - right)
   const rankIndex = new Map(ranks.map((rank, index) => [rank, index]))
   const nodeIndex = new Map<string, number>()
+  const rankNodeCount = new Map<number, number>()
+  let maxNodeCount = 0
 
   for (const rank of ranks) {
     const rankNodes = nodes
       .filter((candidate) => nodeRank(candidate) === rank)
       .sort((left, right) => nodeSortKey(left).localeCompare(nodeSortKey(right)))
+    rankNodeCount.set(rank, rankNodes.length)
+    maxNodeCount = Math.max(maxNodeCount, rankNodes.length)
     rankNodes.forEach((candidate, index) => {
       if (!nodeIndex.has(candidate.id)) nodeIndex.set(candidate.id, index)
     })
   }
 
-  return { rankIndex, nodeIndex }
+  return {
+    rankIndex,
+    nodeIndex,
+    rankNodeCount,
+    maxNodeCount,
+    nodeGapY: maxNodeCount >= 8 ? DENSE_NODE_GAP_Y : NODE_GAP_Y,
+  }
 }
 
 function positionFor(node: LineageNode, layout: LineageLayout): { x: number; y: number } {
   const rank = nodeRank(node)
   const rankIndex = layout.rankIndex.get(rank) ?? 0
   const index = layout.nodeIndex.get(node.id) ?? 0
+  const rankNodeCount = layout.rankNodeCount.get(rank) ?? 1
+  const rankOffsetY = Math.max(0, layout.maxNodeCount - rankNodeCount) * layout.nodeGapY / 2
   return {
     x: NODE_OFFSET_X + rankIndex * NODE_GAP_X,
-    y: NODE_MIN_Y + index * NODE_GAP_Y,
+    y: NODE_MIN_Y + rankOffsetY + index * layout.nodeGapY,
   }
 }
 

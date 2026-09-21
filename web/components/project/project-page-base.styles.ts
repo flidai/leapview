@@ -41,6 +41,13 @@ export const projectBaseStyles = css`
     overflow: hidden;
   }
 
+  .asset-page.semantic-model-definition-page {
+    height: 100svh;
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
   .connection-feedback {
     margin-bottom: var(--base-size-16);
     border: var(--lv-border-muted);
@@ -482,6 +489,17 @@ export const projectBaseStyles = css`
     overflow: hidden;
   }
 
+  .semantic-model-definition-page .asset-body {
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .semantic-model-definition-page .definition-body {
+    min-height: 0;
+    overflow: hidden;
+  }
+
   .asset-body > .tabs {
     position: relative;
     padding-inline: var(--base-size-16);
@@ -551,7 +569,36 @@ export const projectBaseStyles = css`
     min-width: 0;
     align-content: start;
     gap: var(--base-size-12);
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-panel);
     padding: var(--base-size-16);
+  }
+
+  .record-table-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--base-size-12);
+    padding-top: var(--base-size-4);
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-body-compact);
+  }
+
+  .record-table-pagination button {
+    min-height: var(--control-medium-size);
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-panel);
+    color: var(--lv-fg-default);
+    cursor: pointer;
+    padding: 0 var(--base-size-12);
+    font: inherit;
+  }
+
+  .record-table-pagination button:disabled {
+    cursor: default;
+    opacity: .5;
   }
 
   .semantic-overview-description {

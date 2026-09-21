@@ -136,12 +136,13 @@ func (s authoringServingStateReaderStub) ActiveScopeForTarget(context.Context, s
 
 func TestBindClaimedProjectEnforcesConfiguredEnvironment(t *testing.T) {
 	binder := &projectClaimBinderStub{}
-	bind := bindClaimedProject(binder, "prod")
+	identities := &projectIdentityRepositoryStub{}
+	bind := bindClaimedProject(binder, identities, "prod")
 	if err := bind(context.Background(), "finance", "staging"); err == nil {
 		t.Fatal("bindClaimedProject() accepted a different environment")
 	}
-	if binder.called {
-		t.Fatal("runtime binder called for environment mismatch")
+	if binder.called || identities.called {
+		t.Fatal("project identity or runtime binder called for environment mismatch")
 	}
 	binder.err = errors.New("project binding conflict")
 	if err := bind(context.Background(), "finance", "prod"); !errors.Is(err, binder.err) {
@@ -149,6 +150,18 @@ func TestBindClaimedProjectEnforcesConfiguredEnvironment(t *testing.T) {
 	}
 	if !binder.called || binder.projectID != "finance" || binder.environment != "prod" {
 		t.Fatalf("runtime bind = %#v, want finance/prod", binder)
+	}
+	if !identities.called || identities.projectID != "finance" {
+		t.Fatalf("identity ensure = %#v, want finance", identities)
+	}
+
+	binder.called = false
+	identities.err = errors.New("identity unavailable")
+	if err := bind(context.Background(), "finance", "prod"); !errors.Is(err, identities.err) {
+		t.Fatalf("bindClaimedProject() identity error = %v, want %v", err, identities.err)
+	}
+	if binder.called {
+		t.Fatal("runtime binder called after identity ensure failed")
 	}
 }
 
@@ -173,6 +186,18 @@ type projectClaimBinderStub struct {
 	projectID   projectgraph.ResourceID
 	environment servingstatemodule.Environment
 	err         error
+}
+
+type projectIdentityRepositoryStub struct {
+	called    bool
+	projectID projectgraph.ResourceID
+	err       error
+}
+
+func (r *projectIdentityRepositoryStub) EnsureIdentity(_ context.Context, projectID projectgraph.ResourceID) error {
+	r.called = true
+	r.projectID = projectID
+	return r.err
 }
 
 func (r *projectClaimBinderStub) BindClaimedProject(projectID projectgraph.ResourceID, environment servingstatemodule.Environment) error {

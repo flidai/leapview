@@ -546,6 +546,37 @@ func (c *Controller) setImage(image string) error {
 	return updateEnvFile(c.path(deploymentEnvName), map[string]string{"LEAPVIEW_IMAGE": image})
 }
 
+// ConfiguredImage returns the immutable image selected by this installation.
+func (c *Controller) ConfiguredImage() (string, error) {
+	return envFileValue(c.path(deploymentEnvName), "LEAPVIEW_IMAGE")
+}
+
+// RunningImage reads the image reference used to create the running service.
+// A healthy process alone does not establish the candidate's identity.
+func (c *Controller) RunningImage(ctx context.Context) (string, error) {
+	id, err := c.containerID(ctx)
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", fmt.Errorf("running LeapView container is unavailable")
+	}
+	var output bytes.Buffer
+	if err := c.docker(ctx, nil, &output, c.stderr, "inspect", "-f", "{{.Config.Image}}", id); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(output.String()), nil
+}
+
+// UpdateImage changes only the Compose image selection. Host upgrades call it
+// after staging the candidate generation, while holding the host install lock.
+func (c *Controller) UpdateImage(image string) error {
+	if err := requireDigest(image); err != nil {
+		return err
+	}
+	return c.withLock(func() error { return c.setImage(image) })
+}
+
 func (c *Controller) withLock(operation func() error) error {
 	lock, err := instancelock.AcquireNamed(c.root, controllerLockName)
 	if err != nil {

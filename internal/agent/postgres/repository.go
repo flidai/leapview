@@ -226,20 +226,13 @@ func (r *Repository) recordAudit(ctx context.Context, tx Tx, intent *access.Audi
 		return errors.New("agent audit intent recorder is required")
 	}
 	copy := *intent
-	// Access' PostgreSQL audit table stores audit_id (and the optional request
-	// and correlation identities) as UUIDs. Generate only an omitted source
-	// event identity; a non-canonical caller value is rejected so retries never
-	// silently lose their correlation key.
+	// Access' PostgreSQL audit table stores audit_id as a UUID. Generate only an
+	// omitted source event identity; request and correlation identities remain
+	// bounded opaque text so HTTP idempotency keys can be retained verbatim.
 	var identityErr error
 	copy.EventID, identityErr = requiredOrUUIDv7(copy.EventID, "audit event id")
 	if identityErr != nil {
 		return identityErr
-	}
-	if copy.RequestID != "" && !isCanonicalUUID(copy.RequestID) {
-		return fmt.Errorf("audit request id must be a UUID")
-	}
-	if copy.CorrelationID != "" && !isCanonicalUUID(copy.CorrelationID) {
-		return fmt.Errorf("audit correlation id must be a UUID")
 	}
 	if domain != nil {
 		if !isCanonicalUUID(domain.EventID) || domain.AggregateVersion <= 0 {
@@ -278,9 +271,8 @@ func (r *Repository) recordAudit(ctx context.Context, tx Tx, intent *access.Audi
 		copy.AggregateKey = "agent_conversation:" + aggregateID
 	}
 	// The canonical domain event sequence is authoritative whenever a domain
-	// event was appended in this transaction.  The legacy fallback below is
-	// retained only for callers that intentionally omit the domain appender
-	// (for example the SQLite compatibility path).
+	// event was appended in this transaction. The fallback below is retained
+	// for narrow callers that intentionally omit the domain appender.
 	if domain == nil {
 		if isRun {
 			if strings.Contains(op, "create") {

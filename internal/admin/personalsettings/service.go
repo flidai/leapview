@@ -124,7 +124,16 @@ func (s *Service) Load(ctx context.Context, principalID, currentSessionID string
 		Security: SecuritySignal{LocalPasswordEnabled: s.LocalPasswordEnabled, Sessions: make([]SessionSignal, 0, len(sessions))},
 		Tokens:   TokensSignal{Items: make([]TokenSignal, 0, len(tokens)), Capabilities: capabilityOptions},
 	}
+	now := s.now()
+	seenSessions := make(map[string]struct{}, len(sessions))
 	for _, session := range sessions {
+		if !activeSession(session, now) {
+			continue
+		}
+		if _, seen := seenSessions[session.ID]; seen {
+			continue
+		}
+		seenSessions[session.ID] = struct{}{}
 		result.Security.Sessions = append(result.Security.Sessions, sessionSignal(session, currentSessionID))
 	}
 	for _, token := range tokens {
@@ -139,13 +148,45 @@ func (s *Service) Load(ctx context.Context, principalID, currentSessionID string
 			return Signal{}, authoringErr
 		}
 		result.Security.AuthoringSessions = make([]AuthoringSessionSignal, 0, len(authoringSessions))
+		seenAuthoringSessions := make(map[string]struct{}, len(authoringSessions))
 		for _, session := range authoringSessions {
+			if !activeAuthoringSession(session, now) {
+				continue
+			}
+			if _, seen := seenAuthoringSessions[session.ID]; seen {
+				continue
+			}
+			seenAuthoringSessions[session.ID] = struct{}{}
 			result.Security.AuthoringSessions = append(result.Security.AuthoringSessions, authoringSessionSignal(session))
 		}
 	} else {
 		result.Security.AuthoringSessions = []AuthoringSessionSignal{}
 	}
 	return result, nil
+}
+
+func activeSession(value access.Session, now time.Time) bool {
+	if strings.TrimSpace(value.ID) == "" || strings.TrimSpace(value.RevokedAt) != "" {
+		return false
+	}
+	return activeSessionTimestamp(value.ExpiresAt, now) && activeSessionTimestamp(value.AbsoluteExpiresAt, now)
+}
+
+func activeSessionTimestamp(value string, now time.Time) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return true
+	}
+	expiresAt, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		// An unparseable non-empty expiry cannot be presented as an active session.
+		return false
+	}
+	return now.Before(expiresAt)
+}
+
+func activeAuthoringSession(value access.AuthoringSession, now time.Time) bool {
+	return strings.TrimSpace(value.ID) != "" && value.RevokedAt.IsZero() && (value.ExpiresAt.IsZero() || now.Before(value.ExpiresAt))
 }
 
 func (s *Service) ApplyTheme(ctx context.Context, principalID string, command ThemeCommand) error {
@@ -254,6 +295,10 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 		if name == "" || len(name) > 200 {
 			return nil, fmt.Errorf("token name must contain between 1 and 200 bytes")
 		}
+		description := strings.TrimSpace(command.Description)
+		if len(description) > 1024 {
+			return nil, fmt.Errorf("token description must not exceed 1024 bytes")
+		}
 		var capabilities []access.Capability
 		if command.Capabilities != nil {
 			capabilities = make([]access.Capability, 0, len(command.Capabilities))
@@ -288,7 +333,7 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 		var secret string
 		err = s.runAudited(ctx, func(repository Repository) (access.AuditEventInput, error) {
 			createdSecret, token, createErr := repository.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-				PrincipalID: principalID, Name: name, Capabilities: capabilities, ExpiresAt: expiresAt,
+				PrincipalID: principalID, Name: name, Description: description, Capabilities: capabilities, ExpiresAt: expiresAt,
 			})
 			secret = createdSecret
 			return access.AuditEventInput{PrincipalID: principalID, Action: "api_token.created", ResourceKind: "api_token", ResourceID: token.ID, Status: "success", MetadataJSON: metadataJSON(map[string]string{"name": name})}, createErr

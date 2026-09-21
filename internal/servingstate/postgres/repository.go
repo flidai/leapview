@@ -386,7 +386,10 @@ func bundleFromGetRow(row servingdb.GetBundleRow) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, err
 	}
-	bundle := Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}
+	bundle, err := canonicalizeBundleDocuments(Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano)})
+	if err != nil {
+		return Bundle{}, err
+	}
 	if row.CommittedAt.Valid {
 		bundle.ActivatedAt = row.CommittedAt.Time.UTC().Format(time.RFC3339Nano)
 	}
@@ -398,7 +401,7 @@ func bundleFromActiveRow(row servingdb.GetActiveBundleRow) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, err
 	}
-	return Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano), ActivatedAt: row.CommittedAt.Time.UTC().Format(time.RFC3339Nano)}, nil
+	return canonicalizeBundleDocuments(Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano), ActivatedAt: row.CommittedAt.Time.UTC().Format(time.RFC3339Nano)})
 }
 func bundleToState(b Bundle, status servingstate.Status) servingstate.State {
 	return servingstate.State{ID: servingstate.ID(b.GenerationID), ProjectID: b.ProjectID, Environment: b.Environment, Status: status, Source: servingstate.SourcePublish, Digest: b.ArtifactDigest, ManifestJSON: b.ManifestJSON, ProjectDigest: b.ProjectDigest, AccessPolicyJSON: b.AccessPolicyJSON, DashboardPublicationsJSON: b.DashboardPublicationsJSON, DashboardAppearancesJSON: b.DashboardAppearancesJSON, CreatedBy: b.CreatedBy, CreatedAt: b.CreatedAt, ActivatedAt: b.ActivatedAt, DuckLakeSnapshotID: b.DuckLakeSnapshotID}
@@ -726,40 +729,6 @@ func (r *Repository) ReleaseExpiredQuerySnapshotLeasesTx(ctx context.Context, tx
 	return err
 }
 
-func (r *Repository) LeasedDuckLakeSnapshots(ctx context.Context, e string) ([]int64, error) {
-	if err := servingstate.ValidateEnvironment(servingstate.Environment(e)); err != nil {
-		return nil, err
-	}
-	db, err := r.dbOrErr()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := querySet(db).LeasedSnapshots(ctx, e)
-	if err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-func (r *Repository) ReferencedDuckLakeSnapshots(ctx context.Context, e string) ([]int64, error) {
-	if err := servingstate.ValidateEnvironment(servingstate.Environment(e)); err != nil {
-		return nil, err
-	}
-	db, err := r.dbOrErr()
-	if err != nil {
-		return nil, err
-	}
-	return querySet(db).ReferencedSnapshots(ctx, e)
-}
-func (r *Repository) ForeignEnvironmentDuckLakeSnapshots(ctx context.Context, e string) ([]int64, error) {
-	if err := servingstate.ValidateEnvironment(servingstate.Environment(e)); err != nil {
-		return nil, err
-	}
-	db, err := r.dbOrErr()
-	if err != nil {
-		return nil, err
-	}
-	return querySet(db).ForeignSnapshots(ctx, e)
-}
 func (r *Repository) ActiveServingStateGraph(ctx context.Context, p projectgraph.ResourceID, e string) (servingstate.AssetGraph, bool, error) {
 	s, _, err := r.ActiveArtifact(ctx, p, servingstate.Environment(e))
 	if errors.Is(err, servingstate.ErrNotFound) {

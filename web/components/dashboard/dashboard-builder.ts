@@ -919,17 +919,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .field-filter {
-      display: flex;
-      align-items: center;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr));
       gap: var(--base-size-4);
       margin-top: var(--base-size-8);
-      overflow-x: auto;
-      scrollbar-width: thin;
     }
 
     .field-filter button {
       min-height: var(--control-small-size);
-      flex: 0 0 auto;
+      min-width: 0;
       border: 1px solid transparent;
       border-radius: var(--lv-radius-full);
       padding: 0 var(--base-size-8);
@@ -3362,7 +3360,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           <div class="pane-header-details" ?hidden=${collapsed}>
             <label>
               <span class="sr-only">Search fields</span>
-              <input class="search" type="search" aria-label="Search fields" placeholder="Search measures and dimensions" .value=${this.fieldQuery} @input=${this.onFieldQuery} />
+              <input class="search" type="search" aria-label="Search fields" placeholder="Search fields" title="Search measures and dimensions" .value=${this.fieldQuery} @input=${this.onFieldQuery} />
             </label>
             <div class="field-filter" role="group" aria-label="Filter fields by role">
               ${(['all', ...groups] as BuilderFieldFilter[]).map((filter) => html`

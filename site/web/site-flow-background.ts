@@ -183,7 +183,10 @@ class SiteFlowBackground extends LitElement {
     context.lineJoin = 'round'
     context.lineWidth = 1
 
+    const drawIn = this.hasAttribute('draw-in')
     const reveal = this.motionQuery?.matches ? 1 : Math.min(1, time / 1.5)
+    const visibleLeft = -transform.offsetX / transform.scale
+    const visibleRight = (this.canvas.width - transform.offsetX) / transform.scale
     for (let line = 0; line < flowFieldSettings.lineCount; line++) {
       const points = generateFlowLinePoints(line, time)
       const ratio = line / Math.max(1, flowFieldSettings.lineCount - 1)
@@ -193,28 +196,60 @@ class SiteFlowBackground extends LitElement {
       const first = points[0]
       const last = points.at(-1)
       if (!first || !last) continue
+      const delay = 0.12 * line / Math.max(1, flowFieldSettings.lineCount - 1)
+      const progress = this.motionQuery?.matches ? 1 : Math.max(0, Math.min(1, (time - delay) / 1.9))
+      const eased = progress * progress
+      const headX = drawIn && progress < 1 ? visibleLeft + (visibleRight - visibleLeft) * eased : Infinity
+      if (drawIn && headX <= first.x) continue
       const gradient = context.createLinearGradient(first.x, first.y, last.x, last.y)
-      gradient.addColorStop(0, clear)
-      gradient.addColorStop(flowFieldSettings.edgeFade, solid)
-      gradient.addColorStop(1 - flowFieldSettings.edgeFade, solid)
-      gradient.addColorStop(1, clear)
+      if (drawIn && progress < 1) {
+        const headStop = Math.min(1, (headX - first.x) / (last.x - first.x))
+        const startFade = Math.min(headStop / 2, Math.max(0.001, flowFieldSettings.edgeFade * eased))
+        const tipFadeStart = Math.max(startFade, headStop - (0.035 + 0.215 * eased))
+        gradient.addColorStop(0, clear)
+        gradient.addColorStop(startFade, solid)
+        gradient.addColorStop(tipFadeStart, solid)
+        gradient.addColorStop(headStop, clear)
+      } else {
+        gradient.addColorStop(0, clear)
+        gradient.addColorStop(flowFieldSettings.edgeFade, solid)
+        gradient.addColorStop(1 - flowFieldSettings.edgeFade, solid)
+        gradient.addColorStop(1, clear)
+      }
       context.strokeStyle = gradient
-      context.globalAlpha = reveal
-      this.strokeCurve(context, points)
+      context.globalAlpha = drawIn ? 1 : reveal
+      this.strokeCurve(context, points, headX)
     }
 
     context.restore()
   }
 
-  private strokeCurve(context: CanvasRenderingContext2D, points: FlowPoint[]): void {
-    const first = points[0]
-    const last = points[points.length - 1]
+  private strokeCurve(context: CanvasRenderingContext2D, points: FlowPoint[], headX = Infinity): void {
+    let visible = points
+    if (Number.isFinite(headX)) {
+      visible = []
+      for (let index = 0; index < points.length; index++) {
+        const point = points[index]!
+        if (point.x <= headX) {
+          visible.push(point)
+          continue
+        }
+        const previous = points[index - 1]
+        if (previous) {
+          const fraction = (headX - previous.x) / (point.x - previous.x)
+          visible.push({ x: headX, y: previous.y + (point.y - previous.y) * fraction })
+        }
+        break
+      }
+    }
+    const first = visible[0]
+    const last = visible.at(-1)
     if (!first || !last) return
     context.beginPath()
     context.moveTo(first.x, first.y)
-    for (let index = 1; index < points.length - 1; index++) {
-      const point = points[index]
-      const next = points[index + 1]
+    for (let index = 1; index < visible.length - 1; index++) {
+      const point = visible[index]
+      const next = visible[index + 1]
       if (!point || !next) continue
       context.quadraticCurveTo(point.x, point.y, (point.x + next.x) / 2, (point.y + next.y) / 2)
     }

@@ -96,7 +96,7 @@ func TestPersonalSettingsRejectAuthoringCredentials(t *testing.T) {
 	handler := Handler{ReadModel: ReadModel{}, CurrentCredential: func(*http.Request) (access.APICredential, bool) {
 		return access.APICredential{Authoring: &access.AuthoringSession{ID: "authoring-1"}}, true
 	}}
-	for _, path := range []string{"/admin/profile", "/admin/security", "/admin/api-tokens"} {
+	for _, path := range []string{"/admin/profile", "/admin/security", "/admin/api-tokens", "/admin/api-tokens/new"} {
 		recorder := httptest.NewRecorder()
 		handler.Profile(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusForbidden {

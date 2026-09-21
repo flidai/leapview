@@ -16,7 +16,7 @@ var _ depauth.ApprovalActivationAppender = (*Adapter)(nil)
 // activation job in the caller-owned transaction. A worker later rechecks the
 // effective decision and publication fence before activating.
 func (a *Adapter) EnqueueApprovalActivation(ctx context.Context, tx depauth.Tx, request depauth.ApprovalRequest, decision depauth.ApprovalDecision) error {
-	if a == nil || a.jobs == nil || a.delivery == nil || tx == nil {
+	if a == nil || a.jobs == nil || a.delivery == nil || a.resourceUIDs == nil || tx == nil {
 		return fmt.Errorf("%w: approval activation workflow is not configured", depauth.ErrInvalid)
 	}
 	publication, err := a.delivery.PublicationTx(ctx, tx, request.PublicationID)
@@ -28,6 +28,9 @@ func (a *Adapter) EnqueueApprovalActivation(ctx context.Context, tx depauth.Tx, 
 	}
 	if decision.RequestID != request.RequestID || decision.Decision != depauth.ApprovalActionApprove || decision.DecisionID == "" || decision.Revision <= 0 || decision.DecidedBy.PrincipalID == "" {
 		return fmt.Errorf("%w: approval activation decision identity is invalid", depauth.ErrApprovalInvalid)
+	}
+	if _, err := a.resourceUIDs.AuthorizeApprovedResourceUIDRestoresTx(ctx, tx, request.RequestID, decision.DecisionID); err != nil {
+		return fmt.Errorf("authorize approved resource UID restores: %w", err)
 	}
 	var requestMetadata struct {
 		Rollback bool `json:"rollback"`

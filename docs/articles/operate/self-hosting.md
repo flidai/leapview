@@ -12,10 +12,10 @@ One instance contains exactly one LeapView process and environment. Production a
 
 Horizontal application replicas and an independently writable DuckLake catalog
 are not supported in the self-hosted v1 package. Multi-node lease/takeover and
-HA/PITR support remain separately qualified target requirements. SQLite is
-limited to isolated tests, evaluation fixtures, and offline tooling; it is not
-a serving or production control-plane fallback. Deploy another independent
-instance when you need another environment or capacity boundary.
+HA/PITR support remain separately qualified target requirements. No embedded
+control-plane database is available as a serving fallback. SQLite remains a
+supported analytics source connector. Deploy another independent instance when
+you need another environment or capacity boundary.
 
 ## Deploy Compose
 

@@ -66,7 +66,13 @@ func pipelineOverviewMonitor(asset projectview.DevelopAssetView, refresh AssetRe
 	if !refresh.NextRun.IsZero() {
 		monitor.NextRunAt = uisignals.Pointer(refresh.NextRun.UTC().Format(time.RFC3339))
 	}
-	monitor.LastSuccessfulAt = uisignals.Optional(refresh.LatestSuccessful.FinishedAt)
+	lastSuccessfulAt := refresh.LatestSuccessful.FinishedAt
+	if strings.TrimSpace(lastSuccessfulAt) == "" {
+		if run, ok := latestSuccessfulRefreshRun(refresh.Runs); ok {
+			lastSuccessfulAt = firstNonEmpty(run.FinishedAt, run.UpdatedAt, run.CreatedAt)
+		}
+	}
+	monitor.LastSuccessfulAt = uisignals.Optional(lastSuccessfulAt)
 	runs := append([]AssetRefreshRun(nil), refresh.Runs...)
 	if refresh.Latest.ID != "" {
 		found := false

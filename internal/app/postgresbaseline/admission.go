@@ -40,6 +40,7 @@ func VerifyControlRuntimeAdmission(ctx context.Context, reader AdmissionReader) 
 		{kind: "table", object: "project.resource_uid_registry", privilege: "DELETE", want: false},
 		{kind: "table", object: "project.resource_uid_inventory", privilege: "INSERT", want: false},
 		{kind: "function", object: "project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb)", privilege: "EXECUTE", want: true},
+		{kind: "function", object: "project.authorize_resource_uid_restores_for_approval(uuid,uuid)", privilege: "EXECUTE", want: true},
 		{kind: "function", object: "project.bind_resource_uid_generation(uuid)", privilege: "EXECUTE", want: false},
 		{kind: "function", object: "project.authorize_resource_uid_restore(text,text,text,text,uuid,uuid,text,text,text,text)", privilege: "EXECUTE", want: false},
 		{kind: "schema", object: "recovery", privilege: "USAGE", want: true},

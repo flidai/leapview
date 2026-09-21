@@ -1,10 +1,10 @@
 # ADR-0018 final conformance evidence reconciliation
 
-Status: reconciled against merged behavior; ADR closure remains pending on three partial evidence inventories
+Status: FAI-679 candidate evidence; ADR closure awaits protected validation and merge
 
-Evidence snapshot: 2026-09-14
+Evidence snapshot: 2026-09-18
 
-Repository baseline: `92ff6cdb51d51d3e03eeb21adcd1cdac047c9b8f`
+Repository baseline: `c10e7568944cd8ea734b30c09c3dfde899d1de3d`
 
 Governing decision:
 [ADR-0018](../0018-retain-project-as-the-durable-deployment-namespace.md)
@@ -18,7 +18,8 @@ Original disposition map:
 ## Purpose and status rules
 
 This inventory prepares FAI-679's final evidence review without claiming that
-ADR-0018 is implemented. It records exactly one accountable implementation
+ADR-0018 is implemented before the exact merge candidate passes protected
+validation. It records exactly one accountable implementation
 owner for each of the 54 normative requirements, merged change and validation
 evidence, and the genuine evidence gaps that still prevent closure.
 
@@ -32,6 +33,8 @@ The evidence states are:
 - **Main**: the cited implementation is merged on the repository baseline.
 - **Partial**: merged implementation covers a defined slice, but the full
   requirement still lacks maintained evidence.
+- **Candidate**: the missing executable evidence is present on this isolated
+  FAI-679 branch, but has not yet passed protected review and merge validation.
 - **Gap**: required documentation alignment or maintained evidence is absent.
 
 ## Dependency snapshot
@@ -72,11 +75,11 @@ The evidence states are:
 | RID-05 | FAI-670 | [#542](https://github.com/flidai/leapview/pull/542) / `c9e6482a8` | Stable replay/reuse and kind-conflict rollback qualification | — (Main) |
 | RID-06 | FAI-670 | [#542](https://github.com/flidai/leapview/pull/542) / `c9e6482a8` | `TestPostgresResourceUIDAdmissionAndActivationQualification` covers immutable tombstone, authorized exact-generation restore, same-scope historical rollback, atomic audit, and rollback safety | — (Main) |
 | RID-07 | FAI-670 | [#542](https://github.com/flidai/leapview/pull/542) / `c9e6482a8` | Registry-key validation excludes paths, names, environments, dbt identifiers, and artifact hashes | — (Main) |
-| API-01 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` | Project-qualified [deployment audit/lineage](../../internal/deployment/module/native_coordinator_pg_test.go), [authorization](../../internal/app/canonical_authorization_test.go), [catalog filtering](../../internal/release/module/catalog_api_test.go), [generation provenance](../../internal/release/generation_test.go), and generated-locator tests | Complete one end-to-end inventory proving public Project identity propagation across every named surface (Partial) |
-| API-02 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` | Shared [query/browser selector](../../internal/app/project_boundary_test.go), [agent context](../../internal/agent/context_test.go), and [generated agent locator](../../internal/agent/tools/registry_test.go) rejection tests | Search and release request bodies, plus the remaining browser/query body inventory, do not have exhaustive selector-rejection evidence (Partial) |
+| API-01 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1`; FAI-679 candidate | Exact-identity [surface inventory](#api-01-public-project-identity-inventory) links maintained deployment, authorization, audit, lineage, catalog, and generation tests; FAI-679 adds public release and catalog identity assertions | — (Candidate) |
+| API-02 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1`; FAI-679 candidate | [Composed router inventory](../../internal/app/project_boundary_test.go) checks pre-dispatch selector rejection on mounted browser, agent browser, and generated API routes plus all four generated query bodies; [browser commands and search signals](../../internal/project/http/creator_commands_test.go) retain the bound Project with forged selector fields; the [release command body](../../internal/release/module/module_test.go) rejects a foreign `projectId` | — (Candidate) |
 | API-03 | FAI-669 | [#512](https://github.com/flidai/leapview/pull/512) / `62d039399`; #546 supplies supporting generated-locator coverage | Foreign scope and missing claim rejected before source I/O, repository mutation, or workload admission | — (Main) |
 | API-04 | Baseline | Explicit serving identity in authorization snapshots and runtime installation | Capability, malformed identity, and authorization-install fail-closed tests | — (Main) |
-| API-05 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` is supporting but explicitly non-exhaustive | Maintained tests cover [catalog list authorization/filtering](../../internal/release/module/catalog_api_test.go), [search authentication and kind filtering](../../internal/release/module/search_test.go), [foreign candidate concealment](../../internal/deployment/module/native_candidate_preview_test.go), and [scope-safe approval errors](../../internal/deployment/module/native_approval_errors_test.go) | Discovery, autocomplete, audit, lineage, and the remaining list/search/error surfaces lack one systematic authorization-filtered inventory (Partial) |
+| API-05 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1`; FAI-679 candidate | [Authorization-filtered surface inventory](#api-05-bound-project-and-authorization-filtered-surface-inventory) links maintained catalog, browser, audit, candidate, and error tests; FAI-679 strengthens catalog search/list filtering and follows a denied browser resource through discovery, search, lineage, and detail errors | — (Candidate) |
 | API-06 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` plus the API-06 completion change | The maintained [cache/idempotency boundary audit](project-cache-idempotency-boundary-audit.md) maps every consumer; Project/target/environment/candidate partitions, generation byte scopes, protected authorization identities, authoritative HTTP replay scope, native refresh generation scope, exact replay, and fail-closed resolver tests cover the complete identity set | — (Implemented) |
 | API-07 | Baseline | Runtime-host and serving-state admission on main; #546 adds durable claim validation | Mixed Project/environment and foreign active-state rejection tests | — (Main) |
 | ENV-01 | FAI-669 | [#512](https://github.com/flidai/leapview/pull/512) / `62d039399` | Same Project UID and source bundle planned independently for dev/staging/production targets | — (Main) |
@@ -131,15 +134,66 @@ selected SAST results, and CodeQL documentation-only path classification are
 the validation evidence for this audit. No runtime, API, compiler, deployment,
 ResourceUID, dbt, or recovery behavior changed.
 
+## API-01 public Project identity inventory
+
+The following maintained tests cover the public identity chain. Each assertion
+uses the server-bound Project or the exact serving identity; a name, path,
+environment, or client selector cannot substitute for that identity.
+
+| Surface | Executable identity evidence |
+| --- | --- |
+| Deployment | [`TestNativeCoordinatorPostgresPublishCandidatePersistsEvidenceAndReplays`](../../internal/deployment/module/native_coordinator_pg_test.go) checks the Project in the queued activation and public deployment event. |
+| Authorization | [`TestActiveProjectResourceIsExactCanonicalReference`](../../internal/app/canonical_authorization_test.go) and [`TestDeliveryAuthorizationRequiresEveryAffectedResource`](../../internal/app/canonical_authorization_test.go) require the bound Project resource and its affected resources. |
+| Audit | [`TestProjectAuditProducerPersistsThroughScopedEndpoint`](../../internal/app/project_boundary_test.go) reads the emitted Project identity through the scoped API; [`TestAccessExtendedPostgreSQL18AuthorityBoundaries`](../../internal/access/postgres/access_extended_test.go) rejects foreign-Project rows. |
+| Lineage | [`TestActivationLineageVerifierAdapterResolvesExactBinding`](../../internal/app/deploymentpostgres/activation_lineage_test.go) verifies the target/Project/generation tuple at activation. |
+| Catalog | [`TestListManagedConnectionsAuthenticatesBeforeCatalogAndFilters`](../../internal/release/module/catalog_api_test.go) asserts the public Project ID on each allowed connection, while [`TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards`](../../internal/project/http/browser_test.go) binds dashboard discovery to the Project. |
+| Generation | [`TestReleaseResponsePreservesBoundProjectAndGenerationIdentity`](../../internal/release/module/module_test.go) asserts the public release identity; [`TestProvenanceBindsExactGenerationAndBaseIdentity`](../../internal/release/generation_test.go) rejects cross-Project base evidence. |
+
+## API-02 server-bound request inventory
+
+[`TestProjectBoundarySelectorFenceCoversPublicRouteInventory`](../../internal/app/project_boundary_test.go)
+walks the production-composed router, including authenticated agent browser
+routes such as `/chats/references/search`, and sends each selected browser,
+query, search, agent, and release route a client Project selector. It verifies
+the shared ingress rejects the selector before dispatch. It fails if any of
+the four current generated query body operations is missing or a new one
+appears without a body test. The same
+file tests encoded, repeated, and alternate selector spellings; actual
+dashboard page, dashboard visual, semantic query, semantic explain, and agent
+JSON bodies reject a foreign `projectId`. The browser
+[`PipelineCommand` test](../../internal/project/http/creator_commands_test.go)
+shows a forged signal cannot change the bound command invocation's Project;
+the [browser search test](../../internal/project/http/browser_test.go) shows a
+forged search signal cannot change the filtered Project result. The
+[`CreateRelease` command body](../../internal/release/module/module_test.go)
+rejects a foreign `projectId`. API search has a GET contract, so there is no
+API search mutation body to accept. The narrow unclaimed-target ProjectUID bootstrap and the
+platform audit filter remain separate, explicitly tested exceptions; neither
+switches a serving request's Project.
+
+## API-05 bound Project and authorization-filtered surface inventory
+
+| Surface | Executable filter/concealment evidence |
+| --- | --- |
+| List | [`TestSearchUsesDirectAndGroupGrantsAndDoesNotEnumerateDeniedResources`](../../internal/project/catalog/catalog_test.go) now uses matching allowed and denied models and asserts root list filtering; [`TestListManagedConnectionsAuthenticatesBeforeCatalogAndFilters`](../../internal/release/module/catalog_api_test.go) covers the public connection list. |
+| Search | The same catalog test rejects the matching denied model; [`TestSearchFailsClosedForAuthenticationCatalogAndInvalidKinds`](../../internal/release/module/search_test.go) covers public API errors. |
+| Discovery | [`TestAssetsFilterUnauthorizedSiblingAndEdges`](../../internal/project/http/browser_test.go) follows the catalog-filtered active graph into the browser bootstrap; [`TestSemanticCatalogDiscoveryAndDirectReferenceShareGate`](../../internal/project/catalog/semantic_visibility_test.go) covers semantic-resource discovery. |
+| Autocomplete | Browser `/models/search` in `TestAssetsFilterUnauthorizedSiblingAndEdges` uses the same filtered graph; [`TestSearchReferencesAutocompleteFiltersByAuthorization`](../../internal/agent/module/search_test.go) exercises agent suggestions through the real catalog adapter and per-principal grant snapshot for both search and bare mentions. There is no separate Project-switching autocomplete endpoint. |
+| Audit | [`TestProjectAuditProducerPersistsThroughScopedEndpoint`](../../internal/app/project_boundary_test.go) and [`TestAccessExtendedPostgreSQL18AuthorityBoundaries`](../../internal/access/postgres/access_extended_test.go) cover the bound audit API and foreign-row exclusion. |
+| Lineage | `TestAssetsFilterUnauthorizedSiblingAndEdges` verifies a denied node and edge do not reappear in the lineage signal. |
+| Errors | The same browser test makes a denied detail indistinguishable from an unknown detail; [`TestProjectBoundaryGeneratedLocatorsCannotRetarget`](../../internal/app/project_boundary_test.go) conceals foreign Project locators. |
+
 ## Ownership audit
 
 - Requirements mapped: **54**.
 - Unique requirement identifiers: **54**.
 - Requirements without an accountable owner: **0**.
 - Requirements with more than one accountable owner: **0**.
-- Requirements with maintained implementation evidence: **51**.
-- Requirements with partial evidence: **3** (`API-01`, `API-02`, and
-  `API-05`).
+- Requirements with merged maintained implementation evidence: **51**.
+- Requirements with FAI-679 candidate evidence: **3** (`API-01`, `API-02`, and
+  `API-05`); these are not yet merged or protected-validated.
+- Requirements with partial evidence after the candidate tests: **0**, subject
+  to the validation gate below.
 - Requirements resolved by the documentation-only reconciliation: **1**
   (`ISO-03`).
 - Requirements with an unaddressed gap: **0**.
@@ -148,11 +202,18 @@ ResourceUID, dbt, or recovery behavior changed.
 
 ## Final blockers
 
-ADR-0018 must remain `pending` until all of the following are true:
+Local FAI-679 candidate validation on 2026-09-18 passed `task generate`,
+`task generated:check`, `task docs:check`, `task quality:budget:check`,
+`git diff --check`, the focused Project boundary/catalog/browser/release/audit/
+agent/architecture tests, and the existing PostgreSQL deployment-lineage and
+access-audit tests. These are local results, not protected merge-candidate
+checks.
 
-1. Maintained evidence for `API-01`, `API-02`, and `API-05` remains
-   non-exhaustive. The rows above identify the proven slices
-   and the exact inventory still required; no row is upgraded by inference.
+ADR-0018 must remain `pending` until the FAI-679 candidate evidence above
+passes its relevant focused, architecture, generated/documentation, and quality
+checks, then the exact reviewed merge candidate passes the repository's
+protected CI and Security gates. Only then should the ADR implementation status
+change; this branch does not claim protected validation or merge.
 FAI-670, FAI-671, FAI-675, and FAI-678 are no longer implementation merge
 blockers. Their merged evidence replaces the stale provisional and gap claims
 from the previous snapshot.

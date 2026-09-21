@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -89,6 +91,52 @@ func TestChatManagementDoesNotAddChatHistoryToSettingsNavigation(t *testing.T) {
 	handler.writeChatManagementState(response, request, agent.Scope{}, chatManagementSignal{})
 	if strings.Contains(response.Body.String(), `"chrome"`) {
 		t.Fatalf("settings navigation replaced: %s", response.Body.String())
+	}
+}
+
+func TestValidateConversationManagementRequestRequiresTitleForRename(t *testing.T) {
+	if _, _, err := validateConversationManagementRequest(conversationManagementRequest{Action: conversationManagementActionRename, ConversationID: "conversation-1"}); err == nil {
+		t.Fatal("rename without title was accepted")
+	}
+	action, conversationID, err := validateConversationManagementRequest(conversationManagementRequest{Action: conversationManagementActionRename, ConversationID: "conversation-1", Title: "Renamed"})
+	if err != nil || action != conversationManagementActionRename || conversationID != "conversation-1" {
+		t.Fatalf("rename validation = action %q conversation %q err %v", action, conversationID, err)
+	}
+}
+
+func TestValidateConversationManagementRequestAcceptsDeleteActiveAsBulkAction(t *testing.T) {
+	action, conversationID, err := validateConversationManagementRequest(conversationManagementRequest{Action: conversationManagementActionDeleteActive})
+	if err != nil || action != conversationManagementActionDeleteActive || conversationID != "" {
+		t.Fatalf("delete active validation = action %q conversation %q err %v", action, conversationID, err)
+	}
+	if _, _, err := validateConversationManagementRequest(conversationManagementRequest{Action: conversationManagementActionDeleteActive, ConversationID: "conversation-1"}); err == nil {
+		t.Fatal("delete active accepted a conversationId")
+	}
+}
+
+func TestDeleteActiveConversationsKeepsArchivedConversations(t *testing.T) {
+	service, principalID := commandAuditService(t)
+	scope := agent.Scope{PrincipalID: principalID}
+	active, err := service.CreateConversation(context.Background(), scope, "Active conversation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	archived, err := service.CreateConversation(context.Background(), scope, "Archived conversation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ArchiveConversation(context.Background(), scope, archived.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ManageConversation(context.Background(), scope, conversationManagementActionDeleteActive, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.GetConversation(context.Background(), scope, active.ID); !errors.Is(err, agent.ErrNotFound) && !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("active conversation still exists or returned unexpected error: %v", err)
+	}
+	kept, err := service.GetConversation(context.Background(), scope, archived.ID)
+	if err != nil || kept.Status != agent.ConversationStatusArchived {
+		t.Fatalf("archived conversation = %+v, err %v", kept, err)
 	}
 }
 

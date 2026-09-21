@@ -237,8 +237,20 @@ func (r *Repository) beginS3MultipartCompletionOn(ctx context.Context, db DBTX, 
 		return manageddata.S3MultipartCompletion{}, scanNotFound(err)
 	}
 	u := multipartFromRow(row)
-	if tag.RowsAffected() == 0 {
-		if u.Status != "completing" || u.CompletionIdentity != in.IdempotencyIdentity || u.CompletionRequestHash != in.RequestHash {
+	execute := tag.RowsAffected() == 1
+	if !execute {
+		if u.CompletionIdentity != in.IdempotencyIdentity || u.CompletionRequestHash != in.RequestHash {
+			return manageddata.S3MultipartCompletion{}, ErrConflict
+		}
+		switch u.Status {
+		case manageddata.S3MultipartStatusCompleting:
+			// The provider call may have failed or the process may have stopped
+			// after accepting the intent. Retrying the same request must resume it.
+			execute = true
+		case manageddata.S3MultipartStatusCompleted:
+			// A terminal retry is idempotent and returns the stored result.
+			execute = false
+		default:
 			return manageddata.S3MultipartCompletion{}, ErrConflict
 		}
 	}
@@ -250,7 +262,7 @@ func (r *Repository) beginS3MultipartCompletionOn(ctx context.Context, db DBTX, 
 	for _, row := range partRows {
 		parts = append(parts, manageddata.S3MultipartPart{MultipartUploadID: in.ID, PartNumber: row.PartNumber, SizeBytes: row.SizeBytes, SHA256: row.Sha256})
 	}
-	return manageddata.S3MultipartCompletion{Upload: u, Parts: parts, Execute: tag.RowsAffected() == 1}, nil
+	return manageddata.S3MultipartCompletion{Upload: u, Parts: parts, Execute: execute}, nil
 }
 func (r *Repository) FinishS3MultipartCompletion(ctx context.Context, id manageddata.MultipartUploadID) (manageddata.S3MultipartUpload, error) {
 	return r.finishMultipart(ctx, id, "completing", "completed")

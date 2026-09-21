@@ -197,36 +197,34 @@ func TestEnterpriseAuthoringPackagesRemainCapabilityOwned(t *testing.T) {
 	}
 }
 
-func TestSQLiteFixtureBoundaryIsExplicitAndNonCompositional(t *testing.T) {
-	for _, path := range SQLiteFixturePackagePrefixes {
-		if !IsSQLitePackage(path) {
-			t.Errorf("SQLite fixture prefix %q is not a SQLite package path", path)
-		}
-		if !IsSQLiteFixturePackage(path) {
-			t.Errorf("SQLite fixture prefix %q is not recognized as a retained fixture", path)
-		}
-		if IsCompositionContractImport(path) {
-			t.Errorf("SQLite fixture %q is exposed as a production composition contract", path)
-		}
-		rule, ok := ClassifyPackage(path)
-		if !ok || rule.Layer != LayerAdapter {
-			t.Errorf("SQLite fixture %q classification = %#v, %v; want adapter", path, rule, ok)
-		}
-	}
+func TestControlPlaneSQLitePackagesAreProhibited(t *testing.T) {
 	for _, removed := range []string{
-		"internal/analytics/sqlite",
+		"internal/access/sqlite",
+		"internal/agent/sqlite",
+		"internal/servingstate/sqlite",
+		"internal/manageddata/sqlite",
+		"internal/refresh/sqlite",
+		"internal/dashboard/publication/sqlite",
+		"internal/platform/http/idempotency/sqlite",
+		"internal/platform/jobs/sqlite",
 		"internal/dashboard/appearance/sqlite",
 		"internal/dashboard/authoring/sqlite",
 		"internal/release/sqlite",
 		"internal/manageddata/maintenance/sqlite",
 	} {
-		if IsSQLiteFixturePackage(removed) {
-			t.Errorf("removed SQLite adapter %q remains in fixture allowlist", removed)
+		if !IsControlPlaneSQLitePackage(removed) {
+			t.Errorf("removed SQLite adapter %q is not recognized by the prohibition", removed)
+		}
+		if IsCompositionContractImport(removed) {
+			t.Errorf("removed SQLite adapter %q remains a composition contract", removed)
 		}
 	}
-	for _, path := range SQLiteFixtureFilePaths {
-		if !IsSQLiteFixtureFile(path) {
-			t.Errorf("SQLite fixture file %q is not recognized as a retained fixture", path)
+	for _, supported := range []string{
+		"internal/analytics/connectors/sqlite",
+		"internal/analytics/duckdb/sqlite",
+	} {
+		if IsControlPlaneSQLitePackage(supported) {
+			t.Errorf("supported analytics SQLite package %q is classified as control-plane storage", supported)
 		}
 	}
 }
@@ -933,11 +931,11 @@ func TestPlatformProductionCodeDoesNotOwnApplicationEnvironment(t *testing.T) {
 		if file.pkgDir != "internal/platform" && !strings.HasPrefix(file.pkgDir, "internal/platform/") {
 			continue
 		}
-		// postgrestest is an importable test harness rather than runtime code.
-		// Its environment gate is deliberately owned by the conformance lane so
-		// CI can fail closed while ordinary developer runs may skip without a
-		// container provider.
-		if file.pkgDir == "internal/platform/postgres/postgrestest" {
+		// postgrestest and its package runner are test-only infrastructure,
+		// not runtime code. The conformance lane owns their environment gate
+		// so CI can fail closed while ordinary developer runs may skip when
+		// no container provider is available.
+		if file.pkgDir == "internal/platform/postgres/postgrestest" || strings.HasPrefix(file.pkgDir, "internal/platform/postgres/postgrestest/") {
 			continue
 		}
 		parsed, err := parser.ParseFile(token.NewFileSet(), file.path, file.body, 0)
@@ -1389,7 +1387,7 @@ func TestGeneratedQueryPackagesDoNotCombineCapabilitySQL(t *testing.T) {
 		generatedPackage string
 		queryPath        string
 	}{
-		{generatedPackage: `out: "internal/servingstate/internal/db"`, queryPath: `"internal/access/sqlite/queries`},
+		{generatedPackage: `out: "internal/servingstate/postgres/internal/db"`, queryPath: `"internal/access/postgres/queries`},
 	} {
 		for _, block := range blocks {
 			if strings.Contains(block, forbidden.generatedPackage) && strings.Contains(block, forbidden.queryPath) {
@@ -1404,12 +1402,12 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 	require.NoError(t, err)
 	config := string(body)
 	for _, output := range []string{
-		"internal/access/internal/db",
-		"internal/agent/internal/db",
-		"internal/dashboard/internal/db",
-		"internal/manageddata/internal/db",
-		"internal/refresh/internal/db",
-		"internal/servingstate/internal/db",
+		"internal/access/postgres/internal/db",
+		"internal/agent/postgres/internal/db",
+		"internal/dashboard/publication/postgres/internal/db",
+		"internal/manageddata/postgres/internal/db",
+		"internal/refresh/postgres/internal/db",
+		"internal/servingstate/postgres/internal/db",
 	} {
 		fragment := "package: \"db\"\n        out: \"" + output + "\""
 		if !strings.Contains(config, fragment) {
@@ -1438,7 +1436,7 @@ func TestCapabilitiesOnlyImportOwnGeneratedQueries(t *testing.T) {
 			if !generated {
 				continue
 			}
-			if !sourceOK || source.Capability != targetOwner || source.Layer != LayerAdapter {
+			if !sourceOK || source.Capability != targetOwner || !strings.Contains(file.pkgDir, "/postgres") {
 				t.Errorf("%s imports generated database package owned by %s outside its owning persistence adapters", file.path, targetOwner)
 			}
 		}
@@ -1446,14 +1444,14 @@ func TestCapabilitiesOnlyImportOwnGeneratedQueries(t *testing.T) {
 }
 
 func TestCrossCapabilityGeneratedQueryImportIsRejected(t *testing.T) {
-	if owner, ok := capabilityGeneratedDBOwner(modulePath + "/internal/access/internal/db"); !ok || owner != "access" {
+	if owner, ok := capabilityGeneratedDBOwner(modulePath + "/internal/access/postgres/internal/db"); !ok || owner != "access" {
 		t.Fatalf("generated Access database package owner = %q, %v", owner, ok)
 	}
-	source, ok := ClassifyPackage("internal/dashboard/publication/sqlite")
+	source, ok := ClassifyPackage("internal/dashboard/publication/postgres")
 	if !ok {
 		t.Fatal("Dashboard publication adapter is not classified")
 	}
-	targetOwner, generated := capabilityGeneratedDBOwner(modulePath + "/internal/access/internal/db")
+	targetOwner, generated := capabilityGeneratedDBOwner(modulePath + "/internal/access/postgres/internal/db")
 	if !generated || source.Capability == targetOwner {
 		t.Fatal("representative Dashboard-to-Access generated database import was not rejected")
 	}
@@ -1462,7 +1460,7 @@ func TestCrossCapabilityGeneratedQueryImportIsRejected(t *testing.T) {
 func capabilityGeneratedDBOwner(imported string) (string, bool) {
 	relative := strings.TrimPrefix(imported, modulePath+"/")
 	parts := strings.Split(relative, "/")
-	if len(parts) != 4 || parts[0] != "internal" || parts[2] != "internal" || parts[3] != "db" {
+	if len(parts) < 5 || parts[0] != "internal" || parts[len(parts)-3] != "postgres" || parts[len(parts)-2] != "internal" || parts[len(parts)-1] != "db" {
 		return "", false
 	}
 	if _, known := CapabilityDependencies[parts[1]]; !known || parts[1] == "platform" {
@@ -1484,7 +1482,7 @@ func TestCompositionDoesNotUseTestTransports(t *testing.T) {
 	}
 }
 
-func TestRefreshPersistenceIsConstructedOnlyByItsModule(t *testing.T) {
+func TestRefreshDoesNotImportRetiredSQLitePersistence(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
 		for _, imported := range file.imports {
 			if imported != modulePath+"/internal/refresh/sqlite" {
@@ -1555,7 +1553,7 @@ func TestCapabilityModulesDoNotImportOtherCapabilityPersistenceAdapters(t *testi
 			}
 			packagePath := strings.TrimPrefix(imported, modulePath+"/")
 			target, ok := ClassifyPackage(packagePath)
-			if !ok || target.Layer != LayerAdapter || target.Capability == source.Capability || !strings.Contains(packagePath, "/sqlite") {
+			if !ok || target.Layer != LayerAdapter || target.Capability == source.Capability || !IsControlPlaneSQLitePackage(packagePath) {
 				continue
 			}
 			if target.Capability == "platform" || target.Capability == "api" || target.Capability == "ui" {
@@ -1673,11 +1671,8 @@ func TestProductionImportsFollowCapabilityGraph(t *testing.T) {
 				continue
 			}
 			packagePath := strings.TrimPrefix(imported, modulePath+"/")
-			if IsSQLitePackage(packagePath) {
-				if sameSQLiteFixture(packagePath, file.pkgDir) {
-					continue
-				}
-				t.Errorf("%s imports SQLite package %s; SQLite adapters are test fixtures only", file.path, packagePath)
+			if IsControlPlaneSQLitePackage(packagePath) {
+				t.Errorf("%s imports prohibited control-plane SQLite package %s", file.path, packagePath)
 				continue
 			}
 			target, ok := ClassifyPackage(packagePath)
@@ -1695,39 +1690,32 @@ func TestProductionImportsFollowCapabilityGraph(t *testing.T) {
 	}
 }
 
-// sameSQLiteFixture permits a retained fixture adapter to import its own
-// generated support package while rejecting every cross-fixture or
-// production-to-fixture dependency.
-func sameSQLiteFixture(sourcePath, targetPath string) bool {
-	if !IsSQLiteFixturePackage(sourcePath) || !IsSQLiteFixturePackage(targetPath) {
-		return false
-	}
-	for _, prefix := range SQLiteFixturePackagePrefixes {
-		if hasPackagePrefix(sourcePath, []string{prefix}) && hasPackagePrefix(targetPath, []string{prefix}) {
-			return true
-		}
-	}
-	return false
-}
-
 func TestProductionSourcesDoNotImportSQLiteAdapters(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
 		for _, imported := range file.imports {
 			if imported == "modernc.org/sqlite" {
-				if !IsSQLiteFixtureFile(file.path) {
-					t.Errorf("%s imports SQLite driver outside the platform Store fixture", file.path)
-				}
+				t.Errorf("%s imports prohibited control-plane SQLite driver", file.path)
 				continue
 			}
 			if !strings.HasPrefix(imported, modulePath+"/") {
 				continue
 			}
 			packagePath := strings.TrimPrefix(imported, modulePath+"/")
-			if !IsSQLitePackage(packagePath) || sameSQLiteFixture(file.pkgDir, packagePath) {
+			if !IsControlPlaneSQLitePackage(packagePath) {
 				continue
 			}
-			t.Errorf("%s imports SQLite package %s; SQLite adapters are test fixtures only", file.path, packagePath)
+			t.Errorf("%s imports prohibited control-plane SQLite package %s", file.path, packagePath)
 		}
+	}
+}
+
+func TestGoModuleDoesNotRequireControlPlaneSQLiteDriver(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join(repoRoot(t), "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	if regexp.MustCompile(`(?m)^\s*modernc\.org/sqlite\s`).Match(contents) {
+		t.Fatal("go.mod directly requires the retired control-plane SQLite driver")
 	}
 }
 
@@ -2291,50 +2279,6 @@ func TestCapabilityUIPackagesAreRenderOnly(t *testing.T) {
 	}
 }
 
-func TestStaticSQLiteAdaptersUseGeneratedQueries(t *testing.T) {
-	generatedOnly := map[string]bool{
-		"internal/agent/sqlite":                 true,
-		"internal/dashboard/publication/sqlite": true,
-		"internal/manageddata/sqlite":           true,
-		"internal/servingstate/sqlite":          true,
-	}
-	generatedOnlyFiles := map[string]bool{
-		"internal/access/sqlite/api_symmetry.go":  true,
-		"internal/access/sqlite/authorization.go": true,
-		"internal/refresh/sqlite/runs.go":         true,
-	}
-	for _, file := range productionGoFiles(t) {
-		if !generatedOnly[file.pkgDir] && !generatedOnlyFiles[file.path] {
-			continue
-		}
-		for _, directCall := range []string{".QueryContext(", ".QueryRowContext(", ".ExecContext("} {
-			if strings.Contains(file.body, directCall) {
-				t.Fatalf("%s bypasses sqlc via %s", file.path, directCall)
-			}
-		}
-	}
-}
-
-func TestCapabilitySQLiteAdaptersDoNotImportOtherSQLiteAdapters(t *testing.T) {
-	for _, file := range productionGoFiles(t) {
-		if !strings.Contains(file.pkgDir, "/sqlite") {
-			continue
-		}
-		for _, imported := range file.imports {
-			if !strings.HasPrefix(imported, modulePath+"/internal/") || !strings.Contains(imported, "/sqlite") {
-				continue
-			}
-			packagePath := strings.TrimPrefix(imported, modulePath+"/")
-			source, sourceOK := ClassifyPackage(file.pkgDir)
-			target, targetOK := ClassifyPackage(packagePath)
-			if sourceOK && targetOK && source.Capability == target.Capability {
-				continue
-			}
-			t.Errorf("%s imports persistence implementation %s; use a consumer-owned port or module bridge", file.path, imported)
-		}
-	}
-}
-
 func TestDashboardPersistenceDoesNotWriteAccessTables(t *testing.T) {
 	root := repoRoot(t)
 	dashboardRoot := filepath.Join(root, "internal", "dashboard")
@@ -2343,7 +2287,7 @@ func TestDashboardPersistenceDoesNotWriteAccessTables(t *testing.T) {
 			return err
 		}
 		extension := filepath.Ext(path)
-		if entry.IsDir() || !strings.Contains(filepath.ToSlash(path), "/sqlite/") ||
+		if entry.IsDir() || !strings.Contains(filepath.ToSlash(path), "/postgres/") ||
 			(extension != ".go" && extension != ".sql") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
@@ -2383,16 +2327,19 @@ func TestGeneratedPlatformQueriesStayInsidePlatform(t *testing.T) {
 	}
 }
 
-func TestPlatformSQLCOmitsUnusedCapabilityModels(t *testing.T) {
+func TestPlatformSQLCOmitsUnusedModels(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(repoRoot(t), "sqlc.yaml"))
 	require.NoError(t, err)
 	config := string(body)
-	start := strings.Index(config, `queries: "internal/platform/db/queries"`)
-	end := strings.Index(config, `queries: "internal/access/sqlite/queries"`)
-	if start < 0 || end < 0 || end <= start {
+	start := strings.Index(config, `queries: "internal/platform/postgres/queries"`)
+	if start < 0 {
 		t.Fatal("platform sqlc generation block is missing")
 	}
-	if !strings.Contains(config[start:end], "omit_unused_structs: true") {
+	rest := config[start:]
+	if end := strings.Index(rest, "\n  - engine:"); end >= 0 {
+		rest = rest[:end]
+	}
+	if !strings.Contains(rest, "omit_unused_structs: true") {
 		t.Fatal("platform sqlc generation exposes unused product-capability models")
 	}
 }
@@ -2400,16 +2347,15 @@ func TestPlatformSQLCOmitsUnusedCapabilityModels(t *testing.T) {
 func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 	root := repoRoot(t)
 	for _, domain := range []string{
-		"internal/access/sqlite/queries/access.sql",
-		"internal/agent/sqlite/queries/agent.sql",
-		"internal/platform/http/idempotency/sqlite/queries/idempotency.sql",
-		"internal/dashboard/publication/sqlite/queries/publication.sql",
-		"internal/manageddata/sqlite/queries/managed_data.sql",
-		"internal/refresh/sqlite/runqueries/materialization.sql",
-		"internal/platform/jobs/sqlite/queries/async_job.sql",
-		"internal/platform/db/queries/platform.sql",
-		"internal/refresh/sqlite/schedulequeries/refresh_pipeline.sql",
-		"internal/servingstate/sqlite/queries/serving_state.sql",
+		"internal/access/postgres/queries/core_ops.sql",
+		"internal/agent/postgres/queries/agent.sql",
+		"internal/platform/operation/postgres/queries/operation.sql",
+		"internal/dashboard/publication/postgres/queries/publication.sql",
+		"internal/manageddata/postgres/queries/manageddata.sql",
+		"internal/refresh/postgres/queries/refresh.sql",
+		"internal/platform/jobs/postgres/queries/jobs.sql",
+		"internal/platform/postgres/queries/platform.sql",
+		"internal/servingstate/postgres/queries/serving_state.sql",
 	} {
 		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(domain)))
 		if err != nil {
@@ -2424,14 +2370,14 @@ func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 	}
 }
 
-func TestSQLCUsesRuntimeMigrationsAsItsSchemaSource(t *testing.T) {
+func TestSQLCUsesCapabilityOwnedPostgresSchemas(t *testing.T) {
 	root := repoRoot(t)
 	config, err := os.ReadFile(filepath.Join(root, "sqlc.yaml"))
 	if err != nil {
 		t.Fatalf("read sqlc config: %v", err)
 	}
-	if !strings.Contains(string(config), `schema: "internal/platform/migrations"`) {
-		t.Fatal("sqlc must compile against the runtime Goose migrations")
+	if strings.Contains(string(config), `internal/platform/migrations`) || strings.Contains(string(config), `/sqlite`) {
+		t.Fatal("sqlc retains the removed shared or SQLite control-plane schema")
 	}
 	if _, err := os.Stat(filepath.Join(root, "internal", "platform", "db", "schema.sql")); !os.IsNotExist(err) {
 		t.Fatal("duplicate sqlc schema snapshot must not exist")
@@ -4017,20 +3963,12 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			"- task: db:generate",
 		},
 		".gitignore": {
-			"internal/platform/db/db.go",
-			"internal/platform/db/models.go",
-			"internal/platform/db/*.sql.go",
 			"internal/*/internal/db/",
 			"internal/**/internal/db/",
-			"internal/platform/**/sqlite/*db/",
 		},
 		".dockerignore": {
-			"internal/platform/db/db.go",
-			"internal/platform/db/models.go",
-			"internal/platform/db/*.sql.go",
 			"internal/*/internal/db/",
 			"internal/**/internal/db/",
-			"internal/platform/**/sqlite/*db/",
 		},
 		filepath.Join("scripts", "generate_build_sources.sh"): {
 			"GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
@@ -4290,67 +4228,6 @@ func generatedCheckCommand(taskfile string) string {
 	return rest[:end]
 }
 
-func TestFixedPlatformSQLiteQueriesUseSQLC(t *testing.T) {
-	root := repoRoot(t)
-	queryContracts := map[string][]string{
-		filepath.Join("internal", "access", "sqlite", "queries", "authorization.sql"): {
-			"-- name: InsertAuthorizationRoleBinding :exec",
-			"-- name: InsertAuthorizationGrant :exec",
-		},
-		filepath.Join("internal", "platform", "db", "queries", "platform.sql"): {
-			"-- name: InsertPlatformSettingIfMissing :exec",
-		},
-		filepath.Join("internal", "manageddata", "sqlite", "queries", "managed_data.sql"): {
-			"-- name: ListManagedDataReachabilitySources :many",
-		},
-	}
-	for name, markers := range queryContracts {
-		body, err := os.ReadFile(filepath.Join(root, name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		for _, marker := range markers {
-			if !strings.Contains(string(body), marker) {
-				t.Errorf("%s missing sqlc query %q", name, marker)
-			}
-		}
-	}
-
-	handwrittenSQL := map[string][]string{
-		filepath.Join("internal", "platform", "store.go"): {
-			"INSERT INTO platform_settings",
-		},
-	}
-	for name, fragments := range handwrittenSQL {
-		body, err := os.ReadFile(filepath.Join(root, name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		for _, fragment := range fragments {
-			if strings.Contains(string(body), fragment) {
-				t.Errorf("%s retains fixed-shape SQLite query %q instead of using sqlc", name, fragment)
-			}
-		}
-	}
-}
-
-func TestAPIv1SQLiteAdaptersUseSQLC(t *testing.T) {
-	packages := map[string]struct{}{
-		"internal/platform/http/idempotency/sqlite": {},
-		"internal/platform/jobs/sqlite":             {},
-	}
-	for _, file := range productionGoFiles(t) {
-		if _, ok := packages[file.pkgDir]; !ok {
-			continue
-		}
-		for _, forbidden := range []string{".ExecContext(", ".QueryContext(", ".QueryRowContext("} {
-			if strings.Contains(file.body, forbidden) {
-				t.Errorf("%s bypasses sqlc via %s", file.path, forbidden)
-			}
-		}
-	}
-}
-
 func TestStorageArchitectureSpecDocumentsProcessOwnedDuckDB(t *testing.T) {
 	root := repoRoot(t)
 	spec, err := os.ReadFile(filepath.Join(root, "docs", "storage-architecture-spec.md"))
@@ -4361,8 +4238,8 @@ func TestStorageArchitectureSpecDocumentsProcessOwnedDuckDB(t *testing.T) {
 	for _, want := range []string{
 		"Production and development serving use one PostgreSQL control plane",
 		"process-owned DuckDB `DatabaseInstance`",
-		"leapview.db               # local/evaluation SQLite control-plane fixture",
 		"ducklake/catalog.duckdb   # local DuckDB-backed DuckLake metadata catalog",
+		"application profile",
 		"Every physical relation in a serving plan",
 		"AT (VERSION => 42)",
 		"Runtime retirement closes generation-scoped cache state",
@@ -4505,8 +4382,7 @@ func isSQLDBAllowedFile(file goFile) bool {
 		file.pkgDir == "internal/integration" ||
 		strings.HasPrefix(file.pkgDir, "internal/admin/storage") ||
 		strings.HasPrefix(file.pkgDir, "internal/analytics/duckdb") ||
-		strings.HasPrefix(file.pkgDir, "internal/analytics/ducklake") ||
-		IsSQLiteFixtureFile(file.path) {
+		strings.HasPrefix(file.pkgDir, "internal/analytics/ducklake") {
 		return true
 	}
 	return false

@@ -85,3 +85,13 @@ variable "leapview_image" {
     error_message = "leapview_image must be an immutable OCI reference ending in @sha256:<64 lowercase hex characters>."
   }
 }
+
+variable "target_id" {
+  description = "Authoritative deployment target ID to bind into the host installation marker and release preflight."
+  type        = string
+
+  validation {
+    condition     = trimspace(var.target_id) == var.target_id && length(var.target_id) > 0 && length(var.target_id) <= 512 && !can(regex("[\r\n]", var.target_id))
+    error_message = "target_id must be a nonempty canonical single-line deployment target ID."
+  }
+}

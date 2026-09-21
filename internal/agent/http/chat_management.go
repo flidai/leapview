@@ -24,10 +24,12 @@ const (
 	conversationManagementActionArchive        = "archive"
 	conversationManagementActionRestore        = "restore"
 	conversationManagementActionDelete         = "delete"
+	conversationManagementActionRename         = "rename"
 	conversationManagementActionArchivePending = "archive_pending"
 	conversationManagementActionDeletePending  = "delete_pending"
 	conversationManagementActionUndo           = "undo"
 	conversationManagementActionArchiveAll     = "archive_all"
+	conversationManagementActionDeleteActive   = "delete_active"
 	conversationManagementActionDeleteAll      = "delete_all"
 )
 
@@ -37,10 +39,12 @@ var conversationManagementActions = map[string]struct{}{
 	conversationManagementActionArchive:        {},
 	conversationManagementActionRestore:        {},
 	conversationManagementActionDelete:         {},
+	conversationManagementActionRename:         {},
 	conversationManagementActionArchivePending: {},
 	conversationManagementActionDeletePending:  {},
 	conversationManagementActionUndo:           {},
 	conversationManagementActionArchiveAll:     {},
+	conversationManagementActionDeleteActive:   {},
 	conversationManagementActionDeleteAll:      {},
 }
 
@@ -49,6 +53,7 @@ var conversationManagementActions = map[string]struct{}{
 // transitions, and the transaction that consumes the audit intent on ctx.
 type conversationManagementService interface {
 	ManageConversation(context.Context, agent.Scope, string, string) error
+	UpdateConversation(context.Context, agent.Scope, string, string) (agent.Conversation, error)
 	BeginPendingConversationAction(context.Context, agent.Scope, string, string, string) (agent.PendingConversationAction, error)
 	CancelPendingConversationAction(context.Context, agent.Scope, string, string) error
 	ListArchivedConversations(context.Context, agent.Scope) ([]agent.Conversation, error)
@@ -58,6 +63,7 @@ type conversationManagementService interface {
 type conversationManagementRequest struct {
 	Action         string `json:"action"`
 	ConversationID string `json:"conversationId,omitempty"`
+	Title          string `json:"title,omitempty"`
 }
 
 type conversationManagementResponse struct {
@@ -71,6 +77,7 @@ type chatManagementSignals struct {
 	ChatManagement struct {
 		Action         string `json:"action"`
 		ConversationID string `json:"conversationId"`
+		Title          string `json:"title"`
 		RequestID      string `json:"requestId"`
 	} `json:"chatManagement"`
 }
@@ -155,7 +162,7 @@ func (h *Handler) ManageAgentConversations(w stdhttp.ResponseWriter, r *stdhttp.
 		h.writeCommandFailure(w, r, manageAgentConversationsOperation, apigenfailure.Wrap("unavailable", fmt.Errorf("agent conversation management is unavailable")))
 		return
 	}
-	if _, err := h.executeConversationManagement(r.Context(), manager, scope, action, conversationID, requestID); err != nil {
+	if _, err := h.executeConversationManagement(r.Context(), manager, scope, action, conversationID, requestID, input.Title); err != nil {
 		h.writeCommandFailure(w, r, manageAgentConversationsOperation, classifyConversationManagementError(err))
 		return
 	}
@@ -179,6 +186,7 @@ func (h *Handler) ChatManagement(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	input := conversationManagementRequest{
 		Action:         strings.TrimSpace(signals.ChatManagement.Action),
 		ConversationID: strings.TrimSpace(signals.ChatManagement.ConversationID),
+		Title:          strings.TrimSpace(signals.ChatManagement.Title),
 	}
 	requestID := strings.TrimSpace(signals.ChatManagement.RequestID)
 	action, conversationID, err := validateConversationManagementRequest(input)
@@ -218,7 +226,7 @@ func (h *Handler) ChatManagement(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		h.writeChatManagementFailure(w, r, requestID, fmt.Errorf("agent conversation management is unavailable"))
 		return
 	}
-	pending, err := h.executeConversationManagement(ctx, manager, scope, action, conversationID, requestID)
+	pending, err := h.executeConversationManagement(ctx, manager, scope, action, conversationID, requestID, input.Title)
 	if err != nil {
 		h.writeChatManagementFailure(w, r, requestID, classifyConversationManagementError(err))
 		return
@@ -234,7 +242,7 @@ func (h *Handler) ChatManagement(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	})
 }
 
-func (h *Handler) executeConversationManagement(ctx context.Context, manager conversationManagementService, scope agent.Scope, action, conversationID, requestID string) (agent.PendingConversationAction, error) {
+func (h *Handler) executeConversationManagement(ctx context.Context, manager conversationManagementService, scope agent.Scope, action, conversationID, requestID, title string) (agent.PendingConversationAction, error) {
 	switch action {
 	case conversationManagementActionArchivePending:
 		pending, err := manager.BeginPendingConversationAction(ctx, scope, conversationID, agent.PendingConversationArchive, requestID)
@@ -244,6 +252,9 @@ func (h *Handler) executeConversationManagement(ctx context.Context, manager con
 		return pending, err
 	case conversationManagementActionUndo:
 		return agent.PendingConversationAction{}, manager.CancelPendingConversationAction(ctx, scope, conversationID, requestID)
+	case conversationManagementActionRename:
+		_, err := manager.UpdateConversation(ctx, scope, conversationID, title)
+		return agent.PendingConversationAction{}, err
 	default:
 		return agent.PendingConversationAction{}, manager.ManageConversation(ctx, scope, action, conversationID)
 	}
@@ -343,14 +354,17 @@ func validateConversationManagementRequest(input conversationManagementRequest) 
 	action := strings.TrimSpace(input.Action)
 	conversationID := strings.TrimSpace(input.ConversationID)
 	if _, ok := conversationManagementActions[action]; !ok {
-		return "", "", fmt.Errorf("action must be one of pin, unpin, archive, restore, delete, archive_all, or delete_all")
+		return "", "", fmt.Errorf("action must be one of pin, unpin, archive, restore, rename, delete, archive_all, delete_active, or delete_all")
 	}
-	individual := action != conversationManagementActionArchiveAll && action != conversationManagementActionDeleteAll
+	individual := action != conversationManagementActionArchiveAll && action != conversationManagementActionDeleteActive && action != conversationManagementActionDeleteAll
 	if individual && conversationID == "" {
 		return "", "", fmt.Errorf("conversationId is required for %s", action)
 	}
 	if !individual && conversationID != "" {
 		return "", "", fmt.Errorf("conversationId must be omitted for %s", action)
+	}
+	if action == conversationManagementActionRename && strings.TrimSpace(input.Title) == "" {
+		return "", "", fmt.Errorf("title is required for rename")
 	}
 	return action, conversationID, nil
 }
@@ -384,6 +398,8 @@ func conversationManagementMessage(action string) string {
 		return "Conversation restored."
 	case conversationManagementActionDelete:
 		return "Conversation deleted."
+	case conversationManagementActionRename:
+		return "Conversation renamed."
 	case conversationManagementActionArchivePending:
 		return "Conversation archive pending."
 	case conversationManagementActionDeletePending:
@@ -392,6 +408,8 @@ func conversationManagementMessage(action string) string {
 		return "Conversation action canceled."
 	case conversationManagementActionArchiveAll:
 		return "All conversations archived."
+	case conversationManagementActionDeleteActive:
+		return "Active conversations deleted."
 	case conversationManagementActionDeleteAll:
 		return "All conversations deleted."
 	default:

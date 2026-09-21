@@ -17,12 +17,15 @@ import (
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
-	maxSessionTTL = 30 * 24 * time.Hour
-	maxPageSize   = 1000
+	defaultAPITokenTTL               = 90 * 24 * time.Hour
+	defaultServicePrincipalSecretTTL = 180 * 24 * time.Hour
+	maxSessionTTL                    = 30 * 24 * time.Hour
+	maxPageSize                      = 1000
 )
 
 var verifierParams = &argon2id.Params{Memory: 19 * 1024, Iterations: 2, Parallelism: 1, SaltLength: 16, KeyLength: 32}
@@ -731,6 +734,10 @@ func (r *Repository) CreateLocalUser(ctx context.Context, input access.LocalUser
 		err = tx.Commit(ctx)
 	}
 	if err != nil {
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) && databaseError.Code == "23505" && databaseError.ConstraintName == "principal_email_active_key" {
+			return access.LocalPasswordReset{}, access.ErrPrincipalAlreadyExists
+		}
 		return access.LocalPasswordReset{}, err
 	}
 	var p access.Principal
@@ -968,6 +975,21 @@ func (r *Repository) ListSessions(ctx context.Context, pid string) ([]access.Ses
 	}
 	return out, nil
 }
+func (r *Repository) RevokeSessionsForPrincipal(ctx context.Context, pid string) error {
+	db, err := r.requireDB()
+	if err != nil {
+		return err
+	}
+	pid, err = uuidID("principal id", pid)
+	if err != nil {
+		return err
+	}
+	principalID, err := pgUUID(pid)
+	if err != nil {
+		return err
+	}
+	return accessdb.New(db).RevokePrincipalSessions(ctx, principalID)
+}
 func (r *Repository) RevokeSession(ctx context.Context, id string) error {
 	db, err := r.requireDB()
 	if err != nil {
@@ -1050,9 +1072,16 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.A
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
+	description := strings.TrimSpace(in.Description)
+	if len(description) > 1024 {
+		return "", access.APIToken{}, fmt.Errorf("token description must not exceed 1024 bytes")
+	}
 	caps, err := capabilitiesJSON(in.Capabilities)
 	if err != nil {
 		return "", access.APIToken{}, err
+	}
+	if in.ExpiresAt.IsZero() {
+		in.ExpiresAt = time.Now().Add(defaultAPITokenTTL)
 	}
 	tok, err := tokenSecret("lv_pat_")
 	if err != nil {
@@ -1074,7 +1103,7 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.A
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
-	tag, err := accessdb.New(db).CreateAPIToken(ctx, accessdb.CreateAPITokenParams{ID: tokenID, PrincipalID: principalID, Name: name,
+	tag, err := accessdb.New(db).CreateAPIToken(ctx, accessdb.CreateAPITokenParams{ID: tokenID, PrincipalID: principalID, Name: name, Description: description,
 		TokenFingerprint: r.secretFingerprint(tok), Verifier: ver, Capabilities: caps, ExpiresAt: pgTimestamp(in.ExpiresAt)})
 	if err != nil {
 		return "", access.APIToken{}, err
@@ -1102,7 +1131,7 @@ func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, 
 	if err != nil {
 		return access.APIToken{}, err
 	}
-	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name,
+	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name, Description: row.Description,
 		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt),
 		LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
 	if len(row.Capabilities) > 0 && string(row.Capabilities) != "null" {
@@ -1226,6 +1255,9 @@ func (r *Repository) CreateServicePrincipalSecret(ctx context.Context, pid strin
 	name, e := bounded(strings.TrimSpace(in.Name), "secret name", 255)
 	if e != nil {
 		return "", access.ServicePrincipalSecret{}, e
+	}
+	if in.ExpiresAt.IsZero() {
+		in.ExpiresAt = time.Now().Add(defaultServicePrincipalSecretTTL)
 	}
 	secret, e := tokenSecret("lv_sp_")
 	if e != nil {

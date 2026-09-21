@@ -2,12 +2,13 @@ package settings
 
 import (
 	"context"
-	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 )
 
 func TestLoadAccessAdministrationDerivesSourceAwareCapabilities(t *testing.T) {
@@ -32,7 +33,7 @@ func TestLoadAccessAdministrationDerivesSourceAwareCapabilities(t *testing.T) {
 	if err := repository.AddGroupMember(ctx, localGroup.ID, local.Principal.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.CreateSession(ctx, local.Principal.ID, 0); err != nil {
+	if _, err := repository.CreateSession(ctx, local.Principal.ID, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	if err := repository.RecordAuditEvent(ctx, access.AuditEventInput{PrincipalID: actor.Principal.ID, Action: "principal.updated", ResourceKind: "principal", ResourceID: local.Principal.ID, Status: "success"}); err != nil {
@@ -84,7 +85,7 @@ func TestApplyAccessAdministrationCommandRevokesAllPrincipalSessions(t *testing.
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := repository.CreateSession(ctx, target.Principal.ID, 0); err != nil {
+		if _, err := repository.CreateSession(ctx, target.Principal.ID, time.Hour); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -169,14 +170,14 @@ func TestApplyAccessAdministrationCommandAddsMultipleGroupMembers(t *testing.T) 
 	}
 }
 
-func openAccessAdministrationRepository(t *testing.T, ctx context.Context) *accesssqlite.Repository {
+func openAccessAdministrationRepository(t *testing.T, _ context.Context) *accesspostgres.Repository {
 	t.Helper()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
+	pool := postgrestest.Open(t, accesspostgres.ApplySchema)
+	repository, err := accesspostgres.NewAccess(pool, accesspostgres.FingerprintConfig{Key: []byte(strings.Repeat("admin-settings-test-key", 2))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	return accesssqlite.NewRepository(store.SQLDB())
+	return repository
 }
 
 func principalSignalForTest(t *testing.T, state AccessAdministrationSignal, id string) AccessPrincipalSignal {

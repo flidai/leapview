@@ -7,6 +7,9 @@ SELECT current_setting('server_version_num') AS server_version_num,
 -- name: CurrentDatabase :one
 SELECT current_database() AS database_name;
 
+-- name: ConformanceServerToken :one
+SELECT COALESCE(current_setting('leapview.conformance_token', true), '')::text AS token;
+
 -- name: RequiredExtension :one
 SELECT extension.extname::text AS extension_name,
        namespace.nspname::text AS schema_name

@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/analytics/catalogstats"
@@ -46,7 +49,7 @@ func TestServiceDoesNotFallBackWithoutActiveRuntime(t *testing.T) {
 	service := Service{}
 
 	data := service.Data(context.Background())
-	if data.Status != "no active LeapView serving state" {
+	if data.Status != storageInactiveStatus {
 		t.Fatalf("Data() status = %q, want no-active-runtime status", data.Status)
 	}
 	if data.TableCount != 0 || data.DataFileCount != 0 || data.TotalDataSizeBytes != 0 || len(data.Tables) != 0 {
@@ -55,6 +58,25 @@ func TestServiceDoesNotFallBackWithoutActiveRuntime(t *testing.T) {
 
 	if _, err := service.Table(context.Background(), "model", "orders"); !errors.Is(err, errNoActiveRuntime) {
 		t.Fatalf("Table() error = %v, want errNoActiveRuntime", err)
+	}
+}
+
+func TestServiceDoesNotExposeCatalogErrorsInStatus(t *testing.T) {
+	const technical = `Catalog Error: Table with name ducklake_table does not exist (SELECT * FROM secret_relation)`
+	provider := &storageRuntimeProvider{runtime: &storageRuntimeErrorStub{err: errors.New(technical)}}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	service := Service{Runtime: provider, Logger: logger}
+
+	data := service.Data(context.Background())
+	if data.Status != storageUnavailableStatus {
+		t.Fatalf("Data() status = %q, want bounded unavailable status", data.Status)
+	}
+	if strings.Contains(data.Status, "ducklake_table") || strings.Contains(data.Status, "SELECT") {
+		t.Fatalf("Data() leaked technical catalog details: %q", data.Status)
+	}
+	if !strings.Contains(logs.String(), "ducklake_table") || !strings.Contains(logs.String(), "read_catalog") {
+		t.Fatalf("technical catalog diagnostic was not logged: %q", logs.String())
 	}
 }
 
@@ -78,6 +100,13 @@ func (*storageRuntimeLease) Release() {}
 
 type storageRuntimeStub struct {
 	tables []catalogstats.Table
+}
+
+type storageRuntimeErrorStub struct{ err error }
+
+func (s *storageRuntimeErrorStub) Close() error { return nil }
+func (s *storageRuntimeErrorStub) CatalogTableStatistics(context.Context) ([]catalogstats.Table, error) {
+	return nil, s.err
 }
 
 func (s *storageRuntimeStub) Close() error { return nil }

@@ -60,5 +60,6 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 	install.Flags().StringVar(&payloadPath, "payload", payloadPath, "immutable deployment payload (defaults to the leapviewctl directory)")
 	install.Flags().StringVar(&sourceImage, "source-image", sourceImage, "immutable image from which the deployment payload was extracted")
 	host.AddCommand(install)
+	addUpgradeCommand(ctx, host, options)
 	return host
 }

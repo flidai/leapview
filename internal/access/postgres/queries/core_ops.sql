@@ -68,7 +68,7 @@ WHERE id = sqlc.arg(id)::uuid AND revoked_at IS NULL;
 
 -- name: BlockPrincipal :execresult
 UPDATE access.principal
-SET status = 'disabled', blocked_at = COALESCE(blocked_at, clock_timestamp()),
+SET blocked_at = COALESCE(blocked_at, clock_timestamp()),
     updated_at = clock_timestamp()
 WHERE id = sqlc.arg(id)::uuid AND revoked_at IS NULL;
 
@@ -244,8 +244,8 @@ SELECT sqlc.arg(expires_at)::timestamptz > clock_timestamp()
    AND sqlc.arg(expires_at)::timestamptz <= clock_timestamp() + interval '365 days';
 
 -- name: CreateAPIToken :execresult
-INSERT INTO access.api_token(id, principal_id, name, token_fingerprint, verifier, capabilities, expires_at)
-SELECT sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, sqlc.arg(name),
+INSERT INTO access.api_token(id, principal_id, name, description, token_fingerprint, verifier, capabilities, expires_at)
+SELECT sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, sqlc.arg(name), sqlc.arg(description),
        sqlc.arg(token_fingerprint), sqlc.arg(verifier), sqlc.arg(capabilities)::jsonb,
        sqlc.arg(expires_at)
 WHERE sqlc.arg(expires_at)::timestamptz > clock_timestamp()
@@ -257,7 +257,7 @@ WHERE sqlc.arg(expires_at)::timestamptz > clock_timestamp()
   );
 
 -- name: GetAPIToken :one
-SELECT id, principal_id, name, capabilities, expires_at, created_at, last_used_at, revoked_at
+SELECT id, principal_id, name, description, capabilities, expires_at, created_at, last_used_at, revoked_at
 FROM access.api_token
 WHERE id = sqlc.arg(id)::uuid;
 

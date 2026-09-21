@@ -1,12 +1,14 @@
 package http
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
@@ -22,6 +24,14 @@ const (
 )
 
 var errQueryHistoryProjectScope = errors.New("query history is outside the active Project")
+
+// queryHistoryGlobalFilterOptionReader is implemented by query-audit stores
+// that can aggregate filter options across all Projects. Query history is an
+// admin-wide surface, so its menus must not inherit the active serving
+// Project's scope.
+type queryHistoryGlobalFilterOptionReader interface {
+	ListQueryEventFilterOptionsGlobal(context.Context, string, string, int) ([]queryaudit.FilterOption, error)
+}
 
 type queryHistoryCommandSignals struct {
 	AdminQueryHistory        uisignals.AdminQueryHistorySignal  `json:"adminQueryHistory"`
@@ -87,8 +97,9 @@ func (h Handler) queryHistoryCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	projectID, err := readModel.projectID(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
+		// A stale serving identity must not prevent a global history query. The
+		// project menu simply has no scoped options until an identity is active.
+		projectID = ""
 	}
 	command.Filters, err = bindQueryHistoryFilters(command.Filters, projectID)
 	if err != nil {
@@ -97,7 +108,7 @@ func (h Handler) queryHistoryCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	switch command.Action {
 	case "select_detail":
-		event, err := repo.GetQueryEvent(r.Context(), projectID, uisignals.ValueOrZero(command.EventID))
+		event, err := getQueryHistoryEvent(r.Context(), repo, projectID, uisignals.ValueOrZero(command.EventID))
 		if err != nil {
 			detail := signals.AdminQueryDetail
 			detail.EventID = command.EventID
@@ -123,6 +134,10 @@ func (h Handler) queryHistoryCommand(w http.ResponseWriter, r *http.Request) {
 		h.publishQueryHistoryPatch(clientID, history)
 		w.WriteHeader(http.StatusNoContent)
 		return
+	}
+	if command.Action == "clear_all" {
+		command.Filters = uisignals.AdminQueryHistoryFilters{}
+		command.PageToken = nil
 	}
 	if command.Action == "filter_toggle" || command.Action == "filter_clear" {
 		command.Filters = applyFilterMenuCommand(command.Filters, uisignals.ValueOrZero(command.FilterMenu))
@@ -159,6 +174,25 @@ func (h Handler) queryHistoryCommand(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func getQueryHistoryEvent(ctx context.Context, repo queryaudit.Reader, projectID projectgraph.ResourceID, eventID string) (queryaudit.Event, error) {
+	if global, ok := repo.(interface {
+		GetQueryEventGlobal(context.Context, string) (queryaudit.Event, bool, error)
+	}); ok {
+		event, found, err := global.GetQueryEventGlobal(ctx, eventID)
+		if err != nil {
+			return queryaudit.Event{}, err
+		}
+		if !found {
+			return queryaudit.Event{}, errors.New("query audit event not found")
+		}
+		return event, nil
+	}
+	if err := projectID.Validate(); err != nil {
+		return queryaudit.Event{}, errQueryHistoryProjectScope
+	}
+	return repo.GetQueryEvent(ctx, projectID, eventID)
+}
+
 func (h Handler) publishQueryHistoryPatch(clientID string, history uisignals.AdminQueryHistorySignal) {
 	if h.Broker == nil {
 		return
@@ -184,7 +218,7 @@ func (h Handler) publishQueryDetailPatch(clientID string, detail uisignals.Admin
 func normalizeQueryHistoryCommand(command uisignals.AdminQueryHistoryCommand) uisignals.AdminQueryHistoryCommand {
 	action := strings.TrimSpace(command.Action)
 	switch action {
-	case "load_more", "select_detail", "close_detail", "filter_search", "filter_toggle", "filter_clear":
+	case "load_more", "select_detail", "close_detail", "filter_search", "filter_toggle", "filter_clear", "clear_all":
 	default:
 		action = "reset"
 		command.PageToken = nil
@@ -215,15 +249,20 @@ func normalizeQueryHistoryFilters(filters uisignals.AdminQueryHistoryFilters) ui
 
 func bindQueryHistoryFilters(filters uisignals.AdminQueryHistoryFilters, projectID projectgraph.ResourceID) (uisignals.AdminQueryHistoryFilters, error) {
 	filters = normalizeQueryHistoryFilters(filters)
-	if err := projectID.Validate(); err != nil {
-		return filters, errQueryHistoryProjectScope
-	}
+	// Query history is an admin-wide surface. Do not inject the active project
+	// into every request: doing so made the project chip impossible to clear
+	// and left selected project IDs from another Project trapping the page in a
+	// no-results state. Validate the selected IDs, but preserve them regardless
+	// of the active serving Project.
+	projects := make([]string, 0, len(uisignals.ValueOrZero(filters.Projects)))
 	for _, requested := range uisignals.ValueOrZero(filters.Projects) {
-		if requested != projectID.String() {
+		parsed, err := projectgraph.NewResourceID(requested)
+		if err != nil {
 			return filters, errQueryHistoryProjectScope
 		}
+		projects = append(projects, parsed.String())
 	}
-	filters.Projects = uisignals.OptionalSlice([]string{projectID.String()})
+	filters.Projects = uisignals.OptionalSlice(projects)
 	return filters, nil
 }
 
@@ -331,9 +370,9 @@ func (m ReadModel) queryHistoryFilterMenus(r *http.Request, repo queryaudit.Read
 		if menu.id == searchMenuID {
 			menuSearch = strings.TrimSpace(search)
 		}
-		options, err := repo.ListQueryEventFilterOptions(r.Context(), projectID, menu.id, menuSearch, 100)
-		if err != nil {
-			return queryHistoryFilterMenusWithError(filters, err.Error())
+		options, optionsErr := loadQueryHistoryFilterOptions(r, repo, projectID, menu.id, menuSearch)
+		if optionsErr != nil {
+			return queryHistoryFilterMenusWithError(filters, optionsErr.Error())
 		}
 		for _, option := range options {
 			menu.values[option.Value] = option.Count
@@ -344,6 +383,20 @@ func (m ReadModel) queryHistoryFilterMenus(r *http.Request, repo queryaudit.Read
 		out = append(out, queryHistoryFilterMenu(menu.id, menu.label, menu.placeholder, menu.empty, menu.icon, menu.values, menu.labels, menu.selected, menuSearch, loading, ""))
 	}
 	return out
+}
+
+func loadQueryHistoryFilterOptions(r *http.Request, repo queryaudit.Reader, projectID projectgraph.ResourceID, field, search string) ([]queryaudit.FilterOption, error) {
+	if global, ok := repo.(queryHistoryGlobalFilterOptionReader); ok {
+		return global.ListQueryEventFilterOptionsGlobal(r.Context(), field, search, 100)
+	}
+	// Keep compatibility with query-audit readers that predate the global
+	// aggregation capability. Production readers implement the global method;
+	// this fallback remains scoped because those readers cannot safely expose
+	// data outside their existing project boundary.
+	if err := projectID.Validate(); err != nil {
+		return nil, nil
+	}
+	return repo.ListQueryEventFilterOptions(r.Context(), projectID, field, search, 100)
 }
 
 func queryHistoryFilterMenusWithError(filters uisignals.AdminQueryHistoryFilters, message string) []uisignals.FilterMenuSignal {
@@ -467,8 +520,40 @@ func queryHistoryStreamID(clientID string) string {
 
 func queryHistoryPage(r *http.Request, repo queryaudit.Reader, projectID projectgraph.ResourceID, filters uisignals.AdminQueryHistoryFilters, pageToken string, limit int) ([]ui.AdminQueryEvent, string, bool, error) {
 	limit = normalizeQueryHistoryLimit(limit)
+	_ = projectID // retained in the helper signature for callers compiled against the scoped form
+	projectIDs := make([]projectgraph.ResourceID, 0, len(uisignals.ValueOrZero(filters.Projects)))
+	for _, value := range uisignals.ValueOrZero(filters.Projects) {
+		id, err := projectgraph.NewResourceID(value)
+		if err != nil {
+			return nil, "", false, errQueryHistoryProjectScope
+		}
+		projectIDs = append(projectIDs, id)
+	}
+	// A UUID is also an event identity. PostgreSQL exposes a global lookup for
+	// this admin surface because full-text search intentionally excludes UUIDs.
+	if eventID := strings.TrimSpace(uisignals.ValueOrZero(filters.Search)); looksLikeQueryEventID(eventID) {
+		if global, ok := repo.(interface {
+			GetQueryEventGlobal(context.Context, string) (queryaudit.Event, bool, error)
+		}); ok {
+			event, found, err := global.GetQueryEventGlobal(r.Context(), eventID)
+			if err != nil {
+				return nil, "", false, err
+			}
+			if !found {
+				return nil, "", false, nil
+			}
+			matches, matchErr := queryHistoryEventMatchesFilters(event, filters, projectIDs)
+			if matchErr != nil {
+				return nil, "", false, matchErr
+			}
+			if !matches {
+				return nil, "", false, nil
+			}
+			return []ui.AdminQueryEvent{queryEventFromAudit(event)}, "", false, nil
+		}
+	}
 	rows, err := repo.ListQueryEvents(r.Context(), queryaudit.Filter{
-		ProjectID:    projectID,
+		ProjectIDs:   projectIDs,
 		PrincipalIDs: cleanStringSlice(uisignals.ValueOrZero(filters.Principals)),
 		Surfaces:     cleanStringSlice(uisignals.ValueOrZero(filters.Surfaces)),
 		QueryKinds:   cleanStringSlice(uisignals.ValueOrZero(filters.Kinds)),
@@ -523,6 +608,91 @@ func queryEventFromAudit(row queryaudit.Event) ui.AdminQueryEvent {
 		QueryJSON:        row.QueryJSON,
 		CreatedAt:        row.CreatedAt,
 	}
+}
+
+func looksLikeQueryEventID(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 36 {
+		return false
+	}
+	for index, char := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			if char != '-' {
+				return false
+			}
+			continue
+		}
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+func queryHistoryEventMatchesFilters(event queryaudit.Event, filters uisignals.AdminQueryHistoryFilters, projectIDs []projectgraph.ResourceID) (bool, error) {
+	if len(projectIDs) > 0 {
+		matched := false
+		for _, projectID := range projectIDs {
+			if event.ProjectID == projectID {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false, nil
+		}
+	}
+	if values := uisignals.ValueOrZero(filters.Principals); len(values) > 0 && !containsString(values, event.PrincipalID) {
+		return false, nil
+	}
+	if values := uisignals.ValueOrZero(filters.Surfaces); len(values) > 0 && !containsString(values, event.Surface) {
+		return false, nil
+	}
+	if values := uisignals.ValueOrZero(filters.Kinds); len(values) > 0 && !containsString(values, event.QueryKind) {
+		return false, nil
+	}
+	if values := uisignals.ValueOrZero(filters.Statuses); len(values) > 0 && !containsString(values, event.Status) {
+		return false, nil
+	}
+	if target := strings.TrimSpace(uisignals.ValueOrZero(filters.Target)); target != "" && event.Target != target {
+		return false, nil
+	}
+	if from := strings.TrimSpace(uisignals.ValueOrZero(filters.From)); from != "" {
+		fromTime, err := time.Parse(time.RFC3339Nano, from)
+		if err != nil {
+			return false, err
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, event.CreatedAt)
+		if err != nil {
+			return false, err
+		}
+		if createdAt.Before(fromTime) {
+			return false, nil
+		}
+	}
+	if to := strings.TrimSpace(uisignals.ValueOrZero(filters.To)); to != "" {
+		toTime, err := time.Parse(time.RFC3339Nano, to)
+		if err != nil {
+			return false, err
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, event.CreatedAt)
+		if err != nil {
+			return false, err
+		}
+		if createdAt.After(toTime) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func containsString(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 func queryHistoryErrorText(err error) string {

@@ -46,7 +46,7 @@ import './dashboard-appearance-editor'
 import './pipelines-page'
 import { projectBaseStyles } from './project-page-base.styles'
 import { projectOverviewStyles } from './project-page-overview.styles'
-
+import { emptyLineageStatus, renderAssetLineage } from './project-lineage'
 const emptyConnectionAdministration: ConnectionAdministrationSignal = {
   command: {
     action: '', assetId: '', authenticationMode: '', confirmationToken: '', connectorKind: '', credentialEnvironment: '', credentialProjectId: '', database: '', expectedRevision: 0,
@@ -58,7 +58,6 @@ const emptyConnectionAdministration: ConnectionAdministrationSignal = {
 const emptyModelFieldDrawer: ModelFieldDrawerSignal = { fieldKey: '', open: false }
 const emptyRefreshRunDrawer: RefreshRunDrawerSignal = { open: false, runId: '' }
 const emptyAssetVersionDrawer: AssetVersionDrawerSignal = { open: false, versionId: '' }
-
 type ModelFieldDrawerRow = Record<string, unknown> & {
   fieldKey?: string
   label?: string
@@ -258,6 +257,8 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   private pushedRefreshRunDrawerEntry = false
   private assetVersionDrawerPageKey = ''
   private pushedAssetVersionDrawerEntry = false
+  @state() private refreshHistoryPage = 1
+  private refreshHistoryPageKey = ''
   private definitionNavigation?: HTMLElement
 
   static get styles() {
@@ -316,6 +317,13 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     if (refreshDrawerPageKey && refreshDrawerPageKey !== this.refreshRunDrawerPageKey) {
       this.refreshRunDrawerPageKey = refreshDrawerPageKey
       this.syncRefreshRunDrawerFromLocation()
+    }
+    const refreshHistoryPageKey = page?.activeSection === 'refreshes' && page.refresh?.runsTable
+      ? `${page.asset.detailHref}/refreshes`
+      : ''
+    if (refreshHistoryPageKey !== this.refreshHistoryPageKey) {
+      this.refreshHistoryPageKey = refreshHistoryPageKey
+      this.refreshHistoryPage = 1
     }
     const versionDrawerPageKey = page?.activeSection === 'versions' && page.versions?.table
       ? `${page.asset.detailHref}/versions`
@@ -718,7 +726,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   private renderAssetPage(page: ResourceAssetPageSignal) {
     return html`
       <section
-        class=${`asset-page${page.activeSection === 'data' ? ' data-asset-page' : ''}`}
+        class=${`asset-page${page.activeSection === 'data' ? ' data-asset-page' : ''}${page.asset.type === 'semantic_model' && page.activeSection === 'definition' ? ' semantic-model-definition-page' : ''}`}
         aria-label="Project asset detail"
         @lv-record-table-action=${this.handleRecordTableAction}
       >
@@ -868,17 +876,20 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
                           <h2>${semanticSectionName(selected.section.title)}</h2>
                           ${selected.section.table?.rows?.length
                             ? html`
-                              <label class="semantic-object-search-wrap">
+                              <form class="semantic-object-search-wrap" role="search" @submit=${this.preventSearchSubmit}>
+                                <label class="semantic-object-search-label">
                                 <span class="visually-hidden">Search ${semanticSectionName(selected.section.title).toLowerCase()}</span>
                                 ${lucideIcon(Search, { size: 16 })}
                                 <input
                                   class="semantic-object-search"
                                   type="search"
+                                  aria-label=${`Search ${semanticSectionName(selected.section.title).toLowerCase()}`}
                                   placeholder="Search ${semanticSectionName(selected.section.title).toLowerCase()}…"
                                   .value=${this.assetDefinitionQuery}
                                   @input=${(event: Event) => { this.assetDefinitionQuery = (event.currentTarget as HTMLInputElement).value }}
                                 />
-                              </label>
+                                </label>
+                              </form>
                             `
                             : nothing}
                         </div>
@@ -915,7 +926,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     const selectedSection = sections.find((section) => semanticSectionSlug(section.title) === this.semanticModelView)
     const table = filterRecordTable(selectedSection?.table, this.semanticObjectQuery)
     return html`
-      <section class="semantic-model-view" id="definition" aria-label="Definition">
+      <section class=${`semantic-model-view${this.semanticModelView === 'diagram' ? ' semantic-model-diagram-view' : ''}`} id="definition" aria-label="Definition">
         <div class="semantic-model-layout">
           <nav class="semantic-model-navigation" aria-label="Definition sections">
             ${renderSemanticModelNavigationItem('diagram', 'Diagram', undefined, this.semanticModelView, (view) => this.selectSemanticModelView(view))}
@@ -938,17 +949,20 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
                     <div class="semantic-object-list">
                       <div class="semantic-object-list-header">
                         <h2>${semanticSectionName(selectedSection.title)}</h2>
-                        <label class="semantic-object-search-wrap">
+                        <form class="semantic-object-search-wrap" role="search" @submit=${this.preventSearchSubmit}>
+                          <label class="semantic-object-search-label">
                           <span class="visually-hidden">Search ${semanticSectionName(selectedSection.title).toLowerCase()}</span>
                           ${lucideIcon(Search, { size: 16 })}
                           <input
                             class="semantic-object-search"
                             type="search"
+                            aria-label=${`Search ${semanticSectionName(selectedSection.title).toLowerCase()}`}
                             placeholder="Search ${semanticSectionName(selectedSection.title).toLowerCase()}…"
                             .value=${this.semanticObjectQuery}
                             @input=${(event: Event) => { this.semanticObjectQuery = (event.currentTarget as HTMLInputElement).value }}
                           />
-                        </label>
+                          </label>
+                        </form>
                       </div>
                       <lv-record-table .table=${table ?? null}></lv-record-table>
                     </div>
@@ -986,22 +1000,30 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   }
 
   private renderLineage(page: ResourceAssetPageSignal) {
-    return html`
-      <section class="lineage" id="lineage" aria-label="Asset lineage">
-        <lv-asset-lineage-graph class="lineage-graph" .graph=${page.lineage?.graph ?? { nodes: [], edges: [] }}></lv-asset-lineage-graph>
-        <div class="lineage-grids">
-          ${renderRecordTableSection('Uses', page.lineage?.usesTable)}
-          ${renderRecordTableSection('Used by', page.lineage?.usedByTable)}
-        </div>
-      </section>
-    `
+    return renderAssetLineage(page.lineage, this.signal('status', emptyLineageStatus))
   }
 
+  private preventSearchSubmit(event: SubmitEvent): void { event.preventDefault() }
+
   private renderRefreshes(page: ResourceAssetPageSignal) {
+    const table = page.refresh?.runsTable
+    const pageSize = 25
+    const totalPages = table ? Math.max(1, Math.ceil((table.rows?.length ?? 0) / pageSize)) : 1
+    const currentPage = Math.min(Math.max(this.refreshHistoryPage, 1), totalPages)
+    const visibleTable = table && totalPages > 1
+      ? { ...table, rows: table.rows.slice((currentPage - 1) * pageSize, currentPage * pageSize) }
+      : table
     return html`
       <section class="details" id="refreshes" aria-label="Refreshes">
         <div class="details-content">
-          ${page.refresh?.runsTable ? renderRecordTableSection('Refresh history', page.refresh.runsTable) : nothing}
+          ${visibleTable ? renderRecordTableSection('Refresh history', visibleTable) : nothing}
+          ${totalPages > 1 ? html`
+            <nav class="record-table-pagination" aria-label="Refresh history pagination">
+              <button type="button" ?disabled=${currentPage <= 1} @click=${() => { this.refreshHistoryPage = Math.max(1, currentPage - 1) }}>Previous</button>
+              <span>Page ${currentPage} of ${totalPages}</span>
+              <button type="button" ?disabled=${currentPage >= totalPages} @click=${() => { this.refreshHistoryPage = Math.min(totalPages, currentPage + 1) }}>Next</button>
+            </nav>
+          ` : nothing}
         </div>
       </section>
     `
@@ -1671,7 +1693,7 @@ function renderFacts(title: string, facts: DefinitionFactSignal[], overview: boo
   `
 }
 
-function fieldValue(field: Record<string, unknown>, key: string, fallback = '-'): string {
+function fieldValue(field: Record<string, unknown>, key: string, fallback = '—'): string {
   const value = field[key]
   if (value == null || String(value).trim() === '') return fallback
   return String(value)

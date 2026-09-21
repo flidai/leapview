@@ -25,6 +25,16 @@ beforeAll(async () => {
       response.end(testDocument(true))
       return
     }
+    if (url.pathname === '/initial-chrome-shell') {
+      const initialChrome = escapeHTML(JSON.stringify({ sidebar: {
+        productName: 'Northstar Analytics', productLogoUrl: '/northstar.svg', active: 'sources', area: 'develop', compact: false,
+        dashboardId: '', dashboardTitle: '', pageTitle: '', modelId: '', modelTitle: '', userSettingsHref: '/admin/profile',
+        groups: [{ label: 'Catalog', items: [{ id: 'sources', label: 'Sources', href: '/sources', icon: 'database' }] }],
+      } }))
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument(true).replace('<lv-app-shell>', `<lv-app-shell data-initial-chrome="${initialChrome}">`))
+      return
+    }
     if (url.pathname === '/upgraded-compact-shell') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument(true, true))
@@ -32,7 +42,7 @@ beforeAll(async () => {
     }
     if (url.pathname === '/sidebar-history') {
       response.setHeader('content-type', 'text/html')
-      response.end(testDocument(true, false, true))
+      response.end(testDocument(true, false, true, false, false, url.searchParams.getAll('deleted')))
       return
     }
     if (url.pathname === '/sidebar-active-nav') {
@@ -170,6 +180,9 @@ test('app shell renders a restrained text-only LeapView identity', async () => {
         navigationLabel: root.querySelector('aside')?.getAttribute('aria-label'),
         name: root.querySelector('.brand .name')?.textContent?.trim(),
         mobileName: root.querySelector('.mobile-drawer-title')?.textContent?.trim(),
+        homeHref: root.querySelector('.brand-home')?.getAttribute('href'),
+        homeLabel: root.querySelector('.brand-home')?.getAttribute('aria-label'),
+        mobileHomeHref: root.querySelector('.mobile-drawer-title')?.getAttribute('href'),
         markCount: root.querySelectorAll('lv-brand-mark').length,
       }
     })
@@ -178,6 +191,9 @@ test('app shell renders a restrained text-only LeapView identity', async () => {
       navigationLabel: 'LeapView navigation',
       name: 'LeapView',
       mobileName: 'LeapView',
+      homeHref: '/',
+      homeLabel: 'LeapView home',
+      mobileHomeHref: '/',
       markCount: 0,
     })
   } finally {
@@ -210,6 +226,27 @@ test('app shell renders custom identity with permanent LeapView attribution', as
       attribution: 'Powered by LeapView',
       attributionHref: 'https://leapview.dev',
     })
+  } finally {
+    await page.close()
+  }
+})
+
+test('server-projected chrome renders the correct tenant identity before live signals arrive', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/initial-chrome-shell`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    const state = await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      await element.updateComplete
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      await sidebar.updateComplete
+      return {
+        name: sidebar.shadowRoot.querySelector('.name')?.textContent?.trim(),
+        logo: sidebar.shadowRoot.querySelector('.product-logo')?.getAttribute('src'),
+        sourceHref: sidebar.shadowRoot.querySelector('a[href="/sources"]')?.getAttribute('href'),
+      }
+    })
+    expect(state).toEqual({ name: 'Northstar Analytics', logo: '/northstar.svg', sourceHref: '/sources' })
   } finally {
     await page.close()
   }
@@ -937,7 +974,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
   }
 })
 
-test('chat inline hover actions support pinning without navigating the row', async () => {
+test('chat row action menu supports keyboard navigation and pinning without navigating the row', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   await page.goto(`${baseURL}/sidebar-history`)
   await page.evaluate(() => {
@@ -946,9 +983,19 @@ test('chat inline hover actions support pinning without navigating the row', asy
   })
   const row = page.locator('.history-row').filter({ hasText: 'Revenue check' })
   await row.hover()
-  expect(await row.getByRole('button').count()).toBe(3)
-  expect(await page.getByRole('menu').count()).toBe(0)
-  await row.getByRole('button', { name: 'Pin chat', exact: true }).click()
+  const trigger = row.locator('summary[aria-label="More actions for Revenue check"]')
+  expect(await trigger.count()).toBe(1)
+  await trigger.focus()
+  await trigger.press('Enter')
+  const menu = row.getByRole('menu')
+  expect(await menu.count()).toBe(1)
+  await menu.getByRole('menuitem', { name: 'Pin chat', exact: true }).focus()
+  await page.keyboard.press('ArrowDown')
+  expect(await menu.getByRole('menuitem', { name: 'Rename', exact: true }).evaluate((element) => element === (element.getRootNode() as Document | ShadowRoot).activeElement)).toBe(true)
+  await page.keyboard.press('Escape')
+  expect(await trigger.evaluate((element) => element === (element.getRootNode() as Document | ShadowRoot).activeElement)).toBe(true)
+  await trigger.click()
+  await menu.getByRole('menuitem', { name: 'Pin chat', exact: true }).click()
   expect(await page.evaluate(() => (window as any).chatActions.map((item: any) => ({ action: item.action, conversationId: item.conversationId })))).toEqual([{ action: 'pin', conversationId: 'c1' }])
   expect(new URL(page.url()).pathname).toBe('/sidebar-history')
   await page.close()
@@ -969,6 +1016,23 @@ test('chat deletion requires confirmation and cancel sends no command', async ()
   await page.close()
 })
 
+test('deleting all listed chats confirms archived chats are kept', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  await page.goto(`${baseURL}/sidebar-history`)
+  await page.evaluate(() => {
+    ;(window as any).chatActions = []
+    document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+    document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'delete_active', conversationId: '' } }))
+  })
+  const dialog = page.getByRole('dialog', { name: 'Delete all chats?' })
+  await dialog.waitFor()
+  expect(await dialog.textContent()).toContain('Archived chats will be kept')
+  await dialog.getByRole('button', { name: 'Delete', exact: true }).click()
+  await page.waitForFunction(() => (window as any).chatActions.length === 1)
+  expect(await page.evaluate(() => ({ action: (window as any).chatActions[0].action, conversationId: (window as any).chatActions[0].conversationId }))).toEqual({ action: 'delete_active', conversationId: '' })
+  await page.close()
+})
+
 test('archive persists before showing five-second Undo and waits for cancellation acknowledgement', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   try {
@@ -982,18 +1046,16 @@ test('archive persists before showing five-second Undo and waits for cancellatio
     })
     expect(await page.evaluate(() => (window as any).chatActions[0].action)).toBe('archive_pending')
     expect(await page.getByRole('button', { name: 'Undo', exact: true }).count()).toBe(0)
-    await page.evaluate(async () => {
-      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
+    await page.evaluate(() => {
+      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
     await page.getByRole('status').filter({ hasText: 'Archived chat' }).waitFor()
     expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('lv-chat-manager.pending-undo')!)[0].deadline - Date.now())).toBeGreaterThan(4_000)
     await page.locator('button.undo').click()
     expect(await page.evaluate(() => (window as any).chatActions.map((a: any) => a.action))).toEqual(['archive_pending', 'undo'])
     expect(await page.evaluate(() => (window as any).chatActions[0].requestId === (window as any).chatActions[1].requestId)).toBe(true)
-    await page.evaluate(async () => {
-      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      runtime.mergePatch({ chatManagement: { action: 'undo', completedRequestId: (window as any).chatActions[1].requestId, message: 'Conversation action canceled.', archivedConversations: [] } })
+    await page.evaluate(() => {
+      ;(window as any).testMergePatch({ chatManagement: { action: 'undo', completedRequestId: (window as any).chatActions[1].requestId, message: 'Conversation action canceled.', archivedConversations: [] } })
     })
     await page.getByRole('status').filter({ hasText: 'Conversation action canceled.' }).waitFor()
     expect(await page.evaluate(() => sessionStorage.getItem('lv-chat-manager.pending-undo'))).toBeNull()
@@ -1014,9 +1076,8 @@ test('chat actions keep independent Undo notifications without waiting for the f
       document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'archive', conversationId: 'c1', title: 'Revenue check' } }))
     })
     await page.waitForFunction(() => (window as any).chatActions.length === 1)
-    await page.evaluate(async () => {
-      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
+    await page.evaluate(() => {
+      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
     await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
 
@@ -1026,9 +1087,8 @@ test('chat actions keep independent Undo notifications without waiting for the f
     await page.getByRole('dialog', { name: 'Delete chat?' }).waitFor()
     await page.getByRole('button', { name: 'Delete', exact: true }).click()
     await page.waitForFunction(() => (window as any).chatActions.length === 2)
-    await page.evaluate(async () => {
-      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      runtime.mergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: (window as any).chatActions[1].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
+    await page.evaluate(() => {
+      ;(window as any).testMergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: (window as any).chatActions[1].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
 
     await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
@@ -1038,9 +1098,8 @@ test('chat actions keep independent Undo notifications without waiting for the f
 
     await page.locator('button.undo[data-conversation-id="c1"]').click()
     await page.waitForFunction(() => (window as any).chatActions.length === 3)
-    await page.evaluate(async () => {
-      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      runtime.mergePatch({ chatManagement: { action: 'undo', completedRequestId: (window as any).chatActions[2].requestId, message: '', archivedConversations: [] } })
+    await page.evaluate(() => {
+      ;(window as any).testMergePatch({ chatManagement: { action: 'undo', completedRequestId: (window as any).chatActions[2].requestId, message: '', archivedConversations: [] } })
     })
 
     await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
@@ -1066,9 +1125,8 @@ test('expired chat Undo refreshes the sidebar before releasing its temporary hid
       document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'archive', conversationId: 'c1', title: 'Revenue check' } }))
     })
     await page.waitForFunction(() => (window as any).chatActions.length === 1)
-    await page.evaluate(async () => {
-      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
+    await page.evaluate(() => {
+      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
     })
     await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
     await page.waitForFunction(() => (window as any).managementLoads.length > 0)
@@ -1118,9 +1176,8 @@ test('expired chat refresh keeps the current focus when the sidebar read succeed
       document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'archive', conversationId: 'c1', title: 'Revenue check' } }))
     })
     await page.waitForFunction(() => (window as any).chatActions.length === 1)
-    await page.evaluate(async () => {
-      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
+    await page.evaluate(() => {
+      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
     })
     await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
     await page.waitForFunction(() => (window as any).managementLoads.length > 0)
@@ -1129,10 +1186,9 @@ test('expired chat refresh keeps the current focus when the sidebar read succeed
       ;(sidebar.shadowRoot.querySelector('a[href="/"]') as HTMLElement).focus()
     })
 
-    await page.evaluate(async () => {
-      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+    await page.evaluate(() => {
       const requestId = (window as any).managementLoads.at(-1).requestId
-      runtime.mergePatch({ chatManagement: { action: '', completedRequestId: requestId, archivedConversations: [] } })
+      ;(window as any).testMergePatch({ chatManagement: { action: '', completedRequestId: requestId, archivedConversations: [] } })
     })
     await page.locator('lv-chat-manager').evaluate((element: any) => element.updateComplete)
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
@@ -1161,16 +1217,14 @@ test('archived chat manager restores a saved chat and waits for server acknowled
   })
   await page.getByRole('dialog', { name: 'Archived chats' }).waitFor()
   await page.waitForFunction(() => Boolean((window as any).loadID))
-  await page.evaluate(async () => {
-    const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-    runtime.mergePatch({ chatManagement: { action: '', conversationId: '', completedRequestId: (window as any).loadID, archivedConversations: [{ id: 'archived-1', title: 'Last quarter', status: 'archived' }] } })
+  await page.evaluate(() => {
+    ;(window as any).testMergePatch({ chatManagement: { action: '', conversationId: '', completedRequestId: (window as any).loadID, archivedConversations: [{ id: 'archived-1', title: 'Last quarter', status: 'archived' }] } })
   })
   await page.getByRole('button', { name: 'Restore Last quarter', exact: true }).click()
   expect(await page.evaluate(() => (window as any).chatActions[0].action)).toBe('restore')
   await page.getByRole('status').filter({ hasText: 'Loading' }).waitFor()
-  await page.evaluate(async () => {
-    const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-    runtime.mergePatch({ chatManagement: { action: 'restore', completedRequestId: (window as any).chatActions[0].requestId, archivedConversations: [], message: 'Chat restored.' } })
+  await page.evaluate(() => {
+    ;(window as any).testMergePatch({ chatManagement: { action: 'restore', completedRequestId: (window as any).chatActions[0].requestId, archivedConversations: [], message: 'Chat restored.' } })
   })
   await page.getByText('No archived chats yet.', { exact: true }).waitFor()
   await page.close()
@@ -1238,7 +1292,7 @@ test('sidebar renders global chat action and recent history', async () => {
         })),
         spacing: (() => {
           const group = root.querySelector('.nav-group:not(.primary-action)') as HTMLElement
-          const navItem = root.querySelector('a[href="/"]') as HTMLElement
+          const navItem = root.querySelector('a.nav-item[href="/"]') as HTMLElement
           const historyList = root.querySelector('.history-list') as HTMLElement
           return {
             navGroupGap: getComputedStyle(group).gap,
@@ -1449,13 +1503,13 @@ test('admin sidebar replaces global navigation and provides a back to app action
       }
     })
 
-    expect(state.groupLabels).toEqual(['Personal', 'Product', 'Access', 'Data & sharing', 'Operations'])
+    expect(state.groupLabels).toEqual(['Personal', 'Chats', 'Product', 'Access', 'Data & sharing', 'Operations'])
     expect(state.adminMode).toBe(true)
     expect(state.width).toBe(248)
-    expect(state.visibleGroupLabels).toEqual(['Personal', 'Product', 'Access', 'Data & sharing', 'Operations'])
+    expect(state.visibleGroupLabels).toEqual(['Personal', 'Chats', 'Product', 'Access', 'Data & sharing', 'Operations'])
     expect(state.links).toEqual(expect.arrayContaining([
       { href: '/admin/profile', text: 'Profile', current: 'false' },
-      { href: '/admin/principals', text: 'Principals', current: 'page' },
+      { href: '/admin/principals', text: 'Users', current: 'page' },
       { href: '/admin/groups', text: 'Groups', current: 'false' },
       { href: '/admin/agent', text: 'Agent', current: 'false' },
       { href: '/admin/storage', text: 'Storage', current: 'false' },

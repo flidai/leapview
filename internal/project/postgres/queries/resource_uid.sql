@@ -61,3 +61,9 @@ SELECT * FROM project.authorize_resource_uid_restore(
     sqlc.arg(actor_id)::text,
     sqlc.arg(request_digest)::text
 );
+
+-- name: AuthorizeApprovedResourceUIDRestores :one
+SELECT project.authorize_resource_uid_restores_for_approval(
+    sqlc.arg(request_id)::uuid,
+    sqlc.arg(decision_id)::uuid
+)::bigint;

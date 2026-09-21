@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-08-24",
+  "updated": "2026-09-17",
   "guarantees": {
     "transactional": "The state transition and audit event commit in one durable transaction; an audit failure aborts the transition.",
     "durable-before-stream": "The access identity is persisted before a governed stream can release bytes. A later completion event may be best-effort.",
@@ -16,14 +16,14 @@
       "guarantee": "transactional",
       "failureBehavior": "The mutation and one or more audit rows roll back together.",
       "implementation": [
-        "internal/access/sqlite/repository.go",
-        "internal/access/sqlite/authoring_auth.go",
+        "internal/access/postgres/repository.go",
+        "internal/access/postgres/authoring_auth.go",
         "internal/access/http/handler.go",
         "internal/admin/settings/commands.go",
         "internal/admin/personalsettings/service.go"
       ],
       "contractSources": ["internal/access/access.go", "api/typespec/access.tsp", "api/typespec/current_user.tsp"],
-      "evidence": ["internal/access/sqlite/repository_test.go", "internal/access/sqlite/authoring_auth_test.go", "internal/admin/settings/commands_test.go"]
+      "evidence": ["internal/access/postgres/repository_test.go", "internal/access/postgres/authoring_replay_failure_test.go", "internal/admin/settings/commands_test.go"]
     },
     {
       "id": "access.authentication-observations",

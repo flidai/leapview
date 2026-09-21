@@ -39,9 +39,6 @@ internal/platform/http/api/gen/
 internal/project/api/gen/
 internal/refresh/api/gen/
 internal/release/api/gen/
-internal/platform/db/db.go
-internal/platform/db/models.go
-internal/platform/db/*.sql.go
 internal/*/internal/db/
 internal/**/internal/db/
 internal/project/postgres/internal/db/
@@ -50,7 +47,6 @@ internal/platform/operation/postgres/internal/db/
 internal/platform/http/cursorsigning/postgres/internal/db/
 internal/manageddata/postgres/internal/db/
 internal/platform/events/postgres/internal/db/
-internal/platform/**/sqlite/*db/
 docs/visuals/examples.gen.json
 web/generated/
 docs/catalog.json

@@ -13,6 +13,9 @@ func TestTerraformProductionContracts(t *testing.T) {
 	main := readFile(t, "main.tf")
 	cloudInit := readFile(t, filepath.Join("..", "host", "cloud-init.yaml.tftpl"))
 	requireContains(t, variables, `variable "leapview_image"`)
+	requireContains(t, variables, `variable "target_id"`)
+	requireContains(t, main, `targetId      = var.target_id`)
+	requireMatch(t, main, `config_b64\s*=\s*base64encode\(jsonencode\(local\.bootstrap_config\)\)`)
 	requireContains(t, variables, `@sha256:`)
 	requireContains(t, variables, `variable "ssh_allowed_cidrs"`)
 	if strings.Contains(variables, `default     = ["0.0.0.0/0", "::/0"]`) {
@@ -36,7 +39,7 @@ func TestHetznerConsumesGenericComposeLifecycle(t *testing.T) {
 	for _, fragment := range []string{
 		`${path.module}/../host/cloud-init.yaml.tftpl`,
 		`${path.module}/../host/bootstrap-ubuntu.sh`,
-		`jsonencode({`,
+		`jsonencode(local.bootstrap_config)`,
 		`schemaVersion = 1`,
 	} {
 		requireContains(t, main, fragment)
@@ -178,6 +181,7 @@ func assertDockerfileImagesPinned(t *testing.T, name, dockerfile string) {
 
 func TestEphemeralDeploymentExercisesPublicContracts(t *testing.T) {
 	workflow := readFile(t, filepath.Join("..", "..", ".github", "workflows", "hetzner-deploy.yml"))
+	requireContains(t, workflow, `TF_VAR_target_id: leapview-ci-${{ github.run_id }}`)
 	for _, fragment := range []string{
 		"workflow_dispatch:", "environment: leapview-ephemeral-qualification", "terraform apply",
 		"public_ready=false", "--connect-timeout 5", "leapviewctl status", "leapviewctl logs caddy",
@@ -231,7 +235,9 @@ func TestMainArtifactsAllowsOnlyProtectedOpenPRCandidates(t *testing.T) {
 		"needs.authorize-candidate.result == 'success'",
 		`channel="candidate"`,
 		"${{ steps.identity.outputs.channel }}-${{ steps.identity.outputs.revision }}",
-		"source-revision: ${{ needs.build-production-image.outputs.revision }}",
+		"source-revision: ${{ github.sha }}",
+		"--arg revision \"${IMAGE_REVISION}\"",
+		".revision == $revision",
 	} {
 		requireContains(t, workflow, fragment)
 	}

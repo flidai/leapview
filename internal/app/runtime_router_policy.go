@@ -198,7 +198,22 @@ func bootstrapAPIGenDecision(
 	// Candidate-source authoring normally follows the active snapshot too, except
 	// for the canonical-empty legacy generation that must stage its policy-bearing
 	// successor through the durable, exact-claim bootstrap path.
-	if bootstrapCandidateSourceOperation(operationID) {
+	if bootstrapManagedDataOperation(operationID) {
+		active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment, targets, targetID, projectID.String())
+		if err != nil {
+			return accessmodule.APIGenBootstrapDecision{}, err
+		}
+		if active {
+			allowed, claimErr := bootstrapClaimAllows(ctx, claims, environment, operationID, projectID)
+			if claimErr != nil {
+				return accessmodule.APIGenBootstrapDecision{}, claimErr
+			}
+			// Existing resources remain entirely governed by the active snapshot.
+			// This bit is consumed only after that snapshot proves the exact
+			// successor connection is absent.
+			return accessmodule.APIGenBootstrapDecision{Handled: false, AllowMissingResource: allowed}, nil
+		}
+	} else if bootstrapCandidateSourceOperation(operationID) {
 		// A legacy active generation with no authorization content still needs
 		// these authoring operations to stage the policy-bearing successor that
 		// closes bootstrap. During runtime warm-up, keep using the durable exact
@@ -233,26 +248,42 @@ func bootstrapAPIGenDecision(
 			return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
 		}
 	}
+	allowed, err := bootstrapClaimAllows(ctx, claims, environment, operationID, projectID)
+	if err != nil {
+		return accessmodule.APIGenBootstrapDecision{}, err
+	}
+	return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: allowed}, nil
+}
+
+func bootstrapClaimAllows(ctx context.Context, claims deploymentmodule.ProjectClaimReader, environment, operationID string, projectID projectgraph.ResourceID) (bool, error) {
 	if err := projectID.Validate(); err != nil || projectID.String() != strings.TrimSpace(projectID.String()) {
-		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
+		return false, nil
 	}
 	if claims == nil {
-		return accessmodule.APIGenBootstrapDecision{}, errors.New("project claim repository is unavailable")
+		return false, errors.New("project claim repository is unavailable")
 	}
 	claim, err := claims.GetProjectClaim(ctx)
 	if errors.Is(err, deployment.ErrProjectClaimNotFound) {
-		// Only the platform-scoped Project bootstrap may establish a claim.
-		// Project-scoped source and managed-data operations must not create
-		// target state before that separately authorized boundary succeeds.
-		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
+		return false, nil
 	}
 	if err != nil {
-		return accessmodule.APIGenBootstrapDecision{}, fmt.Errorf("read bootstrap project claim: %w", err)
+		return false, fmt.Errorf("read bootstrap project claim: %w", err)
 	}
 	if claim.ProjectID != projectID || claim.Environment != servingstatemodule.Environment(strings.TrimSpace(environment)) {
-		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
+		return false, nil
 	}
-	return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapOperationAllowed(operationID)}, nil
+	return bootstrapOperationAllowed(operationID), nil
+}
+
+func bootstrapManagedDataOperation(operationID string) bool {
+	switch operationID {
+	case "createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
+		"managedDataTusTransport":
+		return true
+	default:
+		return false
+	}
 }
 
 func bootstrapControlPlaneOperation(operationID string) bool {
@@ -316,25 +347,44 @@ func deliveryApprovalDecisionOperation(operationID string) bool {
 	}
 }
 
-func deliveryAuthorizationResources(plan deployment.DeliveryPlan) ([]access.ResourceRef, error) {
-	impact := append([]deployment.DeliveryImpactResource{}, plan.Evidence.GraphImpact.Added...)
-	impact = append(impact, plan.Evidence.GraphImpact.Removed...)
+type deliveryAuthorizationImpact struct {
+	Existing     []access.ResourceRef
+	HasAdditions bool
+}
+
+func deliveryAuthorizationResources(plan deployment.DeliveryPlan) (deliveryAuthorizationImpact, error) {
+	added := plan.Evidence.GraphImpact.Added
+	impact := append([]deployment.DeliveryImpactResource{}, plan.Evidence.GraphImpact.Removed...)
 	impact = append(impact, plan.Evidence.GraphImpact.DirectlyModified...)
 	impact = append(impact, plan.Evidence.GraphImpact.IndirectlyAffected...)
 	resources := make([]access.ResourceRef, 0, len(impact))
-	seen := make(map[string]struct{}, len(impact))
-	for _, item := range impact {
+	seen := make(map[string]struct{}, len(added)+len(impact))
+	parse := func(item deployment.DeliveryImpactResource) (access.ResourceRef, error) {
 		id, err := projectgraph.NewResourceID(strings.TrimSpace(item.ID))
 		if err != nil {
-			return nil, err
+			return access.ResourceRef{}, err
 		}
 		kind, err := projectgraph.ParseKind(strings.TrimSpace(item.Kind))
 		if err != nil {
-			return nil, err
+			return access.ResourceRef{}, err
 		}
 		resource, err := access.NewResourceRef(id, kind)
 		if err != nil {
-			return nil, err
+			return access.ResourceRef{}, err
+		}
+		return resource, nil
+	}
+	for _, item := range added {
+		resource, err := parse(item)
+		if err != nil {
+			return deliveryAuthorizationImpact{}, err
+		}
+		seen[resource.ID().String()+"\x00"+string(resource.Kind())] = struct{}{}
+	}
+	for _, item := range impact {
+		resource, err := parse(item)
+		if err != nil {
+			return deliveryAuthorizationImpact{}, err
 		}
 		key := resource.ID().String() + "\x00" + string(resource.Kind())
 		if _, exists := seen[key]; exists {
@@ -343,7 +393,20 @@ func deliveryAuthorizationResources(plan deployment.DeliveryPlan) ([]access.Reso
 		seen[key] = struct{}{}
 		resources = append(resources, resource)
 	}
-	return resources, nil
+	return deliveryAuthorizationImpact{Existing: resources, HasAdditions: len(added) > 0}, nil
+}
+
+func deliveryAuthorizationImpactAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, impact deliveryAuthorizationImpact, capability access.Capability) (bool, error) {
+	if impact.HasAdditions && !accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability) {
+		return false, nil
+	}
+	if len(impact.Existing) == 0 {
+		if impact.HasAdditions {
+			return true, nil
+		}
+		return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
+	}
+	return deliverySnapshotAllows(snapshot, subjects, impact.Existing, capability)
 }
 func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resources []access.ResourceRef, capability access.Capability) (bool, error) {
 	for _, resource := range resources {
@@ -384,6 +447,13 @@ func projectRootRoleDecision(snapshot accesssnapshot.AuthorizationSnapshot, subj
 }
 
 func deliveryResourceCapability(resource access.ResourceRef, capability access.Capability) access.Capability {
+	if capability == access.CapabilityResourceUse &&
+		!access.SupportsCapability(resource.Kind(), capability) &&
+		access.SupportsCapability(resource.Kind(), access.CapabilityResourceRead) {
+		// Building a plan requires use authority for executable resources and
+		// read authority for dashboards, which are consumed but not executable.
+		return access.CapabilityResourceRead
+	}
 	if capability == access.CapabilityResourcePublish &&
 		!access.SupportsCapability(resource.Kind(), capability) &&
 		access.SupportsCapability(resource.Kind(), access.CapabilityResourceEdit) {

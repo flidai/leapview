@@ -31,17 +31,27 @@ func TestPostgreSQLConformanceRunnerUsesCompleteBoundedInventory(t *testing.T) {
 	}
 	wantArgs := []string{
 		"test",
+		"-exec", "postgres-package-exec",
 		"-tags", "integration duckdb_arrow",
 		"-p", "4",
+		"-parallel", "1",
 		"-count=1",
+		"-timeout=30m",
 		"-v",
 		"-skip", "^TestMinIOParquetSourceRefreshContract$",
 		"github.com/flidai/leapview/internal/pg/legacy",
 		"github.com/flidai/leapview/internal/pg/shared",
 		"github.com/flidai/leapview/internal/pg/tls",
 	}
-	if !reflect.DeepEqual(result.args, wantArgs) {
+	gotArgs := append([]string(nil), result.args...)
+	if len(gotArgs) > 2 && gotArgs[1] == "-exec" {
+		gotArgs[2] = filepath.Base(gotArgs[2])
+	}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("go test args = %#v, want %#v", result.args, wantArgs)
+	}
+	if !reflect.DeepEqual(result.buildArgs, []string{"build", "-o", "postgres-package-exec", "./internal/platform/postgres/postgrestest/cmd/packageexec"}) {
+		t.Fatalf("Go package runner build args = %#v", result.buildArgs)
 	}
 	if result.required != "1" {
 		t.Fatalf("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED = %q, want 1", result.required)
@@ -82,14 +92,16 @@ type postgresConformanceFixture struct {
 	root        string
 	script      string
 	stubArgs    string
+	stubBuild   string
 	stubRequire string
 }
 
 type postgresConformanceRun struct {
-	args     []string
-	required string
-	output   string
-	err      error
+	args      []string
+	buildArgs []string
+	required  string
+	output    string
+	err       error
 }
 
 func newPostgreSQLConformanceFixture(t *testing.T, testFiles map[string]string) postgresConformanceFixture {
@@ -131,7 +143,7 @@ func newPostgreSQLConformanceFixture(t *testing.T, testFiles map[string]string) 
 		t.Fatalf("create fixture bin directory: %v", err)
 	}
 	stub := filepath.Join(stubDir, "go")
-	stubSource := "#!/usr/bin/env bash\nset -eu\nprintf '%s\\n' \"$@\" > \"$STUB_ARGS\"\nprintf '%s' \"${LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED-}\" > \"$STUB_REQUIRED\"\nexit \"${STUB_EXIT:-0}\"\n"
+	stubSource := "#!/usr/bin/env bash\nset -eu\nif [[ \"$1\" == build ]]; then printf '%s\\n' \"$@\" > \"$STUB_BUILD\"; exit 0; fi\nprintf '%s\\n' \"$@\" > \"$STUB_ARGS\"\nprintf '%s' \"${LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED-}\" > \"$STUB_REQUIRED\"\nexit \"${STUB_EXIT:-0}\"\n"
 	if err := os.WriteFile(stub, []byte(stubSource), 0o755); err != nil {
 		t.Fatalf("write fixture Go stub: %v", err)
 	}
@@ -139,6 +151,7 @@ func newPostgreSQLConformanceFixture(t *testing.T, testFiles map[string]string) 
 		root:        root,
 		script:      script,
 		stubArgs:    filepath.Join(root, "stub-args"),
+		stubBuild:   filepath.Join(root, "stub-build"),
 		stubRequire: filepath.Join(root, "stub-required"),
 	}
 }
@@ -150,6 +163,7 @@ func (f postgresConformanceFixture) run(t *testing.T, exitCode int) postgresConf
 	cmd.Env = append(os.Environ(),
 		"PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"STUB_ARGS="+f.stubArgs,
+		"STUB_BUILD="+f.stubBuild,
 		"STUB_REQUIRED="+f.stubRequire,
 		"STUB_EXIT="+strconv.Itoa(exitCode),
 	)
@@ -157,6 +171,12 @@ func (f postgresConformanceFixture) run(t *testing.T, exitCode int) postgresConf
 	result := postgresConformanceRun{output: string(output), err: err}
 	if args, readErr := os.ReadFile(f.stubArgs); readErr == nil {
 		result.args = strings.Split(strings.TrimSuffix(string(args), "\n"), "\n")
+	}
+	if args, readErr := os.ReadFile(f.stubBuild); readErr == nil {
+		result.buildArgs = strings.Split(strings.TrimSuffix(string(args), "\n"), "\n")
+		if len(result.buildArgs) > 2 {
+			result.buildArgs[2] = filepath.Base(result.buildArgs[2])
+		}
 	}
 	if required, readErr := os.ReadFile(f.stubRequire); readErr == nil {
 		result.required = string(required)
