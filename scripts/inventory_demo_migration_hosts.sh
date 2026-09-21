@@ -84,6 +84,19 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ "$scope" == both || "$scope" == old ]]; then
+  servers="$(hcloud_request GET "/servers?per_page=50")"
+  server_id="$(jq -er --arg address "$old_host" '.servers[] | select(.public_net.ipv4.ip == $address) | .id' <<<"$servers")"
+  jq -c --arg address "$old_host" '.servers[] | select(.public_net.ipv4.ip == $address) |
+    {id, name, status, created, backup_window, included_traffic, outgoing_traffic, ingoing_traffic, primary_disk_size}' <<<"$servers"
+  echo "provider backups:"
+  hcloud_request GET "/images?type=backup&sort=created:desc&per_page=50" |
+    jq -c --argjson server_id "$server_id" '.images[] | select(.created_from.id == $server_id) |
+      {id, status, type, created, image_size, disk_size, description}'
+  echo "provider snapshots:"
+  hcloud_request GET "/images?type=snapshot&sort=created:desc&per_page=50" |
+    jq -c --argjson server_id "$server_id" '.images[] | select(.created_from.id == $server_id) |
+      {id, status, type, created, image_size, disk_size, description}'
+
   firewall="$(hcloud_request GET "/firewalls/$firewall_id")"
   jq '.firewall.rules' <<<"$firewall" >"$original_firewall_rules"
   runner_cidr="$runner_ip/32"
