@@ -104,6 +104,25 @@ if (( available_kb < 7340032 )); then
       rm -rf -- "$cache"
     fi
   done
+  for binary in \
+    /tmp/leapview-main/.tmp/leapview-dev.previous \
+    /tmp/leapview-main/.tmp/leapview-dev.before-settings-loading \
+    /tmp/leapview-main/.tmp/leapview-dev.stale-run-delete-v1 \
+    /tmp/leapview-main/.tmp/leapview-dev.pre-delivery-hotfix \
+    /tmp/leapview-main/.tmp/leapview-dev.before-chat-idempotency \
+    /tmp/leapview-main/.tmp/leapview-dev.before-chat-hydration \
+    /tmp/leapview-main/.tmp/leapview-dev.next \
+    /tmp/leapview-main/.tmp/leapview-dev.delivery-hotfix; do
+    if [[ -f "$binary" && ! -L "$binary" ]] && ! lsof "$binary" >/dev/null 2>&1; then
+      du -sh "$binary"
+      rm -f -- "$binary"
+    fi
+  done
+  cache=/tmp/leapview-main/.leapview/duckdb-extension-cache
+  if [[ -d "$cache" && ! -L "$cache" ]]; then
+    du -sh "$cache"
+    rm -rf -- "$cache"
+  fi
   df -h /
 fi
 
