@@ -94,6 +94,7 @@ type runtimeServices struct {
 	runtimeHostModule              *runtimehostmodule.Module
 	projectID                      projectgraph.ResourceID
 	projectIDResolver              func(context.Context) (projectgraph.ResourceID, error)
+	developmentProjectIDResolver   func(context.Context) (projectgraph.ResourceID, error)
 	targetID                       string
 	checkoutID                     string
 	worktreeID                     string
@@ -718,6 +719,10 @@ func buildApplicationSurfaces(
 	runtime.analyticsModule = capabilities.AnalyticsModule
 	runtime.profileApplications = capabilities.ProfileApplications
 	runtime.developmentSessions = capabilities.DevelopmentSessions
+	// Development sessions exist before the first serving generation. Their
+	// project scope must use the durable claim/active-scope authoring resolver,
+	// not the dashboard lease resolver which is unavailable on a fresh target.
+	runtime.developmentProjectIDResolver = runtimeConfig.IdempotencyProjectIDResolver
 	runtime.targetID = runtimeConfig.InstanceID
 	runtime.checkoutID = runtimeConfig.LocalCheckoutID
 	// LocalCheckoutID is the canonical checkout/worktree identity supplied by
@@ -988,7 +993,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			routes.accessModule,
 			runtime.analyticsModule,
 			runtime.profileApplications,
-			runtime.resolveProjectID,
+			runtime.developmentProjectIDResolver,
 			storage.instanceID,
 			runtimeConfig,
 			administration)

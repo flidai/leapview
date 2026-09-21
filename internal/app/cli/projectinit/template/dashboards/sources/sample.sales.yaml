@@ -14,7 +14,7 @@ spec:
     mode: strict
   fields:
     - {name: sale_id, datatype: String}
-    - {name: sale_date, datatype: String}
+    - {name: sale_date, datatype: Date}
     - {name: region, datatype: String}
     - {name: category, datatype: String}
-    - {name: amount, datatype: Decimal}
+    - {name: amount, datatype: Float}
