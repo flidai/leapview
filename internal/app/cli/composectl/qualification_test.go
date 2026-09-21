@@ -1082,6 +1082,26 @@ func TestQualificationRecoveryClientUsesPublicTarget(t *testing.T) {
 	}
 }
 
+func TestQualificationRecoveryDevUsesExplicitRemoteTarget(t *testing.T) {
+	got := qualificationRecoveryDevArguments(
+		"https://localhost:43127",
+		"/work/project-a",
+		"project_qualification",
+		"qualification-release",
+	)
+	want := []string{
+		"leapview", "dev", "--once", "--no-browser",
+		"--target", "https://localhost:43127",
+		"--source-root", "/work/project-a",
+		"--project-id", "project_qualification",
+		"--candidate-key", "qualification-release",
+		"--format", "json",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("recovery dev arguments = %v, want %v", got, want)
+	}
+}
+
 func TestQualificationRecoveryClientArgumentsSortInjectedEnvironment(t *testing.T) {
 	got := qualificationClientExecArgumentsWithEnv(
 		"recovery-client",

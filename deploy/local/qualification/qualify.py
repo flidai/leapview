@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -32,7 +33,10 @@ from typing import Any, Optional
 CONTRACT_VERSION = 1
 MAX_OUTPUT = 4_000
 MAX_MEMBERS = 2_000
-MAX_FILE_BYTES = 128 * 1024 * 1024
+# Released native binaries currently include the complete application and
+# authoring surfaces. Keep extraction bounded while allowing the package built
+# by the release workflow (about 166 MiB uncompressed on linux-amd64).
+MAX_FILE_BYTES = 256 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 300
 SUPPORTED_HOSTS = {
     ("Linux", "x86_64"): ("linux", "amd64"),
@@ -42,6 +46,10 @@ SUPPORTED_HOSTS = {
     ("Darwin", "x86_64"): ("darwin", "amd64"),
     ("Darwin", "arm64"): ("darwin", "arm64"),
 }
+PACKAGE_NAME_PATTERN = re.compile(
+    r"leapview-cli-(v[0-9A-Za-z][0-9A-Za-z._+-]*|candidate-[1-9][0-9]*-[1-9][0-9]*)-(linux|darwin)-(amd64|arm64)"
+)
+VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
 SCENARIOS = (
     "semantic",
     "model",
@@ -247,7 +255,7 @@ def extract_archive(archive: Path, destination: Path) -> tuple[Path, list[str]]:
         if len(roots) != 1:
             raise QualificationError("authoring archive must contain exactly one package root")
         package_name = next(iter(roots))
-        expected = re.fullmatch(r"leapview-cli-v[^/]+-(linux|darwin)-(amd64|arm64)", package_name)
+        expected = PACKAGE_NAME_PATTERN.fullmatch(package_name)
         if not expected:
             raise QualificationError(f"unsupported authoring package root: {package_name!r}")
         package_root = destination / package_name
@@ -548,7 +556,7 @@ def validate_packaged_readme(path: Path) -> dict[str, Any]:
 
 
 def verify_manifests(package_root: Path, package_name: str, archive_digest: str) -> dict[str, Any]:
-    match = re.fullmatch(r"leapview-cli-(v[^/]+)-(linux|darwin)-(amd64|arm64)", package_name)
+    match = PACKAGE_NAME_PATTERN.fullmatch(package_name)
     if not match:
         raise QualificationError("cannot derive release identity from package name")
     release_tag, target_os, target_arch = match.groups()
@@ -579,7 +587,9 @@ def verify_manifests(package_root: Path, package_name: str, archive_digest: str)
         raise QualificationError("authoring manifest identity/host must be objects")
     require_exact_keys(identity, {"version", "revision", "buildTime", "dirty", "development"}, "authoring identity")
     require_exact_keys(host, {"os", "architecture", "supportProfile"}, "authoring host")
-    if identity["version"] != release_tag[1:] or not re.fullmatch(r"[0-9a-f]{40}", str(identity["revision"])):
+    version = str(identity["version"])
+    tag_matches_version = release_tag.startswith("candidate-") or version == release_tag[1:]
+    if not tag_matches_version or not VERSION_PATTERN.fullmatch(version) or not re.fullmatch(r"[0-9a-f]{40}", str(identity["revision"])):
         raise QualificationError("authoring manifest release tag/revision is invalid")
     if identity["dirty"] is not False or identity["development"] is not False:
         raise QualificationError("released authoring package must record dirty=false and development=false")
@@ -668,24 +678,58 @@ def run_command(
     cwd: Optional[Path] = None,
     docker_host: Optional[str] = None,
     check: bool = True,
+    live_output: bool = False,
 ) -> dict[str, Any]:
     started = time.monotonic()
     result: dict[str, Any] = {"name": name, "command": command_display(command), "status": "failed"}
     try:
-        completed = subprocess.run(
-            command,
-            cwd=str(cwd) if cwd else None,
-            env=command_environment(docker_host, command_home),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-        result["exitCode"] = completed.returncode
-        result["output"] = redact(completed.stdout)
-        result["status"] = "passed" if completed.returncode == 0 else "failed"
+        if live_output:
+            process = subprocess.Popen(
+                command,
+                cwd=str(cwd) if cwd else None,
+                env=command_environment(docker_host, command_home),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            captured: list[str] = []
+
+            def copy_output() -> None:
+                assert process.stdout is not None
+                for line in process.stdout:
+                    captured.append(line)
+                    print(redact(line), file=sys.stderr, end="", flush=True)
+
+            reader = threading.Thread(target=copy_output, daemon=True)
+            reader.start()
+            try:
+                return_code = process.wait(timeout=timeout)
+                result["exitCode"] = return_code
+                result["status"] = "passed" if return_code == 0 else "failed"
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                result["exitCode"] = None
+                result["status"] = "timed-out"
+            reader.join()
+            result["output"] = redact("".join(captured))
+        else:
+            completed = subprocess.run(
+                command,
+                cwd=str(cwd) if cwd else None,
+                env=command_environment(docker_host, command_home),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            result["exitCode"] = completed.returncode
+            result["output"] = redact(completed.stdout)
+            result["status"] = "passed" if completed.returncode == 0 else "failed"
     except FileNotFoundError as exc:
         result["exitCode"] = None
         result["output"] = redact(str(exc))
@@ -704,7 +748,17 @@ def require_command_help(command_name: str, result: dict[str, Any]) -> None:
     """Require recognizable help for this command, not merely exit status 0."""
 
     output = str(result.get("output", ""))
-    usage_lines = [line for line in output.splitlines() if re.match(r"^\s*usage\s*:", line, re.IGNORECASE)]
+    lines = output.splitlines()
+    usage_lines: list[str] = []
+    for index, line in enumerate(lines):
+        if not re.match(r"^\s*usage\s*:", line, re.IGNORECASE):
+            continue
+        usage_lines.append(line)
+        if re.fullmatch(r"\s*usage\s*:\s*", line, re.IGNORECASE):
+            for candidate in lines[index + 1:]:
+                if not candidate.strip():
+                    break
+                usage_lines.append(candidate)
     command_pattern = re.compile(rf"\b(?:leapview(?:ctl)?|\S*leapview\S*)\s+{re.escape(command_name)}(?:\s|$|[\[<])", re.IGNORECASE)
     if not usage_lines or not any(command_pattern.search(line) for line in usage_lines):
         raise QualificationError(f"cli-help-{command_name} did not return recognizable command-specific help")
@@ -1014,7 +1068,7 @@ def main(argv: list[str]) -> int:
                     docker["serverPost"] = post_identity
                     docker["pinState"] = "verified-pre-post"
                     evidence["metadata"]["fixture"] = fixture_metadata(checkout)
-                    first_dev = run_command("dev-once", [str(binary), "dev", "--once", "--no-browser", "--docker-host", docker_host], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host)
+                    first_dev = run_command("dev-once", [str(binary), "dev", "--once", "--no-browser", "--docker-host", docker_host], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host, live_output=True)
                     require_happy_path_dev_output("dev-once", first_dev)
                     post_dev_identity = docker_server_identity(docker_path, docker_host, raw_results, args.timeout_seconds, command_home, "docker-version-post-dev")
                     if post_identity != post_dev_identity:
@@ -1023,7 +1077,7 @@ def main(argv: list[str]) -> int:
                         docker["pinState"] = "not-proven"
                         raise QualificationError("Docker effective server identity changed during dev; lifecycle endpoint was not proven stable")
                     docker["serverPost"] = post_dev_identity
-                    restarted_dev = run_command("dev-once-restart", [str(binary), "dev", "--once", "--no-browser", "--docker-host", docker_host], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host)
+                    restarted_dev = run_command("dev-once-restart", [str(binary), "dev", "--once", "--no-browser", "--docker-host", docker_host], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host, live_output=True)
                     require_happy_path_dev_output("dev-once-restart", restarted_dev)
                     post_restart_identity = docker_server_identity(docker_path, docker_host, raw_results, args.timeout_seconds, command_home, "docker-version-post-restart")
                     if post_dev_identity != post_restart_identity:
@@ -1039,7 +1093,7 @@ def main(argv: list[str]) -> int:
                     # fails after creating state, cleanup still uses the
                     # exact confirmation for this temporary checkout.
                     plan = run_command("cleanup-reset-plan", [str(binary), "dev", "reset", "--docker-host", docker_host], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host, check=False)
-                    if evidence["metadata"]["fixture"] is not None and plan["status"] != "passed":
+                    if evidence["metadata"]["fixture"] is not None and plan.get("exitCode") not in (0, 1):
                         raise QualificationError("cleanup reset plan failed; the temporary local runtime could not be proven owned")
                     confirmation = re.search(r"Exact confirmation:\s*(sha256:[0-9a-f]{64})", plan.get("output", ""))
                     if not confirmation:

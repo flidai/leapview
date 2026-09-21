@@ -82,14 +82,11 @@ func bootstrapNativeProjectClaim(ctx context.Context, cfg config.Config, request
 	if err != nil {
 		return admincli.ProjectClaimBootstrapResult{}, err
 	}
-	principalID := access.PrincipalIDForEmail(bootstrapEmail)
-	admin, err := accessAuthority.IsPlatformAdmin(ctx, principalID)
+	principal, err := resolveLocalBootstrapAdministrator(ctx, accessAuthority, bootstrapEmail)
 	if err != nil {
-		return admincli.ProjectClaimBootstrapResult{}, fmt.Errorf("verify local bootstrap administrator: %w", err)
+		return admincli.ProjectClaimBootstrapResult{}, err
 	}
-	if !admin {
-		return admincli.ProjectClaimBootstrapResult{}, errors.New("local bootstrap principal is not an active platform administrator")
-	}
+	principalID := principal.ID
 	bootstrap := platformbootstrap.New(pool)
 	instanceID, err := bootstrap.InstanceID(ctx)
 	if err != nil {
@@ -122,4 +119,24 @@ func bootstrapNativeProjectClaim(ctx context.Context, cfg config.Config, request
 		InstanceID: instanceID, ProjectUID: result.Claim.ProjectID.String(), Environment: string(result.Claim.Environment),
 		ClaimedBy: result.Claim.ClaimedBy, ClaimedAt: result.Claim.ClaimedAt,
 	}, nil
+}
+
+type localBootstrapAccessAuthority interface {
+	PrincipalByEmail(context.Context, string) (access.Principal, error)
+	IsPlatformAdmin(context.Context, string) (bool, error)
+}
+
+func resolveLocalBootstrapAdministrator(ctx context.Context, authority localBootstrapAccessAuthority, email string) (access.Principal, error) {
+	principal, err := authority.PrincipalByEmail(ctx, email)
+	if err != nil {
+		return access.Principal{}, fmt.Errorf("resolve local bootstrap administrator: %w", err)
+	}
+	admin, err := authority.IsPlatformAdmin(ctx, principal.ID)
+	if err != nil {
+		return access.Principal{}, fmt.Errorf("verify local bootstrap administrator: %w", err)
+	}
+	if !admin {
+		return access.Principal{}, errors.New("local bootstrap principal is not an active platform administrator")
+	}
+	return principal, nil
 }
