@@ -492,7 +492,7 @@ test('chat history keeps a readable centered width on wide screens and fits narr
       return { left: rect.left, right: rect.right, width: rect.width, viewport: window.innerWidth }
     })
     const wide = await bounds()
-    expect(wide.width).toBeLessThanOrEqual(960)
+    expect(wide.width).toBeLessThanOrEqual(760)
     expect(Math.abs(wide.left - (wide.viewport - wide.right))).toBeLessThanOrEqual(2)
     await page.setViewportSize({ width: 390, height: 800 })
     const narrow = await bounds()
