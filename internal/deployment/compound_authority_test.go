@@ -150,6 +150,27 @@ func TestDeliveryAuthorizationPlanFromBundleMapsChangedAndDependencyKinds(t *tes
 	}
 }
 
+func TestDeliveryAuthorizationPlanBindsRefreshUseToSemanticModel(t *testing.T) {
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "pipeline_sales", Kind: projectgraph.KindPipeline, Name: "sales_refresh"},
+		{ID: "semantic_sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
+	}, []projectgraph.Edge{{From: "pipeline_sales", To: "semantic_sales", Relation: "refreshes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := DeliveryAuthorizationPlanFromBundle("project_delivery", "target_prod", graph, projectcompiler.BundlePlan{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Dependencies) != 1 {
+		t.Fatalf("refresh dependencies = %#v", plan.Dependencies)
+	}
+	dependency := plan.Dependencies[0]
+	if dependency.Use != DeliveryDependencyUse || dependency.Action != access.ActionSemanticConsume || dependency.Resource.ID().String() != "semantic_sales" || dependency.Resource.Kind() != projectgraph.KindSemanticModel {
+		t.Fatalf("refresh dependency = %#v, want semantic.consume on semantic_sales", dependency)
+	}
+}
+
 func mustSnapshotDigest(t *testing.T, snapshot accesssnapshot.AuthorizationSnapshot) string {
 	t.Helper()
 	digest, err := snapshot.Digest()

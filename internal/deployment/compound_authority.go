@@ -177,13 +177,14 @@ func DeliveryAuthorizationPlanFromBundleWithBindings(projectID projectgraph.Reso
 		}
 	}
 	for _, item := range bundle.DependencyChanges {
-		resource, ok := graph.Resource(projectgraph.ResourceID(item.To))
+		resourceID := projectgraph.ResourceID(item.To)
+		resource, ok := graph.Resource(resourceID)
 		if !ok {
 			kind, parseErr := projectgraph.ParseKind(item.ResourceKind)
 			if parseErr != nil {
-				return DeliveryAuthorizationPlan{}, fmt.Errorf("%w: dependency %q is absent from graph and has invalid kind %q", ErrDeliveryAuthorityInvalid, item.To, item.ResourceKind)
+				return DeliveryAuthorizationPlan{}, fmt.Errorf("%w: dependency %q is absent from graph and has invalid kind %q", ErrDeliveryAuthorityInvalid, resourceID, item.ResourceKind)
 			}
-			resource = projectgraph.Resource{ID: projectgraph.ResourceID(item.To), Kind: kind, Name: item.To}
+			resource = projectgraph.Resource{ID: resourceID, Kind: kind, Name: resourceID.String()}
 		}
 		use, err := dependencyUseForRelation(item.Type, resource.Kind)
 		if err != nil {
@@ -284,10 +285,14 @@ func dependencyUseForRelation(relation string, kind projectgraph.Kind) (Delivery
 	switch relation {
 	case "reads_source", "reads_model", "uses_model", "uses_semantic_model", "uses_connection", "refreshes":
 		if relation == "refreshes" {
-			if kind != projectgraph.KindPipeline {
-				return "", fmt.Errorf("%w: refreshes relation must target a pipeline", ErrDeliveryAuthorityInvalid)
+			if kind != projectgraph.KindSemanticModel {
+				return "", fmt.Errorf("%w: refreshes relation must target a semantic model", ErrDeliveryAuthorityInvalid)
 			}
-			return DeliveryDependencyRun, nil
+			// A delivery build consumes the SemanticModel targeted by the
+			// authored Pipeline relation. It does not trigger an approved
+			// Pipeline revision; runtime refresh admission checks pipeline.run
+			// independently at that later operation boundary.
+			return DeliveryDependencyUse, nil
 		}
 		if relation == "uses_connection" {
 			return DeliveryDependencyUse, nil
