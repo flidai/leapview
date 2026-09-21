@@ -1345,6 +1345,21 @@ tasks:
         -run '^TestFAI519TransitionAndStoppedTargetInterruptionQualification$'
         -count=1 -timeout=30m -v
 
+  qualify:ubdr:provider-restore:
+    desc: Qualify coordinated PostgreSQL, DuckLake catalog, and exact object-version restoration
+    deps:
+      - db:generate
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+      LEAPVIEW_TEST_FAI981_PROVIDER_RESTORE_EVIDENCE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr/provider-restore"
+    cmds:
+      - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr/provider-restore"
+      - >-
+        go test -race -tags='fai981qualification'
+        ./internal/app/providerrestore
+        -run '^TestFAI981CoordinatedProviderRestoreQualification$'
+        -count=1 -timeout=15m -v
+
   qualify:ubdr:release-transition-preflight:
     desc: Qualify authoritative PostgreSQL-era transition resolution without executing a transition
     deps:
