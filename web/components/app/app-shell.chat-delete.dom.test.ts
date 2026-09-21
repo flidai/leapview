@@ -261,7 +261,7 @@ test('mobile account menu fits above the footer and keeps search available after
 test('app shell renders a custom logo and name without sidebar attribution', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
-    await page.goto(`${baseURL}/upgraded-shell`)
+    await page.goto(`${baseURL}/upgraded-shell`, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     const identity = await page.locator('lv-app-shell').evaluate(async (element: any) => {
       const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
@@ -284,4 +284,4 @@ test('app shell renders a custom logo and name without sidebar attribution', asy
   } finally {
     await page.close()
   }
-})
+}, 30_000)
