@@ -75,6 +75,13 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       grid-template-rows: minmax(0, 1fr);
     }
 
+    .loading-state {
+      display: grid;
+      place-items: center;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-body);
+    }
+
     .conversation-titlebar {
       display: grid;
       min-width: 0;
@@ -339,6 +346,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   `
 
   updated(): void {
+    if (!this.hasBootstrapSignals) return
     checkSignalContract('chat page', this.page, {
       title: 'required',
     })
@@ -393,6 +401,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     return this.signal<ChatPageSignal | null>('page', null)
   }
 
+  private get hasBootstrapSignals(): boolean {
+    const agent = this.signal<ChatSignal | null>('agent', null)
+    return this.page?.kind === 'chat' && Boolean(agent?.status && agent?.composer)
+  }
+
   get agent(): ChatSignal {
     return this.signal<ChatSignal>('agent', emptyAgent)
   }
@@ -421,6 +434,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   render() {
+    if (!this.hasBootstrapSignals) {
+      return html`<div class="route"><section class="main new-main" aria-label="LeapView chats"><div class="loading-state" role="status">Loading chat…</div></section></div>`
+    }
     const page = this.page
     const agent = this.agent ?? emptyAgent
     const status = agent.status ?? emptyAgent.status

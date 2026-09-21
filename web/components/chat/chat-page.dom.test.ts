@@ -68,6 +68,11 @@ beforeAll(async () => {
       response.end(testDocument('list', 'new', false))
       return
     }
+    if (url.pathname === '/unhydrated') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument('conversation', 'active', true, false))
+      return
+    }
     if (url.pathname.startsWith('/chats/')) {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument())
@@ -605,7 +610,68 @@ test('unconfigured agent uses intentional unavailable states', async () => {
   }
 })
 
-function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'active', enabled = true): string {
+test('chat switch waits for bootstrap before showing agent availability', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/unhydrated`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page'))
+    const before = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      return {
+        loading: element.shadowRoot.querySelector('.loading-state')?.textContent?.trim(),
+        unavailable: element.shadowRoot.textContent?.includes('Agent unavailable'),
+        thread: Boolean(element.shadowRoot.querySelector('lv-chat-thread')),
+      }
+    })
+    expect(before).toEqual({ loading: 'Loading chat…', unavailable: false, thread: false })
+
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({
+        page: { kind: 'chat', view: 'conversation', title: 'Chats', description: '' },
+        agent: {
+          conversations: [{ id: 'c1', title: 'Revenue check', updatedAt: '2026-01-02T10:00:00Z' }],
+          activeConversationId: 'c1', transcript: [{ id: 'ready', kind: 'assistant', markdown: 'Ready.', conversationId: 'c1' }],
+          status: { enabled: true, running: false },
+          composer: { value: '', disabled: false, placeholder: 'Ask about dashboards, metrics, or models...' },
+        },
+      })
+    })
+    await page.waitForFunction(() => {
+      const root = document.querySelector('lv-chat-page')?.shadowRoot
+      return root?.querySelector('lv-chat-thread') && !root.querySelector('.loading-state')
+    })
+    const after = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      const thread = element.shadowRoot.querySelector('lv-chat-thread') as any
+      await thread.updateComplete
+      return {
+        title: element.shadowRoot.querySelector('h1')?.textContent?.trim(),
+        unavailable: thread.shadowRoot.textContent?.includes('Agent unavailable'),
+        transcript: thread.transcript,
+      }
+    })
+    expect(after.title).toBe('Revenue check')
+    expect(after.unavailable).toBe(false)
+    expect(after.transcript).toHaveLength(1)
+
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: {
+        transcript: [],
+        status: { enabled: false, running: false, error: 'Agent is not configured.' },
+        composer: { value: '', disabled: true, placeholder: 'Agent is not configured.' },
+      } })
+    })
+    await page.waitForFunction(() => {
+      const thread = document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-thread')
+      return thread?.shadowRoot?.querySelector('.empty-title')?.textContent?.trim() === 'Agent unavailable'
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'active', enabled = true, hydrated = true): string {
   const page = {
     kind: 'chat',
     view,
@@ -636,7 +702,7 @@ function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'activ
         </style>
       </head>
       <body>
-        <main data-signals="${escapeHTML(JSON.stringify({ page, agent, visuals: {}, tables: {} }))}">
+        <main ${hydrated ? `data-signals="${escapeHTML(JSON.stringify({ page, agent, visuals: {}, tables: {} }))}"` : ''}>
           <lv-chat-page${submitCommand}></lv-chat-page>
         </main>
         <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
