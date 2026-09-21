@@ -95,6 +95,19 @@ set -euo pipefail
 container="$(docker ps --format '{{.Names}}' | awk '/-demo-current-postgres-1$/ { print }')"
 [[ -n "$container" && "$(wc -l <<<"$container")" -eq 1 ]] || { echo 'expected one hosted-demo PostgreSQL container' >&2; exit 1; }
 
+for _ in $(seq 1 20); do
+  if [[ "$(docker inspect --format '{{.State.Running}} {{.State.Restarting}}' "$container")" == 'true false' ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ "$(docker inspect --format '{{.State.Running}} {{.State.Restarting}}' "$container")" != 'true false' ]]; then
+  docker inspect --format 'database state: status={{.State.Status}} restarting={{.State.Restarting}} oomKilled={{.State.OOMKilled}} exitCode={{.State.ExitCode}} error={{json .State.Error}} restartCount={{.RestartCount}}' "$container"
+  df -h / /opt
+  docker logs --tail 80 "$container" 2>&1
+  exit 1
+fi
+
 query=$(cat <<'SQL'
 WITH shared AS (
   SELECT p.id, p.status, p.disabled_at, p.blocked_at, p.revoked_at,
