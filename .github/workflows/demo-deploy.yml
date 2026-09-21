@@ -11,7 +11,7 @@ on:
         type: choice
         required: true
         default: publish
-        options: [publish, stage, prepare, deploy]
+        options: [publish, inventory, stage, prepare, deploy]
 
 permissions:
   contents: read
@@ -25,6 +25,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  inventory:
+    if: inputs.action == 'inventory' && github.ref == 'refs/heads/ganesh/demo-host-migration'
+    name: Inventory demo migration hosts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: leapview-demo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Fetch infrastructure credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /hetzner-qualification/infrastructure
+      - name: Fetch demo deployment credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /demo/deployment
+      - name: Inventory old and new hosts without changing services or data
+        env:
+          OLD_EXPECTED_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+          NEW_DEMO_HOST: 89.58.13.145
+          NEW_EXPECTED_FINGERPRINT: SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE
+        run: ./scripts/inventory_demo_migration_hosts.sh
+
   publication-source:
     if: >-
       (github.event_name == 'workflow_run' &&
