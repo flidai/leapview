@@ -12,11 +12,4 @@ export const sidebarBrandLayoutStyles = css`
   .brand-row > .collapse-button { grid-area: collapse; }
   .brand-row > .brand-identity { grid-area: identity; }
   .brand-row > .area-switcher { grid-area: switcher; }
-
-  @media (min-width: 641px) {
-    :host([data-collapsed][data-peeking]) .brand-row > .brand-identity {
-      max-height: 0;
-      overflow: hidden;
-    }
-  }
 `

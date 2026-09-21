@@ -771,11 +771,6 @@ class LeapViewSidebar extends LitElement {
         visibility: hidden;
         pointer-events: none;
       }
-
-      :host([data-collapsed][data-peeking]) .brand-row > .brand-identity,
-      :host([data-collapsed][data-peeking]) .brand-row > .brand-back {
-        visibility: hidden;
-      }
     }
 
     @media (max-width: 640px) {
