@@ -205,4 +205,6 @@ fi
 echo 'Application ready after database recovery'
 echo 'Hosted-demo temporary/build disk footprint:'
 du -x -h --max-depth=2 /tmp/leapview-main /tmp/leapview-chat-ui-* /tmp/leapview-demo-runtime /home 2>/dev/null | sort -h | tail -40 || true
+echo 'Remaining development cache and temporary build footprint:'
+du -x -h --max-depth=2 /home/ganesh/.cache /tmp/leapview-main/.tmp 2>/dev/null | sort -h | tail -35 || true
 REMOTE
