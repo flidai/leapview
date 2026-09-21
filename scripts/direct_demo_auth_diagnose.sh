@@ -96,6 +96,18 @@ container="$(docker ps --format '{{.Names}}' | awk '/-demo-current-postgres-1$/ 
 [[ -n "$container" && "$(wc -l <<<"$container")" -eq 1 ]] || { echo 'expected one hosted-demo PostgreSQL container' >&2; exit 1; }
 
 available_kb="$(df --output=avail / | tail -1 | tr -d ' ')"
+if (( available_kb < 7340032 )); then
+  echo 'Reclaiming regenerable developer caches before the next verified rollout'
+  for cache in /home/ganesh/.cache/go-build /home/ganesh/.cache/leapview/dev-assets /home/ganesh/.cache/leapview/ci-duckdb-extensions /home/ganesh/.cache/apigen/typespec; do
+    if [[ -d "$cache" && ! -L "$cache" ]]; then
+      du -sh "$cache"
+      rm -rf -- "$cache"
+    fi
+  done
+  df -h /
+fi
+
+available_kb="$(df --output=avail / | tail -1 | tr -d ' ')"
 if (( available_kb < 1048576 )); then
   echo 'Hosted demo disk is critically full; reclaiming regenerable caches and unused Docker data'
   if [[ -d /root/.cache/go-build && ! -L /root/.cache/go-build ]]; then
@@ -207,4 +219,6 @@ echo 'Hosted-demo temporary/build disk footprint:'
 du -x -h --max-depth=2 /tmp/leapview-main /tmp/leapview-chat-ui-* /tmp/leapview-demo-runtime /home 2>/dev/null | sort -h | tail -40 || true
 echo 'Remaining development cache and temporary build footprint:'
 du -x -h --max-depth=2 /home/ganesh/.cache /tmp/leapview-main/.tmp 2>/dev/null | sort -h | tail -35 || true
+echo 'Temporary deployment scratch footprint:'
+du -x -h --max-depth=1 /tmp/leapview-main/.tmp 2>/dev/null | sort -h | tail -20 || true
 REMOTE
