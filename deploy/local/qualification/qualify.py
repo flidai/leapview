@@ -710,6 +710,21 @@ def require_command_help(command_name: str, result: dict[str, Any]) -> None:
         raise QualificationError(f"cli-help-{command_name} did not return recognizable command-specific help")
 
 
+def require_happy_path_dev_output(name: str, result: dict[str, Any]) -> None:
+    """Require the observable init -> dev contract, not only exit status 0."""
+
+    output = str(result.get("output", ""))
+    required = (
+        "staging declared development input sample (sha256:",
+        "staged sha256:",
+        "synchronized sha256:",
+        "session-preview http",
+    )
+    missing = [fragment for fragment in required if fragment not in output]
+    if missing:
+        raise QualificationError(f"{name} did not demonstrate the local authoring happy path; missing output {missing}")
+
+
 def host_identity() -> dict[str, Any]:
     system = platform.system()
     machine = platform.machine()
@@ -999,7 +1014,8 @@ def main(argv: list[str]) -> int:
                     docker["serverPost"] = post_identity
                     docker["pinState"] = "verified-pre-post"
                     evidence["metadata"]["fixture"] = fixture_metadata(checkout)
-                    run_command("dev-once", [str(binary), "dev", "--once", "--no-browser", "--docker-host", docker_host], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host)
+                    first_dev = run_command("dev-once", [str(binary), "dev", "--once", "--no-browser", "--docker-host", docker_host], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host)
+                    require_happy_path_dev_output("dev-once", first_dev)
                     post_dev_identity = docker_server_identity(docker_path, docker_host, raw_results, args.timeout_seconds, command_home, "docker-version-post-dev")
                     if post_identity != post_dev_identity:
                         docker["serverPost"] = post_dev_identity
@@ -1007,6 +1023,15 @@ def main(argv: list[str]) -> int:
                         docker["pinState"] = "not-proven"
                         raise QualificationError("Docker effective server identity changed during dev; lifecycle endpoint was not proven stable")
                     docker["serverPost"] = post_dev_identity
+                    restarted_dev = run_command("dev-once-restart", [str(binary), "dev", "--once", "--no-browser", "--docker-host", docker_host], raw_results, args.timeout_seconds, command_home, cwd=checkout, docker_host=docker_host)
+                    require_happy_path_dev_output("dev-once-restart", restarted_dev)
+                    post_restart_identity = docker_server_identity(docker_path, docker_host, raw_results, args.timeout_seconds, command_home, "docker-version-post-restart")
+                    if post_dev_identity != post_restart_identity:
+                        docker["serverPost"] = post_restart_identity
+                        docker["endpointPinned"] = False
+                        docker["pinState"] = "not-proven"
+                        raise QualificationError("Docker effective server identity changed during retained-data restart; lifecycle endpoint was not proven stable")
+                    docker["serverPost"] = post_restart_identity
                     docker["endpointPinned"] = True
                     evidence["metadata"]["warmup"] = {"status": "not-run", "requested": 1, "completed": 0, "samplesMs": [], "reason": PREVIEW_NOT_RELEASED}
                 finally:

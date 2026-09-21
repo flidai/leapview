@@ -52,7 +52,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 }
 
 func TestDevelopmentSessionMigrationIsOwnerScopedAndImmutable(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "021_development_session.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "025_development_session.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

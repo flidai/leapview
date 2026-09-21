@@ -3,12 +3,34 @@ package developmentinput_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/app/cli/projectinit"
 	"github.com/flidai/leapview/internal/project/developmentinput"
 )
+
+func TestNamesReturnsDeclaredInputsDeterministically(t *testing.T) {
+	root := initializedProject(t)
+	path := filepath.Join(root, filepath.FromSlash(developmentinput.DefaultRelativePath))
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content = []byte(strings.Replace(string(content), "inputs:\n  sample:", "inputs:\n  z_fixture:\n    connection: sample\n    from: data/sample\n    provenance:\n      kind: synthetic\n      generator: leapview-init/v1\n      rows: 12\n      bounded: true\n    files:\n      sales.csv:\n        sha256: b09b718b0967e3d1bed215440e3d46258b0748363ea7ca6120a483cb5464af05\n        sizeBytes: 545\n  sample:", 1))
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	names, err := developmentinput.Names(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"sample", "z_fixture"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("names = %v, want %v", names, want)
+	}
+}
 
 func TestLoadVerifiesExactSyntheticInput(t *testing.T) {
 	root := initializedProject(t)

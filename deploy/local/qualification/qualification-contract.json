@@ -22,7 +22,8 @@
     "optIn": true,
     "commands": [
       "leapview init <temporary-checkout>",
-      "leapview dev --once --no-browser --docker-host <validated-unix-socket>"
+      "leapview dev --once --no-browser --docker-host <validated-unix-socket>",
+      "leapview dev --once --no-browser --docker-host <validated-unix-socket> (retained-data restart)"
     ],
     "endpoint": {
       "required": true,
@@ -56,7 +57,7 @@
   },
   "status": {
     "staticArchiveVerification": "implemented harness; evidence exists only after execution against a public released archive",
-    "initAndDevLifecycle": "implemented harness; evidence exists only after explicit execution with prerequisites present",
+    "initAndDevLifecycle": "implemented harness requires automatic declared-fixture staging, candidate/session preview output, and a retained-data restart; evidence exists only after explicit execution with prerequisites present",
     "previewEditToVisibleQualification": "planned",
     "productionDeployQualification": "planned"
   }

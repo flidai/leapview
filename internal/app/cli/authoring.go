@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -35,12 +36,14 @@ type candidateSynchronizationTransport struct {
 }
 
 type projectDevRemoteFactory struct {
-	client cliapi.Client
+	client                 cliapi.Client
+	stageDevelopmentInputs func(context.Context, cliapi.Credentials, localDevelopmentSession) error
 }
 
 type localDevelopmentSession struct {
 	profile localDevelopmentProfile
 	state   localruntime.State
+	output  io.Writer
 }
 
 type localDevelopmentSessionContextKey struct{}
@@ -153,13 +156,14 @@ func devCommand(ctx context.Context) *cobra.Command {
 		httpClient:        authoringRefreshingHTTPClient(http.DefaultClient),
 		validateAuthoring: true,
 	}
+	remotes := projectDevRemoteFactory{client: client, stageDevelopmentInputs: stageDeclaredDevelopmentInputs}
 	remote := projectcli.DevCommand(
 		ctx,
 		client,
 		projectcli.NewCandidateCheckpointStore(candidateCheckpointPath()),
-		projectDevRemoteFactory{client: client},
+		remotes,
 		openSystemBrowser,
-		projectDeliveryPlanOperations{client: client, remotes: projectDevRemoteFactory{client: client}, checkpoints: projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())},
+		projectDeliveryPlanOperations{client: client, remotes: remotes, checkpoints: projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())},
 	)
 	command := dispatchLocalDevCommand(ctx, remote, localdocker.Resolve, runLocalDevRuntime)
 	addLocalDevLifecycleCommands(ctx, command, localdocker.Resolve, newLocalRuntimeController, readApplicationDevelopmentProfileStatus)
@@ -265,7 +269,7 @@ func runLocalDevRuntime(
 		if err := command.Flags().Set("target", state.Session.TargetName); err != nil {
 			return err
 		}
-		actionContext = context.WithValue(actionContext, localDevelopmentSessionContextKey{}, localDevelopmentSession{profile: profile, state: state})
+		actionContext = context.WithValue(actionContext, localDevelopmentSessionContextKey{}, localDevelopmentSession{profile: profile, state: state, output: command.OutOrStdout()})
 		command.SetContext(actionContext)
 		return remoteRun(command, args)
 	})
@@ -297,6 +301,11 @@ func (factory projectDevRemoteFactory) Remote(
 	local, localDevelopment := ctx.Value(localDevelopmentSessionContextKey{}).(localDevelopmentSession)
 	if !localDevelopment {
 		return remote, nil
+	}
+	if factory.stageDevelopmentInputs != nil {
+		if err := factory.stageDevelopmentInputs(ctx, credentials, local); err != nil {
+			return nil, fmt.Errorf("stage declared development inputs: %w", err)
+		}
 	}
 	return &profileApplyingDevRemote{remote: remote, client: analyticsgen.NewGenClient(generic), local: local}, nil
 }

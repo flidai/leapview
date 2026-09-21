@@ -57,6 +57,11 @@ and after lifecycle operations, and
 unverifiable identity fails closed. The temporary checkout and its runtime are
 reset after the run when a reset plan is available.
 
+The lifecycle creates the generated project, requires `leapview dev` to stage
+its declared sample without copied target or Project identifiers, synchronizes
+a candidate with a stable session-preview URL, then runs `dev` again to prove
+the same retained local data and pinned daemon survive restart.
+
 Use `--required` in CI or another release gate. Without it, the harness may
 return `skipped` only for an explicitly unsupported host or an explicitly
 missing lifecycle prerequisite. In required mode, those same conditions fail

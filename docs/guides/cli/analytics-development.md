@@ -74,20 +74,18 @@ tunnels are not local-runtime proof. A context or daemon change during
 startup must fail closed rather than redirecting a later operation.
 
 The local runtime owns checkout-scoped Compose services and durable volumes.
-`dev` does not automatically stage an init fixture. For the generated sample,
-inspect and stage the declared immutable input explicitly through Managed Data:
+For the generated sample, `dev` verifies every input declared in
+`.leapview/development-inputs.yaml`, plans the exact immutable revisions, and
+stages them to the internally resolved local target and Project before the
+first candidate synchronization. The staging operation is resumable and
+idempotent, so a restart reuses the retained revision without asking the author
+to copy a URL or internal Project identifier.
 
-```sh
-leapview dev status                 # note URL and target-bound Project ID
-leapview data plan --development-input sample
-leapview data sync --development-input sample \
-  --target http://127.0.0.1:<port> --project-id <project-id> --environment dev
-```
-
-Only declared synthetic fixtures or explicitly configured local inputs may be
-staged. A source save watches authored files and sends a coherent candidate
-through the normal candidate APIs; it never mounts live YAML as serving state
-or stages/refreshes data.
+Only declared bounded synthetic fixtures may be staged automatically. A source
+save watches authored files and sends a coherent candidate through the normal
+candidate APIs; it never mounts live YAML as serving state or stages/refreshes
+data. Fixture changes require a matching manifest update and a `dev` restart;
+ordinary YAML edits never refresh mutable inputs.
 Invalid edits retain the last valid candidate and report actionable
 diagnostics. A candidate transition pins all queries in a view to one
 candidate/snapshot identity, so late responses from an older view cannot mix

@@ -10,20 +10,13 @@ Start the checkout-scoped local runtime:
 leapview dev
 ```
 
-The declared development input is `.leapview/development-inputs.yaml`. Inspect
-the exact managed-data revision before staging it:
-
-```sh
-leapview data plan --development-input sample
-```
-
-Stage only after reviewing that result, using the target and Project identity
-created by the local runtime:
-
-```sh
-leapview data sync --development-input sample --target http://127.0.0.1:<port> --project-id <project-id> --environment dev
-```
+The declared development input is `.leapview/development-inputs.yaml`.
+`leapview dev` verifies its bounded synthetic provenance and exact file digests,
+then stages the immutable managed-data revision to the checkout-scoped local
+runtime before synchronizing the first candidate. Restarting `dev` safely
+reuses the same revision and retained local volumes.
 
 Editing YAML does not restage or refresh the fixture. Changing `sales.csv`
-creates a different immutable managed-data revision on the next explicit sync.
-Never replace this sample with a production download or production credential.
+requires updating its declaration and restarting `dev`, which stages a new
+immutable revision after validating the complete declaration. Never replace
+this sample with a production download or production credential.

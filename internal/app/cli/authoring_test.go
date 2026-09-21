@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -18,11 +19,33 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectionadmin"
 	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	developmentprofile "github.com/flidai/leapview/internal/project/developmentprofile"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
 	"github.com/stretchr/testify/require"
 )
+
+func TestProjectDevRemoteFactoryStagesDeclaredInputsBeforeWatching(t *testing.T) {
+	var state localruntime.State
+	require.NoError(t, json.Unmarshal([]byte(`{"checkout":{"checkoutId":"sha256:checkout"},"runtime":{"ownerId":"owner-1"},"authority":{"instanceId":"target-local","environment":"dev"}}`), &state))
+	want := errors.New("staging stopped")
+	called := false
+	factory := projectDevRemoteFactory{
+		client: fixedTransportClient{transport: &developmentProfileTransportStub{}},
+		stageDevelopmentInputs: func(_ context.Context, credentials cliapi.Credentials, local localDevelopmentSession) error {
+			called = true
+			require.Equal(t, "lvproject_local", credentials.ProjectID)
+			require.Equal(t, "target-local", local.state.Authority.InstanceID)
+			return want
+		},
+	}
+	ctx := context.WithValue(t.Context(), localDevelopmentSessionContextKey{}, localDevelopmentSession{state: state})
+	_, err := factory.Remote(ctx, cliapi.Credentials{Target: "http://127.0.0.1:7090", Token: "token", ProjectID: "lvproject_local"}, 1)
+	if !called || !errors.Is(err, want) {
+		t.Fatalf("called = %t, error = %v", called, err)
+	}
+}
 
 func TestSourceRootDoesNotDeriveProjectIdentity(t *testing.T) {
 	path := t.TempDir()

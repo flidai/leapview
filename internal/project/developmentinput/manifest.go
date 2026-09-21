@@ -82,35 +82,75 @@ func Load(projectRoot, name string) (Selected, error) {
 		return Selected{}, fmt.Errorf("development input project root: %w", err)
 	}
 	defer projectFS.Close()
+	manifest, err := readManifest(projectFS)
+	if err != nil {
+		return Selected{}, err
+	}
+	return selectInput(projectFS, root, manifest, name)
+}
+
+// Names returns every declared development input in deterministic order. It
+// validates the same strict manifest boundary as Load; callers must still call
+// Load for each name before staging so file identities are checked immediately
+// before planning.
+func Names(projectRoot string) ([]string, error) {
+	projectFS, _, err := openCanonicalRoot(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("development input project root: %w", err)
+	}
+	defer projectFS.Close()
+	manifest, err := readManifest(projectFS)
+	if err != nil {
+		return nil, err
+	}
+	if len(manifest.Inputs) == 0 {
+		return nil, errors.New("development inputs declare no inputs")
+	}
+	names := make([]string, 0, len(manifest.Inputs))
+	for name := range manifest.Inputs {
+		if name != strings.TrimSpace(name) || !namePattern.MatchString(name) {
+			return nil, errors.New("development input name is invalid")
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func readManifest(projectFS *os.Root) (Manifest, error) {
 	if err := rejectPathSymlinks(projectFS, filepath.FromSlash(DefaultRelativePath)); err != nil {
-		return Selected{}, fmt.Errorf("development inputs: %w", err)
+		return Manifest{}, fmt.Errorf("development inputs: %w", err)
 	}
 	content, err := readBounded(projectFS, DefaultRelativePath)
 	if err != nil {
-		return Selected{}, fmt.Errorf("development inputs: %w", err)
+		return Manifest{}, fmt.Errorf("development inputs: %w", err)
 	}
 	if !utf8.Valid(content) {
-		return Selected{}, errors.New("development inputs must be UTF-8")
+		return Manifest{}, errors.New("development inputs must be UTF-8")
 	}
 	if err := rejectUnsafeYAML(content); err != nil {
-		return Selected{}, err
+		return Manifest{}, err
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(content))
 	decoder.KnownFields(true)
 	var manifest Manifest
 	if err := decoder.Decode(&manifest); err != nil {
-		return Selected{}, fmt.Errorf("development inputs schema: %w", err)
+		return Manifest{}, fmt.Errorf("development inputs schema: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
-			return Selected{}, errors.New("development inputs must contain one YAML document")
+			return Manifest{}, errors.New("development inputs must contain one YAML document")
 		}
-		return Selected{}, fmt.Errorf("development inputs schema: %w", err)
+		return Manifest{}, fmt.Errorf("development inputs schema: %w", err)
 	}
 	if manifest.Version != Version {
-		return Selected{}, fmt.Errorf("unsupported development inputs version %d", manifest.Version)
+		return Manifest{}, fmt.Errorf("unsupported development inputs version %d", manifest.Version)
 	}
+	return manifest, nil
+}
+
+func selectInput(projectFS *os.Root, root string, manifest Manifest, name string) (Selected, error) {
 	if name != strings.TrimSpace(name) || !namePattern.MatchString(name) {
 		return Selected{}, errors.New("development input name is invalid")
 	}
