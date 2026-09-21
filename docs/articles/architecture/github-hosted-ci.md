@@ -48,6 +48,22 @@ the sequential `task ci:full:extras` contract, and the daily schedule also runs
 composition remains available through the tier targets; the workflow does not duplicate individual
 test commands or introduce a runner-specific container wrapper.
 
+## PostgreSQL conformance topology
+
+The source-inventoried PostgreSQL lane uses the same runner locally and on GitHub. It runs up
+to four Go packages concurrently. Each package gets one disposable, pinned PostgreSQL 18
+server with its data on tmpfs; the testcontainers PostgreSQL module already disables `fsync`
+for these containers. The wrapper passes a server URL and a per-container token to its test
+binary; the harness verifies the token before it can create objects, and the wrapper
+terminates the server after the package exits. The lane fails closed if PostgreSQL is unavailable.
+
+Each test fixture creates a separate database, which is dropped along with its roles after
+the test. Tests within a package run serially because PostgreSQL roles are cluster-wide and
+qualification tests depend on their exact production names. Parallelism is across packages,
+not across tests sharing one server. TLS-specific and direct-container qualifications retain
+their own containers. The lane does not substitute PGlite or skip migrations; changing those
+behaviors would need separate conformance evidence.
+
 Frontend validation has five isolated shards: `core`, `reports`, `chat`, `data`, and `site`.
 Each hosted shard runs `task ci:lane:frontend:shard SHARD=<name>` on its own runner with a
 180-second watchdog and at most one retry for a timeout, never for an assertion failure.
