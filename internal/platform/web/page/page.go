@@ -125,7 +125,7 @@ func Render(layout Layout, spec Spec) g.Node {
 	}
 	mainAttrs = append(mainAttrs,
 		g.Attr("data-page-stream-recovery-root", ""),
-		g.Attr("data-on:datastar-fetch", "evt.detail.el === el && ($pageStreamRecovery = evt.detail.type === 'started' ? false : (evt.detail.type === 'error' || evt.detail.type === 'retrying' || evt.detail.type === 'retries-failed') ? true : (evt.detail.type === 'datastar-patch-elements' || evt.detail.type === 'datastar-patch-signals') ? false : $pageStreamRecovery)"),
+		g.Attr("data-on:datastar-fetch", "evt.detail.el === el && (evt.detail.type === 'error' && evt.detail.argsRaw?.status === '401' ? window.location.replace('/login?error=session_expired') : ($pageStreamRecovery = evt.detail.type === 'started' ? false : evt.detail.type === 'retries-failed' ? true : (evt.detail.type === 'datastar-patch-elements' || evt.detail.type === 'datastar-patch-signals') ? false : $pageStreamRecovery))"),
 	)
 	return pagestream.RenderPage(pagestream.PageSpec{
 		Title: title, DatastarScriptURL: layout.Assets.URL(staticasset.DatastarScriptPath),
@@ -147,13 +147,13 @@ func pageStreamRecovery() g.Node {
 		g.Attr("role", "alert"),
 		g.Attr("aria-live", "assertive"),
 		g.Attr("aria-labelledby", "page-stream-recovery-title"),
-		g.Attr("class", "fixed inset-0 z-50 flex items-center justify-center bg-app/80 p-6"),
+		g.Attr("class", "lv-page-stream-recovery"),
 		g.El("div",
-			g.Attr("class", "w-full max-w-lg rounded-xl border border-border-default bg-canvas-default p-6 shadow-lg"),
-			g.El("p", g.Attr("class", "text-sm text-fg-muted"), g.Text("LeapView")),
-			g.El("h1", g.Attr("id", "page-stream-recovery-title"), g.Attr("class", "mt-3 text-xl font-semibold"), g.Text("Unable to load this page")),
-			g.El("p", g.Attr("class", "mt-3 text-sm text-fg-muted"), g.Text("We couldn't connect to LeapView. Your page is still safe; retry when the service is ready.")),
-			g.El("button", g.Attr("type", "button"), g.Attr("class", "mt-5 inline-flex items-center rounded-md border border-border-default px-3 py-2 text-sm font-medium hover:bg-canvas-subtle"), g.Attr("data-on:click", "window.location.reload()"), g.Text("Retry")),
+			g.Attr("class", "lv-page-stream-recovery-card"),
+			g.El("p", g.Attr("class", "lv-page-stream-recovery-label"), g.Text("LeapView")),
+			g.El("h1", g.Attr("id", "page-stream-recovery-title"), g.Text("Unable to load this page")),
+			g.El("p", g.Text("We couldn't connect to LeapView. Your page is still safe; retry when the service is ready.")),
+			g.El("button", g.Attr("type", "button"), g.Attr("data-on:click", "window.location.reload()"), g.Text("Retry")),
 		),
 	)
 }

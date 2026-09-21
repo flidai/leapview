@@ -59,11 +59,14 @@ func TestRenderIncludesInlineInitialStreamRecovery(t *testing.T) {
 	body := output.String()
 	for _, want := range []string{
 		`data-page-stream-recovery-root`,
-		`data-on:datastar-fetch="evt.detail.el === el &amp;&amp; ($pageStreamRecovery =`,
+		`data-on:datastar-fetch="evt.detail.el === el &amp;&amp; (evt.detail.type`,
 		`evt.detail.type === &#39;started&#39; ? false`,
-		`evt.detail.type === &#39;retrying&#39;`,
+		`evt.detail.argsRaw?.status === &#39;401&#39;`,
+		`window.location.replace(&#39;/login?error=session_expired&#39;)`,
+		`evt.detail.type === &#39;retries-failed&#39;`,
 		`evt.detail.type === &#39;datastar-patch-signals&#39;`,
 		`data-page-stream-recovery`,
+		`lv-page-stream-recovery`,
 		`data-show="$pageStreamRecovery"`,
 		`style="display:none"`,
 		"Unable to load this page",
@@ -72,5 +75,8 @@ func TestRenderIncludesInlineInitialStreamRecovery(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("rendered page missing %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, `evt.detail.type === &#39;retrying&#39;`) {
+		t.Fatal("automatic stream retries should not cover the page")
 	}
 }
