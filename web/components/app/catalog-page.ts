@@ -69,6 +69,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       }
     }
 
+    .page-header { border-bottom: 0; padding-bottom: 0; }
+
     .catalog-create-draft { display: inline-flex; align-items: center; gap: var(--base-size-6); min-height: var(--control-medium-size); padding: 0 var(--base-size-12); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); cursor: pointer; font: var(--lv-type-body-compact); }
     .catalog-create-draft svg { display: block; flex: 0 0 auto; }
     .catalog-create-draft:hover { background: var(--lv-button-bg-hover, var(--lv-bg-control-hover)); }
