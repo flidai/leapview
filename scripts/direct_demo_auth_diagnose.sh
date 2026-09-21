@@ -180,4 +180,21 @@ SELECT json_build_object(
 SQL
 )
 docker exec "$container" sh -c 'exec psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d leapview_control -Atc "$1"' query "$query"
+
+if ! curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8132/readyz >/dev/null 2>&1; then
+  echo 'Restarting the unhealthy application service after database recovery'
+  systemctl restart leapview-demo-current.service
+  for _ in $(seq 1 30); do
+    if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8132/readyz >/dev/null 2>&1; then
+      echo 'Application ready after database recovery'
+      df -h /
+      exit 0
+    fi
+    sleep 2
+  done
+  echo 'Application did not become ready after database recovery' >&2
+  systemctl status leapview-demo-current.service --no-pager -l | tail -35 >&2 || true
+  exit 1
+fi
+echo 'Application ready after database recovery'
 REMOTE
