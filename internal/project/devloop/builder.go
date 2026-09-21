@@ -71,7 +71,8 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 		}
 		artifacts = append(artifacts, contentArtifact(filepath.ToSlash(relative), content))
 	}
-	if _, err := projectcompiler.Compile(root); err != nil {
+	bundle, err := projectcompiler.Compile(root)
+	if err != nil {
 		return Snapshot{}, err
 	}
 	// The source bundle validates source-root resources and intentionally has
@@ -80,7 +81,7 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 	projectID := builder.ProjectID
 	return normalizeSnapshot(Snapshot{
 		ProjectID: projectID,
-		Digest:    candidateSetDigest(artifacts), Artifacts: artifacts,
+		Digest:    candidateSetDigest(artifacts), GraphDigest: bundle.Graph().Digest(), Artifacts: artifacts,
 		SourceRevision: builder.SourceRevision,
 		CandidateKey:   builder.CandidateKey,
 	})

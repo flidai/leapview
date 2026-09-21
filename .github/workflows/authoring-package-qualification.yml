@@ -1,0 +1,99 @@
+name: Released authoring package qualification
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Public release tag whose authoring package should be checked
+        required: true
+        type: string
+      run_lifecycle:
+        description: Run init and one local dev lifecycle (requires manual device approval)
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: Qualify released authoring package (linux-${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    concurrency:
+      group: released-authoring-package-${{ github.event.release.tag_name || inputs.release_tag }}-${{ matrix.arch }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out qualification contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download exact public authoring archive
+        id: package
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) printf 'invalid release tag: %s\n' "$RELEASE_TAG" >&2; exit 1 ;;
+          esac
+          package="leapview-cli-${RELEASE_TAG}-linux-${ARCH}"
+          root="$RUNNER_TEMP/leapview-authoring-package"
+          mkdir -p "$root"
+          curl --fail --location --retry 4 --retry-all-errors --silent --show-error \
+            --output "$root/$package.tar.gz" \
+            "https://github.com/flidai/leapview/releases/download/$RELEASE_TAG/$package.tar.gz"
+          curl --fail --location --retry 4 --retry-all-errors --silent --show-error \
+            --output "$root/$package.tar.gz.sha256" \
+            "https://github.com/flidai/leapview/releases/download/$RELEASE_TAG/$package.tar.gz.sha256"
+          printf 'archive=%s\n' "$root/$package.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Run required package qualification and optional lifecycle
+        env:
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          RUN_LIFECYCLE: ${{ inputs.run_lifecycle || false }}
+          EVIDENCE_DIR: ${{ runner.temp }}/authoring-package-qualification-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          args=(
+            --archive "$ARCHIVE"
+            --checksum "$ARCHIVE.sha256"
+            --evidence-dir "$EVIDENCE_DIR"
+            --required
+          )
+          if [ "$RUN_LIFECYCLE" = true ]; then
+            # Required mode deliberately fails closed if this socket, Compose,
+            # or the human device-approval prerequisite is unavailable.
+            args+=(
+              --run-lifecycle
+              --manual-prerequisites-confirmed
+              --docker-host unix:///var/run/docker.sock
+            )
+          fi
+          ./deploy/local/qualification/qualify.sh "${args[@]}"
+
+      - name: Upload bounded qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: released-authoring-package-${{ github.event.release.tag_name || inputs.release_tag }}-${{ matrix.arch }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/authoring-package-qualification-${{ matrix.arch }}/qualification-report.json
+            ${{ runner.temp }}/authoring-package-qualification-${{ matrix.arch }}/raw-results.json

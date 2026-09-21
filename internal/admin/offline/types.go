@@ -10,9 +10,11 @@ import (
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 )
 
-const (
-	CredentialRecoveryFileName = ".initial-credentials.json"
-)
+const CredentialRecoveryFileName = ".initial-credentials.json"
+
+// DefaultDevelopmentBootstrapEmail is the shared identity used when a local
+// initialization does not configure an explicit administrator.
+const DefaultDevelopmentBootstrapEmail = "admin@localhost"
 
 var ErrStateNotFound = errors.New("offline Admin state was not found")
 

@@ -47,6 +47,7 @@ type ResolvedCredential struct {
 	Profile     cliapi.TargetProfile
 	AccessToken string
 	ExpiresAt   time.Time
+	SessionID   string
 }
 
 type WorkloadIdentityRequest struct {
@@ -165,7 +166,7 @@ func (auth Authenticator) Resolve(ctx context.Context, name string) (ResolvedCre
 		return ResolvedCredential{}, err
 	}
 	if auth.now().Add(refreshClockSkew).Before(credential.AccessExpiresAt) {
-		return ResolvedCredential{Profile: profile, AccessToken: credential.AccessToken, ExpiresAt: credential.AccessExpiresAt}, nil
+		return ResolvedCredential{Profile: profile, AccessToken: credential.AccessToken, ExpiresAt: credential.AccessExpiresAt, SessionID: credential.SessionID}, nil
 	}
 	token, refreshErr := auth.OAuth.Refresh(ctx, OAuthRefreshRequest{
 		Origin: profile.Origin, RefreshToken: credential.RefreshToken,
@@ -193,7 +194,7 @@ func (auth Authenticator) Resolve(ctx context.Context, name string) (ResolvedCre
 	if err := auth.storeCredential(ctx, profile.CredentialAccount, credential); err != nil {
 		return ResolvedCredential{}, err
 	}
-	return ResolvedCredential{Profile: profile, AccessToken: credential.AccessToken, ExpiresAt: credential.AccessExpiresAt}, nil
+	return ResolvedCredential{Profile: profile, AccessToken: credential.AccessToken, ExpiresAt: credential.AccessExpiresAt, SessionID: credential.SessionID}, nil
 }
 
 // ResolveOrigin selects the exact profile whose native credential matches the

@@ -28,15 +28,15 @@ The live-lineage test preserves a project identity and a populated dashboard del
 
 ## Two-Lineage Qualification
 
-`TestSchema24ConvergesBothRevision23Lineages` constructs each revision-23 state in PostgreSQL 18, applies revision 024 through the production `ApplyGoose` entry point, verifies revision 24, runs `VerifyGoose`, checks the recovery schema contract and runtime-role access, and asserts the seeded records remain unchanged.
+`TestSchema24ConvergesBothRevision23Lineages` constructs each revision-23 state in PostgreSQL 18, applies revision 024 and every later migration through the production `ApplyGoose` entry point, verifies the current revision, runs `VerifyGoose`, checks the recovery schema contract and runtime-role access, and asserts the seeded records remain unchanged.
 
 ## Fresh Database Qualification
 
-`TestSchema24FreshDatabaseAndForwardOnlyDown` migrates an empty PostgreSQL 18 database through the complete embedded sequence to revision 24, verifies the recovery schema and runtime compatibility, and proves that a requested downgrade is rejected without changing the recorded revision.
+`TestSchema24FreshDatabaseAndForwardOnlyDown` migrates an empty PostgreSQL 18 database through an isolated sequence ending at revision 24, verifies the recovery schema, and proves that a requested downgrade is rejected without changing the recorded revision. It then applies every later embedded migration and verifies current-runtime compatibility.
 
 ## CurrentRevision
 
-`internal/platform/postgres/migrations/goose.go` now declares `CurrentRevision = 24`. `VerifyGoose` continues to compare the applied version with the embedded migration target and requires every migration status to be applied.
+The convergence change originally declared `CurrentRevision = 24`. After integration with ADR-0021, profile application and development-session authority follow it as revisions 25 and 26, so `internal/platform/postgres/migrations/goose.go` declares `CurrentRevision = 26`. `VerifyGoose` continues to compare the applied version with the embedded migration target and requires every migration status to be applied.
 
 ## Artifact Qualification Fix
 

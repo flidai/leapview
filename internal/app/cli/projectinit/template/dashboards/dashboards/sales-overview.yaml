@@ -1,0 +1,54 @@
+apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata:
+  id: dashboard:sales-overview
+  name: sales-overview
+  displayName: Sales overview
+  description: A deterministic synthetic starter dashboard.
+  tags: [starter, synthetic]
+spec:
+  semanticModel: sales_metrics
+  filters:
+    - id: region
+      label: Region
+      dimension: region
+      control: {type: multiSelect}
+      operators: [in, notIn]
+      urlParameter: region
+  visuals:
+    - id: revenue
+      type: kpi
+      query: {type: aggregate, dimensions: [], metrics: [revenue]}
+      presentation: {type: kpi, note: Synthetic revenue, tone: success}
+    - id: sales
+      type: kpi
+      query: {type: aggregate, dimensions: [], metrics: [sale_count]}
+      presentation: {type: kpi, note: Distinct synthetic sales, tone: ink}
+    - id: revenue_by_month
+      type: area
+      title: Revenue by month
+      query:
+        type: aggregate
+        dimensions:
+          - {dimension: sale_date, grain: month, alias: sale_month}
+        metrics: [revenue]
+        sort: [{field: sale_month, direction: asc}]
+      presentation: {type: cartesian}
+    - id: revenue_by_category
+      type: bar
+      title: Revenue by category
+      query:
+        type: aggregate
+        dimensions: [category]
+        metrics: [revenue]
+        sort: [{field: revenue, direction: desc}]
+      presentation: {type: cartesian}
+  pages:
+    - id: overview
+      title: Overview
+      components:
+        - {id: region-filter, type: filter, filter: region, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 2}}
+        - {id: revenue-kpi, type: visual, visual: revenue, placement: {column: 1, row: 3, columnSpan: 4, rowSpan: 3}}
+        - {id: sales-kpi, type: visual, visual: sales, placement: {column: 5, row: 3, columnSpan: 4, rowSpan: 3}}
+        - {id: revenue-month, type: visual, visual: revenue_by_month, placement: {column: 1, row: 6, columnSpan: 7, rowSpan: 6}}
+        - {id: revenue-category, type: visual, visual: revenue_by_category, placement: {column: 8, row: 6, columnSpan: 5, rowSpan: 6}}

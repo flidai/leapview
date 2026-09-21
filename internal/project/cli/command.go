@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	"github.com/flidai/leapview/internal/project/developmentinput"
 	developmentprofile "github.com/flidai/leapview/internal/project/developmentprofile"
 	"github.com/flidai/leapview/internal/project/schema"
 	"github.com/spf13/cobra"
@@ -210,6 +211,11 @@ func ExportSchema(format, outDir string) error {
 		return err
 	}
 	files[developmentprofile.SchemaFilename] = profileSchema
+	developmentInputSchema, err := developmentinput.JSONSchema()
+	if err != nil {
+		return err
+	}
+	files[developmentinput.SchemaFilename] = developmentInputSchema
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}

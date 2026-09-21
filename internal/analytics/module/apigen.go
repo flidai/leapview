@@ -18,20 +18,30 @@ type QueryAuditAPIGenConfig struct {
 }
 
 type AnalyticsAPIGenConfig struct {
-	QueryAudit  QueryAuditAPIGenConfig
-	Connections ConnectionBindingAPIGenConfig
+	QueryAudit          QueryAuditAPIGenConfig
+	Connections         ConnectionBindingAPIGenConfig
+	DevelopmentProfiles DevelopmentProfileApplicationAPIConfig
 }
 
 type analyticsAPIGenDispatcher struct {
-	queryEvents queryaudithttp.Handler
-	connections connectionBindingAPIHandler
+	queryEvents         queryaudithttp.Handler
+	connections         connectionBindingAPIHandler
+	developmentProfiles developmentProfileApplicationAPIHandler
 }
 
 func newAnalyticsAPIGenDispatcher(config AnalyticsAPIGenConfig) *analyticsAPIGenDispatcher {
 	return &analyticsAPIGenDispatcher{queryEvents: queryaudithttp.Handler{
 		Reader:    queryaudithttp.ReaderProvider(config.QueryAudit.Reader),
 		ProjectID: queryaudithttp.ProjectIDNormalizer(config.QueryAudit.ProjectID),
-	}, connections: connectionBindingAPIHandler{config: config.Connections}}
+	}, connections: connectionBindingAPIHandler{config: config.Connections}, developmentProfiles: developmentProfileApplicationAPIHandler{config: config.DevelopmentProfiles}}
+}
+
+func (d *analyticsAPIGenDispatcher) GetDevelopmentProfileApplication(w http.ResponseWriter, r *http.Request, project, target string) {
+	d.developmentProfiles.Get(w, r, project, target)
+}
+
+func (d *analyticsAPIGenDispatcher) ApplyDevelopmentProfile(w http.ResponseWriter, r *http.Request, project, target string, _ analyticsgen.GenApplyDevelopmentProfileHeaders) {
+	d.developmentProfiles.Apply(w, r, project, target)
 }
 
 func (d *analyticsAPIGenDispatcher) ListQueryEvents(

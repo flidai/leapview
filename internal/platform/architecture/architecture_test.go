@@ -582,6 +582,9 @@ func TestEnterpriseAuthoringGuideDefinesOneTargetHostedLifecycle(t *testing.T) {
 			"leapview staging",
 			"--auto-approve",
 		} {
+			if analyticsDevelopmentGuideAllows(entry.Name(), forbidden) {
+				continue
+			}
 			if strings.Contains(string(content), forbidden) {
 				t.Errorf("docs/guides/cli/%s presents alternate authoring command %q", entry.Name(), forbidden)
 			}

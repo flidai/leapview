@@ -1,0 +1,4 @@
+.leapview/credentials.env
+.leapview/profiles.local.yaml
+.leapview/state/
+.leapview/operations/

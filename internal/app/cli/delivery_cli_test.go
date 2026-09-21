@@ -56,7 +56,7 @@ func TestDeliveryPlanResultPreservesReviewEvidence(t *testing.T) {
 		SourceAttestationDigest: "sha256:attestation", PlanDigest: "sha256:plan",
 		ExecutionDigest: "sha256:execution", ProvenanceDigest: "sha256:provenance",
 		GovernanceDigest: "sha256:governance", EvidenceDigest: "sha256:evidence",
-		Status: deploymentgen.DeliveryPlanStatusPlanned,
+		Status: deploymentgen.DeliveryPlanStatusPlanned, ExpiresAt: "2099-01-01T00:00:00Z",
 		Evidence: deploymentgen.DeliveryPlanEvidenceView{
 			Digest: "sha256:evidence", CompatibilityBreaking: true, AddedCount: 1,
 			RemovedCount: 2, DirectlyModifiedCount: 3, IndirectlyAffectedCount: 4,
@@ -81,7 +81,7 @@ func TestDeliveryPlanResultPreservesReviewEvidence(t *testing.T) {
 			}},
 		},
 	})
-	if plan.SourceAttestationDigest != "sha256:attestation" || plan.Evidence.QualificationPolicy != "required" ||
+	if plan.SourceAttestationDigest != "sha256:attestation" || plan.ExpiresAt != "2099-01-01T00:00:00Z" || plan.Evidence.QualificationPolicy != "required" ||
 		len(plan.Evidence.PlannedInputs) != 1 || plan.Evidence.PlannedInputs[0].Revision != "rev-7" ||
 		len(plan.Evidence.QualificationSteps) != 1 || len(plan.Evidence.ReuseDecisions) != 1 ||
 		plan.Evidence.RollbackClass != "rollback_safe" {
@@ -274,6 +274,25 @@ func TestDeliveryPlanRejectsRetainedSourceIdentityMismatch(t *testing.T) {
 				t.Fatal("created a delivery plan after retained identity mismatch")
 			}
 		})
+	}
+}
+
+func TestDeliveryPlanRejectsPortableSnapshotProjectBeforeRemoteMutation(t *testing.T) {
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
+	snapshot, err := (devloop.FilesystemBuilder{SourceRoot: projectPath, ProjectID: "project:snapshot"}).Build(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &deliveryPlanSourceHandoffTransport{}
+	_, err = (projectDeliveryPlanOperations{client: deliveryPlanSourceHandoffClient{transport: transport}}).Create(t.Context(), projectcli.DeliveryPlanOptions{
+		ProjectID: "project:target", TargetID: "target-1", Environment: "development",
+		SourceSnapshot: &snapshot, UploadConcurrency: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match target-bound Project") {
+		t.Fatalf("portable snapshot mismatch error = %v", err)
+	}
+	if transport.retainCalls != 0 || transport.createCalls != 0 || transport.planCalls != 0 {
+		t.Fatalf("remote mutation occurred before snapshot identity rejection: %#v", transport)
 	}
 }
 

@@ -261,12 +261,15 @@ func (c Config) ValidatePostgresProduction() error {
 }
 
 // ValidatePostgresDevelopment validates the local PostgreSQL composition used
-// by `task dev`. Development keeps the same capability/database and role
-// boundaries as production, but deliberately permits loopback TLS-disabled
-// URLs and does not require an admitted delivery pool. The latter is supplied
-// by an explicit bootstrap operation when a developer publishes a candidate.
+// by both the contributor workflow and the released local authoring runtime.
+// Development keeps the same capability/database and role boundaries as
+// production, but deliberately permits loopback TLS-disabled URLs and does not
+// require an admitted delivery pool. The latter is supplied by an explicit
+// bootstrap operation before candidate work is admitted. A migrator URL is
+// optional for pre-initialized local runtimes and, when present, remains an
+// explicit development migration authority rather than a serving credential.
 func (c Config) ValidatePostgresDevelopment() error {
-	return c.validatePostgresServeTarget("development", false, false, true)
+	return c.validatePostgresServeTarget("development", false, false, false)
 }
 
 // validatePostgresServeTarget contains the common control/DuckLake connection

@@ -70,6 +70,19 @@ func productionAdminConfig(home string) config.Config {
 	}
 }
 
+func developmentAdminConfig(home string) config.Config {
+	return config.Config{
+		HomeDir: home, Environment: "dev", LocalAuth: true,
+		PublicURL: "http://127.0.0.1:8080", AllowedHosts: "127.0.0.1,localhost",
+		TokenHashKey: strings.Repeat("k", 32), PostgresExpectedMajor: 18,
+		PostgresControlURL:             "postgres://runtime:runtime-secret@127.0.0.1:5432/leapview_control?sslmode=disable",
+		PostgresControlMigratorURL:     "postgres://migrator:migrator-secret@127.0.0.1:5432/leapview_control?sslmode=disable",
+		PostgresControlMaintenanceURL:  "postgres://maintenance:maintenance-secret@127.0.0.1:5432/leapview_control?sslmode=disable",
+		PostgresDuckLakeURL:            "postgres://ducklake:ducklake-secret@127.0.0.1:5432/leapview_ducklake?sslmode=disable",
+		PostgresDuckLakeMaintenanceURL: "postgres://ducklake-maintenance:ducklake-maintenance-secret@127.0.0.1:5432/leapview_ducklake?sslmode=disable",
+	}
+}
+
 func skipProductionBaseline(context.Context, config.Config) error { return nil }
 
 func TestProductionInitializeUsesNativeAccessAndDurableRecovery(t *testing.T) {
@@ -120,6 +133,127 @@ func TestProductionInitializeUsesNativeAccessAndDurableRecovery(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "leapview.db")); !os.IsNotExist(err) {
 		t.Fatalf("native initialization created offline SQLite state: %v", err)
+	}
+}
+
+func TestDevelopmentInitializeReplayAndAcknowledgeUsesNativeAccess(t *testing.T) {
+	home := t.TempDir()
+	cfg := developmentAdminConfig(home)
+	initializer := &testAccessInitializer{credentials: access.InitialInstanceCredentials{
+		Email: "admin@localhost", TemporaryPassword: "temporary-password", PublisherToken: "publisher-token",
+		PublisherTokenExpiresAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+	}}
+	bootstrap := &testBootstrap{missing: true}
+	var openedConfig platformpostgres.Config
+	var acquired int
+	ops := New(Dependencies{
+		LoadConfig:      func() (config.Config, error) { return cfg, nil },
+		PrepareBaseline: skipProductionBaseline,
+		OpenAccess: func(_ context.Context, opened platformpostgres.Config) (AccessPool, error) {
+			openedConfig = opened
+			return &testMaintenancePool{}, nil
+		},
+		VerifyBaseline: func(context.Context, postgresbaseline.SQLDBProvider) error { return nil },
+		NewAccess:      func(AccessPool, []byte) (AccessInitializer, error) { return initializer, nil },
+		NewBootstrap:   func(AccessPool) Bootstrap { return bootstrap },
+		AcquireLock: func(string) (adminoffline.Lock, error) {
+			acquired++
+			return &testAdminLock{}, nil
+		},
+	})
+
+	var first bytes.Buffer
+	if err := ops.Initialize(t.Context(), adminoffline.InitializeRequest{Format: "json"}, &first); err != nil {
+		t.Fatalf("initialize local target: %v", err)
+	}
+	var replay bytes.Buffer
+	if err := ops.Initialize(t.Context(), adminoffline.InitializeRequest{Format: "json"}, &replay); err != nil {
+		t.Fatalf("replay local initialization: %v", err)
+	}
+	if replay.String() != first.String() || initializer.initCalls != 1 {
+		t.Fatalf("replay changed credentials or reran mutation: calls=%d first=%q replay=%q", initializer.initCalls, first.String(), replay.String())
+	}
+	if openedConfig.RequireTLS || openedConfig.URL != cfg.PostgresControlURL {
+		t.Fatalf("local access config = %#v, want loopback development runtime config", openedConfig)
+	}
+	if bootstrap.binds != 1 || bootstrap.bound != cfg.Environment || initializer.lastInput.Environment != cfg.Environment || initializer.lastInput.Email != adminoffline.DefaultDevelopmentBootstrapEmail {
+		t.Fatalf("local native state bind=%d/%q initializer input=%#v", bootstrap.binds, bootstrap.bound, initializer.lastInput)
+	}
+	if err := ops.AcknowledgeInitialCredentials(t.Context()); err != nil {
+		t.Fatalf("acknowledge local credentials: %v", err)
+	}
+	if err := ops.Initialize(t.Context(), adminoffline.InitializeRequest{Format: "json"}, &bytes.Buffer{}); !errors.Is(err, adminoffline.ErrInstanceAlreadyInitialized) {
+		t.Fatalf("initialize after local acknowledgement error = %v", err)
+	}
+	if acquired != 4 {
+		t.Fatalf("lock acquisitions = %d, want one per local service operation", acquired)
+	}
+}
+
+func TestDevelopmentInitializeRejectsUnsafeConfigurationBeforeOpeningAccess(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*config.Config)
+		want   string
+	}{
+		{name: "local auth disabled", mutate: func(cfg *config.Config) { cfg.LocalAuth = false }, want: "LEAPVIEW_LOCAL_AUTH=true"},
+		{name: "development auth bypass", mutate: func(cfg *config.Config) { cfg.DevAuthBypass = true }, want: "LEAPVIEW_DEV_AUTH_BYPASS=false"},
+		{name: "remote public URL", mutate: func(cfg *config.Config) { cfg.PublicURL = "http://analytics.example.com:8080" }, want: "loopback"},
+		{name: "remote allowed host", mutate: func(cfg *config.Config) { cfg.AllowedHosts = "analytics.example.com" }, want: "loopback"},
+		{name: "remote plaintext PostgreSQL", mutate: func(cfg *config.Config) {
+			cfg.PostgresControlURL = "postgres://runtime:runtime-secret@postgres.internal:5432/leapview_control?sslmode=disable"
+		}, want: "loopback"},
+		{name: "remote TLS PostgreSQL", mutate: func(cfg *config.Config) {
+			cfg.PostgresRequireTLS = true
+			cfg.PostgresControlURL = "postgres://runtime:runtime-secret@postgres.internal:5432/leapview_control?sslmode=verify-full"
+		}, want: "LEAPVIEW_POSTGRES_CONTROL_URL to target loopback"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := developmentAdminConfig(t.TempDir())
+			test.mutate(&cfg)
+			opened, acquired := false, false
+			ops := New(Dependencies{
+				LoadConfig: func() (config.Config, error) { return cfg, nil },
+				OpenAccess: func(context.Context, platformpostgres.Config) (AccessPool, error) {
+					opened = true
+					return &testMaintenancePool{}, nil
+				},
+				AcquireLock: func(string) (adminoffline.Lock, error) {
+					acquired = true
+					return &testAdminLock{}, nil
+				},
+			})
+			err := ops.Initialize(t.Context(), adminoffline.InitializeRequest{Format: "json"}, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("unsafe local config error = %v, want %q", err, test.want)
+			}
+			if opened || acquired {
+				t.Fatalf("unsafe local config opened access or acquired lock: opened=%t acquired=%t", opened, acquired)
+			}
+		})
+	}
+}
+
+func TestDevelopmentInitializeMigrationFailureRemainsRecoverableBeforeAccessMutation(t *testing.T) {
+	cfg := developmentAdminConfig(t.TempDir())
+	var opened, acquired bool
+	ops := New(Dependencies{
+		LoadConfig: func() (config.Config, error) { return cfg, nil },
+		PrepareBaseline: func(context.Context, config.Config) error {
+			return errors.New("migration interrupted")
+		},
+		OpenAccess: func(context.Context, platformpostgres.Config) (AccessPool, error) {
+			opened = true
+			return &testMaintenancePool{}, nil
+		},
+		AcquireLock: func(string) (adminoffline.Lock, error) {
+			acquired = true
+			return &testAdminLock{}, nil
+		},
+	})
+	err := ops.Initialize(t.Context(), adminoffline.InitializeRequest{Format: "json"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "migration interrupted") || opened || acquired {
+		t.Fatalf("migration failure error=%v opened=%t acquired=%t", err, opened, acquired)
 	}
 }
 

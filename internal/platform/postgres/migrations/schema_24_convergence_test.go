@@ -124,9 +124,9 @@ func TestSchema24ConvergesBothRevision23Lineages(t *testing.T) {
 			test.seed(t, admin)
 
 			if err := ApplyGoose(t.Context(), migrationDB); err != nil {
-				t.Fatalf("apply schema-24 convergence: %v", err)
+				t.Fatalf("apply schema-24 convergence and later migrations: %v", err)
 			}
-			assertGooseRevision(t, migrationDB, 24)
+			assertGooseRevision(t, migrationDB, CurrentRevision)
 			if err := VerifyGoose(t.Context(), migrationDB); err != nil {
 				t.Fatalf("current runtime rejected converged schema: %v", err)
 			}
@@ -151,23 +151,26 @@ func TestSchema24FreshDatabaseAndForwardOnlyDown(t *testing.T) {
 	harness.GrantRole(t, owner, migrator)
 	admin, migrationDB, _ := openSchema24Database(t, harness, owner, migrator, runtime)
 
-	if err := ApplyGoose(t.Context(), migrationDB); err != nil {
-		t.Fatalf("fresh migration to schema 24: %v", err)
-	}
-	assertGooseRevision(t, migrationDB, CurrentRevision)
-	assertRecoveryQualificationContract(t, admin)
-	if err := VerifyGoose(t.Context(), migrationDB); err != nil {
-		t.Fatalf("current runtime rejected fresh schema: %v", err)
-	}
-
-	provider, err := NewProvider(migrationDB)
+	provider, err := newProvider(migrationDB, migrationSetThrough(t, 24))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := provider.Up(t.Context()); err != nil {
+		t.Fatalf("fresh migration to schema 24: %v", err)
+	}
+	assertGooseRevision(t, migrationDB, 24)
+	assertRecoveryQualificationContract(t, admin)
 	if _, err := provider.Down(t.Context()); err == nil || !strings.Contains(err.Error(), "schema 24 convergence is forward-only") {
 		t.Fatalf("schema-24 down error = %v, want forward-only refusal", err)
 	}
+	assertGooseRevision(t, migrationDB, 24)
+	if err := ApplyGoose(t.Context(), migrationDB); err != nil {
+		t.Fatalf("apply migrations after schema 24: %v", err)
+	}
 	assertGooseRevision(t, migrationDB, CurrentRevision)
+	if err := VerifyGoose(t.Context(), migrationDB); err != nil {
+		t.Fatalf("current runtime rejected fresh schema: %v", err)
+	}
 }
 
 func migrationSetThrough(t *testing.T, maximum int) fstest.MapFS {
