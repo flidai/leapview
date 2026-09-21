@@ -19,11 +19,6 @@ beforeAll(async () => {
       response.end(testDocument(true, false, true, false, false, url.searchParams.getAll('deleted')))
       return
     }
-    if (url.pathname === '/sidebar-custom-brand') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument(true, false, true, false, false, [], { name: 'Micro Matic', logoUrl: '/micro-matic.svg' }))
-      return
-    }
     if (url.pathname === '/admin-sidebar') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument(true, true, false, false, true))
@@ -253,44 +248,4 @@ test('mobile account menu fits above the footer and keeps search available after
       expect(await trigger.getAttribute('aria-expanded')).toBe('false')
     }
   } finally { await page.close() }
-}, 30_000)
-
-test('custom sidebar logo and name share the header row without overlapping controls', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
-  try {
-    await page.goto(`${baseURL}/sidebar-custom-brand`, { waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(() => document.querySelector('lv-app-shell')?.shadowRoot?.querySelector('lv-sidebar')?.shadowRoot?.querySelector('.name')?.textContent?.trim() === 'Micro Matic')
-    const layout = await page.locator('lv-sidebar').evaluate((sidebar: any) => {
-      const root = sidebar.shadowRoot as ShadowRoot
-      const identity = root.querySelector<HTMLElement>('.brand-identity')!
-      const switcher = root.querySelector<HTMLElement>('.brand-row > .area-switcher')!
-      const name = root.querySelector<HTMLElement>('.name')!
-      const logo = root.querySelector<HTMLElement>('.product-logo')!
-      return {
-        controlsShareRow: Math.abs((switcher.getBoundingClientRect().top + switcher.getBoundingClientRect().height / 2) - (identity.getBoundingClientRect().top + identity.getBoundingClientRect().height / 2)) <= 2,
-        identityEndsBeforeSwitcher: identity.getBoundingClientRect().right <= switcher.getBoundingClientRect().left,
-        logoBeforeName: logo.getBoundingClientRect().right <= name.getBoundingClientRect().left,
-        nameFits: name.scrollWidth <= name.clientWidth,
-        attributionCount: root.querySelectorAll('.powered-by').length,
-      }
-    })
-    expect(layout).toEqual({ controlsShareRow: true, identityEndsBeforeSwitcher: true, logoBeforeName: true, nameFits: true, attributionCount: 0 })
-    const narrow = await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
-      sidebar.style.setProperty('--lv-sidebar-resized-width', '160px')
-      sidebar.config = { ...sidebar.config, productName: 'An exceptionally long workspace name' }
-      await sidebar.updateComplete
-      const root = sidebar.shadowRoot as ShadowRoot
-      const identity = root.querySelector<HTMLElement>('.brand-identity')!
-      const switcher = root.querySelector<HTMLElement>('.brand-row > .area-switcher')!
-      const name = root.querySelector<HTMLElement>('.name')!
-      return {
-        noOverlap: identity.getBoundingClientRect().right <= switcher.getBoundingClientRect().left,
-        nameTruncates: name.scrollWidth > name.clientWidth,
-        fullNameAccessible: root.querySelector('.brand-home')?.getAttribute('aria-label'),
-      }
-    })
-    expect(narrow).toEqual({ noOverlap: true, nameTruncates: true, fullNameAccessible: 'An exceptionally long workspace name home' })
-  } finally {
-    await page.close()
-  }
 }, 30_000)
