@@ -42,10 +42,10 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 				next,
 			), true
 		case routeDashboardBuilder:
-			return protectPageStreamResource(
-				routes.accessModule, runtime.runtimeHostModule,
-				access.CapabilityResourceEdit, dashboardPageStreamResource,
-				next,
+			return protectProjectAuthoringResourceWithSelector(
+				routes.accessModule, runtime.runtimeHostModule, routes.dashboardModule.Authoring(),
+				access.CapabilityResourceEdit, dashboardBuilderPageStreamDashboardID,
+				next.ServeHTTP,
 			), true
 		case routeChat:
 			return routes.accessModule.Authenticate(next), true
@@ -103,6 +103,14 @@ func dashboardPageStreamResource(r *http.Request, _ projectgraph.ResourceID) []a
 		return nil
 	}
 	return []access.ResourceRef{resource}
+}
+
+func dashboardBuilderPageStreamDashboardID(r *http.Request) string {
+	values, ok := r.URL.Query()["dashboard"]
+	if !ok || len(values) != 1 {
+		return ""
+	}
+	return values[0]
 }
 
 func protectPageStreamResource(

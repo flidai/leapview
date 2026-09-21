@@ -380,7 +380,20 @@ func protectProjectAuthoringResource(
 	capability access.Capability,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
-	if accessModule == nil || runtimeHost == nil || authorizer == nil || (capability != access.CapabilityResourceEdit && capability != access.CapabilityResourceManage) {
+	return protectProjectAuthoringResourceWithSelector(accessModule, runtimeHost, authorizer, capability, func(r *http.Request) string {
+		return chi.URLParam(r, "dashboard")
+	}, next)
+}
+
+func protectProjectAuthoringResourceWithSelector(
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	authorizer repositoryDashboardAuthorizer,
+	capability access.Capability,
+	dashboardIDForRequest func(*http.Request) string,
+	next http.HandlerFunc,
+) http.HandlerFunc {
+	if accessModule == nil || runtimeHost == nil || authorizer == nil || dashboardIDForRequest == nil || (capability != access.CapabilityResourceEdit && capability != access.CapabilityResourceManage) {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		}
@@ -396,7 +409,7 @@ func protectProjectAuthoringResource(
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
-		dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
+		dashboardID := strings.TrimSpace(dashboardIDForRequest(r))
 		if err := authoring.ValidateDashboardID(authoring.DashboardID(dashboardID)); err != nil {
 			http.NotFound(w, r)
 			return
