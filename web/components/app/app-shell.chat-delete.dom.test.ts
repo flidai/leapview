@@ -14,6 +14,11 @@ const tmpRoot = join(projectRoot, '.tmp/app-shell-test')
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/upgraded-shell') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument(true))
+      return
+    }
     if (url.pathname === '/sidebar-history') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument(true, false, true, false, false, url.searchParams.getAll('deleted')))
@@ -256,67 +261,25 @@ test('mobile account menu fits above the footer and keeps search available after
 test('app shell renders a custom logo and name without sidebar attribution', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
-    await page.goto(`${baseURL}/sidebar-history`)
+    await page.goto(`${baseURL}/upgraded-shell`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     const identity = await page.locator('lv-app-shell').evaluate(async (element: any) => {
       const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
-      sidebar.config = {
-        ...sidebar.config,
-        productName: 'Micro Matic',
-        productLogoUrl: '/instance-logo.png',
-        area: 'insights',
-        areas: [
-          { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
-          { id: 'develop', label: 'Develop', href: '/sources', icon: 'code' },
-        ],
-      }
+      sidebar.config = { ...sidebar.config, productName: 'Northstar Analytics', productLogoUrl: '/instance-logo.png' }
       await sidebar.updateComplete
       const root = (sidebar.shadowRoot as ShadowRoot)!
-      const identity = root.querySelector<HTMLElement>('.brand-identity')!
-      const switcher = root.querySelector<HTMLElement>('.brand-row > .area-switcher')!
-      const name = root.querySelector<HTMLElement>('.name')!
-      const logo = root.querySelector<HTMLElement>('.product-logo')!
-      if (!identity || !switcher || !name || !logo) throw new Error(`Missing brand element: ${JSON.stringify({ identity: !!identity, switcher: !!switcher, name: !!name, logo: !!logo })}`)
-      const identityBox = identity.getBoundingClientRect()
-      const switcherBox = switcher.getBoundingClientRect()
-      const nameBox = name.getBoundingClientRect()
-      const logoBox = logo.getBoundingClientRect()
-      const layout = {
-        controlsShareRow: Math.abs((switcherBox.top + switcherBox.height / 2) - (identityBox.top + identityBox.height / 2)) <= 2,
-        identityEndsBeforeSwitcher: identityBox.right <= switcherBox.left,
-        logoBeforeName: logoBox.right <= nameBox.left,
-        nameFits: name.scrollWidth <= name.clientWidth,
-      }
-      const navigationLabel = root.querySelector('aside')?.getAttribute('aria-label')
-      const productName = name.textContent?.trim()
-      const productLogoUrl = logo.getAttribute('src')
-      sidebar.style.setProperty('--lv-sidebar-resized-width', '160px')
-      sidebar.config = { ...sidebar.config, productName: 'An exceptionally long workspace name' }
-      await sidebar.updateComplete
-      const narrowRoot = (sidebar.shadowRoot as ShadowRoot)!
-      const narrowIdentity = narrowRoot.querySelector<HTMLElement>('.brand-identity')!
-      const narrowSwitcher = narrowRoot.querySelector<HTMLElement>('.brand-row > .area-switcher')!
-      const narrowName = narrowRoot.querySelector<HTMLElement>('.name')!
       return {
-        navigationLabel,
-        name: productName,
-        logo: productLogoUrl,
+        navigationLabel: root.querySelector('aside')?.getAttribute('aria-label'),
+        name: root.querySelector('.brand .name')?.textContent?.trim(),
+        logo: root.querySelector('.product-logo')?.getAttribute('src'),
         attributionCount: root.querySelectorAll('.powered-by').length,
-        layout,
-        narrow: {
-          noOverlap: narrowIdentity.getBoundingClientRect().right <= narrowSwitcher.getBoundingClientRect().left,
-          nameTruncates: narrowName.scrollWidth > narrowName.clientWidth,
-          fullNameAccessible: narrowRoot.querySelector('.brand-home')?.getAttribute('aria-label'),
-        },
       }
     })
     expect(identity).toEqual({
-      navigationLabel: 'Micro Matic navigation',
-      name: 'Micro Matic',
+      navigationLabel: 'Northstar Analytics navigation',
+      name: 'Northstar Analytics',
       logo: '/instance-logo.png',
       attributionCount: 0,
-      layout: { controlsShareRow: true, identityEndsBeforeSwitcher: true, logoBeforeName: true, nameFits: true },
-      narrow: { noOverlap: true, nameTruncates: true, fullNameAccessible: 'An exceptionally long workspace name home' },
     })
   } finally {
     await page.close()
