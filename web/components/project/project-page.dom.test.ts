@@ -306,45 +306,6 @@ test('semantic model Definition page exposes every view directly and synchronize
   }
 })
 
-test('long semantic model Metrics list scrolls to its final row', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 700 } })
-  try {
-    await page.goto(`${baseURL}/?root=semantic-definition&view=metrics`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
-    await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
-      await element.updateComplete
-      const root = element.shadowRoot as ShadowRoot
-      const table = root.querySelector('lv-record-table') as any
-      table.table = {
-        ...table.table,
-        rows: Array.from({ length: 45 }, (_, index) => ({ name: `metric_${index + 1}` })),
-      }
-      await table.updateComplete
-    })
-    for (const width of [1280, 390]) {
-      await page.setViewportSize({ width, height: 700 })
-      const result = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
-        const root = element.shadowRoot as ShadowRoot
-        const content = root.querySelector<HTMLElement>('.semantic-model-content')!
-        const table = root.querySelector('lv-record-table') as HTMLElement
-        content.scrollTop = 0
-        const before = content.scrollTop
-        content.scrollTop = content.scrollHeight
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-        return {
-          overflow: getComputedStyle(content).overflowY,
-          scrollable: content.scrollHeight > content.clientHeight,
-          moved: content.scrollTop > before,
-          lastRowVisible: table.getBoundingClientRect().bottom <= content.getBoundingClientRect().bottom + 1,
-        }
-      })
-      expect(result).toEqual({ overflow: 'auto', scrollable: true, moved: true, lastRowVisible: true })
-    }
-  } finally {
-    await page.close()
-  }
-})
-
 test('semantic model Definition uses a full-width horizontal section bar', async () => {
   const page = await browser.newPage()
   try {

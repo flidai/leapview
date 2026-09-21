@@ -31,6 +31,7 @@ import {
 import { lucideIcon } from '../shared/lucide-icons'
 import { leapViewBrandName } from '../shared/brand-mark'
 import { sidebarControlStyles } from './sidebar-controls'
+import { sidebarBrandLayoutStyles } from './sidebar-brand-layout.styles'
 import { renderSidebarChatHistory, sidebarChatHistoryStyles, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
 import { renderSidebarAccount, sidebarAccountStyles } from './sidebar-account'
 
@@ -1075,7 +1076,7 @@ class LeapViewSidebar extends LitElement {
       }
     }
 
-  `]
+  `, sidebarBrandLayoutStyles]
 
   connectedCallback(): void {
     super.connectedCallback()

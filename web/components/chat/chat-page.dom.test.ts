@@ -481,6 +481,29 @@ test('chat list page renders searchable conversation history', async () => {
   }
 })
 
+test('chat history keeps a readable centered width on wide screens and fits narrow screens', async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/list`)
+    await page.waitForFunction(() => customElements.get('lv-chat-list'))
+    const bounds = () => page.locator('lv-chat-list').evaluate((element: HTMLElement) => {
+      const shell = element.shadowRoot!.querySelector<HTMLElement>('.shell')!
+      const rect = shell.getBoundingClientRect()
+      return { left: rect.left, right: rect.right, width: rect.width, viewport: window.innerWidth }
+    })
+    const wide = await bounds()
+    expect(wide.width).toBeLessThanOrEqual(960)
+    expect(Math.abs(wide.left - (wide.viewport - wide.right))).toBeLessThanOrEqual(2)
+    await page.setViewportSize({ width: 390, height: 800 })
+    const narrow = await bounds()
+    expect(narrow.width).toBeLessThanOrEqual(390)
+    expect(narrow.left).toBeGreaterThanOrEqual(0)
+    expect(narrow.right).toBeLessThanOrEqual(390)
+  } finally {
+    await page.close()
+  }
+})
+
 test('chat list exposes bulk deletion and delete row action on hover', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

@@ -149,9 +149,10 @@ test('chat thread distinguishes unavailable, empty, and working states', async (
   })
   const working = await page.locator('lv-chat-thread').evaluate((element: any) => ({
     text: element.shadowRoot.querySelector('.working')?.textContent?.replace(/\s+/g, ' ').trim(),
+    label: element.shadowRoot.querySelector('.working')?.getAttribute('aria-label'),
     hasEmpty: Boolean(element.shadowRoot.querySelector('.empty-state')),
   }))
-  expect(working).toEqual({ text: 'Working', hasEmpty: false })
+  expect(working).toEqual({ text: '', label: 'Working', hasEmpty: false })
   await page.close()
 })
 
@@ -442,11 +443,28 @@ test('chat thread renders tool activity with accessible expandable details', asy
   expect(details.expanded).toEqual(['true', 'true', 'true'])
   expect(details.codeBlocks).toBe(5)
   expect(details.detailsText[0]).toContain('sales')
-  expect(details.detailsText[1]).toContain('Catalog lookup failed.')
   expect(details.detailsText[1]).toContain('secret tool result')
+  expect(details.detailsText[1]).not.toContain('Catalog lookup failed.')
+  expect(details.errorText).toBeUndefined()
   expect(details.detailsText[2]).toContain('dashboard:sales')
-  expect(details.errorText).toBe('Catalog lookup failed.')
   await page.close()
+})
+
+test('tool failure keeps a distinct error message when its result has no error details', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
+      thread.status = { enabled: true, running: false }
+      thread.transcript = [{ id: 'failed-tool', kind: 'tool', name: 'catalog_get', status: 'error', resultJson: '{"ok":false}', error: 'Network timed out.' }]
+      await thread.updateComplete
+      thread.shadowRoot.querySelector('.tool-trigger').click()
+      await thread.updateComplete
+    })
+    expect(await page.locator('lv-chat-thread').locator('.tool-error').textContent()).toBe('Network timed out.')
+  } finally {
+    await page.close()
+  }
 })
 
 test('chat thread keeps one tool row per call when durable history replaces live activity', async () => {
@@ -500,7 +518,7 @@ test('chat thread marks orphaned historical tools interrupted without hiding a n
       working: root.querySelector('.working')?.textContent?.replace(/\s+/g, ' ').trim(),
     }
   })
-  expect(state).toEqual({ label: 'Catalog Search Interrupted', className: 'tool-call interrupted', working: 'Working' })
+  expect(state).toEqual({ label: 'Catalog Search Interrupted', className: 'tool-call interrupted', working: '' })
   await page.close()
 })
 
@@ -599,7 +617,7 @@ test('chat thread rejects payloads embedded in artifact metadata', async () => {
   await page.close()
 })
 
-test('message actions copy exact text and prepare edits without submitting', async () => {
+test('message actions copy exact text and prepare edits without redundant ask again', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
@@ -617,8 +635,8 @@ test('message actions copy exact text and prepare edits without submitting', asy
     expect(await page.evaluate(() => (window as any).copied)).toBe('**Revenue** is sales.')
     await page.locator('.message.user').hover()
     await page.getByRole('button', { name: 'Edit message' }).click()
-    await page.getByRole('button', { name: 'Ask again', exact: true }).click()
-    expect(await page.evaluate(() => (window as any).reused)).toEqual([{ text: 'Explain revenue', references: [], editMessageId: 'u1' }, { text: 'Explain revenue', references: [] }])
+    expect(await page.getByRole('button', { name: 'Ask again', exact: true }).count()).toBe(0)
+    expect(await page.evaluate(() => (window as any).reused)).toEqual([{ text: 'Explain revenue', references: [], editMessageId: 'u1' }])
     expect(await page.evaluate(() => (window as any).submitted)).toBe(0)
     await page.evaluate(() => { (document.querySelector('lv-chat-thread') as any).status = { enabled: true, running: true } })
     expect(await page.getByRole('button', { name: 'Edit message' }).isDisabled()).toBe(true)

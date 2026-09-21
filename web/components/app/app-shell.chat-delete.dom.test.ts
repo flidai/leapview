@@ -69,6 +69,29 @@ test('ordinary chat hover actions expose Pin and Delete without Archive or an ov
   await page.close()
 })
 
+test('delete confirmation keeps its danger color on hover', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty('--lv-fg-danger', '#d1242f')
+      document.documentElement.style.setProperty('--lv-bg-panel', '#ffffff')
+      document.documentElement.style.setProperty('--lv-bg-panel-muted', '#f6f8fa')
+    })
+    await page.evaluate(() => document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'delete', conversationId: 'c2', title: 'Inventory status' } })))
+    const button = page.getByRole('dialog', { name: 'Delete chat?' }).getByRole('button', { name: 'Delete', exact: true })
+    await button.waitFor()
+    const resting = await button.evaluate((element) => getComputedStyle(element).backgroundColor)
+    expect(resting).toBe('rgb(209, 36, 47)')
+    await button.hover()
+    const hovered = await button.evaluate((element) => ({ background: getComputedStyle(element).backgroundColor, filter: getComputedStyle(element).filter }))
+    expect(hovered.background).toBe(resting)
+    expect(hovered.filter).not.toBe('none')
+  } finally {
+    await page.close()
+  }
+})
+
 test('account hover highlights the whole menu trigger', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
@@ -226,4 +249,29 @@ test('mobile account menu fits above the footer and keeps search available after
       expect(await trigger.getAttribute('aria-expanded')).toBe('false')
     }
   } finally { await page.close() }
+})
+
+test('custom sidebar identity has a full row below the header controls', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.waitForFunction(() => customElements.get('lv-sidebar'))
+    const layout = await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
+      sidebar.config = { ...sidebar.config, productName: 'Micro Matic', productLogoUrl: '/micro-matic.svg' }
+      await sidebar.updateComplete
+      const root = sidebar.shadowRoot as ShadowRoot
+      const identity = root.querySelector<HTMLElement>('.brand-identity')!
+      const switcher = root.querySelector<HTMLElement>('.brand-row > .area-switcher')!
+      const name = root.querySelector<HTMLElement>('.name')!
+      const attribution = root.querySelector<HTMLElement>('.powered-by')!
+      return {
+        controlsAboveIdentity: switcher.getBoundingClientRect().bottom <= identity.getBoundingClientRect().top,
+        nameFits: name.scrollWidth <= name.clientWidth,
+        attributionFits: attribution.scrollWidth <= attribution.clientWidth,
+      }
+    })
+    expect(layout).toEqual({ controlsAboveIdentity: true, nameFits: true, attributionFits: true })
+  } finally {
+    await page.close()
+  }
 })

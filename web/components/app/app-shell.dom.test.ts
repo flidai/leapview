@@ -311,7 +311,7 @@ test('main sidebar keeps the product toggle in the upper-right and utility actio
         searchHasPopup: search.getAttribute('aria-haspopup'),
         collapseLabel: collapse.getAttribute('aria-label'),
         toggleInHeader: Boolean(areaSwitcher && root.querySelector('.brand-row')?.contains(areaSwitcher)),
-        toggleRightOfIdentity: Boolean(areaSwitcher && areaSwitcher.getBoundingClientRect().left >= identity.getBoundingClientRect().right),
+        toggleAboveIdentity: Boolean(areaSwitcher && areaSwitcher.getBoundingClientRect().bottom <= identity.getBoundingClientRect().top),
         toggleLabelsHidden: areaSwitcher
           ? Array.from(areaSwitcher.querySelectorAll('.area-label')).every(label => getComputedStyle(label).display === 'none')
           : false,
@@ -344,7 +344,7 @@ test('main sidebar keeps the product toggle in the upper-right and utility actio
       searchHasPopup: 'dialog',
       collapseLabel: 'Collapse navigation',
       toggleInHeader: true,
-      toggleRightOfIdentity: true,
+      toggleAboveIdentity: true,
       toggleLabelsHidden: true,
       toggleGeometry: {
         width: 58,
