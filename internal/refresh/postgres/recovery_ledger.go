@@ -22,6 +22,15 @@ type RecoveryLedger struct{ db DBTX }
 
 func NewRecoveryLedger(db DBTX) *RecoveryLedger { return &RecoveryLedger{db: db} }
 
+// DB returns the native handle solely so production composition can prove
+// that every persistence surface belongs to the same PostgreSQL authority.
+func (r *RecoveryLedger) DB() DBTX {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
 func (r *RecoveryLedger) configured() bool { return r != nil && nativeDBConfigured(r.db) }
 
 func (r *RecoveryLedger) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
@@ -75,8 +84,14 @@ func (r *RecoveryLedger) ReconcileSchedule(ctx context.Context, d recovery.Defin
 			return queries.SetRecoveryQualificationScheduleEnabled(ctx, refreshdb.SetRecoveryQualificationScheduleEnabledParams{Enabled: d.Enabled, UpdatedAt: now.UTC(), ScheduleRevisionID: revision})
 		}
 		if err == nil {
-			if err := r.materializeSchedule(ctx, tx, active.ScheduleRevisionID, now, 1000); err != nil {
-				return err
+			if active.Enabled {
+				complete, err := r.materializeSchedule(ctx, tx, active.ScheduleRevisionID, now, 1000)
+				if err != nil {
+					return err
+				}
+				if !complete {
+					return nil
+				}
 			}
 			if err := queries.CloseRecoveryQualificationSchedule(ctx, refreshdb.CloseRecoveryQualificationScheduleParams{ClosedAt: timestamp(now), ScheduleRevisionID: active.ScheduleRevisionID}); err != nil {
 				return err
@@ -163,29 +178,39 @@ func (r *RecoveryLedger) enqueue(ctx context.Context, tx pgx.Tx, in recovery.Enq
 	return out, created == 1, nil
 }
 
-func (r *RecoveryLedger) materializeSchedule(ctx context.Context, tx pgx.Tx, revision string, now time.Time, limit int) error {
+func (r *RecoveryLedger) materializeSchedule(ctx context.Context, tx pgx.Tx, revision string, now time.Time, limit int) (bool, error) {
 	queries := refreshdb.New(tx)
 	row, err := queries.GetRecoveryQualificationScheduleForMaterialize(ctx, revision)
 	if err != nil {
-		return err
+		return false, err
+	}
+	if !row.Enabled {
+		return true, nil
 	}
 	d := recovery.Definition{ScheduleID: row.ScheduleID, Scenario: row.Scenario, Operation: row.Operation, PolicyVersion: row.PolicyVersion, PolicySHA256: row.PolicySha256, TargetScope: row.TargetScope, ArtifactIdentity: row.ArtifactIdentity, Cron: row.Cron, Timezone: row.Timezone, StaleAfter: row.StaleAfter, Enabled: row.Enabled}
 	next := row.NextRunAt
 	parsed, err := refreshschedule.ParseSchedule(d.Cron, d.Timezone)
 	if err != nil {
-		return err
+		return false, err
 	}
 	for count := 0; !next.After(now) && count < limit; count++ {
 		_, _, err = r.enqueue(ctx, tx, recovery.EnqueueInput{ScheduleID: d.ScheduleID, ScheduleRevision: revision, Scenario: d.Scenario, Operation: d.Operation, PolicyVersion: d.PolicyVersion, PolicySHA256: d.PolicySHA256, TargetScope: d.TargetScope, ArtifactIdentity: d.ArtifactIdentity, PlannedAt: next, StaleAfter: d.StaleAfter}, now)
 		if err != nil {
-			return err
+			return false, err
 		}
 		next = parsed.Next(next)
 		if next.IsZero() {
-			return fmt.Errorf("recovery qualification schedule %q has no next occurrence", d.ScheduleID)
+			return false, fmt.Errorf("recovery qualification schedule %q has no next occurrence", d.ScheduleID)
 		}
 	}
-	return queries.AdvanceRecoveryQualificationSchedule(ctx, refreshdb.AdvanceRecoveryQualificationScheduleParams{NextRunAt: next, UpdatedAt: now.UTC(), ScheduleRevisionID: revision})
+	changed, err := queries.AdvanceRecoveryQualificationSchedule(ctx, refreshdb.AdvanceRecoveryQualificationScheduleParams{NextRunAt: next, UpdatedAt: now.UTC(), ScheduleRevisionID: revision, NextRunAt_2: row.NextRunAt})
+	if err != nil {
+		return false, err
+	}
+	if changed != 1 {
+		return false, fmt.Errorf("recovery qualification schedule %q changed while materializing", d.ScheduleID)
+	}
+	return next.After(now), nil
 }
 
 func (r *RecoveryLedger) EnqueueDue(ctx context.Context, now time.Time, limit int) ([]recovery.Occurrence, error) {
@@ -194,49 +219,91 @@ func (r *RecoveryLedger) EnqueueDue(ctx context.Context, now time.Time, limit in
 	}
 	var result []recovery.Occurrence
 	err := r.withTx(ctx, func(tx pgx.Tx) error {
-		ids, err := refreshdb.New(tx).ListDueRecoveryQualificationScheduleIDs(ctx, now.UTC())
+		queries := refreshdb.New(tx)
+		rows, err := queries.ListDueRecoveryQualificationSchedules(ctx, now.UTC())
 		if err != nil {
 			return err
 		}
-		for _, id := range ids {
-			before := len(result)
-			if err := r.materializeSchedule(ctx, tx, id, now, limit-len(result)); err != nil {
-				return err
-			}
-			added, err := listOccurrencesCreated(ctx, tx, now, id)
+		cursor, err := queries.GetRecoveryQualificationEnqueueCursor(ctx)
+		if err != nil {
+			return err
+		}
+		type dueCursor struct {
+			row      refreshdb.ListDueRecoveryQualificationSchedulesRow
+			schedule refreshschedule.Schedule
+			planned  time.Time
+		}
+		cursors := make([]dueCursor, 0, len(rows))
+		for _, row := range rows {
+			parsed, err := refreshschedule.ParseSchedule(row.Cron, row.Timezone)
 			if err != nil {
 				return err
 			}
-			result = append(result, added...)
-			if len(result) >= limit {
-				return nil
+			cursors = append(cursors, dueCursor{row: row, schedule: parsed, planned: row.NextRunAt})
+		}
+		start := sort.Search(len(cursors), func(i int) bool {
+			if cursors[i].row.ScheduleID != cursor.LastScheduleID {
+				return cursors[i].row.ScheduleID > cursor.LastScheduleID
 			}
-			if len(result) == before {
-				continue
+			return cursors[i].row.ScheduleRevisionID > cursor.LastScheduleRevisionID
+		})
+		if start == len(cursors) {
+			start = 0
+		}
+		if start > 0 {
+			cursors = append(append(make([]dueCursor, 0, len(cursors)), cursors[start:]...), cursors[:start]...)
+		}
+		processed := 0
+		lastID, lastRevision := "", ""
+		for processed < limit {
+			advanced := false
+			for i := range cursors {
+				if processed >= limit {
+					break
+				}
+				c := &cursors[i]
+				if c.planned.After(now) {
+					continue
+				}
+				o, created, err := r.enqueue(ctx, tx, recovery.EnqueueInput{ScheduleID: c.row.ScheduleID, ScheduleRevision: c.row.ScheduleRevisionID, Scenario: c.row.Scenario, Operation: c.row.Operation, PolicyVersion: c.row.PolicyVersion, PolicySHA256: c.row.PolicySha256, TargetScope: c.row.TargetScope, ArtifactIdentity: c.row.ArtifactIdentity, PlannedAt: c.planned, StaleAfter: c.row.StaleAfter}, now)
+				if err != nil {
+					return err
+				}
+				next := c.schedule.Next(c.planned)
+				if next.IsZero() {
+					return fmt.Errorf("recovery qualification schedule %q has no next occurrence", c.row.ScheduleID)
+				}
+				changed, err := queries.AdvanceRecoveryQualificationSchedule(ctx, refreshdb.AdvanceRecoveryQualificationScheduleParams{NextRunAt: next, UpdatedAt: now.UTC(), ScheduleRevisionID: c.row.ScheduleRevisionID, NextRunAt_2: c.planned})
+				if err != nil {
+					return err
+				}
+				if changed != 1 {
+					return fmt.Errorf("recovery qualification schedule %q changed while enqueueing", c.row.ScheduleID)
+				}
+				if created {
+					result = append(result, o)
+				}
+				processed++
+				advanced = true
+				lastID, lastRevision = c.row.ScheduleID, c.row.ScheduleRevisionID
+				c.planned = next
+			}
+			if !advanced {
+				break
+			}
+		}
+		if processed > 0 {
+			changed, err := queries.UpdateRecoveryQualificationEnqueueCursor(ctx, refreshdb.UpdateRecoveryQualificationEnqueueCursorParams{LastScheduleID: lastID, LastScheduleRevisionID: lastRevision, UpdatedAt: now.UTC()})
+			if err != nil {
+				return err
+			}
+			if changed != 1 {
+				return fmt.Errorf("recovery qualification enqueue fairness cursor is unavailable")
 			}
 		}
 		return nil
 	})
-	if len(result) > limit {
-		result = result[:limit]
-	}
 	return result, err
-}
-
-func listOccurrencesCreated(ctx context.Context, db DBTX, created time.Time, revision string) ([]recovery.Occurrence, error) {
-	ids, err := refreshdb.New(db).ListRecoveryQualificationOccurrenceIDsCreated(ctx, refreshdb.ListRecoveryQualificationOccurrenceIDsCreatedParams{ScheduleRevisionID: revision, CreatedAt: created.UTC()})
-	if err != nil {
-		return nil, err
-	}
-	var out []recovery.Occurrence
-	for _, id := range ids {
-		o, _, err := readOccurrence(ctx, db, id)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, o)
-	}
-	return out, nil
 }
 
 func (r *RecoveryLedger) ClaimNext(ctx context.Context, in recovery.ClaimInput) (recovery.Occurrence, bool, error) {
@@ -816,47 +883,17 @@ func (r *RecoveryLedger) Retain(ctx context.Context, p recovery.RetentionPolicy)
 	if p.Now.IsZero() || p.ComplianceWindow <= 0 {
 		return recovery.RetentionResult{}, fmt.Errorf("recovery qualification retention time and positive compliance window are required")
 	}
-	all, err := r.Occurrences(ctx)
+	cutoff := p.Now.Add(-p.ComplianceWindow)
+	queries := refreshdb.New(r.db)
+	deleted, err := queries.RetainRecoveryQualificationOccurrences(ctx, refreshdb.RetainRecoveryQualificationOccurrencesParams{PActiveAt: p.Now.UTC(), PFinishedBefore: cutoff.UTC(), PLimit: 1000})
 	if err != nil {
 		return recovery.RetentionResult{}, err
 	}
-	cutoff := p.Now.Add(-p.ComplianceWindow)
-	preserve := map[string]bool{}
-	success, failure := map[string]recovery.Occurrence{}, map[string]recovery.Occurrence{}
-	for _, o := range all {
-		if !terminal(o.Status) || !o.FinishedAt.Before(cutoff) || (o.EvidenceStatus == "claimed" && o.EvidenceLeaseExpiresAt.After(p.Now)) {
-			preserve[o.ID] = true
-		}
-		key := o.Scenario + "\x00" + o.Operation
-		if o.Status == recovery.StatusSucceeded && newer(o, success[key]) {
-			success[key] = o
-		}
-		if (o.Status == recovery.StatusFailed || o.Status == recovery.StatusExpired) && newer(o, failure[key]) {
-			failure[key] = o
-		}
+	preserved, err := queries.ListRecoveryQualificationRetentionProtectedIDs(ctx, 1000)
+	if err != nil {
+		return recovery.RetentionResult{}, err
 	}
-	for _, o := range success {
-		preserve[o.ID] = true
-	}
-	for _, o := range failure {
-		preserve[o.ID] = true
-	}
-	var out recovery.RetentionResult
-	for _, o := range all {
-		if preserve[o.ID] {
-			out.PreservedIDs = append(out.PreservedIDs, o.ID)
-			continue
-		}
-		deleted, err := refreshdb.New(r.db).RetainRecoveryQualificationOccurrence(ctx, refreshdb.RetainRecoveryQualificationOccurrenceParams{POccurrenceID: o.ID, PActiveAt: p.Now.UTC(), PFinishedBefore: cutoff.UTC()})
-		if err != nil {
-			return out, err
-		}
-		if deleted {
-			out.DeletedIDs = append(out.DeletedIDs, o.ID)
-		} else {
-			out.PreservedIDs = append(out.PreservedIDs, o.ID)
-		}
-	}
+	out := recovery.RetentionResult{DeletedIDs: deleted, PreservedIDs: preserved}
 	sort.Strings(out.DeletedIDs)
 	sort.Strings(out.PreservedIDs)
 	return out, nil
