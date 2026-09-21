@@ -1,8 +1,9 @@
-export function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false, admin = false, removedHistoryIDs: readonly string[] = []): string {
+export function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false, admin = false, removedHistoryIDs: readonly string[] = [], customBrand?: { name: string, logoUrl: string }): string {
   const removedHistory = new Set(removedHistoryIDs)
   const chromeConfig = compact || history || nav || admin ? {
     sidebar: {
-      productName: 'LeapView',
+      productName: customBrand?.name ?? 'LeapView',
+      productLogoUrl: customBrand?.logoUrl,
       active: admin ? 'principals' : history ? 'chat' : 'sources',
       admin,
       area: admin ? undefined : history ? 'insights' : 'develop',

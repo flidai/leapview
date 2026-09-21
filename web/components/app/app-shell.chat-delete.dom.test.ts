@@ -19,6 +19,11 @@ beforeAll(async () => {
       response.end(testDocument(true, false, true, false, false, url.searchParams.getAll('deleted')))
       return
     }
+    if (url.pathname === '/sidebar-custom-brand') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument(true, false, true, false, false, [], { name: 'Micro Matic', logoUrl: '/micro-matic.svg' }))
+      return
+    }
     if (url.pathname === '/admin-sidebar') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument(true, true, false, false, true))
@@ -253,14 +258,7 @@ test('mobile account menu fits above the footer and keeps search available after
 test('custom sidebar identity has a full row below the header controls', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   try {
-    await page.goto(`${baseURL}/sidebar-history`, { waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(() => {
-      const sidebar = document.querySelector('lv-app-shell')?.shadowRoot?.querySelector('lv-sidebar')
-      return customElements.get('lv-app-shell') && customElements.get('lv-sidebar') && sidebar?.shadowRoot?.querySelector('.brand-identity')
-    })
-    await page.locator('lv-sidebar').evaluate((sidebar: any) => {
-      sidebar.config = { ...sidebar.config, productName: 'Micro Matic', productLogoUrl: '/micro-matic.svg' }
-    })
+    await page.goto(`${baseURL}/sidebar-custom-brand`, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => document.querySelector('lv-app-shell')?.shadowRoot?.querySelector('lv-sidebar')?.shadowRoot?.querySelector('.name')?.textContent?.trim() === 'Micro Matic')
     const layout = await page.locator('lv-sidebar').evaluate((sidebar: any) => {
       const root = sidebar.shadowRoot as ShadowRoot
