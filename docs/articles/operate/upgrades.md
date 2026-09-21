@@ -176,6 +176,33 @@ production container or systemd runtime.
 
 Forward transition qualification does not prove rollback or physical disaster recovery.
 
+### Interruption and stopped-target qualification
+
+Run the PostgreSQL-backed interruption matrix with:
+
+```sh
+task qualify:ubdr:migration-interruption
+```
+
+The lane terminates disposable transition-runner processes at the migration,
+staging, activation, restart, and post-validation boundaries. It lets the
+original transition fence expire, records the uncertain attempt as
+indeterminate, and resumes the same FAI-1001 recovery-ledger occurrence under
+a new fence. Migration state, immutable generations, the active-generation
+pointer, and runtime identity are read back from their existing owners so a
+retry does not duplicate completed mutations. The stopped-target cases use an
+exclusive runtime lock and a real
+replacement process, and reject mutation while the predecessor still owns the
+target. Terminal preflight failure, indeterminate post-effect failure, stale
+transition and ledger fences, evidence-publication retry, and abandoned-run
+cleanup are included in the matrix.
+
+Machine-readable evidence is written to
+`.tmp/qualification/ubdr/migration-interruption/`, including
+`scenario-matrix.json`, per-scenario reports and checkpoints, and
+`ledger-export.json`. This qualification does not implement provider restore,
+replacement-host rebuild, rollback, or RPO/RTO evaluation.
+
 The release-owned PostgreSQL policy authority stores one immutable policy for
 each exact predecessor/candidate artifact-digest pair. Policy publication is a
 controlled maintenance operation; the application runtime has read-only

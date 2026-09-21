@@ -1330,6 +1330,21 @@ tasks:
         -run '^TestFAI1001PostgresRecoveryLedgerQualification$'
         -count=1 -timeout=15m -v
 
+  qualify:ubdr:migration-interruption:
+    desc: Qualify transition interruption, stopped-target restart, fencing, and PostgreSQL-ledger resume
+    deps:
+      - db:generate
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+      LEAPVIEW_TEST_FAI519_INTERRUPTION_EVIDENCE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr/migration-interruption"
+    cmds:
+      - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr/migration-interruption"
+      - >-
+        go test -race -tags='duckdb_arrow fai518qualification fai519qualification'
+        ./internal/recoveryset/postgres
+        -run '^TestFAI519TransitionAndStoppedTargetInterruptionQualification$'
+        -count=1 -timeout=30m -v
+
   qualify:ubdr:release-transition-preflight:
     desc: Qualify authoritative PostgreSQL-era transition resolution without executing a transition
     deps:
