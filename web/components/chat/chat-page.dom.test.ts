@@ -440,7 +440,7 @@ test('chat list page renders searchable conversation history', async () => {
     expect(initial.title).toBe('Chats')
     expect(initial.searchPlaceholder).toBe('Search chats...')
     expect(initial.newChatHref).toBe('/chats/new')
-    expect(initial.headerActions).toEqual(['Delete all chats', 'New chat'])
+    expect(initial.headerActions).toEqual(['Archived chats', 'Delete all chats', 'New chat'])
     expect(initial.headerOrder).toEqual(['h2', 'header-actions'])
     expect(initial.metrics).toEqual({
       titleFontSize: '20px',
@@ -505,6 +505,22 @@ test('chat history keeps a readable centered width on wide screens and fits narr
     expect(narrow.width).toBeLessThanOrEqual(390)
     expect(narrow.left).toBeGreaterThanOrEqual(0)
     expect(narrow.right).toBeLessThanOrEqual(390)
+  } finally {
+    await page.close()
+  }
+})
+
+test('chat list opens archived chats from its header', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/list`)
+    await page.waitForFunction(() => customElements.get('lv-chat-list'))
+    await page.evaluate(() => {
+      ;(window as any).archiveOpens = 0
+      document.addEventListener('lv-chat-settings-open', () => { (window as any).archiveOpens++ })
+    })
+    await page.locator('lv-chat-page').locator('lv-chat-list').getByRole('button', { name: 'Archived chats' }).click()
+    expect(await page.evaluate(() => (window as any).archiveOpens)).toBe(1)
   } finally {
     await page.close()
   }
@@ -665,7 +681,7 @@ test('unconfigured agent uses intentional unavailable states', async () => {
         hasArchivedAction: Boolean(Array.from((root as ShadowRoot).querySelectorAll('.header-actions button') as NodeListOf<HTMLButtonElement>).find((button) => button.textContent?.includes('Archive'))),
       }
     })
-    expect(listState).toEqual({ title: 'No chats yet', detail: 'Agent is not configured.', hasSearch: false, newChatDisabled: true, hasArchivedAction: false })
+    expect(listState).toEqual({ title: 'No chats yet', detail: 'Agent is not configured.', hasSearch: false, newChatDisabled: true, hasArchivedAction: true })
   } finally {
     await page.close()
   }

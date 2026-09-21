@@ -388,12 +388,22 @@ class LeapViewChatList extends LitElement {
         display: grid;
       }
 
+      .header-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .header-actions .new-chat-link:last-child {
+        grid-column: 1 / -1;
+      }
+
       h2 {
         font: var(--lv-type-page-title);
       }
 
       .new-chat-link {
         width: 100%;
+        padding-inline: var(--base-size-8);
       }
 
       .quick-actions {
@@ -426,6 +436,7 @@ class LeapViewChatList extends LitElement {
         <div class="header">
           <h2>Chats</h2>
           <div class="header-actions">
+            <button class="new-chat-link" type="button" @click=${this.openArchives}>${lucideIcon(Archive)}<span>Archived chats</span></button>
             <button class="new-chat-link danger" type="button" @click=${() => this.runBulkAction('delete_active')}>${lucideIcon(Trash2)}<span>Delete all chats</span></button>
             ${this.agentEnabled
               ? html`<a class="new-chat-link" href="/chats/new">${lucideIcon(Plus)}<span>New chat</span></a>`
@@ -563,6 +574,10 @@ class LeapViewChatList extends LitElement {
       composed: true,
       detail: { action, conversationId: '' },
     }))
+  }
+
+  private openArchives(): void {
+    this.dispatchEvent(new CustomEvent('lv-chat-settings-open', { bubbles: true, composed: true }))
   }
 }
 
