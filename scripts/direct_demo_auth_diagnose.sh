@@ -221,4 +221,6 @@ echo 'Remaining development cache and temporary build footprint:'
 du -x -h --max-depth=2 /home/ganesh/.cache /tmp/leapview-main/.tmp 2>/dev/null | sort -h | tail -35 || true
 echo 'Temporary deployment scratch footprint:'
 du -x -h --max-depth=1 /tmp/leapview-main/.tmp 2>/dev/null | sort -h | tail -20 || true
+echo 'Largest temporary scratch files (size and basename only):'
+find /tmp/leapview-main/.tmp -maxdepth 1 -type f -printf '%s %f\n' 2>/dev/null | sort -nr | head -18 || true
 REMOTE
