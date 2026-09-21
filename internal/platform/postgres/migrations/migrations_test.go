@@ -27,7 +27,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql,018_refresh_run_notifications.sql,019_refresh_schedule_notifications.sql,020_release_transition_operation.sql,021_api_token_descriptions.sql,022_approval_resource_uid_restore.sql,023_recovery_qualification_ledger.sql,024_profile_application.sql,025_development_session.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql,018_refresh_run_notifications.sql,019_refresh_schedule_notifications.sql,020_release_transition_operation.sql,021_api_token_descriptions.sql,022_approval_resource_uid_restore.sql,023_recovery_qualification_ledger.sql,024_schema_23_convergence.sql,025_profile_application.sql,026_development_session.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -52,7 +52,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 }
 
 func TestDevelopmentSessionMigrationIsOwnerScopedAndImmutable(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "025_development_session.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "026_development_session.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
