@@ -5,9 +5,12 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
+	refreshrecovery "github.com/flidai/leapview/internal/refresh/recovery"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -60,6 +63,52 @@ func TestBuildProductionRequiresNativeFinalizer(t *testing.T) {
 	_, err = Build(t.Context(), Config{Persistence: &persistence, Production: true, Authorization: testAuthorization()})
 	if err == nil || !strings.Contains(err.Error(), "native finalizer") {
 		t.Fatalf("production build error = %v, want native-finalizer admission", err)
+	}
+}
+
+func TestNewPostgresPersistenceComposesNativeRecoveryLedger(t *testing.T) {
+	db := &fakeRefreshTx{}
+	refresh := refreshpostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobspostgres.New(db), refresh)
+	persistence, err := NewPostgresPersistence(refresh, PostgresPersistenceConfig{
+		SchedulerOwner: "scheduler", PublicationIdentityResolver: staticPublicationIdentityResolver("pool", "catalog"),
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool", catalogID: "catalog"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, ok := persistence.Recovery.(*refreshpostgres.RecoveryLedger)
+	if !ok || ledger == nil || ledger.DB() != refresh.DB() {
+		t.Fatalf("recovery persistence = %T, want native PostgreSQL ledger on configured authority", persistence.Recovery)
+	}
+	if err := persistence.Validate(); err != nil {
+		t.Fatalf("native persistence validation: %v", err)
+	}
+}
+
+func TestBuildProductionInjectsNativeRecoveryLedger(t *testing.T) {
+	db := &fakeRefreshTx{}
+	refresh := refreshpostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobspostgres.New(db), refresh)
+	persistence, err := NewPostgresPersistence(refresh, PostgresPersistenceConfig{
+		SchedulerOwner: "scheduler", PublicationIdentityResolver: staticPublicationIdentityResolver("pool", "catalog"), Jobs: queue,
+		CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool", catalogID: "catalog"}, CancelAuditWriter: integrationAuditWriter{},
+		NativeFinalizer: PostgresNativeRefreshFinalizerFunc(func(context.Context, refreshpostgres.Tx, refreshrun.JobRecord, refreshrun.CanonicalRefreshResult, refreshpostgres.PublicationInput) error {
+			return nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle := &RecoveryLifecycle{
+		Definitions: func(context.Context) ([]refreshrecovery.Definition, error) { return nil, nil }, WorkerID: "worker", Actor: "operator",
+		Lease: time.Minute, BatchSize: 1, ComplianceWindow: time.Hour, EvidenceRoot: "/var/lib/leapview/evidence",
+	}
+	if _, err := Build(t.Context(), Config{Persistence: &persistence, Production: true, Authorization: testAuthorization(), RecoveryLifecycle: lifecycle}); err != nil {
+		t.Fatalf("build production recovery lifecycle: %v", err)
+	}
+	if lifecycle.Repository != persistence.Recovery {
+		t.Fatal("production build did not inject the native recovery ledger")
 	}
 }
 
