@@ -7,7 +7,7 @@ import (
 )
 
 func TestResourceShareOnwardDelegationMigrationIsForwardOnly(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "029_resource_share_no_onward_delegation.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "030_resource_share_no_onward_delegation.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -26,6 +26,7 @@ type Config struct {
 	AdminEmail    string `json:"adminEmail"`
 	Environment   string `json:"environment"`
 	Image         string `json:"image"`
+	TargetID      string `json:"targetId,omitempty"`
 	HTTPS         *bool  `json:"https"`
 }
 

@@ -12,9 +12,9 @@ import time
 import urllib.parse
 import urllib.request
 
-REVISION = 'd24ad786be8e838d923f6e57cd744eb8623c893b'
-PREDECESSOR_REVISION = '00ed92dbd77b4e0e3efc6b7620214e6bc7afa95e'
-EXPECTED_IMAGE = 'ghcr.io/flidai/leapview@sha256:d8b9687c3d79daef05351a310be0ff012b3199b7486a78de297451887e93fe37'
+REVISION = '2e228ec6b42ab5c18bea04ce037695642aaf8019'
+PREDECESSOR_REVISION = 'd24ad786be8e838d923f6e57cd744eb8623c893b'
+EXPECTED_IMAGE = 'ghcr.io/flidai/leapview@sha256:29d832a2504ccb39b4b7a4d55defa2c9968116d228449ca6adc981d6adcd1bc2'
 RELEASE = Path('/opt/leapview-demo/releases') / REVISION
 IMAGE = (RELEASE / 'immutable-image.txt').read_text().strip()
 SERVICE = 'leapview-demo-current.service'

@@ -170,6 +170,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	} else if config.Persistence != nil && config.Persistence.isNative() {
 		return nil, errors.New("native PostgreSQL refresh persistence requires production refresh mode")
 	}
+	if config.RecoveryLifecycle != nil && config.Persistence != nil && config.Persistence.Recovery != nil {
+		config.RecoveryLifecycle.Repository = config.Persistence.Recovery
+	}
 	if config.RecoveryLifecycle != nil {
 		if err := config.RecoveryLifecycle.Validate(); err != nil {
 			return nil, fmt.Errorf("configure scheduled recovery qualification: %w", err)

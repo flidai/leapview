@@ -30,6 +30,7 @@ jobs:
     env:
       TF_IN_AUTOMATION: "true"
       TF_VAR_name: leapview-ci-${{ github.run_id }}
+      TF_VAR_target_id: leapview-ci-${{ github.run_id }}
       TF_VAR_admin_email: ci-${{ github.run_id }}@leapview.local
       TF_VAR_leapview_image: ${{ inputs.image_digest }}
       TF_VAR_ssh_allowed_cidrs: '["203.0.113.10/32"]'

@@ -59,7 +59,7 @@ func installDurableGrantMigration(t *testing.T, db auditDatabase) {
 		t.Fatalf("seed resource UID fixture: %v", err)
 	}
 	parts := make([]string, 0, 2)
-	for _, migrationName := range []string{"028_durable_authority_grants.sql", "029_resource_share_no_onward_delegation.sql"} {
+	for _, migrationName := range []string{"029_durable_authority_grants.sql", "030_resource_share_no_onward_delegation.sql"} {
 		contents, readErr := fs.ReadFile(platformmigrations.MigrationFS(), migrationName)
 		if readErr != nil {
 			t.Fatalf("read %s: %v", migrationName, readErr)
@@ -85,10 +85,10 @@ func installDurableGrantMigration(t *testing.T, db auditDatabase) {
 	}
 	if _, err := tx.Exec(ctx, up); err != nil {
 		_ = tx.Rollback(ctx)
-		t.Fatalf("apply migration 026: %v", err)
+		t.Fatalf("apply durable grant migrations: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit migration 026: %v", err)
+		t.Fatalf("commit durable grant migrations: %v", err)
 	}
 }
 

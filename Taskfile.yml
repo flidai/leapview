@@ -1359,6 +1359,21 @@ tasks:
         -run '^TestFAI520ManagedDataS3DRSeedQualification$'
         -count=1 -timeout=15m -v
 
+  qualify:ubdr:recovery-ledger-postgres:
+    desc: Qualify durable PostgreSQL recovery scheduling, fencing, publication retry, and retention
+    deps:
+      - db:generate
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+      LEAPVIEW_TEST_FAI1001_RECOVERY_LEDGER_EVIDENCE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr/recovery-ledger-postgres"
+    cmds:
+      - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr/recovery-ledger-postgres"
+      - >-
+        go test -race -tags='fai1001qualification'
+        ./internal/refresh/postgres
+        -run '^TestFAI1001PostgresRecoveryLedgerQualification$'
+        -count=1 -timeout=15m -v
+
   qualify:ubdr:release-transition-preflight:
     desc: Qualify authoritative PostgreSQL-era transition resolution without executing a transition
     deps:

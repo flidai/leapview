@@ -7,6 +7,15 @@ locals {
   labels = {
     app = "leapview"
   }
+  bootstrap_config = {
+    schemaVersion = 1
+    domain        = local.domain
+    adminEmail    = var.admin_email
+    environment   = "prod"
+    image         = var.leapview_image
+    targetId      = var.target_id
+    https         = true
+  }
 }
 
 resource "hcloud_primary_ip" "leapview" {
@@ -78,14 +87,7 @@ resource "hcloud_server" "leapview" {
 
   user_data = templatefile("${path.module}/../host/cloud-init.yaml.tftpl", {
     bootstrap_b64 = base64encode(file("${path.module}/../host/bootstrap-ubuntu.sh"))
-    config_b64 = base64encode(jsonencode({
-      schemaVersion = 1
-      domain        = local.domain
-      adminEmail    = var.admin_email
-      environment   = "prod"
-      image         = var.leapview_image
-      https         = true
-    }))
-    image_b64 = base64encode("${var.leapview_image}\n")
+    config_b64    = base64encode(jsonencode(local.bootstrap_config))
+    image_b64     = base64encode("${var.leapview_image}\n")
   })
 }

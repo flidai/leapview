@@ -140,10 +140,12 @@ func NewPostgresPersistence(repository *refreshpostgres.Repository, config Postg
 		return Persistence{}, errors.New("PostgreSQL cancellation audit writer is required")
 	}
 	lifecycle := config.Jobs
+	recoveryLedger := refreshpostgres.NewRecoveryLedger(repository.DB())
 	return Persistence{
 		Runs:             &postgresRunPersistence{repository: repository, jobs: config.Jobs, operations: config.Operations, cancelAuditWriter: config.CancelAuditWriter, createAuditWriter: config.CreateAuditWriter},
 		Schedules:        &postgresSchedulePersistence{repository: repository, schedulerOwner: config.SchedulerOwner, identityResolver: config.PublicationIdentityResolver},
 		Publication:      &postgresPublicationPersistence{repository: repository, identityResolver: config.PublicationIdentityResolver, canonicalVerifier: config.CanonicalVerifier, nativeFinalizer: config.NativeFinalizer, cancelAuditWriter: config.CancelAuditWriter, queueLifecycle: lifecycle, jobHistory: config.Jobs},
+		Recovery:         recoveryLedger,
 		nativeRepository: repository,
 	}, nil
 }
