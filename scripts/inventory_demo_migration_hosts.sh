@@ -257,6 +257,9 @@ for host in "${hosts[@]}"; do
   done
   if [[ -z "$remote_user" ]]; then
     echo "deployment SSH identity is not authorized for any reviewed operator account on $host" >&2
+    echo "deployment_identity_fingerprint=$(ssh-keygen -lf "$identity_file" | awk '{print $2}')" >&2
+    printf "deployment_identity_public_key=" >&2
+    ssh-keygen -y -f "$identity_file" >&2
     exit 77
   fi
   remote_shell='bash -se'
