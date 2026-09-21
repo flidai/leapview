@@ -38,6 +38,7 @@ import './report-canvas'
 import './report-footer'
 import './visual-modal'
 import './visualization/host'
+import './dashboard-development-session-status'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
 import {
   applyOptimisticInteraction,
@@ -52,13 +53,9 @@ import {
   DashboardAgentStateController,
   DashboardNavigationController,
   DashboardOptimisticInteractionController,
+  dashboardRefreshProgress,
+  type DashboardRefreshProgress,
 } from './dashboard-page-controller'
-import {
-  developmentSessionEventsPath,
-  DevelopmentSessionViewController,
-  type DevelopmentSessionDiagnostic,
-  type DevelopmentSessionRecord,
-} from './dashboard-page-session'
 
 const dashboardFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
 
@@ -69,13 +66,6 @@ type DashboardRenderSnapshot = {
   filterOptionPages: Record<string, DashboardFilterOptionPage>
   visuals: Record<string, VisualizationEnvelope>
   status: DashboardStatus
-}
-
-type DashboardRefreshProgress = {
-  active: boolean
-  complete: boolean
-  generation: number
-  percent: number
 }
 
 class LeapViewDashboardPage extends DatastarLit(LitElement) {
@@ -92,8 +82,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   @state() private filterDockOpen = false
   @state() private dashboardFavorite = false
   @state() private dashboardOptionsOpen = false
-  @state() private developmentSessionOutOfDate = false
-  @state() private developmentSessionDiagnostics: DevelopmentSessionDiagnostic[] = []
   private favoriteDashboardID = ''
   private agentStateInitialized = false
   private agentRestoreDispatched = false
@@ -117,8 +105,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   private readonly filterOptionInFlight = new Map<string, { context: string, signature: string, generation: number, startedAt: number }>()
   private readonly retainedFilterOptionPages = new Map<string, DashboardFilterOptionPage>()
   private retainedFilterOptionServingStateID = ''
-  private developmentSessionEvents?: EventSource
-  private readonly developmentSessionController = new DevelopmentSessionViewController()
   private readonly filterController = new DashboardFilterController((command) => {
     this.dispatchEvent(new CustomEvent('lv-filter-command', {
       bubbles: true, composed: true, detail: command,
@@ -268,30 +254,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .dashboard-heading .dashboard-favorite,
     .dashboard-heading .dashboard-options {
       flex: 0 0 auto;
-    }
-
-    .development-session-status {
-      display: grid;
-      gap: var(--base-size-4);
-      margin: var(--base-size-8) var(--base-size-12) 0;
-      border: 1px solid var(--display-yellow-borderColor, var(--lv-border-muted));
-      border-radius: var(--lv-radius-default);
-      background: var(--display-yellow-bgColor, var(--lv-bg-panel));
-      color: var(--lv-fg-default);
-      padding: var(--base-size-8) var(--base-size-12);
-      font: var(--lv-type-body-compact);
-    }
-
-    .development-session-status ul {
-      display: grid;
-      gap: var(--base-size-2);
-      margin: 0;
-      padding-inline-start: var(--base-size-20);
-    }
-
-    .development-session-status code {
-      margin-inline-end: var(--base-size-4);
-      color: var(--lv-fg-muted);
     }
 
     .breadcrumb-root {
@@ -593,7 +555,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     this.addEventListener('lv-interaction-spatial-select', this.handleOptimisticSpatialInteraction as EventListener, { capture: true })
     this.addEventListener('lv-filter-mutate', this.handleFilterMutation as EventListener, { capture: true })
     this.addEventListener('lv-filter-options-needed', this.handleFilterOptionsNeeded as EventListener, { capture: true })
-    this.connectDevelopmentSession()
     this.loadRenderedComponents()
   }
 
@@ -607,8 +568,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     this.removeEventListener('lv-interaction-spatial-select', this.handleOptimisticSpatialInteraction as EventListener, { capture: true })
     this.removeEventListener('lv-filter-mutate', this.handleFilterMutation as EventListener, { capture: true })
     this.removeEventListener('lv-filter-options-needed', this.handleFilterOptionsNeeded as EventListener, { capture: true })
-    this.developmentSessionEvents?.close()
-    this.developmentSessionEvents = undefined
     this.optimisticController.dispose()
     super.disconnectedCallback()
   }
@@ -811,7 +770,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       status: this.status,
     }
     this.renderSnapshot = snapshot
-    const refreshProgress = this.refreshProgress(snapshot)
+    const refreshProgress = dashboardRefreshProgress(snapshot.status)
     const agentEnabled = this.presentation === 'app'
     const activeFilterCount = this.activeFilterCount(snapshot)
     return html`
@@ -875,7 +834,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
             tabindex=${this.reportLayout === 'mobile' ? '0' : nothing}
           >
             ${this.renderRefreshProgress(refreshProgress)}
-            ${this.renderDevelopmentSessionStatus()}
+            <lv-dashboard-development-session-status
+              .servingStateID=${this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard' }).servingStateId ?? ''}
+            ></lv-dashboard-development-session-status>
             ${this.renderFilterValidation()}
             ${this.renderFilterDock()}
             <div class="canvas-wrap">
@@ -937,72 +898,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const validation = this.filterValidation
     if (validation.accepted || !validation.message) return nothing
     return html`<div class="filter-validation" role="alert">${validation.message}</div>`
-  }
-
-  private renderDevelopmentSessionStatus() {
-    if (!this.developmentSessionOutOfDate && this.developmentSessionDiagnostics.length === 0) return nothing
-    return html`
-      <section class="development-session-status" role="status" aria-live="polite">
-        <strong>Preview out of date</strong>
-        ${this.developmentSessionDiagnostics.length > 0
-          ? html`<span>Repair the attempted edit; the previous working candidate remains visible.</span>
-            <ul>
-              ${this.developmentSessionDiagnostics.map((diagnostic) => html`
-                <li>
-                  ${diagnostic.path ? html`<code>${diagnostic.path}${diagnostic.line ? `:${diagnostic.line}` : ''}${diagnostic.column ? `:${diagnostic.column}` : ''}</code>` : nothing}
-                  ${diagnostic.message || diagnostic.code || 'Development synchronization failed'}
-                </li>
-              `)}
-            </ul>`
-          : html`<span>An edit is being synchronized; this view remains pinned to the last valid candidate.</span>`}
-      </section>
-    `
-  }
-
-  private connectDevelopmentSession(): void {
-    const pathname = typeof window === 'undefined' ? '' : window.location.pathname
-    const eventsPath = developmentSessionEventsPath(pathname)
-    if (!eventsPath || typeof EventSource === 'undefined') return
-    const source = new EventSource(eventsPath, { withCredentials: true })
-    source.addEventListener('development-session', this.handleDevelopmentSessionEvent)
-    this.developmentSessionEvents = source
-  }
-
-  private handleDevelopmentSessionEvent = (event: Event): void => {
-    const data = (event as MessageEvent<string>).data
-    if (!data) return
-    let record: DevelopmentSessionRecord
-    try {
-      record = JSON.parse(data) as DevelopmentSessionRecord
-    } catch {
-      return
-    }
-    const runtime = this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard' })
-    const servingStateID = runtime.servingStateId ?? ''
-    const currentCandidateID = servingStateID.startsWith('candidate:')
-      ? servingStateID.split(':')[1]?.trim() ?? ''
-      : ''
-    const transition = this.developmentSessionController.consume(record, currentCandidateID)
-    this.developmentSessionDiagnostics = transition.diagnostics
-    this.developmentSessionOutOfDate = transition.outOfDate
-    this.requestUpdate()
-    // A normal reload retains the stable path, query, filters, page, and
-    // selection state. The initial replay establishes the baseline; only a
-    // later pointer transition (or a page still pinned to an older candidate)
-    // starts the replacement view.
-    if (transition.shouldReload) {
-      window.location.reload()
-    }
-  }
-
-  private refreshProgress(snapshot: DashboardRenderSnapshot): DashboardRefreshProgress {
-    const percent = snapshot.status.progressPercent ?? (snapshot.status.loading ? 0 : 100)
-    return {
-      active: snapshot.status.loading,
-      complete: !snapshot.status.loading && percent === 100,
-      generation: snapshot.status.generation,
-      percent,
-    }
   }
 
   private pageSidebar(page: DashboardPageSignal) {
