@@ -57,15 +57,14 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
-test('ordinary chat hover actions expose Pin and Delete without Archive or an overflow menu', async () => {
+test('ordinary chat hover actions expose Pin and Archive without an overflow menu', async () => {
   const page = await browser.newPage()
   await page.goto(`${baseURL}/sidebar-history`)
   const row = page.locator('.history-row').filter({ hasText: 'Revenue check' })
   await row.hover()
   expect(await row.getByRole('button', { name: 'Pin Revenue check', exact: true }).count()).toBe(1)
-  expect(await row.getByRole('button', { name: 'Delete Revenue check', exact: true }).count()).toBe(1)
+  expect(await row.getByRole('button', { name: 'Archive Revenue check', exact: true }).count()).toBe(1)
   expect(await row.locator('summary[aria-label="More actions for Revenue check"]').count()).toBe(0)
-  expect(await row.getByRole('button', { name: /Archive/ }).count()).toBe(0)
   await page.close()
 })
 

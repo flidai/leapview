@@ -1,5 +1,5 @@
 import { css, html } from 'lit'
-import { ChevronRight, Pin, PinOff, Trash2 } from 'lucide'
+import { Archive, ChevronRight, Pin, PinOff } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
 
@@ -145,7 +145,7 @@ function renderSidebarChatHistoryItem(
       </a>
       <div class="history-actions" aria-label=${`Quick actions for ${title}`}>
         <button class="history-action" type="button" aria-label=${`${item.pinned ? 'Unpin' : 'Pin'} ${title}`} title=${item.pinned ? 'Unpin chat' : 'Pin chat'} @click=${(event: MouseEvent) => runChatAction(event, item.pinned ? 'unpin' : 'pin', item, chatAction)}>${lucideIcon(item.pinned ? PinOff : Pin, { size: 16 })}</button>
-        <button class="history-action danger" type="button" aria-label=${`Delete ${title}`} title="Delete chat" @click=${(event: MouseEvent) => runChatAction(event, 'delete', item, chatAction)}>${lucideIcon(Trash2, { size: 16 })}</button>
+        <button class="history-action" type="button" aria-label=${`Archive ${title}`} title="Archive chat" @click=${(event: MouseEvent) => runChatAction(event, 'archive', item, chatAction)}>${lucideIcon(Archive, { size: 16 })}</button>
       </div>
     </div>
   `

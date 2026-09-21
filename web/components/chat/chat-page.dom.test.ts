@@ -446,8 +446,8 @@ test('chat list page renders searchable conversation history', async () => {
       dateDistanceFromRowEnd: 58,
     })
     expect(initial.tableHeaders).toEqual(['Conversation'])
-    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', title: 'Revenue check', date: 'Jan 2', optionsLabel: 'More actions for Revenue check', quickActions: ['Pin Revenue check', 'Delete Revenue check'] })
-    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', title: 'Inventory status', date: 'Jan 3', optionsLabel: 'More actions for Inventory status', quickActions: ['Pin Inventory status', 'Delete Inventory status'] })
+    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', title: 'Revenue check', date: 'Jan 2', optionsLabel: 'More actions for Revenue check', quickActions: ['Pin Revenue check', 'Archive Revenue check'] })
+    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', title: 'Inventory status', date: 'Jan 3', optionsLabel: 'More actions for Inventory status', quickActions: ['Pin Inventory status', 'Archive Inventory status'] })
     await page.locator('lv-chat-page').evaluate((element: any) => {
       const input = ((element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as TestDomElement).shadowRoot!.querySelector('.search') as HTMLInputElement
       input.value = 'inventory'
@@ -504,7 +504,7 @@ test('chat history keeps a readable centered width on wide screens and fits narr
   }
 })
 
-test('chat list exposes bulk deletion and delete row action on hover', async () => {
+test('chat list exposes bulk deletion and archive row action on hover', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(`${baseURL}/list`)
@@ -530,10 +530,10 @@ test('chat list exposes bulk deletion and delete row action on hover', async () 
       return actions && getComputedStyle(actions).opacity === '1'
     })
     expect(await quickActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('1')
-    await firstRow.getByRole('button', { name: 'Delete Revenue check', exact: true }).click()
+    await firstRow.getByRole('button', { name: 'Archive Revenue check', exact: true }).click()
     await list.getByRole('button', { name: 'Delete all chats', exact: true }).click()
     expect(await page.evaluate(() => (window as any).listActions.map((action: any) => ({ action: action.action, conversationId: action.conversationId })))).toEqual([
-      { action: 'delete', conversationId: 'c1' },
+      { action: 'archive', conversationId: 'c1' },
       { action: 'delete_active', conversationId: '' },
     ])
   } finally {
@@ -556,11 +556,11 @@ test('chat list row menu supports keyboard dismissal and dispatches actions', as
         actions.push((event as CustomEvent).detail)
       })
       const row = root.querySelector('tbody tr') as HTMLElement
-      const trigger = row.querySelector('summary') as HTMLElement
+      const trigger = row.querySelector<HTMLButtonElement>('.options-button')!
       trigger.focus()
       trigger.click()
       await list.updateComplete
-      const menu = row.querySelector('details') as HTMLDetailsElement
+      const menu = row.querySelector<HTMLElement>('.options-panel')!
       trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       const initialArrowFocus = (root.activeElement as HTMLElement)?.textContent?.trim()
       const pin = menu.querySelector<HTMLButtonElement>('[role="menuitem"]:nth-of-type(2)')!
@@ -568,17 +568,49 @@ test('chat list row menu supports keyboard dismissal and dispatches actions', as
       pin.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       const arrowFocus = (root.activeElement as HTMLElement)?.textContent?.trim()
       pin.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }))
-      const escaped = { open: menu.open, focus: (root.activeElement as HTMLElement)?.getAttribute('aria-label') }
+      const escaped = { open: menu.matches(':popover-open'), focus: (root.activeElement as HTMLElement)?.getAttribute('aria-label') }
       trigger.click()
       await list.updateComplete
-      const reopenedMenu = row.querySelector('details') as HTMLDetailsElement
+      const reopenedMenu = row.querySelector<HTMLElement>('.options-panel')!
       reopenedMenu.querySelector<HTMLButtonElement>('[role="menuitem"]:nth-of-type(2)')!.click()
       return { initialArrowFocus, arrowFocus, escaped, actions }
     })
     expect(state.initialArrowFocus).toBe('Select')
-    expect(state.arrowFocus).toBe('Rename')
+    expect(state.arrowFocus).toBe('Archive chat')
     expect(state.escaped).toEqual({ open: false, focus: 'More actions for Revenue check' })
     expect(state.actions).toEqual([{ action: 'pin', conversationId: 'c1', title: 'Revenue check', href: '/chats/c1' }])
+  } finally {
+    await page.close()
+  }
+})
+
+test('last chat row menu stays visible and keeps delete accessible', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 300 } })
+  try {
+    await page.goto(`${baseURL}/list`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-list'))
+    const list = page.locator('lv-chat-page').locator('lv-chat-list')
+    await list.evaluate(async (element: any) => {
+      await element.updateComplete
+      ;(window as any).listActions = []
+      element.addEventListener('lv-chat-action', (event: Event) => {
+        event.stopPropagation()
+        ;(window as any).listActions.push((event as CustomEvent).detail)
+      })
+    })
+    await list.locator('tbody tr').last().getByRole('button', { name: 'More actions for Inventory status' }).click()
+    const menu = list.getByRole('menu', { name: 'Actions for Inventory status' })
+    const bounds = await menu.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+      return { visible: element.matches(':popover-open'), top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: innerWidth, height: innerHeight }
+    })
+    expect(bounds.visible).toBe(true)
+    expect(bounds.top).toBeGreaterThanOrEqual(0)
+    expect(bounds.bottom).toBeLessThanOrEqual(bounds.height)
+    expect(bounds.left).toBeGreaterThanOrEqual(0)
+    expect(bounds.right).toBeLessThanOrEqual(bounds.width)
+    await menu.getByRole('menuitem', { name: 'Delete chat' }).click()
+    expect(await page.evaluate(() => (window as any).listActions.map((action: any) => action.action))).toEqual(['delete'])
   } finally {
     await page.close()
   }

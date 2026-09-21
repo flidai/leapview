@@ -982,7 +982,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
   }
 })
 
-test('chat rows expose direct keyboard-accessible pin and delete actions without navigating the row', async () => {
+test('chat rows expose direct keyboard-accessible pin and archive actions without navigating the row', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   await page.goto(`${baseURL}/sidebar-history`)
   await page.evaluate(() => {
@@ -993,15 +993,33 @@ test('chat rows expose direct keyboard-accessible pin and delete actions without
   await row.hover()
   expect(await row.locator('summary[aria-label="More actions for Revenue check"]').count()).toBe(0)
   const pin = row.getByRole('button', { name: 'Pin Revenue check', exact: true })
-  const remove = row.getByRole('button', { name: 'Delete Revenue check', exact: true })
+  const archive = row.getByRole('button', { name: 'Archive Revenue check', exact: true })
   expect(await pin.count()).toBe(1)
-  expect(await remove.count()).toBe(1)
+  expect(await archive.count()).toBe(1)
   await pin.focus()
   expect(await pin.evaluate((element) => element === (element.getRootNode() as Document | ShadowRoot).activeElement)).toBe(true)
   await pin.click()
   expect(await page.evaluate(() => (window as any).chatActions.map((item: any) => ({ action: item.action, conversationId: item.conversationId })))).toEqual([{ action: 'pin', conversationId: 'c1' }])
   expect(new URL(page.url()).pathname).toBe('/sidebar-history')
   await page.close()
+})
+
+test('sidebar archive action starts the undoable archive flow', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.evaluate(() => {
+      ;(window as any).chatActions = []
+      document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+    })
+    const row = page.locator('.history-row').filter({ hasText: 'Revenue check' })
+    await row.hover()
+    await row.getByRole('button', { name: 'Archive Revenue check', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).chatActions.map((item: any) => ({ action: item.action, conversationId: item.conversationId })))).toEqual([{ action: 'archive_pending', conversationId: 'c1' }])
+    expect(new URL(page.url()).pathname).toBe('/sidebar-history')
+  } finally {
+    await page.close()
+  }
 })
 
 test('chat deletion requires confirmation and cancel sends no command', async () => {
