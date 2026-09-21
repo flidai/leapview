@@ -37,7 +37,7 @@ class LeapViewChatList extends LitElement {
       align-content: start;
       gap: var(--base-size-16);
       width: 100%;
-      max-width: var(--lv-chat-stack-width, 45rem);
+      max-width: var(--lv-chat-stack-width);
       margin: 0 auto;
       padding: var(--base-size-16);
       box-sizing: border-box;
