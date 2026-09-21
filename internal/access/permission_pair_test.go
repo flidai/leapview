@@ -75,6 +75,27 @@ func TestPermissionPairsSeparateProjectCreationAndInstanceAudience(t *testing.T)
 	}
 }
 
+func TestInstancePermissionOptionsExposeEverySelectablePlatformAction(t *testing.T) {
+	options, err := InstancePermissionOptions("instance_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := make([]Action, 0)
+	for _, definition := range PermissionCatalog() {
+		if definition.Scope == PermissionScopeInstance && definition.UISelectable {
+			want = append(want, definition.Action)
+		}
+	}
+	if len(options) != len(want) {
+		t.Fatalf("instance options = %d, want %d", len(options), len(want))
+	}
+	for index, pair := range options {
+		if pair.Action != want[index] || pair.Target.Scope != PermissionScopeInstance || pair.Target.InstanceID != "instance_a" {
+			t.Fatalf("instance option %d = %#v, want action %q on instance_a", index, pair, want[index])
+		}
+	}
+}
+
 func TestPermissionPairsRejectDuplicateAndUnsupportedProfiles(t *testing.T) {
 	pair := mustExactPermissionPair(t, ActionDashboardRead, "project_a", "dashboard_a", projectgraph.KindDashboard)
 	if err := ValidatePermissionPairs([]PermissionPair{pair, pair}); !errors.Is(err, ErrInvalidPermissionPair) {

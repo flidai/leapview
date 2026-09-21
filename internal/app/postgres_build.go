@@ -395,16 +395,10 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		if !executionGrantsSupported {
 			return fail(errors.New("PostgreSQL access repository does not support execution-grant authority evidence"))
 		}
-		authorityRevalidator = newAuthorityRevalidator(tokenEvidence, sessionEvidence, executionGrants, func(authCtx context.Context, principalID string, projectID projectgraph.ResourceID, environment string, resource access.ResourceRef, capability access.Capability) (bool, error) {
-			if runtimeHost == nil {
-				return false, errors.New("active runtime host is unavailable")
-			}
-			if string(runtimeHost.Environment()) != environment {
-				return false, errors.New("active runtime environment does not match job authority")
-			}
-			return authorizeProjectResources(authCtx, accessBundle.Module, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, capability)
+		authorityRevalidator = newAuthorityRevalidator(tokenEvidence, sessionEvidence, executionGrants, func(authCtx context.Context, principalID string, pair access.PermissionPair, environment string) (bool, error) {
+			return authorizeCurrentTypedPermission(authCtx, accessBundle.Module, runtimeHost, principalID, pair, environment)
 		}, func(authCtx context.Context, principalID string, pair access.PermissionPair, environment string) (bool, error) {
-			return authorizeCurrentDelegatedPermission(authCtx, accessBundle.Module, runtimeHost, principalID, pair, environment)
+			return authorizeCurrentTypedPermission(authCtx, accessBundle.Module, runtimeHost, principalID, pair, environment)
 		}, instanceID, string(environment))
 	}
 	var requiredAuthorityKinds map[string]struct{}

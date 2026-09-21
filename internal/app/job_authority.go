@@ -19,7 +19,7 @@ import (
 type callerAuthorityRevalidator struct {
 	tokens         access.APITokenAuthorityEvidenceReader
 	sessions       access.SessionAuthorityEvidenceReader
-	current        func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error)
+	current        func(context.Context, string, access.PermissionPair, string) (bool, error)
 	requirement    access.TypedOperationRequirement
 	requirementErr error
 }
@@ -52,7 +52,7 @@ type authorityRevalidator struct {
 	delegated delegatedWorkloadRevalidator
 }
 
-func newAuthorityRevalidator(tokens access.APITokenAuthorityEvidenceReader, sessions access.SessionAuthorityEvidenceReader, grants executionGrantAuthorityReader, current func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error), delegatedCurrent func(context.Context, string, access.PermissionPair, string) (bool, error), instanceID, environment string) jobs.AuthorityRevalidator {
+func newAuthorityRevalidator(tokens access.APITokenAuthorityEvidenceReader, sessions access.SessionAuthorityEvidenceReader, grants executionGrantAuthorityReader, current func(context.Context, string, access.PermissionPair, string) (bool, error), delegatedCurrent func(context.Context, string, access.PermissionPair, string) (bool, error), instanceID, environment string) jobs.AuthorityRevalidator {
 	requirement, requirementErr := refreshmodule.CreateRefreshRunTypedOperationRequirement()
 	return authorityRevalidator{
 		caller:    callerAuthorityRevalidator{tokens: tokens, sessions: sessions, current: current, requirement: requirement, requirementErr: requirementErr},
@@ -71,7 +71,7 @@ func (r authorityRevalidator) Revalidate(ctx context.Context, authority jobs.Aut
 	}
 }
 
-func newCallerAuthorityRevalidator(tokens access.APITokenAuthorityEvidenceReader, sessions access.SessionAuthorityEvidenceReader, current func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error)) jobs.AuthorityRevalidator {
+func newCallerAuthorityRevalidator(tokens access.APITokenAuthorityEvidenceReader, sessions access.SessionAuthorityEvidenceReader, current func(context.Context, string, access.PermissionPair, string) (bool, error)) jobs.AuthorityRevalidator {
 	requirement, requirementErr := refreshmodule.CreateRefreshRunTypedOperationRequirement()
 	return callerAuthorityRevalidator{tokens: tokens, sessions: sessions, current: current, requirement: requirement, requirementErr: requirementErr}
 }
@@ -184,7 +184,7 @@ func (r callerAuthorityRevalidator) Revalidate(ctx context.Context, authority jo
 		if err := r.requirement.ValidateResource(resource); err != nil {
 			return fmt.Errorf("%w: typed refresh operation requirement: %v", jobs.ErrAuthorityInvalid, err)
 		}
-		allowed, err := r.current(ctx, authority.ActorPrincipalID, pair.Target.ProjectID, authority.Target.Environment, resource, access.CapabilityResourceUse)
+		allowed, err := r.current(ctx, authority.ActorPrincipalID, pair, authority.Target.Environment)
 		if err != nil {
 			return fmt.Errorf("%w: current authority: %v", jobs.ErrAuthorityInvalid, err)
 		}

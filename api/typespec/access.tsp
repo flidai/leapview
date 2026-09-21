@@ -1183,8 +1183,12 @@ op issueResourceShareGrant(@path @apigen.target project: ResourceId, @header("Id
 @summary("Revoke a durable resource-share grant")
 @route("/resource-share-grants/{grant}")
 @delete
-@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_SHARE", action: "resource.share", resolver: "resource-share" })
-@extension("x-leapview-object-scope", "resource-share")
+// Revocation is issuer-bound by the durable grant handler. It deliberately
+// requires only a live authenticated credential here: a share outlives the
+// issuer's current resource.share assignment, and losing that assignment must
+// not prevent the issuer from explicitly revoking the independent grant.
+@apigen.authz(#{ mode: "authenticated" })
+@extension("x-leapview-object-scope", "principal")
 @apigen.command(#{ auditAction: "resource_share_grant.revoked", guarantee: "transactional" })
 @apigen.failsWith(ResourceShareGrantInvalidFailure)
 @apigen.failsWith(ResourceShareGrantNotFoundFailure)

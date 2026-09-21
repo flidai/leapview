@@ -51085,7 +51085,7 @@ paths:
             schema_version: 1
           required: true
           success_action: resource_share_grant.revoked
-        authz_mode: privilege
+        authz_mode: authenticated
         failures:
           - code: RESOURCE_SHARE_GRANT_INVALID
             kind: invalid
@@ -51099,13 +51099,7 @@ paths:
         target:
           parameter: grant
           type: grant
-        privilege: RESOURCE_SHARE
-      x-authz:
-        action: resource.share
-        mode: privilege
-        resolver: resource-share
-        privilege: RESOURCE_SHARE
-      x-leapview-object-scope: resource-share
+      x-leapview-object-scope: principal
   /api/v1/search:
     get:
       operationId: search

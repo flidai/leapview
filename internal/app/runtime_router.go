@@ -873,15 +873,7 @@ func buildApplicationSurfaces(
 			return snapshot.EffectiveCapabilities(subjects)
 		})
 		routes.accessModule.SetCurrentEffectivePermissionOptions(func(ctx context.Context, principalID string) ([]access.PermissionPair, error) {
-			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
-			if err != nil {
-				return nil, err
-			}
-			snapshot, err := authorizationSnapshot(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return snapshot.EffectiveTypedPermissionOptions(subjects)
+			return currentEffectivePermissionOptions(ctx, routes.accessModule, principalID, storage.instanceID, authorizationSnapshot)
 		})
 		routes.accessModule.SetCurrentProjectID(runtime.resolveProjectID)
 		if routes.managedDataModule != nil {
@@ -1807,7 +1799,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return []access.ResourceRef{resource}
 		},
 		Instance: func(*http.Request) string { return storage.instanceID },
-		Delivery: func(ctx context.Context, r *http.Request, operationID, objectID string, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+		Delivery: func(ctx context.Context, r *http.Request, operationID, objectID string, projectID projectgraph.ResourceID, _ access.Capability) (bool, error) {
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			if !ok {
 				return false, nil
@@ -1856,10 +1848,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return false, err
 			}
+			if plan.ProjectID != projectID {
+				return false, nil
+			}
 			if deliveryApprovalDecisionOperation(operationID) {
-				if plan.ProjectID != projectID {
-					return false, nil
-				}
 				// The immutable plan/project binding remains mandatory for local dev.
 				if principal.DevBypass {
 					return true, nil
@@ -1868,11 +1860,16 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if err != nil {
 					return false, err
 				}
-				return deliveryProjectAllows(snapshot, subjects, projectID, capability)
+				return deliveryProjectAllowsTypedOperation(snapshot, subjects, projectID, operationID, accessOperations)
 			}
 			impact, err := deliveryAuthorizationResources(plan)
 			if err != nil {
 				return false, err
+			}
+			for _, resource := range impact.Existing {
+				if err := resource.ValidateAgainst(snapshot.Project()); err != nil {
+					return false, err
+				}
 			}
 			// Local development skips only authored grants; candidate, plan, and
 			// graph-impact validation above still fail closed.
@@ -1883,10 +1880,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if err != nil {
 				return false, err
 			}
-			// Added resources cannot exist in the current immutable graph. They
-			// require an explicit project role while existing affected resources
-			// continue through exact snapshot grants.
-			return deliveryAuthorizationImpactAllows(snapshot, subjects, impact, capability)
+			return deliveryProjectAllowsTypedOperation(snapshot, subjects, projectID, operationID, accessOperations)
 		},
 	})
 	if err != nil {

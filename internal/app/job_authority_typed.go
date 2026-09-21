@@ -9,11 +9,11 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 )
 
-// authorizeCurrentDelegatedPermission intersects a sealed execution grant
-// with the workload principal's permissions in the current serving snapshot.
-// Revoking either the grant or the underlying assignment therefore stops work
-// at the next dequeue/protected boundary.
-func authorizeCurrentDelegatedPermission(
+// authorizeCurrentTypedPermission checks an exact queued action-target pair
+// against the principal's permissions in the current serving snapshot.
+// Caller and delegated jobs deliberately share this path so a legacy
+// capability cannot keep work alive after its typed assignment is revoked.
+func authorizeCurrentTypedPermission(
 	ctx context.Context,
 	accessModule canonicalAccessModule,
 	runtimeHost canonicalRuntimeHost,
@@ -22,7 +22,7 @@ func authorizeCurrentDelegatedPermission(
 	environment string,
 ) (bool, error) {
 	if accessModule == nil || runtimeHost == nil || strings.TrimSpace(principalID) == "" {
-		return false, fmt.Errorf("delegated workload authorization modules are required")
+		return false, fmt.Errorf("queued workload authorization modules are required")
 	}
 	if err := pair.Validate(); err != nil {
 		return false, err

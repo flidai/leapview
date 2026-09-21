@@ -92,7 +92,7 @@ func testAuthorityToken(t *testing.T, authority jobs.AuthorityEnvelope) access.A
 func TestCallerAuthorityRevalidatorRejectsQueuedCredentialExpiry(t *testing.T) {
 	expiresAt := time.Now().UTC().Add(time.Hour)
 	authority := testCallerAuthority(t, expiresAt)
-	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{err: access.ErrForbidden}, nil, func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error) {
+	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{err: access.ErrForbidden}, nil, func(context.Context, string, access.PermissionPair, string) (bool, error) {
 		return true, nil
 	})
 	err := revalidator.Revalidate(t.Context(), authority)
@@ -103,7 +103,7 @@ func TestCallerAuthorityRevalidatorRejectsQueuedCredentialExpiry(t *testing.T) {
 
 func TestCallerAuthorityRevalidatorRejectsRevokedQueuedCredential(t *testing.T) {
 	authority := testCallerAuthority(t, time.Now().UTC().Add(time.Hour))
-	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority), err: access.ErrForbidden}, nil, func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error) {
+	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority), err: access.ErrForbidden}, nil, func(context.Context, string, access.PermissionPair, string) (bool, error) {
 		return true, nil
 	})
 	err := revalidator.Revalidate(t.Context(), authority)
@@ -114,13 +114,13 @@ func TestCallerAuthorityRevalidatorRejectsRevokedQueuedCredential(t *testing.T) 
 
 func TestCallerAuthorityRevalidatorChecksExactPipelineResource(t *testing.T) {
 	authority := testCallerAuthority(t, time.Now().UTC().Add(time.Hour))
-	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority)}, nil, func(_ context.Context, _ string, projectID projectgraph.ResourceID, _ string, resource access.ResourceRef, capability access.Capability) (bool, error) {
-		return projectID.String() == authority.Target.ProjectID && resource.ID().String() == authority.Target.ResourceID && resource.Kind() == projectgraph.KindPipeline && capability == access.CapabilityResourceUse, nil
+	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority)}, nil, func(_ context.Context, _ string, pair access.PermissionPair, environment string) (bool, error) {
+		return pair.Target.ProjectID.String() == authority.Target.ProjectID && pair.Target.ResourceID.String() == authority.Target.ResourceID && pair.Target.ResourceKind == projectgraph.KindPipeline && pair.Action == access.ActionPipelineRun && environment == authority.Target.Environment, nil
 	})
 	if err := revalidator.Revalidate(t.Context(), authority); err != nil {
 		t.Fatalf("exact resource revalidation error = %v", err)
 	}
-	denying := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority)}, nil, func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error) {
+	denying := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority)}, nil, func(context.Context, string, access.PermissionPair, string) (bool, error) {
 		return false, nil
 	})
 	if err := denying.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
@@ -131,7 +131,7 @@ func TestCallerAuthorityRevalidatorChecksExactPipelineResource(t *testing.T) {
 func TestCallerAuthorityRevalidatorRejectsWrongTypedAction(t *testing.T) {
 	authority := testCallerAuthority(t, time.Now().UTC().Add(time.Hour))
 	authority.Permissions[0].Action = permissions.Action("pipeline.read")
-	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority)}, nil, func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error) {
+	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority)}, nil, func(context.Context, string, access.PermissionPair, string) (bool, error) {
 		return true, nil
 	})
 	if err := revalidator.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
@@ -152,7 +152,7 @@ func TestCallerAuthorityRevalidatorRejectsExpiredBrowserSession(t *testing.T) {
 	authority := browserSessionAuthority(testCallerAuthority(t, time.Now().UTC().Add(time.Hour)))
 	session := testAuthoritySession(authority)
 	session.ExpiresAt = time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
-	revalidator := newCallerAuthorityRevalidator(nil, jobAuthoritySessionReader{session: session}, func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error) {
+	revalidator := newCallerAuthorityRevalidator(nil, jobAuthoritySessionReader{session: session}, func(context.Context, string, access.PermissionPair, string) (bool, error) {
 		return true, nil
 	})
 	if err := revalidator.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
@@ -162,7 +162,7 @@ func TestCallerAuthorityRevalidatorRejectsExpiredBrowserSession(t *testing.T) {
 
 func TestCallerAuthorityRevalidatorRejectsRevokedBrowserSession(t *testing.T) {
 	authority := browserSessionAuthority(testCallerAuthority(t, time.Now().UTC().Add(time.Hour)))
-	revalidator := newCallerAuthorityRevalidator(nil, jobAuthoritySessionReader{session: testAuthoritySession(authority), err: access.ErrForbidden}, func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error) {
+	revalidator := newCallerAuthorityRevalidator(nil, jobAuthoritySessionReader{session: testAuthoritySession(authority), err: access.ErrForbidden}, func(context.Context, string, access.PermissionPair, string) (bool, error) {
 		return true, nil
 	})
 	if err := revalidator.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
@@ -172,8 +172,8 @@ func TestCallerAuthorityRevalidatorRejectsRevokedBrowserSession(t *testing.T) {
 
 func TestCallerAuthorityRevalidatorAcceptsLiveBrowserSession(t *testing.T) {
 	authority := browserSessionAuthority(testCallerAuthority(t, time.Now().UTC().Add(time.Hour)))
-	revalidator := newCallerAuthorityRevalidator(nil, jobAuthoritySessionReader{session: testAuthoritySession(authority)}, func(_ context.Context, _ string, projectID projectgraph.ResourceID, environment string, resource access.ResourceRef, capability access.Capability) (bool, error) {
-		return projectID.String() == authority.Target.ProjectID && environment == authority.Target.Environment && resource.ID().String() == authority.Target.ResourceID && capability == access.CapabilityResourceUse, nil
+	revalidator := newCallerAuthorityRevalidator(nil, jobAuthoritySessionReader{session: testAuthoritySession(authority)}, func(_ context.Context, _ string, pair access.PermissionPair, environment string) (bool, error) {
+		return pair.Target.ProjectID.String() == authority.Target.ProjectID && environment == authority.Target.Environment && pair.Target.ResourceID.String() == authority.Target.ResourceID && pair.Action == access.ActionPipelineRun, nil
 	})
 	if err := revalidator.Revalidate(t.Context(), authority); err != nil {
 		t.Fatalf("live browser-session revalidation error = %v", err)

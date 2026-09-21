@@ -357,8 +357,18 @@ func TestDeliveryProjectTypedAuthorizationUsesReleaseOperatorAndRequiredPairs(t 
 		allowed   bool
 	}{
 		{operation: "createDeliveryPlan", subject: operator, allowed: true},
+		{operation: "buildDeliveryPlan", subject: operator, allowed: true},
+		{operation: "publishDeliveryCandidate", subject: operator, allowed: true},
+		{operation: "requestDeliveryPublicationApproval", subject: operator, allowed: true},
+		{operation: "rollbackDeliveryGeneration", subject: operator, allowed: true},
+		{operation: "getDeliveryCandidateStatus", subject: operator, allowed: true},
 		{operation: "getDeliveryOperatorSnapshot", subject: operator, allowed: true},
 		{operation: "getDeliveryOperatorSnapshot", subject: approver, allowed: true},
+		{operation: "approveDeliveryPublicationApproval", subject: approver, allowed: true},
+		{operation: "denyDeliveryPublicationApproval", subject: approver, allowed: true},
+		{operation: "revokeDeliveryPublicationApproval", subject: approver, allowed: true},
+		{operation: "buildDeliveryPlan", subject: approver, allowed: false},
+		{operation: "approveDeliveryPublicationApproval", subject: operator, allowed: false},
 		{operation: "createDeliveryPlan", subject: approver, allowed: false},
 		{operation: "createDeliveryPlan", subject: legacy, allowed: false},
 	} {

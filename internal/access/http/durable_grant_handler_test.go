@@ -303,6 +303,10 @@ func TestRevokeResourceShareGrantBindsAuthorityToStoredTarget(t *testing.T) {
 		ID: durableHTTPGrantID, Target: target, Issuer: access.GrantIssuerEvidence{PrincipalID: durableHTTPIssuerID, Credential: access.GrantCredentialEvidence{Class: access.GrantCredentialClassAPIToken, ID: "token-http-1", Fingerprint: "sha256:" + strings.Repeat("b", 64)}},
 	}}
 	authority := durableHTTPAuthority(t, durableHTTPIssuerID, target)
+	// Revocation depends on live issuer identity and credential evidence, not
+	// on retaining the resource.share permission used at issuance time.
+	authority.Permissions = []access.PermissionPair{}
+	authority.CredentialPermissions = []access.PermissionPair{}
 	var resolved access.CurrentAuthorityRequest
 	service, err := access.NewDurableGrantService(repository, access.CurrentAuthorityResolverFunc(func(_ context.Context, request access.CurrentAuthorityRequest) (access.CurrentAuthoritySnapshot, error) {
 		resolved = request

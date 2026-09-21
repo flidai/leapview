@@ -95,6 +95,24 @@ func NewInstancePermissionPair(action Action, instanceID string) (PermissionPair
 	return pair, nil
 }
 
+// InstancePermissionOptions returns every selectable instance-scoped action
+// bound to one concrete installation. These pairs attenuate a separately
+// verified durable platform role; they never create platform authority.
+func InstancePermissionOptions(instanceID string) ([]PermissionPair, error) {
+	options := make([]PermissionPair, 0)
+	for _, definition := range PermissionCatalog() {
+		if definition.Scope != PermissionScopeInstance || !definition.UISelectable {
+			continue
+		}
+		pair, err := NewInstancePermissionPair(definition.Action, instanceID)
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, pair)
+	}
+	return options, nil
+}
+
 func (pair PermissionPair) Validate() error {
 	return permissionMechanicsCatalog.ValidatePair(contractPermissionPair(pair))
 }

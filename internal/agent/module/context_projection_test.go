@@ -119,24 +119,59 @@ func TestResolveChatTurnContextRejectsUnknownReference(t *testing.T) {
 	}
 }
 
-func TestContextCredentialUsesCanonicalCapability(t *testing.T) {
-	scope := agent.Scope{Credential: agent.CredentialScope{Restricted: true, Capabilities: []string{string(access.CapabilityResourceUse)}}}
-	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceUse) {
-		t.Fatal("canonical capability was rejected")
+func TestTurnContextsPassTypedTokenPairsToCanonicalResourceResolver(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	dashboardID := projectgraph.ResourceID("dashboard_sales")
+	modelID := projectgraph.ResourceID("semantic_sales")
+	dashboard, err := access.NewResourceRef(dashboardID, projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if contextCredentialAllowsCapability(scope, access.CapabilityResourceEdit) {
-		t.Fatal("ungranted capability was accepted")
+	dashboardRead, err := access.NewExactPermissionPair(access.ActionDashboardRead, projectID, dashboard)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
+	model, err := access.NewResourceRef(modelID, projectgraph.KindSemanticModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	semanticQuery, err := access.NewExactPermissionPair(access.ActionSemanticQuery, projectID, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	semanticPermissions, err := access.RequiredPermissionPairs(semanticQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-func TestContextCredentialRejectsOmittedAndDenyAllTokenScopes(t *testing.T) {
-	omitted := agent.Scope{Credential: agent.CredentialScope{Restricted: true}}
-	if contextCredentialAllowsCapability(omitted, access.CapabilityResourceRead) {
-		t.Fatal("omitted token scope unexpectedly authorized")
+	called := map[projectgraph.Kind]bool{}
+	module := &Module{
+		projectID: projectID,
+		resolveResource: func(_ context.Context, scope Scope, id projectgraph.ResourceID, kind projectgraph.Kind, capability access.Capability) (projectgraph.ResourceID, error) {
+			if !CredentialAllowsResource(scope, id, kind, capability) {
+				return "", access.ErrForbidden
+			}
+			called[kind] = true
+			return id, nil
+		},
 	}
-	denyAll := agent.Scope{Credential: agent.CredentialScope{Restricted: true, Capabilities: []string{}}}
-	if contextCredentialAllowsCapability(denyAll, access.CapabilityResourceRead) {
-		t.Fatal("explicit empty token scope should deny every capability")
+	for _, test := range []struct {
+		name        string
+		permissions []access.PermissionPair
+		candidate   agent.TurnContext
+		kind        projectgraph.Kind
+	}{
+		{name: "dashboard", permissions: []access.PermissionPair{dashboardRead}, candidate: agent.TurnContext{Surface: "dashboard", DashboardID: dashboardID.String(), PageID: "overview"}, kind: projectgraph.KindDashboard},
+		{name: "data", permissions: semanticPermissions, candidate: agent.TurnContext{Surface: "data", ModelID: modelID.String(), DatasetID: "orders"}, kind: projectgraph.KindSemanticModel},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called[test.kind] = false
+			scope := agent.Scope{PrincipalID: "principal-1", Credential: agent.CredentialScope{Restricted: true, PermissionProfile: access.PermissionCatalogProfile, Permissions: test.permissions}}
+			_, _ = module.ResolveTurnContext(httptest.NewRequest(http.MethodGet, "/agent", nil), scope, test.candidate)
+			if !called[test.kind] {
+				t.Fatalf("typed %s permission was rejected before the canonical resolver", test.name)
+			}
+		})
 	}
 }
 

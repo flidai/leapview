@@ -77,9 +77,6 @@ func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, 
 		return agent.TurnContext{}, errors.New("data context requires semantic model and dataset")
 	}
 	scope.ProjectID = projectID
-	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceUse) {
-		return agent.TurnContext{}, errors.New("credential cannot view this data")
-	}
 	resolvedModel, err := m.resolveContextResource(ctx, scope, modelID, projectgraph.KindSemanticModel, access.CapabilityResourceUse)
 	if err != nil {
 		return agent.TurnContext{}, errors.New("semantic model is unknown or unauthorized")
@@ -178,9 +175,6 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 		return agent.TurnContext{}, errors.New("dashboard context requires dashboard and page")
 	}
 	scope.ProjectID = projectID
-	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceRead) {
-		return agent.TurnContext{}, errors.New("credential cannot view this dashboard")
-	}
 	resolvedDashboard, err := m.resolveContextResource(ctx, scope, dashboardID, projectgraph.KindDashboard, access.CapabilityResourceRead)
 	if err != nil {
 		return agent.TurnContext{}, errors.New("dashboard is unknown or unauthorized")
@@ -417,19 +411,4 @@ func resolvedVisualMetadata(component dashboard.PageVisual, visualID string, vis
 		visualType = string(spec.Mark)
 	}
 	return title, strings.TrimSpace(visualType), true
-}
-
-func contextCredentialAllowsCapability(scope agent.Scope, capability access.Capability) bool {
-	if !scope.Credential.Restricted {
-		return true
-	}
-	if scope.Credential.Capabilities == nil {
-		return false
-	}
-	for _, allowed := range scope.Credential.Capabilities {
-		if strings.EqualFold(strings.TrimSpace(allowed), string(capability)) {
-			return true
-		}
-	}
-	return false
 }

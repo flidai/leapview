@@ -53,6 +53,21 @@ func TestAPIGenTypedAuthzMetadataReachesAccessBoundary(t *testing.T) {
 	}
 }
 
+func TestResourceShareRevocationUsesIssuerBoundAuthenticatedContract(t *testing.T) {
+	contracts := accessAPIGenOperationContracts()
+	revoke, ok := contracts["revokeResourceShareGrant"]
+	if !ok {
+		t.Fatal("resource-share revoke operation is missing")
+	}
+	if revoke.AuthzMode != "authenticated" || revoke.Action != "" || revoke.Resolver != "" || revoke.Extensions["x-leapview-object-scope"] != "principal" {
+		t.Fatalf("resource-share revoke contract = %#v, want issuer-bound authenticated operation", revoke)
+	}
+	issue, ok := contracts["issueResourceShareGrant"]
+	if !ok || issue.AuthzMode != "privilege" || issue.Action != "resource.share" || issue.Resolver != "resource-share" {
+		t.Fatalf("resource-share issue contract = %#v, want typed resource.share authorization", issue)
+	}
+}
+
 func TestAPIGenAgentCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 	root := projectRoot(t)
 	manifest, err := os.ReadFile(filepath.Join(root, "api", "apigen.yaml"))
@@ -902,6 +917,7 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"revokeCurrentAPIToken":            true,
 		"revokeCurrentAuthoringSession":    true,
 		"revokeCurrentSession":             true,
+		"revokeResourceShareGrant":         true,
 		"search":                           true,
 		"updateAgentConversation":          true,
 		"manageAgentConversations":         true,
