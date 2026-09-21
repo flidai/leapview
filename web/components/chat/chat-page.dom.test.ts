@@ -180,6 +180,7 @@ for (const viewport of [
         const root = (element.shadowRoot as ShadowRoot)
         const title = root.querySelector('h1') as HTMLElement
         const stage = root.querySelector('.new-chat-stage') as HTMLElement
+        await Promise.all(Array.from(stage.children).flatMap((child) => child.getAnimations().map((animation) => animation.finished)))
         const intro = root.querySelector('.new-chat-intro') as HTMLElement
         const hint = root.querySelector('.new-chat-context-hint') as HTMLElement
         const starters = Array.from(root.querySelectorAll('.prompt-starter')) as HTMLButtonElement[]
