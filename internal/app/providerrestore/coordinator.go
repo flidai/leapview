@@ -33,11 +33,11 @@ var (
 )
 
 type DatabaseRequest struct {
-	RecoverySetID  string                           `json:"recoverySetId"`
-	TargetID       string                           `json:"targetId"`
-	IdempotencyKey string                           `json:"idempotencyKey"`
-	Point          recoveryset.ClusterRecoveryPoint `json:"point"`
-	Catalog        recoveryset.CatalogCommit        `json:"catalog,omitempty"`
+	RecoverySetID  string                             `json:"recoverySetId"`
+	TargetID       string                             `json:"targetId"`
+	IdempotencyKey string                             `json:"idempotencyKey"`
+	Points         []recoveryset.ClusterRecoveryPoint `json:"points"`
+	Catalog        recoveryset.CatalogCommit          `json:"catalog,omitempty"`
 }
 
 type DatabaseResult struct {
@@ -106,6 +106,7 @@ type Report struct {
 	Kind           string             `json:"kind"`
 	Status         string             `json:"status"`
 	OccurrenceID   string             `json:"occurrenceId"`
+	Fence          recovery.Fence     `json:"fence"`
 	RecoverySetID  string             `json:"recoverySetId"`
 	FrontierDigest string             `json:"frontierDigest"`
 	TargetID       string             `json:"targetId"`
@@ -119,7 +120,7 @@ type Report struct {
 }
 
 type DatabaseProvider interface {
-	RestoreDatabase(context.Context, DatabaseRequest) (DatabaseResult, error)
+	RestoreCluster(context.Context, DatabaseRequest) ([]DatabaseResult, error)
 }
 
 type ObjectProvider interface {
@@ -131,7 +132,7 @@ type Verifier interface {
 }
 
 type EvidenceStore interface {
-	Load(context.Context, string) (Report, bool, error)
+	Load(context.Context, recovery.EvidenceReference) (Report, error)
 	Save(context.Context, Report) (recovery.EvidenceReference, error)
 }
 
@@ -207,9 +208,20 @@ func (coordinator *Coordinator) Run(ctx context.Context, request Request) (Repor
 	if set.Delivery.TargetID != request.TargetID || (set.Status != recoveryset.StatusPrepared && set.Status != recoveryset.StatusPublished) {
 		return Report{}, fmt.Errorf("%w: recovery set target or status mismatch", ErrInconsistent)
 	}
-	report, found, err := coordinator.dependencies.Evidence.Load(ctx, request.OccurrenceID)
+	report, found, err := coordinator.loadCheckpoint(ctx, occurrence)
 	if err != nil {
 		return Report{}, err
+	}
+	if found {
+		if report.Fence != request.Fence {
+			if occurrence.Status == recovery.StatusSucceeded {
+				return Report{}, fmt.Errorf("%w: completed evidence fence does not match the occurrence", ErrInconsistent)
+			}
+			// A successor must not adopt provider effects checkpointed by an
+			// earlier fence. Stable provider idempotency keys let it read back
+			// those effects without trusting the stale checkpoint.
+			report, found = Report{}, false
+		}
 	}
 	if found {
 		if report.OccurrenceID != request.OccurrenceID || report.RecoverySetID != request.RecoverySetID || report.TargetID != request.TargetID || report.FrontierDigest != set.FrontierDigest {
@@ -232,8 +244,8 @@ func (coordinator *Coordinator) Run(ctx context.Context, request Request) (Repor
 		return Report{}, err
 	}
 	if !found {
-		report = Report{SchemaVersion: ReportSchemaVersion, Kind: ReportKind, Status: StatusRunning, OccurrenceID: request.OccurrenceID, RecoverySetID: set.ID, FrontierDigest: set.FrontierDigest, TargetID: request.TargetID, StartedAt: coordinator.now()}
-		if _, err := coordinator.dependencies.Evidence.Save(ctx, report); err != nil {
+		report = Report{SchemaVersion: ReportSchemaVersion, Kind: ReportKind, Status: StatusRunning, OccurrenceID: request.OccurrenceID, Fence: request.Fence, RecoverySetID: set.ID, FrontierDigest: set.FrontierDigest, TargetID: request.TargetID, StartedAt: coordinator.now()}
+		if _, err := coordinator.persistCheckpoint(ctx, request, report); err != nil {
 			return Report{}, err
 		}
 	}
@@ -247,29 +259,35 @@ func (coordinator *Coordinator) Run(ctx context.Context, request Request) (Repor
 	}
 
 	points := set.CanonicalPoints()
-	for _, point := range points {
-		if hasDatabase(report.Databases, point.DatabaseRole) {
+	for _, group := range databaseGroups(points) {
+		if databaseGroupComplete(report.Databases, group) {
 			continue
+		}
+		if databaseGroupStarted(report.Databases, group) {
+			return coordinator.abort(ctx, request, report, "database_restore_checkpoint_incomplete", ErrInconsistent, true)
 		}
 		if _, err := coordinator.activeOccurrence(ctx, request); err != nil {
 			return report, err
 		}
-		databaseRequest := DatabaseRequest{RecoverySetID: set.ID, TargetID: request.TargetID, IdempotencyKey: providerOperationKey(request.OccurrenceID, "database", string(point.DatabaseRole), point.RecoveryIdentity), Point: point}
-		if point.DatabaseRole == recoveryset.DatabaseDuckLake {
+		databaseRequest := DatabaseRequest{RecoverySetID: set.ID, TargetID: request.TargetID, IdempotencyKey: providerOperationKey(request.OccurrenceID, "database-cluster", group[0].ClusterIdentity, group[0].RecoveryIdentity), Points: slices.Clone(group)}
+		if slices.ContainsFunc(group, func(point recoveryset.ClusterRecoveryPoint) bool {
+			return point.DatabaseRole == recoveryset.DatabaseDuckLake
+		}) {
 			databaseRequest.Catalog = set.Catalog
 		}
-		result, restoreErr := coordinator.dependencies.Databases.RestoreDatabase(ctx, databaseRequest)
+		results, restoreErr := coordinator.dependencies.Databases.RestoreCluster(ctx, databaseRequest)
 		if restoreErr != nil {
 			return coordinator.abort(ctx, request, report, "database_restore_indeterminate", restoreErr, true)
 		}
 		if _, err := coordinator.activeOccurrence(ctx, request); err != nil {
 			return report, fmt.Errorf("%w: database restore completed after lease loss: %v", ErrIndeterminate, err)
 		}
-		if err := validateDatabaseResult(point, set.Catalog, result); err != nil {
+		results, err = validateDatabaseResults(group, set.Catalog, results)
+		if err != nil {
 			return coordinator.abort(ctx, request, report, "database_restore_mismatch", err, false)
 		}
-		report.Databases = append(report.Databases, result)
-		if _, err := coordinator.dependencies.Evidence.Save(ctx, report); err != nil {
+		report.Databases = append(report.Databases, results...)
+		if _, err := coordinator.persistCheckpoint(ctx, request, report); err != nil {
 			return report, fmt.Errorf("%w: persist database restore checkpoint: %v", ErrIndeterminate, err)
 		}
 	}
@@ -296,13 +314,13 @@ func (coordinator *Coordinator) Run(ctx context.Context, request Request) (Repor
 			return coordinator.abort(ctx, request, report, "object_restore_mismatch", err, false)
 		}
 		report.Objects = append(report.Objects, result)
-		if _, err := coordinator.dependencies.Evidence.Save(ctx, report); err != nil {
+		if _, err := coordinator.persistCheckpoint(ctx, request, report); err != nil {
 			return report, fmt.Errorf("%w: persist object restore checkpoint: %v", ErrIndeterminate, err)
 		}
 	}
 
 	if verificationPresent(report.Verification) {
-		if err := validateVerification(normalized, report.Verification); err != nil {
+		if err := validateVerification(normalized, report.Databases, report.Verification); err != nil {
 			return coordinator.abort(ctx, request, report, "provider_verification_checkpoint_mismatch", err, false)
 		}
 	} else {
@@ -316,11 +334,11 @@ func (coordinator *Coordinator) Run(ctx context.Context, request Request) (Repor
 		if _, err := coordinator.activeOccurrence(ctx, request); err != nil {
 			return report, fmt.Errorf("%w: provider verification completed after lease loss: %v", ErrIndeterminate, err)
 		}
-		if err := validateVerification(normalized, verification); err != nil {
+		if err := validateVerification(normalized, report.Databases, verification); err != nil {
 			return coordinator.abort(ctx, request, report, "provider_verification_mismatch", err, false)
 		}
 		report.Verification = verification
-		if _, err := coordinator.dependencies.Evidence.Save(ctx, report); err != nil {
+		if _, err := coordinator.persistCheckpoint(ctx, request, report); err != nil {
 			return report, fmt.Errorf("%w: persist verification checkpoint: %v", ErrIndeterminate, err)
 		}
 	}
@@ -346,7 +364,7 @@ func (coordinator *Coordinator) Run(ctx context.Context, request Request) (Repor
 	if report.CompletedAt.IsZero() {
 		report.CompletedAt = coordinator.now()
 	}
-	reference, err := coordinator.dependencies.Evidence.Save(ctx, report)
+	reference, err := coordinator.persistCheckpoint(ctx, request, report)
 	if err != nil {
 		return report, fmt.Errorf("%w: persist completed provider evidence: %v", ErrIndeterminate, err)
 	}
@@ -403,7 +421,22 @@ func (coordinator *Coordinator) admit(ctx context.Context, set recoveryset.Recov
 	}
 	published, err := coordinator.dependencies.Sets.Publish(ctx, set.ID, request.Publisher, set.FenceEpoch, request.ValidationAttemptID)
 	if err != nil {
-		return AdmissionResult{}, err
+		// Publish is an external durable effect. Its response (including the
+		// repository's post-commit readback) can fail after publication commits,
+		// so reconcile the exact set and validation result before classifying it.
+		readback, readErr := coordinator.dependencies.Sets.ReadExact(ctx, set.ID)
+		if readErr == nil && readback.Status == recoveryset.StatusPublished && readback.PublishedValidationAttemptID == request.ValidationAttemptID {
+			storedResult, resultErr := coordinator.dependencies.Sets.ValidationResult(ctx, request.ValidationAttemptID)
+			if resultErr == nil && storedResult.ResultDigest == result.ResultDigest {
+				published = readback
+				err = nil
+			} else {
+				readErr = errors.Join(readErr, resultErr)
+			}
+		}
+		if err != nil {
+			return AdmissionResult{}, errors.Join(err, readErr)
+		}
 	}
 	return AdmissionResult{ValidationAttemptID: request.ValidationAttemptID, ValidationDigest: result.ResultDigest, PublishedSetID: published.ID, PublishedStatus: published.Status, PublishedAt: coordinator.now()}, nil
 }
@@ -431,6 +464,31 @@ func (coordinator *Coordinator) abort(ctx context.Context, request Request, repo
 
 func (coordinator *Coordinator) now() time.Time {
 	return coordinator.dependencies.Now().UTC().Truncate(time.Microsecond)
+}
+
+func (coordinator *Coordinator) loadCheckpoint(ctx context.Context, occurrence recovery.Occurrence) (Report, bool, error) {
+	if len(occurrence.Evidence) == 0 {
+		return Report{}, false, nil
+	}
+	if len(occurrence.Evidence) != 1 || occurrence.Evidence[0].Kind != "provider-restore" {
+		return Report{}, false, fmt.Errorf("%w: occurrence has unexpected provider checkpoint references", ErrInconsistent)
+	}
+	report, err := coordinator.dependencies.Evidence.Load(ctx, occurrence.Evidence[0])
+	if err != nil {
+		return Report{}, false, err
+	}
+	return report, true, nil
+}
+
+func (coordinator *Coordinator) persistCheckpoint(ctx context.Context, request Request, report Report) (recovery.EvidenceReference, error) {
+	reference, err := coordinator.dependencies.Evidence.Save(ctx, report)
+	if err != nil {
+		return recovery.EvidenceReference{}, err
+	}
+	if err := coordinator.dependencies.Ledger.RecordCheckpoint(ctx, request.OccurrenceID, request.Fence, coordinator.now(), reference); err != nil {
+		return recovery.EvidenceReference{}, err
+	}
+	return reference, nil
 }
 
 func (coordinator *Coordinator) activeOccurrence(ctx context.Context, request Request) (recovery.Occurrence, error) {
@@ -473,6 +531,31 @@ func hasDatabase(results []DatabaseResult, role recoveryset.DatabaseRole) bool {
 	return slices.ContainsFunc(results, func(result DatabaseResult) bool { return result.DatabaseRole == role })
 }
 
+func databaseGroups(points []recoveryset.ClusterRecoveryPoint) [][]recoveryset.ClusterRecoveryPoint {
+	groups := make([][]recoveryset.ClusterRecoveryPoint, 0, len(points))
+	indexes := make(map[string]int, len(points))
+	for _, point := range points {
+		key := point.ClusterIdentity + "\x00" + point.RecoveryIdentity
+		index, ok := indexes[key]
+		if !ok {
+			indexes[key] = len(groups)
+			groups = append(groups, nil)
+			index = len(groups) - 1
+		}
+		groups[index] = append(groups[index], point)
+	}
+	return groups
+}
+
+func databaseGroupComplete(results []DatabaseResult, points []recoveryset.ClusterRecoveryPoint) bool {
+	return len(points) > 0 && slices.ContainsFunc(points, func(point recoveryset.ClusterRecoveryPoint) bool { return hasDatabase(results, point.DatabaseRole) }) &&
+		!slices.ContainsFunc(points, func(point recoveryset.ClusterRecoveryPoint) bool { return !hasDatabase(results, point.DatabaseRole) })
+}
+
+func databaseGroupStarted(results []DatabaseResult, points []recoveryset.ClusterRecoveryPoint) bool {
+	return slices.ContainsFunc(points, func(point recoveryset.ClusterRecoveryPoint) bool { return hasDatabase(results, point.DatabaseRole) })
+}
+
 func hasObject(results []ObjectResult, root recoveryset.ObjectRoot) bool {
 	return slices.ContainsFunc(results, func(result ObjectResult) bool {
 		return result.Kind == root.Kind && result.URI == root.URI && result.RequiredVersionID == root.VersionID && result.Digest == root.Digest
@@ -491,6 +574,24 @@ func validateDatabaseResult(point recoveryset.ClusterRecoveryPoint, catalog reco
 	return nil
 }
 
+func validateDatabaseResults(points []recoveryset.ClusterRecoveryPoint, catalog recoveryset.CatalogCommit, results []DatabaseResult) ([]DatabaseResult, error) {
+	if len(results) != len(points) {
+		return nil, fmt.Errorf("%w: database provider returned %d results for %d recovery points", ErrInconsistent, len(results), len(points))
+	}
+	canonical := make([]DatabaseResult, 0, len(points))
+	for _, point := range points {
+		index := slices.IndexFunc(results, func(result DatabaseResult) bool { return result.DatabaseRole == point.DatabaseRole })
+		if index < 0 {
+			return nil, fmt.Errorf("%w: database provider omitted %s result", ErrInconsistent, point.DatabaseRole)
+		}
+		if err := validateDatabaseResult(point, catalog, results[index]); err != nil {
+			return nil, err
+		}
+		canonical = append(canonical, results[index])
+	}
+	return canonical, nil
+}
+
 func validateObjectResult(root recoveryset.ObjectRoot, result ObjectResult) error {
 	if result.Provider == "" || result.OperationID == "" || result.StartedAt.IsZero() || result.CompletedAt.Before(result.StartedAt) || result.Kind != root.Kind || result.URI != root.URI || result.RequiredVersionID != root.VersionID || result.ObservedVersionID != root.VersionID || result.Digest != root.Digest {
 		return fmt.Errorf("%w: object provider result does not match exact root/version", ErrInconsistent)
@@ -498,9 +599,14 @@ func validateObjectResult(root recoveryset.ObjectRoot, result ObjectResult) erro
 	return nil
 }
 
-func validateVerification(set recoveryset.RecoverySet, result VerificationResult) error {
+func validateVerification(set recoveryset.RecoverySet, databases []DatabaseResult, result VerificationResult) error {
 	if result.ProviderOperationID == "" || result.ControlStateDigest == "" || result.DuckLakeStateDigest == "" || result.VerifiedAt.IsZero() || !result.ObjectsConsistent || !result.Ready || result.Catalog != set.Catalog {
 		return fmt.Errorf("%w: coordinated post-restore verification is incomplete", ErrInconsistent)
+	}
+	control := slices.IndexFunc(databases, func(database DatabaseResult) bool { return database.DatabaseRole == recoveryset.DatabaseControl })
+	ducklake := slices.IndexFunc(databases, func(database DatabaseResult) bool { return database.DatabaseRole == recoveryset.DatabaseDuckLake })
+	if control < 0 || ducklake < 0 || result.ControlStateDigest != databases[control].StateDigest || result.DuckLakeStateDigest != databases[ducklake].StateDigest {
+		return fmt.Errorf("%w: post-restore verification digests do not match provider results", ErrInconsistent)
 	}
 	return nil
 }
@@ -514,11 +620,11 @@ func admissionPresent(result AdmissionResult) bool {
 }
 
 func admissionComplete(set recoveryset.RecoverySet, request Request, result AdmissionResult) bool {
-	return result.ValidationAttemptID == request.ValidationAttemptID && result.ValidationDigest != "" && result.PublishedSetID == set.ID && result.PublishedStatus == recoveryset.StatusPublished && !result.PublishedAt.IsZero()
+	return set.Status == recoveryset.StatusPublished && set.PublishedValidationAttemptID == request.ValidationAttemptID && result.ValidationAttemptID == request.ValidationAttemptID && result.ValidationDigest != "" && result.PublishedSetID == set.ID && result.PublishedStatus == recoveryset.StatusPublished && !result.PublishedAt.IsZero()
 }
 
 func validateCheckpoint(set recoveryset.RecoverySet, request Request, report Report) error {
-	if report.SchemaVersion != ReportSchemaVersion || report.Kind != ReportKind || report.StartedAt.IsZero() || len(report.Databases) > 2 || len(report.Objects) > len(set.ObjectRoots) {
+	if report.SchemaVersion != ReportSchemaVersion || report.Kind != ReportKind || report.Fence != request.Fence || report.StartedAt.IsZero() || len(report.Databases) > 2 || len(report.Objects) > len(set.ObjectRoots) {
 		return fmt.Errorf("%w: durable provider checkpoint shape is invalid", ErrInconsistent)
 	}
 	points := set.CanonicalPoints()
@@ -528,6 +634,11 @@ func validateCheckpoint(set recoveryset.RecoverySet, request Request, report Rep
 		}
 		if err := validateDatabaseResult(points[index], set.Catalog, result); err != nil {
 			return err
+		}
+	}
+	for _, group := range databaseGroups(points) {
+		if databaseGroupStarted(report.Databases, group) && !databaseGroupComplete(report.Databases, group) {
+			return fmt.Errorf("%w: shared-cluster checkpoint is incomplete", ErrInconsistent)
 		}
 	}
 	normalized, err := set.Normalize()
@@ -546,7 +657,7 @@ func validateCheckpoint(set recoveryset.RecoverySet, request Request, report Rep
 		if len(report.Databases) != len(points) || len(report.Objects) != len(normalized.ObjectRoots) {
 			return fmt.Errorf("%w: verification checkpoint precedes provider completion", ErrInconsistent)
 		}
-		if err := validateVerification(normalized, report.Verification); err != nil {
+		if err := validateVerification(normalized, report.Databases, report.Verification); err != nil {
 			return err
 		}
 	}

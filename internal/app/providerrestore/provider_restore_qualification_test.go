@@ -277,59 +277,61 @@ func (fixture *qualificationPostgresFixture) databaseURL(t *testing.T, name stri
 }
 
 type qualificationDatabaseProvider struct {
-	fixture            *qualificationPostgresFixture
-	backups            map[recoveryset.DatabaseRole]qualificationBackup
-	mu                 sync.Mutex
-	restoredURLs       map[recoveryset.DatabaseRole]string
-	restoreStartedAt   time.Time
-	restoreCompletedAt time.Time
-	restoreStarted     bool
+	fixture      *qualificationPostgresFixture
+	backups      map[recoveryset.DatabaseRole]qualificationBackup
+	mu           sync.Mutex
+	restoredURLs map[recoveryset.DatabaseRole]string
 }
 
-func (provider *qualificationDatabaseProvider) RestoreDatabase(ctx context.Context, request providerrestore.DatabaseRequest) (providerrestore.DatabaseResult, error) {
-	backup, ok := provider.backups[request.Point.DatabaseRole]
-	if !ok || backup.point != request.Point {
-		return providerrestore.DatabaseResult{}, fmt.Errorf("unknown PostgreSQL recovery point")
+func (provider *qualificationDatabaseProvider) RestoreCluster(ctx context.Context, request providerrestore.DatabaseRequest) ([]providerrestore.DatabaseResult, error) {
+	if len(request.Points) == 0 {
+		return nil, fmt.Errorf("PostgreSQL recovery points are required")
 	}
-	provider.mu.Lock()
-	if !provider.restoreStarted {
-		provider.restoreStartedAt = time.Now().UTC()
-		if err := runContainerCommandError(ctx, provider.fixture.container, "su", "postgres", "-c", `pg_ctl -D /tmp/fai981-physical-base -o "-p 55432 -k /tmp -c listen_addresses='*'" -w start`); err != nil {
-			provider.mu.Unlock()
-			return providerrestore.DatabaseResult{}, err
+	for _, point := range request.Points {
+		backup, ok := provider.backups[point.DatabaseRole]
+		if !ok || backup.point != point || point.ClusterIdentity != request.Points[0].ClusterIdentity || point.RecoveryIdentity != request.Points[0].RecoveryIdentity {
+			return nil, fmt.Errorf("unknown PostgreSQL recovery point")
 		}
-		provider.restoreCompletedAt = time.Now().UTC()
-		provider.restoreStarted = true
 	}
-	started, completed := provider.restoreStartedAt, provider.restoreCompletedAt
-	provider.mu.Unlock()
-	restoredURL, err := provider.fixture.restoredDatabaseURL(ctx, request.Point.DatabaseIdentity)
-	if err != nil {
-		return providerrestore.DatabaseResult{}, err
+	started := time.Now().UTC()
+	if err := runContainerCommandError(ctx, provider.fixture.container, "su", "postgres", "-c", "pg_ctl -D /tmp/fai981-physical-base status"); err != nil {
+		if err := runContainerCommandError(ctx, provider.fixture.container, "su", "postgres", "-c", `pg_ctl -D /tmp/fai981-physical-base -o "-p 55432 -k /tmp -c listen_addresses='*'" -w start`); err != nil {
+			return nil, err
+		}
 	}
-	pool, err := pgxpool.New(ctx, restoredURL)
-	if err != nil {
-		return providerrestore.DatabaseResult{}, err
+	completed := time.Now().UTC()
+	results := make([]providerrestore.DatabaseResult, 0, len(request.Points))
+	for _, point := range request.Points {
+		backup := provider.backups[point.DatabaseRole]
+		restoredURL, err := provider.fixture.restoredDatabaseURL(ctx, point.DatabaseIdentity)
+		if err != nil {
+			return nil, err
+		}
+		pool, err := pgxpool.New(ctx, restoredURL)
+		if err != nil {
+			return nil, err
+		}
+		stateDigest, err := qualificationDatabaseStateDigestContext(ctx, pool, point.DatabaseRole)
+		pool.Close()
+		if err != nil || stateDigest != backup.stateDigest {
+			return nil, fmt.Errorf("restored PostgreSQL state mismatch: %w", err)
+		}
+		provider.mu.Lock()
+		provider.restoredURLs[point.DatabaseRole] = restoredURL
+		provider.mu.Unlock()
+		result := providerrestore.DatabaseResult{
+			Provider: "postgresql-physical-basebackup", OperationID: "postgres-physical-restore:" + digestText(point.RecoveryIdentity),
+			DatabaseRole: point.DatabaseRole, ClusterIdentity: point.ClusterIdentity,
+			DatabaseIdentity: point.DatabaseIdentity, RecoveryIdentity: point.RecoveryIdentity,
+			StateDigest: stateDigest, StartedAt: started, CompletedAt: completed,
+		}
+		if point.DatabaseRole == recoveryset.DatabaseDuckLake {
+			catalog := request.Catalog
+			result.Catalog = &catalog
+		}
+		results = append(results, result)
 	}
-	stateDigest, err := qualificationDatabaseStateDigestContext(ctx, pool, request.Point.DatabaseRole)
-	pool.Close()
-	if err != nil || stateDigest != backup.stateDigest {
-		return providerrestore.DatabaseResult{}, fmt.Errorf("restored PostgreSQL state mismatch: %w", err)
-	}
-	provider.mu.Lock()
-	provider.restoredURLs[request.Point.DatabaseRole] = restoredURL
-	provider.mu.Unlock()
-	result := providerrestore.DatabaseResult{
-		Provider: "postgresql-physical-basebackup", OperationID: "postgres-physical-restore:" + digestText(request.Point.RecoveryIdentity),
-		DatabaseRole: request.Point.DatabaseRole, ClusterIdentity: request.Point.ClusterIdentity,
-		DatabaseIdentity: request.Point.DatabaseIdentity, RecoveryIdentity: request.Point.RecoveryIdentity,
-		StateDigest: stateDigest, StartedAt: started, CompletedAt: completed,
-	}
-	if request.Point.DatabaseRole == recoveryset.DatabaseDuckLake {
-		catalog := request.Catalog
-		result.Catalog = &catalog
-	}
-	return result, nil
+	return results, nil
 }
 
 func (fixture *qualificationPostgresFixture) restoredDatabaseURL(ctx context.Context, database string) (string, error) {

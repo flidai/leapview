@@ -2,8 +2,11 @@ package providerrestore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
 	"testing"
 	"time"
 
@@ -31,14 +34,16 @@ func TestCoordinatorOrdersProvidersPublishesAndCompletesLedger(t *testing.T) {
 	if len(fixture.ledger.result.Evidence) != 1 || fixture.ledger.result.Evidence[0].SHA256 == "" {
 		t.Fatalf("ledger evidence = %#v", fixture.ledger.result.Evidence)
 	}
+	if report.Verification.ControlStateDigest != report.Databases[0].StateDigest || report.Verification.DuckLakeStateDigest != report.Databases[1].StateDigest {
+		t.Fatalf("verification digests are not bound to provider results: report=%#v", report)
+	}
 }
 
 func TestCoordinatorResumeSkipsDurableProviderCheckpoint(t *testing.T) {
 	fixture := newCoordinatorFixture(t)
 	point := fixture.set.CanonicalPoints()[0]
 	control := matchingDatabaseResult(point, fixture.set.Catalog, fixture.now())
-	fixture.store.report = Report{SchemaVersion: ReportSchemaVersion, Kind: ReportKind, Status: StatusRunning, OccurrenceID: fixture.request.OccurrenceID, RecoverySetID: fixture.set.ID, FrontierDigest: fixture.set.FrontierDigest, TargetID: fixture.request.TargetID, Databases: []DatabaseResult{control}, StartedAt: fixture.now()}
-	fixture.store.found = true
+	fixture.seedCheckpoint(Report{SchemaVersion: ReportSchemaVersion, Kind: ReportKind, Status: StatusRunning, OccurrenceID: fixture.request.OccurrenceID, Fence: fixture.request.Fence, RecoverySetID: fixture.set.ID, FrontierDigest: fixture.set.FrontierDigest, TargetID: fixture.request.TargetID, Databases: []DatabaseResult{control}, StartedAt: fixture.now()})
 	fixture.ledger.occurrence.RestoreStartedAt = fixture.now()
 	if _, err := fixture.coordinator.Run(t.Context(), fixture.request); err != nil {
 		t.Fatal(err)
@@ -52,12 +57,13 @@ func TestCoordinatorResumeSkipsDurableProviderCheckpoint(t *testing.T) {
 
 func TestCoordinatorResumesAfterDurableCheckpointResponseLoss(t *testing.T) {
 	fixture := newCoordinatorFixture(t)
-	fixture.store.failAfterDatabaseCheckpoint = true
+	fixture.ledger.checkpointErrAfterCommitCall = 2
 	if _, err := fixture.coordinator.Run(t.Context(), fixture.request); !errors.Is(err, ErrIndeterminate) {
 		t.Fatalf("lost checkpoint response error = %v", err)
 	}
-	if len(fixture.store.report.Databases) != 1 || fixture.store.report.Databases[0].DatabaseRole != recoveryset.DatabaseControl {
-		t.Fatalf("durable provider checkpoint = %#v", fixture.store.report.Databases)
+	checkpoint := fixture.mustCheckpoint(t)
+	if len(checkpoint.Databases) != 1 || checkpoint.Databases[0].DatabaseRole != recoveryset.DatabaseControl {
+		t.Fatalf("durable provider checkpoint = %#v", checkpoint.Databases)
 	}
 	fixture.calls = nil
 	if _, err := fixture.coordinator.Run(t.Context(), fixture.request); err != nil {
@@ -131,8 +137,8 @@ func TestCoordinatorDoesNotCheckpointProviderEffectAfterFenceLoss(t *testing.T) 
 	if !errors.Is(err, ErrIndeterminate) {
 		t.Fatalf("fence-loss error = %v", err)
 	}
-	if len(report.Databases) != 0 || len(fixture.store.report.Databases) != 0 {
-		t.Fatalf("stale provider effect became authoritative: report=%#v stored=%#v", report.Databases, fixture.store.report.Databases)
+	if len(report.Databases) != 0 || len(fixture.ledger.occurrence.Evidence) != 1 {
+		t.Fatalf("stale provider effect became authoritative: report=%#v", report.Databases)
 	}
 	if fixture.ledger.completed || fixture.ledger.failed {
 		t.Fatal("stale owner changed terminal ledger state")
@@ -158,6 +164,138 @@ func TestCoordinatorUsesStableProviderIdempotencyKeys(t *testing.T) {
 	}
 }
 
+func TestCoordinatorRejectsCheckpointWrittenAfterFenceLoss(t *testing.T) {
+	fixture := newCoordinatorFixture(t)
+	oldFence := fixture.request.Fence
+	successorFence := recovery.Fence{Owner: "worker-successor", Generation: oldFence.Generation + 1}
+	fixture.store.afterSave = func(report Report) {
+		if len(report.Databases) > 0 {
+			// Simulate lease expiry recovery and a successor ClaimNext between
+			// the coordinator's post-effect check and the fenced pointer update.
+			fixture.ledger.occurrence.LeaseExpiresAt = fixture.clock
+			fixture.ledger.occurrence.Fence = successorFence
+			fixture.ledger.occurrence.LeaseExpiresAt = fixture.clock.Add(time.Hour)
+		}
+	}
+	if _, err := fixture.coordinator.Run(t.Context(), fixture.request); !errors.Is(err, ErrIndeterminate) {
+		t.Fatalf("stale checkpoint error = %v", err)
+	}
+	checkpoint := fixture.mustCheckpoint(t)
+	if checkpoint.Fence != oldFence || len(checkpoint.Databases) != 0 {
+		t.Fatalf("stale provider checkpoint became authoritative: %#v", checkpoint)
+	}
+
+	fixture.store.afterSave = nil
+	fixture.calls = nil
+	fixture.request.Fence = successorFence
+	report, err := fixture.coordinator.Run(t.Context(), fixture.request)
+	if err != nil || report.Status != StatusSucceeded {
+		t.Fatalf("successor report=%#v err=%v", report, err)
+	}
+	if report.Fence != successorFence || len(fixture.calls) == 0 || fixture.calls[0] != "database:control" {
+		t.Fatalf("successor accepted stale checkpoint: report fence=%#v calls=%v", report.Fence, fixture.calls)
+	}
+}
+
+func TestCoordinatorReconcilesCommittedPublicationAfterResponseLoss(t *testing.T) {
+	fixture := newCoordinatorFixture(t)
+	fixture.sets.publishErrAfterCommit = errors.New("publication readback response lost")
+	report, err := fixture.coordinator.Run(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != StatusSucceeded || report.Admission.PublishedStatus != recoveryset.StatusPublished || !fixture.ledger.completed || fixture.ledger.failed {
+		t.Fatalf("report=%#v completed=%v failed=%v", report, fixture.ledger.completed, fixture.ledger.failed)
+	}
+}
+
+func TestCoordinatorRejectsVerificationDigestMismatch(t *testing.T) {
+	fixture := newCoordinatorFixture(t)
+	fixture.verifier.mismatch = true
+	report, err := fixture.coordinator.Run(t.Context(), fixture.request)
+	if !errors.Is(err, ErrInconsistent) {
+		t.Fatalf("verification mismatch error = %v", err)
+	}
+	if report.Status != StatusFailed || fixture.ledger.completed {
+		t.Fatalf("inconsistent verification completed recovery: %#v", report)
+	}
+}
+
+func TestCoordinatorRestoresSharedClusterOnceAcrossRestart(t *testing.T) {
+	fixture := newCoordinatorFixture(t)
+	points := fixture.set.CanonicalPoints()
+	points[1].ClusterIdentity = points[0].ClusterIdentity
+	points[1].RecoveryIdentity = points[0].RecoveryIdentity
+	fixture.set.ClusterPoints = points
+	fixture.set.FrontierDigest = ""
+	normalized, err := fixture.set.Normalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized.FrontierDigest, err = normalized.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.set, fixture.sets.set = normalized, normalized
+	fixture.ledger.checkpointErrAfterCommitCall = 2
+	if _, err := fixture.coordinator.Run(t.Context(), fixture.request); !errors.Is(err, ErrIndeterminate) {
+		t.Fatalf("checkpoint response-loss error = %v", err)
+	}
+	if fixture.databases.clusterCalls != 1 || len(fixture.databases.keys) != 1 {
+		t.Fatalf("shared cluster restore calls=%d keys=%v", fixture.databases.clusterCalls, fixture.databases.keys)
+	}
+	restarted, err := New(Dependencies{Ledger: fixture.ledger, Sets: fixture.sets, Databases: fixture.databases, Objects: fixture.objects, Verifier: fixture.verifier, Evidence: fixture.store, Now: fixture.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.Run(t.Context(), fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.databases.clusterCalls != 1 || len(fixture.databases.keys) != 1 {
+		t.Fatalf("restart repeated shared PITR: calls=%d keys=%v", fixture.databases.clusterCalls, fixture.databases.keys)
+	}
+}
+
+func TestCoordinatorRejectsMutatedCompletedEvidence(t *testing.T) {
+	fixture := newCoordinatorFixture(t)
+	store := FileEvidenceStore{Root: t.TempDir()}
+	coordinator, err := New(Dependencies{Ledger: fixture.ledger, Sets: fixture.sets, Databases: fixture.databases, Objects: fixture.objects, Verifier: fixture.verifier, Evidence: store, Now: fixture.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.Run(t.Context(), fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.ledger.occurrence.Evidence) != 1 {
+		t.Fatalf("completion evidence = %#v", fixture.ledger.occurrence.Evidence)
+	}
+	reference := fixture.ledger.occurrence.Evidence[0]
+	parsed, err := url.Parse(reference.URI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(parsed.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report Report
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	report.TargetID += "-modified"
+	modified, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modified = append(modified, '\n')
+	if err := os.WriteFile(parsed.Path, modified, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.Run(t.Context(), fixture.request); !errors.Is(err, ErrInconsistent) {
+		t.Fatalf("mutated completed evidence error = %v", err)
+	}
+}
+
 type coordinatorFixture struct {
 	coordinator *Coordinator
 	request     Request
@@ -167,6 +305,7 @@ type coordinatorFixture struct {
 	store       *memoryEvidence
 	databases   *fakeDatabases
 	objects     *fakeObjects
+	verifier    *fakeVerifier
 	calls       []string
 	clock       time.Time
 }
@@ -181,7 +320,8 @@ func newCoordinatorFixture(t *testing.T) *coordinatorFixture {
 	fixture.store = &memoryEvidence{}
 	fixture.databases = &fakeDatabases{calls: &fixture.calls, now: fixture.now}
 	fixture.objects = &fakeObjects{calls: &fixture.calls, now: fixture.now}
-	coordinator, err := New(Dependencies{Ledger: fixture.ledger, Sets: fixture.sets, Databases: fixture.databases, Objects: fixture.objects, Verifier: fakeVerifier{calls: &fixture.calls, now: fixture.now}, Evidence: fixture.store, Now: fixture.now})
+	fixture.verifier = &fakeVerifier{calls: &fixture.calls, now: fixture.now}
+	coordinator, err := New(Dependencies{Ledger: fixture.ledger, Sets: fixture.sets, Databases: fixture.databases, Objects: fixture.objects, Verifier: fixture.verifier, Evidence: fixture.store, Now: fixture.now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,15 +334,37 @@ func (fixture *coordinatorFixture) now() time.Time {
 	return fixture.clock
 }
 
+func (fixture *coordinatorFixture) seedCheckpoint(report Report) {
+	reference, err := fixture.store.Save(context.Background(), report)
+	if err != nil {
+		panic(err)
+	}
+	fixture.ledger.occurrence.Evidence = []recovery.EvidenceReference{reference}
+}
+
+func (fixture *coordinatorFixture) mustCheckpoint(t *testing.T) Report {
+	t.Helper()
+	if len(fixture.ledger.occurrence.Evidence) != 1 {
+		t.Fatalf("checkpoint references = %#v", fixture.ledger.occurrence.Evidence)
+	}
+	report, err := fixture.store.Load(t.Context(), fixture.ledger.occurrence.Evidence[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
 type fakeLedger struct {
 	recovery.Repository
-	occurrence             recovery.Occurrence
-	phases                 []string
-	result                 recovery.Result
-	completed              bool
-	failed                 bool
-	completeCalls          int
-	completeErrAfterCommit error
+	occurrence                   recovery.Occurrence
+	phases                       []string
+	result                       recovery.Result
+	completed                    bool
+	failed                       bool
+	completeCalls                int
+	completeErrAfterCommit       error
+	checkpointCalls              int
+	checkpointErrAfterCommitCall int
 }
 
 func (ledger *fakeLedger) Occurrence(context.Context, string) (recovery.Occurrence, error) {
@@ -218,10 +380,22 @@ func (ledger *fakeLedger) RecordPhase(_ context.Context, _ string, _ recovery.Fe
 	}
 	return nil
 }
+func (ledger *fakeLedger) RecordCheckpoint(_ context.Context, id string, fence recovery.Fence, at time.Time, reference recovery.EvidenceReference) error {
+	ledger.checkpointCalls++
+	if ledger.occurrence.ID != id || ledger.occurrence.Fence != fence || ledger.occurrence.Status != recovery.StatusRunning || (!ledger.occurrence.LeaseExpiresAt.IsZero() && !at.Before(ledger.occurrence.LeaseExpiresAt)) {
+		return recovery.ErrFenced
+	}
+	ledger.occurrence.Evidence = []recovery.EvidenceReference{reference}
+	if ledger.checkpointErrAfterCommitCall == ledger.checkpointCalls {
+		return errors.New("checkpoint response lost")
+	}
+	return nil
+}
 func (ledger *fakeLedger) Complete(_ context.Context, _ string, _ recovery.Fence, _ time.Time, result recovery.Result) error {
 	ledger.completeCalls++
 	ledger.completed, ledger.result = true, result
 	ledger.occurrence.Status = recovery.StatusSucceeded
+	ledger.occurrence.Evidence = append([]recovery.EvidenceReference(nil), result.Evidence...)
 	if ledger.completeErrAfterCommit != nil {
 		err := ledger.completeErrAfterCommit
 		ledger.completeErrAfterCommit = nil
@@ -231,14 +405,17 @@ func (ledger *fakeLedger) Complete(_ context.Context, _ string, _ recovery.Fence
 }
 func (ledger *fakeLedger) Fail(_ context.Context, _ string, _ recovery.Fence, _ time.Time, result recovery.Result, _ error) error {
 	ledger.failed, ledger.result = true, result
+	ledger.occurrence.Status = recovery.StatusFailed
+	ledger.occurrence.Evidence = append([]recovery.EvidenceReference(nil), result.Evidence...)
 	return nil
 }
 
 type fakeSets struct {
 	RecoverySetAuthority
-	set     recoveryset.RecoverySet
-	attempt recoveryset.ValidationAttempt
-	result  recoveryset.ValidationResult
+	set                   recoveryset.RecoverySet
+	attempt               recoveryset.ValidationAttempt
+	result                recoveryset.ValidationResult
+	publishErrAfterCommit error
 }
 
 func (sets *fakeSets) ReadExact(context.Context, string) (recoveryset.RecoverySet, error) {
@@ -262,25 +439,36 @@ func (sets *fakeSets) CompleteValidation(_ context.Context, attempt recoveryset.
 func (sets *fakeSets) Publish(_ context.Context, _ string, _ string, _ int64, attemptID string) (recoveryset.RecoverySet, error) {
 	sets.set.Status = recoveryset.StatusPublished
 	sets.set.PublishedValidationAttemptID = attemptID
+	if sets.publishErrAfterCommit != nil {
+		return recoveryset.RecoverySet{}, sets.publishErrAfterCommit
+	}
 	return sets.set, nil
 }
 
 type memoryEvidence struct {
-	report                      Report
-	found                       bool
-	failAfterDatabaseCheckpoint bool
+	reports   map[string]Report
+	saves     int
+	afterSave func(Report)
 }
 
-func (store *memoryEvidence) Load(context.Context, string) (Report, bool, error) {
-	return store.report, store.found, nil
+func (store *memoryEvidence) Load(_ context.Context, reference recovery.EvidenceReference) (Report, error) {
+	report, ok := store.reports[reference.URI]
+	if !ok {
+		return Report{}, os.ErrNotExist
+	}
+	return report, nil
 }
 func (store *memoryEvidence) Save(_ context.Context, report Report) (recovery.EvidenceReference, error) {
-	store.report, store.found = report, true
-	if store.failAfterDatabaseCheckpoint && len(report.Databases) == 1 {
-		store.failAfterDatabaseCheckpoint = false
-		return recovery.EvidenceReference{}, errors.New("checkpoint response lost")
+	if store.reports == nil {
+		store.reports = map[string]Report{}
 	}
-	return recovery.EvidenceReference{Kind: "provider-restore", URI: "file:///evidence/provider-restore.json", SHA256: strings64("a")}, nil
+	store.saves++
+	reference := recovery.EvidenceReference{Kind: "provider-restore", URI: fmt.Sprintf("file:///evidence/provider-restore-%d.json", store.saves), SHA256: fmt.Sprintf("%064x", store.saves)}
+	store.reports[reference.URI] = report
+	if store.afterSave != nil {
+		store.afterSave(report)
+	}
+	return reference, nil
 }
 
 type fakeDatabases struct {
@@ -288,20 +476,25 @@ type fakeDatabases struct {
 	now          func() time.Time
 	err          error
 	keys         []string
+	clusterCalls int
 	afterRestore func()
 }
 
-func (provider *fakeDatabases) RestoreDatabase(_ context.Context, request DatabaseRequest) (DatabaseResult, error) {
-	*provider.calls = append(*provider.calls, "database:"+string(request.Point.DatabaseRole))
+func (provider *fakeDatabases) RestoreCluster(_ context.Context, request DatabaseRequest) ([]DatabaseResult, error) {
+	provider.clusterCalls++
 	provider.keys = append(provider.keys, request.IdempotencyKey)
 	if provider.err != nil {
-		return DatabaseResult{}, provider.err
+		return nil, provider.err
 	}
-	result := matchingDatabaseResult(request.Point, request.Catalog, provider.now())
+	results := make([]DatabaseResult, 0, len(request.Points))
+	for _, point := range request.Points {
+		*provider.calls = append(*provider.calls, "database:"+string(point.DatabaseRole))
+		results = append(results, matchingDatabaseResult(point, request.Catalog, provider.now()))
+	}
 	if provider.afterRestore != nil {
 		provider.afterRestore()
 	}
-	return result, nil
+	return results, nil
 }
 
 func matchingDatabaseResult(point recoveryset.ClusterRecoveryPoint, catalog recoveryset.CatalogCommit, now time.Time) DatabaseResult {
@@ -331,13 +524,21 @@ func (provider *fakeObjects) RestoreObject(_ context.Context, request ObjectRequ
 }
 
 type fakeVerifier struct {
-	calls *[]string
-	now   func() time.Time
+	calls    *[]string
+	now      func() time.Time
+	mismatch bool
 }
 
-func (verifier fakeVerifier) Verify(_ context.Context, request VerificationRequest) (VerificationResult, error) {
+func (verifier *fakeVerifier) Verify(_ context.Context, request VerificationRequest) (VerificationResult, error) {
 	*verifier.calls = append(*verifier.calls, "verify")
-	return VerificationResult{ProviderOperationID: "verification-operation", ControlStateDigest: "sha256:" + strings64("c"), DuckLakeStateDigest: "sha256:" + strings64("d"), Catalog: request.Set.Catalog, ObjectsConsistent: true, Ready: true, VerifiedAt: verifier.now()}, nil
+	digests := map[recoveryset.DatabaseRole]string{}
+	for _, database := range request.Databases {
+		digests[database.DatabaseRole] = database.StateDigest
+	}
+	if verifier.mismatch {
+		digests[recoveryset.DatabaseDuckLake] = "sha256:" + strings64("d")
+	}
+	return VerificationResult{ProviderOperationID: "verification-operation", ControlStateDigest: digests[recoveryset.DatabaseControl], DuckLakeStateDigest: digests[recoveryset.DatabaseDuckLake], Catalog: request.Set.Catalog, ObjectsConsistent: true, Ready: true, VerifiedAt: verifier.now()}, nil
 }
 
 func providerRestoreSet(t *testing.T) recoveryset.RecoverySet {
