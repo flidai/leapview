@@ -42,6 +42,7 @@ import {
 } from 'lucide'
 import { lucideIcon } from './lucide-icons'
 import { entityListStickyStyles } from './entity-list-sticky.styles'
+import { entityListGroupStyles } from './entity-list-group.styles'
 import './user-avatar'
 
 export type EntityListItem = {
@@ -460,14 +461,7 @@ const entityListStyles = `
     font: var(--lv-type-caption);
   }
 
-  lv-entity-list[group-appearance='compact'] .entity-list-group-row th {
-    height: 2.5rem;
-    padding: var(--base-size-2);
-  }
-
-  lv-entity-list[group-appearance='compact'] .entity-list-group-toggle {
-    padding-block: var(--base-size-4);
-  }
+  ${entityListGroupStyles}
 
   .entity-list-table-row.is-actionable {
     cursor: pointer;
