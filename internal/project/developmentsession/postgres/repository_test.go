@@ -74,3 +74,17 @@ func TestResolveIsOwnerAndScopeBound(t *testing.T) {
 		t.Fatalf("missing row error = %v", err)
 	}
 }
+
+func TestMarshalDiagnosticsPreservesEmptyArrayForFirstSession(t *testing.T) {
+	encoded, err := marshalDiagnostics(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != "[]" {
+		t.Fatalf("first session diagnostics = %s, want []", encoded)
+	}
+	encoded, err = marshalDiagnostics([]developmentsession.Diagnostic{{Code: "INVALID", Message: "fix model"}})
+	if err != nil || !strings.Contains(string(encoded), `"code":"INVALID"`) {
+		t.Fatalf("retained diagnostics = %s, %v", encoded, err)
+	}
+}

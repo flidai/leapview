@@ -2,15 +2,19 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/project/developmentsession"
 	developmenthttp "github.com/flidai/leapview/internal/project/developmentsession/http"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -130,5 +134,47 @@ func TestDevelopmentSessionAPIRoutesInstallBearerPrincipal(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("missing bearer status = %d", response.Code)
+	}
+}
+
+func TestDevelopmentSessionProjectScopeBeforeFirstActivation(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_1")
+	key := developmentsession.Key{
+		OwnerID: "owner_1", CheckoutID: "checkout_1", WorktreeID: "checkout_1",
+		ProjectID: projectID, TargetID: "target_1", Environment: "dev",
+	}
+	store := developmentsession.NewMemoryStore()
+	if _, err := store.Save(t.Context(), developmentsession.Record{Key: key}, 0); err != nil {
+		t.Fatal(err)
+	}
+	// A fresh local target has a durable Project claim but no activated
+	// dashboard serving lease. Its first development-session attempt must still
+	// be able to resolve the exact, claimed project scope.
+	claim := projectClaimRepositoryStub{claim: deployment.ProjectClaim{
+		ProjectID: projectID, Environment: servingstate.Environment("dev"),
+		ClaimedBy: key.OwnerID, ClaimedAt: time.Now().UTC(),
+	}}
+	authoringProject := postgresAuthoringProjectIDResolver(claim, authoringServingStateReaderStub{}, key.TargetID, "dev")
+	runtime := &runtimeServices{
+		projectIDResolver: func(context.Context) (projectgraph.ResourceID, error) {
+			return "", errors.New("no active serving generation")
+		},
+		developmentProjectIDResolver: authoringProject,
+	}
+	if _, err := runtime.resolveProjectID(t.Context()); err == nil {
+		t.Fatal("fresh runtime unexpectedly acquired an active serving lease")
+	}
+	handler := developmenthttp.New(developmenthttp.Config{
+		Store: store, Enabled: true, CheckoutID: key.CheckoutID, WorktreeID: key.WorktreeID,
+		TargetID: key.TargetID, Environment: key.Environment,
+		CurrentPrincipal: func(*http.Request) (string, bool) { return key.OwnerID, true },
+		ResolveProjectID: runtime.developmentProjectIDResolver,
+	})
+	router := chi.NewRouter()
+	handler.Mount(router)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/projects/project_1/targets/target_1/development-session/", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), key.ID()) {
+		t.Fatalf("fresh local development session = %d %q", response.Code, response.Body.String())
 	}
 }

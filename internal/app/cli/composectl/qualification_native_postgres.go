@@ -314,19 +314,36 @@ func (topology *qualificationNativePostgresTopology) AssertDurableActivePointer(
 	targetID string,
 	generationID string,
 ) error {
-	if topology == nil || topology.Container == nil {
-		return errors.New("qualification PostgreSQL topology is unavailable")
-	}
-	if !qualificationMultiNodeScopeIdentifier.MatchString(strings.TrimSpace(targetID)) {
-		return errors.New("qualification durable pointer target ID contains unsupported characters")
-	}
 	if !qualificationMultiNodeScopeIdentifier.MatchString(strings.TrimSpace(generationID)) {
 		return errors.New("qualification durable pointer generation ID contains unsupported characters")
 	}
+	selectedGeneration, err := topology.DurableActiveGeneration(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	if selectedGeneration != generationID {
+		return fmt.Errorf(
+			"durable active PostgreSQL pointer selected generation %q, want %q",
+			selectedGeneration,
+			generationID,
+		)
+	}
+	return nil
+}
+
+func (topology *qualificationNativePostgresTopology) DurableActiveGeneration(
+	ctx context.Context,
+	targetID string,
+) (string, error) {
+	if topology == nil || topology.Container == nil {
+		return "", errors.New("qualification PostgreSQL topology is unavailable")
+	}
+	if !qualificationMultiNodeScopeIdentifier.MatchString(strings.TrimSpace(targetID)) {
+		return "", errors.New("qualification durable pointer target ID contains unsupported characters")
+	}
 	query := fmt.Sprintf(
-		"SELECT count(*) FROM delivery.delivery_active_pointer ap JOIN delivery.delivery_publication p ON p.publication_id = ap.publication_id AND p.target_id = ap.target_id AND p.generation_id = ap.generation_id WHERE ap.target_id = '%s' AND ap.generation_id::text = '%s' AND p.state = 'committed'",
+		"SELECT COALESCE((SELECT generation_id::text FROM delivery.delivery_active_pointer WHERE target_id = '%s'), '')",
 		targetID,
-		generationID,
 	)
 	// sqlc-exception: analyzer-incompatible. Qualification executes psql
 	// through a sidecar container command, outside generated query code.
@@ -338,12 +355,13 @@ func (topology *qualificationNativePostgresTopology) AssertDurableActivePointer(
 psql --host localhost --username leapview_control_readonly --dbname leapview_control --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "`+query+`"`,
 	)
 	if err != nil {
-		return qualificationContainerOperationError(ctx, topology.Container, "verify durable active PostgreSQL pointer", err)
+		return "", qualificationContainerOperationError(ctx, topology.Container, "read durable active PostgreSQL pointer", err)
 	}
-	if strings.TrimSpace(string(output)) != "1" {
-		return fmt.Errorf("durable active PostgreSQL pointer did not select the expected committed generation: %q", strings.TrimSpace(string(redactQualificationBytes(output))))
+	selectedGeneration := strings.TrimSpace(string(output))
+	if !qualificationMultiNodeScopeIdentifier.MatchString(selectedGeneration) {
+		return "", fmt.Errorf("durable active PostgreSQL pointer returned invalid generation %q", strings.TrimSpace(string(redactQualificationBytes(output))))
 	}
-	return nil
+	return selectedGeneration, nil
 }
 
 // startQualificationNativePostgresTopology is the Controller seam used by
