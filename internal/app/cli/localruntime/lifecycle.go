@@ -494,14 +494,16 @@ func (controller *Controller) redactRuntimeOutput(runtime lifecycleRuntime, outp
 			}
 		}
 	}
-	if encoded, err := securefs.ReadPrivateFile(filepath.Join(runtime.root, credentialsFileName)); err == nil {
-		var values map[string]any
-		if json.Unmarshal(encoded, &values) == nil {
-			for name, raw := range values {
-				value, ok := raw.(string)
-				upper := strings.ToUpper(name)
-				if ok && value != "" && (strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "TOKEN") || strings.Contains(upper, "SECRET")) {
-					redacted = strings.ReplaceAll(redacted, value, safetext.Replacement)
+	for _, name := range []string{credentialsFileName, browserCredentialsFileName} {
+		if encoded, err := securefs.ReadPrivateFile(filepath.Join(runtime.root, name)); err == nil {
+			var values map[string]any
+			if json.Unmarshal(encoded, &values) == nil {
+				for field, raw := range values {
+					value, ok := raw.(string)
+					upper := strings.ToUpper(field)
+					if ok && value != "" && (strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "TOKEN") || strings.Contains(upper, "SECRET")) {
+						redacted = strings.ReplaceAll(redacted, value, safetext.Replacement)
+					}
 				}
 			}
 		}
@@ -661,7 +663,7 @@ func (controller *Controller) resumeReset(ctx context.Context, runtime lifecycle
 	// Keep the authoritative state descriptor until every subordinate artifact
 	// has been removed. A retry can therefore finish cleanup even when an
 	// interruption happened after runtime.env or the attachment registry left.
-	for _, name := range []string{runtimeEnvFileName, credentialsFileName, qualificationFileName, poolFileName, evidenceFileName, attachmentsFileName, stateFileName} {
+	for _, name := range []string{runtimeEnvFileName, credentialsFileName, browserCredentialsFileName, qualificationFileName, poolFileName, evidenceFileName, attachmentsFileName, stateFileName} {
 		path := filepath.Join(runtime.root, name)
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove local runtime state %s: %w", name, err)

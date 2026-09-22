@@ -36,6 +36,10 @@ type LoginRequest struct {
 	ProjectID    string
 	Capabilities []string
 	Headless     bool
+	// BeforeExchange lets a trusted local launcher complete the browser-side
+	// authorization with an already-authenticated local session. Remote login
+	// leaves this unset and retains the ordinary interactive device flow.
+	BeforeExchange func(context.Context, DeviceChallenge) error
 }
 
 type LoginResult struct {
@@ -119,6 +123,11 @@ func (auth Authenticator) Login(ctx context.Context, request LoginRequest, notif
 	if !request.Headless && auth.OpenBrowser != nil {
 		if err := auth.OpenBrowser(challenge.VerificationURIComplete); err != nil {
 			return LoginResult{}, fmt.Errorf("open device authorization in browser: %w", err)
+		}
+	}
+	if request.BeforeExchange != nil {
+		if err := request.BeforeExchange(ctx, challenge); err != nil {
+			return LoginResult{}, fmt.Errorf("complete device authorization: %w", err)
 		}
 	}
 	token, err := authorization.Token(ctx)

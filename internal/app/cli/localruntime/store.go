@@ -56,6 +56,7 @@ const (
 	runtimeEnvFileName             = "runtime.env"
 	developmentCredentialsFileName = "development-credentials.env"
 	credentialsFileName            = "initial-credentials.json"
+	browserCredentialsFileName     = "local-browser-credentials.json"
 	qualificationFileName          = "physical-pool-qualification.json"
 	poolFileName                   = "physical-pool.json"
 	evidenceFileName               = "physical-pool-evidence.json"

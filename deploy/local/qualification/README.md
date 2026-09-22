@@ -32,20 +32,19 @@ remains a separate build/provenance gate and is not replaced by this lane.
 
 ## Optional local lifecycle
 
-The lifecycle is deliberately opt-in because local device authentication can
-require a person to approve a browser challenge:
+The lifecycle is deliberately opt-in because it creates and later resets a
+temporary checkout-owned Docker runtime:
 
 ```sh
 ./deploy/local/qualification/qualify.sh \
   --archive leapview-cli-v<version>-linux-amd64.tar.gz \
   --run-lifecycle \
-  --manual-prerequisites-confirmed \
   --docker-host unix:///var/run/docker.sock
 ```
 
 Lifecycle qualification requires a supported Linux or macOS host, an explicit
-local Unix Docker socket, Docker Compose 2.17 or newer, and the manual
-authentication prerequisite. SSH endpoints, arbitrary TCP endpoints, loopback
+local Unix Docker socket, and Docker Compose 2.17 or newer. Local bootstrap
+password rotation and scoped CLI authorization are automatic. SSH endpoints, arbitrary TCP endpoints, loopback
 tunnels, Podman compatibility sockets, and unknown socket paths are rejected.
 The v1 endpoint set covers Linux Docker Engine and macOS Docker Desktop,
 OrbStack, Colima Docker-mode profiles, and Rancher Desktop Moby/dockerd sockets.
