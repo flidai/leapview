@@ -583,24 +583,26 @@ test('chat list row menu supports keyboard dismissal and dispatches actions', as
       trigger.click()
       await list.updateComplete
       const menu = row.querySelector<HTMLElement>('.options-panel')!
+      const menuItems = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())
       trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       const initialArrowFocus = (root.activeElement as HTMLElement)?.textContent?.trim()
-      const pin = menu.querySelector<HTMLButtonElement>('[role="menuitem"]:nth-of-type(2)')!
-      pin.focus()
-      pin.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
+      const rename = menu.querySelector<HTMLButtonElement>('[role="menuitem"]:first-of-type')!
+      rename.focus()
+      rename.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       const arrowFocus = (root.activeElement as HTMLElement)?.textContent?.trim()
-      pin.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }))
+      rename.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }))
       const escaped = { open: menu.matches(':popover-open'), focus: (root.activeElement as HTMLElement)?.getAttribute('aria-label') }
       trigger.click()
       await list.updateComplete
       const reopenedMenu = row.querySelector<HTMLElement>('.options-panel')!
-      reopenedMenu.querySelector<HTMLButtonElement>('[role="menuitem"]:nth-of-type(2)')!.click()
-      return { initialArrowFocus, arrowFocus, escaped, actions }
+      reopenedMenu.querySelector<HTMLButtonElement>('[role="menuitem"]:first-of-type')!.click()
+      return { menuItems, initialArrowFocus, arrowFocus, escaped, actions }
     })
-    expect(state.initialArrowFocus).toBe('Select')
-    expect(state.arrowFocus).toBe('Archive chat')
+    expect(state.menuItems).toEqual(['Rename', 'Delete chat'])
+    expect(state.initialArrowFocus).toBe('Rename')
+    expect(state.arrowFocus).toBe('Delete chat')
     expect(state.escaped).toEqual({ open: false, focus: 'More actions for Revenue check' })
-    expect(state.actions).toEqual([{ action: 'pin', conversationId: 'c1', title: 'Revenue check', href: '/chats/c1' }])
+    expect(state.actions).toEqual([{ action: 'rename', conversationId: 'c1', title: 'Revenue check', href: '/chats/c1' }])
   } finally {
     await page.close()
   }

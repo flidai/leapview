@@ -499,11 +499,7 @@ class LeapViewChatList extends LitElement {
             <div class="options-menu">
               <button class="options-button" type="button" aria-label=${`More actions for ${title}`} aria-haspopup="menu" aria-expanded=${String(this.openMenuID === conversation.id)} title="More actions" @click=${(event: MouseEvent) => this.toggleMenu(event)}>${lucideIcon(MoreHorizontal)}</button>
               <div class="options-panel" popover="auto" role="menu" aria-label=${`Actions for ${title}`} @toggle=${(event: Event) => this.onMenuToggle(event, conversation.id)}>
-                <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'select', conversation, href)}><span aria-hidden="true"></span><span>Select</span></button>
-                <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, conversation.pinned ? 'unpin' : 'pin', conversation, href)}>${lucideIcon(conversation.pinned ? PinOff : Pin, { size: 16 })}<span>${conversation.pinned ? 'Unpin chat' : 'Pin chat'}</span></button>
-                <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'archive', conversation, href)}>${lucideIcon(Archive, { size: 16 })}<span>Archive chat</span></button>
                 <button class="chat-action" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'rename', conversation, href)}>${lucideIcon(Pencil, { size: 16 })}<span>Rename</span></button>
-                <button class="chat-action unavailable" type="button" role="menuitem" disabled title="Chat projects are not supported yet"><span aria-hidden="true"></span><span>Add to project</span></button>
                 <button class="chat-action danger" type="button" role="menuitem" @click=${(event: MouseEvent) => this.runChatAction(event, 'delete', conversation, href)}>${lucideIcon(Trash2, { size: 16 })}<span>Delete chat</span></button>
               </div>
             </div>
