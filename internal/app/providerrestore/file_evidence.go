@@ -81,7 +81,7 @@ func (store FileEvidenceStore) Load(_ context.Context, reference recovery.Eviden
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Report{}, fmt.Errorf("provider restore evidence contains trailing data")
 	}
-	if report.SchemaVersion != ReportSchemaVersion || report.Kind != ReportKind || report.OccurrenceID == "" {
+	if (report.SchemaVersion != LegacyReportSchemaVersion && report.SchemaVersion != ReportSchemaVersion) || report.Kind != ReportKind || report.OccurrenceID == "" {
 		return Report{}, fmt.Errorf("%w: provider restore evidence identity mismatch", ErrInconsistent)
 	}
 	return report, nil
