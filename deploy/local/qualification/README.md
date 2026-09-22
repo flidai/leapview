@@ -46,8 +46,11 @@ require a person to approve a browser challenge:
 Lifecycle qualification requires a supported Linux or macOS host, an explicit
 local Unix Docker socket, Docker Compose 2.17 or newer, and the manual
 authentication prerequisite. SSH endpoints, arbitrary TCP endpoints, loopback
-tunnels, and unknown socket paths are rejected. A forwarded daemon deliberately
-bound onto an otherwise recognized Engine/Desktop socket remains a required
+tunnels, Podman compatibility sockets, and unknown socket paths are rejected.
+The v1 endpoint set covers Linux Docker Engine and macOS Docker Desktop,
+OrbStack, Colima Docker-mode profiles, and Rancher Desktop Moby/dockerd sockets.
+The Docker server must identify an Engine component. A forwarded daemon deliberately
+bound onto an otherwise recognized Docker Engine socket remains a required
 external adversarial platform case; this harness does not infer its absence
 from a responsive API. The selected socket is inspected and explicitly supplied
 before the harness runs `init` or `dev`; ambient Docker context or host values

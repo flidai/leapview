@@ -22,6 +22,7 @@ type fakeDocker struct {
 	active   string
 	contexts map[string]string
 	serverID string
+	engine   string
 }
 
 func (docker *fakeDocker) run(_ context.Context, environment []string, arguments ...string) ([]byte, error) {
@@ -43,6 +44,13 @@ func (docker *fakeDocker) run(_ context.Context, environment []string, arguments
 	}
 	if len(arguments) == 5 && arguments[0] == "--host" && arguments[2] == "info" {
 		return json.Marshal(map[string]any{"ID": docker.serverID, "OperatingSystem": "Docker Engine"})
+	}
+	if len(arguments) == 5 && arguments[0] == "--host" && arguments[2] == "version" {
+		engine := docker.engine
+		if engine == "" {
+			engine = "Engine"
+		}
+		return json.Marshal(map[string]any{"Components": []map[string]string{{"Name": engine}}})
 	}
 	return nil, nil
 }
@@ -272,9 +280,128 @@ func TestTrustedSocketPoliciesAreExact(t *testing.T) {
 	}
 
 	darwin := newResolver(Options{Platform: "darwin", HomeDir: "/Users/author", Environment: []string{}})
-	for _, path := range []string{"/var/run/docker.sock", "/Users/author/.docker/run/docker.sock"} {
-		if kind, ok := darwin.trustedPath(path); !ok || kind != KindDesktop {
-			t.Errorf("Darwin trustedPath(%q) = %q, %v", path, kind, ok)
+	for path, want := range map[string]Kind{
+		"/var/run/docker.sock":                        KindDesktop,
+		"/private/var/run/docker.sock":                KindDesktop,
+		"/Users/author/.docker/run/docker.sock":       KindDesktop,
+		"/Users/author/.orbstack/run/docker.sock":     KindOrbStack,
+		"/Users/author/.colima/default/docker.sock":   KindColima,
+		"/Users/author/.colima/analytics/docker.sock": KindColima,
+		"/Users/author/.rd/docker.sock":               KindRancherDesktop,
+	} {
+		if kind, ok := darwin.trustedPath(path); !ok || kind != want {
+			t.Errorf("Darwin trustedPath(%q) = %q, %v; want %q", path, kind, ok, want)
+		}
+	}
+	for _, path := range []string{
+		"/Users/author/.colima/docker.sock",
+		"/Users/author/.colima/default/other.sock",
+		"/Users/author/.colima/default/nested/docker.sock",
+		"/Users/author/.orbstack/other/docker.sock",
+		"/Users/author/.local/share/containers/podman/machine/podman.sock",
+	} {
+		if _, ok := darwin.trustedPath(path); ok {
+			t.Errorf("Darwin trustedPath(%q) unexpectedly succeeded", path)
+		}
+	}
+}
+
+func TestResolveMacProviderAndDefaultSocketAlias(t *testing.T) {
+	home := shortSocketDir(t)
+	for _, tc := range []struct {
+		name string
+		path string
+		kind Kind
+	}{
+		{"orbstack", filepath.Join(home, ".orbstack", "run", "docker.sock"), KindOrbStack},
+		{"colima-default", filepath.Join(home, ".colima", "default", "docker.sock"), KindColima},
+		{"colima-named", filepath.Join(home, ".colima", "analytics", "docker.sock"), KindColima},
+		{"rancher-desktop", filepath.Join(home, ".rd", "docker.sock"), KindRancherDesktop},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Dir(tc.path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			listener, err := net.Listen("unix", tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = listener.Close() })
+			docker := &fakeDocker{serverID: "engine-1"}
+			for _, host := range []string{"unix://" + tc.path, "unix:///var/run/docker.sock", "unix:///private/var/run/docker.sock"} {
+				endpoint, err := Resolve(t.Context(), Options{
+					Platform: "darwin", HomeDir: home, ExplicitHost: host, Run: docker.run,
+					evaluateSymlinks: func(path string) (string, error) {
+						if path == "/var/run/docker.sock" || path == "/private/var/run/docker.sock" {
+							return tc.path, nil
+						}
+						return filepath.EvalSymlinks(path)
+					},
+				})
+				if err != nil {
+					t.Fatalf("Resolve(%q): %v", host, err)
+				}
+				if endpoint.Host() != "unix://"+tc.path || endpoint.Kind() != tc.kind {
+					t.Fatalf("Resolve(%q) = host %q kind %q", host, endpoint.Host(), endpoint.Kind())
+				}
+				if err := endpoint.Verify(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			docker.active = tc.name
+			docker.contexts = map[string]string{tc.name: "unix://" + tc.path}
+			endpoint, err := Resolve(t.Context(), Options{
+				Platform: "darwin", HomeDir: home, Environment: []string{}, Run: docker.run,
+			})
+			if err != nil {
+				t.Fatalf("resolve active %s context: %v", tc.name, err)
+			}
+			if endpoint.Source() != SourceActiveContext || endpoint.Context() != tc.name || endpoint.Kind() != tc.kind {
+				t.Fatalf("active provider endpoint = context %q source %q kind %q", endpoint.Context(), endpoint.Source(), endpoint.Kind())
+			}
+		})
+	}
+}
+
+func TestResolveRejectsDefaultAliasToUnknownSocket(t *testing.T) {
+	socket := testSocket(t)
+	docker := &fakeDocker{serverID: "must-not-be-contacted"}
+	_, err := Resolve(t.Context(), Options{
+		Platform: "darwin", HomeDir: t.TempDir(), ExplicitHost: "unix:///var/run/docker.sock", Run: docker.run,
+		evaluateSymlinks: func(string) (string, error) { return socket, nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "recognized local runtime paths") {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if len(docker.commands) != 0 {
+		t.Fatalf("unknown socket contacted Docker: %#v", docker.commands)
+	}
+}
+
+func TestMacProviderSocketOwnerPolicy(t *testing.T) {
+	resolver := newResolver(Options{Platform: "darwin", HomeDir: "/Users/author"})
+	for _, kind := range []Kind{KindOrbStack, KindColima, KindRancherDesktop} {
+		if !resolver.trustedOwner(kind, resolver.uid) || resolver.trustedOwner(kind, 0) {
+			t.Errorf("provider %q must require the current user as socket owner", kind)
+		}
+	}
+	if !resolver.trustedOwner(KindDesktop, 0) {
+		t.Fatal("Docker Desktop's root-owned socket should remain supported")
+	}
+}
+
+func TestResolveRejectsPodmanCompatibilityEndpointBeforeInfo(t *testing.T) {
+	socket := testSocket(t)
+	docker := &fakeDocker{serverID: "podman-1", engine: "Podman Engine"}
+	_, err := Resolve(t.Context(), Options{
+		ExplicitHost: "unix://" + socket, Run: docker.run, trustedSocketPaths: []string{socket},
+	})
+	if err == nil || !strings.Contains(err.Error(), "Docker Engine") {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	for _, command := range docker.commands {
+		if slices.Contains(command.arguments, "info") {
+			t.Fatalf("unsupported engine queried for daemon identity: %#v", docker.commands)
 		}
 	}
 }
@@ -305,7 +432,7 @@ func TestResolveLocalDockerIntegration(t *testing.T) {
 }
 
 func TestResolvedSocketPathIsPinnedAcrossSymlinkChange(t *testing.T) {
-	directory := t.TempDir()
+	directory := shortSocketDir(t)
 	first := filepath.Join(directory, "first.sock")
 	second := filepath.Join(directory, "second.sock")
 	for _, path := range []string{first, second} {
@@ -348,13 +475,23 @@ func TestResolvedSocketPathIsPinnedAcrossSymlinkChange(t *testing.T) {
 
 func testSocket(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "docker.sock")
+	path := filepath.Join(shortSocketDir(t), "docker.sock")
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
 	return path
+}
+
+func shortSocketDir(t *testing.T) string {
+	t.Helper()
+	directory, err := os.MkdirTemp("", "lv-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	return directory
 }
 
 func environmentMap(environment []string) map[string]string {

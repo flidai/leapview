@@ -73,6 +73,16 @@ preview URL instead. SSH endpoints, arbitrary TCP endpoints, and forwarding
 tunnels are not local-runtime proof. A context or daemon change during
 startup must fail closed rather than redirecting a later operation.
 
+The v1 Docker Engine path recognizes Linux Engine and the conventional local
+macOS sockets used by Docker Desktop, OrbStack, Colima in Docker mode (including
+named profiles), and Rancher Desktop in Moby/dockerd mode. Select the desired
+provider in Docker's active context or pass `--docker-context` explicitly;
+the context name itself is never trusted. The CLI resolves provider-owned
+symlinks, requires a Docker Engine server, and pins the canonical socket and
+daemon identity. Podman compatibility sockets, Rancher's containerd/nerdctl
+mode, and arbitrary Unix sockets are not v1 local targets. Individual provider
+support remains release-gated by installed-artifact host qualification.
+
 The local runtime owns checkout-scoped Compose services and durable volumes.
 For the generated sample, `dev` verifies every input declared in
 `.leapview/development-inputs.yaml`, plans the exact immutable revisions, and

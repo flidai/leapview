@@ -62,7 +62,7 @@ func TestAnalyticsDevelopmentGuideAndEvidenceMatrixStayLinked(t *testing.T) {
 	for _, scenario := range []string{
 		"Remote active Docker context",
 		"Misleading context name",
-		"Supported local Engine",
+		"Supported local Docker Engine providers",
 		"Docker context changes during startup",
 		"PostgreSQL and object-storage sources",
 		"Profile-file/name selection",

@@ -1,6 +1,6 @@
 // Package localdocker resolves and verifies the Docker endpoint used by local
-// analytics development. It deliberately accepts only documented local Unix
-// sockets and returns an endpoint that can be pinned for every later command.
+// analytics development. It deliberately accepts only documented local Docker
+// Engine Unix sockets and returns an endpoint pinned for every later command.
 package localdocker
 
 import (
@@ -35,9 +35,12 @@ const (
 type Kind string
 
 const (
-	KindEngine   Kind = "engine"
-	KindRootless Kind = "rootless-engine"
-	KindDesktop  Kind = "docker-desktop"
+	KindEngine         Kind = "engine"
+	KindRootless       Kind = "rootless-engine"
+	KindDesktop        Kind = "docker-desktop"
+	KindOrbStack       Kind = "orbstack"
+	KindColima         Kind = "colima"
+	KindRancherDesktop Kind = "rancher-desktop"
 )
 
 // Endpoint is the immutable result of local endpoint selection. Host is a
@@ -274,6 +277,9 @@ func (resolver *resolver) resolveHost(ctx context.Context, rawHost, contextName 
 		return Endpoint{}, err
 	}
 	endpoint := Endpoint{context: contextName, host: host, socketPath: socketPath, source: source, kind: kind}
+	if err := resolver.requireDockerEngine(ctx, endpoint); err != nil {
+		return Endpoint{}, fmt.Errorf("inspect local Docker Engine endpoint %s: %w", redactedEndpoint(host), err)
+	}
 	serverID, err := resolver.probe(ctx, endpoint)
 	if err != nil {
 		return Endpoint{}, fmt.Errorf("inspect verified local Docker endpoint %s: %w", redactedEndpoint(host), err)
@@ -283,6 +289,30 @@ func (resolver *resolver) resolveHost(ctx context.Context, rawHost, contextName 
 		return resolver.Verify(verifyContext, endpoint)
 	}
 	return endpoint, nil
+}
+
+// The Docker-compatible API is not enough for the local runtime contract:
+// Podman and other compatibility servers can also listen on Docker sockets.
+func (resolver *resolver) requireDockerEngine(ctx context.Context, endpoint Endpoint) error {
+	output, err := resolver.run(
+		ctx, endpoint.Environment(resolver.environment),
+		endpoint.DockerArguments("version", "--format", "{{json .Server}}")...,
+	)
+	if err != nil {
+		return err
+	}
+	var server struct {
+		Components []struct {
+			Name string `json:"Name"`
+		} `json:"Components"`
+	}
+	if err := decodeOneJSON(output, &server); err != nil {
+		return err
+	}
+	if len(server.Components) == 0 || server.Components[0].Name != "Engine" {
+		return errors.New("local development requires Docker Engine; Docker-compatible non-Docker runtimes are not supported")
+	}
+	return nil
 }
 
 func (resolver *resolver) Verify(ctx context.Context, endpoint Endpoint) error {
@@ -341,7 +371,7 @@ func (resolver *resolver) verifyLocalSocket(rawHost string) (string, string, Kin
 	}
 	kind, trusted := resolver.trustedPath(path)
 	if !trusted {
-		return "", "", "", fmt.Errorf("Docker endpoint %s is not a recognized local Engine or Docker Desktop socket", redactedEndpoint(rawHost))
+		return "", "", "", fmt.Errorf("Docker endpoint %s is not a recognized local Docker Engine socket", redactedEndpoint(rawHost))
 	}
 	resolved, err := resolver.evaluateSymlinks(path)
 	if err != nil {
@@ -349,7 +379,7 @@ func (resolver *resolver) verifyLocalSocket(rawHost string) (string, string, Kin
 	}
 	resolved = filepath.Clean(resolved)
 	resolvedKind, resolvedTrusted := resolver.trustedPath(resolved)
-	if !resolvedTrusted || resolvedKind != kind {
+	if !resolvedTrusted || (resolvedKind != kind && !resolver.macDefaultSocketAlias(path, kind, resolvedKind)) {
 		return "", "", "", fmt.Errorf("Docker socket %q resolves outside recognized local runtime paths", path)
 	}
 	info, err := resolver.stat(resolved)
@@ -360,7 +390,7 @@ func (resolver *resolver) verifyLocalSocket(rawHost string) (string, string, Kin
 		return "", "", "", fmt.Errorf("Docker endpoint %q is not a Unix socket", path)
 	}
 	owner, ownerKnown := fileOwnerUID(info)
-	if ownerKnown && !resolver.trustedOwner(kind, owner) {
+	if ownerKnown && !resolver.trustedOwner(resolvedKind, owner) {
 		return "", "", "", fmt.Errorf("Docker socket %q has unexpected owner uid %d", path, owner)
 	}
 	return "unix://" + resolved, resolved, resolvedKind, nil
@@ -378,18 +408,47 @@ func (resolver *resolver) trustedPath(path string) (Kind, bool) {
 		}
 		return KindEngine, true
 	}
+	if resolver.platform == "darwin" && path == "/private/var/run/docker.sock" {
+		return KindDesktop, true
+	}
 	if resolver.homeDir != "" {
 		if resolver.platform == "linux" && path == filepath.Join(resolver.homeDir, ".docker", "desktop", "docker.sock") {
 			return KindDesktop, true
 		}
-		if resolver.platform == "darwin" && path == filepath.Join(resolver.homeDir, ".docker", "run", "docker.sock") {
-			return KindDesktop, true
+		if resolver.platform == "darwin" {
+			switch path {
+			case filepath.Join(resolver.homeDir, ".docker", "run", "docker.sock"):
+				return KindDesktop, true
+			case filepath.Join(resolver.homeDir, ".orbstack", "run", "docker.sock"):
+				return KindOrbStack, true
+			case filepath.Join(resolver.homeDir, ".rd", "docker.sock"):
+				return KindRancherDesktop, true
+			}
+			profile, err := filepath.Rel(filepath.Join(resolver.homeDir, ".colima"), path)
+			if err == nil {
+				parts := strings.Split(profile, string(filepath.Separator))
+				if len(parts) == 2 && parts[0] != "" && parts[0] != "." && parts[0] != ".." && parts[1] == "docker.sock" {
+					return KindColima, true
+				}
+			}
 		}
 	}
 	if resolver.platform == "linux" && resolver.uid >= 0 && path == filepath.Join("/run/user", strconv.Itoa(resolver.uid), "docker.sock") {
 		return KindRootless, true
 	}
 	return "", false
+}
+
+// macOS providers can own the conventional Docker socket through a symlink.
+// The resolved socket, not the alias or context name, supplies runtime kind.
+func (resolver *resolver) macDefaultSocketAlias(path string, aliasKind, resolvedKind Kind) bool {
+	if resolver.platform != "darwin" || aliasKind != KindDesktop {
+		return false
+	}
+	if path != "/var/run/docker.sock" && path != "/run/docker.sock" && path != "/private/var/run/docker.sock" && path != filepath.Join(resolver.homeDir, ".docker", "run", "docker.sock") {
+		return false
+	}
+	return resolvedKind == KindDesktop || resolvedKind == KindOrbStack || resolvedKind == KindColima || resolvedKind == KindRancherDesktop
 }
 
 func (resolver *resolver) trustedOwner(kind Kind, owner int) bool {
@@ -399,7 +458,7 @@ func (resolver *resolver) trustedOwner(kind Kind, owner int) bool {
 	if kind == KindEngine && resolver.platform == "linux" {
 		return owner == 0
 	}
-	return owner == resolver.uid || (resolver.platform == "darwin" && owner == 0)
+	return owner == resolver.uid || (resolver.platform == "darwin" && kind == KindDesktop && owner == 0)
 }
 
 func (resolver *resolver) optionValue(name string) string {

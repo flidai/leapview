@@ -69,7 +69,7 @@ released evidence, measurement, approval, or completion is inferred.
 | ---: | --- | --- | --- | --- |
 | 1 | Remote active Docker context, `DOCKER_HOST`, or `DOCKER_CONTEXT` | FAI-779 | `internal/app/cli/localdocker/endpoint_test.go`; `internal/app/cli/local_dev_dispatch_test.go` | Automated/local |
 | 2 | Misleading context name or loopback tunnel | FAI-779 | `internal/app/cli/localdocker/endpoint_test.go`; a forwarded daemon deliberately bound at a recognized socket remains an external adversarial platform case | External platform/manual |
-| 3 | Supported local Engine and Docker Desktop | FAI-778, FAI-779, FAI-798 | `internal/app/cli/localdocker/endpoint_test.go`; `deploy/local/qualification/qualify.sh` | External platform/manual |
+| 3 | Supported local Docker Engine providers | FAI-778, FAI-779, FAI-798 | Linux Engine; macOS Docker Desktop, OrbStack, Colima Docker, and Rancher Desktop Moby. `internal/app/cli/localdocker/endpoint_test.go`; `deploy/local/qualification/qualify.sh`; each provider still needs an exact installed-artifact host run | External platform/manual |
 | 4 | Docker context changes during startup | FAI-779 | `internal/app/cli/composectl/docker_endpoint_test.go`; `internal/app/cli/localdocker/endpoint_test.go` | Automated/local |
 | 5 | PostgreSQL and object-storage sources in one local profile | FAI-783–FAI-786, FAI-788 | `internal/project/developmentprofile/profile_test.go`; `internal/app/integration_minio_source_test.go`; `internal/analytics/connectionbinding/profile_application_test.go` | Automated/local |
 | 6 | Profile-file/name selection, missing files, or conflicting remote flags | FAI-783 | `internal/project/developmentprofile/profile_test.go`; `internal/app/cli/local_dev_dispatch_test.go` | Automated/local |

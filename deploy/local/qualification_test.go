@@ -153,6 +153,72 @@ print("retained")
 	}
 }
 
+func TestReleasedAuthoringQualificationDockerEngineProviderPolicy(t *testing.T) {
+	root := repositoryRoot(t)
+	python := `
+import importlib.util
+import json
+import pathlib
+import stat
+import sys
+import types
+from unittest.mock import patch
+
+spec = importlib.util.spec_from_file_location("leapview_qualify", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+home = pathlib.Path("/Users/author")
+expected = {
+    "/var/run/docker.sock": "docker-desktop",
+    "/private/var/run/docker.sock": "docker-desktop",
+    "/Users/author/.orbstack/run/docker.sock": "orbstack",
+    "/Users/author/.colima/default/docker.sock": "colima",
+    "/Users/author/.colima/analytics/docker.sock": "colima",
+    "/Users/author/.rd/docker.sock": "rancher-desktop",
+}
+for path, kind in expected.items():
+    if module.local_socket_kind(path, home, "Darwin") != kind:
+        raise SystemExit(f"unexpected socket policy for {path}")
+for path in ("/Users/author/.colima/docker.sock", "/Users/author/.local/share/containers/podman/machine/podman.sock"):
+    if module.local_socket_kind(path, home, "Darwin") is not None:
+        raise SystemExit(f"unsupported socket accepted: {path}")
+
+with patch.object(module.platform, "system", return_value="Darwin"), \
+     patch.object(module.Path, "home", return_value=home), \
+     patch.object(module.os.path, "realpath", return_value=str(home / ".orbstack/run/docker.sock")), \
+     patch.object(module.os, "stat", return_value=types.SimpleNamespace(st_mode=stat.S_IFSOCK, st_uid=module.os.getuid())):
+    if module.normalize_docker_host("unix:///private/var/run/docker.sock") != "unix:///Users/author/.orbstack/run/docker.sock":
+        raise SystemExit("private default socket did not resolve to the OrbStack Engine socket")
+
+with patch.object(module.platform, "system", return_value="Darwin"), \
+     patch.object(module.Path, "home", return_value=home), \
+     patch.object(module.os.path, "realpath", return_value=str(home / ".orbstack/run/docker.sock")), \
+     patch.object(module.os, "stat", return_value=types.SimpleNamespace(st_mode=stat.S_IFSOCK, st_uid=module.os.getuid() + 1)):
+    try:
+        module.normalize_docker_host("unix:///private/var/run/docker.sock")
+    except module.QualificationSkip as error:
+        if "owner" not in str(error):
+            raise
+    else:
+        raise SystemExit("provider socket owned by another user passed qualification")
+
+module.run_command = lambda *args, **kwargs: {"output": json.dumps({"Components": [{"Name": "Podman Engine"}], "Version": "5.0"})}
+try:
+    module.docker_server_identity("docker", "unix:///var/run/docker.sock", [], 5, home, "probe")
+except module.QualificationError as error:
+    if "Docker Engine" not in str(error):
+        raise
+else:
+    raise SystemExit("Podman compatibility endpoint passed Docker Engine qualification")
+`
+	command := exec.Command("python3", "-c", python, filepath.Join(root, "deploy", "local", "qualification", "qualify.py"))
+	command.Dir = root
+	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	if combined, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("Docker Engine provider policy: %v\n%s", err, combined)
+	}
+}
+
 func TestReleasedAuthoringQualificationForwardsNativeKeyringSessionOnly(t *testing.T) {
 	root := repositoryRoot(t)
 	python := `
