@@ -1378,7 +1378,7 @@ test('dashboard refresh progress is owned by the latest stream generation', asyn
   try {
     await page.goto(baseURL, { waitUntil: 'networkidle' })
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
-    const states = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    const states = await evaluateAcrossContextTurnover(page, () => page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       const read = async () => {
         await element.updateComplete
@@ -1391,7 +1391,7 @@ test('dashboard refresh progress is owned by the latest stream generation', asyn
       mergePatch({ status: { generation: 4, refreshId: 'refresh-4', loading: false, progressPercent: 100 } })
       const complete = await read()
       return { initial, active, complete }
-    })
+    }))
     expect(states).toEqual({
       initial: { generation: '3', now: '50', complete: 'false' },
       active: { generation: '4', now: '25', complete: 'false' },

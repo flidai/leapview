@@ -38,7 +38,7 @@ func TestHetznerConsumesGenericComposeLifecycle(t *testing.T) {
 	main := readFile(t, "main.tf")
 	for _, fragment := range []string{
 		`${path.module}/../host/cloud-init.yaml.tftpl`,
-		`${path.module}/../host/bootstrap-ubuntu.sh`,
+		`${path.module}/../host/bootstrap-linux.sh`,
 		`jsonencode(local.bootstrap_config)`,
 		`schemaVersion = 1`,
 	} {
@@ -193,7 +193,7 @@ func TestEphemeralDeploymentExercisesPublicContracts(t *testing.T) {
 		"expected-workflow: flidai/leapview/.github/workflows/artifacts.yml",
 		"source-revision: ${{ inputs.source_revision }}",
 		"TF_VAR_leapview_image=${{ steps.admission.outputs.image }}",
-		"Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17",
+		"Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18",
 		`method: "oidc"`,
 		`identity-id: "6aac9c3e-4f33-45b5-aa4e-884839b950a7"`,
 		`oidc-audience: "https://github.com/flidai"`,
