@@ -74,8 +74,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     .identity-preview img { box-sizing: border-box; display: grid; width: var(--control-large-size); height: var(--control-large-size); flex: 0 0 auto; place-items: center; border: var(--lv-border-muted); border-radius: var(--lv-radius-small); background: var(--lv-bg-panel); object-fit: contain; }
     .identity-copy { display: grid; min-width: 0; gap: var(--base-size-2); }
     .identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
-    .attribution { width: fit-content; color: var(--lv-fg-muted); font: var(--lv-type-caption); text-decoration: none; }
-    .attribution:hover { color: var(--lv-fg-accent); text-decoration: underline; }
+    .attribution { width: fit-content; color: var(--lv-fg-muted); font: var(--lv-type-caption); text-decoration: none; } .attribution:hover { color: var(--lv-fg-accent); text-decoration: underline; }
     .file-action { position: relative; }
     .file-action input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
     .about-links { display: flex; flex-wrap: wrap; gap: var(--base-size-16); }

@@ -732,12 +732,10 @@ class WindowedTable extends LitElement {
   }
 
   private loadedRows(table: Required<WindowedTablePayload>): Array<{ row: Record<string, unknown>; index: number }> {
-    const availableRows = this.effectiveAvailableRows(table)
-    return blockIDs
-      .map((id) => this.blockCache[id])
+    return blockIDs.map((id) => this.blockCache[id])
       .sort((a, b) => a.start - b.start)
       .flatMap((block) => block.rows.map((row, offset) => ({ row, index: block.start + offset })))
-      .filter((item) => item.index < availableRows)
+      .filter((item) => item.index < this.effectiveAvailableRows(table))
   }
 
   private visibleRows(table: Required<WindowedTablePayload>): VisibleRowSlot[] {
@@ -746,9 +744,7 @@ class WindowedTable extends LitElement {
     const rowMap = new Map(this.loadedRows(table).map((item) => [item.index, item.row]))
     const { first, last } = virtualRowRange(availableRows, this.viewportTop, this.viewportHeight || table.rowHeight, table.rowHeight, 2)
     const rows: VisibleRowSlot[] = []
-    for (let index = first; index < last; index++) {
-      rows.push({ index, row: rowMap.get(index) })
-    }
+    for (let index = first; index < last; index++) rows.push({ index, row: rowMap.get(index) })
     return rows
   }
 
@@ -757,10 +753,8 @@ class WindowedTable extends LitElement {
     if (visibleRows.some((row) => !row.row)) return true
     const first = visibleRows.at(0)?.index
     const last = visibleRows.at(-1)?.index
-    if (first === undefined || last === undefined) return false
-    return [...this.expectedBlocks.values()].some((request) => (
-      request.start <= last && request.start + table.chunkSize > first
-    ))
+    return first !== undefined && last !== undefined && [...this.expectedBlocks.values()]
+      .some((request) => request.start <= last && request.start + table.chunkSize > first)
   }
 
   private handleScroll = (event: Event): void => {
@@ -782,23 +776,18 @@ class WindowedTable extends LitElement {
     const table = normalizeTable(this.table)
     const availableRows = this.effectiveAvailableRows(table)
     if (availableRows <= 0) {
-      this.expectedBlocks.clear()
-      this.clearJumpTimer()
+      this.expectedBlocks.clear(); this.clearJumpTimer()
       return
     }
     const currentStart = Math.floor(Math.floor(this.viewportTop / table.rowHeight) / table.chunkSize) * table.chunkSize
     const desired = this.desiredStarts(table, currentStart, availableRows)
     const desiredSet = new Set(desired)
-    const loadedStarts = new Set(blockIDs.flatMap((id) => {
-      const block = this.blockCache[id]
-      return block?.rows.length ? [block.start] : []
-    }))
+    const loadedStarts = new Set(blockIDs.flatMap((id) => this.blockCache[id]?.rows.length ? [this.blockCache[id].start] : []))
     const expectedStarts = new Set([...this.expectedBlocks.values()].map((request) => request.start))
     const missingStarts = desired.filter((start) => !loadedStarts.has(start) && !expectedStarts.has(start))
 
     if (missingStarts.length > 1 || !loadedStarts.has(currentStart) && !expectedStarts.has(currentStart)) {
-      this.scheduleJumpBlock(currentStart)
-      return
+      this.scheduleJumpBlock(currentStart); return
     }
 
     this.clearJumpTimer()
@@ -806,8 +795,7 @@ class WindowedTable extends LitElement {
     for (const start of missingStarts) {
       const block = this.reusableBlock(desiredSet, usedBlocks)
       if (!block) continue
-      usedBlocks.add(block)
-      this.emitBlock(table, block, start, table.sort, table.resetVersion)
+      usedBlocks.add(block); this.emitBlock(table, block, start, table.sort, table.resetVersion)
     }
   }
 
@@ -825,45 +813,29 @@ class WindowedTable extends LitElement {
 
   private clearJumpTimer(): void {
     if (!this.jumpTimer) return
-    clearTimeout(this.jumpTimer)
-    this.jumpTimer = 0
+    clearTimeout(this.jumpTimer); this.jumpTimer = 0
   }
 
   private desiredStarts(table: Required<WindowedTablePayload>, currentStart: number, availableRows: number): number[] {
-    const starts = currentStart <= 0
-      ? [0, table.chunkSize, table.chunkSize * 2]
-      : [Math.max(0, currentStart - table.chunkSize), currentStart, currentStart + table.chunkSize]
+    const starts = currentStart <= 0 ? [0, table.chunkSize, table.chunkSize * 2] : [Math.max(0, currentStart - table.chunkSize), currentStart, currentStart + table.chunkSize]
     return starts.filter((start, index, all) => start < availableRows && all.indexOf(start) === index)
   }
 
   private effectiveAvailableRows(table: Required<WindowedTablePayload>): number {
     const blocks = blockIDs.map((id) => this.blockCache[id])
-    const settled = blocks.filter((block) => block.requestSeq > 0)
-    let availableRows = table.availableRows
-    for (const block of settled) {
-      if (block.rows.length > 0 && block.rows.length < table.chunkSize) {
-        availableRows = Math.min(availableRows, block.start + block.rows.length)
-        continue
-      }
-      if (block.rows.length === 0 && !blocks.some((candidate) => candidate.start > block.start && candidate.rows.length > 0)) {
-        availableRows = Math.min(availableRows, block.start)
-      }
-    }
-    return Math.max(0, availableRows)
+    return blocks.reduce((available, block) => {
+      if (block.requestSeq <= 0) return available
+      const terminal = block.rows.length ? block.rows.length < table.chunkSize
+        : !blocks.some((candidate) => candidate.start > block.start && candidate.rows.length > 0)
+      return terminal ? Math.min(available, block.start + block.rows.length) : available
+    }, table.availableRows)
   }
-
   private reusableBlock(desiredStarts: Set<number>, usedBlocks: Set<WindowedTableBlockID>): WindowedTableBlockID | undefined {
-    return blockIDs.find((id) => !usedBlocks.has(id) && !desiredStarts.has(this.blockCache[id]?.start ?? -1))
-      ?? blockIDs.find((id) => !usedBlocks.has(id))
+    return blockIDs.find((id) => !usedBlocks.has(id) && !desiredStarts.has(this.blockCache[id]?.start ?? -1)) ?? blockIDs.find((id) => !usedBlocks.has(id))
   }
 
-  private emitBlock(
-    table: Required<WindowedTablePayload>,
-    block: WindowedTableBlockID | 'all',
-    start: number,
-    sort = table.sort,
-    resetVersion = table.resetVersion,
-  ): void {
+  private emitBlock(table: Required<WindowedTablePayload>, block: WindowedTableBlockID | 'all', start: number,
+    sort = table.sort, resetVersion = table.resetVersion): void {
     const count = table.chunkSize
     const requestSeq = ++this.requestSeq
     if (block === 'all') {
@@ -871,9 +843,7 @@ class WindowedTable extends LitElement {
       const starts = this.allBlockStarts(table, start)
       blockIDs.forEach((id, index) => {
         const expectedStart = starts[index]
-        if (expectedStart < table.availableRows) {
-          this.expectedBlocks.set(id, { start: expectedStart, requestSeq, resetVersion, sort })
-        }
+        if (expectedStart < table.availableRows) this.expectedBlocks.set(id, { start: expectedStart, requestSeq, resetVersion, sort })
       })
     } else {
       this.expectedBlocks.set(block, { start, requestSeq, resetVersion, sort })
