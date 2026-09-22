@@ -324,6 +324,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           empty-text=${this.catalogEmptyText()}
           title-emphasis="normal"
           sticky-identity
+          hover-sort-indicators
           @lv-entity-list-favorite-toggle=${this.toggleDashboardFavorite}
           @lv-entity-list-item-activate=${this.recordDashboardOpen}
           @lv-entity-list-row-action=${this.handleDashboardRowAction}
@@ -342,21 +343,21 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       return [
         { id: 'name', label: 'Dashboard', width: '32%' },
         { id: 'dataModel', label: 'Data model', width: '16%' },
-        { id: 'popularity', label: 'Popularity', width: '10%', render: 'popularity' as const },
+        { id: 'popularity', label: 'Popularity', width: '10%', align: 'center' as const, render: 'popularity' as const },
         { id: 'status', label: 'Status', width: '17%', render: 'quiet-status' as const },
         { id: 'updated', label: 'Updated', width: '9%', render: 'datetime' as const },
         { id: 'lastOpened', label: 'Last opened', width: '11%', render: 'datetime' as const },
-        { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
+        { id: 'actions', label: 'Actions', width: '5%', align: 'center' as const, sortable: false, render: 'actions' as const },
       ]
     }
     return [
       { id: 'name', label: 'Dashboard', width: '36%' },
       { id: 'dataModel', label: 'Data model', width: '15%' },
-      { id: 'owner', label: 'Owner', width: '9%', render: 'person-avatar' as const },
-      { id: 'popularity', label: 'Popularity', width: '10%', render: 'popularity' as const },
+      { id: 'owner', label: 'Owner', width: '9%', align: 'center' as const, render: 'person-avatar' as const },
+      { id: 'popularity', label: 'Popularity', width: '10%', align: 'center' as const, render: 'popularity' as const },
       { id: 'updated', label: 'Updated', width: '11%', render: 'datetime' as const },
       { id: 'lastOpened', label: 'Last opened', width: '14%', render: 'datetime' as const },
-      { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
+      { id: 'actions', label: 'Actions', width: '5%', align: 'center' as const, sortable: false, render: 'actions' as const },
     ]
   }
 
@@ -483,8 +484,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   private recordDashboardOpen = (event: CustomEvent<{ item?: { id?: string } }>): void => {
     const id = event.detail?.item?.id?.trim()
     if (!id) return
-    this.recentDashboardIDs = { ...this.recentDashboardIDs, [id]: new Date().toISOString() }
-    writeStorage(catalogRecentsStorageKey, this.recentDashboardIDs)
+    writeStorage(catalogRecentsStorageKey, { ...readStringRecord(catalogRecentsStorageKey), [id]: new Date().toISOString() })
   }
 
   private handleDashboardRowAction = (event: CustomEvent<{ action?: string, item?: { id?: string }, anchor?: EventTarget | null }>): void => {

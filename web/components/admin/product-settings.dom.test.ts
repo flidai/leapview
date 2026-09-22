@@ -74,19 +74,36 @@ test('product settings renders redacted sections and emits typed identity comman
         system: { instanceId: 'lvinst_test', canonicalOrigin: 'https://example.test', environment: 'production', build: { version: '1.2.3', revision: 'abcdef', buildTime: 'now', dirty: false, development: false }, storageBackend: 'local', agent: { available: true, configured: true, provider: 'openai-compatible', modelConfigured: true }, limits: { queryResultMaxRows: 10000, queryResultMaxBytes: 1024, managedDataMaxFiles: 2000, managedDataMaxFileBytes: 3, managedDataMaxRevisionBytes: 4 }, runtime: { health: 'healthy', controlPlane: 'available', environment: 'production' } },
       } })
       const element = document.querySelector('lv-product-settings') as any
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await element.updateComplete
       let command: unknown = null
       element.addEventListener('lv-product-settings-command', (event: CustomEvent) => { command = event.detail })
       const input = element.shadowRoot.querySelector('input[type="text"]') as HTMLInputElement
       const logoLabel = element.shadowRoot.querySelector('input[type="file"]')?.getAttribute('aria-label')
+      const customPreview = {
+        logo: Boolean(element.shadowRoot.querySelector('.identity-preview img')),
+        name: element.shadowRoot.querySelector('.identity-name')?.textContent?.trim(),
+        attribution: element.shadowRoot.querySelector('.attribution'),
+      }
       input.value = 'Acme BI'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await element.updateComplete
       ;(Array.from(element.shadowRoot.querySelectorAll('button')) as HTMLButtonElement[]).find((button) => button.textContent?.trim() === 'Save')?.click()
       await element.updateComplete
       const saveCommand = command
+      const inputValue = input.value
       ;(Array.from(element.shadowRoot.querySelectorAll('button')) as HTMLButtonElement[]).find((button) => button.textContent?.trim() === 'Reset to LeapView')?.click()
       const resetCommand = command
       const generalText = element.shadowRoot.textContent.replace(/\s+/g, ' ').trim()
+      mergePatch({ productSettings: { general: { displayName: '', revision: 8, logo: null } } })
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      await element.updateComplete
+      const defaultPreview = {
+        logo: Boolean(element.shadowRoot.querySelector('.identity-preview img')),
+        fallback: Boolean(element.shadowRoot.querySelector('.identity-fallback')),
+        name: element.shadowRoot.querySelector('.identity-name')?.textContent?.trim(),
+        attribution: element.shadowRoot.querySelector('.attribution'),
+      }
       const fieldLabelFontSize = getComputedStyle(element.shadowRoot.querySelector('.settings-label')!).fontSize
       mergePatch({ productSettings: { active: 'authentication' } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
@@ -101,7 +118,9 @@ test('product settings renders redacted sections and emits typed identity comman
       const websiteHref = (element.shadowRoot as ShadowRoot).querySelector<HTMLAnchorElement>('a[href="https://leapview.dev"]')?.getAttribute('href')
       return {
         generalText,
-        inputValue: input.value,
+        customPreview,
+        defaultPreview,
+        inputValue,
         inputLabel: input.getAttribute('aria-label'),
         logoLabel,
         authText,
@@ -117,7 +136,9 @@ test('product settings renders redacted sections and emits typed identity comman
       }
     })
     expect(state.generalText).toContain('Instance identity')
-    expect(state.generalText).toContain('Powered by LeapView')
+    expect(state.generalText).not.toContain('Powered by LeapView')
+    expect(state.customPreview).toEqual({ logo: true, name: 'Acme Analytics', attribution: null })
+    expect(state.defaultPreview).toEqual({ logo: false, fallback: false, name: 'LeapView', attribution: null })
     expect(state.inputValue).toBe('Acme BI')
     expect(state.inputLabel).toBe('Instance name')
     expect(state.logoLabel).toBe('Change logo')

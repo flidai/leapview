@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import { DatastarLit } from '../shared/datastar-lit'
 import { browserCommandFailure } from '../shared/command-failure'
+import { leapViewBrandName } from '../shared/brand-mark'
 import { renderSettingsActions, renderSettingsRow, renderSettingsSection, settingsLayoutStyles } from '../shared/settings-layout'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import type {
@@ -70,11 +71,9 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     .logo { display: flex; align-items: center; gap: .75rem; }
     .logo img { width: 3.25rem; height: 3.25rem; border: var(--lv-border-muted); border-radius: var(--lv-radius-small); object-fit: contain; background: var(--lv-bg-panel); }
     .identity-preview { display: flex; min-width: 0; align-items: center; gap: var(--base-size-12); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); padding: var(--base-size-12); }
-    .identity-preview img, .identity-fallback { box-sizing: border-box; display: grid; width: var(--control-large-size); height: var(--control-large-size); flex: 0 0 auto; place-items: center; border: var(--lv-border-muted); border-radius: var(--lv-radius-small); background: var(--lv-bg-panel); object-fit: contain; color: var(--lv-fg-muted); font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
+    .identity-preview img { box-sizing: border-box; display: grid; width: var(--control-large-size); height: var(--control-large-size); flex: 0 0 auto; place-items: center; border: var(--lv-border-muted); border-radius: var(--lv-radius-small); background: var(--lv-bg-panel); object-fit: contain; }
     .identity-copy { display: grid; min-width: 0; gap: var(--base-size-2); }
     .identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
-    .attribution { color: var(--lv-fg-muted); text-decoration: none; font: var(--lv-type-caption); }
-    .attribution:hover, .attribution:focus-visible { color: var(--lv-fg-default); text-decoration: underline; }
     .file-action { position: relative; }
     .file-action input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
     .about-links { display: flex; flex-wrap: wrap; gap: var(--base-size-16); }
@@ -128,22 +127,19 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
   }
 
   private renderGeneral(general: ProductGeneralSignal, canManage: boolean) {
-    const previewName = this.displayNameDraft.trim() || 'LeapView'
+    const previewName = this.displayNameDraft.trim() || leapViewBrandName
     const disabled = this.busy || this.commandBusy
     // Keep reset available while a name mutation is pending so a user can
     // choose the explicit restore-default action; the in-flight command is
     // still serialized by the page command transport and all other controls
     // remain disabled until its signal patch or failure arrives.
-    const resetDisabled = !canManage || this.busy || (general.displayName === 'LeapView' && !general.logo)
+    const resetDisabled = !canManage || this.busy || (general.displayName === leapViewBrandName && !general.logo)
     return html`
-      ${renderSettingsSection({ label: 'Instance identity settings', className: 'panel', appearance: 'panel', heading: 'Instance identity', description: 'Choose the name and logo shown in the application. Customized instances retain a subtle link back to LeapView.', content: html`
+      ${renderSettingsSection({ label: 'Instance identity settings', className: 'panel', appearance: 'panel', heading: 'Instance identity', description: 'Choose the name and logo shown in the application.', content: html`
         <div class="identity-preview" aria-label="Instance identity preview">
-          ${general.logo
-            ? html`<img src=${general.logo.url} alt="">`
-            : html`<span class="identity-fallback" aria-hidden="true">${previewName.slice(0, 1).toLocaleUpperCase()}</span>`}
+          ${general.logo ? html`<img src=${general.logo.url} alt="">` : nothing}
           <span class="identity-copy">
             <span class="identity-name">${previewName}</span>
-            <a class="attribution" href="https://leapview.dev" target="_blank" rel="noreferrer">Powered by LeapView</a>
           </span>
         </div>
         <div class="settings-rows">
@@ -159,7 +155,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
               </label>
               ${general.logo ? html`<button class="settings-button action danger" type="button" ?disabled=${!canManage || disabled} @click=${this.removeLogo}>Remove</button>` : nothing}
             `, { className: 'inline', stack: true })}` })}
-          ${renderSettingsRow({ label: 'LeapView defaults', layout: 'field', className: 'row', description: 'Restore the default name and remove the custom logo', control: html`<button class="settings-button action" type="button" ?disabled=${resetDisabled} @click=${this.resetIdentity}>Reset to LeapView</button>` })}
+          ${renderSettingsRow({ label: 'LeapView defaults', layout: 'field', className: 'row', description: 'Restore the default name and remove the custom logo', control: html`<button class="settings-button action" type="button" ?disabled=${resetDisabled} @click=${this.resetIdentity}>Reset to ${leapViewBrandName}</button>` })}
         </div>
         ${!canManage ? html`<div class="notice">You have read-only access. Platform administrator access is required to change product identity.</div>` : nothing}
       ` })}
