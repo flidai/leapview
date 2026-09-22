@@ -345,6 +345,54 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 	return paginate(items, request.Cursor, cursorInput{Snapshot: digest, Kinds: kinds, Domain: domain, Limit: limit, Parent: parentKey})
 }
 
+// VisibleKinds reports which requested resource kinds the principal can read
+// in the active generation. Navigation uses this projection so one request
+// does not acquire and scan the same graph separately for every sidebar link.
+func (s *Service) VisibleKinds(ctx context.Context, principalID string, kinds []projectgraph.Kind, devAuthBypass bool) (map[projectgraph.Kind]bool, error) {
+	visible := make(map[projectgraph.Kind]bool)
+	if s == nil || s.leases == nil || s.subjects == nil {
+		return nil, ErrUnavailable
+	}
+	wanted, err := normalizeKinds(kinds)
+	if err != nil {
+		return nil, err
+	}
+	if len(wanted) == 0 {
+		return visible, nil
+	}
+	lease, snapshot, graph, subjects, err := s.authorized(ctx, principalID, devAuthBypass)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.Release()
+	for _, resource := range graph.Resources() {
+		if !containsKind(wanted, resource.Kind) || visible[resource.Kind] {
+			continue
+		}
+		allowed, err := s.semanticModelAllowed(ctx, lease, principalID, resource)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			continue
+		}
+		allowed = devAuthBypass
+		if !devAuthBypass {
+			allowed, err = allowsAny(snapshot, subjects, resource)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if allowed {
+			visible[resource.Kind] = true
+			if len(visible) == len(wanted) {
+				break
+			}
+		}
+	}
+	return visible, nil
+}
+
 // Resolve validates the exact ID/kind against the leased graph and then checks
 // the required capability. Every failure is deliberately ErrNotFound so an
 // unauthorized ID cannot be distinguished from an unknown ID by callers.

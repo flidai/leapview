@@ -106,13 +106,26 @@ and `RESOURCE_USE` on the three backing semantic models. Use canonical IDs
 Dashboard read access opens the page; semantic-model use authorizes its queries. Project namespaces accept only `PROJECT_ADMIN` as a direct
 grant, and dashboards do not support `RESOURCE_USE`; neither is needed for
 this shared dashboard reader. Do not bind it to the built-in `viewer` role: that role
-also enables the agent and shared conversation history. The shared login must
+also grants access to shared conversation history. The shared login must
 never receive administration, authoring, preview, refresh, deployment,
 or connection privileges. Personal API tokens are allowed, but remain limited
 to this principal's existing resource access; token capabilities cannot grant
-additional authority. Keep the agent unconfigured on the shared demo instance.
+additional authority. Agent tools remain governed by the principal's exact
+resource grants.
 Conversation and personal-settings pages are authenticated user surfaces, so
 absence of a project role must not be treated as a blanket denial of those pages.
+
+### Agent provider
+
+The legacy hosted-demo rollout receives `DEEPSEEK_API_KEY` from the protected
+GitHub environment and passes it directly to `scripts/rollout_demo_runtime.sh`.
+The checked rollout maps it to `LEAPVIEW_AGENT_API_KEY`, sets
+`LEAPVIEW_AGENT_BASE_URL` and `LEAPVIEW_AGENT_MODEL`, and writes those values
+only to the release's private mode-0600 `runtime.env`. The provider key is never committed.
+Every replacement runtime inherits these variables from the running
+predecessor, while an operator-triggered prepare or deploy refreshes the key
+from the deployment secret. Provider configuration enables the runtime while
+access policy continues to control which resources its tools can reach.
 
 Treat the shared credential as public. To rotate it, reset the local password,
 revoke every existing session for the principal, complete the forced password

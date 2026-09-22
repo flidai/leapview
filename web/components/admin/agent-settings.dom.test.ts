@@ -218,34 +218,30 @@ test('agent settings makes deployment ownership and mobile tools layout explicit
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-agent-settings'))
-    const state = await page.evaluate(async () => {
-      const element = document.querySelector('lv-agent-settings') as any
+    await page.locator('lv-agent-settings').evaluate((element: any) => {
       element.agent = { enabled: false, model: '', systemPrompt: '', canWrite: false, updatePath: '', tools: [{ name: 'read_data', description: '', effect: 'read', tags: ['analytics'], defaults: {}, inputSchema: {}, outputSchema: {} }] }
-      await element.updateComplete
-      const root = element.shadowRoot as ShadowRoot
-      const promptEditor = root.querySelector('lv-agent-prompt-editor') as any
-      await promptEditor.updateComplete
-      const managedBadge = (promptEditor.shadowRoot as ShadowRoot).querySelector('.managed-badge')?.textContent?.trim()
-      const toolsTab = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((button) => button.textContent?.trim() === 'Tools')!
-      toolsTab.click()
-      await element.updateComplete
-      const tools = root.querySelector('lv-agent-tools') as any
-      await tools.updateComplete
-      const toolsRoot = tools.shadowRoot as ShadowRoot
-      const list = toolsRoot.querySelector('lv-entity-list') as HTMLElement & { updateComplete: Promise<unknown> }
-      await list.updateComplete
-      list.querySelector<HTMLElement>('.entity-list-table-row')?.click()
-      await tools.updateComplete
-      const drawer = toolsRoot.querySelector('lv-drawer') as any
-      await drawer.updateComplete
-      return {
-        text: root.textContent?.replace(/\s+/g, ' ').trim(),
-        managedBadge,
-        hasSharedList: Boolean(list),
-        drawerModal: drawer.modal,
-        drawerWidth: Math.round((drawer.shadowRoot as ShadowRoot).querySelector('.drawer')!.getBoundingClientRect().width),
-      }
     })
+
+    const settings = page.locator('lv-agent-settings')
+    const managedBadge = settings.locator('.managed-badge')
+    await managedBadge.waitFor()
+    const managedBadgeText = (await managedBadge.textContent())?.trim()
+    await settings.getByRole('tab', { name: 'Tools' }).click()
+
+    const list = settings.locator('lv-entity-list')
+    const row = list.locator('.entity-list-table-row')
+    await row.waitFor()
+    await row.click()
+
+    const drawer = settings.locator('lv-drawer')
+    await drawer.waitFor({ state: 'attached' })
+    const state = {
+      text: (await settings.locator('.settings-stack').textContent())?.replace(/\s+/g, ' ').trim(),
+      managedBadge: managedBadgeText,
+      hasSharedList: await list.count() === 1,
+      drawerModal: await drawer.evaluate((element: any) => element.modal),
+      drawerWidth: Math.round((await drawer.locator('.drawer').boundingBox())?.width ?? 0),
+    }
     expect(state.text).toContain('Read-only')
     expect(state.text).toContain('Deployment managed')
     expect(state.managedBadge).toBe('Deployment managed')

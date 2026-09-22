@@ -93,6 +93,38 @@ func TestDevelopmentBypassReturnsExactActiveGraphWithEmptyGrants(t *testing.T) {
 	}
 }
 
+func TestVisibleKindsReturnsOnlyReadableResourceKinds(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
+		{ID: "dashboard_sales", Kind: projectgraph.KindDashboard, Name: "sales"},
+		{ID: "source_finance", Kind: projectgraph.KindSource, Name: "finance"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{
+		grant(t, project, "dashboard_read", principal, "dashboard_sales", projectgraph.KindDashboard),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible, err := service.VisibleKinds(context.Background(), principal.ID, []projectgraph.Kind{
+		projectgraph.KindDashboard, projectgraph.KindModel, projectgraph.KindSource,
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !visible[projectgraph.KindDashboard] || visible[projectgraph.KindModel] || visible[projectgraph.KindSource] {
+		t.Fatalf("visible kinds = %#v, want dashboard only", visible)
+	}
+}
+
 func TestSearchUsesDirectAndGroupGrantsAndDoesNotEnumerateDeniedResources(t *testing.T) {
 	// Build the graph first so grants can be bound to its exact IDs.
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{

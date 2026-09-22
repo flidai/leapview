@@ -10,6 +10,8 @@ operations binary for the archive's operating system and architecture.
 cp deployment.env.example deployment.env
 cp leapview.env.example leapview.env
 # Configure the external PostgreSQL URLs and roles in leapview.env.
+# Configure LEAPVIEW_AGENT_API_KEY and LEAPVIEW_AGENT_MODEL in leapview.env
+# when the agent should be enabled. Keep the API key out of source control.
 # Run pool bootstrap without --apply; the database-free result contains the
 # deterministic pool_id and compatibility_digest. Copy them into leapview.env.
 ./leapviewctl init --admin-email admin@example.com --domain dash.example.com
@@ -29,6 +31,14 @@ Each PostgreSQL URL must use `sslmode=verify-full` with a trusted provider CA
 (through `sslrootcert` or the image's system trust store); `require` and
 `verify-ca` are intentionally rejected because they do not authenticate both
 the server certificate and hostname.
+
+The agent is enabled when both `LEAPVIEW_AGENT_API_KEY` and
+`LEAPVIEW_AGENT_MODEL` are set in the private `leapview.env` on the host.
+`LEAPVIEW_AGENT_BASE_URL` defaults to the OpenAI-compatible endpoint shown in
+the template and may be changed for another compatible provider. Never commit
+the real API key. Run `./leapviewctl start` after changing these values so
+Compose recreates the application with the updated environment.
+
 The pre-initialization pool command must be a dry run. Apply the same reviewed
 pool/evidence pair only after `init`, because durable admission verifies the
 control baseline created during initialization. Inject the DuckLake migrator
