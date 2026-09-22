@@ -76,13 +76,21 @@ demo login:
 - `DEMO_VIEWER_EMAIL`
 - `DEMO_VIEWER_PASSWORD`
 
-The shared principal is `demo@leapview.dev`. The target policy grants it only `RESOURCE_READ` on each canonical
-dashboard ID. Project namespaces accept only `PROJECT_ADMIN` as a direct
+The shared principal is `demo@leapview.dev`. The target policy grants it `RESOURCE_READ` on each canonical dashboard ID
+and `RESOURCE_USE` on the three backing semantic models. Use canonical IDs
+(`dashboard:executive-sales`, `dashboard:fulfillment-operations`,
+`dashboard:visual-showcase`, and `semantic-model:sales`,
+`semantic-model:operations`, `semantic-model:visuals`), not dashboard URL names.
+Dashboard read access opens the page; semantic-model use authorizes its queries. Project namespaces accept only `PROJECT_ADMIN` as a direct
 grant, and dashboards do not support `RESOURCE_USE`; neither is needed for
 this shared dashboard reader. Do not bind it to the built-in `viewer` role: that role
 also enables the agent and shared conversation history. The shared login must
-never receive administration, authoring, preview, refresh, deployment, token,
-or connection privileges.
+never receive administration, authoring, preview, refresh, deployment,
+or connection privileges. Personal API tokens are allowed, but remain limited
+to this principal's existing resource access; token capabilities cannot grant
+additional authority. Keep the agent unconfigured on the shared demo instance.
+Conversation and personal-settings pages are authenticated user surfaces, so
+absence of a project role must not be treated as a blanket denial of those pages.
 
 Treat the shared credential as public. To rotate it, reset the local password,
 revoke every existing session for the principal, complete the forced password
