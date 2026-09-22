@@ -530,7 +530,7 @@ test('windowed table requests empty placeholder blocks and replaces loading rows
   }
 })
 
-test('windowed table keeps completed empty blocks settled and reports only visible pending work', async () => {
+test('windowed table reconciles terminal empty blocks and reports only visible pending work', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
   try {
     await page.goto(baseURL)
@@ -548,7 +548,7 @@ test('windowed table keeps completed empty blocks settled and reports only visib
         columns: [{ key: 'id', label: 'ID', width: 180 }],
         totalRows: 150, availableRows: 150, chunkSize: 50, rowHeight: 34,
         resetVersion: 0, sort,
-        blocks: { a: block(0, 2, rows(0)), b: block(50, 2), c: block(100, 2, rows(100)) },
+        blocks: { a: block(0, 2, rows(0)), b: block(50, 2), c: block(100, 2) },
       }
       const requests: WindowedTableRequest[] = []
       element.addEventListener('lv-windowed-table-request', (event: CustomEvent<WindowedTableRequest>) => requests.push(event.detail))
@@ -559,6 +559,8 @@ test('windowed table keeps completed empty blocks settled and reports only visib
       scrollport.dispatchEvent(new Event('scroll'))
       await new Promise((resolve) => setTimeout(resolve, 120))
       const settledRequestCount = requests.length
+      const terminalCanvasHeight = (element.shadowRoot.querySelector('.canvas') as HTMLElement).style.height
+      const terminalLoading = Boolean(element.shadowRoot.querySelector('.loading'))
 
       element.table = {
         ...element.table,
@@ -574,10 +576,16 @@ test('windowed table keeps completed empty blocks settled and reports only visib
       ;(element as any).emitBlock(element.table, 'a', 0, sort, 0)
       await element.updateComplete
       const visiblePending = Boolean(element.shadowRoot.querySelector('.loading'))
-      return { settledRequestCount, backgroundPending, visiblePending }
+      return { settledRequestCount, terminalCanvasHeight, terminalLoading, backgroundPending, visiblePending }
     })
 
-    expect(state).toEqual({ settledRequestCount: 0, backgroundPending: false, visiblePending: true })
+    expect(state).toEqual({
+      settledRequestCount: 0,
+      terminalCanvasHeight: '1700px',
+      terminalLoading: false,
+      backgroundPending: false,
+      visiblePending: true,
+    })
   } finally {
     await page.close()
   }
