@@ -35,7 +35,7 @@ func TestPageStreamRouteInventoryIsProjectOwned(t *testing.T) {
 	}
 }
 
-func TestDashboardBuilderPageStreamUsesHandlerAuthorization(t *testing.T) {
+func TestDashboardBuilderPageStreamValidatesSelectorAndUsesHandlerAuthorization(t *testing.T) {
 	auth, err := accessmodule.NewAuth(nil, accessmodule.AuthConfig{
 		DevBypass: true, DevAPIToken: "builder-stream-test", CSRFKey: "0123456789abcdef0123456789abcdef",
 	})
@@ -55,12 +55,25 @@ func TestDashboardBuilderPageStreamUsesHandlerAuthorization(t *testing.T) {
 	runtime := &runtimeServices{}
 	configurePageStream(routes, runtime, nil, nil)
 
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/updates?route=dashboard_builder&dashboard=dashboard_owned", nil)
-	request.Header.Set("Authorization", "Bearer builder-stream-test")
-	runtime.pageStreams.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("dashboard builder stream status = %d, want downstream handler status %d", recorder.Code, http.StatusInternalServerError)
+	for _, test := range []struct {
+		name       string
+		url        string
+		wantStatus int
+	}{
+		{name: "exact dashboard", url: "/updates?route=dashboard_builder&dashboard=dashboard_owned", wantStatus: http.StatusInternalServerError},
+		{name: "missing dashboard", url: "/updates?route=dashboard_builder", wantStatus: http.StatusNotFound},
+		{name: "duplicate dashboard", url: "/updates?route=dashboard_builder&dashboard=dashboard_owned&dashboard=dashboard_other", wantStatus: http.StatusNotFound},
+		{name: "invalid dashboard", url: "/updates?route=dashboard_builder&dashboard=not%20a%20dashboard", wantStatus: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, test.url, nil)
+			request.Header.Set("Authorization", "Bearer builder-stream-test")
+			runtime.pageStreams.ServeHTTP(recorder, request)
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("dashboard builder stream status = %d, want %d", recorder.Code, test.wantStatus)
+			}
+		})
 	}
 }
 

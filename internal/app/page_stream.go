@@ -6,6 +6,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	"github.com/flidai/leapview/internal/dashboard/authoring"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
@@ -44,10 +45,9 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 		case routeDashboardBuilder:
 			// DashboardBuilderUpdates performs the repository-backed EDIT
 			// decision while constructing the exact draft projection. Keep the
-			// stream boundary responsible for authentication only; applying the
-			// authoring guard here repeats the same lifecycle lookup and can reject
-			// a request before the builder has a chance to produce its bootstrap.
-			return routes.accessModule.Authenticate(next), true
+			// Keep authorization in the builder handler, where the draft lifecycle is
+			// available, but reject malformed selectors at the stream boundary.
+			return routes.accessModule.Authenticate(validateDashboardBuilderPageStream(next)), true
 		case routeChat:
 			return routes.accessModule.Authenticate(next), true
 		case routeAdmin:
@@ -88,6 +88,17 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 		handlers[routeAsset] = http.HandlerFunc(routes.projectBrowser.Updates)
 	}
 	runtime.pageStreams = uitransport.NewPageStream(uitransport.PageStreamConfig{Authorize: authorize, Handlers: handlers})
+}
+
+func validateDashboardBuilderPageStream(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dashboardID := strings.TrimSpace(dashboardBuilderPageStreamDashboardID(r))
+		if err := authoring.ValidateDashboardID(authoring.DashboardID(dashboardID)); err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func dashboardPageStreamResource(r *http.Request, _ projectgraph.ResourceID) []access.ResourceRef {
