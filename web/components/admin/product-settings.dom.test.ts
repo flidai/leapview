@@ -80,11 +80,12 @@ test('product settings renders redacted sections and emits typed identity comman
       element.addEventListener('lv-product-settings-command', (event: CustomEvent) => { command = event.detail })
       const input = element.shadowRoot.querySelector('input[type="text"]') as HTMLInputElement
       const logoLabel = element.shadowRoot.querySelector('input[type="file"]')?.getAttribute('aria-label')
+      const attribution = element.shadowRoot.querySelector('.attribution') as HTMLAnchorElement | null
       const customPreview = {
         logo: Boolean(element.shadowRoot.querySelector('.identity-preview img')),
         name: element.shadowRoot.querySelector('.identity-name')?.textContent?.trim(),
-        attribution: element.shadowRoot.querySelector<HTMLAnchorElement>('.attribution')?.textContent?.trim(),
-        attributionHref: element.shadowRoot.querySelector<HTMLAnchorElement>('.attribution')?.getAttribute('href'),
+        attribution: attribution?.textContent?.trim(),
+        attributionHref: attribution?.getAttribute('href'),
       }
       input.value = 'Acme BI'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
