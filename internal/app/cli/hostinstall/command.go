@@ -60,6 +60,35 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 	install.Flags().StringVar(&payloadPath, "payload", payloadPath, "immutable deployment payload (defaults to the leapviewctl directory)")
 	install.Flags().StringVar(&sourceImage, "source-image", sourceImage, "immutable image from which the deployment payload was extracted")
 	host.AddCommand(install)
+	addRecoveryAdmissionCommand(ctx, host)
 	addUpgradeCommand(ctx, host, options)
 	return host
+}
+
+func addRecoveryAdmissionCommand(ctx context.Context, host *cobra.Command) {
+	var request RecoveryAdmissionRequest
+	command := &cobra.Command{
+		Use:   "admit-recovery",
+		Short: "Validate a provider-restored recovery handoff before host activation",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if os.Geteuid() != 0 {
+				return fmt.Errorf("host recovery admission must run as root")
+			}
+			_, err := (RecoveryAdmission{}).Admit(ctx, request)
+			return err
+		},
+	}
+	command.Flags().StringVar(&request.ReportPath, "report", "", "private authoritative FAI-981 provider restore report")
+	command.Flags().StringVar(&request.SecretRoot, "secret-root", "/run/leapview/recovery", "provisioner-owned recovery secret bundle directory")
+	command.Flags().StringVar(&request.OutputPath, "output", "/opt/leapview/recovery-admission.json", "durable credential-free admission evidence")
+	command.Flags().StringVar(&request.OccurrenceID, "occurrence-id", "", "expected durable recovery occurrence ID")
+	command.Flags().StringVar(&request.TargetID, "target-id", "", "expected authoritative target ID")
+	command.Flags().StringVar(&request.RecoverySetID, "recovery-set-id", "", "expected RecoverySet ID")
+	command.Flags().StringVar(&request.FrontierDigest, "frontier-digest", "", "expected RecoverySet frontier digest")
+	command.Flags().StringVar(&request.ArtifactIdentity, "artifact", "", "expected immutable admitted OCI artifact")
+	for _, name := range []string{"report", "occurrence-id", "target-id", "recovery-set-id", "frontier-digest", "artifact"} {
+		_ = command.MarkFlagRequired(name)
+	}
+	host.AddCommand(command)
 }

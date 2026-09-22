@@ -111,15 +111,42 @@ and the final PostgreSQL recovery-ledger occurrence. A successful report also
 contains the exact runnable OCI artifact and source revision, credential-free
 control, DuckLake, and object-provider endpoints, and a digest-bound reference
 to a provisioner-installed root-readable credential bundle stored outside the
-evidence tree. The qualification places the providers on a dedicated recovery
-network and runs the consumer in a separate filesystem and network namespace;
-the consumer receives only the public evidence and provisioned bundle and
-verifies the retained providers by their recovery-network names. Producer-side
-listeners are bound to loopback. A durable resource manifest allows the next
-run or the cleanup task to remove retained containers and networks even when a
-prior run failed before publishing its summary. Run
+evidence tree. PostgreSQL endpoints require `sslmode=verify-full`; object
+endpoints require HTTPS. Both publish only the secret keys for their CA and
+credentials, while the private bundle uses an opaque `leapview-secret://`
+reference resolved from a provisioner-owned directory on the consuming host.
+The qualification places the providers on a dedicated recovery network and
+runs the consumer in a separate filesystem and network namespace. The consumer
+has no producer mounts or provider-network membership and reaches both retained
+providers through their advertised host endpoints. It executes the production
+preactivation admission and writes credential-free evidence to
+`.tmp/qualification/ubdr/provider-restore/replacement-host-preactivation-admission.json`.
+A durable resource manifest allows the next run or the cleanup task to remove
+retained containers and networks even when a prior run failed before publishing
+its summary. Run
 `task qualify:ubdr:provider-restore:cleanup` after the downstream consumer
 finishes.
+
+On a provisioned replacement host, run the same gate before bootstrap or
+traffic activation:
+
+```sh
+sudo leapviewctl host admit-recovery \
+  --report /secure/provider-restore-report.json \
+  --occurrence-id "$RECOVERY_OCCURRENCE_ID" \
+  --target-id "$TARGET_ID" \
+  --recovery-set-id "$RECOVERY_SET_ID" \
+  --frontier-digest "$RECOVERY_FRONTIER_DIGEST" \
+  --artifact "$IMMUTABLE_CANDIDATE_IMAGE"
+```
+
+The provisioner installs the matching secret bundle under
+`/run/leapview/recovery`; the command resolves the opaque reference there,
+binds every expected identity, verifies provider TLS and exact object versions,
+and writes `/opt/leapview/recovery-admission.json`. It fails before writing
+success evidence when the handoff is missing, mismatched, insecure, or
+unreachable. This command does not install the artifact, activate traffic, or
+perform a replacement-host rebuild.
 
 This disposable qualification proves the repository coordinator, fencing,
 ordering, exact-version checks, and durable evidence path. It does not prove a

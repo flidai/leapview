@@ -6,12 +6,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
@@ -28,6 +35,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/app/cli/hostinstall"
 	"github.com/flidai/leapview/internal/app/providerrestore"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
@@ -72,10 +80,12 @@ func TestFAI981CoordinatedProviderRestoreQualification(t *testing.T) {
 		t.Fatal(err)
 	}
 	recoveryNetwork := startQualificationNetwork(t, manifest, runID)
+	providerHost := requiredQualificationEnv(t, "LEAPVIEW_TEST_FAI981_PROVIDER_HOST")
+	tlsMaterial := qualificationTLS(t, providerHost)
 	artifact := qualificationArtifact(t)
-	objects := startQualificationObjects(t, recoveryNetwork, manifest, runID)
+	objects := startQualificationObjects(t, recoveryNetwork, manifest, runID, providerHost, tlsMaterial)
 	objectPoints := objects.seedAndDamage(t)
-	postgres := startQualificationPostgres(t, recoveryNetwork, manifest, runID)
+	postgres := startQualificationPostgres(t, recoveryNetwork, manifest, runID, providerHost, tlsMaterial)
 	backups := postgres.seedBackupAndDamage(t, objectPoints)
 	authorityPool := postgres.createAuthorityDatabase(t)
 
@@ -101,7 +111,7 @@ func TestFAI981CoordinatedProviderRestoreQualification(t *testing.T) {
 	coordinator, err := providerrestore.New(providerrestore.Dependencies{
 		Ledger: ledger, Sets: setRepository, Databases: databaseProvider, Objects: objectProvider,
 		Verifier: verifier, Evidence: store,
-		Handoff: &qualificationHandoffProvider{artifact: artifact, postgres: postgres, databases: databaseProvider, objects: objects, private: providerrestore.FileSecretBundleStore{Root: privateRoot, ReferenceURI: "file:///run/leapview/recovery"}},
+		Handoff: &qualificationHandoffProvider{artifact: artifact, postgres: postgres, databases: databaseProvider, objects: objects, private: providerrestore.FileSecretBundleStore{Root: privateRoot}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -181,12 +191,32 @@ func TestFAI981DownstreamHandoffSurvivesProducerExit(t *testing.T) {
 		runIsolatedHandoffConsumer(t, evidenceRoot, privateRoot, report)
 		return
 	}
-	bundle, err := (providerrestore.FileSecretBundleStore{Root: filepath.Dir(strings.TrimPrefix(report.Handoff.Secrets.URI, "file://"))}).Load(t.Context(), report.Handoff.Secrets)
+	bundle, err := (providerrestore.FileSecretBundleStore{Root: privateRoot}).Load(t.Context(), report.Handoff.Secrets)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if relative, err := filepath.Rel(evidenceRoot, strings.TrimPrefix(report.Handoff.Secrets.URI, "file://")); err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	privateBundlePath := filepath.Join(privateRoot, report.Handoff.Secrets.SHA256+".json")
+	if relative, err := filepath.Rel(evidenceRoot, privateBundlePath); err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		t.Fatal("credential bundle is inside the published evidence tree")
+	}
+	reportPath := filepath.Join(t.TempDir(), "provider-restore-report.json")
+	reportJSON, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reportPath, reportJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	admission, err := (hostinstall.RecoveryAdmission{}).Admit(t.Context(), hostinstall.RecoveryAdmissionRequest{
+		ReportPath: reportPath, SecretRoot: privateRoot, OutputPath: "/tmp/recovery-admission.json",
+		OccurrenceID: report.OccurrenceID, TargetID: report.TargetID, RecoverySetID: report.RecoverySetID,
+		FrontierDigest: report.FrontierDigest, ArtifactIdentity: report.Handoff.Artifact.Image,
+	})
+	if err != nil {
+		t.Fatalf("replacement-host preactivation admission: %v", err)
+	}
+	if admission.Status != "admitted" || !admission.Probe.TLSVerified || admission.Probe.ObjectCount != len(report.Objects) {
+		t.Fatalf("replacement-host preactivation admission incomplete: %#v", admission)
 	}
 	if os.Getenv("LEAPVIEW_TEST_FAI981_ISOLATED_CONSUMER") == "" {
 		for _, resource := range report.Handoff.Providers {
@@ -196,14 +226,14 @@ func TestFAI981DownstreamHandoffSurvivesProducerExit(t *testing.T) {
 			}
 		}
 	}
-	control := openQualificationPool(t, bundle.ControlURL)
+	control := openQualificationTLSPool(t, bundle.ControlURL, bundle.PostgresRootCA)
 	controlDigest := qualificationDatabaseStateDigest(t, control, recoveryset.DatabaseControl)
-	ducklake := openQualificationPool(t, bundle.DuckLakeURL)
+	ducklake := openQualificationTLSPool(t, bundle.DuckLakeURL, bundle.PostgresRootCA)
 	duckDigest := qualificationDatabaseStateDigest(t, ducklake, recoveryset.DatabaseDuckLake)
 	if controlDigest != report.Verification.ControlStateDigest || duckDigest != report.Verification.DuckLakeStateDigest {
 		t.Fatalf("downstream database state mismatch: %s/%s", controlDigest, duckDigest)
 	}
-	client := awss3.New(awss3.Options{Region: bundle.ObjectRegion, BaseEndpoint: aws.String(bundle.ObjectEndpoint), UsePathStyle: true, Credentials: credentials.NewStaticCredentialsProvider(bundle.ObjectAccessKey, bundle.ObjectSecretKey, ""), RetryMaxAttempts: 1})
+	client := awss3.New(awss3.Options{Region: bundle.ObjectRegion, BaseEndpoint: aws.String(bundle.ObjectEndpoint), UsePathStyle: true, Credentials: credentials.NewStaticCredentialsProvider(bundle.ObjectAccessKey, bundle.ObjectSecretKey, ""), RetryMaxAttempts: 1, HTTPClient: qualificationTLSHTTPClient(t, bundle.ObjectRootCA)})
 	for _, object := range report.Objects {
 		parsed, parseErr := parseObjectURI(object.URI)
 		if parseErr != nil {
@@ -247,7 +277,7 @@ func (provider *qualificationHandoffProvider) CreateHandoff(ctx context.Context,
 	if controlURL == "" || duckLakeURL == "" {
 		return providerrestore.ReplacementHandoff{}, fmt.Errorf("restored PostgreSQL endpoints are unavailable")
 	}
-	secretReference, err := provider.private.Save(ctx, providerrestore.CredentialBundle{SchemaVersion: 1, ControlURL: controlURL, DuckLakeURL: duckLakeURL, ObjectEndpoint: provider.objects.endpoint, ObjectRegion: "us-east-1", ObjectAccessKey: provider.objects.user, ObjectSecretKey: provider.objects.secret})
+	secretReference, err := provider.private.Save(ctx, providerrestore.CredentialBundle{SchemaVersion: 2, ControlURL: controlURL, DuckLakeURL: duckLakeURL, ObjectEndpoint: provider.objects.endpoint, ObjectRegion: "us-east-1", ObjectAccessKey: provider.objects.user, ObjectSecretKey: provider.objects.secret, PostgresRootCA: provider.postgres.rootCA, ObjectRootCA: provider.objects.rootCA})
 	if err != nil {
 		return providerrestore.ReplacementHandoff{}, err
 	}
@@ -263,9 +293,9 @@ func (provider *qualificationHandoffProvider) CreateHandoff(ctx context.Context,
 		SchemaVersion: providerrestore.HandoffSchemaVersion, Kind: providerrestore.HandoffKind, Status: providerrestore.HandoffAvailable,
 		RecoverySetID: request.Set.ID, FrontierDigest: request.Set.FrontierDigest, TargetID: request.Set.Delivery.TargetID, Artifact: provider.artifact,
 		Providers: []providerrestore.ProviderEndpoint{
-			{Role: "control", Provider: "postgresql-physical-basebackup", ResourceID: provider.postgres.resourceID, Endpoint: controlEndpoint, Database: controlDatabase, CredentialSecretKey: "postgres.control.url"},
-			{Role: "ducklake", Provider: "postgresql-physical-basebackup", ResourceID: provider.postgres.resourceID, Endpoint: duckEndpoint, Database: duckDatabase, CredentialSecretKey: "postgres.ducklake.url"},
-			{Role: "objects", Provider: "minio-s3-versioning", ResourceID: provider.objects.resourceID, Endpoint: provider.objects.endpoint, Region: "us-east-1", Bucket: provider.objects.bucket, CredentialSecretKey: "object.credentials"},
+			{Role: "control", Provider: "postgresql-physical-basebackup", ResourceID: provider.postgres.resourceID, Endpoint: controlEndpoint, Database: controlDatabase, CredentialSecretKey: "postgres.control.url", TLSRootCASecretKey: "postgres.root-ca"},
+			{Role: "ducklake", Provider: "postgresql-physical-basebackup", ResourceID: provider.postgres.resourceID, Endpoint: duckEndpoint, Database: duckDatabase, CredentialSecretKey: "postgres.ducklake.url", TLSRootCASecretKey: "postgres.root-ca"},
+			{Role: "objects", Provider: "minio-s3-versioning", ResourceID: provider.objects.resourceID, Endpoint: provider.objects.endpoint, Region: "us-east-1", Bucket: provider.objects.bucket, CredentialSecretKey: "object.credentials", TLSRootCASecretKey: "object.root-ca"},
 		},
 		Secrets: secretReference, AvailableAt: time.Now().UTC(),
 	}, nil
@@ -343,6 +373,72 @@ func randomQualificationCredential(t *testing.T, byteCount int) string {
 	return hex.EncodeToString(raw)
 }
 
+type qualificationTLSMaterial struct {
+	caCert, serverCert, serverKey string
+}
+
+func qualificationTLS(t *testing.T, host string) qualificationTLSMaterial {
+	t.Helper()
+	if !providerHostIdentityValid(host) {
+		t.Fatalf("LEAPVIEW_TEST_FAI981_PROVIDER_HOST %q is not a replacement-host-routable IP or DNS identity", host)
+	}
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "LeapView FAI-981 qualification root"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
+	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: host}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment}
+	if address := net.ParseIP(host); address != nil {
+		server.IPAddresses = []net.IP{address}
+	} else {
+		server.DNSNames = []string{host}
+	}
+	serverDER, err := x509.CreateCertificate(rand.Reader, server, ca, &serverKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(serverKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return qualificationTLSMaterial{
+		caCert:     string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})),
+		serverCert: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER})),
+		serverKey:  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})),
+	}
+}
+
+func providerHostIdentityValid(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") || !strings.Contains(host, ".") {
+		return false
+	}
+	if address := net.ParseIP(host); address != nil {
+		return !address.IsLoopback() && !address.IsUnspecified() && !address.IsLinkLocalUnicast()
+	}
+	return true
+}
+
+func qualificationTLSHTTPClient(t *testing.T, rootCA string) *http.Client {
+	t.Helper()
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(rootCA)) {
+		t.Fatal("qualification TLS root is invalid")
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	return &http.Client{Transport: transport, Timeout: 15 * time.Second}
+}
+
 func assertLoopbackPortBindings(t *testing.T, containerID string) {
 	t.Helper()
 	output, err := exec.Command("docker", "inspect", "--format", "{{json .HostConfig.PortBindings}}", containerID).CombinedOutput()
@@ -393,19 +489,6 @@ func persistResourceAfterCreate(manifest providerrestore.RetainedResourceManifes
 
 func runIsolatedHandoffConsumer(t *testing.T, evidenceRoot, privateRoot string, report providerrestore.Report) {
 	t.Helper()
-	manifest, found, err := (providerrestore.RetainedResourceManifestStore{Path: requiredQualificationEnv(t, "LEAPVIEW_TEST_FAI981_RESOURCE_MANIFEST")}).Load()
-	if err != nil || !found {
-		t.Fatalf("load retained-resource manifest: found=%v err=%v", found, err)
-	}
-	networkName := ""
-	for _, resource := range manifest.Resources {
-		if resource.Kind == "network" {
-			networkName = resource.ID
-		}
-	}
-	if networkName == "" {
-		t.Fatal("retained recovery network is absent")
-	}
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -424,14 +507,13 @@ func runIsolatedHandoffConsumer(t *testing.T, evidenceRoot, privateRoot string, 
 				"LEAPVIEW_TEST_FAI981_PROVIDER_RESTORE_EVIDENCE_DIR": "/tmp",
 				"LEAPVIEW_TEST_FAI981_HANDOFF_PRIVATE_DIR":           "/run/leapview/recovery",
 			},
-			Networks: []string{networkName},
 		},
 	})
 	if err != nil {
 		t.Fatalf("start isolated handoff consumer: %v", err)
 	}
 	t.Cleanup(func() { _ = testcontainers.TerminateContainer(consumer) })
-	assertIsolatedConsumer(t, consumer.GetContainerID(), networkName)
+	assertIsolatedConsumer(t, consumer.GetContainerID(), "bridge")
 	if code, _, err := consumer.Exec(t.Context(), []string{"mkdir", "-p", "/run/leapview/recovery"}, tcexec.Multiplexed()); err != nil || code != 0 {
 		t.Fatalf("prepare consumer secret directory: exit=%d err=%v", code, err)
 	}
@@ -441,11 +523,8 @@ func runIsolatedHandoffConsumer(t *testing.T, evidenceRoot, privateRoot string, 
 	if err := consumer.CopyFileToContainer(t.Context(), filepath.Join(evidenceRoot, "coordinated-provider-restore.json"), "/tmp/coordinated-provider-restore.json", 0o600); err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := url.Parse(report.Handoff.Secrets.URI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := consumer.CopyFileToContainer(t.Context(), sourceBundle, parsed.Path, 0o600); err != nil {
+	consumerSecretPath := filepath.Join("/run/leapview/recovery", report.Handoff.Secrets.SHA256+".json")
+	if err := consumer.CopyFileToContainer(t.Context(), sourceBundle, consumerSecretPath, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	exitCode, output, err := consumer.Exec(t.Context(), []string{"/tmp/fai981-consumer", "-test.run=^TestFAI981DownstreamHandoffSurvivesProducerExit$", "-test.v"}, tcexec.Multiplexed())
@@ -453,7 +532,20 @@ func runIsolatedHandoffConsumer(t *testing.T, evidenceRoot, privateRoot string, 
 	if err != nil || readErr != nil || exitCode != 0 {
 		t.Fatalf("isolated handoff consumer failed: exit=%d exec=%v read=%v output=%s", exitCode, err, readErr, raw)
 	}
-	t.Logf("isolated handoff consumer used recovery network %s without producer filesystem mounts", networkName)
+	admissionReader, err := consumer.CopyFileFromContainer(t.Context(), "/tmp/recovery-admission.json")
+	if err != nil {
+		t.Fatalf("copy preactivation admission evidence: %v", err)
+	}
+	admissionJSON, readErr := io.ReadAll(admissionReader)
+	closeErr := admissionReader.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read preactivation admission evidence: %v", errorsJoin(readErr, closeErr))
+	}
+	if err := os.WriteFile(filepath.Join(evidenceRoot, "replacement-host-preactivation-admission.json"), admissionJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertQualificationEvidenceCredentialFree(t, evidenceRoot)
+	t.Log("isolated handoff consumer used the default bridge without the producer recovery network or filesystem mounts")
 }
 
 func assertIsolatedConsumer(t *testing.T, containerID, networkName string) {
@@ -490,6 +582,8 @@ type qualificationPostgresFixture struct {
 	clusterIdentity string
 	timeline        string
 	backupIdentity  string
+	providerHost    string
+	rootCA          string
 }
 
 type qualificationBackup struct {
@@ -497,7 +591,7 @@ type qualificationBackup struct {
 	stateDigest string
 }
 
-func startQualificationPostgres(t *testing.T, networkName string, manifest providerrestore.RetainedResourceManifestStore, runID string) *qualificationPostgresFixture {
+func startQualificationPostgres(t *testing.T, networkName string, manifest providerrestore.RetainedResourceManifestStore, runID, providerHost string, material qualificationTLSMaterial) *qualificationPostgresFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
@@ -509,6 +603,11 @@ func startQualificationPostgres(t *testing.T, networkName string, manifest provi
 	primaryPort, restorePort := freeLoopbackPort(t), freeLoopbackPort(t)
 	container, err := tcpostgres.Run(ctx, postgrestest.PostgreSQL18Image,
 		tcpostgres.WithDatabase("postgres"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword(password),
+		testcontainers.WithFiles(
+			testcontainers.ContainerFile{Reader: strings.NewReader(material.caCert), ContainerFilePath: "/etc/fai981-tls/ca.crt", FileMode: 0o600},
+			testcontainers.ContainerFile{Reader: strings.NewReader(material.serverCert), ContainerFilePath: "/etc/fai981-tls/server.crt", FileMode: 0o600},
+			testcontainers.ContainerFile{Reader: strings.NewReader(material.serverKey), ContainerFilePath: "/etc/fai981-tls/server.key", FileMode: 0o600},
+		),
 		testcontainers.WithReuseByName(containerName),
 		testcontainers.WithCmd("postgres"),
 		testcontainers.WithExposedPorts("55432/tcp"),
@@ -518,7 +617,7 @@ func startQualificationPostgres(t *testing.T, networkName string, manifest provi
 		testcontainers.WithHostConfigModifier(func(config *dockercontainer.HostConfig) {
 			config.PortBindings = dockernetwork.PortMap{
 				dockernetwork.MustParsePort("5432/tcp"):  {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: primaryPort}},
-				dockernetwork.MustParsePort("55432/tcp"): {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: restorePort}},
+				dockernetwork.MustParsePort("55432/tcp"): {{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: restorePort}},
 			}
 		}),
 		testcontainers.WithTmpfs(map[string]string{"/var/lib/postgresql": "rw,size=1g", "/tmp": "rw,size=512m"}),
@@ -531,7 +630,8 @@ func startQualificationPostgres(t *testing.T, networkName string, manifest provi
 		_ = testcontainers.TerminateContainer(container)
 		t.Fatal(err)
 	}
-	assertLoopbackPortBindings(t, container.GetContainerID())
+	runContainerCommand(t, container, "chown", "postgres:postgres", "/etc/fai981-tls/server.key", "/etc/fai981-tls/server.crt", "/etc/fai981-tls/ca.crt")
+	runContainerCommand(t, container, "chmod", "0600", "/etc/fai981-tls/server.key")
 	adminURL, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		t.Fatal(err)
@@ -548,7 +648,7 @@ func startQualificationPostgres(t *testing.T, networkName string, manifest provi
 	if err := admin.QueryRow(ctx, `SELECT timeline_id::text FROM pg_control_checkpoint()`).Scan(&timeline); err != nil {
 		t.Fatal(err)
 	}
-	return &qualificationPostgresFixture{container: container, resourceID: container.GetContainerID(), admin: admin, password: password, clusterIdentity: "postgres-system:" + systemID, timeline: timeline}
+	return &qualificationPostgresFixture{container: container, resourceID: container.GetContainerID(), admin: admin, password: password, clusterIdentity: "postgres-system:" + systemID, timeline: timeline, providerHost: providerHost, rootCA: material.caCert}
 }
 
 func (fixture *qualificationPostgresFixture) seedBackupAndDamage(t *testing.T, objects map[string]qualificationObjectPoint) map[recoveryset.DatabaseRole]qualificationBackup {
@@ -673,7 +773,7 @@ func (provider *qualificationDatabaseProvider) RestoreCluster(ctx context.Contex
 	}
 	started := time.Now().UTC()
 	if err := runContainerCommandError(ctx, provider.fixture.container, "su", "postgres", "-c", "pg_ctl -D /tmp/fai981-physical-base status"); err != nil {
-		if err := runContainerCommandError(ctx, provider.fixture.container, "su", "postgres", "-c", `pg_ctl -D /tmp/fai981-physical-base -o "-p 55432 -k /tmp -c listen_addresses='*'" -w start`); err != nil {
+		if err := runContainerCommandError(ctx, provider.fixture.container, "su", "postgres", "-c", `pg_ctl -D /tmp/fai981-physical-base -o "-p 55432 -k /tmp -c listen_addresses='*' -c ssl=on -c ssl_cert_file=/etc/fai981-tls/server.crt -c ssl_key_file=/etc/fai981-tls/server.key -c ssl_ca_file=/etc/fai981-tls/ca.crt" -w start`); err != nil {
 			return nil, err
 		}
 	}
@@ -725,7 +825,11 @@ func (fixture *qualificationPostgresFixture) restoredDatabaseURL(ctx context.Con
 }
 
 func (fixture *qualificationPostgresFixture) consumerDatabaseURL(database string) string {
-	return (&url.URL{Scheme: "postgres", User: url.UserPassword("postgres", fixture.password), Host: "fai981-postgres:55432", Path: "/" + database, RawQuery: "sslmode=disable"}).String()
+	port, err := fixture.container.MappedPort(context.Background(), "55432/tcp")
+	if err != nil {
+		panic(err)
+	}
+	return (&url.URL{Scheme: "postgres", User: url.UserPassword("postgres", fixture.password), Host: net.JoinHostPort(fixture.providerHost, port.Port()), Path: "/" + database, RawQuery: "sslmode=verify-full"}).String()
 }
 
 type qualificationObjectPoint struct {
@@ -738,9 +842,10 @@ type qualificationObjects struct {
 	bucket                 string
 	endpoint, user, secret string
 	resourceID             string
+	rootCA                 string
 }
 
-func startQualificationObjects(t *testing.T, networkName string, manifest providerrestore.RetainedResourceManifestStore, runID string) *qualificationObjects {
+func startQualificationObjects(t *testing.T, networkName string, manifest providerrestore.RetainedResourceManifestStore, runID, providerHost string, material qualificationTLSMaterial) *qualificationObjects {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
@@ -748,17 +853,21 @@ func startQualificationObjects(t *testing.T, networkName string, manifest provid
 	containerName := "leapview-fai981-minio-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	objectPort := freeLoopbackPort(t)
 	container, err := tcminio.Run(ctx, qualificationMinIOImage, tcminio.WithUsername(user), tcminio.WithPassword(secret),
+		testcontainers.WithFiles(
+			testcontainers.ContainerFile{Reader: strings.NewReader(material.serverCert), ContainerFilePath: "/root/.minio/certs/public.crt", FileMode: 0o644},
+			testcontainers.ContainerFile{Reader: strings.NewReader(material.serverKey), ContainerFilePath: "/root/.minio/certs/private.key", FileMode: 0o600},
+		),
 		testcontainers.WithReuseByName(containerName),
 		tcnetwork.WithNetworkName([]string{"fai981-objects"}, networkName),
 		tcnetwork.WithBridgeNetwork(),
 		testcontainers.WithAdditionalLifecycleHooks(persistResourceAfterCreate(manifest, runID)),
 		testcontainers.WithHostConfigModifier(func(config *dockercontainer.HostConfig) {
 			config.PortBindings = dockernetwork.PortMap{
-				dockernetwork.MustParsePort("9000/tcp"): {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: objectPort}},
+				dockernetwork.MustParsePort("9000/tcp"): {{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: objectPort}},
 			}
 		}),
 		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g"}),
-		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithStartupTimeout(time.Minute)))
+		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithTLS(true).WithAllowInsecure(true).WithStartupTimeout(time.Minute)))
 	if err != nil {
 		t.Fatalf("start required versioned object provider: %v", err)
 	}
@@ -766,12 +875,12 @@ func startQualificationObjects(t *testing.T, networkName string, manifest provid
 		_ = testcontainers.TerminateContainer(container)
 		t.Fatal(err)
 	}
-	assertLoopbackPortBindings(t, container.GetContainerID())
-	address, err := container.ConnectionString(ctx)
+	port, err := container.MappedPort(ctx, "9000/tcp")
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := awss3.New(awss3.Options{Region: "us-east-1", BaseEndpoint: aws.String("http://" + strings.TrimRight(address, "/")), UsePathStyle: true, Credentials: credentials.NewStaticCredentialsProvider(user, secret, ""), RetryMaxAttempts: 1})
+	endpoint := (&url.URL{Scheme: "https", Host: net.JoinHostPort(providerHost, port.Port())}).String()
+	client := awss3.New(awss3.Options{Region: "us-east-1", BaseEndpoint: aws.String(endpoint), UsePathStyle: true, Credentials: credentials.NewStaticCredentialsProvider(user, secret, ""), RetryMaxAttempts: 1, HTTPClient: qualificationTLSHTTPClient(t, material.caCert)})
 	bucket := "fai981-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:20]
 	if _, err := client.CreateBucket(ctx, &awss3.CreateBucketInput{Bucket: &bucket}); err != nil {
 		t.Fatal(err)
@@ -779,7 +888,7 @@ func startQualificationObjects(t *testing.T, networkName string, manifest provid
 	if _, err := client.PutBucketVersioning(ctx, &awss3.PutBucketVersioningInput{Bucket: &bucket, VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusEnabled}}); err != nil {
 		t.Fatal(err)
 	}
-	return &qualificationObjects{client: client, bucket: bucket, endpoint: "http://fai981-objects:9000", user: user, secret: secret, resourceID: container.GetContainerID()}
+	return &qualificationObjects{client: client, bucket: bucket, endpoint: endpoint, user: user, secret: secret, resourceID: container.GetContainerID(), rootCA: material.caCert}
 }
 
 func (objects *qualificationObjects) seedAndDamage(t *testing.T) map[string]qualificationObjectPoint {
@@ -1004,8 +1113,13 @@ func assertQualificationResult(t *testing.T, report providerrestore.Report, occu
 	if len(report.Databases) != 2 || len(report.Objects) != 2 || !report.Verification.Ready || !report.Verification.ObjectsConsistent {
 		t.Fatalf("coordinated provider evidence incomplete: %#v", report)
 	}
-	if report.Handoff.Status != providerrestore.HandoffAvailable || report.Handoff.Artifact.Image != occurrence.ArtifactIdentity || len(report.Handoff.Providers) != 3 || len(report.Handoff.Secrets.Keys) != 3 {
+	if report.Handoff.Status != providerrestore.HandoffAvailable || report.Handoff.Artifact.Image != occurrence.ArtifactIdentity || len(report.Handoff.Providers) != 3 || len(report.Handoff.Secrets.Keys) != 5 || strings.HasPrefix(report.Handoff.Secrets.URI, "file://") {
 		t.Fatalf("replacement-host handoff incomplete: %#v", report.Handoff)
+	}
+	for _, endpoint := range report.Handoff.Providers {
+		if strings.Contains(endpoint.Endpoint, "fai981-") || strings.Contains(endpoint.Endpoint, "127.0.0.1") || (endpoint.Role == "objects" && !strings.HasPrefix(endpoint.Endpoint, "https://")) || (endpoint.Role != "objects" && !strings.Contains(endpoint.Endpoint, "sslmode=verify-full")) {
+			t.Fatalf("replacement-host handoff contains a producer-only or insecure endpoint: %#v", endpoint)
+		}
 	}
 	if occurrence.RestoreStartedAt.IsZero() || occurrence.RestoreCompletedAt.IsZero() || occurrence.RestoreCompletedAt.Before(occurrence.RestoreStartedAt) || len(occurrence.Evidence) != 1 {
 		t.Fatalf("durable occurrence phase/evidence incomplete: %#v", occurrence)
@@ -1037,6 +1151,11 @@ func writeQualificationEvidence(t *testing.T, root string, value any, secrets ..
 	if err := os.WriteFile(path, encoded, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	assertQualificationEvidenceCredentialFree(t, root, secrets...)
+}
+
+func assertQualificationEvidenceCredentialFree(t *testing.T, root string, secrets ...string) {
+	t.Helper()
 	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil || entry.IsDir() {
 			return walkErr
@@ -1062,6 +1181,25 @@ func writeQualificationEvidence(t *testing.T, root string, value any, secrets ..
 func openQualificationPool(t *testing.T, databaseURL string) *pgxpool.Pool {
 	t.Helper()
 	pool, err := pgxpool.New(t.Context(), databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+func openQualificationTLSPool(t *testing.T, databaseURL, rootCA string) *pgxpool.Pool {
+	t.Helper()
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(rootCA)) || config.ConnConfig.TLSConfig == nil {
+		t.Fatal("qualification PostgreSQL TLS configuration is incomplete")
+	}
+	config.ConnConfig.TLSConfig.RootCAs = roots
+	pool, err := pgxpool.NewWithConfig(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}

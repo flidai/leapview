@@ -601,11 +601,11 @@ func (provider *fakeHandoff) CreateHandoff(_ context.Context, request HandoffReq
 		RecoverySetID: request.Set.ID, FrontierDigest: request.Set.FrontierDigest, TargetID: request.Set.Delivery.TargetID,
 		Artifact: compatibility.ReleaseIdentity{Version: "0.2.0-rc.2", SourceRevision: "69652fb20101de80497cbf47ecfb402f700d6552", Image: request.ArtifactIdentity, Distribution: "oci", Platform: "linux/amd64"},
 		Providers: []ProviderEndpoint{
-			{Role: "control", Provider: "postgresql", ResourceID: "provider-control", Endpoint: "postgres://127.0.0.1:55432", Database: "control-restored", CredentialSecretKey: "postgres.control.url"},
-			{Role: "ducklake", Provider: "postgresql", ResourceID: "provider-ducklake", Endpoint: "postgres://127.0.0.1:55432", Database: "ducklake-restored", CredentialSecretKey: "postgres.ducklake.url"},
-			{Role: "objects", Provider: "s3", ResourceID: "provider-objects", Endpoint: "http://127.0.0.1:9000", Region: "us-east-1", Bucket: "provider-bucket", CredentialSecretKey: "object.credentials"},
+			{Role: "control", Provider: "postgresql", ResourceID: "provider-control", Endpoint: "postgres://db.example.com:55432?sslmode=verify-full", Database: "control-restored", CredentialSecretKey: "postgres.control.url", TLSRootCASecretKey: "postgres.root-ca"},
+			{Role: "ducklake", Provider: "postgresql", ResourceID: "provider-ducklake", Endpoint: "postgres://db.example.com:55432?sslmode=verify-full", Database: "ducklake-restored", CredentialSecretKey: "postgres.ducklake.url", TLSRootCASecretKey: "postgres.root-ca"},
+			{Role: "objects", Provider: "s3", ResourceID: "provider-objects", Endpoint: "https://objects.example.com", Region: "us-east-1", Bucket: "provider-bucket", CredentialSecretKey: "object.credentials", TLSRootCASecretKey: "object.root-ca"},
 		},
-		Secrets:     SecretBundleReference{Provider: "host-provisioned-root-file", URI: "file:///run/fai981/private.json", SHA256: strings64("c"), Version: "1", Keys: []string{"postgres.control.url", "postgres.ducklake.url", "object.credentials"}},
+		Secrets:     SecretBundleReference{Provider: "host-provisioned-root-file", URI: "leapview-secret://host-provisioned/recovery/" + strings64("c"), SHA256: strings64("c"), Version: "1", Keys: []string{"object.credentials", "object.root-ca", "postgres.control.url", "postgres.ducklake.url", "postgres.root-ca"}},
 		AvailableAt: provider.now(),
 	}
 	if provider.mismatch {
