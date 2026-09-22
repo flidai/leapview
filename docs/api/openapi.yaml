@@ -40896,6 +40896,7 @@ paths:
                 environment: example
                 items:
                   - id: example
+                    name: example
                     policyDigest: example
                     policyRevision: 1
                 page:
@@ -41182,6 +41183,7 @@ paths:
                 $ref: '#/components/schemas/TargetGrantResponse'
               example:
                 id: example
+                name: example
                 policyDigest: example
                 policyRevision: 1
         '400':
@@ -84172,6 +84174,7 @@ components:
             $ref: '#/components/schemas/TargetGrantResponse'
           example:
             - id: example
+              name: example
               policyDigest: example
               policyRevision: 1
         page:
@@ -84199,6 +84202,7 @@ components:
         environment: example
         items:
           - id: example
+            name: example
             policyDigest: example
             policyRevision: 1
         page:
@@ -84219,6 +84223,9 @@ components:
         id:
           type: string
           example: example
+        name:
+          type: string
+          example: example
         policyRevision:
           type: integer
           format: int64
@@ -84228,6 +84235,7 @@ components:
           example: example
       example:
         id: example
+        name: example
         policyDigest: example
         policyRevision: 1
     TemporalVisualizationFormat:

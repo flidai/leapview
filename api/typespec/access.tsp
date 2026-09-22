@@ -467,6 +467,7 @@ model TargetGrantCreateRequest extends GrantRequest {
 
 model TargetGrantResponse extends GrantRequest {
   id: string;
+  name?: string;
   policyRevision: int64;
   policyDigest: string;
 }

@@ -23,7 +23,7 @@ type grantCreateRequest struct {
 }
 
 func grantDTO(g access.AuthorizationGrant, p access.AuthorizationPolicy) map[string]any {
-	return map[string]any{"id": g.ID, "resourceId": g.Resource.ID(), "resourceKind": g.Resource.Kind(), "subjectType": g.Subject.Kind, "subjectId": g.Subject.ID, "capability": g.Capability, "policyRevision": p.Revision, "policyDigest": p.Digest}
+	return map[string]any{"id": g.ID, "name": g.Name, "resourceId": g.Resource.ID(), "resourceKind": g.Resource.Kind(), "subjectType": g.Subject.Kind, "subjectId": g.Subject.ID, "capability": g.Capability, "policyRevision": p.Revision, "policyDigest": p.Digest}
 }
 func (h Handler) ListGrants(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
