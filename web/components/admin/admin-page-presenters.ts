@@ -70,7 +70,7 @@ export function publicationFact(label: string, value: string) {
 }
 
 export function isPersonalSettings(active: string): boolean {
-  return active === 'profile' || active === 'security' || active === 'api-tokens' || active === 'api-token-new' || active === 'archived-chats'
+  return active === 'profile' || active === 'security' || active === 'api-tokens' || active === 'api-token-new'
 }
 
 export function isProductSettings(active: string): boolean {

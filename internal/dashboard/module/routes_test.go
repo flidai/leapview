@@ -26,6 +26,7 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 		"POST /dashboards/{dashboard}/fork":                 false,
 		"GET /dashboards/{dashboard}/edit":                  false,
 		"POST /dashboards/{dashboard}/archive":              false,
+		"POST /dashboards/{dashboard}/delete":               false,
 		"GET /dashboards/{dashboard}/preview":               false,
 		"GET /dashboards/{dashboard}/export.yaml":           false,
 		"POST /dashboards/{dashboard}/draft/command":        false,

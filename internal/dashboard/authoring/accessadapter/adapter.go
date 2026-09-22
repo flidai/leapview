@@ -117,6 +117,8 @@ func capabilityForAction(action authoring.AuthorizationAction) (access.Capabilit
 		return access.CapabilityResourcePublish, nil
 	case authoring.AuthorizationActionArchive:
 		return access.CapabilityResourceManage, nil
+	case authoring.AuthorizationActionDelete:
+		return access.CapabilityResourceManage, nil
 	default:
 		return "", fmt.Errorf("%w: unsupported authorization action %q", ErrInvalid, action)
 	}

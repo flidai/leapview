@@ -115,6 +115,31 @@ type ArchiveInput struct {
 	Evidence                CommandEvidence
 }
 
+// DeleteInput permanently removes one authored dashboard and all of its
+// private revisions. The expected revision keeps a stale browser request from
+// deleting a dashboard that changed after the catalog was rendered.
+type DeleteInput struct {
+	ProjectID               graph.ResourceID
+	DashboardID             DashboardID
+	ExpectedCurrentRevision RevisionToken
+	Evidence                CommandEvidence
+}
+
+// DeleteResult carries the idempotent outcome of a permanent deletion. A
+// replay returns the original revision without touching the already-removed
+// dashboard rows.
+type DeleteResult struct {
+	Revision RevisionToken
+	Replayed bool
+}
+
+// DeleteRepository is kept separate from Repository so read-side and archive
+// fixtures cannot accidentally gain a destructive capability.
+type DeleteRepository interface {
+	LookupDeleteCommand(context.Context, graph.ResourceID, DashboardID, CommandEvidence) (DeleteResult, bool, error)
+	Delete(context.Context, DeleteInput) (DeleteResult, error)
+}
+
 // ArchiveInput.ExpectedCurrentRevision is compared with the current draft
 // pointer when one exists; otherwise it is compared with the published
 // pointer. This makes archive an optimistic, project-scoped transition.

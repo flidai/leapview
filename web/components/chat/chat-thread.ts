@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronRight, Check, Copy, FileText, LayoutDashboard, LayoutPanelTop, Pencil, RotateCcw, Waypoints, Wrench, type IconNode } from 'lucide'
+import { ChevronRight, Check, Copy, FileText, LayoutDashboard, LayoutPanelTop, Pencil, Waypoints, Wrench, type IconNode } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import type { ChatArtifactSignal, ChatStatus, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
@@ -68,8 +68,7 @@ class ChatThread extends LitElement {
             ${empty && !unavailable ? this.renderEmptyState('Start a conversation') : nothing}
             ${groupTranscript(transcript).map((unit) => this.renderUnit(unit))}
             ${showWorking ? html`
-              <div class="working" role="status" aria-live="polite">
-                <span>Working</span>
+              <div class="working" role="status" aria-label="Working" aria-live="polite">
                 <span class="working-dots" aria-hidden="true"><i></i><i></i><i></i></span>
               </div>
             ` : nothing}
@@ -164,14 +163,12 @@ class ChatThread extends LitElement {
 
   private renderAgentTurn(items: ChatTranscriptItemSignal[]) {
     const text = items.filter(item => item.kind === 'assistant').map(item => item.markdown || item.text || '').filter(Boolean).join('\n\n')
-    const index = this.resolvedTranscript.indexOf(items[0])
-    const prompt = this.resolvedTranscript.slice(0, index).reverse().find(item => item.kind === 'user')
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
           ${items.map((item) => this.renderAgentItem(item))}
         </div>
-        ${text && !this.status.running ? this.messageActions(items[0].id, text, prompt, false) : nothing}
+        ${text && !this.status.running ? this.messageActions(items[0].id, text, undefined, false) : nothing}
       </article>
     `
   }
@@ -179,29 +176,20 @@ class ChatThread extends LitElement {
   private messageActions(id: string, text: string, prompt: ChatTranscriptItemSignal | undefined, user: boolean) {
     return html`<div class="message-actions" role="group" aria-label=${user ? 'Your message actions' : 'Answer actions'}>
       <button type="button" title=${this.copiedId === id ? 'Copied' : 'Copy'} aria-label=${this.copiedId === id ? 'Copied' : 'Copy message'} @click=${() => this.copyMessage(id, text)}>${lucideIcon(this.copiedId === id ? Check : Copy, { size: 16 })}</button>
-      ${prompt ? html`<button type="button" title=${user ? 'Edit in message input' : 'Ask again'} aria-label=${user ? 'Edit message' : 'Ask again'} ?disabled=${this.status.running || !this.status.enabled} @click=${() => this.reuseMessage(prompt, user)}>${lucideIcon(user ? Pencil : RotateCcw, { size: 16 })}</button>` : nothing}
+      ${user && prompt ? html`<button type="button" title="Edit in message input" aria-label="Edit message" ?disabled=${this.status.running || !this.status.enabled} @click=${() => this.reuseMessage(prompt)}>${lucideIcon(Pencil, { size: 16 })}</button>` : nothing}
       ${this.copiedId === id ? html`<span class="copy-confirmation" role="status">Copied</span>` : nothing}
     </div>`
   }
 
-  private reuseMessage(item: ChatTranscriptItemSignal, edit: boolean) {
+  private reuseMessage(item: ChatTranscriptItemSignal) {
     if (this.status.running || !this.status.enabled) return
-    if (edit && item.kind === 'user') {
-      const editMessageId = typeof item.id === 'string' ? item.id.trim() : ''
-      // An edit without a persisted message ID cannot be represented safely.
-      // Leave the composer untouched rather than turning it into a new prompt.
-      if (!editMessageId) return
-      this.dispatchEvent(new CustomEvent('lv-chat-reuse', {
-        bubbles: true,
-        composed: true,
-        detail: { text: item.text || '', references: item.references || [], editMessageId },
-      }))
-      return
-    }
+    const editMessageId = typeof item.id === 'string' ? item.id.trim() : ''
+    // An edit without a persisted message ID cannot be represented safely.
+    if (!editMessageId || item.kind !== 'user') return
     this.dispatchEvent(new CustomEvent('lv-chat-reuse', {
       bubbles: true,
       composed: true,
-      detail: { text: item.text || '', references: item.references || [] },
+      detail: { text: item.text || '', references: item.references || [], editMessageId },
     }))
   }
 
@@ -292,7 +280,7 @@ class ChatThread extends LitElement {
       <div class="tool-details" id=${detailsID}>
         ${item.argumentsJson || item.inputJson ? this.renderToolCode('Input', item.argumentsJson || item.inputJson || '', toolInputLanguage(item)) : nothing}
         ${item.resultJson ? this.renderToolCode(toolResultLabel(item, status), item.resultJson, toolResultLanguage(item)) : nothing}
-        ${item.error ? html`<div class="tool-error" role="alert">${item.error}</div>` : nothing}
+        ${item.error && !hasStructuredErrorResult(item.resultJson) ? html`<div class="tool-error" role="alert">${item.error}</div>` : nothing}
         ${!item.argumentsJson && !item.inputJson && !item.resultJson && !item.error
           ? html`<div class="tool-empty">No details available.</div>`
           : nothing}
@@ -403,6 +391,16 @@ function toolResultLabel(item: ChatTranscriptItemSignal, status: string): string
   if (status === 'error') return 'Error result'
   if (item.name === 'export_dashboard_yaml' && toolResultLanguage(item) === 'yaml') return 'Dashboard YAML'
   return 'Result'
+}
+
+function hasStructuredErrorResult(value: string | undefined): boolean {
+  if (!value) return false
+  try {
+    const result = JSON.parse(value)
+    return result !== null && typeof result === 'object' && 'error' in result && result.error != null
+  } catch {
+    return false
+  }
 }
 
 function previewLanguage(format: string | undefined, value: string, fallback: ToolPreviewLanguage): ToolPreviewLanguage {

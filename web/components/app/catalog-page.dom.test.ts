@@ -656,6 +656,48 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
   }
 })
 
+test('owned private draft can be deleted after confirmation with a UUIDv7 key', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const confirmation = new Promise<string>((resolve) => {
+      page.once('dialog', async (dialog) => {
+        const message = dialog.message()
+        await dialog.dismiss()
+        resolve(message)
+      })
+    })
+    const action = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        ...element.page,
+        dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({
+          ...dashboard,
+          catalogScope: index === 0 ? 'mine' : dashboard.catalogScope,
+          status: index === 0 ? 'private_draft' : dashboard.status,
+        })),
+      } })
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const list = root.querySelector('lv-entity-list') as CatalogListElement
+      await list.updateComplete
+      ;(list.querySelector('.entity-list-row-action') as HTMLButtonElement).click()
+      await element.updateComplete
+      const form = root.querySelector<HTMLFormElement>('.catalog-action-form[action$="/delete"]')
+      const key = form?.querySelector<HTMLInputElement>('[name=idempotencyKey]')?.value ?? ''
+      form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.click()
+      return { action: form?.getAttribute('action'), key }
+    })
+    expect(action.action).toBe('/dashboards/executive-sales/delete')
+    expect(action.key).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(await confirmation).toContain('Delete Executive Sales Dashboard?')
+    expect(new URL(page.url()).pathname).toBe('/')
+  } finally {
+    await page.close()
+  }
+})
+
 test('managed dashboard menu offers an editable copy without edit or archive actions', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -675,7 +717,7 @@ test('managed dashboard menu offers an editable copy without edit or archive act
     })
 
     expect(menu).toEqual([
-      { label: 'Make an editable copy', href: '/dashboards/executive-sales/fork' },
+      { label: 'Make an editable copy', href: null },
       { label: 'View details', href: null },
       { label: 'Copy link', href: null },
     ])

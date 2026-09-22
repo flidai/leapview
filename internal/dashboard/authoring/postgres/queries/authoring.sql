@@ -52,6 +52,16 @@ SELECT dashboard.authoring_archive_dashboard(
  sqlc.arg(expected_revision_number),sqlc.arg(expected_content_hash),sqlc.arg(command_id)::uuid,
  sqlc.arg(request_fingerprint),sqlc.arg(action),sqlc.arg(command_provenance_json)::jsonb,
  sqlc.arg(occurred_at),sqlc.arg(event_id)::uuid) AS applied;
+-- name: GetDeleteCommand :one
+SELECT command_id::text, request_fingerprint, revision_id::text, revision_number, content_hash
+FROM dashboard.authoring_delete_commands
+WHERE project_id=sqlc.arg(project_id) AND dashboard_id=sqlc.arg(dashboard_id) AND command_id=sqlc.arg(command_id)::uuid;
+-- name: DeleteDashboard :one
+SELECT dashboard.authoring_delete_dashboard(
+ sqlc.arg(project_id), sqlc.arg(dashboard_id), sqlc.arg(expected_revision_id)::uuid,
+ sqlc.arg(expected_revision_number), sqlc.arg(expected_content_hash), sqlc.arg(command_id)::uuid,
+ sqlc.arg(request_fingerprint), sqlc.arg(action), sqlc.arg(command_provenance_json)::jsonb,
+ sqlc.arg(occurred_at)) AS applied;
 -- name: CommitRevalidation :one
 SELECT dashboard.authoring_commit_revalidation(
  sqlc.arg(project_id),sqlc.arg(dashboard_id),sqlc.arg(revision_id)::uuid,

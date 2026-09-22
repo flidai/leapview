@@ -2,22 +2,14 @@ import { css } from 'lit'
 
 export const personalSettingsStyles = css`
     :host { display: block; color: var(--lv-fg-default); font: var(--lv-type-body); }
-    .settings { display: grid; gap: var(--base-size-20); width: 100%; min-width: 0; }
-    section { display: grid; gap: var(--base-size-20); }
+    section:not(.settings-section) { display: grid; gap: var(--base-size-20); }
     h2, h3, p { margin: 0; }
     h2 { font: var(--lv-type-section-title); }
     h3 { font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
-    .card { display: grid; gap: 0; overflow: visible; border: var(--lv-border-muted); border-radius: var(--lv-radius-large); background: var(--lv-bg-panel); }
-    .row { display: grid; min-height: var(--base-size-48); box-sizing: border-box; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-16); padding: var(--base-size-8) var(--base-size-16); border-bottom: var(--lv-border-muted); }
-    .row:first-child { border-radius: var(--lv-radius-large) var(--lv-radius-large) 0 0; }
-    .row:last-child { border-bottom: 0; }
-    .profile-row { min-height: var(--base-size-64); padding: var(--base-size-12) var(--base-size-20); }
-    .account-section { gap: var(--base-size-12); }
-    .account-row { min-height: var(--base-size-64); padding: var(--base-size-12) var(--base-size-20); }
     .account-id { max-width: 22rem; overflow: hidden; color: var(--lv-fg-muted); font: var(--lv-type-caption); text-overflow: ellipsis; white-space: nowrap; }
     .profile-email { max-width: 22rem; justify-self: end; text-align: right; }
     .profile-name-form { min-width: 0; justify-self: end; }
-    .profile-name-control { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: var(--base-size-8); }
+    .profile-name-control { justify-content: flex-end; }
     .profile-name-control input { width: min(13rem, 40vw); min-height: var(--control-medium-size, var(--base-size-32)); text-align: center; font: var(--lv-type-body); }
     .profile-local-input { width: min(13rem, 40vw); min-height: var(--control-medium-size, var(--base-size-32)); justify-self: end; text-align: center; font: var(--lv-type-body); }
     .muted { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
@@ -194,7 +186,6 @@ export const personalSettingsStyles = css`
     .notice { padding: var(--base-size-8) var(--base-size-12); border-radius: var(--lv-radius-small); background: var(--lv-bg-success-muted); color: var(--lv-fg-success); }
     .error { color: var(--lv-fg-danger); }
     @media (max-width: 40rem) {
-      .row { grid-template-columns: 1fr; gap: var(--base-size-12); padding: var(--base-size-16); }
       .profile-email { max-width: none; justify-self: stretch; text-align: left; }
       .profile-name-form { width: 100%; justify-self: stretch; }
       .profile-name-control { justify-content: stretch; }

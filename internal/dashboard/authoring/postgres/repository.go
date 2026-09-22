@@ -112,6 +112,7 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 }
 
 var _ authoring.Repository = (*Repository)(nil)
+var _ authoring.DeleteRepository = (*Repository)(nil)
 
 func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (authoring.DashboardLifecycle, error) {
 	if err := input.ProjectID.Validate(); err != nil {
@@ -979,6 +980,114 @@ func (r *Repository) Archive(ctx context.Context, input authoring.ArchiveInput) 
 	return r.Get(ctx, graph.ResourceID(projectID), input.DashboardID)
 }
 
+func (r *Repository) LookupDeleteCommand(ctx context.Context, projectID graph.ResourceID, dashboardID authoring.DashboardID, evidence authoring.CommandEvidence) (authoring.DeleteResult, bool, error) {
+	if err := projectID.Validate(); err != nil {
+		return authoring.DeleteResult{}, false, err
+	}
+	if err := authoring.ValidateDashboardID(dashboardID); err != nil {
+		return authoring.DeleteResult{}, false, err
+	}
+	if err := evidence.Validate(); err != nil {
+		return authoring.DeleteResult{}, false, err
+	}
+	if evidence.Action != authoring.AuthorizationActionDelete {
+		return authoring.DeleteResult{}, false, fmt.Errorf("%w: delete requires delete command evidence", authoring.ErrInvalidAuthoring)
+	}
+	row, err := dashboarddb.New(r.db).GetDeleteCommand(ctx, dashboarddb.GetDeleteCommandParams{ProjectID: projectID.String(), DashboardID: dashboardID.String(), CommandID: nativeUUIDValue(string(evidence.ID))})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return authoring.DeleteResult{}, false, nil
+	}
+	if err != nil {
+		return authoring.DeleteResult{}, false, err
+	}
+	if row.RequestFingerprint != evidence.Fingerprint {
+		return authoring.DeleteResult{}, false, authoring.ErrCommandReuse
+	}
+	result := authoring.DeleteResult{Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(row.RevisionID), Number: uint64(row.RevisionNumber), ContentHash: row.ContentHash}, Replayed: true}
+	if err := result.Revision.ValidateComplete(); err != nil {
+		return authoring.DeleteResult{}, false, err
+	}
+	return result, true, nil
+}
+
+func (r *Repository) Delete(ctx context.Context, input authoring.DeleteInput) (authoring.DeleteResult, error) {
+	projectID, err := validateDeleteInput(input)
+	if err != nil {
+		return authoring.DeleteResult{}, err
+	}
+	expectedRevisionNumber, err := checkedInt64(input.ExpectedCurrentRevision.Number, "expected current revision number")
+	if err != nil {
+		return authoring.DeleteResult{}, err
+	}
+	for label, value := range map[string]string{
+		"command id":                   string(input.Evidence.ID),
+		"expected current revision id": input.ExpectedCurrentRevision.RevisionID.String(),
+	} {
+		if err := validateNativeUUIDv7Boundary(value, label); err != nil {
+			return authoring.DeleteResult{}, err
+		}
+	}
+	tx, err := r.begin(ctx)
+	if err != nil {
+		return authoring.DeleteResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	q := dashboarddb.New(r.db).WithTx(tx)
+	if row, lookupErr := q.GetDeleteCommand(ctx, dashboarddb.GetDeleteCommandParams{ProjectID: projectID, DashboardID: input.DashboardID.String(), CommandID: nativeUUIDValue(string(input.Evidence.ID))}); lookupErr == nil {
+		if row.RequestFingerprint != input.Evidence.Fingerprint {
+			return authoring.DeleteResult{}, authoring.ErrCommandReuse
+		}
+		result := authoring.DeleteResult{Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(row.RevisionID), Number: uint64(row.RevisionNumber), ContentHash: row.ContentHash}, Replayed: true}
+		if err := result.Revision.ValidateComplete(); err != nil {
+			return authoring.DeleteResult{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return authoring.DeleteResult{}, err
+		}
+		return result, nil
+	} else if !errors.Is(lookupErr, pgx.ErrNoRows) {
+		return authoring.DeleteResult{}, lookupErr
+	}
+	lifecycle, err := r.getLifecycle(ctx, q, projectID, input.DashboardID)
+	if err != nil {
+		return authoring.DeleteResult{}, err
+	}
+	expected := input.ExpectedCurrentRevision
+	if lifecycle.Draft != nil {
+		if !sameToken(lifecycle.Draft.Revision, expected) {
+			return authoring.DeleteResult{}, staleConflict()
+		}
+	} else if lifecycle.Published == nil || !sameToken(lifecycle.Published.Revision, expected) {
+		return authoring.DeleteResult{}, staleConflict()
+	}
+	revision := authoring.Revision{ID: expected.RevisionID, DashboardID: input.DashboardID, Number: expected.Number, ContentHash: expected.ContentHash}
+	if lifecycle.Draft != nil {
+		revision.Provenance = lifecycle.Draft.Provenance
+	} else if lifecycle.Published != nil {
+		revision.Provenance = lifecycle.Published.Provenance
+	}
+	if err := r.recordAuditIntent(ctx, tx, lifecycle, revision, input.Evidence.ID.String()); err != nil {
+		return authoring.DeleteResult{}, err
+	}
+	commandProvenanceJSON, err := json.Marshal(input.Evidence.Provenance)
+	if err != nil {
+		return authoring.DeleteResult{}, err
+	}
+	applied, err := q.DeleteDashboard(ctx, dashboarddb.DeleteDashboardParams{
+		ProjectID: projectID, DashboardID: input.DashboardID.String(), ExpectedRevisionID: nativeUUIDValue(string(expected.RevisionID)),
+		ExpectedRevisionNumber: expectedRevisionNumber, ExpectedContentHash: expected.ContentHash,
+		CommandID: nativeUUIDValue(string(input.Evidence.ID)), RequestFingerprint: input.Evidence.Fingerprint,
+		Action: string(input.Evidence.Action), CommandProvenanceJson: commandProvenanceJSON, OccurredAt: input.Evidence.OccurredAt,
+	})
+	if err != nil {
+		return authoring.DeleteResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return authoring.DeleteResult{}, err
+	}
+	return authoring.DeleteResult{Revision: expected, Replayed: applied == 0}, nil
+}
+
 type commandResult struct {
 	RevisionID authoring.RevisionID
 }
@@ -1462,6 +1571,26 @@ func validateArchiveInput(input authoring.ArchiveInput) (string, error) {
 	}
 	if input.Evidence.Action != authoring.AuthorizationActionArchive {
 		return "", fmt.Errorf("%w: archive requires archive command evidence", authoring.ErrInvalidAuthoring)
+	}
+	if err := input.ExpectedCurrentRevision.ValidateComplete(); err != nil {
+		return "", err
+	}
+	return projectID, nil
+}
+
+func validateDeleteInput(input authoring.DeleteInput) (string, error) {
+	if err := input.ProjectID.Validate(); err != nil {
+		return "", fmt.Errorf("project id is required: %w", err)
+	}
+	projectID := input.ProjectID.String()
+	if err := authoring.ValidateDashboardID(input.DashboardID); err != nil {
+		return "", err
+	}
+	if err := input.Evidence.Validate(); err != nil {
+		return "", err
+	}
+	if input.Evidence.Action != authoring.AuthorizationActionDelete {
+		return "", fmt.Errorf("%w: delete requires delete command evidence", authoring.ErrInvalidAuthoring)
 	}
 	if err := input.ExpectedCurrentRevision.ValidateComplete(); err != nil {
 		return "", err
