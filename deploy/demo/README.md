@@ -3,7 +3,12 @@
 `https://demo.leapview.dev` is the hosted LeapView demonstration environment.
 The `leapview-demo` GitHub environment variable `DEMO_DATASET` selects its
 project: `cfo` publishes the CFO Command Center, while `olist` (the default)
-preserves the existing Olist showcase. Other values are rejected before any
+preserves the existing Olist showcase. CFO publication requires a qualified,
+already-deployed runtime revision containing the CFO-aware publisher and
+`deploy/demo/datasets.txt` declaring `cfo`. The workflow checks this declaration
+in the pinned checkout before fetching credentials; older Olist-only pins are
+rejected for CFO publication. Merging this workflow alone does not upgrade the
+pinned runtime or its publisher. Other values are rejected before any
 credential exchange or publication.
 
 The CFO project lives in `dashboards/experiments/cfo-demo/`. Its four pages are
