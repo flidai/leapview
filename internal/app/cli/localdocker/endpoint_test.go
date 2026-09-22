@@ -484,14 +484,42 @@ func testSocket(t *testing.T) string {
 	return path
 }
 
-func shortSocketDir(t *testing.T) string {
-	t.Helper()
-	directory, err := os.MkdirTemp("", "lv-sock-")
+func TestShortSocketDirCanonicalizesSymlinkedTempRoot(t *testing.T) {
+	parent, err := os.MkdirTemp("/tmp", "lv-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(directory) })
-	return directory
+	t.Cleanup(func() { _ = os.RemoveAll(parent) })
+	alias := filepath.Join(parent, "alias")
+	if err := os.Symlink(parent, alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", alias)
+	directory := shortSocketDir(t)
+	resolved, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if directory != resolved {
+		t.Fatalf("shortSocketDir() = %q, canonical path = %q", directory, resolved)
+	}
+}
+
+func shortSocketDir(t *testing.T) string {
+	t.Helper()
+	// Keep Unix socket paths short and use the canonical spelling. On macOS,
+	// TMPDIR commonly sits under /var/folders, which resolves to /private/var/folders.
+	directory, err := os.MkdirTemp("/tmp", "lv-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		_ = os.RemoveAll(directory)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(canonical) })
+	return canonical
 }
 
 func environmentMap(environment []string) map[string]string {

@@ -488,15 +488,17 @@ func TestStartRetriesNormalSessionEstablishmentWithoutRebootstrapping(t *testing
 	options.EstablishSessions = func(_ context.Context, request SessionRequest) (SessionResult, error) {
 		if fail {
 			fail = false
-			return SessionResult{}, errors.New("browser authorization interrupted")
+			return SessionResult{}, context.DeadlineExceeded
 		}
 		return SessionResult{TargetName: request.TargetName, SessionID: "session-local"}, nil
 	}
 	controller, err := New(options)
 	require.NoError(t, err)
 	failed, err := controller.Start(t.Context())
-	require.ErrorContains(t, err, "browser authorization interrupted")
+	require.ErrorContains(t, err, "authorization timed out")
+	require.ErrorContains(t, err, "rerun leapview dev")
 	require.Equal(t, phaseApplication, failed.Phase)
+	require.Equal(t, statusIncomplete, failed.Status)
 	bootstrapCalls := countCommands(runner.commands, "admin delivery pool bootstrap")
 	controller, err = New(options)
 	require.NoError(t, err)

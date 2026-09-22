@@ -164,6 +164,10 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/localdocker-macos.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
   - path: .github/workflows/merge-validation.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
