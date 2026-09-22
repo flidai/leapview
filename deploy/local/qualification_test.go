@@ -159,7 +159,10 @@ func TestReleasedAuthoringQualificationDockerEngineProviderPolicy(t *testing.T) 
 import importlib.util
 import json
 import pathlib
+import stat
 import sys
+import types
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("leapview_qualify", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
@@ -179,6 +182,13 @@ for path, kind in expected.items():
 for path in ("/Users/author/.colima/docker.sock", "/Users/author/.local/share/containers/podman/machine/podman.sock"):
     if module.local_socket_kind(path, home, "Darwin") is not None:
         raise SystemExit(f"unsupported socket accepted: {path}")
+
+with patch.object(module.platform, "system", return_value="Darwin"), \
+     patch.object(module.Path, "home", return_value=home), \
+     patch.object(module.os.path, "realpath", return_value=str(home / ".orbstack/run/docker.sock")), \
+     patch.object(module.os, "stat", return_value=types.SimpleNamespace(st_mode=stat.S_IFSOCK)):
+    if module.normalize_docker_host("unix:///private/var/run/docker.sock") != "unix:///Users/author/.orbstack/run/docker.sock":
+        raise SystemExit("private default socket did not resolve to the OrbStack Engine socket")
 
 module.run_command = lambda *args, **kwargs: {"output": json.dumps({"Components": [{"Name": "Podman Engine"}], "Version": "5.0"})}
 try:

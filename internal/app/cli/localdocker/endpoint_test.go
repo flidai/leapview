@@ -282,6 +282,7 @@ func TestTrustedSocketPoliciesAreExact(t *testing.T) {
 	darwin := newResolver(Options{Platform: "darwin", HomeDir: "/Users/author", Environment: []string{}})
 	for path, want := range map[string]Kind{
 		"/var/run/docker.sock":                        KindDesktop,
+		"/private/var/run/docker.sock":                KindDesktop,
 		"/Users/author/.docker/run/docker.sock":       KindDesktop,
 		"/Users/author/.orbstack/run/docker.sock":     KindOrbStack,
 		"/Users/author/.colima/default/docker.sock":   KindColima,
@@ -327,11 +328,11 @@ func TestResolveMacProviderAndDefaultSocketAlias(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = listener.Close() })
 			docker := &fakeDocker{serverID: "engine-1"}
-			for _, host := range []string{"unix://" + tc.path, "unix:///var/run/docker.sock"} {
+			for _, host := range []string{"unix://" + tc.path, "unix:///var/run/docker.sock", "unix:///private/var/run/docker.sock"} {
 				endpoint, err := Resolve(t.Context(), Options{
 					Platform: "darwin", HomeDir: home, ExplicitHost: host, Run: docker.run,
 					evaluateSymlinks: func(path string) (string, error) {
-						if path == "/var/run/docker.sock" {
+						if path == "/var/run/docker.sock" || path == "/private/var/run/docker.sock" {
 							return tc.path, nil
 						}
 						return filepath.EvalSymlinks(path)

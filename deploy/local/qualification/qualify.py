@@ -862,7 +862,7 @@ def normalize_docker_host(value: str) -> str:
     resolved_path = os.path.realpath(socket_path)
     resolved_kind = local_socket_kind(resolved_path, home, system)
     mac_alias = system == "Darwin" and socket_path in (
-        "/var/run/docker.sock", "/run/docker.sock", str(home / ".docker/run/docker.sock")
+        "/var/run/docker.sock", "/run/docker.sock", "/private/var/run/docker.sock", str(home / ".docker/run/docker.sock")
     )
     if source_kind is None or resolved_kind is None or (source_kind != resolved_kind and not mac_alias):
         raise QualificationSkip("Docker socket is not a recognized local Docker Engine endpoint")

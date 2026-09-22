@@ -445,7 +445,7 @@ func (resolver *resolver) macDefaultSocketAlias(path string, aliasKind, resolved
 	if resolver.platform != "darwin" || aliasKind != KindDesktop {
 		return false
 	}
-	if path != "/var/run/docker.sock" && path != "/run/docker.sock" && path != filepath.Join(resolver.homeDir, ".docker", "run", "docker.sock") {
+	if path != "/var/run/docker.sock" && path != "/run/docker.sock" && path != "/private/var/run/docker.sock" && path != filepath.Join(resolver.homeDir, ".docker", "run", "docker.sock") {
 		return false
 	}
 	return resolvedKind == KindDesktop || resolvedKind == KindOrbStack || resolvedKind == KindColima || resolvedKind == KindRancherDesktop
