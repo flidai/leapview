@@ -13,9 +13,10 @@ fi
 # The application lifecycle below remains identical across supported hosts.
 # shellcheck disable=SC1091
 source /etc/os-release
+extra_packages=()
 case "${ID:-}:${VERSION_ID:-}" in
   ubuntu:24.04) compose_package=docker-compose-v2 ;;
-  debian:13) compose_package=docker-compose ;;
+  debian:13) compose_package=docker-compose; extra_packages=(docker-cli) ;;
   *)
     printf 'LeapView host bootstrap requires Ubuntu 24.04 LTS or Debian 13\n' >&2
     exit 1
@@ -44,7 +45,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates \
   docker.io \
-  "$compose_package" \
+  "$compose_package" "${extra_packages[@]}" \
   unattended-upgrades
 systemctl enable --now docker
 docker version >/dev/null
