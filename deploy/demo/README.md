@@ -76,9 +76,10 @@ demo login:
 - `DEMO_VIEWER_EMAIL`
 - `DEMO_VIEWER_PASSWORD`
 
-The shared principal is `demo@leapview.dev`. The project grants it only
-`RESOURCE_USE` and `RESOURCE_READ` on the canonical project and dashboard
-resource IDs. Do not bind it to the built-in `viewer` role: that role
+The shared principal is `demo@leapview.dev`. The target policy grants it only `RESOURCE_READ` on each canonical
+dashboard ID. Project namespaces accept only `PROJECT_ADMIN` as a direct
+grant, and dashboards do not support `RESOURCE_USE`; neither is needed for
+this shared dashboard reader. Do not bind it to the built-in `viewer` role: that role
 also enables the agent and shared conversation history. The shared login must
 never receive administration, authoring, preview, refresh, deployment, token,
 or connection privileges.
@@ -88,7 +89,14 @@ revoke every existing session for the principal, complete the forced password
 change, and update `DEMO_VIEWER_PASSWORD` in Infisical. A password reset alone
 does not revoke an already-issued browser session. On a replacement instance,
 create the local shared principal before the first project deployment; the
-project deployment then reconciles its least-privilege grants.
+administrator stages its least-privilege grants through
+`POST /api/v1/projects/{project}/grants`, supplying a stable `id`, the exact
+`resourceKind`/`resourceId`, `subjectType`/`subjectId`, `capability`, an
+`expectedRevision`, and an `Idempotency-Key` header. Read the current policy
+revision from the role-bindings or grants list response. Each mutation produces
+a new target-policy revision; publish and activate a candidate containing that
+revision before expecting serving access to change. The portable source bundle
+does not contain these target-owned grants.
 
 Manual recovery is available from the workflow dispatch control. It republishes
 the selected `main` revision through the identical project-content path.

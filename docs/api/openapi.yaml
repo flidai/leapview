@@ -40891,22 +40891,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GrantListResponse'
+                $ref: '#/components/schemas/TargetGrantListResponse'
               example:
+                environment: example
                 items:
-                  - capability: PROJECT_ADMIN
-                    createdAt: "2026-01-02T15:04:05Z"
-                    id: example
-                    inherited: true
-                    parentId: example
-                    parentResourceId: example
-                    parentResourceKind: project
-                    resourceId: example
-                    resourceKind: project
-                    subjectId: example
-                    subjectType: example
+                  - id: example
+                    policyDigest: example
+                    policyRevision: 1
                 page:
                   nextCursor: example
+                policyDigest: example
+                policyRevision: 1
+                projectId: example
+                targetId: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -41182,19 +41179,11 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GrantResponse'
+                $ref: '#/components/schemas/TargetGrantResponse'
               example:
-                capability: PROJECT_ADMIN
-                createdAt: "2026-01-02T15:04:05Z"
                 id: example
-                inherited: true
-                parentId: example
-                parentResourceId: example
-                parentResourceKind: project
-                resourceId: example
-                resourceKind: project
-                subjectId: example
-                subjectType: example
+                policyDigest: example
+                policyRevision: 1
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -41437,13 +41426,11 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GrantRequest'
+              $ref: '#/components/schemas/TargetGrantCreateRequest'
             example:
-              capability: PROJECT_ADMIN
-              resourceId: example
-              resourceKind: project
-              subjectId: example
-              subjectType: example
+              expectedRevision: 1
+              id: example
+              name: example
       x-apigen-operation-kind: command
       x-apigen-command:
         additional_exposures:
@@ -74666,45 +74653,6 @@ components:
         subjectId: example
         subjectType: example
         surface: example
-    GrantListResponse:
-      type: object
-      required:
-        - items
-        - page
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/GrantResponse'
-          example:
-            - capability: PROJECT_ADMIN
-              createdAt: "2026-01-02T15:04:05Z"
-              id: example
-              inherited: true
-              parentId: example
-              parentResourceId: example
-              parentResourceKind: project
-              resourceId: example
-              resourceKind: project
-              subjectId: example
-              subjectType: example
-        page:
-          $ref: '#/components/schemas/PageInfo'
-      example:
-        items:
-          - capability: PROJECT_ADMIN
-            createdAt: "2026-01-02T15:04:05Z"
-            id: example
-            inherited: true
-            parentId: example
-            parentResourceId: example
-            parentResourceKind: project
-            resourceId: example
-            resourceKind: project
-            subjectId: example
-            subjectType: example
-        page:
-          nextCursor: example
     GrantRequest:
       type: object
       required:
@@ -84183,6 +84131,105 @@ components:
         outcome: example
         providerVersion: example
         targetId: example
+    TargetGrantCreateRequest:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/GrantRequest'
+      required:
+        - id
+        - expectedRevision
+      properties:
+        id:
+          type: string
+          example: example
+        name:
+          type: string
+          example: example
+        expectedRevision:
+          type: integer
+          format: int64
+          example: 1
+      description: Mutable target policy intent; publication activates its graph-bound
+        grants.
+      example:
+        expectedRevision: 1
+        id: example
+        name: example
+    TargetGrantListResponse:
+      type: object
+      required:
+        - items
+        - page
+        - targetId
+        - projectId
+        - environment
+        - policyRevision
+        - policyDigest
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TargetGrantResponse'
+          example:
+            - id: example
+              policyDigest: example
+              policyRevision: 1
+        page:
+          $ref: '#/components/schemas/PageInfo'
+        targetId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        environment:
+          type: string
+          example: example
+        policyRevision:
+          type: integer
+          format: int64
+          example: 1
+        policyDigest:
+          type: string
+          example: example
+      example:
+        environment: example
+        items:
+          - id: example
+            policyDigest: example
+            policyRevision: 1
+        page:
+          nextCursor: example
+        policyDigest: example
+        policyRevision: 1
+        projectId: example
+        targetId: example
+    TargetGrantResponse:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/GrantRequest'
+      required:
+        - id
+        - policyRevision
+        - policyDigest
+      properties:
+        id:
+          type: string
+          example: example
+        policyRevision:
+          type: integer
+          format: int64
+          example: 1
+        policyDigest:
+          type: string
+          example: example
+      example:
+        id: example
+        policyDigest: example
+        policyRevision: 1
     TemporalVisualizationFormat:
       type: object
       allOf:

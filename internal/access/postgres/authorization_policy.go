@@ -98,14 +98,18 @@ func (r *Repository) authorizationPolicyAtRevision(ctx context.Context, db DBTX,
 	// SQL orders by ID, but sort again before validation/digesting so this
 	// boundary remains deterministic if the query is ever changed.
 	sort.Slice(bindings, func(i, j int) bool { return bindings[i].ID < bindings[j].ID })
-	digest, err := access.AuthorizationPolicyDigest(scope, bindings)
+	grants, err := readAuthorizationPolicyGrants(ctx, db, scope, revision)
+	if err != nil {
+		return access.AuthorizationPolicy{}, err
+	}
+	digest, err := access.AuthorizationPolicyDigest(scope, bindings, grants...)
 	if err != nil {
 		return access.AuthorizationPolicy{}, fmt.Errorf("compute authorization policy digest: %w", err)
 	}
 	if digest != row.Digest || (expectedDigest != "" && expectedDigest != row.Digest) {
 		return access.AuthorizationPolicy{}, fmt.Errorf("%w: stored digest %q, computed %q", access.ErrAuthorizationPolicyConflict, row.Digest, digest)
 	}
-	return access.AuthorizationPolicy{Scope: scope, Revision: revision, Digest: row.Digest, RoleBindings: cloneAuthorizationRoleBindings(bindings)}, nil
+	return access.AuthorizationPolicy{Scope: scope, Revision: revision, Digest: row.Digest, RoleBindings: cloneAuthorizationRoleBindings(bindings), Grants: grants}, nil
 }
 
 // AuthorizationPolicy reads the current exact target/project/environment
@@ -399,7 +403,7 @@ func (r *Repository) upsertAuthorizationRoleBindingCore(ctx context.Context, db 
 	if !replaced {
 		bindings = append(bindings, input.Binding)
 	}
-	digest, err := access.AuthorizationPolicyDigest(input.Scope, bindings)
+	digest, err := access.AuthorizationPolicyDigest(input.Scope, bindings, current.Grants...)
 	if err != nil {
 		return access.AuthorizationPolicy{}, err
 	}
@@ -415,6 +419,9 @@ func (r *Repository) upsertAuthorizationRoleBindingCore(ctx context.Context, db 
 		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: nextRevision, ID: binding.ID, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID, Role: string(binding.Role), Capabilities: encoded, Name: binding.Name}); err != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy role binding %q: %w", binding.ID, err)
 		}
+	}
+	if err := insertAuthorizationPolicyGrants(ctx, db, input.Scope, nextRevision, current.Grants); err != nil {
+		return access.AuthorizationPolicy{}, err
 	}
 	updateTag, err := queries.UpdateAuthorizationPolicyHead(ctx, accessdb.UpdateAuthorizationPolicyHeadParams{Revision: nextRevision, Digest: digest, ExpectedRevision: head.Revision, TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment})
 	if err != nil {
