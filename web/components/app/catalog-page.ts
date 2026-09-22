@@ -1,6 +1,8 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import type { CatalogPageSignal, ChromeSignal } from '../../generated/signals'
+import { readStringList, readStringRecord, writeStorage } from './catalog-preferences'
+import { uuidv7 } from '../shared/command'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
@@ -17,7 +19,7 @@ type CatalogDashboard = CatalogPageSignal['dashboards'][number]
 
 const catalogFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
 const catalogRecentsStorageKey = 'leapview.dashboard-catalog.recents.v1'
-const unrankedPopularityLabel = 'Not ranked — popularity is based on distinct viewers, not opens; at least 3 viewers and a top-30% rank over 30 days are required.'
+const unrankedPopularityLabel = 'Not ranked'
 
 class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @property({ attribute: 'create-draft-href' }) createDraftHref = ''
@@ -29,11 +31,15 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @state() private favoriteDashboardIDs: string[] = []
   @state() private recentDashboardIDs: Record<string, string> = {}
   @state() private createDraftOpen = false
+  @state() private copyDraftDashboardID = ''
+  @state() private copyDraftIdempotencyKey = ''
   @state() private actionMenu: { dashboardID: string, top: number, left: number } | null = null
   @state() private detailsDashboardID = ''
   @state() private copyLinkMessage = ''
   private autoOpenChecked = false
+  private copyAutoOpenChecked = false
   private createDraftTrigger: HTMLAnchorElement | null = null
+  private copyDraftTrigger: HTMLElement | null = null
   private actionMenuTrigger: HTMLElement | null = null
   static styles = [pageHeaderStyles, css`
     :host {
@@ -62,6 +68,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
         padding: var(--base-size-12);
       }
     }
+
+    .page-header { border-bottom: 0; padding-bottom: 0; }
 
     .catalog-create-draft { display: inline-flex; align-items: center; gap: var(--base-size-6); min-height: var(--control-medium-size); padding: 0 var(--base-size-12); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); cursor: pointer; font: var(--lv-type-body-compact); }
     .catalog-create-draft svg { display: block; flex: 0 0 auto; }
@@ -199,7 +207,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     .catalog-details-list dt { color: var(--lv-fg-muted); }
     .catalog-details-list dd { margin: 0; overflow-wrap: anywhere; color: var(--lv-fg-default); }
     .catalog-details-footer { display: flex; gap: var(--base-size-8); border-top: var(--lv-border-muted); padding: var(--base-size-16) var(--base-size-20); }
-    .catalog-details-action { display: inline-flex; min-height: var(--control-medium-size); align-items: center; justify-content: center; gap: var(--base-size-6); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); padding: 0 var(--base-size-12); font: var(--lv-type-body-compact); text-decoration: none; }
+    .catalog-details-action { display: inline-flex; min-height: var(--control-medium-size); align-items: center; justify-content: center; gap: var(--base-size-6); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); padding: 0 var(--base-size-12); cursor: pointer; font: var(--lv-type-body-compact); text-decoration: none; }
     .catalog-details-action:hover { background: var(--lv-button-bg-hover, var(--lv-bg-control-hover)); }
 
     @media (max-width: 720px) {
@@ -233,16 +241,15 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       if (this.urlCreateDraftRequested()) this.createDraftOpen = true
     }
 
-    const dialog = this.renderRoot.querySelector<HTMLDialogElement>('#catalog-create-draft-dialog')
-    if (this.createDraftOpen && dialog && !dialog.open) {
-      dialog.showModal()
-      window.setTimeout(() => {
-        const target = dialog.querySelector<HTMLElement>('[autofocus]') ?? dialog.querySelector<HTMLElement>('input:not([type="hidden"]), select, button')
-        target?.focus({ preventScroll: true })
-      }, 0)
-    } else if (!this.createDraftOpen && dialog?.open) {
-      dialog.close()
+    if (!this.copyAutoOpenChecked && page) {
+      this.copyAutoOpenChecked = true
+      const requested = this.urlCopyDraftRequested()
+      const dashboard = page.dashboards.find((candidate) => candidate.dashboardId === requested || candidate.id === requested)
+      if (dashboard) this.beginDashboardCopy(dashboard)
     }
+
+    this.syncDialog('#catalog-create-draft-dialog', this.createDraftOpen)
+    this.syncDialog('#catalog-copy-draft-dialog', Boolean(this.copyDraftDashboardID))
   }
 
   get page(): CatalogPageSignal | null {
@@ -262,6 +269,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     return html`
       <section aria-label="LeapView dashboard catalog">
         ${renderPageHeader(page.title, '', '', this.createDraftHref ? html`<a class="catalog-create-draft" href=${this.createDraftHref} aria-haspopup="dialog" aria-controls="catalog-create-draft-dialog" @click=${this.handleCreateDraftTrigger}>${lucideIcon(lucideIconByCanonicalName('plus'), { size: 16, strokeWidth: 2 })}<span>New dashboard</span></a>` : undefined)}
+        ${['archive', 'delete'].includes(new URLSearchParams(window.location.search).get('dashboardActionError') ?? '') ? html`<p role="alert">The dashboard could not be ${new URLSearchParams(window.location.search).get('dashboardActionError') === 'delete' ? 'deleted' : 'archived'}. Refresh the page and try again. If the problem continues, check your dashboard permissions with an administrator.</p>` : ''}
         <nav class="catalog-tabs" aria-label="Dashboard views" role="tablist">
           ${this.renderCatalogTab('all', 'All dashboards')}
           ${this.renderCatalogTab('favorites', 'Favorites')}
@@ -316,12 +324,14 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           empty-text=${this.catalogEmptyText()}
           title-emphasis="normal"
           sticky-identity
+          hover-sort-indicators
           @lv-entity-list-favorite-toggle=${this.toggleDashboardFavorite}
           @lv-entity-list-item-activate=${this.recordDashboardOpen}
           @lv-entity-list-row-action=${this.handleDashboardRowAction}
         ></lv-entity-list>
         ${this.renderDashboardActionMenu(sourceDashboards)}
         ${this.renderDashboardDetails(sourceDashboards)}
+        ${this.renderCopyDraftDialog(sourceDashboards)}
         ${this.copyLinkMessage ? html`<div class="catalog-copy-status" role="status">${this.copyLinkMessage}</div>` : ''}
         ${this.createDraftHref ? this.renderCreateDraftDialog(models) : ''}
       </section>
@@ -333,21 +343,21 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       return [
         { id: 'name', label: 'Dashboard', width: '32%' },
         { id: 'dataModel', label: 'Data model', width: '16%' },
-        { id: 'popularity', label: 'Popularity', width: '10%', render: 'popularity' as const },
+        { id: 'popularity', label: 'Popularity', width: '10%', align: 'center' as const, render: 'popularity' as const },
         { id: 'status', label: 'Status', width: '17%', render: 'quiet-status' as const },
         { id: 'updated', label: 'Updated', width: '9%', render: 'datetime' as const },
         { id: 'lastOpened', label: 'Last opened', width: '11%', render: 'datetime' as const },
-        { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
+        { id: 'actions', label: 'Actions', width: '5%', align: 'center' as const, sortable: false, render: 'actions' as const },
       ]
     }
     return [
       { id: 'name', label: 'Dashboard', width: '36%' },
       { id: 'dataModel', label: 'Data model', width: '15%' },
-      { id: 'owner', label: 'Owner', width: '9%', render: 'person-avatar' as const },
-      { id: 'popularity', label: 'Popularity', width: '10%', render: 'popularity' as const },
+      { id: 'owner', label: 'Owner', width: '9%', align: 'center' as const, render: 'person-avatar' as const },
+      { id: 'popularity', label: 'Popularity', width: '10%', align: 'center' as const, render: 'popularity' as const },
       { id: 'updated', label: 'Updated', width: '11%', render: 'datetime' as const },
       { id: 'lastOpened', label: 'Last opened', width: '14%', render: 'datetime' as const },
-      { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
+      { id: 'actions', label: 'Actions', width: '5%', align: 'center' as const, sortable: false, render: 'actions' as const },
     ]
   }
 
@@ -371,15 +381,15 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     return html`
       <button class="catalog-action-dismiss" type="button" tabindex="-1" aria-label="Close dashboard actions" @click=${this.closeDashboardActionMenu}></button>
       <div class="catalog-action-menu" role="menu" aria-label=${`Actions for ${dashboard.title}`} style=${menuStyle}>
-        <a role="menuitem" href=${editOrCopyHref}>${lucideIcon(lucideIconByCanonicalName(editable ? 'pencil' : 'copy'), { size: 16, strokeWidth: 2 })}<span>${editOrCopyLabel}</span></a>
+        ${editable ? html`<a role="menuitem" href=${editOrCopyHref}>${lucideIcon(lucideIconByCanonicalName('pencil'), { size: 16, strokeWidth: 2 })}<span>${editOrCopyLabel}</span></a>` : html`<button type="button" role="menuitem" @click=${(event: Event) => this.openDashboardCopy(event, dashboard)}>${lucideIcon(lucideIconByCanonicalName('copy'), { size: 16, strokeWidth: 2 })}<span>${editOrCopyLabel}</span></button>`}
         <button type="button" role="menuitem" data-action="details" @click=${() => this.openDashboardDetails(dashboard.id)}>${lucideIcon(lucideIconByCanonicalName('panel-right-open'), { size: 16, strokeWidth: 2 })}<span>View details</span></button>
         <button type="button" role="menuitem" data-action="copy-link" @click=${() => this.copyDashboardLink(dashboard)}>${lucideIcon(lucideIconByCanonicalName('link'), { size: 16, strokeWidth: 2 })}<span>Copy link</span></button>
         ${editable ? html`
           <div class="catalog-action-divider" role="separator"></div>
-          <form class="catalog-action-form" method="post" action=${dashboardArchiveHref(dashboard)}>
+          <form class="catalog-action-form" method="post" action=${dashboardDeleteHref(dashboard)} @submit=${(event: SubmitEvent) => this.confirmDashboardDelete(event, dashboard)}>
             <input type="hidden" name="gorilla.csrf.Token" value=${this.mutationCSRFToken || this.createDraftCSRFToken}>
             <input type="hidden" name="idempotencyKey" value=${newRequestID()}>
-            <button class="catalog-action-danger" type="submit" role="menuitem">${lucideIcon(lucideIconByCanonicalName('archive'), { size: 16, strokeWidth: 2 })}<span>Archive</span></button>
+            <button class="catalog-action-danger" type="submit" role="menuitem">${lucideIcon(lucideIconByCanonicalName('trash-2'), { size: 16, strokeWidth: 2 })}<span>Delete</span></button>
           </form>
         ` : ''}
       </div>
@@ -417,7 +427,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           </dl>
         </div>
         <footer class="catalog-details-footer">
-          <a class="catalog-details-action" href=${actionHref}>${lucideIcon(lucideIconByCanonicalName(editable ? 'pencil' : 'copy'), { size: 16, strokeWidth: 2 })}<span>${actionLabel}</span></a>
+          ${editable ? html`<a class="catalog-details-action" href=${actionHref}>${lucideIcon(lucideIconByCanonicalName('pencil'), { size: 16, strokeWidth: 2 })}<span>${actionLabel}</span></a>` : html`<button class="catalog-details-action" type="button" @click=${(event: Event) => this.openDashboardCopy(event, dashboard)}>${lucideIcon(lucideIconByCanonicalName('copy'), { size: 16, strokeWidth: 2 })}<span>${actionLabel}</span></button>`}
         </footer>
       </aside>
     `
@@ -469,8 +479,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   private recordDashboardOpen = (event: CustomEvent<{ item?: { id?: string } }>): void => {
     const id = event.detail?.item?.id?.trim()
     if (!id) return
-    this.recentDashboardIDs = { ...this.recentDashboardIDs, [id]: new Date().toISOString() }
-    writeStorage(catalogRecentsStorageKey, this.recentDashboardIDs)
+    writeStorage(catalogRecentsStorageKey, { ...readStringRecord(catalogRecentsStorageKey), [id]: new Date().toISOString() })
   }
 
   private handleDashboardRowAction = (event: CustomEvent<{ action?: string, item?: { id?: string }, anchor?: EventTarget | null }>): void => {
@@ -522,6 +531,10 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     const trigger = this.actionMenuTrigger
     this.actionMenuTrigger = null
     queueMicrotask(() => trigger?.focus({ preventScroll: true }))
+  }
+
+  private confirmDashboardDelete(event: SubmitEvent, dashboard: CatalogDashboard): void {
+    if (!window.confirm(`Delete ${dashboard.title}? This cannot be undone.`)) event.preventDefault()
   }
 
   private handleGlobalKeydown = (event: KeyboardEvent): void => {
@@ -588,6 +601,36 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     `
   }
 
+  private renderCopyDraftDialog(dashboards: CatalogDashboard[]) {
+    const dashboard = dashboards.find((candidate) => candidate.id === this.copyDraftDashboardID)
+    if (!dashboard) return ''
+    return html`
+      <dialog id="catalog-copy-draft-dialog" class="catalog-create-dialog" aria-labelledby="catalog-copy-draft-title" aria-describedby="catalog-copy-draft-description" @cancel=${this.cancelCopyDraft} @click=${this.closeCopyDraftOnBackdrop}>
+        <div class="catalog-create-dialog-shell">
+          <header class="catalog-create-dialog-header">
+            <div>
+              <h2 id="catalog-copy-draft-title">Make a copy</h2>
+              <p id="catalog-copy-draft-description">Create an editable copy in My dashboards.</p>
+            </div>
+            <button class="catalog-create-dialog-close" type="button" aria-label="Close dashboard copy" @click=${this.closeCopyDraft}>${lucideIcon(lucideIconByCanonicalName('x'), { size: 16, strokeWidth: 2 })}</button>
+          </header>
+          <form class="catalog-create-dialog-form" method="post" action=${dashboardForkHref(dashboard)}>
+            <div class="catalog-create-field">
+              <label for="catalog-copy-draft-name">Title</label>
+              <input id="catalog-copy-draft-name" name="title" type="text" autocomplete="off" required autofocus maxlength="160" .value=${`${dashboard.title} copy`}>
+            </div>
+            <input type="hidden" name="gorilla.csrf.Token" value=${this.mutationCSRFToken || this.createDraftCSRFToken}>
+            <input type="hidden" name="idempotencyKey" value=${this.copyDraftIdempotencyKey}>
+            <div class="catalog-create-dialog-actions">
+              <button type="button" @click=${this.closeCopyDraft}>Cancel</button>
+              <button type="submit">Create copy</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+    `
+  }
+
   private createDraftModels(): CreateDraftModel[] {
     let value: unknown
     try {
@@ -611,6 +654,23 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
 
   private urlCreateDraftRequested(): boolean {
     return new URL(window.location.href).searchParams.get('create') === 'dashboard'
+  }
+
+  private urlCopyDraftRequested(): string {
+    return new URL(window.location.href).searchParams.get('copy')?.trim() ?? ''
+  }
+
+  private syncDialog(selector: string, open: boolean): void {
+    const dialog = this.renderRoot.querySelector<HTMLDialogElement>(selector)
+    if (open && dialog && !dialog.open) {
+      dialog.showModal()
+      window.setTimeout(() => {
+        const target = dialog.querySelector<HTMLElement>('[autofocus]') ?? dialog.querySelector<HTMLElement>('input:not([type="hidden"]), select, button')
+        target?.focus({ preventScroll: true })
+      }, 0)
+    } else if (!open && dialog?.open) {
+      dialog.close()
+    }
   }
 
   private handleCreateDraftTrigger = (event: MouseEvent): void => {
@@ -639,6 +699,37 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     if (event.target === event.currentTarget) this.closeCreateDraft()
   }
 
+  private openDashboardCopy(event: Event, dashboard: CatalogDashboard): void {
+    const trigger = event.currentTarget
+    this.copyDraftTrigger = this.actionMenu ? this.actionMenuTrigger : trigger instanceof HTMLElement ? trigger : null
+    this.actionMenu = null
+    this.beginDashboardCopy(dashboard)
+  }
+
+  private beginDashboardCopy(dashboard: CatalogDashboard): void {
+    this.copyDraftDashboardID = dashboard.id
+    this.copyDraftIdempotencyKey = newRequestID()
+  }
+
+  private closeCopyDraft = (): void => {
+    const dialog = this.renderRoot.querySelector<HTMLDialogElement>('#catalog-copy-draft-dialog')
+    if (dialog?.open) dialog.close()
+    this.copyDraftDashboardID = ''
+    this.copyDraftIdempotencyKey = ''
+    const trigger = this.copyDraftTrigger
+    this.copyDraftTrigger = null
+    queueMicrotask(() => trigger?.focus({ preventScroll: true }))
+  }
+
+  private cancelCopyDraft = (event: Event): void => {
+    event.preventDefault()
+    this.closeCopyDraft()
+  }
+
+  private closeCopyDraftOnBackdrop = (event: MouseEvent): void => {
+    if (event.target === event.currentTarget) this.closeCopyDraft()
+  }
+
   private renderCatalogTab(scope: 'all' | 'favorites' | 'mine', label: string) {
     return html`<button class="catalog-tab" type="button" role="tab" aria-selected=${String(this.catalogScope === scope)} @click=${() => { this.catalogScope = scope }}>${label}</button>`
   }
@@ -662,7 +753,7 @@ function humanizeCreateDraftModelTitle(value: string): string {
 }
 
 function popularityLabel(level: 'low' | 'medium' | 'high'): string {
-  return `${capitalize(level)} popularity — ${popularityPercentile(level).toLowerCase()} in the last 30 days`
+  return `${capitalize(level)} popularity`
 }
 
 function popularityPercentile(level: 'low' | 'medium' | 'high'): string {
@@ -684,7 +775,8 @@ function semanticModelLabel(value: string | undefined): string {
 }
 
 function dashboardViewHref(dashboard: CatalogDashboard): string {
-  return `/dashboards/${encodeURIComponent(dashboard.dashboardId)}`
+  // Match the server's canonical path segment: resource IDs retain their colon.
+  return `/dashboards/${encodeURIComponent(dashboard.dashboardId).replace(/%3A/g, ':')}`
 }
 
 function dashboardEditorHref(dashboard: CatalogDashboard): string {
@@ -698,8 +790,8 @@ function dashboardForkHref(dashboard: CatalogDashboard): string {
   return `${dashboardViewHref(dashboard)}/fork`
 }
 
-function dashboardArchiveHref(dashboard: CatalogDashboard): string {
-  return `${dashboardViewHref(dashboard)}/archive`
+function dashboardDeleteHref(dashboard: CatalogDashboard): string {
+  return `${dashboardViewHref(dashboard)}/delete`
 }
 
 function dashboardAppearanceColor(value: string): string {
@@ -707,40 +799,13 @@ function dashboardAppearanceColor(value: string): string {
 }
 
 function newRequestID(): string {
-  return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `archive-${Date.now()}`
+  return uuidv7()
 }
 
 function timestamp(value: string | undefined): number {
   if (!value) return 0
   const result = new Date(value).getTime()
   return Number.isNaN(result) ? 0 : result
-}
-
-function readStringList(key: string): string[] {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(key) ?? '[]')
-    return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim())) : []
-  } catch {
-    return []
-  }
-}
-
-function readStringRecord(key: string): Record<string, string> {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(key) ?? '{}')
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-    return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
-  } catch {
-    return {}
-  }
-}
-
-function writeStorage(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // Discovery preferences are a progressive enhancement when storage is unavailable.
-  }
 }
 
 function formatCompactDate(value: string | undefined): string {

@@ -263,7 +263,7 @@ class SubSidebar extends LitElement {
       min-height: var(--lv-sub-sidebar-footer-height, var(--control-medium-size));
       height: var(--lv-sub-sidebar-footer-height, var(--control-medium-size));
       align-items: center;
-      justify-content: flex-end;
+      justify-content: flex-start;
       border-top: var(--lv-border-muted);
       padding: 0 var(--base-size-8);
     }
@@ -447,8 +447,7 @@ class SubSidebar extends LitElement {
     }
 
     :host([data-collapsed]) .sidebar-footer {
-      justify-content: center;
-      padding-inline: 0;
+      padding-inline: var(--base-size-8);
     }
 
     :host([data-collapsed]) nav {

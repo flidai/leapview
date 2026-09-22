@@ -15,6 +15,7 @@ const focusableSelector = [
 class LeapViewDrawer extends LitElement {
   @property({ type: Boolean, reflect: true }) open = false
   @property({ type: Boolean, reflect: true }) modal = true
+  @property({ type: Boolean, attribute: 'close-on-outside' }) closeOnOutside = false
   @property() label = 'Drawer'
   @property({ reflect: true }) size: 'default' | 'wide' = 'default'
 
@@ -146,10 +147,12 @@ class LeapViewDrawer extends LitElement {
   connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener('keydown', this.handleWindowKeyDown)
+    window.addEventListener('pointerdown', this.handleWindowPointerDown)
   }
 
   disconnectedCallback(): void {
     window.removeEventListener('keydown', this.handleWindowKeyDown)
+    window.removeEventListener('pointerdown', this.handleWindowPointerDown)
     super.disconnectedCallback()
   }
 
@@ -198,6 +201,11 @@ class LeapViewDrawer extends LitElement {
   private readonly handleWindowKeyDown = (event: KeyboardEvent): void => {
     if (!this.open || event.defaultPrevented || event.key !== 'Escape') return
     event.preventDefault()
+    this.close()
+  }
+
+  private readonly handleWindowPointerDown = (event: PointerEvent): void => {
+    if (!this.open || this.modal || !this.closeOnOutside || event.composedPath().includes(this)) return
     this.close()
   }
 

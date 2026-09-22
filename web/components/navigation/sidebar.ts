@@ -31,8 +31,9 @@ import {
 import { lucideIcon } from '../shared/lucide-icons'
 import { leapViewBrandName } from '../shared/brand-mark'
 import { sidebarControlStyles } from './sidebar-controls'
+import { sidebarBrandLayoutStyles } from './sidebar-brand-layout.styles'
 import { renderSidebarChatHistory, sidebarChatHistoryStyles, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
-import '../shared/user-avatar'
+import { renderSidebarAccount, sidebarAccountStyles } from './sidebar-account'
 
 type NavItem = {
   id: string
@@ -184,7 +185,7 @@ class LeapViewSidebar extends LitElement {
   private mobileMediaQuery?: MediaQueryList
   private resizeDrag?: { pointerId: number; startX: number; startWidth: number }
 
-  static styles = [sidebarControlStyles, sidebarChatHistoryStyles, css`
+  static styles = [sidebarControlStyles, sidebarChatHistoryStyles, sidebarAccountStyles, css`
     :host {
       --lv-sidebar-width-default: var(--lv-sidebar-width-expanded);
       --lv-sidebar-width: var(--lv-sidebar-resized-width, var(--lv-sidebar-width-default));
@@ -451,18 +452,15 @@ class LeapViewSidebar extends LitElement {
     }
 
     .brand-identity {
-      display: grid;
       min-width: 0;
       flex: 1 1 auto;
-      gap: var(--base-size-2);
     }
 
     .brand-home {
-      display: grid;
+      display: flex;
       min-width: 0;
-      grid-template-columns: auto minmax(0, 1fr);
       align-items: center;
-      gap: var(--base-size-8);
+      gap: var(--base-size-4);
       border-radius: var(--lv-radius-default);
       color: inherit;
       text-decoration: none;
@@ -474,26 +472,11 @@ class LeapViewSidebar extends LitElement {
     }
 
     .product-logo {
-      width: var(--control-small-size);
-      height: var(--control-small-size);
-      grid-row: 1 / span 2;
+      width: var(--base-size-20);
+      height: var(--base-size-20);
+      flex: 0 0 var(--base-size-20);
       border-radius: var(--lv-radius-small);
       object-fit: contain;
-    }
-
-    .powered-by {
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      text-decoration: none;
-      font: var(--lv-type-caption);
-    }
-
-    .powered-by:hover,
-    .powered-by:focus-visible {
-      color: var(--lv-fg-default);
-      text-decoration: underline;
     }
 
     .footer-actions {
@@ -741,59 +724,6 @@ class LeapViewSidebar extends LitElement {
       gap: var(--base-size-2);
     }
 
-    .user-card {
-      box-sizing: border-box;
-      display: grid;
-      min-width: 0;
-      grid-template-columns: var(--control-small-size) minmax(0, 1fr) var(--control-xsmall-size);
-      min-height: calc(var(--control-medium-size) + var(--base-size-2));
-      align-items: center;
-      gap: var(--base-size-4);
-      border-radius: var(--lv-radius-default);
-      color: var(--lv-fg-default);
-      padding: 0 var(--base-size-12);
-      text-decoration: none;
-    }
-
-    .user-settings-icon {
-      display: grid;
-      width: var(--control-xsmall-size);
-      height: var(--control-xsmall-size);
-      place-items: center;
-      border-radius: var(--lv-radius-default);
-      color: var(--lv-fg-muted);
-    }
-
-    .user-card:hover .user-settings-icon,
-    .user-card:focus-visible .user-settings-icon { background: var(--control-bgColor-hover); color: var(--lv-fg-default); }
-    .user-card:focus-visible { outline: none; }
-    .user-card:focus-visible .user-settings-icon { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
-
-    .user-text {
-      display: grid;
-      gap: var(--base-size-2);
-      min-width: 0;
-    }
-
-    .user-name,
-    .user-role {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .user-name {
-      font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
-    }
-
-    .user-loading { grid-column: 1 / -1; }
-
-    .user-role {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
     @media (min-width: 641px) {
       :host([data-collapsed]) aside {
         position: fixed;
@@ -837,9 +767,9 @@ class LeapViewSidebar extends LitElement {
         transition: opacity var(--motion-transition-stateChange);
       }
 
-      :host([data-collapsed][data-peeking]) .brand-row > .brand-identity,
-      :host([data-collapsed][data-peeking]) .brand-row > .brand-back {
+      :host([data-collapsed][data-peeking]) .collapse-button {
         visibility: hidden;
+        pointer-events: none;
       }
     }
 
@@ -1113,6 +1043,8 @@ class LeapViewSidebar extends LitElement {
         display: none;
       }
 
+      .mobile-footer .search-button { display: grid; }
+
       .mobile-footer {
         display: grid;
         margin-top: auto;
@@ -1121,7 +1053,7 @@ class LeapViewSidebar extends LitElement {
       }
     }
 
-  `]
+  `, sidebarBrandLayoutStyles]
 
   connectedCallback(): void {
     super.connectedCallback()
@@ -1306,7 +1238,6 @@ class LeapViewSidebar extends LitElement {
     const groups = this.filteredGroups()
     const productName = this.config.productName?.trim() || leapViewBrandName
     const productLogoUrl = this.config.productLogoUrl?.trim()
-    const hasCustomIdentity = productName !== leapViewBrandName || Boolean(productLogoUrl)
     return html`
       <aside
         aria-label="${productName} navigation"
@@ -1348,6 +1279,18 @@ class LeapViewSidebar extends LitElement {
         <div class="sidebar-content" ?inert=${collapsed && !this.peeking && !this.isMobileViewport}>
         <header class="brand">
           <div class="brand-row">
+            ${this.config.admin ? null : html`
+              <button
+                  class="header-action collapse-button"
+                  type="button"
+                  aria-label=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
+                  aria-pressed=${String(collapsed)}
+                  title=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
+                  @click=${this.toggleCollapsed}
+                >
+                  ${icon(collapsed ? 'expand' : 'collapse')}
+              </button>
+            `}
             ${this.config.admin && this.config.primaryAction ? html`
               <a
                 class="nav-item brand-back sidebar-control-back"
@@ -1365,7 +1308,6 @@ class LeapViewSidebar extends LitElement {
                   ${productLogoUrl ? html`<img class="product-logo" src=${productLogoUrl} alt="">` : null}
                   <span class="name">${productName}</span>
                 </a>
-                ${hasCustomIdentity ? html`<a class="powered-by" href="https://leapview.dev" target="_blank" rel="noreferrer">Powered by LeapView</a>` : null}
               </span>
             `}
             ${this.config.admin ? null : this.renderAreaSwitcher()}
@@ -1431,36 +1373,13 @@ class LeapViewSidebar extends LitElement {
             </section>
           `) : this.searchQuery.trim() ? html`<p class="search-empty">No matching pages</p>` : null}
           ${this.renderHistory()}
-          ${this.config.admin ? null : html`<div class="mobile-footer">${this.renderUserCard()}</div>`}
+          <div class="mobile-footer"><div class="footer-row">${this.renderUserCard(true)}${this.renderFooterSearch()}</div></div>
         </nav>
 
         <footer class="footer">
           <div class="footer-row">
             ${this.renderUserCard()}
-            ${this.config.admin || collapsed ? null : html`
-              <span class="footer-actions">
-                <button
-                  class="header-action search-button"
-                  type="button"
-                  aria-label="Search LeapView"
-                  aria-haspopup="dialog"
-                  title="Search LeapView"
-                  @click=${this.openProductSearch}
-                >
-                  ${icon('search')}
-                </button>
-                <button
-                  class="header-action collapse-button"
-                  type="button"
-                  aria-label=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
-                  aria-pressed=${String(collapsed)}
-                  title=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
-                  @click=${this.toggleCollapsed}
-                >
-                  ${icon(collapsed ? 'expand' : 'collapse')}
-                </button>
-              </span>
-            `}
+            ${this.renderFooterSearch()}
           </div>
         </footer>
         </div>
@@ -1636,27 +1555,16 @@ class LeapViewSidebar extends LitElement {
     `
   }
 
-  private renderUserCard() {
-    const userName = this.config.userName?.trim()
-    if (!userName) return html`<div class="user-card" aria-label="Loading account" aria-busy="true"><span class="user-name user-loading">Loading…</span></div>`
-    const userAvatarUrl = this.liveUserAvatarUrl ?? this.config.userAvatarUrl?.trim()
-    const href = this.config.userSettingsHref || '/admin/profile'
-    return html`
-      <a
-        class="user-card"
-        href=${href}
-        aria-label=${`Open settings for ${userName}`}
-        title=${userName}
-        @click=${(event: MouseEvent) => this.followInternalLink(event, href)}
-      >
-        <lv-user-avatar .name=${userName} .imageUrl=${userAvatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>
-        <span class="user-text">
-          <strong class="user-name">${userName}</strong>
-          <span class="user-role">${this.config.userRole ?? ''}</span>
-        </span>
-        <span class="user-settings-icon" aria-hidden="true">${icon('settings')}</span>
-      </a>
-    `
+  private renderFooterSearch() {
+    return html`<span class="footer-actions"><button class="header-action search-button" type="button" aria-label="Search LeapView" aria-haspopup="dialog" title="Search LeapView" @click=${this.openProductSearch}>${icon('search')}</button></span>`
+  }
+
+  private renderUserCard(mobile = false) {
+    return renderSidebarAccount({
+      name: this.config.userName, avatarUrl: this.liveUserAvatarUrl ?? this.config.userAvatarUrl?.trim(),
+      role: this.config.userRole, settingsHref: this.config.userSettingsHref,
+      id: mobile ? 'mobile-account-menu' : 'account-menu', navigate: (event, href) => this.followInternalLink(event, href),
+    })
   }
 
   private areaHref(area: SidebarArea, current: boolean): string {

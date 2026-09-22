@@ -19,7 +19,6 @@ import '../shared/filter-menu'
 import '../shared/record-table'
 import '../shared/user-avatar'
 import './agent-settings'
-import './archived-chats'
 import './personal-settings'
 import './product-settings'
 import './settings-surfaces'
@@ -123,8 +122,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
               ></lv-entity-list>`
             : page.active === 'groups'
               ? html`<lv-entity-list .items=${adminGroupListItems(page)} .columns=${adminGroupListColumns()} .filters=${adminGroupListFilters(page)} .actions=${[{ id: 'create-group', label: 'Create group', emphasis: 'primary' }]} initial-query=${page.listQuery ?? ''} active-filter=${page.listFilter ?? 'all'} search-placeholder="Search groups by name or ID" empty-text="No groups found." export-filename="groups.csv" @lv-entity-list-action=${this.handleEntityListAction}></lv-entity-list>`
-            : page.active === 'archived-chats' ? html`<lv-archived-chats></lv-archived-chats>`
-              : isPersonalSettings(page.active) ? html`<lv-personal-settings token-view=${page.active === 'api-token-new' ? 'create' : 'list'}></lv-personal-settings>`
+            : isPersonalSettings(page.active) ? html`<lv-personal-settings token-view=${page.active === 'api-token-new' ? 'create' : 'list'}></lv-personal-settings>`
                 : isProductSettings(page.active) ? html`<lv-product-settings></lv-product-settings>`
                 : page.active === 'projects-admin' ? html`<lv-project-registry></lv-project-registry>`
                   : page.active === 'service-accounts' || page.active === 'service-accounts-new' ? html`<lv-service-accounts .createAccountOpen=${page.active === 'service-accounts-new'}></lv-service-accounts>`
@@ -241,7 +239,12 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   private renderQueries(page: AdminPageSignal) {
     const history = this.currentQueryHistory(page)
     const rows = tableRows(history.table)
-    const table = queryHistoryPresentation(history.table)
+    const table = queryHistoryPresentation({
+      ...history.table,
+      empty: queryHistoryHasActiveFilters(history.filters)
+        ? 'No query events match these filters.'
+        : 'No query activity yet. Run a dashboard or agent query to see it here.',
+    })
     const detail = this.queryDetail ?? emptyQueryDetail
     return html`
       <section class="query-audit" aria-label="Query audit">
@@ -712,6 +715,10 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     window.location.reload()
   }
 
+}
+
+function queryHistoryHasActiveFilters(filters: AdminQueryHistoryFilters): boolean {
+  return Object.values(filters).some((value) => Array.isArray(value) ? value.length > 0 : typeof value === 'string' ? value.trim().length > 0 : Boolean(value))
 }
 
 if (!customElements.get('lv-admin-page')) customElements.define('lv-admin-page', LeapViewAdminPage)

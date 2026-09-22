@@ -310,6 +310,12 @@ export const projectOverviewStyles = css`
     align-content: stretch;
   }
 
+  .semantic-model-definition-page .semantic-model-view:not(.semantic-model-diagram-view) .semantic-model-content {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
   .semantic-model-diagram-view .semantic-model-section {
     display: grid;
   }
