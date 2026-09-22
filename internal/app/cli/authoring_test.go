@@ -28,12 +28,19 @@ import (
 
 func TestProjectDevRemoteFactoryStagesDeclaredInputsBeforeWatching(t *testing.T) {
 	var state localruntime.State
-	require.NoError(t, json.Unmarshal([]byte(`{"checkout":{"checkoutId":"sha256:checkout"},"runtime":{"ownerId":"owner-1"},"authority":{"instanceId":"target-local","environment":"dev"}}`), &state))
+	require.NoError(t, json.Unmarshal([]byte(`{"checkout":{"checkoutId":"sha256:checkout"},"runtime":{"ownerId":"owner-1"},"authority":{"instanceId":"target-local","projectUid":"lvproject_local","environment":"dev"}}`), &state))
 	want := errors.New("staging stopped")
 	called := false
+	ownerPolicyReady := false
 	factory := projectDevRemoteFactory{
 		client: fixedTransportClient{transport: &developmentProfileTransportStub{}},
+		bootstrapOwnerPolicy: func(_ context.Context, _ apigenclient.Transport, local localDevelopmentSession) error {
+			require.Equal(t, "lvproject_local", local.state.Authority.ProjectUID)
+			ownerPolicyReady = true
+			return nil
+		},
 		stageDevelopmentInputs: func(_ context.Context, credentials cliapi.Credentials, local localDevelopmentSession) error {
+			require.True(t, ownerPolicyReady, "the owner policy must precede development input staging")
 			called = true
 			require.Equal(t, "lvproject_local", credentials.ProjectID)
 			require.Equal(t, "target-local", local.state.Authority.InstanceID)
@@ -42,7 +49,7 @@ func TestProjectDevRemoteFactoryStagesDeclaredInputsBeforeWatching(t *testing.T)
 	}
 	ctx := context.WithValue(t.Context(), localDevelopmentSessionContextKey{}, localDevelopmentSession{state: state})
 	_, err := factory.Remote(ctx, cliapi.Credentials{Target: "http://127.0.0.1:7090", Token: "token", ProjectID: "lvproject_local"}, 1)
-	if !called || !errors.Is(err, want) {
+	if !called || !ownerPolicyReady || !errors.Is(err, want) {
 		t.Fatalf("called = %t, error = %v", called, err)
 	}
 }

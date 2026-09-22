@@ -34,10 +34,10 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		apiaggregate.RegisterAPIGenRoutes(r, platform.apiGenServers)
 	}
 	var developmentSession *developmentsessionmodule.Handler
-	if runtime.developmentSessions != nil && runtime.checkoutID != "" && runtime.worktreeID != "" {
+	if runtime.developmentSessions != nil && runtime.checkoutID != "" && runtime.worktreeID != "" && runtime.developmentProjectIDResolver != nil {
 		developmentSession = developmentsessionmodule.Build(context.Background(), developmentsessionmodule.Config{
 			Store: runtime.developmentSessions, CheckoutID: runtime.checkoutID, WorktreeID: runtime.worktreeID, TargetID: runtime.targetID, Environment: policy.defaultEnvironment,
-			ResolveProjectID: runtime.resolveProjectID,
+			ResolveProjectID: runtime.developmentProjectIDResolver,
 			CurrentPrincipal: func(r *http.Request) (string, bool) {
 				principal, ok := routes.accessModule.CurrentPrincipal(r)
 				return principal.ID, ok

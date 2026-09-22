@@ -97,16 +97,28 @@ restore APIs and can substitute the managed service's equivalent commands.
    revision visibility. Record measured RPO/RTO and retain failed-state
    evidence until the incident or drill review is closed.
 
-The repository can validate the immutable frontier, evidence digest, and
-active-pointer bindings, but it cannot honestly prove a provider PITR,
-object-store version restore, encryption-key recovery, or secret-manager
-restore in this local test environment. Those steps remain external-provider
-admission gates; a local unit or PostgreSQL conformance test must not be
-reported as completion of this drill. The active serving seal carries the
-object URI and digest, while provider version/frontier identifiers are retained
-in the recovery-set evidence; readiness deliberately does not re-probe those
-providers. A new provider version or frontier therefore requires a new
-recovery-set validation before publication.
+`task qualify:ubdr:provider-restore` exercises the coordinated restore contract
+against disposable PostgreSQL 18 and versioned MinIO providers. It runs a real
+cluster-wide `pg_basebackup`, starts the restored physical data directory as an
+independent PostgreSQL server, removes corrupt and delete-marker object versions
+to expose the exact retained versions, verifies the restored control,
+catalog/object closure, and publishes the exact RecoverySet only after every
+provider check succeeds. The command
+writes machine-readable evidence under
+`.tmp/qualification/ubdr/provider-restore/`, including provider operation IDs,
+the PostgreSQL timeline/recovery point, exact object versions, phase timing,
+and the final PostgreSQL recovery-ledger occurrence.
+
+This disposable qualification proves the repository coordinator, fencing,
+ordering, exact-version checks, and durable evidence path. It does not prove a
+managed service's PITR API, encryption-key recovery, secret-manager recovery,
+replacement-host rebuild, or measured production RPO/RTO. Those provider and
+environment-specific steps remain external admission gates for the production
+drill. The active serving seal carries the object URI and digest, while provider
+version/frontier identifiers are retained in the recovery-set evidence;
+readiness deliberately does not re-probe those providers. A new provider
+version or frontier therefore requires a new recovery-set validation before
+publication.
 
 ## Recovery qualification and publication
 

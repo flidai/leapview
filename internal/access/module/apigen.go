@@ -322,13 +322,14 @@ func (a *APIGenAuthorizer) projectBoundaryProjectID(ctx context.Context) (projec
 }
 
 // isBootstrapAPIGenOperation is the exact pre-activation operation allowlist.
-// Candidate source retention, managed-data staging, and the narrowly scoped
-// target-policy role-binding creation command are the only project-scoped
+// Candidate source retention, local profile application, managed-data staging,
+// and the narrowly scoped target-policy role-binding creation command are the only project-scoped
 // routes that may run before an active serving generation; all other project
 // resource operations must use immutable snapshot authorization.
 func isBootstrapAPIGenOperation(operationID string) bool {
 	switch operationID {
 	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
+		"getDevelopmentProfileApplication", "applyDevelopmentProfile",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
 		"createProjectRoleBinding", "listProjectRoleBindings":
@@ -687,6 +688,7 @@ func isManagedDataBootstrapOperation(operationID string) bool {
 func isAuthoringBootstrapOperation(operationID string) bool {
 	switch operationID {
 	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
+		"getDevelopmentProfileApplication", "applyDevelopmentProfile",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
 		"listProjectRoleBindings", "createProjectRoleBinding":
