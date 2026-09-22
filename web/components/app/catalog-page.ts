@@ -63,6 +63,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       }
     }
 
+    .page-header { border-bottom: 0; padding-bottom: 0; }
+
     .catalog-create-draft { display: inline-flex; align-items: center; gap: var(--base-size-6); min-height: var(--control-medium-size); padding: 0 var(--base-size-12); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); cursor: pointer; font: var(--lv-type-body-compact); }
     .catalog-create-draft svg { display: block; flex: 0 0 auto; }
     .catalog-create-draft:hover { background: var(--lv-button-bg-hover, var(--lv-bg-control-hover)); }
@@ -316,6 +318,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           empty-text=${this.catalogEmptyText()}
           title-emphasis="normal"
           sticky-identity
+          hover-sort-indicators
           @lv-entity-list-favorite-toggle=${this.toggleDashboardFavorite}
           @lv-entity-list-item-activate=${this.recordDashboardOpen}
           @lv-entity-list-row-action=${this.handleDashboardRowAction}
@@ -333,21 +336,21 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       return [
         { id: 'name', label: 'Dashboard', width: '32%' },
         { id: 'dataModel', label: 'Data model', width: '16%' },
-        { id: 'popularity', label: 'Popularity', width: '10%', render: 'popularity' as const },
+        { id: 'popularity', label: 'Popularity', width: '10%', align: 'center' as const, render: 'popularity' as const },
         { id: 'status', label: 'Status', width: '17%', render: 'quiet-status' as const },
         { id: 'updated', label: 'Updated', width: '9%', render: 'datetime' as const },
         { id: 'lastOpened', label: 'Last opened', width: '11%', render: 'datetime' as const },
-        { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
+        { id: 'actions', label: 'Actions', width: '5%', align: 'center' as const, sortable: false, render: 'actions' as const },
       ]
     }
     return [
       { id: 'name', label: 'Dashboard', width: '36%' },
       { id: 'dataModel', label: 'Data model', width: '15%' },
-      { id: 'owner', label: 'Owner', width: '9%', render: 'person-avatar' as const },
-      { id: 'popularity', label: 'Popularity', width: '10%', render: 'popularity' as const },
+      { id: 'owner', label: 'Owner', width: '9%', align: 'center' as const, render: 'person-avatar' as const },
+      { id: 'popularity', label: 'Popularity', width: '10%', align: 'center' as const, render: 'popularity' as const },
       { id: 'updated', label: 'Updated', width: '11%', render: 'datetime' as const },
       { id: 'lastOpened', label: 'Last opened', width: '14%', render: 'datetime' as const },
-      { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
+      { id: 'actions', label: 'Actions', width: '5%', align: 'center' as const, sortable: false, render: 'actions' as const },
     ]
   }
 
@@ -374,14 +377,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
         <a role="menuitem" href=${editOrCopyHref}>${lucideIcon(lucideIconByCanonicalName(editable ? 'pencil' : 'copy'), { size: 16, strokeWidth: 2 })}<span>${editOrCopyLabel}</span></a>
         <button type="button" role="menuitem" data-action="details" @click=${() => this.openDashboardDetails(dashboard.id)}>${lucideIcon(lucideIconByCanonicalName('panel-right-open'), { size: 16, strokeWidth: 2 })}<span>View details</span></button>
         <button type="button" role="menuitem" data-action="copy-link" @click=${() => this.copyDashboardLink(dashboard)}>${lucideIcon(lucideIconByCanonicalName('link'), { size: 16, strokeWidth: 2 })}<span>Copy link</span></button>
-        ${editable ? html`
-          <div class="catalog-action-divider" role="separator"></div>
-          <form class="catalog-action-form" method="post" action=${dashboardArchiveHref(dashboard)}>
-            <input type="hidden" name="gorilla.csrf.Token" value=${this.mutationCSRFToken || this.createDraftCSRFToken}>
-            <input type="hidden" name="idempotencyKey" value=${newRequestID()}>
-            <button class="catalog-action-danger" type="submit" role="menuitem">${lucideIcon(lucideIconByCanonicalName('archive'), { size: 16, strokeWidth: 2 })}<span>Archive</span></button>
-          </form>
-        ` : ''}
+
       </div>
     `
   }
@@ -469,8 +465,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   private recordDashboardOpen = (event: CustomEvent<{ item?: { id?: string } }>): void => {
     const id = event.detail?.item?.id?.trim()
     if (!id) return
-    this.recentDashboardIDs = { ...this.recentDashboardIDs, [id]: new Date().toISOString() }
-    writeStorage(catalogRecentsStorageKey, this.recentDashboardIDs)
+    writeStorage(catalogRecentsStorageKey, { ...readStringRecord(catalogRecentsStorageKey), [id]: new Date().toISOString() })
   }
 
   private handleDashboardRowAction = (event: CustomEvent<{ action?: string, item?: { id?: string }, anchor?: EventTarget | null }>): void => {
@@ -698,9 +693,7 @@ function dashboardForkHref(dashboard: CatalogDashboard): string {
   return `${dashboardViewHref(dashboard)}/fork`
 }
 
-function dashboardArchiveHref(dashboard: CatalogDashboard): string {
-  return `${dashboardViewHref(dashboard)}/archive`
-}
+
 
 function dashboardAppearanceColor(value: string): string {
   return ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'coral'].includes(value) ? value : 'purple'

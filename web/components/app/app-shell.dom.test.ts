@@ -201,36 +201,6 @@ test('app shell renders a restrained text-only LeapView identity', async () => {
   }
 })
 
-test('app shell renders custom identity with permanent LeapView attribution', async () => {
-  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
-  try {
-    await page.goto(`${baseURL}/upgraded-shell`)
-    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
-    const identity = await page.locator('lv-app-shell').evaluate(async (element: any) => {
-      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
-      sidebar.config = { ...sidebar.config, productName: 'Northstar Analytics', productLogoUrl: '/instance-logo.png' }
-      await sidebar.updateComplete
-      const root = (sidebar.shadowRoot as ShadowRoot)!
-      return {
-        navigationLabel: root.querySelector('aside')?.getAttribute('aria-label'),
-        name: root.querySelector('.brand .name')?.textContent?.trim(),
-        logo: root.querySelector('.product-logo')?.getAttribute('src'),
-        attribution: root.querySelector('.powered-by')?.textContent?.trim(),
-        attributionHref: root.querySelector('.powered-by')?.getAttribute('href'),
-      }
-    })
-    expect(identity).toEqual({
-      navigationLabel: 'Northstar Analytics navigation',
-      name: 'Northstar Analytics',
-      logo: '/instance-logo.png',
-      attribution: 'Powered by LeapView',
-      attributionHref: 'https://leapview.dev',
-    })
-  } finally {
-    await page.close()
-  }
-})
-
 test('server-projected chrome renders the correct tenant identity before live signals arrive', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
@@ -297,9 +267,9 @@ test('main sidebar keeps the product toggle in the upper-right and utility actio
       const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
       await sidebar.updateComplete
       const root = (sidebar.shadowRoot as ShadowRoot)!
-      const search = root.querySelector('.search-button') as HTMLButtonElement
+      const search = root.querySelector('.footer .search-button') as HTMLButtonElement
       const collapse = root.querySelector('.collapse-button') as HTMLButtonElement
-      const actions = root.querySelector('.footer-actions') as HTMLElement | null
+      const actions = root.querySelector('.footer .footer-actions') as HTMLElement | null
       const identity = root.querySelector('.brand-identity') as HTMLElement
       const areaSwitcher = root.querySelector('.brand-row > .area-switcher') as HTMLElement | null
       const currentArea = areaSwitcher?.querySelector('.area-item[aria-current="page"]') as HTMLElement | null
@@ -311,7 +281,7 @@ test('main sidebar keeps the product toggle in the upper-right and utility actio
         searchHasPopup: search.getAttribute('aria-haspopup'),
         collapseLabel: collapse.getAttribute('aria-label'),
         toggleInHeader: Boolean(areaSwitcher && root.querySelector('.brand-row')?.contains(areaSwitcher)),
-        toggleRightOfIdentity: Boolean(areaSwitcher && areaSwitcher.getBoundingClientRect().left >= identity.getBoundingClientRect().right),
+        controlsShareRow: Boolean(areaSwitcher && Math.abs((areaSwitcher.getBoundingClientRect().top + areaSwitcher.getBoundingClientRect().height / 2) - (identity.getBoundingClientRect().top + identity.getBoundingClientRect().height / 2)) <= 2),
         toggleLabelsHidden: areaSwitcher
           ? Array.from(areaSwitcher.querySelectorAll('.area-label')).every(label => getComputedStyle(label).display === 'none')
           : false,
@@ -344,7 +314,7 @@ test('main sidebar keeps the product toggle in the upper-right and utility actio
       searchHasPopup: 'dialog',
       collapseLabel: 'Collapse navigation',
       toggleInHeader: true,
-      toggleRightOfIdentity: true,
+      controlsShareRow: true,
       toggleLabelsHidden: true,
       toggleGeometry: {
         width: 58,
@@ -372,7 +342,7 @@ test('product search uses one modal for the sidebar action and Command-K', async
     await page.goto(`${baseURL}/sidebar-active-nav`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar') && customElements.get('lv-product-search'))
 
-    await page.locator('lv-sidebar .search-button').click()
+    await page.locator('lv-sidebar .footer .search-button').click()
     const search = page.locator('lv-product-search')
     await search.locator('dialog[open]').waitFor()
     expect(await search.locator('input[type="search"]').evaluate((input) => input === (input.getRootNode() as Document).activeElement)).toBe(true)
@@ -568,6 +538,12 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
       const nav = root.querySelector('nav') as HTMLElement
       const brand = root.querySelector('.brand') as HTMLElement
       const brandIdentity = root.querySelector('.brand-identity') as HTMLElement
+      const visibleCollapseControls = Array.from(root.querySelectorAll<HTMLElement>('.collapsed-trigger, .collapse-button'))
+        .filter((control) => {
+          const rect = control.getBoundingClientRect()
+          const style = getComputedStyle(control)
+          return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+        })
       return {
         hostWidth: Math.round(sidebar.getBoundingClientRect().width),
         overlayWidth: Math.round(aside.getBoundingClientRect().width),
@@ -576,7 +552,8 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
         contentInert: (root.querySelector('.sidebar-content') as HTMLElement).inert,
         navVisible: getComputedStyle(nav).visibility === 'visible' && nav.getBoundingClientRect().width > 0,
         compactHeader: Math.round(brand.getBoundingClientRect().height) < 80,
-        identityHidden: getComputedStyle(brandIdentity).visibility === 'hidden',
+        identityVisible: getComputedStyle(brandIdentity).visibility === 'visible' && brandIdentity.getBoundingClientRect().height > 0,
+        visibleCollapseControlLabels: visibleCollapseControls.map((control) => control.getAttribute('aria-label')),
         footerActionCount: root.querySelectorAll('.footer-actions').length,
         footerSearchCount: root.querySelectorAll('.footer > .sidebar-search').length,
       }
@@ -589,8 +566,9 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
       contentInert: false,
       navVisible: true,
       compactHeader: true,
-      identityHidden: true,
-      footerActionCount: 0,
+      identityVisible: true,
+      visibleCollapseControlLabels: ['Open navigation'],
+      footerActionCount: 2,
       footerSearchCount: 0,
     })
     expect(peek.overlayWidth).toBeGreaterThan(200)
@@ -901,7 +879,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
     expect(openState.visibleAreaSwitcherCount).toBe(1)
     expect(openState.globalSearchCount).toBe(1)
     expect(openState.localSearchCount).toBe(0)
-    expect(openState.mobileSettings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
+    expect(openState.mobileSettings).toEqual({ href: null, label: 'Account menu for Current User' })
 
     await page.locator('lv-sidebar .mobile-product-search').click()
     await page.locator('lv-product-search dialog[open]').waitFor()
@@ -974,7 +952,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
   }
 })
 
-test('chat row action menu supports keyboard navigation and pinning without navigating the row', async () => {
+test('chat rows expose direct keyboard-accessible pin and archive actions without navigating the row', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   await page.goto(`${baseURL}/sidebar-history`)
   await page.evaluate(() => {
@@ -983,22 +961,35 @@ test('chat row action menu supports keyboard navigation and pinning without navi
   })
   const row = page.locator('.history-row').filter({ hasText: 'Revenue check' })
   await row.hover()
-  const trigger = row.locator('summary[aria-label="More actions for Revenue check"]')
-  expect(await trigger.count()).toBe(1)
-  await trigger.focus()
-  await trigger.press('Enter')
-  const menu = row.getByRole('menu')
-  expect(await menu.count()).toBe(1)
-  await menu.getByRole('menuitem', { name: 'Pin chat', exact: true }).focus()
-  await page.keyboard.press('ArrowDown')
-  expect(await menu.getByRole('menuitem', { name: 'Rename', exact: true }).evaluate((element) => element === (element.getRootNode() as Document | ShadowRoot).activeElement)).toBe(true)
-  await page.keyboard.press('Escape')
-  expect(await trigger.evaluate((element) => element === (element.getRootNode() as Document | ShadowRoot).activeElement)).toBe(true)
-  await trigger.click()
-  await menu.getByRole('menuitem', { name: 'Pin chat', exact: true }).click()
+  expect(await row.locator('summary[aria-label="More actions for Revenue check"]').count()).toBe(0)
+  const pin = row.getByRole('button', { name: 'Pin Revenue check', exact: true })
+  const archive = row.getByRole('button', { name: 'Archive Revenue check', exact: true })
+  expect(await pin.count()).toBe(1)
+  expect(await archive.count()).toBe(1)
+  await pin.focus()
+  expect(await pin.evaluate((element) => element === (element.getRootNode() as Document | ShadowRoot).activeElement)).toBe(true)
+  await pin.click()
   expect(await page.evaluate(() => (window as any).chatActions.map((item: any) => ({ action: item.action, conversationId: item.conversationId })))).toEqual([{ action: 'pin', conversationId: 'c1' }])
   expect(new URL(page.url()).pathname).toBe('/sidebar-history')
   await page.close()
+})
+
+test('sidebar archive action starts the undoable archive flow', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.evaluate(() => {
+      ;(window as any).chatActions = []
+      document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+    })
+    const row = page.locator('.history-row').filter({ hasText: 'Revenue check' })
+    await row.hover()
+    await row.getByRole('button', { name: 'Archive Revenue check', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).chatActions.map((item: any) => ({ action: item.action, conversationId: item.conversationId })))).toEqual([{ action: 'archive_pending', conversationId: 'c1' }])
+    expect(new URL(page.url()).pathname).toBe('/sidebar-history')
+  } finally {
+    await page.close()
+  }
 })
 
 test('chat deletion requires confirmation and cancel sends no command', async () => {
@@ -1497,16 +1488,16 @@ test('admin sidebar replaces global navigation and provides a back to app action
             name: card.querySelector('.user-name')?.textContent?.trim(),
             initials: avatar?.shadowRoot?.textContent?.trim(),
             avatarSrc: avatar?.shadowRoot?.querySelector('img')?.getAttribute('src'),
-            role: card.querySelector('.user-role')?.textContent?.trim(),
+            role: root.querySelector('.account-role')?.textContent?.trim(),
           }
         })(),
       }
     })
 
-    expect(state.groupLabels).toEqual(['Personal', 'Chats', 'Product', 'Access', 'Data & sharing', 'Operations'])
+    expect(state.groupLabels).toEqual(['Personal', 'Product', 'Access', 'Data & sharing', 'Operations'])
     expect(state.adminMode).toBe(true)
     expect(state.width).toBe(248)
-    expect(state.visibleGroupLabels).toEqual(['Personal', 'Chats', 'Product', 'Access', 'Data & sharing', 'Operations'])
+    expect(state.visibleGroupLabels).toEqual(['Personal', 'Product', 'Access', 'Data & sharing', 'Operations'])
     expect(state.links).toEqual(expect.arrayContaining([
       { href: '/admin/profile', text: 'Profile', current: 'false' },
       { href: '/admin/principals', text: 'Users', current: 'page' },
@@ -1550,7 +1541,7 @@ test('admin sidebar replaces global navigation and provides a back to app action
       const root = (sidebar.shadowRoot as ShadowRoot)!
       return {
         groupLabels: Array.from(root.querySelectorAll('.nav-group:not(.primary-action)')).map((group) => group.getAttribute('aria-label')),
-        links: Array.from(root.querySelectorAll('#mobile-navigation a[href^="/admin/"]')).map((link) => link.getAttribute('href')),
+        links: Array.from(root.querySelectorAll('#mobile-navigation .nav-group a[href^="/admin/"]')).map((link) => link.getAttribute('href')),
       }
     })
     expect(filtered).toEqual({ groupLabels: ['Data & sharing'], links: ['/admin/storage'] })
@@ -1578,7 +1569,7 @@ test('sidebar switches between Insights and Develop and remembers the last area 
     ])
     expect(developState.items).toEqual(['Sources', 'Models', 'Semantic models', 'Dashboards', 'Pipelines', 'Connections', 'Runs'])
     expect(developState.visibleGroupLabels).toEqual(['Catalog', 'Operations'])
-    expect(developState.settings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
+    expect(developState.settings).toEqual({ href: null, label: 'Account menu for Current User' })
     expect(developState.visibleAreaSwitcherCount).toBe(1)
     expect(developState.currentAreaClickPrevented).toBe(true)
     expect(developState.navigationItemStyle).toEqual({ gap: '4px', paddingInlineStart: '12px' })

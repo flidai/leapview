@@ -111,7 +111,7 @@ export class ChatManager extends DatastarLit(LitElement) {
     .icon { padding: 7px; border: 0; flex-shrink: 0; }
     .danger { color: var(--lv-fg-danger); }
     .confirm-delete { background: var(--lv-fg-danger); color: var(--lv-fg-on-emphasis); border-color: transparent; }
-    .confirm-delete:hover { filter: brightness(.92); }
+    .confirm-delete:hover { background: var(--lv-fg-danger); filter: brightness(.92); }
     .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
     .rename-form { display: grid; gap: 16px; }
     .rename-form label { display: grid; gap: 6px; color: var(--lv-fg-muted); font-size: .9em; }

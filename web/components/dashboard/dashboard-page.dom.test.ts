@@ -359,6 +359,7 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
       const reportHeaderRect = reportHeader.getBoundingClientRect()
       const railFooterRect = railFooter.getBoundingClientRect()
       const backRect = back.getBoundingClientRect()
+      const expandedCollapseRect = collapse.getBoundingClientRect()
       const expandedBackLabelDisplay = getComputedStyle(backLabel).display
       const sidebarRect = sidebar.getBoundingClientRect()
       const mainRect = main.getBoundingClientRect()
@@ -379,6 +380,7 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
         (root.querySelector('.item-link') as HTMLElement).getBoundingClientRect().top,
       )
       const collapsedToggleIconMarkup = root.querySelector('.collapse svg')?.innerHTML
+      const collapsedCollapseRect = (root.querySelector('.collapse') as HTMLElement).getBoundingClientRect()
       const collapsedMainRect = main.getBoundingClientRect()
       const collapsedRailFooterRect = railFooter.getBoundingClientRect()
       const collapsedBackRect = back.getBoundingClientRect()
@@ -419,6 +421,12 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
         backInRailFooter: railFooter.contains(back),
         railFooterAligned: Math.round(railFooterRect.left) === Math.round(sidebarRect.left),
         backInset: Math.round(backRect.left - sidebarRect.left),
+        expandedCollapseInset: Math.round(expandedCollapseRect.left - sidebarRect.left),
+        collapsedCollapseInset: Math.round(collapsedCollapseRect.left - collapsedSidebarRect.left),
+        collapseStaysInPlace: Math.abs(
+          (expandedCollapseRect.left - sidebarRect.left)
+            - (collapsedCollapseRect.left - collapsedSidebarRect.left),
+        ) < 2,
         backAtTop: backRect.top < expandedPageTop,
         searchBelowBack: searchRect.top >= backRect.bottom,
         searchLabel: search.getAttribute('aria-label'),
@@ -489,6 +497,9 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
       backInRailFooter: false,
       railFooterAligned: true,
       backInset: 8,
+      expandedCollapseInset: 8,
+      collapsedCollapseInset: 8,
+      collapseStaysInPlace: true,
       backAtTop: true,
       searchBelowBack: true,
       searchLabel: 'Search pages',
