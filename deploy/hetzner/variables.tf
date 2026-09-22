@@ -31,7 +31,7 @@ variable "image" {
 
   validation {
     condition     = var.image == "ubuntu-24.04"
-    error_message = "image must be ubuntu-24.04; the automated host contract supports Ubuntu 24.04 LTS only."
+    error_message = "image must be ubuntu-24.04; this Hetzner adapter provisions Ubuntu 24.04 LTS only."
   }
 }
 

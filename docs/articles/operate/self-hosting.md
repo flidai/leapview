@@ -51,11 +51,11 @@ The controller is optional if an existing container platform already provides eq
 
 ## Generic VPS host contract
 
-LeapView's provider adapters share one Ubuntu 24.04 LTS host bootstrap. It installs Docker Compose and the host prerequisites, pulls the immutable application image, extracts the image's matching deployment payload, and delegates all installation behavior to `leapviewctl host install`. The typed Go installer validates configuration before mutation, stages immutable digest-named host generations, activates one generation atomically, initializes the instance once, and starts it.
+LeapView's provider adapters share one Linux host bootstrap for Ubuntu 24.04 LTS and Debian 13. It installs Docker Compose and the host prerequisites, pulls the immutable application image, extracts the image's matching deployment payload, and delegates all installation behavior to `leapviewctl host install`. The typed Go installer validates configuration before mutation, stages immutable digest-named host generations, activates one generation atomically, initializes the instance once, and starts it.
 
 This boundary keeps server creation, IPs, firewalls, DNS, and optional provider snapshots in thin provider adapters. Compose configuration, proxy defaults, and initialization remain provider-neutral. Provider-native backup, retention, image rollout, and host rollback are outside LeapView; follow the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore), plus the provider's change-management procedure. After bootstrap, operators use the same `leapviewctl` status, logs, and start commands on every supported VPS provider.
 
-Provider independence does not expand the guest operating-system matrix: the automated host contract supports Ubuntu 24.04 LTS with systemd on `linux/amd64` and `linux/arm64`. Other Docker hosts can continue to use the generic Compose package directly.
+Provider independence does not imply support for every guest operating system: the automated host contract supports Ubuntu 24.04 LTS and Debian 13 with systemd on `linux/amd64` and `linux/arm64`. Other Docker hosts can continue to use the generic Compose package directly. Ubuntu installs the `docker-compose-v2` package; Debian installs its Compose v2 CLI plugin from `docker-compose`.
 
 ## Persistent and external storage
 

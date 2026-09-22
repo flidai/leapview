@@ -1,9 +1,9 @@
 # LeapView generic VPS host
 
 This package is the provider-neutral bridge between a fresh VPS and the
-canonical LeapView Compose lifecycle. It deliberately supports one guest
-platform—Ubuntu 24.04 LTS with systemd—on any provider that can deliver the
-cloud-init document or run the bootstrap as root.
+canonical LeapView Compose lifecycle. It deliberately supports a small tested
+guest-platform matrix—Ubuntu 24.04 LTS or Debian 13 with systemd—on any
+provider that can deliver the cloud-init document or run the bootstrap as root.
 
 The bootstrap has one bounded responsibility: install Docker Compose and the
 host prerequisites, pull an immutable LeapView image, extract that image's
@@ -29,7 +29,7 @@ Provider adapters supply a private JSON document with this schema:
 The adapter also supplies the same immutable image reference as a private
 single-line file because the bootstrap must pull the image before the Go
 installer is available. `cloud-init.yaml.tftpl` writes these inputs and the
-shared `bootstrap-ubuntu.sh`; it contains no application lifecycle logic.
+shared `bootstrap-linux.sh`; it contains no application lifecycle logic.
 
 The production image carries the matching payload under
 `/usr/local/share/leapview/deployment`. A digest therefore selects the server,
