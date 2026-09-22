@@ -86,6 +86,7 @@ type RecordTablePayload = {
   rows?: RecordRow[]
   empty?: string
   minWidth?: string
+  width?: string
   columnSelector?: RecordColumnSelector
   density?: RecordTableDensity
   rowAction?: string
@@ -103,6 +104,7 @@ const emptyRecordTable: NormalizedRecordTable = {
   rows: [],
   empty: 'No rows to show.',
   minWidth: '0',
+  width: '',
   columnSelector: { enabled: false, storageKey: '', label: 'Columns', defaultColumns: [] },
   density: 'normal',
   rowAction: '',
@@ -179,6 +181,7 @@ function normalizeTable(table: RecordTablePayload): NormalizedRecordTable {
     rows: table.rows ?? [],
     empty: table.empty ?? emptyRecordTable.empty,
     minWidth: table.minWidth ?? emptyRecordTable.minWidth,
+    width: table.width ?? '',
     columnSelector: {
       enabled: Boolean(table.columnSelector?.enabled),
       storageKey: table.columnSelector?.storageKey ?? '',
@@ -247,7 +250,7 @@ class RecordTable extends LitElement {
         aria-label="Scrollable table"
         tabindex="0"
       >
-        <table class=${`record-table ${columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : ''}`} style=${table.minWidth ? `min-width: ${table.minWidth}` : ''}>
+        <table class=${`record-table ${columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : ''}`} style=${[table.width ? `width: ${table.width}` : '', table.minWidth ? `min-width: ${table.minWidth}` : ''].filter(Boolean).join('; ')}>
           <thead>
             <tr>
               ${columns.map((column) => {
@@ -446,9 +449,9 @@ class RecordTable extends LitElement {
     const label = cellLabel(value)
     switch (column.kind) {
       case 'code':
-        return label === '-' ? html`<span class="record-muted">-</span>` : html`<code class="record-code">${label}</code>`
+        return label === '-' ? html`<span class="record-muted">-</span>` : html`<code class="record-code" title=${label}>${label}</code>`
       case 'expression':
-        return label === '-' ? html`<span class="record-muted">-</span>` : html`<code class="record-expression">${label}</code>`
+        return label === '-' ? html`<span class="record-muted">-</span>` : html`<code class="record-expression" title=${label}>${label}</code>`
       case 'badge':
         return label === '-' ? html`<span class="record-muted">-</span>` : html`<span class=${`record-badge record-badge-${cellTone(value)}`}>${label}</span>`
       case 'status':

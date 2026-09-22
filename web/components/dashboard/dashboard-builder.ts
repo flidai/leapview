@@ -439,7 +439,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       background: var(--lv-bg-panel-muted);
     }
 
-    .more-menu .archive-action {
+    .more-menu .archive-action,
+    .more-menu .delete-action {
       color: var(--lv-fg-danger);
     }
 
@@ -3064,7 +3065,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       : previewValidation
         ? previewValidation
       : !builder.hasUnpublishedChanges ? 'This revision is already published' : 'Publish this dashboard revision'
-    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || builder.capabilities.canArchive || Boolean(this.forkHref)
+    const canDelete = this.canDeleteDashboard(builder)
+    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || builder.capabilities.canArchive || canDelete || Boolean(this.forkHref)
     const appearanceColor = dashboardAppearanceColor(builder.appearance.color)
     return html`
       <header class="toolbar">
@@ -3114,6 +3116,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                   ? this.exportYAMLHref ? html`<a class="button" href=${this.exportYAMLHref} download>Export YAML</a>` : html`<button disabled title="YAML export is not available yet">Export YAML</button>`
                   : nothing}
                 ${builder.capabilities.canArchive ? html`<button type="button" class="archive-action" data-builder-action="archive" @click=${this.archiveDashboard}>${lucideIcon(Archive, { size: 14, strokeWidth: 2 })}<span>Archive dashboard</span></button>` : nothing}
+                ${canDelete ? html`<button type="button" class="delete-action" data-builder-action="delete" @click=${this.deleteDashboard}>${lucideIcon(Trash2, { size: 14, strokeWidth: 2 })}<span>Delete dashboard</span></button>` : nothing}
               </div>
             </details>` : nothing}
           ${builder.capabilities.canPublish ? html`<button type="button" class="primary" data-builder-action="publish" title=${publishTitle} ?disabled=${publishDisabled} @click=${this.publish}>${publishLabel}</button>` : nothing}
@@ -4768,6 +4771,17 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private archiveDashboard = (): void => {
     if (!this.builder?.capabilities.canArchive || this.commandPending) return
     this.emitCommand('archive', {}, false)
+  }
+
+  private canDeleteDashboard(builder: DashboardBuilderSignal): boolean {
+    return builder.capabilities.canArchive && builder.lifecycle === 'draft' && builder.visibility === 'private'
+  }
+
+  private deleteDashboard = (): void => {
+    const builder = this.builder
+    if (!builder || !this.canDeleteDashboard(builder) || this.commandPending) return
+    if (!window.confirm(`Delete ${builder.title}? This cannot be undone.`)) return
+    this.emitCommand('delete', {}, false)
   }
 
   private addPage = (): void => {

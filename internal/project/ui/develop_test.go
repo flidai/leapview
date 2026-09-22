@@ -139,6 +139,14 @@ func TestSemanticModelDetailProjectionRendersDatasetsDimensionsMetricsRelationsh
 	if len(metricTable.Rows) != 1 {
 		t.Fatalf("metric rows = %#v, want one row", metricTable.Rows)
 	}
+	if got := uisignals.ValueOrZero(metricTable.Width); got != "930px" {
+		t.Fatalf("metric table width = %q, want bounded 930px layout", got)
+	}
+	for index, want := range []string{"180px", "150px", "160px", "320px", "120px"} {
+		if got := uisignals.ValueOrZero(metricTable.Columns[index].Width); got != want {
+			t.Fatalf("metric column %d width = %q, want %s", index, got, want)
+		}
+	}
 	metricRow := metricTable.Rows[0]
 	if metricRow["dataset"] != "orders" || metricRow["input"] != "orders.order_id" {
 		t.Fatalf("metric row = %#v, want canonical dataset and input", metricRow)
@@ -439,6 +447,14 @@ func TestModelDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	columns := details.Sections[1].Table.Columns
 	if len(columns) != 4 || columns[0].ID != "field" || columns[1].ID != "type" || columns[2].ID != "description" || columns[3].ID != "status" {
 		t.Fatalf("field columns = %#v, want compact catalog columns", columns)
+	}
+	if got := uisignals.ValueOrZero(details.Sections[1].Table.Width); got != "900px" {
+		t.Fatalf("model fields table width = %q, want bounded 900px layout", got)
+	}
+	for index, want := range []string{"240px", "170px", "360px", "130px"} {
+		if got := uisignals.ValueOrZero(columns[index].Width); got != want {
+			t.Fatalf("model field column %d width = %q, want %s", index, got, want)
+		}
 	}
 	if got := uisignals.ValueOrZero(details.Sections[1].Table.RowAction); got != "open-model-field" {
 		t.Fatalf("field row action = %q, want open-model-field", got)

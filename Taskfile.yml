@@ -353,6 +353,7 @@ tasks:
       - bun run test:ui-command-boundaries
       - bun run test:command-failure
       - bun run test:app-shell
+      - bun run test:settings
       - bun run typecheck:app
       - bun run typecheck:contracts
       - bun run typecheck:tests

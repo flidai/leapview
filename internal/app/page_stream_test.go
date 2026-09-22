@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -37,7 +38,6 @@ func TestDashboardPageStreamResourceRequiresExactDashboardID(t *testing.T) {
 		want projectgraph.ResourceID
 	}{
 		{name: "direct resource", url: "/updates?route=dashboard&dashboard=dashboard_sales", want: "dashboard_sales"},
-		{name: "builder resource", url: "/updates?route=dashboard_builder&dashboard=dashboard_sales", want: "dashboard_sales"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -54,6 +54,37 @@ func TestDashboardPageStreamResourceRequiresExactDashboardID(t *testing.T) {
 			}
 			if err := resources[0].Validate(); err != nil {
 				t.Fatalf("resource is not canonical: %v", err)
+			}
+		})
+	}
+}
+
+func TestDashboardBuilderPageStreamAuthorizesPrivateDraftWithoutPublishedGraphResource(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		url        string
+		wantStatus int
+		wantCalls  int
+	}{
+		{name: "private draft", url: "/updates?route=dashboard_builder&dashboard=dashboard_owned", wantStatus: http.StatusNoContent, wantCalls: 1},
+		{name: "missing dashboard", url: "/updates?route=dashboard_builder", wantStatus: http.StatusNotFound},
+		{name: "duplicate dashboard", url: "/updates?route=dashboard_builder&dashboard=dashboard_owned&dashboard=dashboard_other", wantStatus: http.StatusNotFound},
+		{name: "invalid dashboard", url: "/updates?route=dashboard_builder&dashboard=not%20a%20dashboard", wantStatus: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			authorizer := &repositoryDashboardAuthorizerFake{}
+			guarded := protectProjectAuthoringResourceWithSelector(
+				tusAccess{principal: accessmodule.Principal{ID: "owner"}, ok: true},
+				tusRuntime{project: "project_demo"},
+				authorizer,
+				access.CapabilityResourceEdit,
+				dashboardBuilderPageStreamDashboardID,
+				func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+			)
+			recorder := httptest.NewRecorder()
+			guarded(recorder, httptest.NewRequest(http.MethodGet, test.url, nil))
+			if recorder.Code != test.wantStatus || authorizer.editCalls != test.wantCalls {
+				t.Errorf("status = %d, edit calls = %d; want %d and %d", recorder.Code, authorizer.editCalls, test.wantStatus, test.wantCalls)
 			}
 		})
 	}
