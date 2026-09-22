@@ -250,6 +250,36 @@ func TestCoordinatorRejectsCompletedHandoffForDifferentArtifact(t *testing.T) {
 	}
 }
 
+func TestCoordinatorLoadsLegacySuccessfulEvidenceWithoutHandoff(t *testing.T) {
+	fixture := newCoordinatorFixture(t)
+	report, err := fixture.coordinator.Run(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.SchemaVersion = LegacyReportSchemaVersion
+	report.Handoff = ReplacementHandoff{}
+	fixture.seedCheckpoint(report)
+	fixture.ledger.occurrence.Status = recovery.StatusSucceeded
+	loaded, err := fixture.coordinator.Run(t.Context(), fixture.request)
+	if err != nil || loaded.SchemaVersion != LegacyReportSchemaVersion || HandoffPresent(loaded.Handoff) {
+		t.Fatalf("legacy successful evidence=%#v err=%v", loaded, err)
+	}
+}
+
+func TestCoordinatorRequiresHandoffForNewSuccessfulEvidence(t *testing.T) {
+	fixture := newCoordinatorFixture(t)
+	report, err := fixture.coordinator.Run(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.Handoff = ReplacementHandoff{}
+	fixture.seedCheckpoint(report)
+	fixture.ledger.occurrence.Status = recovery.StatusSucceeded
+	if _, err := fixture.coordinator.Run(t.Context(), fixture.request); !errors.Is(err, ErrInconsistent) {
+		t.Fatalf("schema-version-%d successful evidence without handoff error = %v", ReportSchemaVersion, err)
+	}
+}
+
 func TestCoordinatorRestoresSharedClusterOnceAcrossRestart(t *testing.T) {
 	fixture := newCoordinatorFixture(t)
 	points := fixture.set.CanonicalPoints()
@@ -575,7 +605,7 @@ func (provider *fakeHandoff) CreateHandoff(_ context.Context, request HandoffReq
 			{Role: "ducklake", Provider: "postgresql", ResourceID: "provider-ducklake", Endpoint: "postgres://127.0.0.1:55432", Database: "ducklake-restored", CredentialSecretKey: "postgres.ducklake.url"},
 			{Role: "objects", Provider: "s3", ResourceID: "provider-objects", Endpoint: "http://127.0.0.1:9000", Region: "us-east-1", Bucket: "provider-bucket", CredentialSecretKey: "object.credentials"},
 		},
-		Secrets:     SecretBundleReference{Provider: "root-readable-file", URI: "file:///run/fai981/private.json", SHA256: strings64("c"), Version: "1", Keys: []string{"postgres.control.url", "postgres.ducklake.url", "object.credentials"}},
+		Secrets:     SecretBundleReference{Provider: "host-provisioned-root-file", URI: "file:///run/fai981/private.json", SHA256: strings64("c"), Version: "1", Keys: []string{"postgres.control.url", "postgres.ducklake.url", "object.credentials"}},
 		AvailableAt: provider.now(),
 	}
 	if provider.mismatch {

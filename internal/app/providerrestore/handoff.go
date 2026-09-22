@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -60,6 +61,14 @@ type HandoffRequest struct {
 	ArtifactIdentity string
 	Databases        []DatabaseResult
 	Objects          []ObjectResult
+}
+
+type HandoffExpectations struct {
+	OccurrenceID     string
+	TargetID         string
+	RecoverySetID    string
+	FrontierDigest   string
+	ArtifactIdentity string
 }
 
 type HandoffProvider interface {
@@ -135,7 +144,7 @@ func containsCredentialQuery(endpoint *url.URL) bool {
 
 func validateSecretBundleReference(reference SecretBundleReference) error {
 	parsed, err := url.Parse(reference.URI)
-	if reference.Provider != "root-readable-file" || err != nil || parsed.Scheme != "file" || parsed.Host != "" || parsed.Path == "" || strings.TrimSpace(reference.Version) == "" || len(reference.Keys) == 0 {
+	if reference.Provider != "host-provisioned-root-file" || err != nil || parsed.Scheme != "file" || parsed.Host != "" || !filepath.IsAbs(parsed.Path) || parsed.Path != filepath.Clean(parsed.Path) || strings.TrimSpace(reference.Version) == "" || len(reference.Keys) == 0 {
 		return fmt.Errorf("%w: secret bundle reference is invalid", ErrInconsistent)
 	}
 	decoded, err := hex.DecodeString(reference.SHA256)
@@ -159,12 +168,18 @@ func HandoffPresent(handoff ReplacementHandoff) bool {
 	return handoff.SchemaVersion != 0 || handoff.Kind != "" || handoff.Status != ""
 }
 
-func ValidateHandoffReport(report Report) error {
+func ValidateHandoffReport(report Report, expected HandoffExpectations) error {
 	if report.Status != StatusSucceeded || !HandoffPresent(report.Handoff) {
 		return fmt.Errorf("%w: successful provider restore has no replacement handoff", ErrInconsistent)
 	}
-	set := recoveryset.RecoverySet{ID: report.RecoverySetID, FrontierDigest: report.FrontierDigest, Delivery: recoveryset.DeliveryPointer{TargetID: report.TargetID}}
-	if err := report.Handoff.Validate(set, report.Handoff.Artifact.Image); err != nil {
+	if strings.TrimSpace(expected.OccurrenceID) == "" || strings.TrimSpace(expected.TargetID) == "" || strings.TrimSpace(expected.RecoverySetID) == "" || strings.TrimSpace(expected.FrontierDigest) == "" || strings.TrimSpace(expected.ArtifactIdentity) == "" {
+		return fmt.Errorf("%w: authoritative handoff expectations are incomplete", ErrInvalid)
+	}
+	if report.OccurrenceID != expected.OccurrenceID || report.TargetID != expected.TargetID || report.RecoverySetID != expected.RecoverySetID || report.FrontierDigest != expected.FrontierDigest {
+		return fmt.Errorf("%w: provider restore report does not match authoritative handoff expectations", ErrInconsistent)
+	}
+	set := recoveryset.RecoverySet{ID: expected.RecoverySetID, FrontierDigest: expected.FrontierDigest, Delivery: recoveryset.DeliveryPointer{TargetID: expected.TargetID}}
+	if err := report.Handoff.Validate(set, expected.ArtifactIdentity); err != nil {
 		return err
 	}
 	return validateHandoffResults(report.Handoff, report.Databases, report.Objects)

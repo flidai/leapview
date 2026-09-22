@@ -25,7 +25,10 @@ type CredentialBundle struct {
 	ObjectSecretKey string `json:"objectSecretKey"`
 }
 
-type FileSecretBundleStore struct{ Root string }
+type FileSecretBundleStore struct {
+	Root         string
+	ReferenceURI string
+}
 
 func (store FileSecretBundleStore) Save(_ context.Context, bundle CredentialBundle) (SecretBundleReference, error) {
 	if err := validateCredentialBundle(bundle); err != nil {
@@ -49,10 +52,29 @@ func (store FileSecretBundleStore) Save(_ context.Context, bundle CredentialBund
 	if err := os.WriteFile(path, encoded, 0o600); err != nil {
 		return SecretBundleReference{}, err
 	}
+	referenceURI := (&url.URL{Scheme: "file", Path: path}).String()
+	if target := strings.TrimSpace(store.ReferenceURI); target != "" {
+		parsed, parseErr := url.Parse(target)
+		if parseErr != nil || parsed.Scheme != "file" || parsed.Host != "" || !filepath.IsAbs(parsed.Path) || parsed.Path != filepath.Clean(parsed.Path) {
+			return SecretBundleReference{}, fmt.Errorf("%w: provisioned secret bundle directory is invalid", ErrInvalid)
+		}
+		referenceURI = (&url.URL{Scheme: "file", Path: filepath.Join(parsed.Path, digest+".json")}).String()
+	}
 	return SecretBundleReference{
-		Provider: "root-readable-file", URI: (&url.URL{Scheme: "file", Path: path}).String(), SHA256: digest, Version: "1",
+		Provider: "host-provisioned-root-file", URI: referenceURI, SHA256: digest, Version: "1",
 		Keys: []string{"postgres.control.url", "postgres.ducklake.url", "object.credentials"},
 	}, nil
+}
+
+func (store FileSecretBundleStore) SourcePath(reference SecretBundleReference) (string, error) {
+	if err := validateSecretBundleReference(reference); err != nil {
+		return "", err
+	}
+	root, err := store.root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, reference.SHA256+".json"), nil
 }
 
 func (store FileSecretBundleStore) Load(_ context.Context, reference SecretBundleReference) (CredentialBundle, error) {

@@ -1374,9 +1374,11 @@ tasks:
       TESTCONTAINERS_RYUK_DISABLED: "true"
       LEAPVIEW_TEST_FAI981_PROVIDER_RESTORE_EVIDENCE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr/provider-restore"
       LEAPVIEW_TEST_FAI981_HANDOFF_PRIVATE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr-private/provider-restore"
+      LEAPVIEW_TEST_FAI981_RESOURCE_MANIFEST: "{{.ROOT_DIR}}/.tmp/qualification/ubdr-resources/provider-restore.json"
       LEAPVIEW_TEST_FAI981_HANDOFF_IMAGE: "ghcr.io/flidai/leapview@sha256:5b0cec900c5182f42654d07e58ca4ea9911ab1200f410670628601ab66085b85"
       LEAPVIEW_TEST_FAI981_HANDOFF_REVISION: "69652fb20101de80497cbf47ecfb402f700d6552"
     cmds:
+      - task: qualify:ubdr:provider-restore:cleanup
       - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr/provider-restore"
       - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr-private/provider-restore"
       - >-
@@ -1392,12 +1394,22 @@ tasks:
 
   qualify:ubdr:provider-restore:cleanup:
     desc: Remove provider resources retained for the FAI-981 downstream handoff
+    vars:
+      MANIFEST: "{{.ROOT_DIR}}/.tmp/qualification/ubdr-resources/provider-restore.json"
     cmds:
       - >-
-        test ! -f "{{.ROOT_DIR}}/.tmp/qualification/ubdr/provider-restore/coordinated-provider-restore.json" ||
-        jq -r '.report.replacementHostHandoff.providers[].resourceId'
-        "{{.ROOT_DIR}}/.tmp/qualification/ubdr/provider-restore/coordinated-provider-restore.json" |
-        sort -u | xargs -r docker rm -f
+        test ! -f "{{.MANIFEST}}" ||
+        jq -r '.resources[] | select(.kind == "container") | .id' "{{.MANIFEST}}" |
+        while IFS= read -r id; do
+        if docker inspect "$id" >/dev/null 2>&1; then docker rm -f "$id"; fi;
+        done
+      - >-
+        test ! -f "{{.MANIFEST}}" ||
+        jq -r '.resources[] | select(.kind == "network") | .id' "{{.MANIFEST}}" |
+        while IFS= read -r id; do
+        if docker network inspect "$id" >/dev/null 2>&1; then docker network rm "$id"; fi;
+        done
+      - rm -f "{{.MANIFEST}}"
       - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr-private/provider-restore"
 
   qualify:ubdr:release-transition-preflight:

@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	ReportSchemaVersion = 1
-	ReportKind          = "leapview/fai981-provider-restore"
+	LegacyReportSchemaVersion = 1
+	ReportSchemaVersion       = 2
+	ReportKind                = "leapview/fai981-provider-restore"
 
 	StatusRunning       = "running"
 	StatusSucceeded     = "succeeded"
@@ -655,7 +656,7 @@ func admissionComplete(set recoveryset.RecoverySet, request Request, result Admi
 }
 
 func validateCheckpoint(set recoveryset.RecoverySet, request Request, artifactIdentity string, report Report) error {
-	if report.SchemaVersion != ReportSchemaVersion || report.Kind != ReportKind || report.Fence != request.Fence || report.StartedAt.IsZero() || len(report.Databases) > 2 || len(report.Objects) > len(set.ObjectRoots) {
+	if (report.SchemaVersion != LegacyReportSchemaVersion && report.SchemaVersion != ReportSchemaVersion) || report.Kind != ReportKind || report.Fence != request.Fence || report.StartedAt.IsZero() || len(report.Databases) > 2 || len(report.Objects) > len(set.ObjectRoots) {
 		return fmt.Errorf("%w: durable provider checkpoint shape is invalid", ErrInconsistent)
 	}
 	points := set.CanonicalPoints()
@@ -703,8 +704,11 @@ func validateCheckpoint(set recoveryset.RecoverySet, request Request, artifactId
 			return err
 		}
 	}
-	if report.Status == StatusSucceeded && (!verificationPresent(report.Verification) || !admissionPresent(report.Admission) || !HandoffPresent(report.Handoff) || report.CompletedAt.IsZero()) {
+	if report.Status == StatusSucceeded && (!verificationPresent(report.Verification) || !admissionPresent(report.Admission) || report.CompletedAt.IsZero()) {
 		return fmt.Errorf("%w: successful checkpoint is incomplete", ErrInconsistent)
+	}
+	if report.SchemaVersion == ReportSchemaVersion && report.Status == StatusSucceeded && !HandoffPresent(report.Handoff) {
+		return fmt.Errorf("%w: successful schema-version-%d checkpoint has no replacement handoff", ErrInconsistent, ReportSchemaVersion)
 	}
 	return nil
 }
