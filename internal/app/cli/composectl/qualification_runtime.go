@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 type qualificationContainerVolume struct {
 	Source   string
 	Target   string
+	Subpath  string
 	ReadOnly bool
 }
 
@@ -165,6 +167,20 @@ func (runtime *dockerCLIQualificationRuntime) Start(
 		target := strings.TrimSpace(volume.Target)
 		if source == "" || target == "" {
 			return nil, fmt.Errorf("qualification container volume source and target are required")
+		}
+		subpath := strings.TrimSpace(volume.Subpath)
+		if subpath != "" {
+			if strings.ContainsAny(source+target, ",\r\n\x00") || !path.IsAbs(target) ||
+				path.IsAbs(subpath) || path.Clean(subpath) != subpath || subpath == "." || subpath == ".." ||
+				strings.HasPrefix(subpath, "../") || strings.ContainsAny(subpath, ",\r\n\x00") {
+				return nil, fmt.Errorf("qualification container volume subpath is invalid")
+			}
+			value := "type=volume,src=" + source + ",dst=" + target + ",volume-subpath=" + subpath
+			if volume.ReadOnly {
+				value += ",readonly"
+			}
+			arguments = append(arguments, "--mount", value)
+			continue
 		}
 		value := source + ":" + target
 		if volume.ReadOnly {

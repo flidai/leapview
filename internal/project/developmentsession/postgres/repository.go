@@ -106,7 +106,7 @@ func (r *Repository) Save(ctx context.Context, input developmentsession.Record, 
 }
 
 func insert(ctx context.Context, queries *sessiondb.Queries, record developmentsession.Record) error {
-	diagnostics, err := json.Marshal(record.Diagnostics)
+	diagnostics, err := marshalDiagnostics(record.Diagnostics)
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func insert(ctx context.Context, queries *sessiondb.Queries, record developments
 }
 
 func update(ctx context.Context, queries *sessiondb.Queries, record developmentsession.Record, expected int64) error {
-	diagnostics, err := json.Marshal(record.Diagnostics)
+	diagnostics, err := marshalDiagnostics(record.Diagnostics)
 	if err != nil {
 		return err
 	}
@@ -148,6 +148,15 @@ func update(ctx context.Context, queries *sessiondb.Queries, record developments
 		return developmentsession.ErrConflict
 	}
 	return nil
+}
+
+func marshalDiagnostics(values []developmentsession.Diagnostic) ([]byte, error) {
+	// The durable column requires a JSON array. A freshly initialized session
+	// has no diagnostics, and json.Marshal(nil) would store JSON null instead.
+	if values == nil {
+		values = []developmentsession.Diagnostic{}
+	}
+	return json.Marshal(values)
 }
 
 func scan(row sessiondb.ProjectDevelopmentSession, key developmentsession.Key) (developmentsession.Record, error) {

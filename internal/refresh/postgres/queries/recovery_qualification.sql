@@ -48,6 +48,8 @@ UPDATE refresh.recovery_qualification_attempt SET lease_expires_at=$3 WHERE occu
 UPDATE refresh.recovery_qualification_occurrence SET restore_started_at=$4 WHERE occurrence_id=$1 AND lease_owner=$2 AND fence_generation=$3 AND lease_expires_at>$4 AND status='running' AND operation='restore' AND started_at IS NOT NULL AND started_at<=$4 AND restore_started_at IS NULL AND restore_completed_at IS NULL;
 -- name: CompleteRecoveryRestorePhase :execrows
 UPDATE refresh.recovery_qualification_occurrence SET restore_completed_at=$4 WHERE occurrence_id=$1 AND lease_owner=$2 AND fence_generation=$3 AND lease_expires_at>$4 AND status='running' AND operation='restore' AND restore_started_at IS NOT NULL AND restore_completed_at IS NULL AND restore_started_at<=$4;
+-- name: RecordRecoveryQualificationCheckpoint :execrows
+UPDATE refresh.recovery_qualification_occurrence SET evidence_refs=sqlc.arg(evidence_refs)::jsonb WHERE occurrence_id=sqlc.arg(occurrence_id) AND lease_owner=sqlc.arg(lease_owner) AND fence_generation=sqlc.arg(fence_generation) AND lease_expires_at>sqlc.arg(active_at) AND status='running';
 -- name: StartRecoveryReadinessPhase :execrows
 UPDATE refresh.recovery_qualification_occurrence SET readiness_started_at=$4 WHERE occurrence_id=$1 AND lease_owner=$2 AND fence_generation=$3 AND lease_expires_at>$4 AND status='running' AND operation IN ('upgrade','rollback') AND started_at IS NOT NULL AND started_at<=$4 AND readiness_started_at IS NULL AND readiness_completed_at IS NULL;
 -- name: CompleteRecoveryReadinessPhase :execrows
