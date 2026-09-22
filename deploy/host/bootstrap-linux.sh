@@ -9,14 +9,19 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
-# The supported host contract deliberately fixes the guest OS while allowing
-# any VPS provider. Keep operating-system branching out of this bootstrap.
+# Keep the supported guest OS matrix explicit while allowing any VPS provider.
+# The application lifecycle below remains identical across supported hosts.
 # shellcheck disable=SC1091
 source /etc/os-release
-if [[ "${ID:-}" != ubuntu || "${VERSION_ID:-}" != 24.04 ]]; then
-  printf 'LeapView host bootstrap requires Ubuntu 24.04 LTS\n' >&2
-  exit 1
-fi
+case "${ID:-}:${VERSION_ID:-}" in
+  ubuntu:24.04) compose_package=docker-compose-v2 ;;
+  debian:13) compose_package=docker-compose ;;
+  *)
+    printf 'LeapView host bootstrap requires Ubuntu 24.04 LTS or Debian 13\n' >&2
+    exit 1
+    ;;
+esac
+readonly compose_package
 case "$(dpkg --print-architecture)" in
   amd64|arm64) ;;
   *)
@@ -39,10 +44,11 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates \
   docker.io \
-  docker-compose-v2 \
+  "$compose_package" \
   unattended-upgrades
 systemctl enable --now docker
 docker version >/dev/null
+docker compose version >/dev/null
 
 docker pull "$leapview_image"
 payload_container="$(docker create "$leapview_image")"

@@ -86,7 +86,7 @@ resource "hcloud_server" "leapview" {
   }
 
   user_data = templatefile("${path.module}/../host/cloud-init.yaml.tftpl", {
-    bootstrap_b64 = base64encode(file("${path.module}/../host/bootstrap-ubuntu.sh"))
+    bootstrap_b64 = base64encode(file("${path.module}/../host/bootstrap-linux.sh"))
     config_b64    = base64encode(jsonencode(local.bootstrap_config))
     image_b64     = base64encode("${var.leapview_image}\n")
   })

@@ -9,18 +9,28 @@ import (
 )
 
 func TestBootstrapIsProviderNeutralAndDelegatesLifecycleToGo(t *testing.T) {
-	bootstrap := read(t, "bootstrap-ubuntu.sh")
-	if output, err := exec.Command("bash", "-n", "bootstrap-ubuntu.sh").CombinedOutput(); err != nil {
-		t.Fatalf("bash -n bootstrap-ubuntu.sh: %v\n%s", err, output)
+	bootstrap := read(t, "bootstrap-linux.sh")
+	info, err := os.Stat("bootstrap-linux.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Fatal("bootstrap-linux.sh must be executable")
+	}
+	if output, err := exec.Command("bash", "-n", "bootstrap-linux.sh").CombinedOutput(); err != nil {
+		t.Fatalf("bash -n bootstrap-linux.sh: %v\n%s", err, output)
 	}
 	for _, required := range []string{
-		"Ubuntu 24.04 LTS", "docker-compose-v2", "docker pull", "docker create", "docker cp",
+		"ubuntu:24.04) compose_package=docker-compose-v2",
+		"debian:13) compose_package=docker-compose",
+		"requires Ubuntu 24.04 LTS or Debian 13", "\"$compose_package\"", "docker compose version",
+		"docker pull", "docker create", "docker cp",
 		`leapviewctl" host install`, "repository@sha256",
 	} {
 		requireContains(t, bootstrap, required)
 	}
 	for _, forbidden := range []string{
-		"docker compose", "leapviewctl init", "leapviewctl start", "terraform", "hcloud", "hetzner", "netcup",
+		"docker compose up", "docker compose down", "leapviewctl init", "leapviewctl start", "terraform", "hcloud", "hetzner", "netcup",
 	} {
 		if strings.Contains(strings.ToLower(bootstrap), forbidden) {
 			t.Errorf("bootstrap contains lifecycle/provider fragment %q", forbidden)
@@ -56,7 +66,7 @@ func TestProductionImageCarriesCanonicalDeploymentPayload(t *testing.T) {
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
 	for _, required := range []string{
 		"deploy/host/files/leapviewctl-wrapper",
-		"deploy/host/bootstrap-ubuntu.sh",
+		"deploy/host/bootstrap-linux.sh",
 	} {
 		requireContains(t, release, required)
 	}
