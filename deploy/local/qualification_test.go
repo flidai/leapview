@@ -186,9 +186,21 @@ for path in ("/Users/author/.colima/docker.sock", "/Users/author/.local/share/co
 with patch.object(module.platform, "system", return_value="Darwin"), \
      patch.object(module.Path, "home", return_value=home), \
      patch.object(module.os.path, "realpath", return_value=str(home / ".orbstack/run/docker.sock")), \
-     patch.object(module.os, "stat", return_value=types.SimpleNamespace(st_mode=stat.S_IFSOCK)):
+     patch.object(module.os, "stat", return_value=types.SimpleNamespace(st_mode=stat.S_IFSOCK, st_uid=module.os.getuid())):
     if module.normalize_docker_host("unix:///private/var/run/docker.sock") != "unix:///Users/author/.orbstack/run/docker.sock":
         raise SystemExit("private default socket did not resolve to the OrbStack Engine socket")
+
+with patch.object(module.platform, "system", return_value="Darwin"), \
+     patch.object(module.Path, "home", return_value=home), \
+     patch.object(module.os.path, "realpath", return_value=str(home / ".orbstack/run/docker.sock")), \
+     patch.object(module.os, "stat", return_value=types.SimpleNamespace(st_mode=stat.S_IFSOCK, st_uid=module.os.getuid() + 1)):
+    try:
+        module.normalize_docker_host("unix:///private/var/run/docker.sock")
+    except module.QualificationSkip as error:
+        if "owner" not in str(error):
+            raise
+    else:
+        raise SystemExit("provider socket owned by another user passed qualification")
 
 module.run_command = lambda *args, **kwargs: {"output": json.dumps({"Components": [{"Name": "Podman Engine"}], "Version": "5.0"})}
 try:

@@ -872,6 +872,14 @@ def normalize_docker_host(value: str) -> str:
         raise QualificationSkip(f"explicit Docker socket is unavailable: {redacted_docker_host(value)} ({exc.strerror})") from exc
     if not stat.S_ISSOCK(info.st_mode):
         raise QualificationSkip("explicit Docker endpoint is not a Unix socket")
+    uid = os.getuid()
+    trusted_owner = (
+        info.st_uid == 0 if resolved_kind == "engine" and system == "Linux"
+        else info.st_uid in (uid, 0) if resolved_kind == "docker-desktop" and system == "Darwin"
+        else info.st_uid == uid
+    )
+    if not trusted_owner:
+        raise QualificationSkip("Docker socket has an unexpected owner")
     return "unix://" + resolved_path
 
 
