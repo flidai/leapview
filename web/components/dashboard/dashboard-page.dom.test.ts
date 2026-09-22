@@ -1385,6 +1385,7 @@ test('dashboard refresh progress is owned by the latest stream generation', asyn
         const progress = (element.shadowRoot as ShadowRoot).querySelector('[data-dashboard-refresh-progress]')
         return { generation: progress?.getAttribute('data-generation'), now: progress?.getAttribute('aria-valuenow'), complete: progress?.getAttribute('data-complete') }
       }
+      mergePatch({ status: { generation: 3, refreshId: 'refresh-3', loading: true, progressPercent: 50 } })
       const initial = await read()
       mergePatch({ status: { generation: 4, refreshId: 'refresh-4', loading: true, progressPercent: 25 } })
       const active = await read()
