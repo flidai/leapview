@@ -18,6 +18,8 @@ func TestAPIGenProjectRoleBindingsAllowAuthoringBootstrapCredential(t *testing.T
 	operations := map[string]APIGenOperationContract{
 		"listProjectRoleBindings":  contracts["listProjectRoleBindings"],
 		"createProjectRoleBinding": contracts["createProjectRoleBinding"],
+		"createGrant":              contracts["createGrant"],
+		"listGrants":               contracts["listGrants"],
 	}
 	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{}, false)
 	module.auth = &Auth{}

@@ -214,7 +214,7 @@ func TestBootstrapAPIGenDecisionKeepsLegacyEmptyAuthorizationGenerationOpen(t *t
 	target := bootstrapTargetReaderFake{target: deployment.DeliveryTarget{
 		TargetID: "target_demo", ProjectID: project.String(), Environment: "prod", ActiveGenerationID: identity.GenerationID,
 	}}
-	for _, operation := range []string{"createProjectRoleBinding", "listProjectRoleBindings", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "getDevelopmentProfileApplication", "applyDevelopmentProfile"} {
+	for _, operation := range []string{"createProjectRoleBinding", "listProjectRoleBindings", "createGrant", "listGrants", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "getDevelopmentProfileApplication", "applyDevelopmentProfile"} {
 		t.Run(operation, func(t *testing.T) {
 			got, err := bootstrapAPIGenDecision(context.Background(), runtime, bootstrapStateStoreFake{}, claim, "prod", operation, project, target, "target_demo")
 			if err != nil {

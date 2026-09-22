@@ -253,3 +253,13 @@ func (d *APIGenDispatcher) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.
 func (d *APIGenDispatcher) ListPlatformAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListPlatformAuditEventsParams) {
 	d.handler.ListPlatformAuditEvents(w, r)
 }
+
+func (d *APIGenDispatcher) ListGrants(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListGrantsParams) {
+	d.handler.ListGrants(w, r)
+}
+func (d *APIGenDispatcher) CreateGrant(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenCreateGrantHeaders) {
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.CreateGrant(w, r)
+}

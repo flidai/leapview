@@ -332,7 +332,7 @@ func isBootstrapAPIGenOperation(operationID string) bool {
 		"getDevelopmentProfileApplication", "applyDevelopmentProfile",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
-		"createProjectRoleBinding", "listProjectRoleBindings":
+		"createProjectRoleBinding", "listProjectRoleBindings", "createGrant", "listGrants":
 		return true
 	default:
 		return false
@@ -691,7 +691,7 @@ func isAuthoringBootstrapOperation(operationID string) bool {
 		"getDevelopmentProfileApplication", "applyDevelopmentProfile",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
-		"listProjectRoleBindings", "createProjectRoleBinding":
+		"listProjectRoleBindings", "createProjectRoleBinding", "createGrant", "listGrants":
 		return true
 	default:
 		return false
