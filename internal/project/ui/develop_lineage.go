@@ -297,47 +297,57 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 		downstreamBySource[edge.source] = append(downstreamBySource[edge.source], edge)
 	}
 	relevant := make([]collapsedEdge, 0, len(candidates))
-	upstreamVisited := map[string]struct{}{selectedAnchor.ID: {}}
+	type traversalVisit struct {
+		assetID         string
+		visibleAnchorID string
+	}
+	upstreamVisited := map[traversalVisit]struct{}{{assetID: selectedAnchor.ID, visibleAnchorID: selectedAnchor.ID}: {}}
 	var walkUpstream func(string, string)
 	walkUpstream = func(targetID, visibleTargetID string) {
 		for _, edge := range upstreamByTarget[targetID] {
-			_, seen := upstreamVisited[edge.source]
 			if lineageVisualLayer(assets[edge.source].Type) < lineageVisualLayer(assets[visibleTargetID].Type) {
 				policy := lineageProjectionEdge(assets[edge.source].Type, assets[visibleTargetID].Type, edge.kind)
 				relevant = append(relevant, collapsedEdge{source: edge.source, target: visibleTargetID, kind: policy.kind})
+				visit := traversalVisit{assetID: edge.source, visibleAnchorID: edge.source}
+				_, seen := upstreamVisited[visit]
 				if seen {
 					continue
 				}
-				upstreamVisited[edge.source] = struct{}{}
+				upstreamVisited[visit] = struct{}{}
 				walkUpstream(edge.source, edge.source)
 				continue
 			}
+			visit := traversalVisit{assetID: edge.source, visibleAnchorID: visibleTargetID}
+			_, seen := upstreamVisited[visit]
 			if seen {
 				continue
 			}
-			upstreamVisited[edge.source] = struct{}{}
+			upstreamVisited[visit] = struct{}{}
 			walkUpstream(edge.source, visibleTargetID)
 		}
 	}
-	downstreamVisited := map[string]struct{}{selectedAnchor.ID: {}}
+	downstreamVisited := map[traversalVisit]struct{}{{assetID: selectedAnchor.ID, visibleAnchorID: selectedAnchor.ID}: {}}
 	var walkDownstream func(string, string)
 	walkDownstream = func(sourceID, visibleSourceID string) {
 		for _, edge := range downstreamBySource[sourceID] {
-			_, seen := downstreamVisited[edge.target]
 			if lineageVisualLayer(assets[edge.target].Type) > lineageVisualLayer(assets[visibleSourceID].Type) {
 				policy := lineageProjectionEdge(assets[visibleSourceID].Type, assets[edge.target].Type, edge.kind)
 				relevant = append(relevant, collapsedEdge{source: visibleSourceID, target: edge.target, kind: policy.kind})
+				visit := traversalVisit{assetID: edge.target, visibleAnchorID: edge.target}
+				_, seen := downstreamVisited[visit]
 				if seen {
 					continue
 				}
-				downstreamVisited[edge.target] = struct{}{}
+				downstreamVisited[visit] = struct{}{}
 				walkDownstream(edge.target, edge.target)
 				continue
 			}
+			visit := traversalVisit{assetID: edge.target, visibleAnchorID: visibleSourceID}
+			_, seen := downstreamVisited[visit]
 			if seen {
 				continue
 			}
-			downstreamVisited[edge.target] = struct{}{}
+			downstreamVisited[visit] = struct{}{}
 			walkDownstream(edge.target, visibleSourceID)
 		}
 	}

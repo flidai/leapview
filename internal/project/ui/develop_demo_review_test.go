@@ -117,6 +117,36 @@ func TestAssetLineagePreservesEveryBranchThatConvergesOnSharedDownstreamAssets(t
 	}
 }
 
+func TestAssetLineagePreservesVisibleBranchesThroughSameLayerConvergence(t *testing.T) {
+	source := projectview.DevelopAssetView{ID: "source:finance", Type: "source"}
+	modelA := projectview.DevelopAssetView{ID: "model:a", Type: "model"}
+	modelB := projectview.DevelopAssetView{ID: "model:b", Type: "model"}
+	sharedModel := projectview.DevelopAssetView{ID: "model:shared", Type: "model"}
+	semantic := projectview.DevelopAssetView{ID: "semantic:finance", Type: "semantic_model"}
+	assets := []projectview.DevelopAssetView{source, modelA, modelB, sharedModel, semantic}
+	edges := []projectview.DevelopEdgeView{
+		{FromAssetID: modelA.ID, ToAssetID: source.ID, Type: "reads_source"},
+		{FromAssetID: modelB.ID, ToAssetID: source.ID, Type: "reads_source"},
+		{FromAssetID: sharedModel.ID, ToAssetID: modelA.ID, Type: "uses_model"},
+		{FromAssetID: sharedModel.ID, ToAssetID: modelB.ID, Type: "uses_model"},
+		{FromAssetID: semantic.ID, ToAssetID: sharedModel.ID, Type: "uses_model"},
+	}
+
+	lineage := assetLineage("project:test", source, assets, edges)
+	wantEdges := map[string]bool{
+		source.ID + "->" + modelA.ID:   true,
+		source.ID + "->" + modelB.ID:   true,
+		modelA.ID + "->" + semantic.ID: true,
+		modelB.ID + "->" + semantic.ID: true,
+	}
+	for _, edge := range lineage.Graph.Edges {
+		delete(wantEdges, edge.Source+"->"+edge.Target)
+	}
+	if len(wantEdges) != 0 {
+		t.Fatalf("same-layer convergence collapsed visible branches %v: %#v", wantEdges, lineage.Graph.Edges)
+	}
+}
+
 func TestAssetLineageCollapsesSameLayerDependenciesAroundSelectedModel(t *testing.T) {
 	connection := projectview.DevelopAssetView{ID: "connection:finance", Type: "connection"}
 	source := projectview.DevelopAssetView{ID: "source:finance", Type: "source"}
