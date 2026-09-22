@@ -54,6 +54,16 @@ project authoring, and release publication. The release principal is restricted
 to viewing, approving, and activating the demo project environment, plus
 managing the public dashboard publications declared by the canonical showcase.
 
+For an operator-qualified replacement runtime, set `DEMO_RUNTIME_REVISION` in
+the `leapview-demo` GitHub environment to the exact source revision reported by
+that immutable image. Set it together with the new project and principal IDs
+only after cutover. Then dispatch the `publish` action to validate the new
+credentials and publish matching source. While this override is set, unrelated
+main artifact builds do not republish the pinned source automatically. An unset
+override preserves the legacy tracked revision for the existing demo. The
+legacy `stage`, `prepare`, and `deploy` actions target the old installation;
+do not use them for the new Compose-managed host.
+
 The `leapview-demo` environment variable `DEMO_PROJECT_ID` stores the target's
 durable `ProjectUID`. Content publication must use that issuer-owned identity;
 the source bundle does not provide or replace it.
