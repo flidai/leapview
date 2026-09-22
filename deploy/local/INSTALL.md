@@ -4,12 +4,20 @@ This archive contains the released `leapview` host command and its exact
 version-matched local runtime package. It does not require a LeapView source
 checkout, Go, Bun, Task, or a separately installed DuckDB runtime.
 
-## Supported hosts
+## V1 host and runtime targets
 
-| Host | Architecture | Local container runtime |
+| Host | Architecture | Local Docker Engine provider |
 | --- | --- | --- |
 | Ubuntu 24.04 LTS | amd64, arm64 | Docker Engine with Compose 2.17 or newer |
-| macOS 15 | Intel, Apple Silicon | Docker Desktop with Compose 2.17 or newer |
+| macOS 15 | Intel, Apple Silicon | Docker Desktop, OrbStack, Colima (Docker mode), or Rancher Desktop (Moby/dockerd mode), with Compose 2.17 or newer |
+
+These are v1 qualification targets, not a claim that every provider has passed
+clean-machine installed-artifact testing. The release support matrix must record
+a passing host lifecycle for each provider it names. Podman compatibility mode,
+containerd/nerdctl, arbitrary Unix sockets, TCP, and SSH Docker endpoints are
+not v1 local runtimes. An active context named after a provider is not proof
+of the selected daemon; the CLI inspects and pins the resolved socket and
+Docker Engine identity before pulling images or starting services.
 
 Windows is not a supported authoring-CLI host in this release. LeapView Desktop
 artifacts do not imply a Windows CLI or local-runtime support contract. Use a

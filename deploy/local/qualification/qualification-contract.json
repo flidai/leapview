@@ -28,8 +28,8 @@
     "endpoint": {
       "required": true,
       "acceptedTransports": ["unix socket"],
-      "acceptedEndpoints": ["absolute recognized local Engine/Desktop socket"],
-      "rejectedTransports": ["ssh", "tcp", "loopback tunnel", "unknown socket path"],
+      "acceptedEndpoints": ["absolute recognized local Docker Engine socket (Linux Engine; macOS Docker Desktop, OrbStack, Colima Docker mode, Rancher Desktop Moby mode)"],
+      "rejectedTransports": ["ssh", "tcp", "loopback tunnel", "unknown socket path", "Podman compatibility socket"],
       "pinBeforeMutation": true,
       "effectiveIdentityChecks": ["before init", "after init", "after dev"],
       "endpointPinnedClaim": "true only after all pre/post identities agree; recognized-path proxy adversarial evidence remains external"

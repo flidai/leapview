@@ -33,8 +33,12 @@ It must not infer locality from `LEAPVIEW_TARGET`, the word `default` in a
 context name, or a published loopback port.
 
 The implementation must document supported local-runtime transports and their
-verification checks. Recognized local Engine sockets and supported Docker
-Desktop local-VM endpoints may qualify. SSH, arbitrary TCP endpoints (including
+verification checks. V1 recognizes Docker Engine on Linux and qualified local
+macOS Docker Engine providers (Docker Desktop, OrbStack, Colima's Docker mode,
+and Rancher Desktop's Moby/dockerd mode). A recognized socket and Docker
+Engine server response are required; a provider name or Docker-compatible API
+response alone is insufficient. Podman, containerd/nerdctl, and arbitrary
+Unix-socket providers are outside v1. SSH, arbitrary TCP endpoints (including
 loopback tunnels), and unrecognized socket proxies must not qualify merely
 because they respond to the Docker API. This is a documented host-runtime trust
 boundary, not a claim to detect a compromised host or maliciously replaced
@@ -472,7 +476,7 @@ noninteractive mode. Only confirmed activation may be reported as active success
 | --- | --- |
 | Remote active Docker context, `DOCKER_HOST`, or `DOCKER_CONTEXT` | Each is tested, including precedence conflicts; reject before mutations, pulls, or staging. |
 | Misleading context name or loopback tunnel | Neither alone passes locality validation. |
-| Supported local Engine and Docker Desktop | Both supported profiles start with documented locality checks. |
+| Supported local Docker Engine providers | Linux Engine and each qualified macOS provider start with documented locality and Docker Engine checks; Podman/containerd and unknown sockets fail before mutation. |
 | Docker context changes during startup | All operations stay on the validated endpoint or fail without redirection. |
 | PostgreSQL and object-storage sources in one local profile | Both resolve exact logical Connection identities and use their own typed endpoints and credential bundles. |
 | Profile-file/name selection, missing files, or conflicting remote flags | Deterministic single-file selection; no hidden merge, target redirection, or silent fallback. |

@@ -818,20 +818,31 @@ def redacted_docker_host(value: str) -> str:
     return "<redacted-endpoint>"
 
 
-def recognized_local_socket_paths() -> set[str]:
-    """Return absolute Engine/Desktop socket paths accepted by this lane."""
+def local_socket_kind(path: str, home: Path, system: str) -> Optional[str]:
+    """Mirror the CLI's recognized local Docker Engine socket shapes."""
 
-    paths = {os.path.realpath("/var/run/docker.sock"), os.path.realpath("/run/docker.sock")}
-    home = Path.home()
-    if platform.system() == "Darwin":
-        paths.update({os.path.realpath(str(home / ".docker/run/docker.sock")), os.path.realpath(str(home / ".docker/desktop/docker.sock"))})
-    elif platform.system() == "Linux":
-        paths.update({os.path.realpath(str(home / ".docker/run/docker.sock")), os.path.realpath(str(home / ".docker/desktop/docker.sock"))})
-        runtime = os.environ.get("XDG_RUNTIME_DIR", "")
-        if runtime == f"/run/user/{os.getuid()}":
-            paths.add(os.path.realpath(str(Path(runtime) / "docker.sock")))
-        paths.add(os.path.realpath(f"/run/user/{os.getuid()}/docker.sock"))
-    return paths
+    path = os.path.normpath(path)
+    if path in ("/var/run/docker.sock", "/run/docker.sock"):
+        return "docker-desktop" if system == "Darwin" else "engine" if system == "Linux" else None
+    if system == "Darwin":
+        if path in ("/private/var/run/docker.sock", str(home / ".docker/run/docker.sock")):
+            return "docker-desktop"
+        if path == str(home / ".orbstack/run/docker.sock"):
+            return "orbstack"
+        if path == str(home / ".rd/docker.sock"):
+            return "rancher-desktop"
+        try:
+            parts = Path(path).relative_to(home / ".colima").parts
+        except ValueError:
+            return None
+        if len(parts) == 2 and parts[0] not in ("", ".", "..") and parts[1] == "docker.sock":
+            return "colima"
+    if system == "Linux":
+        if path == str(home / ".docker/desktop/docker.sock"):
+            return "docker-desktop"
+        if path == f"/run/user/{os.getuid()}/docker.sock":
+            return "rootless-engine"
+    return None
 
 
 def normalize_docker_host(value: str) -> str:
@@ -845,15 +856,23 @@ def normalize_docker_host(value: str) -> str:
         raise QualificationSkip("lifecycle requires an explicit local Unix Docker endpoint; SSH and TCP endpoints are unsupported")
     if not Path(socket_path).is_absolute():
         raise QualificationSkip("lifecycle requires an absolute local Docker socket path")
-    if os.path.realpath(socket_path) not in recognized_local_socket_paths():
-        raise QualificationSkip("Docker socket is not a recognized local Engine/Desktop endpoint")
+    home = Path.home()
+    system = platform.system()
+    source_kind = local_socket_kind(socket_path, home, system)
+    resolved_path = os.path.realpath(socket_path)
+    resolved_kind = local_socket_kind(resolved_path, home, system)
+    mac_alias = system == "Darwin" and socket_path in (
+        "/var/run/docker.sock", "/run/docker.sock", str(home / ".docker/run/docker.sock")
+    )
+    if source_kind is None or resolved_kind is None or (source_kind != resolved_kind and not mac_alias):
+        raise QualificationSkip("Docker socket is not a recognized local Docker Engine endpoint")
     try:
         info = os.stat(socket_path)
     except OSError as exc:
         raise QualificationSkip(f"explicit Docker socket is unavailable: {redacted_docker_host(value)} ({exc.strerror})") from exc
     if not stat.S_ISSOCK(info.st_mode):
         raise QualificationSkip("explicit Docker endpoint is not a Unix socket")
-    return "unix://" + os.path.realpath(socket_path)
+    return "unix://" + resolved_path
 
 
 def docker_server_identity(docker: str, docker_host: str, raw_results: list[dict[str, Any]], timeout: int, command_home: Path, name: str) -> dict[str, str]:
@@ -864,6 +883,9 @@ def docker_server_identity(docker: str, docker_host: str, raw_results: list[dict
         raise QualificationError(f"{name} did not return JSON server metadata") from exc
     if not isinstance(parsed, dict):
         raise QualificationError(f"{name} did not provide server identity metadata")
+    components = parsed.get("Components")
+    if not isinstance(components, list) or not components or not isinstance(components[0], dict) or components[0].get("Name") != "Engine":
+        raise QualificationError(f"{name} did not reach Docker Engine; Docker-compatible non-Docker runtimes are outside v1")
     server = {key: str(parsed[key]) for key in ("ID", "ServerVersion", "OperatingSystem", "Architecture", "Version", "ApiVersion", "Os", "Arch") if parsed.get(key) is not None}
     if not server:
         raise QualificationError(f"{name} did not provide server identity metadata")

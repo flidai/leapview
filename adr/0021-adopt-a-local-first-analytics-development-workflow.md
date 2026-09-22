@@ -167,8 +167,16 @@ and ambient `DOCKER_HOST` and `DOCKER_CONTEXT`, and validate that it is a
 supported local runtime before provisioning, pulling images, or staging data.
 Unsupported or unverifiable endpoints fail closed with actionable diagnostics.
 Loopback publication, a context name, or a daemon label alone is not evidence
-that the daemon is on the author's machine. Docker Desktop's supported local
-VM can qualify as local; arbitrary remote daemons and forwarding tunnels do not.
+that the daemon is on the author's machine. The v1 runtime scope is Docker
+Engine on Linux and local macOS Docker Engine VMs supplied by Docker Desktop,
+OrbStack, Colima in Docker mode, or Rancher Desktop in Moby/dockerd mode.
+These providers share the Docker CLI/Compose contract; Podman compatibility
+mode, containerd/nerdctl, and arbitrary Docker-compatible sockets are outside
+v1. A provider enters the released support matrix only after its exact local
+lifecycle passes host qualification. Recognized socket paths, ownership,
+Docker Engine identity, and daemon pinning establish the documented trust
+boundary, not a proof against a local process forwarding a trusted socket to
+a remote daemon. Arbitrary remote daemons and forwarding tunnels do not qualify.
 Subsequent operations must use the validated endpoint, not resolve ambient
 configuration again and silently act elsewhere.
 
