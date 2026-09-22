@@ -2,6 +2,10 @@ name: Set up LeapView CI
 description: Installs the pinned LeapView toolchain and restores bounded GitHub Actions caches.
 
 inputs:
+  go-cache-restore-workload:
+    description: Existing default-branch workload to restore on candidate refs; publication always uses this job's own identity.
+    required: false
+    default: ""
   browser:
     description: Install the cached Playwright Chromium browser and host dependencies.
     required: false
@@ -69,9 +73,9 @@ runs:
         path: |
           ${{ steps.go-cache-paths.outputs.gomodcache }}
           ${{ steps.go-cache-paths.outputs.gocache }}
-        key: go-validation-v1-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.mod', '**/go.sum', 'Taskfile.yml', '.github/actions/setup-ci/action.yml') }}
+        key: go-validation-v1-${{ inputs.go-cache-restore-workload || github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('**/go.mod', '**/go.sum', 'Taskfile.yml', '.github/actions/setup-ci/action.yml') }}
         restore-keys: |
-          go-validation-v1-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.go.outputs.go-version }}-
+          go-validation-v1-${{ inputs.go-cache-restore-workload || github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.go.outputs.go-version }}-
 
     - name: Set up Node.js
       uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6

@@ -42,9 +42,11 @@ cache eviction pressure; the API does not supply an eviction audit trail.
 The shared setup action now lets successful default-branch workloads publish
 Go caches at job completion. Other refs use the pinned restore-only action,
 preventing each candidate from adding gigabytes of ref-local Go archives.
-Nightly already runs the matching workload IDs on the default branch, so it
-remains the trusted producer without adding another workflow or scheduling
-barrier. Unrelated Bun, browser, Terraform and native packaging caches retain
+Nightly runs the common workload IDs on the default branch. PR-only readers
+explicitly select compatible package, application or full-validation producers,
+including the selective quality job that never runs in a manual full CI plan.
+Reader mappings never change publication identity. This supplies scheduled
+producers without adding another workflow or scheduling barrier. Unrelated Bun, browser, Terraform and native packaging caches retain
 their existing behavior.
 
 The exact key still includes dependency manifests, Taskfile and setup action.
@@ -64,7 +66,8 @@ about image patch versions.
 ## Verification and completion criteria
 
 Regression tests require mutually exclusive default-branch publication and
-candidate restoration, identical cache inputs, bounded fallback identity, pinned
+candidate restoration, compatible reader mappings with scheduled producers,
+bounded fallback identity, pinned
 actions and no cache-based validation bypass. Reporting tests cover cancellation
 versus failure, unchanged alerts, deduplicated counts, bounded deterministic
 examples and Markdown escaping.

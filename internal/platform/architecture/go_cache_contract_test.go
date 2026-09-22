@@ -3,7 +3,6 @@ package architecture
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -96,8 +95,17 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 	if reader.If != "github.ref != format('refs/heads/{0}', github.event.repository.default_branch)" || reader.Run != "" || !regexp.MustCompile(`^actions/cache/restore@[0-9a-f]{40}$`).MatchString(reader.Uses) {
 		t.Fatal("candidates must use the complementary restore-only action")
 	}
-	if !reflect.DeepEqual(reader.With, goCache.With) {
-		t.Fatal("candidate readers must use exactly the same cache inputs as default-branch writers")
+	if len(reader.With) != len(goCache.With) {
+		t.Fatal("reader and writer must use the same cache controls")
+	}
+	for key, value := range goCache.With {
+		want := value
+		if key == "key" || key == "restore-keys" {
+			want = strings.ReplaceAll(value, "${{ github.job }}", "${{ inputs.go-cache-restore-workload || github.job }}")
+		}
+		if reader.With[key] != want {
+			t.Fatalf("candidate cache %s differs from producer inputs beyond the explicit read scope", key)
+		}
 	}
 	wantPrefix := "go-validation-v1-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.go.outputs.go-version }}-"
 	if strings.TrimSpace(goCache.With["restore-keys"]) != wantPrefix {
@@ -254,4 +262,51 @@ func setupGoCacheModes(t *testing.T, body []byte) []string {
 	}
 	visit(&document)
 	return modes
+}
+
+func TestPRGoCacheReadersHaveScheduledProducers(t *testing.T) {
+	type job struct {
+		Runner string              `yaml:"runs-on"`
+		Steps  []goCacheActionStep `yaml:"steps"`
+	}
+	read := func(name string) map[string]job {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var workflow struct {
+			Jobs map[string]job `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(body, &workflow); err != nil {
+			t.Fatal(err)
+		}
+		return workflow.Jobs
+	}
+	producers := read("nightly.yml")
+	for _, name := range []string{"ci.yml", "recovery-evidence-qualification.yml"} {
+		for id, reader := range read(name) {
+			for _, step := range reader.Steps {
+				if step.Uses != "./.github/actions/setup-ci" {
+					continue
+				}
+				scope := step.With["go-cache-restore-workload"]
+				if scope == "" {
+					scope = id
+				}
+				producer, ok := producers[scope]
+				if !ok || producer.Runner != reader.Runner {
+					t.Errorf("%s/%s has no compatible nightly producer for cache scope %q", name, id, scope)
+					continue
+				}
+				usesSetup := false
+				for _, setup := range producer.Steps {
+					usesSetup = usesSetup || setup.Uses == "./.github/actions/setup-ci"
+				}
+				if !usesSetup {
+					t.Errorf("nightly producer %s does not publish a setup-ci cache", scope)
+				}
+			}
+		}
+	}
 }
