@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	"github.com/flidai/leapview/internal/extension"
+	"github.com/flidai/leapview/internal/platform/outbound"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,6 +22,12 @@ import (
 // evidence to a recording session. The fake session never opens these paths;
 // real-load coverage uses newDuckDBTestExtensionAdmission in source tests.
 type targetPoolTestExtensionAdmission struct{}
+
+type targetPoolResolver map[string][]netip.Addr
+
+func (r targetPoolResolver) LookupNetIP(_ context.Context, _, host string) ([]netip.Addr, error) {
+	return append([]netip.Addr(nil), r[host]...), nil
+}
 
 var _ extension.Admission = targetPoolTestExtensionAdmission{}
 var _ extension.Preparation = targetPoolTestExtensionAdmission{}
@@ -70,6 +78,10 @@ func TestTargetRuntimePoolFactoryPreparesOnlyConnectorOwnedReadOnlyProbe(t *test
 			MemoryMaxBytes: 64 << 20, TempMaxBytes: 16 << 20, MaxThreads: 1,
 		},
 		RequireTLS: true, ExtensionAdmission: targetPoolTestExtensionAdmission{},
+		DestinationPolicy: outbound.New(outbound.ExplicitPrivate, outbound.Options{Resolver: targetPoolResolver{
+			"warehouse.internal": {netip.MustParseAddr("10.20.30.40")},
+		}}),
+		HTTPProxyURL: "http://127.0.0.1:43123", HTTPProxyUser: "leapview", HTTPProxyPassword: "test-proxy-secret",
 	})
 	require.NoError(t, err)
 	binding := testDuckDBTargetBinding(t)
@@ -91,9 +103,13 @@ func TestTargetRuntimePoolFactoryPreparesOnlyConnectorOwnedReadOnlyProbe(t *test
 		"SET memory_limit = '67108864B'",
 		"SET max_temp_directory_size = '16777216B'",
 		"SET threads = 1",
+		"SET http_proxy = 'http://127.0.0.1:43123'",
+		"SET http_proxy_username = 'leapview'",
+		"SET http_proxy_password = 'test-proxy-secret'",
 		loadExtensionStatement("/test/extensions/" + extension.ArtifactFilenameStem("postgres") + ".duckdb_extension"),
 		"CREATE OR REPLACE TEMPORARY SECRET leapview_warehouse",
 		"HOST 'warehouse.internal'",
+		"HOSTADDR '10.20.30.40'",
 		"PASSWORD 'source-secret'",
 		"ATTACH '' AS conn_warehouse (TYPE postgres, READ_ONLY, SECRET leapview_warehouse)",
 		"SET lock_configuration = true",
@@ -113,6 +129,38 @@ func TestTargetRuntimePoolFactoryPreparesOnlyConnectorOwnedReadOnlyProbe(t *test
 	}
 	if !session.closed {
 		t.Fatal("runtime session was not closed")
+	}
+}
+
+func TestTargetRuntimePoolFactoryRejectsAnyUnsafeDNSAnswerBeforeNativeClient(t *testing.T) {
+	opened := 0
+	factory, err := NewTargetRuntimePoolFactory(TargetRuntimePoolFactoryConfig{
+		Open: func(context.Context) (TargetRuntimeSession, error) {
+			opened++
+			return &recordingTargetSession{}, nil
+		},
+		Limits:             TargetRuntimeLimits{MemoryMaxBytes: 1, TempMaxBytes: 1, MaxThreads: 1},
+		RequireTLS:         true,
+		ExtensionAdmission: targetPoolTestExtensionAdmission{},
+		DestinationPolicy: outbound.New(outbound.ExplicitPrivate, outbound.Options{Resolver: targetPoolResolver{
+			"warehouse.internal": {
+				netip.MustParseAddr("10.20.30.40"),
+				netip.MustParseAddr("169.254.169.254"),
+			},
+		}}),
+	})
+	require.NoError(t, err)
+	snapshot, err := connectionbinding.NewCredentialSnapshot(
+		map[string]string{"password": "source-secret"},
+		"secret-1:v4", time.Now(), time.Now().Add(time.Minute),
+	)
+	require.NoError(t, err)
+	_, err = factory.Prepare(t.Context(), testDuckDBTargetBinding(t), snapshot)
+	if !errors.Is(err, connectionbinding.ErrInvalidBinding) {
+		t.Fatalf("Prepare() error = %v, want invalid binding", err)
+	}
+	if opened != 0 {
+		t.Fatalf("native target sessions opened = %d, want 0", opened)
 	}
 }
 

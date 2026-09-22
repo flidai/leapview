@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/duckdbsession"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
+	"github.com/flidai/leapview/internal/platform/outbound"
 )
 
 type TargetRuntimeSession interface {
@@ -51,6 +52,10 @@ type TargetRuntimePoolFactoryConfig struct {
 	Limits             TargetRuntimeLimits
 	RequireTLS         bool
 	ExtensionAdmission ExtensionAdmission
+	DestinationPolicy  *outbound.Policy
+	HTTPProxyURL       string
+	HTTPProxyUser      string
+	HTTPProxyPassword  string
 }
 
 type TargetRuntimePoolFactory struct {
@@ -58,6 +63,10 @@ type TargetRuntimePoolFactory struct {
 	limits             TargetRuntimeLimits
 	requireTLS         bool
 	extensionAdmission ExtensionAdmission
+	destinationPolicy  *outbound.Policy
+	httpProxyURL       string
+	httpProxyUser      string
+	httpProxyPassword  string
 }
 
 var _ connectionbinding.RuntimePoolFactory = (*TargetRuntimePoolFactory)(nil)
@@ -72,6 +81,10 @@ func NewTargetRuntimePoolFactory(config TargetRuntimePoolFactoryConfig) (*Target
 	}
 	return &TargetRuntimePoolFactory{
 		open: config.Open, limits: config.Limits, requireTLS: config.RequireTLS, extensionAdmission: config.ExtensionAdmission,
+		destinationPolicy: config.DestinationPolicy,
+		httpProxyURL:      config.HTTPProxyURL,
+		httpProxyUser:     config.HTTPProxyUser,
+		httpProxyPassword: config.HTTPProxyPassword,
 	}, nil
 }
 
@@ -99,6 +112,18 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 		return nil, err
 	}
 	defer clear(connection.Auth)
+	if factory.destinationPolicy != nil && strings.TrimSpace(connection.Host) != "" {
+		addresses, err := factory.destinationPolicy.ResolveHost(ctx, connection.Host)
+		if err != nil {
+			return nil, fmt.Errorf("%w: outbound target destination denied", connectionbinding.ErrInvalidBinding)
+		}
+		if connection.Kind == "postgres" {
+			// DuckDB's PostgreSQL extension passes HOST and HOSTADDR separately to
+			// libpq: HOST retains TLS identity while HOSTADDR binds the socket to
+			// the policy-validated answer, preventing a second DNS lookup.
+			connection.ResolvedHost = addresses[0].String()
+		}
+	}
 
 	secret, ok, err := compileConnectionSecret(binding.ConnectionID.String(), connection)
 	if err != nil || !ok {
@@ -137,9 +162,12 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 		}
 	}()
 	statements, err := (duckdbsession.ResourcePolicy{
-		MemoryMaxBytes: factory.limits.MemoryMaxBytes,
-		TempMaxBytes:   factory.limits.TempMaxBytes,
-		MaxThreads:     factory.limits.MaxThreads,
+		MemoryMaxBytes:    factory.limits.MemoryMaxBytes,
+		TempMaxBytes:      factory.limits.TempMaxBytes,
+		MaxThreads:        factory.limits.MaxThreads,
+		HTTPProxyURL:      factory.httpProxyURL,
+		HTTPProxyUser:     factory.httpProxyUser,
+		HTTPProxyPassword: factory.httpProxyPassword,
 	}).BoundedStatements()
 	if err != nil {
 		return nil, fmt.Errorf("build bounded DuckDB target runtime policy: %w", err)

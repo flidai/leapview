@@ -98,7 +98,7 @@ func TestS3FactoryUsesInjectedConstructorsAndAmbientCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if domain == "" || gotLoadOptions != 1 || gotClientOptions != 1 || gotRegion != "eu-west-1" || gotCredentials || gotEndpoint != "https://s3.example.com" || !gotPathStyle {
+	if domain == "" || gotLoadOptions != 2 || gotClientOptions != 1 || gotRegion != "eu-west-1" || gotCredentials || gotEndpoint != "https://s3.example.com" || !gotPathStyle {
 		t.Fatalf("domain=%q loadOptions=%d clientOptions=%d region=%q credentials=%v endpoint=%q pathStyle=%v", domain, gotLoadOptions, gotClientOptions, gotRegion, gotCredentials, gotEndpoint, gotPathStyle)
 	}
 	static := cfg
