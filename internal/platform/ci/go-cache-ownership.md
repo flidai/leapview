@@ -25,7 +25,8 @@ or security work become the first writer. The fix scopes ownership by workload.
 ## Implemented ownership
 
 `setup-ci` disables setup-go's automatic cache and uses the already-pinned
-`actions/cache` action for Go's module and build-cache paths. It resolves those
+`actions/cache` action on the default branch and `actions/cache/restore` on
+candidate refs for Go's module and build-cache paths. It resolves those
 paths after Go installation, rather than caching a whole GOPATH or workspace.
 
 The key combines:
@@ -57,14 +58,23 @@ shares a scope: each shard prepares the same generated inputs before its tests.
 Other setup-ci callers own their own job scopes. Native packaging retains its
 existing action and cache behavior.
 
-No restore prefix bridges workloads or imports the legacy namespace. A miss runs
-the same downloads, generation, tests and checks. A successful job can publish
-its own scope without competing with native packaging. Simultaneous equivalent
-writers may still race; the losing save is optional cache work, not a test result.
+The restore prefix retains the namespace, workload, OS, architecture, image and
+installed Go version. It permits reuse across manifest and Taskfile changes:
+Go's content-addressed build cache checks source and build inputs, module
+versions have separate paths, and commands still request their pinned tool
+versions. The exact save key continues to include all manifest/tool inputs.
+No prefix bridges workloads or imports native setup-go archives. A miss runs
+the same downloads, generation, tests and checks.
+
+Only successful default-branch jobs publish at job completion. PR and merge-group
+runs restore without saving large archives that other candidates cannot access.
+This reduces eviction pressure on reusable default-branch archives. Equivalent
+nightly writers may still race; the losing save is optional cache work, not a test
+result. No cache output skips a validation command.
 
 ## Correctness and rollout
 
-No workflow files, validation targets, required names, planner outputs, gate
+No caller workflow files, validation targets, required names, planner outputs, gate
 conditions, permissions, runner configuration or merge dependencies change.
 There is no producer barrier or shared workspace. Cache outputs are not used to
 skip validation. Fresh-container flags, generated checks and native proofs stay
@@ -76,7 +86,7 @@ jobs can seed the same scopes on main, after which eligible candidates can resto
 them. The new namespace deliberately starts cold; older entries need not be
 removed to establish ownership.
 
-More independent archives can increase storage and eviction pressure. Cache
+Existing candidate archives can still occupy storage until GitHub evicts them. Cache
 absence and save failures must remain performance-only outcomes. Source changes
 with unchanged dependency identities may require fresh compilation even on an
 exact hit; the immutable archive is not guaranteed to stay fully warm forever.
@@ -114,3 +124,10 @@ For rollout, record each scope's producer/ref, archive size, restore/save outcom
 setup/preparation and test-command timing. Measure both cold and warm merge
 candidates with unchanged required gates and exact-SHA native proof. Do not infer
 a new p95 from one run or attribute the separate Buf-removal change twice.
+
+## Cache publication follow-up — #667
+
+See [ci-health-667.md](ci-health-667.md) for the September 22 inventory and
+critical-path evidence behind default-branch-only publication and bounded
+fallbacks. The earlier validation and rollout record above describes the initial
+ownership change; it is not evidence that the follow-up meets the latency SLO.

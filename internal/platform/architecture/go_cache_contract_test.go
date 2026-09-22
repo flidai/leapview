@@ -3,6 +3,7 @@ package architecture
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 		if strings.HasPrefix(step.Uses, "actions/setup-go@") {
 			setupGo = append(setupGo, step)
 		}
-		if strings.HasPrefix(step.Uses, "actions/cache@") && strings.Contains(step.With["path"], "steps.go-cache-paths.outputs.") {
+		if (strings.HasPrefix(step.Uses, "actions/cache@") || strings.HasPrefix(step.Uses, "actions/cache/restore@")) && strings.Contains(step.With["path"], "steps.go-cache-paths.outputs.") {
 			goCaches = append(goCaches, step)
 		}
 	}
@@ -84,15 +85,28 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 		}
 	}
 
-	if len(goCaches) != 1 {
-		t.Fatalf("setup-ci must have one Go cache writer, found %d", len(goCaches))
+	if len(goCaches) != 2 {
+		t.Fatalf("setup-ci must have a default-branch writer and a candidate reader, found %d", len(goCaches))
 	}
 	goCache := goCaches[0]
-	if goCache.If != "" || goCache.Run != "" {
-		t.Fatalf("Go cache must not conditionally bypass the cache action")
+	if goCache.If != "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" || goCache.Run != "" {
+		t.Fatal("only default-branch workloads may publish Go caches")
 	}
-	if _, ok := goCache.With["restore-keys"]; ok {
-		t.Fatal("Go validation cache must not use a fallback restore key")
+	reader := goCaches[1]
+	if reader.If != "github.ref != format('refs/heads/{0}', github.event.repository.default_branch)" || reader.Run != "" || !regexp.MustCompile(`^actions/cache/restore@[0-9a-f]{40}$`).MatchString(reader.Uses) {
+		t.Fatal("candidates must use the complementary restore-only action")
+	}
+	if !reflect.DeepEqual(reader.With, goCache.With) {
+		t.Fatal("candidate readers must use exactly the same cache inputs as default-branch writers")
+	}
+	wantPrefix := "go-validation-v1-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.image }}-${{ steps.go.outputs.go-version }}-"
+	if strings.TrimSpace(goCache.With["restore-keys"]) != wantPrefix {
+		t.Fatal("fallback must retain workload, OS, architecture, image and compiler identity")
+	}
+	for _, input := range []string{"lookup-only", "save-always", "fail-on-cache-miss", "enableCrossOsArchive"} {
+		if goCache.With[input] != "" {
+			t.Fatalf("unexpected cache override %s", input)
+		}
 	}
 	path := strings.Split(strings.TrimSpace(goCache.With["path"]), "\n")
 	if len(path) != 2 || path[0] != "${{ steps.go-cache-paths.outputs.gomodcache }}" || path[1] != "${{ steps.go-cache-paths.outputs.gocache }}" {
@@ -118,7 +132,7 @@ func TestSetupCIOwnsGoValidationCache(t *testing.T) {
 			setupIndex = index
 		case step.ID == "go-cache-paths":
 			resolverIndex = index
-		case strings.HasPrefix(step.Uses, "actions/cache@") && strings.Contains(step.With["path"], "steps.go-cache-paths.outputs."):
+		case (strings.HasPrefix(step.Uses, "actions/cache@") || strings.HasPrefix(step.Uses, "actions/cache/restore@")) && strings.Contains(step.With["path"], "steps.go-cache-paths.outputs."):
 			cacheIndex = index
 		case step.Name == "Install pinned CI tools":
 			toolIndex = index
