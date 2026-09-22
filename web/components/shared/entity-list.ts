@@ -42,6 +42,7 @@ import {
 } from 'lucide'
 import { lucideIcon } from './lucide-icons'
 import { entityListStickyStyles } from './entity-list-sticky.styles'
+import { entityListGroupStyles } from './entity-list-group.styles'
 import './user-avatar'
 
 export type EntityListItem = {
@@ -88,7 +89,7 @@ export type EntityListColumn = {
   id: string
   label: string
   width?: string
-  align?: 'left' | 'right'
+  align?: 'left' | 'center' | 'right'
   sortable?: boolean
   render?: 'badges' | 'actions' | 'status' | 'quiet-status' | 'person' | 'person-avatar' | 'popularity' | 'datetime'
 }
@@ -255,6 +256,10 @@ const entityListStyles = `
     opacity: 0.45;
   }
 
+  .entity-list-cell.is-center .entity-list-row-actions {
+    justify-content: center;
+  }
+
   .entity-list-items {
     min-width: 0;
     overflow: hidden;
@@ -343,6 +348,11 @@ const entityListStyles = `
     width: 100%;
   }
 
+  .entity-list-sort-button.is-center {
+    justify-content: center;
+    width: 100%;
+  }
+
   .entity-list-sort-indicator {
     display: inline-grid;
     width: var(--base-size-12);
@@ -356,9 +366,23 @@ const entityListStyles = `
     color: var(--lv-fg-default);
   }
 
+  .entity-list.has-hover-sort-indicators .entity-list-sort-indicator:not(.is-active) {
+    opacity: 0;
+  }
+
+  .entity-list.has-hover-sort-indicators .entity-list-sort-button:hover .entity-list-sort-indicator,
+  .entity-list.has-hover-sort-indicators .entity-list-sort-button:focus-visible .entity-list-sort-indicator {
+    opacity: 1;
+  }
+
   .entity-list-table th.is-right,
   .entity-list-table td.is-right {
     text-align: right;
+  }
+
+  .entity-list-table th.is-center,
+  .entity-list-table td.is-center {
+    text-align: center;
   }
 
   .entity-list-table-row {
@@ -436,6 +460,8 @@ const entityListStyles = `
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
   }
+
+  ${entityListGroupStyles}
 
   .entity-list-table-row.is-actionable {
     cursor: pointer;
@@ -740,6 +766,13 @@ const entityListStyles = `
     transition: opacity var(--motion-transition-stateChange);
   }
 
+  .entity-list-person-avatar .entity-list-hover-tooltip,
+  .entity-list-popularity .entity-list-hover-tooltip,
+  .entity-list-datetime .entity-list-hover-tooltip {
+    top: auto;
+    bottom: calc(100% + var(--base-size-8));
+  }
+
   .entity-list-person-avatar:hover .entity-list-hover-tooltip,
   .entity-list-person-avatar:focus .entity-list-hover-tooltip,
   .entity-list-popularity:hover .entity-list-hover-tooltip,
@@ -890,6 +923,7 @@ class EntityList extends LitElement {
   @property({ type: Boolean, attribute: 'client-filter' }) clientFilter = false
   @property({ type: Boolean, attribute: 'show-toolbar' }) showToolbar = true
   @property({ type: Boolean, attribute: 'sticky-identity' }) stickyIdentity = false
+  @property({ type: Boolean, attribute: 'hover-sort-indicators' }) hoverSortIndicators = false
   @state() private query = ''
   @state() private filter = ''
   @state() private sortColumnId = ''
@@ -918,7 +952,7 @@ class EntityList extends LitElement {
     const columns = this.resolvedColumns()
     return html`
       <style>${entityListStyles}</style>
-      <section class=${`entity-list ${this.compact ? 'is-compact' : ''} ${this.titleEmphasis === 'normal' ? 'is-title-normal' : ''} ${this.stickyIdentity ? 'has-sticky-identity' : ''}`} aria-label=${this.listLabel}>
+      <section class=${`entity-list ${this.compact ? 'is-compact' : ''} ${this.titleEmphasis === 'normal' ? 'is-title-normal' : ''} ${this.stickyIdentity ? 'has-sticky-identity' : ''} ${this.hoverSortIndicators ? 'has-hover-sort-indicators' : ''}`} aria-label=${this.listLabel}>
         ${this.showToolbar ? html`<div class="entity-toolbar">
           <form class="entity-search" @submit=${this.preventSubmit}>
             ${lucideIcon(Search, { size: 16, strokeWidth: 1.8 })}
@@ -970,19 +1004,20 @@ class EntityList extends LitElement {
                   ${columns.map((column) => {
                     const direction = this.sortColumnId === column.id ? this.sortDirection : false
                     const sortable = column.sortable !== false && column.render !== 'actions'
+                    const alignment = column.align ? `is-${column.align}` : ''
                     if (column.render === 'actions') {
-                      return html`<th class=${column.align === 'right' ? 'is-right' : ''} scope="col"><span class="entity-list-visually-hidden">${column.label}</span></th>`
+                      return html`<th class=${alignment} scope="col"><span class="entity-list-visually-hidden">${column.label}</span></th>`
                     }
                     return html`
                       <th
-                        class=${column.align === 'right' ? 'is-right' : ''}
+                        class=${alignment}
                         scope="col"
                         aria-sort=${direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none'}
                       >
                         <button
                           type="button"
-                          class=${`entity-list-sort-button ${column.align === 'right' ? 'is-right' : ''}`}
-                          aria-label=${`Sort by ${column.label}`}
+                          class=${`entity-list-sort-button ${alignment}`}
+                          aria-label=${direction ? `Sort by ${column.label}, currently sorted ${direction === 'asc' ? 'ascending' : 'descending'}` : `Sort by ${column.label}`}
                           ?disabled=${!sortable}
                           @click=${() => sortable && this.toggleSort(column.id)}
                         >
@@ -1170,8 +1205,9 @@ class EntityList extends LitElement {
     const title = column.render === 'badges'
       ? badges.map((badge) => badge.label).join(', ')
       : item.columnTitles?.[column.id] ?? String(value ?? '')
+    const alignment = column.align ? `is-${column.align}` : ''
     return html`
-      <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''} ${column.render === 'person-avatar' || column.render === 'popularity' || column.render === 'datetime' ? 'is-hover-indicator' : ''}`} title=${column.render === 'person-avatar' || column.render === 'popularity' || column.render === 'datetime' ? '' : title}>
+      <td class=${`entity-list-cell ${alignment} ${column.render === 'person-avatar' || column.render === 'popularity' || column.render === 'datetime' ? 'is-hover-indicator' : ''}`} title=${column.render === 'person-avatar' || column.render === 'popularity' || column.render === 'datetime' ? '' : title}>
         ${column.render === 'badges'
           ? (badges.length ? badges.map((badge) => this.renderBadge(badge)) : html`
               <span class="entity-list-badge-empty" role="img" aria-label="No popularity data">—</span>

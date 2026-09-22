@@ -225,6 +225,7 @@ class AgentTools extends LitElement {
           client-filter
           row-action="open"
           group-by="group"
+          group-appearance="compact"
           list-label="Agent tools"
           search-placeholder="Search tools"
           empty-text="No tools are available."
@@ -237,7 +238,7 @@ class AgentTools extends LitElement {
 
   private renderToolDrawer(tool: ToolView) {
     return html`
-      <lv-drawer open size="wide" label="Tool details" .modal=${false} @lv-drawer-close=${this.closeTool}>
+      <lv-drawer open size="wide" label="Tool details" .modal=${false} .closeOnOutside=${true} @lv-drawer-close=${this.closeTool}>
         <div slot="title" class="drawer-title">
           <h2><code>${tool.name}</code></h2>
           <p>${tool.description || 'No description provided.'}</p>

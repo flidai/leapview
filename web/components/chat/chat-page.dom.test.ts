@@ -68,6 +68,11 @@ beforeAll(async () => {
       response.end(testDocument('list', 'new', false))
       return
     }
+    if (url.pathname === '/unhydrated') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument('conversation', 'active', true, false))
+      return
+    }
     if (url.pathname.startsWith('/chats/')) {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument())
@@ -175,22 +180,22 @@ for (const viewport of [
         const root = (element.shadowRoot as ShadowRoot)
         const title = root.querySelector('h1') as HTMLElement
         const stage = root.querySelector('.new-chat-stage') as HTMLElement
+        await Promise.all(Array.from(stage.children).flatMap((child) => child.getAnimations().map((animation) => animation.finished)))
         const intro = root.querySelector('.new-chat-intro') as HTMLElement
-        const description = root.querySelector('.new-chat-description') as HTMLElement
         const hint = root.querySelector('.new-chat-context-hint') as HTMLElement
         const starters = Array.from(root.querySelectorAll('.prompt-starter')) as HTMLButtonElement[]
-        const starterGrid = root.querySelector('.prompt-starters') as HTMLElement
+        const starterGroup = root.querySelector('.prompt-starters') as HTMLElement
         const composer = root.querySelector('lv-chat-composer') as any
         const composerRoot = composer?.shadowRoot
         const composerSurface = composerRoot?.querySelector('.composer-surface') as HTMLElement
-        const titleRect = title.getBoundingClientRect()
+        const headingRect = root.querySelector('.new-chat-heading')!.getBoundingClientRect()
         const stageRect = stage.getBoundingClientRect()
         const composerRect = composer.getBoundingClientRect()
         const surfaceRect = composerSurface.getBoundingClientRect()
         const introStyle = getComputedStyle(intro)
         const composerStyle = getComputedStyle(composer)
         const clusterTop = intro.getBoundingClientRect().top
-        const clusterBottom = composerRect.bottom
+        const clusterBottom = hint.getBoundingClientRect().bottom
         let submits = 0
         composer.addEventListener('lv-chat-submit', () => submits += 1)
         starters[0]?.click()
@@ -206,17 +211,19 @@ for (const viewport of [
           hasNewStage: Boolean(stage),
           hasComposer: Boolean(composer),
           composerDisabled: composer?.disabled,
-          kicker: root.querySelector('.new-chat-kicker')?.textContent?.trim(),
-          description: description.textContent?.trim(),
+          hasAgentMark: Boolean(root.querySelector('.new-chat-heading .agent-mark')),
+          descriptionCount: root.querySelectorAll('.new-chat-description').length,
           contextHint: hint.textContent?.replace(/\s+/g, ' ').trim(),
           starters: starters.map((button) => ({
             label: button.querySelector('.prompt-starter-label')?.textContent?.trim(),
-            prompt: button.querySelector('.prompt-starter-prompt')?.textContent?.trim(),
+            prompt: button.getAttribute('title'),
           })),
+          promptsFollowComposer: composer.nextElementSibling === starterGroup,
+          promptsAreCompact: starters.every((button) => button.getBoundingClientRect().height <= 40),
           starterDraft: textarea.value,
           starterFocused: composerRoot?.activeElement === textarea,
           starterSubmits: submits,
-          titleCenterOffset: Math.round(Math.abs((titleRect.left + titleRect.width / 2) - window.innerWidth / 2)),
+          titleCenterOffset: Math.round(Math.abs((headingRect.left + headingRect.width / 2) - window.innerWidth / 2)),
           composerBottomDistance: Math.round(window.innerHeight - composerRect.bottom),
           composerBorderTopWidth: getComputedStyle(composer).borderTopWidth,
           composerSurfaceWidth: Math.round(surfaceRect.width),
@@ -228,7 +235,8 @@ for (const viewport of [
           composerAnimationName: composerStyle.animationName,
           composerAnimationDelay: composerStyle.animationDelay,
           stageJustifyContent: getComputedStyle(stage).justifyContent,
-          promptColumns: getComputedStyle(starterGrid).gridTemplateColumns.split(' ').length,
+          stageFlexDirection: getComputedStyle(stage).flexDirection,
+          promptLayout: getComputedStyle(starterGroup).display,
           contextActionDisplay: getComputedStyle(composerRoot.querySelector('.context-button')).display,
           hasVerticalOverflow: document.documentElement.scrollHeight > window.innerHeight,
           hasHorizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
@@ -245,8 +253,8 @@ for (const viewport of [
         hasNewStage: true,
         hasComposer: true,
         composerDisabled: false,
-        kicker: 'LeapView Agent',
-        description: 'Get clear answers grounded in the dashboards, metrics, and models you can access.',
+        hasAgentMark: true,
+        descriptionCount: 0,
         contextHint: 'Type @ to attach a dashboard, metric, model, page, or visual.',
         starters: [
           { label: 'Spot a change', prompt: 'What changed most in the last 30 days?' },
@@ -256,6 +264,8 @@ for (const viewport of [
         starterDraft: 'What changed most in the last 30 days?',
         starterFocused: true,
         starterSubmits: 0,
+        promptsFollowComposer: true,
+        promptsAreCompact: true,
         titleCenterOffset: 0,
         composerBorderTopWidth: '0px',
         composerSurfaceWidth: viewport.expectedSurfaceWidth,
@@ -266,7 +276,8 @@ for (const viewport of [
         composerAnimationName: 'new-chat-enter',
         composerAnimationDelay: '0.07s',
         stageJustifyContent: viewport.name === 'desktop' ? 'center' : 'flex-start',
-        promptColumns: viewport.name === 'desktop' ? 3 : 1,
+        stageFlexDirection: 'column',
+        promptLayout: 'flex',
         contextActionDisplay: 'none',
         hasVerticalOverflow: false,
         hasHorizontalOverflow: false,
@@ -429,7 +440,7 @@ test('chat list page renders searchable conversation history', async () => {
     expect(initial.title).toBe('Chats')
     expect(initial.searchPlaceholder).toBe('Search chats...')
     expect(initial.newChatHref).toBe('/chats/new')
-    expect(initial.headerActions).toEqual(['Delete all chats', 'New chat'])
+    expect(initial.headerActions).toEqual(['Archived chats', 'Delete all chats', 'New chat'])
     expect(initial.headerOrder).toEqual(['h2', 'header-actions'])
     expect(initial.metrics).toEqual({
       titleFontSize: '20px',
@@ -441,8 +452,8 @@ test('chat list page renders searchable conversation history', async () => {
       dateDistanceFromRowEnd: 58,
     })
     expect(initial.tableHeaders).toEqual(['Conversation'])
-    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', title: 'Revenue check', date: 'Jan 2', optionsLabel: 'More actions for Revenue check', quickActions: ['Pin Revenue check', 'Delete Revenue check'] })
-    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', title: 'Inventory status', date: 'Jan 3', optionsLabel: 'More actions for Inventory status', quickActions: ['Pin Inventory status', 'Delete Inventory status'] })
+    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', title: 'Revenue check', date: 'Jan 2', optionsLabel: 'More actions for Revenue check', quickActions: ['Pin Revenue check', 'Archive Revenue check'] })
+    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', title: 'Inventory status', date: 'Jan 3', optionsLabel: 'More actions for Inventory status', quickActions: ['Pin Inventory status', 'Archive Inventory status'] })
     await page.locator('lv-chat-page').evaluate((element: any) => {
       const input = ((element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as TestDomElement).shadowRoot!.querySelector('.search') as HTMLInputElement
       input.value = 'inventory'
@@ -476,7 +487,46 @@ test('chat list page renders searchable conversation history', async () => {
   }
 })
 
-test('chat list exposes bulk deletion and delete row action on hover', async () => {
+test('chat history keeps a readable centered width on wide screens and fits narrow screens', async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/list`)
+    await page.waitForFunction(() => customElements.get('lv-chat-list'))
+    const bounds = () => page.locator('lv-chat-list').evaluate((element: HTMLElement) => {
+      const shell = element.shadowRoot!.querySelector<HTMLElement>('.shell')!
+      const rect = shell.getBoundingClientRect()
+      return { left: rect.left, right: rect.right, width: rect.width, viewport: window.innerWidth }
+    })
+    const wide = await bounds()
+    expect(wide.width).toBeLessThanOrEqual(760)
+    expect(Math.abs(wide.left - (wide.viewport - wide.right))).toBeLessThanOrEqual(2)
+    await page.setViewportSize({ width: 390, height: 800 })
+    const narrow = await bounds()
+    expect(narrow.width).toBeLessThanOrEqual(390)
+    expect(narrow.left).toBeGreaterThanOrEqual(0)
+    expect(narrow.right).toBeLessThanOrEqual(390)
+  } finally {
+    await page.close()
+  }
+})
+
+test('chat list opens archived chats from its header', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/list`)
+    await page.waitForFunction(() => customElements.get('lv-chat-list'))
+    await page.evaluate(() => {
+      ;(window as any).archiveOpens = 0
+      document.addEventListener('lv-chat-settings-open', () => { (window as any).archiveOpens++ })
+    })
+    await page.locator('lv-chat-page').locator('lv-chat-list').getByRole('button', { name: 'Archived chats' }).click()
+    expect(await page.evaluate(() => (window as any).archiveOpens)).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
+
+test('chat list exposes bulk deletion and archive row action on hover', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(`${baseURL}/list`)
@@ -502,10 +552,10 @@ test('chat list exposes bulk deletion and delete row action on hover', async () 
       return actions && getComputedStyle(actions).opacity === '1'
     })
     expect(await quickActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('1')
-    await firstRow.getByRole('button', { name: 'Delete Revenue check', exact: true }).click()
+    await firstRow.getByRole('button', { name: 'Archive Revenue check', exact: true }).click()
     await list.getByRole('button', { name: 'Delete all chats', exact: true }).click()
     expect(await page.evaluate(() => (window as any).listActions.map((action: any) => ({ action: action.action, conversationId: action.conversationId })))).toEqual([
-      { action: 'delete', conversationId: 'c1' },
+      { action: 'archive', conversationId: 'c1' },
       { action: 'delete_active', conversationId: '' },
     ])
   } finally {
@@ -528,29 +578,63 @@ test('chat list row menu supports keyboard dismissal and dispatches actions', as
         actions.push((event as CustomEvent).detail)
       })
       const row = root.querySelector('tbody tr') as HTMLElement
-      const trigger = row.querySelector('summary') as HTMLElement
+      const trigger = row.querySelector<HTMLButtonElement>('.options-button')!
       trigger.focus()
       trigger.click()
       await list.updateComplete
-      const menu = row.querySelector('details') as HTMLDetailsElement
+      const menu = row.querySelector<HTMLElement>('.options-panel')!
+      const menuItems = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())
       trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       const initialArrowFocus = (root.activeElement as HTMLElement)?.textContent?.trim()
-      const pin = menu.querySelector<HTMLButtonElement>('[role="menuitem"]:nth-of-type(2)')!
-      pin.focus()
-      pin.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
+      const rename = menu.querySelector<HTMLButtonElement>('[role="menuitem"]:first-of-type')!
+      rename.focus()
+      rename.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       const arrowFocus = (root.activeElement as HTMLElement)?.textContent?.trim()
-      pin.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }))
-      const escaped = { open: menu.open, focus: (root.activeElement as HTMLElement)?.getAttribute('aria-label') }
+      rename.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }))
+      const escaped = { open: menu.matches(':popover-open'), focus: (root.activeElement as HTMLElement)?.getAttribute('aria-label') }
       trigger.click()
       await list.updateComplete
-      const reopenedMenu = row.querySelector('details') as HTMLDetailsElement
-      reopenedMenu.querySelector<HTMLButtonElement>('[role="menuitem"]:nth-of-type(2)')!.click()
-      return { initialArrowFocus, arrowFocus, escaped, actions }
+      const reopenedMenu = row.querySelector<HTMLElement>('.options-panel')!
+      reopenedMenu.querySelector<HTMLButtonElement>('[role="menuitem"]:first-of-type')!.click()
+      return { menuItems, initialArrowFocus, arrowFocus, escaped, actions }
     })
-    expect(state.initialArrowFocus).toBe('Select')
-    expect(state.arrowFocus).toBe('Rename')
+    expect(state.menuItems).toEqual(['Rename', 'Delete chat'])
+    expect(state.initialArrowFocus).toBe('Rename')
+    expect(state.arrowFocus).toBe('Delete chat')
     expect(state.escaped).toEqual({ open: false, focus: 'More actions for Revenue check' })
-    expect(state.actions).toEqual([{ action: 'pin', conversationId: 'c1', title: 'Revenue check', href: '/chats/c1' }])
+    expect(state.actions).toEqual([{ action: 'rename', conversationId: 'c1', title: 'Revenue check', href: '/chats/c1' }])
+  } finally {
+    await page.close()
+  }
+})
+
+test('last chat row menu stays visible and keeps delete accessible', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 300 } })
+  try {
+    await page.goto(`${baseURL}/list`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-list'))
+    const list = page.locator('lv-chat-page').locator('lv-chat-list')
+    await list.evaluate(async (element: any) => {
+      await element.updateComplete
+      ;(window as any).listActions = []
+      element.addEventListener('lv-chat-action', (event: Event) => {
+        event.stopPropagation()
+        ;(window as any).listActions.push((event as CustomEvent).detail)
+      })
+    })
+    await list.locator('tbody tr').last().getByRole('button', { name: 'More actions for Inventory status' }).click()
+    const menu = list.getByRole('menu', { name: 'Actions for Inventory status' })
+    const bounds = await menu.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+      return { visible: element.matches(':popover-open'), top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: innerWidth, height: innerHeight }
+    })
+    expect(bounds.visible).toBe(true)
+    expect(bounds.top).toBeGreaterThanOrEqual(0)
+    expect(bounds.bottom).toBeLessThanOrEqual(bounds.height)
+    expect(bounds.left).toBeGreaterThanOrEqual(0)
+    expect(bounds.right).toBeLessThanOrEqual(bounds.width)
+    await menu.getByRole('menuitem', { name: 'Delete chat' }).click()
+    expect(await page.evaluate(() => (window as any).listActions.map((action: any) => action.action))).toEqual(['delete'])
   } finally {
     await page.close()
   }
@@ -568,7 +652,7 @@ test('unconfigured agent uses intentional unavailable states', async () => {
       await composer.updateComplete
       return {
         title: root.querySelector('.new-chat-title')?.textContent?.trim(),
-        description: root.querySelector('.new-chat-description')?.textContent?.trim(),
+        descriptionCount: root.querySelectorAll('.new-chat-description').length,
         starterCount: root.querySelectorAll('.prompt-starter').length,
         startersDisabled: Array.from(root.querySelectorAll<HTMLButtonElement>('.prompt-starter')).every((button) => button.disabled),
         composerDisabled: composer.disabled,
@@ -577,7 +661,7 @@ test('unconfigured agent uses intentional unavailable states', async () => {
     })
     expect(newState).toEqual({
       title: 'Ask about your data',
-      description: 'Get clear answers grounded in the dashboards, metrics, and models you can access.',
+      descriptionCount: 0,
       starterCount: 3,
       startersDisabled: true,
       composerDisabled: true,
@@ -599,13 +683,74 @@ test('unconfigured agent uses intentional unavailable states', async () => {
         hasArchivedAction: Boolean(Array.from((root as ShadowRoot).querySelectorAll('.header-actions button') as NodeListOf<HTMLButtonElement>).find((button) => button.textContent?.includes('Archive'))),
       }
     })
-    expect(listState).toEqual({ title: 'No chats yet', detail: 'Agent is not configured.', hasSearch: false, newChatDisabled: true, hasArchivedAction: false })
+    expect(listState).toEqual({ title: 'No chats yet', detail: 'Agent is not configured.', hasSearch: false, newChatDisabled: true, hasArchivedAction: true })
   } finally {
     await page.close()
   }
 })
 
-function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'active', enabled = true): string {
+test('chat switch waits for bootstrap before showing agent availability', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/unhydrated`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page'))
+    const before = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      return {
+        loading: element.shadowRoot.querySelector('.loading-state')?.textContent?.trim(),
+        unavailable: element.shadowRoot.textContent?.includes('Agent unavailable'),
+        thread: Boolean(element.shadowRoot.querySelector('lv-chat-thread')),
+      }
+    })
+    expect(before).toEqual({ loading: 'Loading chat…', unavailable: false, thread: false })
+
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({
+        page: { kind: 'chat', view: 'conversation', title: 'Chats', description: '' },
+        agent: {
+          conversations: [{ id: 'c1', title: 'Revenue check', updatedAt: '2026-01-02T10:00:00Z' }],
+          activeConversationId: 'c1', transcript: [{ id: 'ready', kind: 'assistant', markdown: 'Ready.', conversationId: 'c1' }],
+          status: { enabled: true, running: false },
+          composer: { value: '', disabled: false, placeholder: 'Ask about dashboards, metrics, or models...' },
+        },
+      })
+    })
+    await page.waitForFunction(() => {
+      const root = document.querySelector('lv-chat-page')?.shadowRoot
+      return root?.querySelector('lv-chat-thread') && !root.querySelector('.loading-state')
+    })
+    const after = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      const thread = element.shadowRoot.querySelector('lv-chat-thread') as any
+      await thread.updateComplete
+      return {
+        title: element.shadowRoot.querySelector('h1')?.textContent?.trim(),
+        unavailable: thread.shadowRoot.textContent?.includes('Agent unavailable'),
+        transcript: thread.transcript,
+      }
+    })
+    expect(after.title).toBe('Revenue check')
+    expect(after.unavailable).toBe(false)
+    expect(after.transcript).toHaveLength(1)
+
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: {
+        transcript: [],
+        status: { enabled: false, running: false, error: 'Agent is not configured.' },
+        composer: { value: '', disabled: true, placeholder: 'Agent is not configured.' },
+      } })
+    })
+    await page.waitForFunction(() => {
+      const thread = document.querySelector('lv-chat-page')?.shadowRoot?.querySelector('lv-chat-thread')
+      return thread?.shadowRoot?.querySelector('.empty-title')?.textContent?.trim() === 'Agent unavailable'
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'active', enabled = true, hydrated = true): string {
   const page = {
     kind: 'chat',
     view,
@@ -636,7 +781,7 @@ function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'activ
         </style>
       </head>
       <body>
-        <main data-signals="${escapeHTML(JSON.stringify({ page, agent, visuals: {}, tables: {} }))}">
+        <main ${hydrated ? `data-signals="${escapeHTML(JSON.stringify({ page, agent, visuals: {}, tables: {} }))}"` : ''}>
           <lv-chat-page${submitCommand}></lv-chat-page>
         </main>
         <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>

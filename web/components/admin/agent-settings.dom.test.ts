@@ -140,6 +140,7 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
       await list.updateComplete
       const rows = Array.from(list.querySelectorAll<HTMLElement>('.entity-list-table-row'))
       const groups = Array.from(list.querySelectorAll('.entity-list-group-label')).map((label) => label.textContent?.trim())
+      const groupPadding = getComputedStyle(list.querySelector('.entity-list-group-row th')!).paddingTop
       const firstHeader = list.querySelector<HTMLElement>('.entity-list-table thead th:first-child')
       const firstCell = list.querySelector<HTMLElement>('.entity-list-table-row th[scope="row"]')
       const firstColumnPositions = [firstHeader, firstCell].map((cell) => cell ? getComputedStyle(cell).position : '')
@@ -152,6 +153,13 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
       search.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
       await list.updateComplete
       const filteredTools = Array.from(list.querySelectorAll('.entity-list-table-row')).map((row) => row.querySelector('.entity-list-title')?.textContent?.trim())
+      const drawerClosesOutside = drawer.closeOnOutside
+      ;(drawer.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.drawer')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }))
+      await tools.updateComplete
+      const remainsOpenInside = Boolean(toolsRoot.querySelector('lv-drawer'))
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }))
+      await tools.updateComplete
+      const closedOutside = !toolsRoot.querySelector('lv-drawer')
 
       return {
         overviewText,
@@ -164,10 +172,14 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
         hasSharedList: Boolean(list),
         firstColumnPositions,
         groups,
+        groupPadding,
         impacts: rows.map((row) => row.querySelectorAll('td')[1]?.textContent?.trim()),
         hasRowIcons: Boolean(list.querySelector('.entity-list-icon')),
         drawerOpen: Boolean(drawer),
         drawerModal: drawer?.modal,
+        drawerClosesOutside,
+        remainsOpenInside,
+        closedOutside,
         schemaTabs,
         filteredTools,
       }
@@ -186,10 +198,14 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
     expect(state.hasSharedList).toBe(true)
     expect(state.firstColumnPositions).toEqual(['static', 'static'])
     expect(state.groups).toEqual(['Data & queries', 'Dashboards'])
+    expect(state.groupPadding).toBe('2px')
     expect(state.impacts).toEqual(['Read-only', 'Changes draft'])
     expect(state.hasRowIcons).toBe(false)
     expect(state.drawerOpen).toBe(true)
     expect(state.drawerModal).toBe(false)
+    expect(state.drawerClosesOutside).toBe(true)
+    expect(state.remainsOpenInside).toBe(true)
+    expect(state.closedOutside).toBe(true)
     expect(state.schemaTabs).toEqual(['Fields', 'Input JSON', 'Output'])
     expect(state.filteredTools).toEqual(['publish_report'])
   } finally {
@@ -242,5 +258,5 @@ test('agent settings makes deployment ownership and mobile tools layout explicit
 })
 
 function testDocument(): string {
-  return `<!doctype html><html><head><style>body { ${typographyTestTokens} }</style></head><body><lv-agent-settings></lv-agent-settings><script type="module" src="/agent-settings.js"></script></body></html>`
+  return `<!doctype html><html><head><style>body { ${typographyTestTokens} --base-size-2: 2px; --base-size-4: 4px; }</style></head><body><lv-agent-settings></lv-agent-settings><script type="module" src="/agent-settings.js"></script></body></html>`
 }
