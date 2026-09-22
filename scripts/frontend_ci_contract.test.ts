@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { parse } from 'yaml'
 
 const shards = ['core', 'reports', 'chat', 'data', 'site']
@@ -51,6 +52,7 @@ test('hosted demo generates build-only packages before publishing', () => {
   expect(deploy.needs).toBe('publication-source')
   expect(deploy.if).toBe("needs.publication-source.outputs.publish == 'true'")
   expect(deploy.env.SOURCE_REVISION).toBe('${{ needs.publication-source.outputs.revision }}')
+  expect(deploy.env.DEMO_DATASET).toBe("${{ vars.DEMO_DATASET || 'olist' }}")
   const steps = deploy.steps
   const setupIndex = steps.findIndex((step: any) => step.uses === './.github/actions/setup-ci')
   const generateIndex = steps.findIndex((step: any) => step.run === 'task generate')
@@ -68,4 +70,12 @@ test('production image qualification generates SQL packages before compiling the
     { task: 'api:generate' },
   ])
   expect(commands.at(-1)).toContain('go run ./cmd/leapviewctl qualify image')
+})
+
+test('hosted demo rejects an unknown dataset before requesting deployment credentials', () => {
+  const result = spawnSync('/bin/bash', ['scripts/deploy_demo.sh'], {
+    env: { PATH: process.env.PATH, DEMO_DATASET: 'unknown' }, encoding: 'utf8',
+  })
+  expect(result.status).toBe(64)
+  expect(result.stderr.trim()).toBe('DEMO_DATASET must be olist or cfo')
 })

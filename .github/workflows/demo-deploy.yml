@@ -73,7 +73,7 @@ jobs:
           fi
 
   deploy:
-    name: Deploy Olist showcase
+    name: Deploy selected showcase
     needs: publication-source
     if: needs.publication-source.outputs.publish == 'true'
     runs-on: ubuntu-24.04
@@ -81,6 +81,7 @@ jobs:
     environment: leapview-demo
     env:
       SOURCE_REVISION: ${{ needs.publication-source.outputs.revision }}
+      DEMO_DATASET: ${{ vars.DEMO_DATASET || 'olist' }}
 
     steps:
       - name: Check out the qualified revision
@@ -93,11 +94,11 @@ jobs:
         with:
           browser: "false"
 
-      - name: Restore the pinned Olist dataset cache
+      - name: Restore the pinned demo dataset cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/leapview
-          key: olist-v2-967e41e04fc306fe604e2a693f488995a8b41e5047418f8a5c8e4abd6deca784
+          key: demo-datasets-v1-olist-967e41e0-finance-c3f17156
 
       - name: Prepare generated code
         run: task generate
@@ -113,7 +114,7 @@ jobs:
           env-slug: prod
           secret-path: /demo/deployment
 
-      - name: Publish the canonical Olist showcase
+      - name: Publish the selected showcase
         env:
           DEMO_SOURCE_REVISION: ${{ env.SOURCE_REVISION }}
           DEMO_TARGET: https://demo.leapview.dev
@@ -130,9 +131,13 @@ jobs:
             echo
             echo '- [Sign in](https://demo.leapview.dev/login)'
             echo '- Product dashboards (sign-in required):'
-            echo '- [Visual Showcase](https://demo.leapview.dev/dashboards/visual-showcase/pages/overview)'
-            echo '- [Executive Sales](https://demo.leapview.dev/dashboards/executive-sales/pages/overview)'
-            echo '- [Fulfillment Operations](https://demo.leapview.dev/dashboards/fulfillment-operations/pages/overview)'
+            if [[ "$DEMO_DATASET" == cfo ]]; then
+              echo '- [CFO Command Center](https://demo.leapview.dev/dashboards/dashboard:cfo-command-center/pages/overview)'
+            else
+              echo '- [Visual Showcase](https://demo.leapview.dev/dashboards/dashboard:visual-showcase/pages/overview)'
+              echo '- [Executive Sales](https://demo.leapview.dev/dashboards/dashboard:executive-sales/pages/overview)'
+              echo '- [Fulfillment Operations](https://demo.leapview.dev/dashboards/dashboard:fulfillment-operations/pages/overview)'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   stage:

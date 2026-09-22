@@ -62,7 +62,8 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"id-token: write",
 		"Infisical/secrets-action@",
 		"scripts/deploy_demo.sh",
-		"Publish the canonical Olist showcase",
+		"Publish the selected showcase",
+		"vars.DEMO_DATASET",
 		"vars.DEMO_PROJECT_ID",
 		"vars.DEMO_PUBLISHER_PRINCIPAL_ID",
 		"vars.DEMO_RELEASE_PRINCIPAL_ID",
@@ -122,10 +123,10 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		require.NotContains(t, strings.ToLower(script), forbidden)
 	}
 	configGeneration := strings.Index(script, "go run ./internal/app/tools/configgen")
-	olistBootstrap := strings.Index(script, "go run ./internal/app/tools/bootstrapolist")
+	datasetBootstrap := strings.Index(script, `go run "$bootstrap_tool"`)
 	require.NotEqual(t, -1, configGeneration, "demo deployment must generate ignored config sources")
-	require.NotEqual(t, -1, olistBootstrap, "demo deployment must bootstrap Olist")
-	require.Less(t, configGeneration, olistBootstrap, "config generation must precede Olist compilation")
+	require.NotEqual(t, -1, datasetBootstrap, "demo deployment must bootstrap the selected dataset")
+	require.Less(t, configGeneration, datasetBootstrap, "config generation must precede dataset compilation")
 	if _, err := os.Stat(filepath.Join(root, "deploy", "demo", "ssh-host-key.sha256")); !os.IsNotExist(err) {
 		t.Fatalf("stale demo SSH identity remains tracked: %v", err)
 	}
@@ -170,4 +171,14 @@ func read(t *testing.T, path string) string {
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return string(body)
+}
+
+func TestDemoCFOProjectCompilesWithoutOlistResources(t *testing.T) {
+	compiled, err := projectcompiler.Compile(filepath.Join("..", "..", "dashboards", "experiments", "cfo-demo"))
+	require.NoError(t, err)
+	canonical := string(compiled.Canonical())
+	require.Contains(t, canonical, "dashboard:cfo-command-center")
+	require.Contains(t, canonical, "semantic-model:finance")
+	require.NotContains(t, canonical, "dashboard:executive-sales")
+	require.NotContains(t, canonical, `"access"`)
 }
