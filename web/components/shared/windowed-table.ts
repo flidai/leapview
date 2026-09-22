@@ -305,6 +305,7 @@ class WindowedTable extends LitElement {
       min-width: 0;
       min-height: 0;
       overflow: auto;
+      background: var(--lv-windowed-table-surface, var(--lv-bg-panel));
       scrollbar-gutter: stable;
     }
 
@@ -453,6 +454,7 @@ class WindowedTable extends LitElement {
       position: relative;
       min-width: var(--lv-windowed-table-width, 760px);
       width: var(--lv-windowed-table-width, 760px);
+      background: var(--lv-windowed-table-surface, var(--lv-bg-panel));
     }
 
     .row {
@@ -748,7 +750,7 @@ class WindowedTable extends LitElement {
   }
 
   private visibleLoading(table: Required<WindowedTablePayload>): boolean {
-    return this.visibleRows(table).some((row) => !row.row) || this.expectedBlocks.size > 0
+    return this.visibleRows(table).some((row) => !row.row)
   }
 
   private handleScroll = (event: Event): void => {
@@ -776,7 +778,10 @@ class WindowedTable extends LitElement {
     const currentStart = Math.floor(Math.floor(this.viewportTop / table.rowHeight) / table.chunkSize) * table.chunkSize
     const desired = this.desiredStarts(table, currentStart)
     const desiredSet = new Set(desired)
-    const loadedStarts = new Set(blockIDs.map((id) => this.blockCache[id]?.start ?? -1))
+    const loadedStarts = new Set(blockIDs.flatMap((id) => {
+      const block = this.blockCache[id]
+      return block?.rows.length ? [block.start] : []
+    }))
     const expectedStarts = new Set([...this.expectedBlocks.values()].map((request) => request.start))
     const missingStarts = desired.filter((start) => !loadedStarts.has(start) && !expectedStarts.has(start))
 
@@ -838,7 +843,10 @@ class WindowedTable extends LitElement {
       this.expectedBlocks.clear()
       const starts = this.allBlockStarts(table, start)
       blockIDs.forEach((id, index) => {
-        this.expectedBlocks.set(id, { start: starts[index], requestSeq, resetVersion, sort })
+        const expectedStart = starts[index]
+        if (expectedStart < table.availableRows) {
+          this.expectedBlocks.set(id, { start: expectedStart, requestSeq, resetVersion, sort })
+        }
       })
     } else {
       this.expectedBlocks.set(block, { start, requestSeq, resetVersion, sort })

@@ -83,6 +83,40 @@ func TestAssetLineageProjectsOnlyRelevantDependenciesWithForwardEdges(t *testing
 	}
 }
 
+func TestAssetLineagePreservesEveryBranchThatConvergesOnSharedDownstreamAssets(t *testing.T) {
+	connection := projectview.DevelopAssetView{ID: "connection:finance", Type: "connection"}
+	source := projectview.DevelopAssetView{ID: "source:finance", Type: "source"}
+	cash := projectview.DevelopAssetView{ID: "model:cash", Type: "model"}
+	pnl := projectview.DevelopAssetView{ID: "model:pnl", Type: "model"}
+	semantic := projectview.DevelopAssetView{ID: "semantic:finance", Type: "semantic_model"}
+	dashboard := projectview.DevelopAssetView{ID: "dashboard:finance", Type: "dashboard"}
+	assets := []projectview.DevelopAssetView{connection, source, cash, pnl, semantic, dashboard}
+	edges := []projectview.DevelopEdgeView{
+		{FromAssetID: source.ID, ToAssetID: connection.ID, Type: "uses_connection"},
+		{FromAssetID: cash.ID, ToAssetID: source.ID, Type: "reads_source"},
+		{FromAssetID: pnl.ID, ToAssetID: source.ID, Type: "reads_source"},
+		{FromAssetID: semantic.ID, ToAssetID: cash.ID, Type: "uses_model"},
+		{FromAssetID: semantic.ID, ToAssetID: pnl.ID, Type: "uses_model"},
+		{FromAssetID: dashboard.ID, ToAssetID: semantic.ID, Type: "uses_semantic_model"},
+	}
+
+	lineage := assetLineage("project:test", source, assets, edges)
+	wantEdges := map[string]bool{
+		connection.ID + "->" + source.ID:  true,
+		source.ID + "->" + cash.ID:        true,
+		source.ID + "->" + pnl.ID:         true,
+		cash.ID + "->" + semantic.ID:      true,
+		pnl.ID + "->" + semantic.ID:       true,
+		semantic.ID + "->" + dashboard.ID: true,
+	}
+	for _, edge := range lineage.Graph.Edges {
+		delete(wantEdges, edge.Source+"->"+edge.Target)
+	}
+	if len(wantEdges) != 0 {
+		t.Fatalf("lineage collapsed converging dependency branches %v: %#v", wantEdges, lineage.Graph.Edges)
+	}
+}
+
 func TestAssetLineageCollapsesSameLayerDependenciesAroundSelectedModel(t *testing.T) {
 	connection := projectview.DevelopAssetView{ID: "connection:finance", Type: "connection"}
 	source := projectview.DevelopAssetView{ID: "source:finance", Type: "source"}

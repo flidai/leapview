@@ -301,16 +301,21 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 	var walkUpstream func(string, string)
 	walkUpstream = func(targetID, visibleTargetID string) {
 		for _, edge := range upstreamByTarget[targetID] {
-			if _, seen := upstreamVisited[edge.source]; seen {
-				continue
-			}
-			upstreamVisited[edge.source] = struct{}{}
+			_, seen := upstreamVisited[edge.source]
 			if lineageVisualLayer(assets[edge.source].Type) < lineageVisualLayer(assets[visibleTargetID].Type) {
 				policy := lineageProjectionEdge(assets[edge.source].Type, assets[visibleTargetID].Type, edge.kind)
 				relevant = append(relevant, collapsedEdge{source: edge.source, target: visibleTargetID, kind: policy.kind})
+				if seen {
+					continue
+				}
+				upstreamVisited[edge.source] = struct{}{}
 				walkUpstream(edge.source, edge.source)
 				continue
 			}
+			if seen {
+				continue
+			}
+			upstreamVisited[edge.source] = struct{}{}
 			walkUpstream(edge.source, visibleTargetID)
 		}
 	}
@@ -318,16 +323,21 @@ func collapsedAssetLineageGraph(projectID string, selected projectview.DevelopAs
 	var walkDownstream func(string, string)
 	walkDownstream = func(sourceID, visibleSourceID string) {
 		for _, edge := range downstreamBySource[sourceID] {
-			if _, seen := downstreamVisited[edge.target]; seen {
-				continue
-			}
-			downstreamVisited[edge.target] = struct{}{}
+			_, seen := downstreamVisited[edge.target]
 			if lineageVisualLayer(assets[edge.target].Type) > lineageVisualLayer(assets[visibleSourceID].Type) {
 				policy := lineageProjectionEdge(assets[visibleSourceID].Type, assets[edge.target].Type, edge.kind)
 				relevant = append(relevant, collapsedEdge{source: visibleSourceID, target: edge.target, kind: policy.kind})
+				if seen {
+					continue
+				}
+				downstreamVisited[edge.target] = struct{}{}
 				walkDownstream(edge.target, edge.target)
 				continue
 			}
+			if seen {
+				continue
+			}
+			downstreamVisited[edge.target] = struct{}{}
 			walkDownstream(edge.target, visibleSourceID)
 		}
 	}

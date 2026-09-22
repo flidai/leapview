@@ -459,6 +459,77 @@ test('windowed table keeps a bounded trailing jump and clears matching empty res
   }
 })
 
+test('windowed table requests empty placeholder blocks and replaces loading rows with solid data', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-windowed-table'))
+
+    const state = await page.evaluate(async () => {
+      const sort = { key: 'id', direction: 'asc' as const }
+      const rows = (start: number) => Array.from({ length: 50 }, (_, offset) => ({ id: `row-${start + offset}` }))
+      const block = (start: number, requestSeq: number, values: Array<Record<string, unknown>> = []) => ({
+        start, requestSeq, resetVersion: 0, sort, rows: values,
+      })
+      const element = document.createElement('lv-windowed-table') as any
+      element.style.cssText = '--lv-windowed-table-surface: rgb(17, 24, 39);display:grid;width:720px;height:320px;'
+      element.table = {
+        tableKey: 'placeholder-scroll', title: 'Rows',
+        columns: [{ key: 'id', label: 'ID', type: 'VARCHAR', width: 180 }],
+        totalRows: 500, availableRows: 500, chunkSize: 50, rowHeight: 34,
+        resetVersion: 0, sort,
+        blocks: {
+          a: block(0, 0, rows(0)),
+          b: block(50, 0),
+          c: block(100, 0),
+        },
+      }
+      const requests: WindowedTableRequest[] = []
+      element.addEventListener('lv-windowed-table-request', (event: CustomEvent<WindowedTableRequest>) => {
+        const request = event.detail
+        requests.push(request)
+        const starts = request.block === 'all'
+          ? request.start <= 0 ? [0, 50, 100] : [request.start - 50, request.start, request.start + 50]
+          : [0, 50, 100]
+        element.table = {
+          ...element.table,
+          blocks: {
+            a: block(starts[0]!, request.requestSeq, rows(starts[0]!)),
+            b: block(starts[1]!, request.requestSeq, rows(starts[1]!)),
+            c: block(starts[2]!, request.requestSeq, rows(starts[2]!)),
+          },
+        }
+      })
+      document.body.append(element)
+      await element.updateComplete
+      const scrollport = element.shadowRoot.querySelector('.scrollport') as HTMLElement
+      scrollport.scrollTop = 55 * 34
+      scrollport.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => setTimeout(resolve, 180))
+      await element.updateComplete
+
+      const root = element.shadowRoot as ShadowRoot
+      return {
+        requests,
+        visibleText: Array.from(root.querySelectorAll('.row:not([aria-busy="true"]) .cell')).map((cell) => cell.textContent?.trim()),
+        skeletons: root.querySelectorAll('.row[aria-busy="true"]').length,
+        loading: Boolean(root.querySelector('.loading')),
+        scrollportBackground: getComputedStyle(scrollport).backgroundColor,
+        canvasBackground: getComputedStyle(root.querySelector('.canvas')!).backgroundColor,
+      }
+    })
+
+    expect(state.requests).toContainEqual(expect.objectContaining({ block: 'all', start: 50 }))
+    expect(state.visibleText).toContain('row-55')
+    expect(state.skeletons).toBe(0)
+    expect(state.loading).toBe(false)
+    expect(state.scrollportBackground).toBe('rgb(17, 24, 39)')
+    expect(state.canvasBackground).toBe('rgb(17, 24, 39)')
+  } finally {
+    await page.close()
+  }
+})
+
 test('windowed table recreates viewport observation after reconnecting the same instance', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
   try {
