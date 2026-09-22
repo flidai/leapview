@@ -50,7 +50,7 @@ guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
 guide](/docs/guides/operate/backup-restore). Run `./leapviewctl help` for the
 current lifecycle commands.
 
-The same archive also carries the provider-neutral Ubuntu bootstrap and host
+The same archive also carries the provider-neutral Linux bootstrap and host
 operations assets. VPS adapters use the matching payload embedded in the
 immutable application image and delegate installation to `leapviewctl host
 install`; they do not maintain a provider-specific Compose lifecycle.

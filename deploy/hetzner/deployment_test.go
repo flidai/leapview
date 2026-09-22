@@ -38,7 +38,7 @@ func TestHetznerConsumesGenericComposeLifecycle(t *testing.T) {
 	main := readFile(t, "main.tf")
 	for _, fragment := range []string{
 		`${path.module}/../host/cloud-init.yaml.tftpl`,
-		`${path.module}/../host/bootstrap-ubuntu.sh`,
+		`${path.module}/../host/bootstrap-linux.sh`,
 		`jsonencode(local.bootstrap_config)`,
 		`schemaVersion = 1`,
 	} {
