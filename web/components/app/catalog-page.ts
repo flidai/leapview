@@ -386,11 +386,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
         <button type="button" role="menuitem" data-action="copy-link" @click=${() => this.copyDashboardLink(dashboard)}>${lucideIcon(lucideIconByCanonicalName('link'), { size: 16, strokeWidth: 2 })}<span>Copy link</span></button>
         ${editable ? html`
           <div class="catalog-action-divider" role="separator"></div>
-          <form class="catalog-action-form" method="post" action=${`${dashboardViewHref(dashboard)}/archive`}>
-            <input type="hidden" name="gorilla.csrf.Token" value=${this.mutationCSRFToken || this.createDraftCSRFToken}>
-            <input type="hidden" name="idempotencyKey" value=${newRequestID()}>
-            <button type="submit" role="menuitem">${lucideIcon(lucideIconByCanonicalName('archive'), { size: 16, strokeWidth: 2 })}<span>Archive</span></button>
-          </form>
           <form class="catalog-action-form" method="post" action=${dashboardDeleteHref(dashboard)} @submit=${(event: SubmitEvent) => this.confirmDashboardDelete(event, dashboard)}>
             <input type="hidden" name="gorilla.csrf.Token" value=${this.mutationCSRFToken || this.createDraftCSRFToken}>
             <input type="hidden" name="idempotencyKey" value=${newRequestID()}>

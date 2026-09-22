@@ -642,7 +642,7 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
       }
     })
 
-    expect(state.menuLabels).toEqual(['Edit dashboard', 'View details', 'Copy link', 'Archive', 'Delete'])
+    expect(state.menuLabels).toEqual(['Edit dashboard', 'View details', 'Copy link', 'Delete'])
     expect(state.rowHref).toBe('/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone')
     expect(state.editHref).toBe('/dashboards/executive-sales/edit?draft=draft-one')
     expect(state.copiedLink).toBe(`${baseURL}/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone`)
