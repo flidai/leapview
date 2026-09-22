@@ -14,6 +14,7 @@ import (
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
@@ -143,11 +144,15 @@ func bootstrapProjectOwnerPolicy(ctx context.Context, client *accessgen.GenClien
 		}
 		return 0, "", fmt.Errorf("verify current bootstrap owner policy: %w", listErr)
 	}
-	if err := validateBootstrapExistingPolicy(listed.Body, targetID, projectID, environment, principalID); err != nil {
+	grants, err := bootstrapPolicyGrants(ctx, client, listed.Body, targetID, projectID, environment)
+	if err != nil {
+		return 0, "", fmt.Errorf("verify current bootstrap grants: %w", err)
+	}
+	if err := validateBootstrapExistingPolicy(listed.Body, targetID, projectID, environment, principalID, grants...); err != nil {
 		// A short-lived release created empty revision-one heads from legacy `{}`
 		// serving policies. Recover only after proving the current policy is
 		// canonical and empty, then append the owner through the ordinary CAS API.
-		if createErr != nil && validateBootstrapEmptyPolicy(listed.Body, targetID, projectID, environment) == nil {
+		if createErr != nil && validateBootstrapEmptyPolicy(listed.Body, targetID, projectID, environment, grants...) == nil {
 			repaired, repairErr := create(listed.Body.PolicyRevision)
 			if repairErr != nil {
 				return 0, "", fmt.Errorf("create initial owner binding: %w (repair canonical empty policy at revision %d: %v)", createErr, listed.Body.PolicyRevision, repairErr)
@@ -161,7 +166,11 @@ func bootstrapProjectOwnerPolicy(ctx context.Context, client *accessgen.GenClien
 			if currentErr != nil {
 				return 0, "", fmt.Errorf("verify repaired bootstrap owner policy: %w", currentErr)
 			}
-			if currentErr := validateBootstrapExistingPolicy(current.Body, targetID, projectID, environment, principalID); currentErr != nil {
+			currentGrants, grantErr := bootstrapPolicyGrants(ctx, client, current.Body, targetID, projectID, environment)
+			if grantErr != nil {
+				return 0, "", fmt.Errorf("verify repaired bootstrap grants: %w", grantErr)
+			}
+			if currentErr := validateBootstrapExistingPolicy(current.Body, targetID, projectID, environment, principalID, currentGrants...); currentErr != nil {
 				return 0, "", fmt.Errorf("repaired bootstrap owner policy is incompatible: %w", currentErr)
 			}
 			return current.Body.PolicyRevision, current.Body.PolicyDigest, nil
@@ -203,8 +212,8 @@ func validateBootstrapOwnerBinding(binding accessgen.GenSchemaRoleBindingRespons
 	return nil
 }
 
-func validateBootstrapExistingPolicy(policy accessgen.GenSchemaRoleBindingListResponse, targetID, projectID, environment, principalID string) error {
-	bindings, err := validateBootstrapPolicy(policy, targetID, projectID, environment)
+func validateBootstrapExistingPolicy(policy accessgen.GenSchemaRoleBindingListResponse, targetID, projectID, environment, principalID string, grants ...access.AuthorizationGrant) error {
+	bindings, err := validateBootstrapPolicy(policy, targetID, projectID, environment, grants...)
 	if err != nil {
 		return err
 	}
@@ -216,18 +225,18 @@ func validateBootstrapExistingPolicy(policy accessgen.GenSchemaRoleBindingListRe
 	return errors.New("claiming principal has no administrator role binding")
 }
 
-func validateBootstrapEmptyPolicy(policy accessgen.GenSchemaRoleBindingListResponse, targetID, projectID, environment string) error {
-	bindings, err := validateBootstrapPolicy(policy, targetID, projectID, environment)
+func validateBootstrapEmptyPolicy(policy accessgen.GenSchemaRoleBindingListResponse, targetID, projectID, environment string, grants ...access.AuthorizationGrant) error {
+	bindings, err := validateBootstrapPolicy(policy, targetID, projectID, environment, grants...)
 	if err != nil {
 		return err
 	}
-	if len(bindings) != 0 {
+	if len(bindings) != 0 || len(grants) != 0 {
 		return errors.New("authorization policy is not empty")
 	}
 	return nil
 }
 
-func validateBootstrapPolicy(policy accessgen.GenSchemaRoleBindingListResponse, targetID, projectID, environment string) ([]access.RoleBinding, error) {
+func validateBootstrapPolicy(policy accessgen.GenSchemaRoleBindingListResponse, targetID, projectID, environment string, grants ...access.AuthorizationGrant) ([]access.RoleBinding, error) {
 	if policy.TargetId != targetID || policy.ProjectId != projectID || policy.Environment != environment || policy.PolicyRevision <= 0 {
 		return nil, errors.New("authorization policy scope or revision is incompatible")
 	}
@@ -260,7 +269,7 @@ func validateBootstrapPolicy(policy accessgen.GenSchemaRoleBindingListResponse, 
 		}
 		bindings = append(bindings, binding)
 	}
-	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, bindings)
+	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, bindings, grants...)
 	if err != nil {
 		return nil, err
 	}
@@ -301,4 +310,48 @@ func validateProjectClaimBootstrapResponse(response deploymentgen.ProjectClaimBo
 		return fmt.Errorf("bootstrap Project claim returned invalid claimedAt %q", response.ClaimedAt)
 	}
 	return nil
+}
+
+// A role listing no longer describes the entire policy once resource grants
+// exist. Fetch the matching grant revision instead of rejecting a safe replay
+// or weakening the canonical digest check. Legacy role-only targets need no
+// grants endpoint. Concurrent changes and incomplete pages fail closed.
+func bootstrapPolicyGrants(ctx context.Context, client *accessgen.GenClient, policy accessgen.GenSchemaRoleBindingListResponse, targetID, projectID, environment string) ([]access.AuthorizationGrant, error) {
+	if _, err := validateBootstrapPolicy(policy, targetID, projectID, environment); err == nil {
+		return nil, nil
+	}
+	limit := int32(200)
+	result, err := client.ListGrants(ctx, accessgen.GenListGrantsClientRequest{Project: projectID, Params: accessgen.GenListGrantsClientParams{Limit: &limit}})
+	if err != nil {
+		return nil, err
+	}
+	current := result.Body
+	if current.TargetId != targetID || current.ProjectId != projectID || current.Environment != environment || current.PolicyRevision != policy.PolicyRevision || current.PolicyDigest != policy.PolicyDigest {
+		return nil, errors.New("grant policy does not match role policy revision")
+	}
+	if current.Page.NextCursor != nil && *current.Page.NextCursor != "" {
+		return nil, errors.New("grant policy verification is paginated")
+	}
+	grants := make([]access.AuthorizationGrant, 0, len(current.Items))
+	for _, item := range current.Items {
+		if item.PolicyRevision != policy.PolicyRevision || item.PolicyDigest != policy.PolicyDigest {
+			return nil, errors.New("grant is not bound to policy head")
+		}
+		resource, err := access.NewResourceRef(projectgraph.ResourceID(item.ResourceId), projectgraph.Kind(item.ResourceKind))
+		if err != nil {
+			return nil, err
+		}
+		grant := access.AuthorizationGrant{ID: item.Id, Resource: resource, Subject: access.SubjectRef{Kind: access.SubjectKind(item.SubjectType), ID: item.SubjectId}, Capability: access.Capability(item.Capability)}
+		if item.Name != nil {
+			grant.Name = *item.Name
+		}
+		if err := access.ValidateAuthorizationGrant(grant); err != nil {
+			return nil, err
+		}
+		grants = append(grants, grant)
+	}
+	if _, err := validateBootstrapPolicy(policy, targetID, projectID, environment, grants...); err != nil {
+		return nil, err
+	}
+	return grants, nil
 }

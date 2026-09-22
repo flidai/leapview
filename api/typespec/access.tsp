@@ -458,6 +458,30 @@ model GrantListResponse {
   page: PageInfo;
 }
 
+/** Mutable target policy intent; publication activates its graph-bound grants. */
+model TargetGrantCreateRequest extends GrantRequest {
+  id: string;
+  name?: string;
+  expectedRevision: int64;
+}
+
+model TargetGrantResponse extends GrantRequest {
+  id: string;
+  name?: string;
+  policyRevision: int64;
+  policyDigest: string;
+}
+
+model TargetGrantListResponse {
+  items: TargetGrantResponse[];
+  page: PageInfo;
+  targetId: string;
+  projectId: ResourceId;
+  environment: string;
+  policyRevision: int64;
+  policyDigest: string;
+}
+
 @apigen.failureDefinition(#{
   kind: "invalid",
   statusCode: 400,
@@ -970,8 +994,8 @@ alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
 @extension("x-leapview-object-scope", "project")
 op listEffectiveCapabilities(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId): ListEffectiveCapabilitiesOK | CommonErrors;
 
-alias ListGrantsOK = OkJson<GrantListResponse>;
-alias CreateGrantCreated = CreatedJson<GrantResponse>;
+alias ListGrantsOK = OkJson<TargetGrantListResponse>;
+alias CreateGrantCreated = CreatedJson<TargetGrantResponse>;
 
 @tag("Access")
 @route("/projects/{project}/grants")
@@ -995,7 +1019,7 @@ interface Grants {
     ],
   })
   @apigen.auditPayload(GrantAuditPayload)
-  createGrant(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GrantRequest): CreateGrantCreated | CommonErrors;
+  createGrant(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: TargetGrantCreateRequest): CreateGrantCreated | CommonErrors;
 
   @summary("Get a resource capability grant")
   @route("/{grant}")
