@@ -107,7 +107,14 @@ provider check succeeds. The command
 writes machine-readable evidence under
 `.tmp/qualification/ubdr/provider-restore/`, including provider operation IDs,
 the PostgreSQL timeline/recovery point, exact object versions, phase timing,
-and the final PostgreSQL recovery-ledger occurrence.
+and the final PostgreSQL recovery-ledger occurrence. A successful report also
+contains the exact runnable OCI artifact and source revision, credential-free
+control, DuckLake, and object-provider endpoints, and a digest-bound reference
+to a root-readable credential bundle stored outside the evidence tree. The
+qualification runs a second process that reloads this handoff and verifies the
+retained providers. They remain running for the downstream replacement-host
+qualification; run `task qualify:ubdr:provider-restore:cleanup` after that
+consumer finishes.
 
 This disposable qualification proves the repository coordinator, fencing,
 ordering, exact-version checks, and durable evidence path. It does not prove a

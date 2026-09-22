@@ -11,9 +11,12 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/flidai/leapview/internal/recoveryset"
 	"github.com/flidai/leapview/internal/refresh/recovery"
 )
+
+const testRunnableArtifact = "ghcr.io/flidai/leapview@sha256:5b0cec900c5182f42654d07e58ca4ea9911ab1200f410670628601ab66085b85"
 
 func TestCoordinatorOrdersProvidersPublishesAndCompletesLedger(t *testing.T) {
 	fixture := newCoordinatorFixture(t)
@@ -221,6 +224,32 @@ func TestCoordinatorRejectsVerificationDigestMismatch(t *testing.T) {
 	}
 }
 
+func TestCoordinatorRejectsUnboundReplacementHandoff(t *testing.T) {
+	fixture := newCoordinatorFixture(t)
+	fixture.handoff.mismatch = true
+	report, err := fixture.coordinator.Run(t.Context(), fixture.request)
+	if !errors.Is(err, ErrInconsistent) || report.Status != StatusFailed || fixture.ledger.completed {
+		t.Fatalf("unbound handoff report=%#v err=%v completed=%v", report, err, fixture.ledger.completed)
+	}
+}
+
+func TestCoordinatorRejectsCompletedHandoffForDifferentArtifact(t *testing.T) {
+	fixture := newCoordinatorFixture(t)
+	if _, err := fixture.coordinator.Run(t.Context(), fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.ledger.occurrence.Evidence) != 1 {
+		t.Fatalf("completion evidence = %#v", fixture.ledger.occurrence.Evidence)
+	}
+	reference := fixture.ledger.occurrence.Evidence[0]
+	report := fixture.store.reports[reference.URI]
+	report.Handoff.Artifact.Image = "ghcr.io/flidai/leapview@sha256:" + strings64("d")
+	fixture.store.reports[reference.URI] = report
+	if _, err := fixture.coordinator.Run(t.Context(), fixture.request); !errors.Is(err, ErrInconsistent) {
+		t.Fatalf("completed handoff artifact mismatch error = %v", err)
+	}
+}
+
 func TestCoordinatorRestoresSharedClusterOnceAcrossRestart(t *testing.T) {
 	fixture := newCoordinatorFixture(t)
 	points := fixture.set.CanonicalPoints()
@@ -244,7 +273,7 @@ func TestCoordinatorRestoresSharedClusterOnceAcrossRestart(t *testing.T) {
 	if fixture.databases.clusterCalls != 1 || len(fixture.databases.keys) != 1 {
 		t.Fatalf("shared cluster restore calls=%d keys=%v", fixture.databases.clusterCalls, fixture.databases.keys)
 	}
-	restarted, err := New(Dependencies{Ledger: fixture.ledger, Sets: fixture.sets, Databases: fixture.databases, Objects: fixture.objects, Verifier: fixture.verifier, Evidence: fixture.store, Now: fixture.now})
+	restarted, err := New(Dependencies{Ledger: fixture.ledger, Sets: fixture.sets, Databases: fixture.databases, Objects: fixture.objects, Verifier: fixture.verifier, Evidence: fixture.store, Handoff: fixture.handoff, Now: fixture.now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +288,7 @@ func TestCoordinatorRestoresSharedClusterOnceAcrossRestart(t *testing.T) {
 func TestCoordinatorRejectsMutatedCompletedEvidence(t *testing.T) {
 	fixture := newCoordinatorFixture(t)
 	store := FileEvidenceStore{Root: t.TempDir()}
-	coordinator, err := New(Dependencies{Ledger: fixture.ledger, Sets: fixture.sets, Databases: fixture.databases, Objects: fixture.objects, Verifier: fixture.verifier, Evidence: store, Now: fixture.now})
+	coordinator, err := New(Dependencies{Ledger: fixture.ledger, Sets: fixture.sets, Databases: fixture.databases, Objects: fixture.objects, Verifier: fixture.verifier, Evidence: store, Handoff: fixture.handoff, Now: fixture.now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,6 +335,7 @@ type coordinatorFixture struct {
 	databases   *fakeDatabases
 	objects     *fakeObjects
 	verifier    *fakeVerifier
+	handoff     *fakeHandoff
 	calls       []string
 	clock       time.Time
 }
@@ -315,13 +345,14 @@ func newCoordinatorFixture(t *testing.T) *coordinatorFixture {
 	fixture := &coordinatorFixture{clock: time.Date(2026, 9, 21, 14, 0, 0, 0, time.UTC)}
 	fixture.set = providerRestoreSet(t)
 	fixture.request = Request{OccurrenceID: "recovery-occurrence-test", Fence: recovery.Fence{Owner: "worker-a", Generation: 1}, RecoverySetID: fixture.set.ID, TargetID: fixture.set.Delivery.TargetID, ValidationAttemptID: "018f3f83-7b2f-7b37-9f9e-000000009981", Validator: "fai981-validator", Publisher: "fai981-publisher"}
-	fixture.ledger = &fakeLedger{occurrence: recovery.Occurrence{ID: fixture.request.OccurrenceID, Operation: recovery.OperationRestore, TargetScope: fixture.request.TargetID, Status: recovery.StatusRunning, Fence: fixture.request.Fence, PlannedAt: fixture.clock.Add(-time.Hour)}}
+	fixture.ledger = &fakeLedger{occurrence: recovery.Occurrence{ID: fixture.request.OccurrenceID, Operation: recovery.OperationRestore, TargetScope: fixture.request.TargetID, ArtifactIdentity: testRunnableArtifact, Status: recovery.StatusRunning, Fence: fixture.request.Fence, PlannedAt: fixture.clock.Add(-time.Hour)}}
 	fixture.sets = &fakeSets{set: fixture.set}
 	fixture.store = &memoryEvidence{}
 	fixture.databases = &fakeDatabases{calls: &fixture.calls, now: fixture.now}
 	fixture.objects = &fakeObjects{calls: &fixture.calls, now: fixture.now}
 	fixture.verifier = &fakeVerifier{calls: &fixture.calls, now: fixture.now}
-	coordinator, err := New(Dependencies{Ledger: fixture.ledger, Sets: fixture.sets, Databases: fixture.databases, Objects: fixture.objects, Verifier: fixture.verifier, Evidence: fixture.store, Now: fixture.now})
+	fixture.handoff = &fakeHandoff{now: fixture.now}
+	coordinator, err := New(Dependencies{Ledger: fixture.ledger, Sets: fixture.sets, Databases: fixture.databases, Objects: fixture.objects, Verifier: fixture.verifier, Evidence: fixture.store, Handoff: fixture.handoff, Now: fixture.now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,6 +558,30 @@ type fakeVerifier struct {
 	calls    *[]string
 	now      func() time.Time
 	mismatch bool
+}
+
+type fakeHandoff struct {
+	now      func() time.Time
+	mismatch bool
+}
+
+func (provider *fakeHandoff) CreateHandoff(_ context.Context, request HandoffRequest) (ReplacementHandoff, error) {
+	handoff := ReplacementHandoff{
+		SchemaVersion: HandoffSchemaVersion, Kind: HandoffKind, Status: HandoffAvailable,
+		RecoverySetID: request.Set.ID, FrontierDigest: request.Set.FrontierDigest, TargetID: request.Set.Delivery.TargetID,
+		Artifact: compatibility.ReleaseIdentity{Version: "0.2.0-rc.2", SourceRevision: "69652fb20101de80497cbf47ecfb402f700d6552", Image: request.ArtifactIdentity, Distribution: "oci", Platform: "linux/amd64"},
+		Providers: []ProviderEndpoint{
+			{Role: "control", Provider: "postgresql", ResourceID: "provider-control", Endpoint: "postgres://127.0.0.1:55432", Database: "control-restored", CredentialSecretKey: "postgres.control.url"},
+			{Role: "ducklake", Provider: "postgresql", ResourceID: "provider-ducklake", Endpoint: "postgres://127.0.0.1:55432", Database: "ducklake-restored", CredentialSecretKey: "postgres.ducklake.url"},
+			{Role: "objects", Provider: "s3", ResourceID: "provider-objects", Endpoint: "http://127.0.0.1:9000", Region: "us-east-1", Bucket: "provider-bucket", CredentialSecretKey: "object.credentials"},
+		},
+		Secrets:     SecretBundleReference{Provider: "root-readable-file", URI: "file:///run/fai981/private.json", SHA256: strings64("c"), Version: "1", Keys: []string{"postgres.control.url", "postgres.ducklake.url", "object.credentials"}},
+		AvailableAt: provider.now(),
+	}
+	if provider.mismatch {
+		handoff.Providers[0].Database = "other-control"
+	}
+	return handoff, nil
 }
 
 func (verifier *fakeVerifier) Verify(_ context.Context, request VerificationRequest) (VerificationResult, error) {

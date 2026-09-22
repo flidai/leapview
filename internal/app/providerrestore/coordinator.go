@@ -114,6 +114,7 @@ type Report struct {
 	Objects        []ObjectResult     `json:"objects"`
 	Verification   VerificationResult `json:"verification,omitempty"`
 	Admission      AdmissionResult    `json:"admission,omitempty"`
+	Handoff        ReplacementHandoff `json:"replacementHostHandoff,omitempty"`
 	Failure        *Failure           `json:"failure,omitempty"`
 	StartedAt      time.Time          `json:"startedAt"`
 	CompletedAt    time.Time          `json:"completedAt,omitempty"`
@@ -152,14 +153,15 @@ type Dependencies struct {
 	Objects   ObjectProvider
 	Verifier  Verifier
 	Evidence  EvidenceStore
+	Handoff   HandoffProvider
 	Now       func() time.Time
 }
 
 type Coordinator struct{ dependencies Dependencies }
 
 func New(dependencies Dependencies) (*Coordinator, error) {
-	if dependencies.Ledger == nil || dependencies.Sets == nil || dependencies.Databases == nil || dependencies.Objects == nil || dependencies.Verifier == nil || dependencies.Evidence == nil {
-		return nil, fmt.Errorf("%w: ledger, recovery set, providers, verifier, and evidence store are required", ErrInvalid)
+	if dependencies.Ledger == nil || dependencies.Sets == nil || dependencies.Databases == nil || dependencies.Objects == nil || dependencies.Verifier == nil || dependencies.Evidence == nil || dependencies.Handoff == nil {
+		return nil, fmt.Errorf("%w: ledger, recovery set, providers, verifier, handoff provider, and evidence store are required", ErrInvalid)
 	}
 	if dependencies.Now == nil {
 		dependencies.Now = func() time.Time { return time.Now().UTC() }
@@ -230,7 +232,7 @@ func (coordinator *Coordinator) Run(ctx context.Context, request Request) (Repor
 		if report.Status != StatusRunning && report.Status != StatusSucceeded {
 			return report, fmt.Errorf("%w: prior attempt is terminal with status %s", ErrIndeterminate, report.Status)
 		}
-		if err := validateCheckpoint(set, request, report); err != nil {
+		if err := validateCheckpoint(set, request, occurrence.ArtifactIdentity, report); err != nil {
 			return report, err
 		}
 	}
@@ -359,6 +361,35 @@ func (coordinator *Coordinator) Run(ctx context.Context, request Request) (Repor
 			return report, fmt.Errorf("%w: recovery-set admission completed after lease loss: %v", ErrIndeterminate, err)
 		}
 		report.Admission = admission
+	}
+	if HandoffPresent(report.Handoff) {
+		if err := report.Handoff.Validate(normalized, occurrence.ArtifactIdentity); err != nil {
+			return coordinator.abort(ctx, request, report, "replacement_handoff_checkpoint_mismatch", err, false)
+		}
+		if err := validateHandoffResults(report.Handoff, report.Databases, report.Objects); err != nil {
+			return coordinator.abort(ctx, request, report, "replacement_handoff_checkpoint_mismatch", err, false)
+		}
+	} else {
+		if _, err := coordinator.activeOccurrence(ctx, request); err != nil {
+			return report, err
+		}
+		handoff, err := coordinator.dependencies.Handoff.CreateHandoff(ctx, HandoffRequest{Set: normalized, ArtifactIdentity: occurrence.ArtifactIdentity, Databases: slices.Clone(report.Databases), Objects: slices.Clone(report.Objects)})
+		if err != nil {
+			return coordinator.abort(ctx, request, report, "replacement_handoff_failed", err, false)
+		}
+		if _, err := coordinator.activeOccurrence(ctx, request); err != nil {
+			return report, fmt.Errorf("%w: replacement handoff completed after lease loss: %v", ErrIndeterminate, err)
+		}
+		if err := handoff.Validate(normalized, occurrence.ArtifactIdentity); err != nil {
+			return coordinator.abort(ctx, request, report, "replacement_handoff_mismatch", err, false)
+		}
+		if err := validateHandoffResults(handoff, report.Databases, report.Objects); err != nil {
+			return coordinator.abort(ctx, request, report, "replacement_handoff_mismatch", err, false)
+		}
+		report.Handoff = handoff
+		if _, err := coordinator.persistCheckpoint(ctx, request, report); err != nil {
+			return report, fmt.Errorf("%w: persist replacement handoff checkpoint: %v", ErrIndeterminate, err)
+		}
 	}
 	report.Status = StatusSucceeded
 	if report.CompletedAt.IsZero() {
@@ -623,7 +654,7 @@ func admissionComplete(set recoveryset.RecoverySet, request Request, result Admi
 	return set.Status == recoveryset.StatusPublished && set.PublishedValidationAttemptID == request.ValidationAttemptID && result.ValidationAttemptID == request.ValidationAttemptID && result.ValidationDigest != "" && result.PublishedSetID == set.ID && result.PublishedStatus == recoveryset.StatusPublished && !result.PublishedAt.IsZero()
 }
 
-func validateCheckpoint(set recoveryset.RecoverySet, request Request, report Report) error {
+func validateCheckpoint(set recoveryset.RecoverySet, request Request, artifactIdentity string, report Report) error {
 	if report.SchemaVersion != ReportSchemaVersion || report.Kind != ReportKind || report.Fence != request.Fence || report.StartedAt.IsZero() || len(report.Databases) > 2 || len(report.Objects) > len(set.ObjectRoots) {
 		return fmt.Errorf("%w: durable provider checkpoint shape is invalid", ErrInconsistent)
 	}
@@ -664,7 +695,15 @@ func validateCheckpoint(set recoveryset.RecoverySet, request Request, report Rep
 	if admissionPresent(report.Admission) && !admissionComplete(normalized, request, report.Admission) {
 		return fmt.Errorf("%w: durable admission checkpoint is inconsistent", ErrInconsistent)
 	}
-	if report.Status == StatusSucceeded && (!verificationPresent(report.Verification) || !admissionPresent(report.Admission) || report.CompletedAt.IsZero()) {
+	if HandoffPresent(report.Handoff) {
+		if err := report.Handoff.Validate(normalized, artifactIdentity); err != nil {
+			return err
+		}
+		if err := validateHandoffResults(report.Handoff, report.Databases, report.Objects); err != nil {
+			return err
+		}
+	}
+	if report.Status == StatusSucceeded && (!verificationPresent(report.Verification) || !admissionPresent(report.Admission) || !HandoffPresent(report.Handoff) || report.CompletedAt.IsZero()) {
 		return fmt.Errorf("%w: successful checkpoint is incomplete", ErrInconsistent)
 	}
 	return nil
