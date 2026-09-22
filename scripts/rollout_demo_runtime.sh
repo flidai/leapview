@@ -10,6 +10,7 @@ expected_fingerprint="${DEMO_EXPECTED_SSH_FINGERPRINT:?Set DEMO_EXPECTED_SSH_FIN
 temporary_directory="$(mktemp -d)"
 original_firewall_rules="$temporary_directory/original-firewall-rules.json"
 firewall_changed=false
+agent_key_uploaded=false
 
 for command in base64 curl jq ssh ssh-keygen ssh-keyscan; do
   command -v "$command" >/dev/null || {
@@ -66,6 +67,14 @@ set_firewall_rules() {
 
 cleanup() {
   local status=$?
+  if [[ "$agent_key_uploaded" == true && -s "$identity_file" && -s "$pinned_known_hosts" ]]; then
+    if ! ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
+      -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$pinned_known_hosts" \
+      "root@$demo_host" 'rm -f /run/leapview-demo-agent-api-key'; then
+      echo 'warning: failed to remove the temporary demo agent key' >&2
+      status=1
+    fi
+  fi
   if [[ "$firewall_changed" == true && -s "$original_firewall_rules" ]]; then
     local restore_payload="$temporary_directory/restore-firewall.json"
     jq '{rules: .}' "$original_firewall_rules" >"$restore_payload"
@@ -125,7 +134,21 @@ case "${DEMO_ROLLOUT_ACTION:?}" in
   deploy) phase=--apply ;;
   *) echo 'Unsupported rollout action' >&2; exit 64 ;;
 esac
+
+agent_api_key="${DEEPSEEK_API_KEY:?Set DEEPSEEK_API_KEY}"
+if [[ "$agent_api_key" == *$'\n'* || "$agent_api_key" == *$'\r'* ]]; then
+  echo 'DEEPSEEK_API_KEY must not contain line breaks' >&2
+  exit 64
+fi
+agent_key_uploaded=true
+printf '%s' "$agent_api_key" | ssh \
+  -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
+  -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$pinned_known_hosts" \
+  "root@$demo_host" 'umask 077; cat > /run/leapview-demo-agent-api-key'
+unset agent_api_key DEEPSEEK_API_KEY
+
 ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
   -o ServerAliveInterval=15 -o ServerAliveCountMax=20 \
   -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$pinned_known_hosts" \
-  "root@$demo_host" "python3 - $phase" < "$repo_root/scripts/rollout_demo_runtime.py"
+  "root@$demo_host" "trap 'rm -f /run/leapview-demo-agent-api-key' EXIT; python3 - $phase" \
+  < "$repo_root/scripts/rollout_demo_runtime.py"
