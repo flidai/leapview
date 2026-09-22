@@ -3,13 +3,30 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 demo_target="${DEMO_TARGET:-https://demo.leapview.dev}"
+demo_dataset="${DEMO_DATASET:-olist}"
+case "$demo_dataset" in
+  olist)
+    source_root="$repo_root/dashboards"
+    data_link="$repo_root/.data/olist"
+    data_connection="olist"
+    bootstrap_tool="./internal/app/tools/bootstrapolist"
+    ;;
+  cfo)
+    source_root="$repo_root/dashboards/experiments/cfo-demo"
+    data_link="$repo_root/.data/cfo-demo"
+    data_connection="finance_files"
+    bootstrap_tool="./internal/app/tools/bootstrapfinance"
+    ;;
+  *)
+    echo "DEMO_DATASET must be olist or cfo" >&2
+    exit 64
+    ;;
+esac
 source_revision="${DEMO_SOURCE_REVISION:?Set DEMO_SOURCE_REVISION to the deployed Git revision}"
 publisher_client_id="${DEMO_PUBLISHER_CLIENT_ID:?Set DEMO_PUBLISHER_CLIENT_ID}"
 publisher_client_secret="${DEMO_PUBLISHER_CLIENT_SECRET:?Set DEMO_PUBLISHER_CLIENT_SECRET}"
 release_client_id="${DEMO_RELEASE_CLIENT_ID:?Set DEMO_RELEASE_CLIENT_ID}"
 release_client_secret="${DEMO_RELEASE_CLIENT_SECRET:?Set DEMO_RELEASE_CLIENT_SECRET}"
-source_root="$repo_root/dashboards"
-data_link="$repo_root/.data/olist"
 project_id="${DEMO_PROJECT_ID:?Set DEMO_PROJECT_ID to the durable target ProjectUID}"
 candidate_key="hosted-demo"
 temporary_directory="$(mktemp -d)"
@@ -85,11 +102,11 @@ jq -e --arg source_revision "$source_revision" '
   exit 1
 }
 go run ./internal/app/tools/configgen
-go run ./internal/app/tools/bootstrapolist --shared-cache --out "$data_link"
+go run "$bootstrap_tool" --shared-cache --out "$data_link"
 data_path="$(cd -P "$data_link" && pwd)"
 "$leapview" data sync \
   --source-root "$source_root" \
-  --connection olist \
+  --connection "$data_connection" \
   --from "$data_path" \
   --target "$demo_target" \
   --project-id "$project_id" \

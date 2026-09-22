@@ -1,38 +1,45 @@
 # Hosted product demo
 
-`https://demo.leapview.dev` is the continuously deployed, client-neutral
-LeapView demonstration environment. It runs the same canonical Olist project
-as `task dev`:
+`https://demo.leapview.dev` is the hosted LeapView demonstration environment.
+The `leapview-demo` GitHub environment variable `DEMO_DATASET` selects its
+project: `cfo` publishes the CFO Command Center, while `olist` (the default)
+preserves the existing Olist showcase. CFO publication requires a qualified,
+already-deployed runtime revision containing the CFO-aware publisher and
+`deploy/demo/datasets.txt` declaring `cfo`. The workflow checks this declaration
+in the pinned checkout before fetching credentials; older Olist-only pins are
+rejected for CFO publication. Merging this workflow alone does not upgrade the
+pinned runtime or its publisher. Other values are rejected before any
+credential exchange or publication.
 
-- Executive Sales
-- Fulfillment Operations
-- Visual Showcase
+The CFO project lives in `dashboards/experiments/cfo-demo/`. Its four pages are
+Executive Overview, P&L and Budget, Cash and Working Capital, and Profitability
+Drivers. `bootstrapfinance` verifies the pinned Microsoft Financial Sample
+workbook and prepares its managed CSV. Budget, forecast and cash extensions are
+fictional demo scenarios; see the [CFO source README](../../dashboards/experiments/cfo-demo/README.md).
 
-The project source remains in `dashboards/`. This directory contains only the
-content-publication contract; it must never contain client configuration or
-secret values.
+This directory contains only the publication contract, never secret values.
 
 ## Delivery
 
 After `Main artifacts` builds and qualifies the `main` revision,
 `.github/workflows/demo-deploy.yml`:
 
-1. downloads the pinned public Olist dataset and synchronizes it as
+1. downloads the selected pinned public dataset and synchronizes it as
    managed data;
 2. authenticates to `/api/v1/capabilities` and admits the running runtime only
    when it reports API v1, native PostgreSQL delivery, a clean production
    build, and a canonical immutable build revision;
-3. publishes the `dashboards/` source root through the normal candidate,
+3. publishes the selected project source root through the normal candidate,
    approval, and activation APIs; and
-4. verifies the Visual Showcase and public readiness.
+4. verifies publication activation and public readiness.
 
 This is deliberately a content-only workflow. The `leapview-demo` platform
 operators own runtime image rollout outside this repository workflow, using an
 immutable image that has passed the repository's [release qualification](../../.github/workflows/release.yml)
 and [installed-candidate qualification](../../.github/workflows/installed-candidate.yml).
 The publication records both the selected source revision and the authenticated
-running build revision in its job output; equality is not required, but the
-runtime compatibility contract above is. No SSH host rollout or tracked SSH
+running build revision in its job output; they must match, and the runtime
+must satisfy the compatibility contract above. No SSH host rollout or tracked SSH
 identity is part of the supported path.
 
 The `leapview-demo` GitHub environment authenticates to Infisical through
@@ -86,7 +93,12 @@ demo login:
 - `DEMO_VIEWER_EMAIL`
 - `DEMO_VIEWER_PASSWORD`
 
-The shared principal is `demo@leapview.dev`. The target policy grants it `RESOURCE_READ` on each canonical dashboard ID
+The shared principal is `demo@leapview.dev`. For the CFO project, grant it `RESOURCE_READ` on
+`dashboard:cfo-command-center` and `RESOURCE_USE` on `semantic-model:finance`.
+Do not carry Olist grants into a CFO-only project graph. Stage the grants before
+publishing the candidate; the same activation requirement below applies.
+
+For the Olist project, the target policy grants it `RESOURCE_READ` on each canonical dashboard ID
 and `RESOURCE_USE` on the three backing semantic models. Use canonical IDs
 (`dashboard:executive-sales`, `dashboard:fulfillment-operations`,
 `dashboard:visual-showcase`, and `semantic-model:sales`,
