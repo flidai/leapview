@@ -1400,7 +1400,6 @@ test('dashboard refresh progress is owned by the latest stream generation', asyn
     })
   } finally { await page.close() }
 })
-
 test('dashboard keeps the source visualization selected through canonicalization and clearing', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
