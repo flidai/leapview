@@ -530,6 +530,59 @@ test('windowed table requests empty placeholder blocks and replaces loading rows
   }
 })
 
+test('windowed table keeps completed empty blocks settled and reports only visible pending work', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-windowed-table'))
+
+    const state = await page.evaluate(async () => {
+      const sort = { key: 'id', direction: 'asc' as const }
+      const rows = (start: number) => Array.from({ length: 50 }, (_, offset) => ({ id: `row-${start + offset}` }))
+      const block = (start: number, requestSeq: number, values: Array<Record<string, unknown>> = []) => ({
+        start, requestSeq, resetVersion: 0, sort, rows: values,
+      })
+      const element = document.createElement('lv-windowed-table') as any
+      element.table = {
+        tableKey: 'settled-empty', title: 'Rows',
+        columns: [{ key: 'id', label: 'ID', width: 180 }],
+        totalRows: 150, availableRows: 150, chunkSize: 50, rowHeight: 34,
+        resetVersion: 0, sort,
+        blocks: { a: block(0, 2, rows(0)), b: block(50, 2), c: block(100, 2, rows(100)) },
+      }
+      const requests: WindowedTableRequest[] = []
+      element.addEventListener('lv-windowed-table-request', (event: CustomEvent<WindowedTableRequest>) => requests.push(event.detail))
+      document.body.append(element)
+      await element.updateComplete
+      const scrollport = element.shadowRoot.querySelector('.scrollport') as HTMLElement
+      scrollport.scrollTop = 55 * 34
+      scrollport.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      const settledRequestCount = requests.length
+
+      element.table = {
+        ...element.table,
+        blocks: { a: block(0, 3, rows(0)), b: block(50, 3, rows(50)), c: block(100, 3, rows(100)) },
+      }
+      await element.updateComplete
+      scrollport.scrollTop = 0
+      scrollport.dispatchEvent(new Event('scroll'))
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      ;(element as any).emitBlock(element.table, 'c', 100, sort, 0)
+      await element.updateComplete
+      const backgroundPending = Boolean(element.shadowRoot.querySelector('.loading'))
+      ;(element as any).emitBlock(element.table, 'a', 0, sort, 0)
+      await element.updateComplete
+      const visiblePending = Boolean(element.shadowRoot.querySelector('.loading'))
+      return { settledRequestCount, backgroundPending, visiblePending }
+    })
+
+    expect(state).toEqual({ settledRequestCount: 0, backgroundPending: false, visiblePending: true })
+  } finally {
+    await page.close()
+  }
+})
+
 test('windowed table recreates viewport observation after reconnecting the same instance', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
   try {

@@ -750,7 +750,14 @@ class WindowedTable extends LitElement {
   }
 
   private visibleLoading(table: Required<WindowedTablePayload>): boolean {
-    return this.visibleRows(table).some((row) => !row.row)
+    const visibleRows = this.visibleRows(table)
+    if (visibleRows.some((row) => !row.row)) return true
+    const first = visibleRows.at(0)?.index
+    const last = visibleRows.at(-1)?.index
+    if (first === undefined || last === undefined) return false
+    return [...this.expectedBlocks.values()].some((request) => (
+      request.start <= last && request.start + table.chunkSize > first
+    ))
   }
 
   private handleScroll = (event: Event): void => {
@@ -780,7 +787,7 @@ class WindowedTable extends LitElement {
     const desiredSet = new Set(desired)
     const loadedStarts = new Set(blockIDs.flatMap((id) => {
       const block = this.blockCache[id]
-      return block?.rows.length ? [block.start] : []
+      return block && (block.rows.length > 0 || block.requestSeq > 0) ? [block.start] : []
     }))
     const expectedStarts = new Set([...this.expectedBlocks.values()].map((request) => request.start))
     const missingStarts = desired.filter((start) => !loadedStarts.has(start) && !expectedStarts.has(start))
