@@ -919,6 +919,17 @@ func (s *Service) delete(ctx context.Context, projectID graph.ResourceID, comman
 	if replay, found, err := deleter.LookupDeleteCommand(ctx, projectID, command.DashboardID, evidence); err != nil {
 		return Result{}, err
 	} else if found {
+		// The lifecycle is gone by the time a delete command is replayed, so
+		// authorize from the owner retained in the delete fence before
+		// disclosing the prior result. This preserves owner/admin semantics and
+		// ensures a revoked actor cannot replay a previously authorized delete.
+		if err := s.authorizer.Authorize(ctx, AuthorizationRequest{
+			ActorID: command.Provenance.ActorID, ProjectID: projectID, DashboardID: command.DashboardID,
+			OwnerPrincipalID: replay.OwnerPrincipalID, Target: AuthorizationTargetAuthoredDashboard,
+			Visibility: authoring.VisibilityPrivate, Action: authoring.AuthorizationActionDelete,
+		}); err != nil {
+			return Result{}, err
+		}
 		return Result{Revision: replay.Revision, Lifecycle: authoring.DashboardLifecycle{}}, nil
 	}
 	lifecycle, err := s.repository.Get(ctx, projectID, command.DashboardID)

@@ -129,8 +129,9 @@ type DeleteInput struct {
 // replay returns the original revision without touching the already-removed
 // dashboard rows.
 type DeleteResult struct {
-	Revision RevisionToken
-	Replayed bool
+	Revision         RevisionToken
+	OwnerPrincipalID string
+	Replayed         bool
 }
 
 // DeleteRepository is kept separate from Repository so read-side and archive

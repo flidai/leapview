@@ -54,6 +54,7 @@ type canonicalRepository struct {
 	deleteCommands map[authoring.CommandID]struct {
 		fingerprint string
 		token       authoring.RevisionToken
+		owner       string
 	}
 	operations           map[string]authoring.CreateOperationResult
 	compiled             authoring.CompiledRevision
@@ -70,6 +71,7 @@ func newCanonicalRepository() *canonicalRepository {
 	}{}, deleteCommands: map[authoring.CommandID]struct {
 		fingerprint string
 		token       authoring.RevisionToken
+		owner       string
 	}{}, operations: map[string]authoring.CreateOperationResult{}}
 }
 
@@ -174,7 +176,7 @@ func (r *canonicalRepository) LookupDeleteCommand(_ context.Context, _ graph.Res
 	if value.fingerprint != evidence.Fingerprint {
 		return authoring.DeleteResult{}, false, authoring.ErrCommandReuse
 	}
-	return authoring.DeleteResult{Revision: value.token, Replayed: true}, true, nil
+	return authoring.DeleteResult{Revision: value.token, OwnerPrincipalID: value.owner, Replayed: true}, true, nil
 }
 func (r *canonicalRepository) Delete(_ context.Context, input authoring.DeleteInput) (authoring.DeleteResult, error) {
 	if current := currentLifecycleToken(r.lifecycle); current != input.ExpectedCurrentRevision {
@@ -183,9 +185,10 @@ func (r *canonicalRepository) Delete(_ context.Context, input authoring.DeleteIn
 	r.deleteCommands[input.Evidence.ID] = struct {
 		fingerprint string
 		token       authoring.RevisionToken
-	}{input.Evidence.Fingerprint, input.ExpectedCurrentRevision}
+		owner       string
+	}{input.Evidence.Fingerprint, input.ExpectedCurrentRevision, r.lifecycle.OwnerPrincipalID}
 	r.lifecycle = authoring.DashboardLifecycle{}
-	return authoring.DeleteResult{Revision: input.ExpectedCurrentRevision}, nil
+	return authoring.DeleteResult{Revision: input.ExpectedCurrentRevision, OwnerPrincipalID: r.deleteCommands[input.Evidence.ID].owner}, nil
 }
 func (r *canonicalRepository) GetPublishedCompilation(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
 	if r.compiled.DashboardID == "" {
@@ -287,6 +290,36 @@ func TestCanonicalServiceDeleteOnlyRemovesPrivateDraft(t *testing.T) {
 	}
 	if repository.lifecycle.ID == "" {
 		t.Fatal("restricted dashboard was deleted")
+	}
+}
+
+func TestCanonicalServiceDeleteReplayRequiresCurrentAuthorization(t *testing.T) {
+	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
+	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-delete-replay", "draft-delete-replay", "revision-delete-replay")
+	created, err := svc.Create(t.Context(), service.CreateRequest{
+		ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders",
+		SemanticModel: "model:test", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-delete-replay",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := authoring.Command{
+		ID: "delete-replay", DashboardID: created.Lifecycle.ID,
+		Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Delete: &authoring.DeletePayload{},
+	}
+	if _, err := svc.Execute(t.Context(), "project:test", command); err != nil {
+		t.Fatal(err)
+	}
+
+	// The lifecycle has been removed, so this authorization must use the owner
+	// retained in the delete fence. Simulate the actor losing access after the
+	// first request and ensure a replay cannot disclose or return the result.
+	authorizer.denied = true
+	if _, err := svc.Execute(t.Context(), "project:test", command); err == nil || err.Error() != "denied" {
+		t.Fatalf("revoked delete replay error = %v", err)
+	}
+	if len(authorizer.calls) == 0 || authorizer.calls[len(authorizer.calls)-1].OwnerPrincipalID != "owner" || authorizer.calls[len(authorizer.calls)-1].Action != authoring.AuthorizationActionDelete {
+		t.Fatalf("replay authorization = %#v", authorizer.calls)
 	}
 }
 

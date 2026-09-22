@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "d1a880e061285ae4de40ec786f6091498e10a51d9b0274cfc6b71fbe30cb9489"
+	const expectedRouteContractDigest = "5fd03c7c5535e919400ae2669006764296b1ff11fcd6c37622f099e7ac09fb0e"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -161,7 +161,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case path == "/dashboards/{dashboard}/edit" || path == "/dashboards/{dashboard}/draft/command" || path == "/dashboards/{dashboard}/draft/visual-window":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_EDIT"
-	case path == "/dashboards/{dashboard}/archive":
+	case path == "/dashboards/{dashboard}/archive" || path == "/dashboards/{dashboard}/delete":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_MANAGE"
 	case path == "/dashboards/new" || path == "/dashboards/{dashboard}/fork":
@@ -366,6 +366,7 @@ GET /connections/search
 GET /dashboards/search
 POST /explore/command
 POST /dashboards/{dashboard}/archive
+POST /dashboards/{dashboard}/delete
 POST /dashboards/{dashboard}/commands/clear-selection
 POST /dashboards/{dashboard}/commands/filter
 POST /dashboards/{dashboard}/commands/filter-options

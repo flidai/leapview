@@ -1003,7 +1003,7 @@ func (r *Repository) LookupDeleteCommand(ctx context.Context, projectID graph.Re
 	if row.RequestFingerprint != evidence.Fingerprint {
 		return authoring.DeleteResult{}, false, authoring.ErrCommandReuse
 	}
-	result := authoring.DeleteResult{Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(row.RevisionID), Number: uint64(row.RevisionNumber), ContentHash: row.ContentHash}, Replayed: true}
+	result := authoring.DeleteResult{Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(row.RevisionID), Number: uint64(row.RevisionNumber), ContentHash: row.ContentHash}, OwnerPrincipalID: row.OwnerPrincipalID, Replayed: true}
 	if err := result.Revision.ValidateComplete(); err != nil {
 		return authoring.DeleteResult{}, false, err
 	}
@@ -1037,7 +1037,7 @@ func (r *Repository) Delete(ctx context.Context, input authoring.DeleteInput) (a
 		if row.RequestFingerprint != input.Evidence.Fingerprint {
 			return authoring.DeleteResult{}, authoring.ErrCommandReuse
 		}
-		result := authoring.DeleteResult{Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(row.RevisionID), Number: uint64(row.RevisionNumber), ContentHash: row.ContentHash}, Replayed: true}
+		result := authoring.DeleteResult{Revision: authoring.RevisionToken{RevisionID: authoring.RevisionID(row.RevisionID), Number: uint64(row.RevisionNumber), ContentHash: row.ContentHash}, OwnerPrincipalID: row.OwnerPrincipalID, Replayed: true}
 		if err := result.Revision.ValidateComplete(); err != nil {
 			return authoring.DeleteResult{}, err
 		}
@@ -1085,7 +1085,7 @@ func (r *Repository) Delete(ctx context.Context, input authoring.DeleteInput) (a
 	if err := tx.Commit(ctx); err != nil {
 		return authoring.DeleteResult{}, err
 	}
-	return authoring.DeleteResult{Revision: expected, Replayed: applied == 0}, nil
+	return authoring.DeleteResult{Revision: expected, OwnerPrincipalID: lifecycle.OwnerPrincipalID, Replayed: applied == 0}, nil
 }
 
 type commandResult struct {

@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS dashboard.authoring_delete_commands (
     dashboard_id text NOT NULL,
     command_id uuid NOT NULL,
     request_fingerprint text NOT NULL CHECK (request_fingerprint = btrim(request_fingerprint) AND octet_length(request_fingerprint) BETWEEN 1 AND 255),
+    owner_principal_id uuid NOT NULL,
     revision_id uuid NOT NULL,
     revision_number bigint NOT NULL CHECK (revision_number > 0),
     content_hash text NOT NULL CHECK (content_hash ~ '^sha256:[0-9a-f]{64}$'),
@@ -31,11 +32,12 @@ SET search_path = pg_catalog, dashboard
 AS $$
 DECLARE
     v_existing_fingerprint text;
+    v_owner_principal_id uuid;
     v_visibility text;
     v_status text;
     v_rows bigint;
 BEGIN
-    SELECT visibility, status INTO v_visibility, v_status
+    SELECT owner_principal_id, visibility, status INTO v_owner_principal_id, v_visibility, v_status
       FROM dashboard.authoring_dashboards
      WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id
      FOR UPDATE;
@@ -77,10 +79,10 @@ BEGIN
     END IF;
     INSERT INTO dashboard.authoring_delete_commands(
         project_id, dashboard_id, command_id, request_fingerprint,
-        revision_id, revision_number, content_hash
+        owner_principal_id, revision_id, revision_number, content_hash
     ) VALUES (
         p_project_id, p_dashboard_id, p_command_id, p_request_fingerprint,
-        p_expected_revision_id, p_expected_revision_number, p_expected_content_hash
+        v_owner_principal_id, p_expected_revision_id, p_expected_revision_number, p_expected_content_hash
     );
     DELETE FROM dashboard.authoring_create_operations
      WHERE project_id = p_project_id AND dashboard_id = p_dashboard_id;
