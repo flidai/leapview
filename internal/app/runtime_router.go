@@ -799,7 +799,7 @@ func buildApplicationSurfaces(
 		PrincipalDisplayReader: data.AccessRepo,
 		ResolveProjectID:       runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID,
 		Layout: func(r *http.Request) webpage.Provider {
-			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
+			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r, authorizedProductNavigationAccess(r.Context(), routes.accessModule, routes.projectCatalog, r))
 		},
 		CSRFToken: func(r *http.Request) string { return routes.accessModule.CSRFToken(r) },
 		CurrentUser: func(r *http.Request) (projecthttp.Principal, bool) {
@@ -1264,7 +1264,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				},
 				CSRFToken: routes.accessModule.CSRFToken,
 				Layout: func(r *http.Request) webpage.Provider {
-					return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
+					return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r, authorizedProductNavigationAccess(r.Context(), routes.accessModule, routes.projectCatalog, r))
 				},
 				Environment: func(r *http.Request) string {
 					return string(requestServingEnvironment(policy.defaultEnvironment, r))
@@ -1550,7 +1550,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				CSRFToken:        routes.accessModule.CSRFToken,
 				CurrentRoleLabel: routes.accessModule.CurrentRoleLabel,
 				Layout: func(r *http.Request) webpage.Provider {
-					return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
+					return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r, authorizedProductNavigationAccess(r.Context(), routes.accessModule, routes.projectCatalog, r))
 				},
 				CurrentPrincipal: func(r *http.Request) (agentmodule.Principal, bool) {
 					if platform.auth == nil {

@@ -42,11 +42,12 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 				next,
 			), true
 		case routeDashboardBuilder:
-			return protectProjectAuthoringResourceWithSelector(
-				routes.accessModule, runtime.runtimeHostModule, routes.dashboardModule.Authoring(),
-				access.CapabilityResourceEdit, dashboardBuilderPageStreamDashboardID,
-				next.ServeHTTP,
-			), true
+			// DashboardBuilderUpdates performs the repository-backed EDIT
+			// decision while constructing the exact draft projection. Keep the
+			// stream boundary responsible for authentication only; applying the
+			// authoring guard here repeats the same lifecycle lookup and can reject
+			// a request before the builder has a chance to produce its bootstrap.
+			return routes.accessModule.Authenticate(next), true
 		case routeChat:
 			return routes.accessModule.Authenticate(next), true
 		case routeAdmin:

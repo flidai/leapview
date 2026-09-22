@@ -1,12 +1,16 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	adminmodule "github.com/flidai/leapview/internal/admin/module"
+	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -28,6 +32,35 @@ func TestPageStreamRouteInventoryIsProjectOwned(t *testing.T) {
 		if _, ok := got[legacy]; ok {
 			t.Fatalf("legacy workspace page-stream route %q remains registered", legacy)
 		}
+	}
+}
+
+func TestDashboardBuilderPageStreamUsesHandlerAuthorization(t *testing.T) {
+	auth, err := accessmodule.NewAuth(nil, accessmodule.AuthConfig{
+		DevBypass: true, DevAPIToken: "builder-stream-test", CSRFKey: "0123456789abcdef0123456789abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessSurface, err := accessmodule.Build(context.Background(), accessmodule.Config{ExistingAuth: auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := &capabilityRoutes{
+		accessModule:    accessSurface,
+		dashboardModule: &dashboardmodule.Module{},
+		agentModule:     &agentmodule.Module{},
+		adminModule:     &adminmodule.Module{},
+	}
+	runtime := &runtimeServices{}
+	configurePageStream(routes, runtime, nil, nil)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/updates?route=dashboard_builder&dashboard=dashboard_owned", nil)
+	request.Header.Set("Authorization", "Bearer builder-stream-test")
+	runtime.pageStreams.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("dashboard builder stream status = %d, want downstream handler status %d", recorder.Code, http.StatusInternalServerError)
 	}
 }
 

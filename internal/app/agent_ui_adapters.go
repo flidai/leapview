@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -12,12 +13,47 @@ import (
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-func applicationLayout(access *accessmodule.Module, agent *agentmodule.Module, product *adminmodule.ProductService, assets staticasset.Resolver, r *http.Request) webpage.Provider {
+func authorizedProductNavigationAccess(ctx context.Context, access *accessmodule.Module, catalog *projectcatalog.Service, r *http.Request) appshell.ProductNavigationAccess {
+	if access == nil || catalog == nil || r == nil {
+		return appshell.ProductNavigationAccess{}
+	}
+	principal, ok := access.CurrentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return appshell.ProductNavigationAccess{}
+	}
+	if principal.DevBypass {
+		return appshell.ProductNavigationAccess{
+			CanExplore: true, CanSources: true, CanModels: true, CanSemanticModels: true,
+			CanDashboardCatalog: true, CanPipelines: true, CanConnections: true, CanRuns: true,
+		}
+	}
+	visible, err := catalog.VisibleKinds(ctx, principal.ID, []projectgraph.Kind{
+		projectgraph.KindSemanticModel, projectgraph.KindSource, projectgraph.KindModel,
+		projectgraph.KindDashboard, projectgraph.KindPipeline, projectgraph.KindConnection,
+	}, false)
+	if err != nil {
+		return appshell.ProductNavigationAccess{}
+	}
+	return appshell.ProductNavigationAccess{
+		CanExplore: visible[projectgraph.KindSemanticModel],
+		CanSources: visible[projectgraph.KindSource], CanModels: visible[projectgraph.KindModel],
+		CanSemanticModels: visible[projectgraph.KindSemanticModel], CanDashboardCatalog: visible[projectgraph.KindDashboard],
+		CanPipelines: visible[projectgraph.KindPipeline], CanConnections: visible[projectgraph.KindConnection],
+		CanRuns: visible[projectgraph.KindPipeline],
+	}
+}
+
+func applicationLayout(access *accessmodule.Module, agent *agentmodule.Module, product *adminmodule.ProductService, assets staticasset.Resolver, r *http.Request, navigation ...appshell.ProductNavigationAccess) webpage.Provider {
 	config := appshell.Config{
 		Presentation: webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
 		Assets:       assets,
+	}
+	if len(navigation) > 0 {
+		config.ProductNavigation = &navigation[0]
 	}
 	if product != nil {
 		if identity, err := product.Get(r.Context()); err == nil {
