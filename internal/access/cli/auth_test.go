@@ -182,6 +182,28 @@ func TestHeadlessLoginShowsCodeWithoutOpeningBrowser(t *testing.T) {
 	}
 }
 
+func TestHeadlessLoginCanCompleteTrustedLocalAuthorizationBeforeExchange(t *testing.T) {
+	now := time.Now().UTC()
+	auth, _, _ := testAuthenticator(t, now)
+	opened := false
+	auth.OpenBrowser = func(string) error {
+		opened = true
+		return nil
+	}
+	approved := ""
+	_, err := auth.Login(context.Background(), LoginRequest{
+		Name: "local", Origin: "http://127.0.0.1:8080", InstanceID: "lvinst_prod",
+		ProjectID: "project", Capabilities: []string{"RESOURCE_EDIT"}, Headless: true,
+		BeforeExchange: func(_ context.Context, challenge DeviceChallenge) error {
+			approved = challenge.UserCode
+			return nil
+		},
+	}, nil)
+	require.NoError(t, err)
+	require.False(t, opened)
+	require.NotEmpty(t, approved)
+}
+
 func TestLoginFailsClosedWhenNativeStoreIsUnavailable(t *testing.T) {
 	now := time.Now().UTC()
 	auth, profiles, _ := testAuthenticator(t, now)

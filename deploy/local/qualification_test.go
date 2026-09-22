@@ -75,12 +75,12 @@ func TestReleasedAuthoringQualificationStaticJourney(t *testing.T) {
 	validateQualificationEvidenceSchema(t, root, evidence)
 
 	// Required lifecycle mode must fail closed before Docker mutation when the
-	// explicit human authentication prerequisite is absent.
+	// explicit local Docker endpoint is absent.
 	lifecycleEvidenceDir := filepath.Join(t.TempDir(), "lifecycle-evidence")
 	lifecycle := exec.Command(filepath.Join(root, "deploy", "local", "qualification", "qualify.sh"),
 		"--archive", archive, "--required", "--run-lifecycle", "--evidence-dir", lifecycleEvidenceDir)
 	lifecycle.Dir = root
-	if combined, err := lifecycle.CombinedOutput(); err == nil || !strings.Contains(string(combined), "device authentication") {
+	if combined, err := lifecycle.CombinedOutput(); err == nil || !strings.Contains(string(combined), "explicit --docker-host") {
 		t.Fatalf("required lifecycle prerequisite result: %v\n%s", err, combined)
 	}
 }

@@ -59,11 +59,34 @@ func resolveLocalProjectAuthority() (localruntime.ProjectAuthority, error) {
 }
 
 func establishLocalAuthoringSessions(ctx context.Context, request localruntime.SessionRequest, out io.Writer) (localruntime.SessionResult, error) {
-	authenticator, err := defaultAuthoringAuthenticator(http.DefaultClient)
+	sessionClient, browserCookie, err := establishLocalBrowserSession(ctx, request, http.DefaultClient)
 	if err != nil {
 		return localruntime.SessionResult{}, err
 	}
-	return establishLocalAuthoringSessionsWith(ctx, localSessionAuthority{Authenticator: authenticator}, request, out)
+	authenticator, err := defaultAuthoringAuthenticator(sessionClient)
+	if err != nil {
+		return localruntime.SessionResult{}, err
+	}
+	authority := localSessionAuthority{
+		Authenticator: authenticator,
+		approve: func(ctx context.Context, challenge accesscli.DeviceChallenge) error {
+			origin, err := localSessionOrigin(request.Origin)
+			if err != nil {
+				return err
+			}
+			return approveLocalDeviceAuthorization(ctx, sessionClient, origin, challenge)
+		},
+	}
+	result, err := establishLocalAuthoringSessionsWith(ctx, authority, request, out)
+	if err != nil {
+		return localruntime.SessionResult{}, err
+	}
+	if request.OpenBrowser {
+		if err := openLocalBrowserSession(ctx, request.Origin, browserCookie, openSystemBrowser); err != nil {
+			return localruntime.SessionResult{}, err
+		}
+	}
+	return result, nil
 }
 
 func resetLocalAuthoringSessions(ctx context.Context, request localruntime.SessionRequest) error {
@@ -122,7 +145,10 @@ type localSessionAuthentication interface {
 	Login(context.Context, accesscli.LoginRequest, func(accesscli.DeviceChallenge)) (accesscli.LoginResult, error)
 }
 
-type localSessionAuthority struct{ *accesscli.Authenticator }
+type localSessionAuthority struct {
+	*accesscli.Authenticator
+	approve func(context.Context, accesscli.DeviceChallenge) error
+}
 
 func (authority localSessionAuthority) Profile(name string) (cliapi.TargetProfile, error) {
 	return authority.Profiles.Get(name)
@@ -130,6 +156,17 @@ func (authority localSessionAuthority) Profile(name string) (cliapi.TargetProfil
 
 func (authority localSessionAuthority) RebindLoopbackOrigin(name string, expected cliapi.TargetProfile, origin string) error {
 	return authority.Profiles.RebindLoopbackOrigin(name, expected, origin)
+}
+
+func (authority localSessionAuthority) ApproveDeviceAuthorization(ctx context.Context, challenge accesscli.DeviceChallenge) error {
+	if authority.approve == nil {
+		return errors.New("automatic local device authorization is unavailable")
+	}
+	return authority.approve(ctx, challenge)
+}
+
+type localSessionAutomaticApproval interface {
+	ApproveDeviceAuthorization(context.Context, accesscli.DeviceChallenge) error
 }
 
 func establishLocalAuthoringSessionsWith(ctx context.Context, authenticator localSessionAuthentication, request localruntime.SessionRequest, out io.Writer) (localruntime.SessionResult, error) {
@@ -151,13 +188,21 @@ func establishLocalAuthoringSessionsWith(ctx context.Context, authenticator loca
 	} else if !errors.Is(profileErr, cliapi.ErrProfileNotFound) {
 		return localruntime.SessionResult{}, profileErr
 	}
-	result, err := authenticator.Login(ctx, accesscli.LoginRequest{
+	loginRequest := accesscli.LoginRequest{
 		Name: request.TargetName, Origin: request.Origin, InstanceID: request.InstanceID,
 		Environment: request.Environment, ProjectID: request.ProjectID,
 		Capabilities: []string{"PROJECT_ADMIN", "RESOURCE_USE", "RESOURCE_READ", "RESOURCE_EDIT", "RESOURCE_PUBLISH", "RESOURCE_MANAGE"},
-	}, func(challenge accesscli.DeviceChallenge) {
-		fmt.Fprintf(out, "Open %s and enter code %s\n", challenge.VerificationURI, challenge.UserCode)
-	})
+	}
+	var notify func(accesscli.DeviceChallenge)
+	if approval, ok := authenticator.(localSessionAutomaticApproval); ok {
+		loginRequest.Headless = true
+		loginRequest.BeforeExchange = approval.ApproveDeviceAuthorization
+	} else {
+		notify = func(challenge accesscli.DeviceChallenge) {
+			fmt.Fprintf(out, "Open %s and enter code %s\n", challenge.VerificationURI, challenge.UserCode)
+		}
+	}
+	result, err := authenticator.Login(ctx, loginRequest, notify)
 	if err != nil {
 		return localruntime.SessionResult{}, err
 	}

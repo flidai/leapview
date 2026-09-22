@@ -29,8 +29,11 @@ Its static package and CLI identity checks produce release evidence only when
 run against the exact public archive after the authoring archive is available.
 The optional
 `init`/`dev` journey
-requires an explicitly selected local Docker socket and, where local device
-authentication is configured, a manual browser approval. Preview
+automatically rotates the private bootstrap password, approves the
+checkout-scoped CLI grant through the authenticated loopback session, and
+hands the HttpOnly browser session to the system browser through a one-shot
+loopback listener. It does not require a password prompt or device-code
+approval. Preview
 edit-to-visible measurements and production delivery qualification remain
 planned; this runtime payload does not claim those journeys are released.
 

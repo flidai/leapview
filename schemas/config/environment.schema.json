@@ -3540,14 +3540,6 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
-    "LEAPVIEW_QUALIFICATION_MANUAL_PREREQUISITES": {
-      "default": "false",
-      "description": "Confirm that required human browser authentication prerequisites are available.",
-      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
-      "type": "string",
-      "x-lifecycle": "internal",
-      "x-scope": "authoring package qualification"
-    },
     "LEAPVIEW_QUALIFICATION_REQUIRED": {
       "default": "false",
       "description": "Make missing qualification prerequisites fail the released-artifact gate.",

@@ -375,16 +375,13 @@ func (controller *Controller) Start(ctx context.Context) (result State, err erro
 
 	phase = phaseSession
 	credentialsPath := filepath.Join(root, credentialsFileName)
-	fmt.Fprintf(controller.stdout, "Use the private initial credentials at %s if the browser requests local sign-in.\n", credentialsPath)
 	targetName := sessionTargetName(state)
 	session, sessionErr := controller.establishSessions(ctx, SessionRequest{
 		TargetName: targetName, Origin: state.Network.URL, InstanceID: state.Authority.InstanceID,
 		Environment: state.Authority.Environment, ProjectID: state.Authority.ProjectUID,
+		CredentialsPath: credentialsPath,
 	})
 	if sessionErr != nil {
-		if errors.Is(sessionErr, context.DeadlineExceeded) {
-			return state, fmt.Errorf("establish local CLI/browser sessions: authorization timed out; complete local sign-in and approve the device code, then rerun leapview dev for a fresh code (runtime data is retained): %w", sessionErr)
-		}
 		return state, fmt.Errorf("establish local CLI/browser sessions: %w", sessionErr)
 	}
 	if session.TargetName != targetName {
