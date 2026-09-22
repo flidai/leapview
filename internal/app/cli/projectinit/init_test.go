@@ -3,6 +3,7 @@ package projectinit
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -35,6 +36,19 @@ func TestInitializeCreatesExactProjectAtomically(t *testing.T) {
 		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			t.Errorf("%s is not a regular project file", path)
 		}
+	}
+	source, err := os.ReadFile(filepath.Join(root, "dashboards", "sources", "sample.sales.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// DuckDB's CSV discovery identifies the bundled ISO-8601 dates as DATE
+	// and prices as DOUBLE. A mismatched strict source schema compiles but
+	// its first physical delivery cannot build.
+	if !strings.Contains(string(source), "{name: sale_date, datatype: Date}") {
+		t.Fatal("sample fixture strict source schema does not match its discovered DATE column")
+	}
+	if !strings.Contains(string(source), "{name: amount, datatype: Float}") {
+		t.Fatal("sample fixture strict source schema does not match its discovered DOUBLE column")
 	}
 }
 
