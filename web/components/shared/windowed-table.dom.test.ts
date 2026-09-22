@@ -562,9 +562,18 @@ test('windowed table reconciles terminal empty blocks and reports only visible p
       const terminalCanvasHeight = (element.shadowRoot.querySelector('.canvas') as HTMLElement).style.height
       const terminalLoading = Boolean(element.shadowRoot.querySelector('.loading'))
 
+      element.table = { ...element.table, totalRows: 200, availableRows: 200 }
+      await element.updateComplete
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      const growthRequest = requests.at(-1)
+      const reloadedAfterGrowth = requests.length > settledRequestCount
       element.table = {
         ...element.table,
-        blocks: { a: block(0, 3, rows(0)), b: block(50, 3, rows(50)), c: block(100, 3, rows(100)) },
+        blocks: {
+          a: block(0, growthRequest?.requestSeq ?? 3, rows(0)),
+          b: block(50, growthRequest?.requestSeq ?? 3, rows(50)),
+          c: block(100, growthRequest?.requestSeq ?? 3, rows(100)),
+        },
       }
       await element.updateComplete
       scrollport.scrollTop = 0
@@ -576,13 +585,14 @@ test('windowed table reconciles terminal empty blocks and reports only visible p
       ;(element as any).emitBlock(element.table, 'a', 0, sort, 0)
       await element.updateComplete
       const visiblePending = Boolean(element.shadowRoot.querySelector('.loading'))
-      return { settledRequestCount, terminalCanvasHeight, terminalLoading, backgroundPending, visiblePending }
+      return { settledRequestCount, terminalCanvasHeight, terminalLoading, reloadedAfterGrowth, backgroundPending, visiblePending }
     })
 
     expect(state).toEqual({
       settledRequestCount: 0,
       terminalCanvasHeight: '1700px',
       terminalLoading: false,
+      reloadedAfterGrowth: true,
       backgroundPending: false,
       visiblePending: true,
     })

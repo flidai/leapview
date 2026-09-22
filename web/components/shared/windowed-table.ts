@@ -170,8 +170,7 @@ class WindowedTable extends LitElement {
   @state() private resizeGuide = -1
   private viewportHeight = 0
   private viewportWidth = 0
-  private lastResetVersion = -1
-  private lastTableKey = ''
+  private lastResetVersion = -1; private lastAvailableRows = -1; private lastTableKey = ''
   private shouldResetScroll = false
   private requestSeq = 0
   private scrollFrame = 0
@@ -501,14 +500,11 @@ class WindowedTable extends LitElement {
       font-variant-numeric: tabular-nums;
     }
 
-    .cell.right code,
-    .cell.right > span:not(.muted):not(.skeleton) {
+    .cell.right code, .cell.right > span:not(.muted):not(.skeleton) {
       text-align: right;
     }
 
-    .muted,
-    .empty,
-    .error {
+    .muted, .empty, .error {
       color: var(--lv-fg-muted);
       padding: var(--base-size-16);
       font: var(--lv-type-body);
@@ -578,7 +574,7 @@ class WindowedTable extends LitElement {
   }
 
   willUpdate(): void {
-    const table = normalizeTable(this.table)
+    const table = normalizeTable(this.table); const availabilityGrew = this.lastTableKey === table.tableKey && this.lastResetVersion === table.resetVersion && table.availableRows > this.lastAvailableRows
     if (this.lastResetVersion !== table.resetVersion || this.lastTableKey !== table.tableKey) {
       const tableChanged = this.lastTableKey !== table.tableKey
       this.lastResetVersion = table.resetVersion
@@ -594,6 +590,10 @@ class WindowedTable extends LitElement {
       this.clearJumpTimer()
     }
     this.mergeIncomingBlocks(table)
+    if (availabilityGrew && this.effectiveAvailableRows(table) < table.availableRows) {
+      this.blockCache = emptyBlocks(table.chunkSize, table.sort, table.resetVersion); this.expectedBlocks.clear(); this.scheduleEnsureBlocksForScroll()
+    }
+    this.lastAvailableRows = table.availableRows
     // A matching empty response completes the request even without scrollable content.
     if (table.availableRows <= 0) {
       this.expectedBlocks.clear()
