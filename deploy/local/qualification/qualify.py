@@ -65,8 +65,11 @@ PREVIEW_NOT_RELEASED = (
 # The qualification subprocesses are intentionally given a small, explicit
 # process environment.  In particular, Docker context/configuration and
 # arbitrary LEAPVIEW_* variables are not inherited from the operator.  The
-# lifecycle passes its already-validated endpoint explicitly below.
+# lifecycle passes its already-validated endpoint explicitly below. The D-Bus
+# session address is retained so Linux can use its native Secret Service for
+# the device credential; it identifies a local IPC endpoint, not a credential.
 COMMAND_ENV_ALLOWLIST = (
+    "DBUS_SESSION_BUS_ADDRESS",
     "LANG",
     "LC_ALL",
     "PATH",

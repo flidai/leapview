@@ -1677,11 +1677,15 @@ func TestAPIGenBootstrapAllowlistIncludesCandidateSourceAndManagedDataStaging(t 
 		t.Fatal("source retention operation is not bootstrap-authorized")
 	}
 	for _, operation := range []string{
+		"getDevelopmentProfileApplication", "applyDevelopmentProfile",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
 	} {
 		if !isBootstrapAPIGenOperation(operation) {
-			t.Errorf("managed-data operation %q is not bootstrap-authorized", operation)
+			t.Errorf("local authoring operation %q is not bootstrap-authorized", operation)
+		}
+		if !isAuthoringBootstrapOperation(operation) {
+			t.Errorf("local authoring operation %q does not require scoped authoring credentials", operation)
 		}
 	}
 	for _, operation := range []string{"listManagedDataRevisions", "getManagedDataRevision", "getActiveManagedDataRevision", "listManagedDataUploadSessions", "listManagedDataUploadSessionEvents", "getDashboard"} {

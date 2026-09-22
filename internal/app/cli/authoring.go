@@ -38,6 +38,7 @@ type candidateSynchronizationTransport struct {
 type projectDevRemoteFactory struct {
 	client                 cliapi.Client
 	stageDevelopmentInputs func(context.Context, cliapi.Credentials, localDevelopmentSession) error
+	bootstrapOwnerPolicy   func(context.Context, apigenclient.Transport, localDevelopmentSession) error
 }
 
 type localDevelopmentSession struct {
@@ -302,12 +303,33 @@ func (factory projectDevRemoteFactory) Remote(
 	if !localDevelopment {
 		return remote, nil
 	}
+	bootstrap := factory.bootstrapOwnerPolicy
+	if bootstrap == nil {
+		bootstrap = bootstrapLocalOwnerPolicy
+	}
+	if err := bootstrap(ctx, generic, local); err != nil {
+		return nil, fmt.Errorf("bootstrap local Project authorization policy: %w", err)
+	}
 	if factory.stageDevelopmentInputs != nil {
 		if err := factory.stageDevelopmentInputs(ctx, credentials, local); err != nil {
 			return nil, fmt.Errorf("stage declared development inputs: %w", err)
 		}
 	}
 	return &profileApplyingDevRemote{remote: remote, client: analyticsgen.NewGenClient(generic), local: local}, nil
+}
+
+func bootstrapLocalOwnerPolicy(ctx context.Context, transport apigenclient.Transport, local localDevelopmentSession) error {
+	client := accessgen.NewGenClient(transport)
+	principal, err := client.GetCurrentPrincipal(ctx, accessgen.GenGetCurrentPrincipalClientRequest{})
+	if err != nil {
+		return fmt.Errorf("resolve local Project owner: %w", err)
+	}
+	_, _, err = bootstrapProjectOwnerPolicy(
+		ctx, client, local.state.Authority.InstanceID,
+		local.state.Authority.ProjectUID, local.state.Authority.Environment,
+		strings.TrimSpace(principal.Body.Id),
+	)
+	return err
 }
 
 // DevelopmentSession supplies the durable local pointer only for the local
