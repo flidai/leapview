@@ -194,6 +194,72 @@ func TestHostedDemoRequiresPrivateAgentProviderConfiguration(t *testing.T) {
 	require.NotContains(t, runbook, "Keep the agent unconfigured on the shared demo instance.")
 }
 
+func TestHostedDemoComposeRolloutIsPinnedAndRollbackSafe(t *testing.T) {
+	root := filepath.Join("..", "..")
+	workflow := read(t, filepath.Join(root, ".github", "workflows", "demo-deploy.yml"))
+	shell := read(t, filepath.Join(root, "scripts", "deploy_compose_demo_runtime.sh"))
+	runtime := read(t, filepath.Join(root, "scripts", "deploy_compose_demo_runtime.py"))
+	runbook := read(t, filepath.Join(root, "deploy", "demo", "README.md"))
+
+	for _, required := range []string{
+		"options: [publish, compose-deploy]",
+		"inputs.action == 'compose-deploy'",
+		"35894842492",
+		"2caaf4d0c3e0ce637a22c376f63240c27dfaf20d",
+		"ghcr.io/flidai/leapview@sha256:35d1207a312279cc7bcf3c64a9284a8410d1f21c30920f2cbf1935113553eb24",
+		"SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE",
+		"scripts/deploy_compose_demo_runtime.sh",
+	} {
+		require.Contains(t, workflow, required)
+	}
+	require.NotContains(t, workflow, "DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}")
+
+	for _, required := range []string{
+		"StrictHostKeyChecking=yes",
+		"DEMO_EXPECTED_SSH_FINGERPRINT",
+		"set_firewall_rules",
+		"demo server did not become reachable",
+		"scripts/deploy_compose_demo_runtime.py",
+	} {
+		require.Contains(t, shell, required)
+	}
+	require.NotContains(t, shell, "DEEPSEEK_API_KEY")
+	require.NotContains(t, shell, "leapview-demo-agent-api-key")
+
+	for _, required := range []string{
+		"PREDECESSOR_REVISION = '5a50b4c4d065278172c9779b98abb094215014c2'",
+		"PREDECESSOR_IMAGE = 'ghcr.io/flidai/leapview@sha256:a24ef9fc224f4366b232938158f13c2665a069fc8f467f8856c6e183d76bf7eb'",
+		"ROOT = Path('/opt/leapview')",
+		"LEAPVIEW_AGENT_API_KEY",
+		"LEAPVIEW_AGENT_BASE_URL",
+		"LEAPVIEW_AGENT_MODEL",
+		"org.opencontainers.image.revision",
+		"rollout-success.json",
+		"app_contents = APP_ENV.read_text()",
+		"Compose rollout failed; reviewed predecessor configuration was restored",
+	} {
+		require.Contains(t, runtime, required)
+	}
+	require.NotContains(t, runtime, "write_private_atomic(APP_ENV")
+	rollbackArmed := strings.Index(runtime, "changed = True")
+	firstMutation := strings.Index(runtime, "write_private_atomic(DEPLOYMENT_ENV")
+	startAttempt := strings.Index(runtime, "\n        start()")
+	require.NotEqual(t, -1, rollbackArmed)
+	require.NotEqual(t, -1, firstMutation)
+	require.NotEqual(t, -1, startAttempt)
+	require.Less(t, rollbackArmed, firstMutation, "rollback must be armed before the first durable mutation")
+	require.Less(t, firstMutation, startAttempt, "configuration must be durable before the restart")
+
+	for _, required := range []string{
+		"exact reviewed predecessor",
+		"complete predecessor state",
+		"private application environment untouched",
+		"revision-pinned `compose-deploy` action",
+	} {
+		require.Contains(t, runbook, required)
+	}
+}
+
 func TestDemoDeploymentRequiresSourceRevisionBeforeChangingInfrastructure(t *testing.T) {
 	root := filepath.Join("..", "..")
 	command := exec.Command("bash", filepath.Join(root, "scripts", "deploy_demo.sh"))
