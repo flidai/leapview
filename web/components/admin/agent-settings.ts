@@ -68,13 +68,23 @@ export class AgentSettings extends LitElement {
     }
 
     .status-value.is-disabled {
-      background: var(--lv-bg-danger-muted, var(--lv-bg-panel-muted));
-      color: var(--lv-fg-danger);
+	  background: var(--lv-bg-panel-muted);
+	  color: var(--lv-fg-muted);
+    }
+
+    .status-value.is-degraded {
+      background: var(--lv-bg-warning-muted, var(--lv-bg-panel-muted));
+      color: var(--lv-fg-warning);
+    }
+
+    .status-value.is-configured {
+      background: var(--lv-bg-accent-muted, var(--lv-bg-panel-muted));
+      color: var(--lv-fg-accent);
     }
 
     .overview-grid {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: var(--base-size-8);
     }
 
@@ -204,17 +214,22 @@ export class AgentSettings extends LitElement {
     if (!agent) return html`<div class="settings-stack"><p class="empty">Agent settings are unavailable.</p></div>`
 
     const prompt = this.prompt || agent.systemPrompt || ''
-    const enabledLabel = agent.enabled ? 'Enabled' : 'Disabled'
+    const status = normalizeAgentStatus(agent.status, agent.enabled)
+    const statusLabel = status[0].toUpperCase() + status.slice(1)
     return html`
       <div class="settings-stack">
         ${renderSettingsSection({ label: 'Agent overview', appearance: 'plain', className: 'overview', content: html`
           <h2 class="visually-hidden">Agent overview</h2>
           <div class="overview-grid">
-            ${this.stat('Status', enabledLabel, agent.enabled ? 'enabled' : 'disabled')}
+            ${renderSettingsRow({
+              label: 'Status', layout: 'stacked', className: 'overview-stat',
+              control: html`<span class=${`status-value is-${status}`} title=${agent.statusDetail || statusLabel}>${statusLabel}</span>`,
+            })}
             ${this.stat('Model', agent.model || 'Not configured')}
+            ${this.stat('Reasoning', formatReasoningEffort(agent.reasoningEffort))}
             ${this.stat('Tools', String(agent.tools.length))}
             ${this.stat('Access', agent.canWrite ? 'Editable' : 'Read-only')}
-            ${this.stat('Instructions', prompt.trim() ? 'Configured' : 'Not configured')}
+            ${this.stat('Configuration', agent.configured ? 'Configured' : 'Not configured', agent.configured ? 'configured' : 'disabled')}
           </div>
         ` })}
 
@@ -224,6 +239,8 @@ export class AgentSettings extends LitElement {
             <span>Agent instructions are controlled by deployment configuration and cannot be changed here.</span>
           </div>
         ` : ''}
+
+        ${agent.statusDetail ? html`<div class="notice" role="status"><strong>${statusLabel}.</strong><span>${agent.statusDetail}</span></div>` : ''}
 
         ${renderSettingsSection({ label: 'Agent settings', appearance: 'plain', className: 'settings-panel', content: html`
           <div class="tab-bar" role="tablist" aria-label="Agent settings sections">
@@ -240,7 +257,7 @@ export class AgentSettings extends LitElement {
     `
   }
 
-  private stat(label: string, value: string, status: 'enabled' | 'disabled' | '' = '') {
+  private stat(label: string, value: string, status: 'enabled' | 'disabled' | 'configured' | '' = '') {
     return renderSettingsRow({
       label, layout: 'stacked', className: 'overview-stat',
       control: html`<span class=${status ? `status-value is-${status}` : 'overview-value'} title=${value}>${value}</span>`,
@@ -259,6 +276,19 @@ export class AgentSettings extends LitElement {
       >${label}</button>
     `
   }
+}
+
+function normalizeAgentStatus(value: string | undefined, enabled: boolean): 'enabled' | 'disabled' | 'degraded' {
+  const status = value?.trim().toLowerCase()
+  if (status === 'degraded') return 'degraded'
+  if (status === 'enabled') return 'enabled'
+  return enabled ? 'enabled' : 'disabled'
+}
+
+function formatReasoningEffort(value?: string): string {
+  const effort = value?.trim().toLowerCase()
+  if (!effort) return 'Not configured'
+  return effort === 'xhigh' ? 'Extra high' : effort[0].toUpperCase() + effort.slice(1)
 }
 
 if (!customElements.get('lv-agent-settings')) customElements.define('lv-agent-settings', AgentSettings)

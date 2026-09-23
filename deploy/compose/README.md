@@ -10,7 +10,7 @@ operations binary for the archive's operating system and architecture.
 cp deployment.env.example deployment.env
 cp leapview.env.example leapview.env
 # Configure the external PostgreSQL URLs and roles in leapview.env.
-# Configure LEAPVIEW_AGENT_API_KEY and LEAPVIEW_AGENT_MODEL in leapview.env
+# Configure LEAPVIEW_AGENT_API_KEY in leapview.env; override LEAPVIEW_AGENT_MODEL if needed
 # when the agent should be enabled. Keep the API key out of source control.
 # Run pool bootstrap without --apply; the database-free result contains the
 # deterministic pool_id and compatibility_digest. Copy them into leapview.env.
@@ -33,7 +33,9 @@ Each PostgreSQL URL must use `sslmode=verify-full` with a trusted provider CA
 the server certificate and hostname.
 
 The agent is enabled when both `LEAPVIEW_AGENT_API_KEY` and
-`LEAPVIEW_AGENT_MODEL` are set in the private `leapview.env` on the host.
+`LEAPVIEW_AGENT_MODEL` are set in the private `leapview.env` on the host. The
+template selects `gpt-6-luna` with `LEAPVIEW_AGENT_REASONING_EFFORT=high` by
+default.
 `LEAPVIEW_AGENT_BASE_URL` defaults to the OpenAI-compatible endpoint shown in
 the template and may be changed for another compatible provider. Never commit
 the real API key. Run `./leapviewctl start` after changing these values so

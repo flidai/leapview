@@ -35,6 +35,9 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 	if !m.config.Enabled() {
 		return agentcore.ModelResponse{}, agentapp.ErrDisabled
 	}
+	if usesGPT6LunaResponses(m.config) {
+		return m.completeResponse(ctx, req, stream)
+	}
 	streaming := req.Purpose == agentcore.ModelRequestPurposeTurn && stream != nil
 	body := openAIChatRequest{
 		Model:     m.config.Model,

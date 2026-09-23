@@ -355,8 +355,13 @@ enum PopularityLevel {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminAgentSignal {
   `canWrite`: boolean;
+  `configured`: boolean;
   `enabled`: boolean;
   `model`?: string;
+  `reasoningEffort`?: string;
+  `revision`: string;
+  `status`: string;
+  `statusDetail`?: string;
   `systemPrompt`: string;
   `tools`: AdminAgentToolSignal[];
   `updatePath`: string;
@@ -485,7 +490,7 @@ model AdminPageEnvelope {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminAgentCommandSignal {
-  `systemPrompt`: string;
+  `systemPrompt`?: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })

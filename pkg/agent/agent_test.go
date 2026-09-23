@@ -658,6 +658,45 @@ func TestInitialTranscriptSeedsModelRequestsAndIsCloned(t *testing.T) {
 	}
 }
 
+func TestProviderStateIsPreservedInTranscriptAndModelRequests(t *testing.T) {
+	state := json.RawMessage(`[{"type":"reasoning","encrypted_content":"opaque"}]`)
+	model := &fakeModel{responses: []ModelResponse{
+		{ToolCalls: []ToolCall{{ID: "call_1", Name: "noop", Arguments: json.RawMessage(`{}`)}}, FinishReason: FinishReasonToolCalls, ProviderState: state},
+		{Content: "done", FinishReason: FinishReasonStop},
+	}}
+	a := mustAgent(t, Definition{
+		Name:         "test",
+		SystemPrompt: "system",
+		Model:        model,
+		Tools: []ToolDefinition{{
+			Name:        "noop",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+			Handler: ToolHandlerFunc(func(context.Context, ToolCall) (ToolResult, error) {
+				return ToolResult{Content: map[string]any{}}, nil
+			}),
+		}},
+	})
+
+	if _, err := a.Prompt(context.Background(), PromptRequest{Input: "go"}); err != nil {
+		t.Fatalf("Prompt returned error: %v", err)
+	}
+	if len(model.requests) != 2 {
+		t.Fatalf("model requests = %d, want 2", len(model.requests))
+	}
+	requestState := model.requests[1].Messages[2].ProviderState
+	if string(requestState) != string(state) {
+		t.Fatalf("provider state in model request = %s, want %s", requestState, state)
+	}
+	transcript := a.Transcript()
+	if string(transcript[1].ProviderState) != string(state) {
+		t.Fatalf("provider state in transcript = %s, want %s", transcript[1].ProviderState, state)
+	}
+	requestState[0] = 'x'
+	if string(a.Transcript()[1].ProviderState) != string(state) {
+		t.Fatal("provider state was not cloned")
+	}
+}
+
 func TestAbortRetainsStreamedTextForContinuation(t *testing.T) {
 	started := make(chan struct{})
 	model := ModelFunc(func(ctx context.Context, req ModelRequest, stream ModelStream) (ModelResponse, error) {

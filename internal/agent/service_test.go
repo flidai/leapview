@@ -1412,7 +1412,7 @@ func TestServiceDurableEditRetryAfterReplacementAppendTrimsIdenticalBranch(t *te
 	runID := "run_" + hex.EncodeToString(hash[:12])
 	if _, err := store.workflowAgentStore.CreateRun(ctx, RunInput{
 		PrincipalID: scope.PrincipalID, ConversationID: conversation.ID, RunID: runID,
-		Model: service.config.Model, MetadataJSON: metadataJSON(map[string]any{
+		Model: service.Model(), MetadataJSON: metadataJSON(map[string]any{
 			"request_digest": promptDigest(input), "edit_message_id": targetID,
 		}), Status: RunStatusPreparing,
 	}); err != nil {
