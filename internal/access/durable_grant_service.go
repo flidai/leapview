@@ -68,10 +68,6 @@ type CurrentAuthoritySnapshot struct {
 	CredentialPermissions []PermissionPair
 }
 
-// AuthoritySnapshot is a concise compatibility alias for callers that use
-// the shorter name.
-type AuthoritySnapshot = CurrentAuthoritySnapshot
-
 var (
 	ErrGrantAuthorityUnavailable = errors.New("current grant authority is unavailable")
 	ErrGrantAuthorityInvalid     = errors.New("current grant authority is invalid")
@@ -95,11 +91,6 @@ type ResourceShareGrantRequest struct {
 	RequestDigest         string
 	AllowOnwardDelegation bool
 }
-
-// ResourceShareRequest and ShareGrantRequest retain concise names for
-// adapters without exposing the repository's authority-bearing input type.
-type ResourceShareRequest = ResourceShareGrantRequest
-type ShareGrantRequest = ResourceShareGrantRequest
 
 // ExecutionGrantRequest contains only user-controlled bounded execution
 // parameters. The issuer, bound principal, and issuance ceiling are derived
@@ -268,13 +259,6 @@ func (s *DurableGrantService) IssueGrantAdminEnvelope(ctx context.Context, reque
 	return s.writer.CreateGrantAdminEnvelope(ctx, in)
 }
 
-// RevokeResourceShareGrant performs the monotonic active-to-revoked mutation
-// using the current resolved principal as actor. The actor is never accepted
-// from a request body and a repeated repository revoke cannot restore state.
-func (s *DurableGrantService) RevokeResourceShareGrant(ctx context.Context, id, reason string) error {
-	return s.revoke(ctx, DurableGrantKindResourceShare, id, reason, DurableGrantTarget{})
-}
-
 // RevokeResourceShareGrantForTarget performs the same audited revocation but
 // binds authority resolution to the persisted exact target. Public adapters
 // use this form after loading the grant and proving the caller is its issuer.
@@ -286,14 +270,9 @@ func (s *DurableGrantService) RevokeExecutionGrant(ctx context.Context, id, reas
 	return s.revoke(ctx, DurableGrantKindExecution, id, reason, DurableGrantTarget{})
 }
 
-func (s *DurableGrantService) RevokeGrantAdminEnvelope(ctx context.Context, id, reason string) error {
-	return s.revoke(ctx, DurableGrantKindAdminEnvelope, id, reason, DurableGrantTarget{})
-}
-
 // RevokeGrantAdminEnvelopeForTarget binds the issuer re-check to the exact
 // project/resource selector persisted on the envelope. Public adapters must
-// load that selector before calling this method; the empty-target compatibility
-// method above remains for internal callers that already own that proof.
+// load that selector before calling this method.
 func (s *DurableGrantService) RevokeGrantAdminEnvelopeForTarget(ctx context.Context, id, reason string, target DurableGrantTarget) error {
 	return s.revoke(ctx, DurableGrantKindAdminEnvelope, id, reason, target)
 }

@@ -24,7 +24,7 @@ type Module struct {
 	auth                              *Auth
 	currentPrincipal                  func(*http.Request) (Principal, bool)
 	repository                        func() (access.Repository, error)
-	oauth                             *mcpoauth.Service
+	oauth                             mcpOAuthService
 	oauthResource                     mcpoauth.ResourceServer
 	desktopAuth                       *desktopauth.Service
 	authoringAuth                     *access.AuthoringAuthService
@@ -39,6 +39,24 @@ type Module struct {
 	logger             *slog.Logger
 	presentation       webpage.Presentation
 	assets             staticasset.Resolver
+}
+
+// mcpOAuthService keeps the module's consent surface independent of the
+// transport adapter assembled by Build.
+type mcpOAuthService interface {
+	AuthorizationServerMetadata(http.ResponseWriter, *http.Request)
+	Register(http.ResponseWriter, *http.Request)
+	Token(http.ResponseWriter, *http.Request)
+	Revoke(http.ResponseWriter, *http.Request)
+	Consent(*http.Request) (mcpoauth.Consent, error)
+	Authorize(http.ResponseWriter, *http.Request, string, bool)
+}
+
+// The resource side needs only this small authentication/metadata contract.
+type mcpOAuthResource interface {
+	Authenticate(context.Context, string) (mcpoauth.Credential, error)
+	ProtectedResourceMetadata(http.ResponseWriter, *http.Request)
+	Challenge(http.ResponseWriter)
 }
 
 type surfaceConfig struct {
@@ -58,8 +76,8 @@ type surfaceConfig struct {
 	AuthoringProjectID                func(context.Context) (projectgraph.ResourceID, error)
 	Auth                              *Auth
 	Logger                            *slog.Logger
-	OAuth                             *mcpoauth.Service
-	OAuthResource                     mcpoauth.ResourceServer
+	OAuth                             mcpOAuthService
+	OAuthResource                     mcpOAuthResource
 	AuthoringAuth                     *access.AuthoringAuthService
 	Avatar                            *avatar.Service
 	Presentation                      webpage.Presentation

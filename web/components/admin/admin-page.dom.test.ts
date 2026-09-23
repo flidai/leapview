@@ -451,13 +451,16 @@ test('personal API tokens use exact typed permission selectors', async () => {
       await personal.updateComplete
       ;(root.querySelector('.permission-resource-trigger') as HTMLButtonElement).click()
       await personal.updateComplete
+      await (root.querySelector('lv-personal-token-permission-picker') as any).updateComplete
       const resourcePicker = {
         resources: Array.from(root.querySelectorAll('.permission-resource-option span')).map((label) => label.textContent?.trim()),
         initiallySelected: root.querySelectorAll('.permission-resource-option input:checked').length,
         searchFocused: root.activeElement === root.querySelector('.permission-resource-menu .permission-search input'),
       }
-      ;(root.querySelector('input[type="checkbox"][value="typed-1"]') as HTMLInputElement).click()
-      ;(root.querySelector('input[type="checkbox"][value="typed-3"]') as HTMLInputElement).click()
+      const salesResource = Array.from(root.querySelectorAll<HTMLElement>('.permission-resource-option')).find((option) => option.textContent?.includes('Sales overview'))
+      ;(salesResource?.querySelector('input[type="checkbox"]') as HTMLInputElement).click()
+      const financeResource = Array.from(root.querySelectorAll<HTMLElement>('.permission-resource-option')).find((option) => option.textContent?.includes('Finance'))
+      ;(financeResource?.querySelector('input[type="checkbox"]') as HTMLInputElement).click()
       await personal.updateComplete
       ;(root.querySelector('.permission-resource-menu-footer .primary') as HTMLButtonElement).click()
       await personal.updateComplete
@@ -481,7 +484,6 @@ test('personal API tokens use exact typed permission selectors', async () => {
         technicalTarget: technicalDetails.querySelector('.permission-technical-row span')?.textContent?.replace(/\s+/g, ' ').trim(),
       }
       const triggerFocused = root.activeElement === add
-
       let command: any = null
       personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
       const form = root.querySelector('.token-form') as HTMLFormElement
@@ -565,7 +567,6 @@ test('personal API tokens use exact typed permission selectors', async () => {
         deletion,
       }
     })
-
     await page.setViewportSize({ width: 390, height: 700 })
     const mobile = await page.evaluate(async () => {
       const admin = document.querySelector('lv-admin-page') as any
@@ -588,7 +589,6 @@ test('personal API tokens use exact typed permission selectors', async () => {
       await personal.updateComplete
       return { ...state, closed: !root.querySelector('.permission-menu') }
     })
-
     expect(state.initial).toEqual({
       listHeading: 'Personal access tokens',
       pageHeaderVisible: false,

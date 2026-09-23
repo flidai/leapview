@@ -118,3 +118,10 @@ func TestPermissionCatalogRejectsMalformedOrDuplicateActions(t *testing.T) {
 		t.Fatalf("malformed action error = %v", err)
 	}
 }
+
+func TestPermissionCatalogRequiresPresentationMetadata(t *testing.T) {
+	definition := resourcePermission("test.read", " ", "Read test data.", projectgraph.KindModel, true)
+	if err := ValidatePermissionCatalog([]PermissionDefinition{definition}); !errors.Is(err, ErrInvalidPermissionCatalog) {
+		t.Fatalf("missing family metadata error = %v", err)
+	}
+}

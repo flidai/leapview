@@ -1,4 +1,4 @@
-package app
+package revalidation
 
 import (
 	"context"
@@ -8,9 +8,19 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/permissions"
 )
+
+func newCallerAuthorityRevalidator(tokens access.APITokenAuthorityEvidenceReader, sessions access.SessionAuthorityEvidenceReader, current func(context.Context, string, access.PermissionPair, string) (bool, error)) jobs.AuthorityRevalidator {
+	requirement, err := refreshmodule.CreateRefreshRunTypedOperationRequirement()
+	return NewCallerAuthorityRevalidator(tokens, sessions, current, requirement, err)
+}
+
+func newDelegatedWorkloadRevalidator(grants ExecutionGrantAuthorityReader, current func(context.Context, string, access.PermissionPair, string) (bool, error), instanceID, environment string) jobs.AuthorityRevalidator {
+	return NewDelegatedWorkloadRevalidator(grants, current, instanceID, environment)
+}
 
 type jobAuthorityTokenReader struct {
 	token access.APIToken

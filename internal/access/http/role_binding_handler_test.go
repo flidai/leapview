@@ -399,6 +399,7 @@ func TestCreateProjectRoleBindingRejectsTokenWithManageButNoDelegate(t *testing.
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/role-bindings", strings.NewReader(`{"id":"binding-1","subjectType":"group","subjectId":"group-1","role":"viewer","grantAdminEnvelopeId":"envelope-1","expectedRevision":0}`))
 	request = withProjectRoute(request, "project_demo")
+	request.Header.Set("Idempotency-Key", "idem-denied-1")
 	recorder := httptest.NewRecorder()
 	handler.CreateProjectRoleBinding(recorder, request)
 	if recorder.Code != http.StatusForbidden {
@@ -445,6 +446,7 @@ func TestCreateProjectRoleBindingRejectsTokenPairCeilingNarrowerThanRole(t *test
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/role-bindings", strings.NewReader(`{"id":"binding-1","subjectType":"group","subjectId":"group-1","role":"viewer","grantAdminEnvelopeId":"envelope-1","expectedRevision":0}`))
 	request = withProjectRoute(request, "project_demo")
+	request.Header.Set("Idempotency-Key", "idem-denied-2")
 	recorder := httptest.NewRecorder()
 	handler.CreateProjectRoleBinding(recorder, request)
 	if recorder.Code != http.StatusForbidden {
@@ -491,6 +493,7 @@ func TestCreateProjectRoleBindingRejectsEnvelopeIssuedByAnotherToken(t *testing.
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/role-bindings", strings.NewReader(`{"id":"binding-1","subjectType":"group","subjectId":"group-1","role":"viewer","grantAdminEnvelopeId":"envelope-1","expectedRevision":0}`))
 	request = withProjectRoute(request, "project_demo")
+	request.Header.Set("Idempotency-Key", "idem-denied-3")
 	recorder := httptest.NewRecorder()
 	handler.CreateProjectRoleBinding(recorder, request)
 	if recorder.Code != http.StatusForbidden {
@@ -626,6 +629,7 @@ func TestCreateProjectRoleBindingRejectsNonCanonicalSubjectOrRole(t *testing.T) 
 }
 
 func TestDeleteProjectRoleBindingUsesAuditedCASAndReturnsNewPolicyReceipt(t *testing.T) {
+	const actorID = "00000000-0000-7000-8000-000000000101"
 	binding := access.RoleBinding{
 		ID: "binding-1", Name: "Viewer",
 		Subject:           access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal-1"},
@@ -635,9 +639,23 @@ func TestDeleteProjectRoleBindingUsesAuditedCASAndReturnsNewPolicyReceipt(t *tes
 		Scope:    access.AuthorizationPolicyScope{TargetID: "target-server", ProjectID: "project_demo", Environment: "prod"},
 		Revision: 3, Digest: "sha256:" + strings.Repeat("b", 64), RoleBindings: []access.RoleBinding{binding},
 	}}
+	manage, err := access.NewProjectPermissionPair(access.ActionProjectAccessManage, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler := Handler{
 		Repository:                  func() (access.Repository, error) { return repo, nil },
 		AuthorizationPolicyTargetID: "target-server", AuthorizationPolicyEnvironment: "prod",
+		CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: actorID}, true },
+		CurrentEffectivePermissionOptions: func(context.Context, string) ([]access.PermissionPair, error) {
+			return []access.PermissionPair{manage}, nil
+		},
+		CurrentCredential: func(*http.Request) (access.APICredential, bool) {
+			return access.APICredential{Principal: access.Principal{ID: actorID}, Token: access.APIToken{
+				ID: "token-1", PrincipalID: actorID, PermissionProfile: access.PermissionCatalogProfile,
+				Permissions: []access.PermissionPair{manage},
+			}}, true
+		},
 	}
 	request := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/project_demo/role-bindings/binding-1", strings.NewReader(`{"expectedRevision":3}`))
 	request = withProjectAndBindingRoute(request, "project_demo", "binding-1")

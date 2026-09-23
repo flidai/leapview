@@ -2,7 +2,6 @@ package access
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -302,139 +301,25 @@ func ValidateActionForKind(action Action, kind projectgraph.Kind) error {
 }
 
 // ValidatePermissionCatalog validates the package catalog or a candidate
-// future profile. It proves action identity, kinds, prerequisites, and cycles;
-// callers must still separately validate operation coverage and migration.
+// future profile. Structural action, scope, prerequisite, and cycle checks
+// belong to pkg/permissions. Access also checks its presentation metadata and
+// the closed set of graph kinds before handing over the structural contract.
+// Callers must still separately validate operation coverage and migration.
 func ValidatePermissionCatalog(definitions []PermissionDefinition) error {
-	if len(definitions) == 0 {
-		return fmt.Errorf("%w: catalog is empty", ErrInvalidPermissionCatalog)
-	}
-	byAction := make(map[Action]PermissionDefinition, len(definitions))
-	for index, definition := range definitions {
-		if !validActionName(definition.Action) {
-			return fmt.Errorf("%w: definition %d has invalid action %q", ErrInvalidPermissionCatalog, index, definition.Action)
-		}
-		if _, exists := byAction[definition.Action]; exists {
-			return fmt.Errorf("%w: duplicate action %q", ErrInvalidPermissionCatalog, definition.Action)
-		}
+	for _, definition := range definitions {
 		if strings.TrimSpace(definition.Family) == "" || strings.TrimSpace(definition.Description) == "" {
 			return fmt.Errorf("%w: action %q lacks presentation metadata", ErrInvalidPermissionCatalog, definition.Action)
 		}
-		switch definition.Scope {
-		case PermissionScopeInstance:
-			if len(definition.ResourceKinds) != 0 || len(definition.CheckKinds) != 0 {
-				return fmt.Errorf("%w: instance action %q has graph kinds", ErrInvalidPermissionCatalog, definition.Action)
-			}
-		case PermissionScopeProject, PermissionScopeResource:
-			if len(definition.ResourceKinds) == 0 || len(definition.CheckKinds) == 0 {
-				return fmt.Errorf("%w: action %q lacks resource/check kinds", ErrInvalidPermissionCatalog, definition.Action)
-			}
-		default:
-			return fmt.Errorf("%w: action %q has scope %q", ErrInvalidPermissionCatalog, definition.Action, definition.Scope)
-		}
-		if err := validateKinds(definition.Action, "resource", definition.ResourceKinds); err != nil {
-			return err
-		}
-		if err := validateKinds(definition.Action, "check", definition.CheckKinds); err != nil {
-			return err
-		}
-		byAction[definition.Action] = definition
-	}
-	for _, definition := range definitions {
-		seen := make(map[Action]struct{}, len(definition.Prerequisites))
-		for _, prerequisite := range definition.Prerequisites {
-			if prerequisite == definition.Action {
-				return fmt.Errorf("%w: action %q requires itself", ErrInvalidPermissionCatalog, definition.Action)
-			}
-			if _, duplicate := seen[prerequisite]; duplicate {
-				return fmt.Errorf("%w: action %q repeats prerequisite %q", ErrInvalidPermissionCatalog, definition.Action, prerequisite)
-			}
-			seen[prerequisite] = struct{}{}
-			if _, exists := byAction[prerequisite]; !exists {
-				return fmt.Errorf("%w: action %q has unknown prerequisite %q", ErrInvalidPermissionCatalog, definition.Action, prerequisite)
+		for _, kind := range definition.ResourceKinds {
+			if !kind.Valid() {
+				return fmt.Errorf("%w: action %q has unknown resource kind %q", ErrInvalidPermissionCatalog, definition.Action, kind)
 			}
 		}
-	}
-	if cycle := permissionCycle(byAction); len(cycle) > 0 {
-		return fmt.Errorf("%w: prerequisite cycle %s", ErrInvalidPermissionCatalog, strings.Join(cycle, " -> "))
+		for _, kind := range definition.CheckKinds {
+			if !kind.Valid() {
+				return fmt.Errorf("%w: action %q has unknown check kind %q", ErrInvalidPermissionCatalog, definition.Action, kind)
+			}
+		}
 	}
 	return permissions.ValidateCatalog(permissionMechanicsDefinitions(definitions))
-}
-
-func validActionName(action Action) bool {
-	value := string(action)
-	if value == "" || value != strings.ToLower(value) || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") || !strings.Contains(value, ".") {
-		return false
-	}
-	for _, char := range value {
-		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '.' || char == '_' {
-			continue
-		}
-		return false
-	}
-	return !strings.Contains(value, "..")
-}
-
-func validateKinds(action Action, label string, kinds []projectgraph.Kind) error {
-	seen := make(map[projectgraph.Kind]struct{}, len(kinds))
-	for _, kind := range kinds {
-		if !kind.Valid() {
-			return fmt.Errorf("%w: action %q has invalid %s kind %q", ErrInvalidPermissionCatalog, action, label, kind)
-		}
-		if _, duplicate := seen[kind]; duplicate {
-			return fmt.Errorf("%w: action %q repeats %s kind %q", ErrInvalidPermissionCatalog, action, label, kind)
-		}
-		seen[kind] = struct{}{}
-	}
-	return nil
-}
-
-func permissionCycle(definitions map[Action]PermissionDefinition) []string {
-	const (
-		unvisited = iota
-		visiting
-		visited
-	)
-	state := make(map[Action]int, len(definitions))
-	stack := make([]Action, 0, len(definitions))
-	actions := make([]string, 0, len(definitions))
-	for action := range definitions {
-		actions = append(actions, string(action))
-	}
-	sort.Strings(actions)
-	var visit func(Action) []string
-	visit = func(action Action) []string {
-		if state[action] == visiting {
-			start := 0
-			for index, candidate := range stack {
-				if candidate == action {
-					start = index
-					break
-				}
-			}
-			cycle := make([]string, 0, len(stack)-start+1)
-			for _, candidate := range stack[start:] {
-				cycle = append(cycle, string(candidate))
-			}
-			return append(cycle, string(action))
-		}
-		if state[action] == visited {
-			return nil
-		}
-		state[action] = visiting
-		stack = append(stack, action)
-		for _, prerequisite := range definitions[action].Prerequisites {
-			if cycle := visit(prerequisite); len(cycle) > 0 {
-				return cycle
-			}
-		}
-		stack = stack[:len(stack)-1]
-		state[action] = visited
-		return nil
-	}
-	for _, raw := range actions {
-		if cycle := visit(Action(raw)); len(cycle) > 0 {
-			return cycle
-		}
-	}
-	return nil
 }
