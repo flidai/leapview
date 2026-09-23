@@ -1,3 +1,4 @@
+# Temporary draft-PR smoke test; close without merging.
 name: Local Docker macOS tests
 
 on:
