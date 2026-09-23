@@ -6,6 +6,7 @@ export async function verifyBuilderZoomActionTargets(page: Page, baseURL: string
   const previewEnvelope = governedBarPreviewEnvelope('sha256:builder-zoom-targets')
   await page.goto(baseURL)
   await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+  await page.waitForLoadState('networkidle')
   await page.locator('lv-dashboard-builder').evaluate(async (element: any, envelope: any) => {
     const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
     mergePatch({ builderVisuals: { 'sales-chart': envelope } })
