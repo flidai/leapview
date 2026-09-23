@@ -63,6 +63,19 @@ func TestDevLifecycleCommandSurfaceMatchesAcceptedContract(t *testing.T) {
 	}
 }
 
+func TestLocalDevBrowserHandoffHonorsNoBrowser(t *testing.T) {
+	command := &cobra.Command{Use: "dev"}
+	command.Flags().Bool("no-browser", false, "")
+	openBrowser, err := localDevOpenBrowser(command)
+	require.NoError(t, err)
+	require.True(t, openBrowser)
+
+	require.NoError(t, command.Flags().Set("no-browser", "true"))
+	openBrowser, err = localDevOpenBrowser(command)
+	require.NoError(t, err)
+	require.False(t, openBrowser)
+}
+
 func TestDevStatusRejectsInvalidFormatBeforeDockerResolution(t *testing.T) {
 	parent := &cobra.Command{Use: "dev"}
 	resolveCalls := 0

@@ -985,8 +985,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--checksum", help="adjacent .sha256 file (defaults to --archive.sha256)")
     parser.add_argument("--evidence-dir", default="qualification-evidence", help="bounded evidence output directory")
     parser.add_argument("--run-lifecycle", action="store_true", help="run init and one local dev lifecycle against an explicit Docker socket")
-    parser.add_argument("--required", action="store_true", help="fail instead of skipping missing platform/manual prerequisites")
-    parser.add_argument("--manual-prerequisites-confirmed", action="store_true", help="confirm a human can complete local device authentication")
+    parser.add_argument("--required", action="store_true", help="fail instead of skipping missing platform prerequisites")
     parser.add_argument("--docker-host", help="explicit local Unix Docker endpoint; never inferred for lifecycle")
     parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     return parser.parse_args(argv)
@@ -996,7 +995,6 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     required = args.required or os.environ.get("LEAPVIEW_QUALIFICATION_REQUIRED") == "1"
     run_lifecycle = args.run_lifecycle or os.environ.get("LEAPVIEW_QUALIFICATION_RUN_LIFECYCLE") == "1"
-    manual_confirmed = args.manual_prerequisites_confirmed or os.environ.get("LEAPVIEW_QUALIFICATION_MANUAL_PREREQUISITES") == "1"
     if args.timeout_seconds < 1 or args.timeout_seconds > 1_800:
         raise SystemExit("--timeout-seconds must be between 1 and 1800")
 
@@ -1075,8 +1073,6 @@ def main(argv: list[str]) -> int:
                 require_command_help(command_name, help_result)
 
             if run_lifecycle:
-                if not manual_confirmed:
-                    raise QualificationSkip("local lifecycle requires --manual-prerequisites-confirmed because device authentication is interactive")
                 raw_host = args.docker_host or ""
                 if not raw_host:
                     raise QualificationSkip("local lifecycle requires an explicit --docker-host Unix socket")

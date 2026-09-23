@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect, type Locator, type Page } from '@playwright/test'
 import { blockingAxeViolations, formatAxeViolations } from './axe_accessibility'
 import { ensureDashboardVisualizationsMounted } from './dashboard_visualization_readiness'
+import { verifyDashboardCopyBuilder } from './dashboard_copy_builder_qa'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
 type RouteExpectation = {
@@ -57,6 +58,7 @@ try {
     await verifyKeyboardAccessibilityJourney()
     await verifyEChartsFirstNavigation()
     await verifyDashboardCommandDoesNotReopenUpdates()
+    await verifyDashboardCopyBuilder(browser, baseURL)
     await verifyDataExplorerRecoveryActions()
     await verifyTableShowcase()
     await verifyFilterShowcase()

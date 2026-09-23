@@ -22,7 +22,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	candidates := candidateRouteDependencies{
 		access: routes.accessModule, agent: routes.agentModule, product: routes.product, assets: platform.assets,
 		dashboards: routes.dashboardModule, deployments: routes.deploymentModule,
-		runtimeHost: runtime.runtimeHostModule, candidateMetrics: runtime.candidateMetrics,
+		runtimeHost: runtime.runtimeHostModule, catalog: routes.projectCatalog, candidateMetrics: runtime.candidateMetrics,
 	}
 	csrf := func(next http.Handler) http.Handler {
 		return csrfMiddleware(routes.accessModule, next)

@@ -131,6 +131,12 @@ type SessionRequest struct {
 	InstanceID  string
 	Environment string
 	ProjectID   string
+	// CredentialsPath is the controller-owned, mode-0600 initialization
+	// credential file used only to establish the loopback local session.
+	CredentialsPath string
+	// OpenBrowser requests the post-authentication loopback handoff to the
+	// system browser. Headless qualification still establishes both sessions.
+	OpenBrowser bool
 }
 
 type SessionResult struct {

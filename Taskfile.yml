@@ -238,7 +238,7 @@ tasks:
         --archive "{{.LEAPVIEW_AUTHORING_ARCHIVE}}"
         --evidence-dir "{{.LEAPVIEW_AUTHORING_EVIDENCE_DIR | default .ROOT_DIR}}/.tmp/qualification/authoring-package"
         {{if .LEAPVIEW_AUTHORING_REQUIRED}}--required{{end}}
-        {{if .LEAPVIEW_AUTHORING_RUN_LIFECYCLE}}--run-lifecycle --manual-prerequisites-confirmed --docker-host "{{.LEAPVIEW_AUTHORING_DOCKER_HOST}}"{{end}}
+        {{if .LEAPVIEW_AUTHORING_RUN_LIFECYCLE}}--run-lifecycle --docker-host "{{.LEAPVIEW_AUTHORING_DOCKER_HOST}}"{{end}}
 
   test:qualification:postgres-ha:
     desc: Run the bounded disposable same-host PostgreSQL 18 Patroni HA qualification

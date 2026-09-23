@@ -113,6 +113,55 @@ func TestProviderPlacesExploreInInsightsNavigation(t *testing.T) {
 	t.Fatal("Insights navigation did not contain Data Explorer")
 }
 
+func TestProviderFiltersUnauthorizedProductNavigation(t *testing.T) {
+	provider := Provider(Config{
+		Presentation:      webpage.Presentation{ProductName: "LeapView"},
+		ProductNavigation: &ProductNavigationAccess{CanDashboardCatalog: true},
+	})
+	for _, active := range []string{"", "dashboard-catalog"} {
+		t.Run(active, func(t *testing.T) {
+			layout := provider(webpage.Context{Active: active})
+			chrome := layout.Signal.(Chrome)
+			if chrome.Sidebar.Area != "insights" {
+				t.Fatalf("area = %q, want insights", chrome.Sidebar.Area)
+			}
+			if len(chrome.Sidebar.Areas) != 1 || chrome.Sidebar.Areas[0].ID != "insights" {
+				t.Fatalf("areas = %#v, want only Insights", chrome.Sidebar.Areas)
+			}
+			if active == "dashboard-catalog" && chrome.Sidebar.Active != "dashboards" {
+				t.Fatalf("active = %q, want dashboards in Insights", chrome.Sidebar.Active)
+			}
+			if len(chrome.Sidebar.Groups) != 1 || len(chrome.Sidebar.Groups[0].Items) != 2 {
+				t.Fatalf("navigation = %#v, want dashboards and chats", chrome.Sidebar.Groups)
+			}
+			if chrome.Sidebar.Groups[0].Items[0].ID != "dashboards" || chrome.Sidebar.Groups[0].Items[1].ID != "chat" {
+				t.Fatalf("navigation = %#v, want dashboards and chats", chrome.Sidebar.Groups)
+			}
+			if chrome.Sidebar.Groups[0].Items[0].Href != "/" || chrome.Sidebar.Groups[0].Items[1].Href != "/chats" {
+				t.Fatalf("navigation = %#v, want dashboard/chat links", chrome.Sidebar.Groups)
+			}
+		})
+	}
+}
+
+func TestProviderFiltersDevelopNavigationByResourceKind(t *testing.T) {
+	provider := Provider(Config{
+		Presentation:      webpage.Presentation{ProductName: "LeapView"},
+		ProductNavigation: &ProductNavigationAccess{CanModels: true, CanDashboardCatalog: true},
+	})
+	layout := provider(webpage.Context{Active: "models"})
+	chrome := layout.Signal.(Chrome)
+	if len(chrome.Sidebar.Areas) != 2 || chrome.Sidebar.Areas[1].Href != "/models" {
+		t.Fatalf("areas = %#v, want Develop rooted at models", chrome.Sidebar.Areas)
+	}
+	if len(chrome.Sidebar.Groups) != 1 || len(chrome.Sidebar.Groups[0].Items) != 2 {
+		t.Fatalf("navigation = %#v, want models and dashboards", chrome.Sidebar.Groups)
+	}
+	if chrome.Sidebar.Groups[0].Items[0].ID != "models" || chrome.Sidebar.Groups[0].Items[1].ID != "dashboard-catalog" {
+		t.Fatalf("navigation = %#v, want authorized resource kinds only", chrome.Sidebar.Groups)
+	}
+}
+
 func TestProviderProjectsCustomProductIdentity(t *testing.T) {
 	provider := Provider(Config{
 		Presentation:   webpage.Presentation{ProductName: "Northstar Analytics"},

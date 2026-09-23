@@ -15,6 +15,7 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	"github.com/go-chi/chi/v5"
@@ -44,6 +45,7 @@ type candidateRouteDependencies struct {
 	dashboards       *dashboardmodule.Module
 	deployments      *deploymentmodule.Module
 	runtimeHost      *runtimehostmodule.Module
+	catalog          *projectcatalog.Service
 	candidateMetrics func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
 }
 
@@ -55,7 +57,7 @@ func candidatePreview(deps candidateRouteDependencies, w http.ResponseWriter, r 
 	if candidate.Status != deploymentmodule.CandidateReady {
 		serveCandidatePreview(
 			deps.deployments, candidate.ID, principalID,
-			applicationLayout(deps.access, deps.agent, deps.product, deps.assets, r), w, r,
+			applicationLayout(deps.access, deps.agent, deps.product, deps.assets, r, authorizedProductNavigationAccess(r.Context(), deps.access, deps.catalog, r)), w, r,
 		)
 		return
 	}
@@ -106,7 +108,7 @@ func candidateReview(deps candidateRouteDependencies, w http.ResponseWriter, r *
 	}
 	serveCandidateReview(
 		deps.deployments, strings.TrimSpace(chi.URLParam(r, "candidate")), projectID,
-		applicationLayout(deps.access, deps.agent, deps.product, deps.assets, r), w, r,
+		applicationLayout(deps.access, deps.agent, deps.product, deps.assets, r, authorizedProductNavigationAccess(r.Context(), deps.access, deps.catalog, r)), w, r,
 	)
 }
 

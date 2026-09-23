@@ -43,11 +43,30 @@ func newLocalRuntimeControllerForProfile(endpoint localdocker.Endpoint, command 
 	return localruntime.New(localruntime.Options{
 		Endpoint: endpoint, ResolveProjectAuthority: resolveLocalProjectAuthority,
 		EstablishSessions: func(ctx context.Context, request localruntime.SessionRequest) (localruntime.SessionResult, error) {
+			openBrowser, err := localDevOpenBrowser(command)
+			if err != nil {
+				return localruntime.SessionResult{}, err
+			}
+			request.OpenBrowser = openBrowser
 			return establishLocalAuthoringSessions(ctx, request, command.OutOrStdout())
 		},
 		ResetSessions: resetLocalAuthoringSessions,
 		Stdout:        command.OutOrStdout(), DevelopmentCredentials: credentials, DevelopmentProfile: profile,
 	})
+}
+
+func localDevOpenBrowser(command *cobra.Command) (bool, error) {
+	if command == nil {
+		return false, errors.New("local development command is required")
+	}
+	if command.Flags().Lookup("no-browser") == nil {
+		return true, nil
+	}
+	noBrowser, err := command.Flags().GetBool("no-browser")
+	if err != nil {
+		return false, err
+	}
+	return !noBrowser, nil
 }
 
 func runAttachedLocalRuntime(ctx context.Context, controller localRuntimeLifecycle, once bool) error {

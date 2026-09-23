@@ -21,6 +21,9 @@ SERVICE = 'leapview-demo-current.service'
 UNIT = Path('/etc/systemd/system') / SERVICE
 DATABASE_CONTAINER = 'leapview-postgres-3948794932-demo-current-postgres-1'
 HOME_PATH = Path('/tmp/leapview-demo-host-state')
+AGENT_API_KEY_FILE = Path('/run/leapview-demo-agent-api-key')
+AGENT_BASE_URL = 'https://api.deepseek.com'
+AGENT_MODEL = 'deepseek-v4-flash'
 
 
 def output(*args):
@@ -68,6 +71,9 @@ def sha256(path):
 def main():
     os.umask(0o077)
     assert sys.argv[1:] in (['--check'], ['--apply']), 'Expected --check or --apply'
+    agent_api_key = AGENT_API_KEY_FILE.read_text()
+    AGENT_API_KEY_FILE.unlink()
+    assert agent_api_key and '\n' not in agent_api_key and '\r' not in agent_api_key, 'Invalid agent provider key'
     assert IMAGE == EXPECTED_IMAGE, 'Staged image differs from the admitted image'
     assert output('systemctl', 'is-active', SERVICE) == 'active'
     pid = output('systemctl', 'show', SERVICE, '--property=MainPID', '--value')
@@ -148,6 +154,10 @@ def main():
         if migration.returncode and 'already initialized' not in (backup / 'baseline-error.log').read_text():
             raise RuntimeError('Canonical baseline operation failed; private diagnostics retained with backup')
         assert sql('SELECT max(version_id) FROM public.goose_db_version WHERE is_applied') == '22'
+        runtime_env['LEAPVIEW_AGENT_API_KEY'] = agent_api_key
+        runtime_env['LEAPVIEW_AGENT_BASE_URL'] = AGENT_BASE_URL
+        runtime_env['LEAPVIEW_AGENT_MODEL'] = AGENT_MODEL
+        agent_api_key = ''
         environment_file = RELEASE / 'runtime.env'
         environment_lines = []
         for name, value in sorted(runtime_env.items()):
@@ -166,6 +176,10 @@ def main():
         new_pid = output('systemctl', 'show', SERVICE, '--property=MainPID', '--value')
         live = json.loads(output(f'/proc/{new_pid}/exe', 'version', '--json'))
         assert live['revision'] == REVISION
+        live_environment = dict(item.decode().split('=', 1) for item in Path('/proc', new_pid, 'environ').read_bytes().split(b'\0') if b'=' in item)
+        assert live_environment.get('LEAPVIEW_AGENT_API_KEY'), 'Agent provider key was not installed'
+        assert live_environment.get('LEAPVIEW_AGENT_BASE_URL') == AGENT_BASE_URL, 'Agent provider URL differs'
+        assert live_environment.get('LEAPVIEW_AGENT_MODEL') == AGENT_MODEL, 'Agent provider model differs'
         with urllib.request.urlopen('https://demo.leapview.dev/readyz', timeout=15) as response:
             assert response.status == 200 and json.load(response)['status'] == 'ready'
         with urllib.request.urlopen('https://demo.leapview.dev/login', timeout=15) as response:
