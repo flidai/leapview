@@ -118,7 +118,9 @@ absence of a project role must not be treated as a blanket denial of those pages
 ### Agent provider
 
 The legacy hosted-demo rollout receives `DEEPSEEK_API_KEY` from the protected
-GitHub environment and passes it directly to `scripts/rollout_demo_runtime.sh`.
+Infisical `prod:/demo/deployment` path and passes it directly to
+`scripts/rollout_demo_runtime.sh`. The rollout step must not override that
+injected value with an unset GitHub environment secret.
 The checked rollout maps it to `LEAPVIEW_AGENT_API_KEY`, sets
 `LEAPVIEW_AGENT_BASE_URL` and `LEAPVIEW_AGENT_MODEL`, and writes those values
 only to the release's private mode-0600 `runtime.env`. The provider key is never committed.
