@@ -88,6 +88,12 @@ func TestFAI981CoordinatedProviderRestoreQualification(t *testing.T) {
 	postgres := startQualificationPostgres(t, recoveryNetwork, manifest, runID, providerHost, tlsMaterial)
 	backups := postgres.seedBackupAndDamage(t, objectPoints)
 	authorityPool := postgres.createAuthorityDatabase(t)
+	if err := os.MkdirAll(privateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(privateRoot, "authority-url"), []byte(postgres.consumerAuthorityURL(t)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	set := qualificationRecoverySet(t, postgres.clusterIdentity, backups, objects, objectPoints)
 	canonicalSet, err := set.CanonicalJSON()
@@ -188,7 +194,7 @@ func TestFAI981DownstreamHandoffSurvivesProducerExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if os.Getenv("LEAPVIEW_TEST_FAI981_ISOLATED_CONSUMER") == "" {
-		runIsolatedHandoffConsumer(t, evidenceRoot, privateRoot, report)
+		runIsolatedHandoffConsumer(t, evidenceRoot, privateRoot, report, summary.Occurrence.Evidence[0])
 		return
 	}
 	bundle, err := (providerrestore.FileSecretBundleStore{Root: privateRoot}).Load(t.Context(), report.Handoff.Secrets)
@@ -199,15 +205,17 @@ func TestFAI981DownstreamHandoffSurvivesProducerExit(t *testing.T) {
 	if relative, err := filepath.Rel(evidenceRoot, privateBundlePath); err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		t.Fatal("credential bundle is inside the published evidence tree")
 	}
-	reportPath := filepath.Join(t.TempDir(), "provider-restore-report.json")
-	reportJSON, err := json.Marshal(report)
+	reportPath := "/tmp/provider-restore-report.json"
+	authorityURL, err := os.ReadFile(filepath.Join(privateRoot, "authority-url"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(reportPath, reportJSON, 0o600); err != nil {
+	ledgerPool, err := pgxpool.New(t.Context(), strings.TrimSpace(string(authorityURL)))
+	if err != nil {
 		t.Fatal(err)
 	}
-	admission, err := (hostinstall.RecoveryAdmission{}).Admit(t.Context(), hostinstall.RecoveryAdmissionRequest{
+	t.Cleanup(ledgerPool.Close)
+	admission, err := (hostinstall.RecoveryAdmission{Ledger: refreshpg.NewRecoveryLedger(ledgerPool)}).Admit(t.Context(), hostinstall.RecoveryAdmissionRequest{
 		ReportPath: reportPath, SecretRoot: privateRoot, OutputPath: "/tmp/recovery-admission.json",
 		OccurrenceID: report.OccurrenceID, TargetID: report.TargetID, RecoverySetID: report.RecoverySetID,
 		FrontierDigest: report.FrontierDigest, ArtifactIdentity: report.Handoff.Artifact.Image,
@@ -217,6 +225,9 @@ func TestFAI981DownstreamHandoffSurvivesProducerExit(t *testing.T) {
 	}
 	if admission.Status != "admitted" || !admission.Probe.TLSVerified || admission.Probe.ObjectCount != len(report.Objects) {
 		t.Fatalf("replacement-host preactivation admission incomplete: %#v", admission)
+	}
+	if os.Getenv("LEAPVIEW_TEST_FAI981_ISOLATED_CONSUMER") != "" {
+		runQualificationAdmissionCLI(t, report, reportPath, privateRoot, filepath.Join(privateRoot, "authority-url"))
 	}
 	if os.Getenv("LEAPVIEW_TEST_FAI981_ISOLATED_CONSUMER") == "" {
 		for _, resource := range report.Handoff.Providers {
@@ -487,7 +498,7 @@ func persistResourceAfterCreate(manifest providerrestore.RetainedResourceManifes
 	}}
 }
 
-func runIsolatedHandoffConsumer(t *testing.T, evidenceRoot, privateRoot string, report providerrestore.Report) {
+func runIsolatedHandoffConsumer(t *testing.T, evidenceRoot, privateRoot string, report providerrestore.Report, reference recovery.EvidenceReference) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
@@ -496,6 +507,12 @@ func runIsolatedHandoffConsumer(t *testing.T, evidenceRoot, privateRoot string, 
 	sourceBundle, err := (providerrestore.FileSecretBundleStore{Root: privateRoot}).SourcePath(report.Handoff.Secrets)
 	if err != nil {
 		t.Fatal(err)
+	}
+	cliBinary := filepath.Join(t.TempDir(), "leapviewctl")
+	build := exec.Command("go", "build", "-o", cliBinary, "github.com/flidai/leapview/cmd/leapviewctl")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build production recovery admission CLI: %v: %s", err, output)
 	}
 	consumer, err := testcontainers.GenericContainer(t.Context(), testcontainers.GenericContainerRequest{
 		Started: true,
@@ -520,11 +537,20 @@ func runIsolatedHandoffConsumer(t *testing.T, evidenceRoot, privateRoot string, 
 	if err := consumer.CopyFileToContainer(t.Context(), executable, "/tmp/fai981-consumer", 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := consumer.CopyFileToContainer(t.Context(), cliBinary, "/tmp/leapviewctl", 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := consumer.CopyFileToContainer(t.Context(), filepath.Join(evidenceRoot, "coordinated-provider-restore.json"), "/tmp/coordinated-provider-restore.json", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.CopyFileToContainer(t.Context(), filepath.Join(evidenceRoot, "checkpoints", reference.SHA256+".json"), "/tmp/provider-restore-report.json", 0o600); err != nil {
 		t.Fatal(err)
 	}
 	consumerSecretPath := filepath.Join("/run/leapview/recovery", report.Handoff.Secrets.SHA256+".json")
 	if err := consumer.CopyFileToContainer(t.Context(), sourceBundle, consumerSecretPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.CopyFileToContainer(t.Context(), filepath.Join(privateRoot, "authority-url"), "/run/leapview/recovery/authority-url", 0o600); err != nil {
 		t.Fatal(err)
 	}
 	exitCode, output, err := consumer.Exec(t.Context(), []string{"/tmp/fai981-consumer", "-test.run=^TestFAI981DownstreamHandoffSurvivesProducerExit$", "-test.v"}, tcexec.Multiplexed())
@@ -544,8 +570,102 @@ func runIsolatedHandoffConsumer(t *testing.T, evidenceRoot, privateRoot string, 
 	if err := os.WriteFile(filepath.Join(evidenceRoot, "replacement-host-preactivation-admission.json"), admissionJSON, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	cliReader, err := consumer.CopyFileFromContainer(t.Context(), "/tmp/recovery-admission-cli.json")
+	if err != nil {
+		t.Fatalf("copy production CLI admission evidence: %v", err)
+	}
+	cliJSON, readErr := io.ReadAll(cliReader)
+	closeErr = cliReader.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read production CLI admission evidence: %v", errorsJoin(readErr, closeErr))
+	}
+	if err := os.WriteFile(filepath.Join(evidenceRoot, "replacement-host-cli-admission.json"), cliJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	assertQualificationEvidenceCredentialFree(t, evidenceRoot)
 	t.Log("isolated handoff consumer used the default bridge without the producer recovery network or filesystem mounts")
+}
+
+func runQualificationAdmissionCLI(t *testing.T, report providerrestore.Report, reportPath, privateRoot, authorityURLPath string) {
+	t.Helper()
+	outputPath := "/tmp/recovery-admission-cli.json"
+	invoke := func() error {
+		command := exec.CommandContext(t.Context(), "/tmp/leapviewctl", "host", "admit-recovery",
+			"--report", reportPath, "--control-url-file", authorityURLPath,
+			"--secret-root", privateRoot, "--output", outputPath,
+			"--occurrence-id", report.OccurrenceID, "--target-id", report.TargetID,
+			"--recovery-set-id", report.RecoverySetID, "--frontier-digest", report.FrontierDigest,
+			"--artifact", report.Handoff.Artifact.Image)
+		command.Env = append(os.Environ(), "LEAPVIEWCTL_ROOT=/tmp")
+		if output, err := command.CombinedOutput(); err != nil {
+			return fmt.Errorf("production admission CLI: %w: %s", err, output)
+		}
+		return nil
+	}
+	if err := invoke(); err != nil {
+		t.Fatal(err)
+	}
+	assertCLIAdmission := func() {
+		t.Helper()
+		raw, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result hostinstall.RecoveryAdmissionEvidence
+		if err := json.Unmarshal(raw, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Status != "admitted" || result.OccurrenceID != report.OccurrenceID || result.Probe.ControlDigest != report.Verification.ControlStateDigest || result.Probe.DuckLakeDigest != report.Verification.DuckLakeStateDigest {
+			t.Fatalf("production CLI admitted incorrect recovery state: %#v", result)
+		}
+	}
+	assertCLIAdmission()
+	original, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changed providerrestore.Report
+	if err := json.Unmarshal(original, &changed); err != nil {
+		t.Fatal(err)
+	}
+	changed.Verification.ProviderOperationID = "modified-after-publication"
+	edited, err := json.Marshal(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reportPath, edited, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := invoke(); err == nil {
+		t.Fatal("production CLI admitted a modified authoritative report")
+	}
+	if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
+		t.Fatalf("failed CLI retry retained prior success: %v", err)
+	}
+	if err := os.WriteFile(reportPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := (providerrestore.FileSecretBundleStore{Root: privateRoot}).Load(t.Context(), report.Handoff.Secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := openQualificationTLSPool(t, bundle.ControlURL, bundle.PostgresRootCA)
+	if _, err := control.Exec(t.Context(), `UPDATE application_state SET state_value='changed-after-restore' WHERE state_key='tenant'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := invoke(); err == nil {
+		t.Fatal("production CLI admitted altered live PostgreSQL state")
+	}
+	if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
+		t.Fatalf("incorrect live state retained prior success: %v", err)
+	}
+	if _, err := control.Exec(t.Context(), `UPDATE application_state SET state_value='tenant-a' WHERE state_key='tenant'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := invoke(); err != nil {
+		t.Fatal(err)
+	}
+	assertCLIAdmission()
 }
 
 func assertIsolatedConsumer(t *testing.T, containerID, networkName string) {
@@ -583,6 +703,7 @@ type qualificationPostgresFixture struct {
 	timeline        string
 	backupIdentity  string
 	providerHost    string
+	authorityHost   string
 	rootCA          string
 }
 
@@ -601,6 +722,14 @@ func startQualificationPostgres(t *testing.T, networkName string, manifest provi
 		t.Fatal("PostgreSQL qualification credential is not unpredictable")
 	}
 	primaryPort, restorePort := freeLoopbackPort(t), freeLoopbackPort(t)
+	bridgeOutput, err := exec.Command("docker", "network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("find isolated consumer bridge gateway: %v: %s", err, bridgeOutput)
+	}
+	bridgeGateway, err := netip.ParseAddr(strings.TrimSpace(string(bridgeOutput)))
+	if err != nil || !bridgeGateway.Is4() || bridgeGateway.IsLoopback() {
+		t.Fatalf("invalid isolated consumer bridge gateway: %q: %v", bridgeOutput, err)
+	}
 	container, err := tcpostgres.Run(ctx, postgrestest.PostgreSQL18Image,
 		tcpostgres.WithDatabase("postgres"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword(password),
 		testcontainers.WithFiles(
@@ -616,7 +745,10 @@ func startQualificationPostgres(t *testing.T, networkName string, manifest provi
 		testcontainers.WithAdditionalLifecycleHooks(persistResourceAfterCreate(manifest, runID)),
 		testcontainers.WithHostConfigModifier(func(config *dockercontainer.HostConfig) {
 			config.PortBindings = dockernetwork.PortMap{
-				dockernetwork.MustParsePort("5432/tcp"):  {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: primaryPort}},
+				dockernetwork.MustParsePort("5432/tcp"): {
+					{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: primaryPort},
+					{HostIP: bridgeGateway, HostPort: primaryPort},
+				},
 				dockernetwork.MustParsePort("55432/tcp"): {{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: restorePort}},
 			}
 		}),
@@ -648,7 +780,7 @@ func startQualificationPostgres(t *testing.T, networkName string, manifest provi
 	if err := admin.QueryRow(ctx, `SELECT timeline_id::text FROM pg_control_checkpoint()`).Scan(&timeline); err != nil {
 		t.Fatal(err)
 	}
-	return &qualificationPostgresFixture{container: container, resourceID: container.GetContainerID(), admin: admin, password: password, clusterIdentity: "postgres-system:" + systemID, timeline: timeline, providerHost: providerHost, rootCA: material.caCert}
+	return &qualificationPostgresFixture{container: container, resourceID: container.GetContainerID(), admin: admin, password: password, clusterIdentity: "postgres-system:" + systemID, timeline: timeline, providerHost: providerHost, authorityHost: bridgeGateway.String(), rootCA: material.caCert}
 }
 
 func (fixture *qualificationPostgresFixture) seedBackupAndDamage(t *testing.T, objects map[string]qualificationObjectPoint) map[recoveryset.DatabaseRole]qualificationBackup {
@@ -752,6 +884,15 @@ func (fixture *qualificationPostgresFixture) databaseURL(t *testing.T, name stri
 		t.Fatal(err)
 	}
 	return value
+}
+
+func (fixture *qualificationPostgresFixture) consumerAuthorityURL(t *testing.T) string {
+	t.Helper()
+	port, err := fixture.container.MappedPort(t.Context(), "5432/tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return (&url.URL{Scheme: "postgres", User: url.UserPassword("postgres", fixture.password), Host: net.JoinHostPort(fixture.authorityHost, port.Port()), Path: "/fai981_recovery_authority", RawQuery: "sslmode=disable"}).String()
 }
 
 type qualificationDatabaseProvider struct {
@@ -1078,31 +1219,7 @@ func qualificationDatabaseStateDigest(t *testing.T, pool *pgxpool.Pool, role rec
 }
 
 func qualificationDatabaseStateDigestContext(ctx context.Context, pool *pgxpool.Pool, role recoveryset.DatabaseRole) (string, error) {
-	query := `SELECT id::text,state_key,state_value FROM application_state ORDER BY id`
-	if role == recoveryset.DatabaseDuckLake {
-		query = `
-SELECT 'metadata',key,value FROM ducklake_catalog.ducklake_metadata
-UNION ALL SELECT 'snapshot',snapshot_id::text,catalog_version::text FROM ducklake_catalog.ducklake_snapshot
-UNION ALL SELECT 'object',object_uri,object_version||':'||object_digest FROM ducklake_catalog.ducklake_data_file
-ORDER BY 1,2,3`
-	}
-	rows, err := pool.Query(ctx, query)
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-	hash := sha256.New()
-	for rows.Next() {
-		var first, second, third string
-		if err := rows.Scan(&first, &second, &third); err != nil {
-			return "", err
-		}
-		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00%s\n", first, second, third)
-	}
-	if err := rows.Err(); err != nil {
-		return "", err
-	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+	return hostinstall.RecoveryDatabaseStateDigest(ctx, pool, role)
 }
 
 func assertQualificationResult(t *testing.T, report providerrestore.Report, occurrence recovery.Occurrence, set recoveryset.RecoverySet, objects map[string]qualificationObjectPoint) {

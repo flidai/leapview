@@ -133,6 +133,7 @@ traffic activation:
 ```sh
 sudo leapviewctl host admit-recovery \
   --report /secure/provider-restore-report.json \
+  --control-url-file /run/leapview/recovery/authority-url \
   --occurrence-id "$RECOVERY_OCCURRENCE_ID" \
   --target-id "$TARGET_ID" \
   --recovery-set-id "$RECOVERY_SET_ID" \
@@ -142,10 +143,14 @@ sudo leapviewctl host admit-recovery \
 
 The provisioner installs the matching secret bundle under
 `/run/leapview/recovery`; the command resolves the opaque reference there,
-binds every expected identity, verifies provider TLS and exact object versions,
+loads the completed occurrence from the PostgreSQL recovery ledger, requires
+the report bytes to match its immutable evidence digest, binds every expected
+identity, verifies provider TLS, live control and DuckLake state digests, and
+exact object versions,
 and writes `/opt/leapview/recovery-admission.json`. It fails before writing
 success evidence when the handoff is missing, mismatched, insecure, or
-unreachable. This command does not install the artifact, activate traffic, or
+unreachable. A failed retry removes prior admission evidence at that path.
+This command does not install the artifact, activate traffic, or
 perform a replacement-host rebuild.
 
 This disposable qualification proves the repository coordinator, fencing,
