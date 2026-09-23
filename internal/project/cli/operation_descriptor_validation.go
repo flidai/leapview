@@ -62,9 +62,10 @@ func normalizeDeploymentOperation(descriptor DeploymentOperationDescriptor) (Dep
 	descriptor.PublicationStatus = strings.TrimSpace(descriptor.PublicationStatus)
 	descriptor.FailureCode = strings.TrimSpace(descriptor.FailureCode)
 	descriptor.FailureDetail = strings.TrimSpace(descriptor.FailureDetail)
-	if descriptor.Outcome == DeploymentOperationActive {
-		// A resolved publication must not retain an earlier approval or retry
-		// error in its durable descriptor or structured result.
+	if descriptor.Outcome == DeploymentOperationActive ||
+		(descriptor.Outcome == DeploymentOperationPendingApproval && descriptor.PublicationID != "" && descriptor.PublicationStatus == "pending") {
+		// Once publication is accepted, an earlier plan-confirmation or retry
+		// error is no longer the reason for its current outcome.
 		descriptor.FailureCode, descriptor.FailureDetail = "", ""
 	}
 	descriptor.StatusURL = strings.TrimSpace(descriptor.StatusURL)

@@ -350,7 +350,8 @@ func (operations projectDeployOperations) deployWithOperation(ctx context.Contex
 		default:
 			descriptor.Outcome = projectcli.DeploymentOperationIndeterminate
 		}
-		if descriptor.Outcome == projectcli.DeploymentOperationActive {
+		if descriptor.Outcome == projectcli.DeploymentOperationActive ||
+			(descriptor.Outcome == projectcli.DeploymentOperationPendingApproval && descriptor.PublicationStatus == "pending") {
 			descriptor.FailureCode, descriptor.FailureDetail = "", ""
 		}
 		if err := store.Save(descriptor); err != nil {
@@ -492,7 +493,8 @@ func (operations projectDeployOperations) reconcileDescriptor(ctx context.Contex
 	if descriptor.Outcome == projectcli.DeploymentOperationActive && descriptor.GenerationID == "" {
 		descriptor.Outcome = projectcli.DeploymentOperationIndeterminate
 		descriptor.FailureDetail = "target reported committed publication without generation identity"
-	} else if descriptor.Outcome == projectcli.DeploymentOperationActive {
+	} else if descriptor.Outcome == projectcli.DeploymentOperationActive ||
+		(descriptor.Outcome == projectcli.DeploymentOperationPendingApproval && descriptor.PublicationStatus == "pending") {
 		descriptor.FailureCode, descriptor.FailureDetail = "", ""
 	}
 	if descriptor.StatusURL == "" && descriptor.CandidateID != "" {

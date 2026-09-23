@@ -120,6 +120,20 @@ func TestDeployOperationRequiresExactPlanReviewBeforeExpensiveWork(t *testing.T)
 	if builder.calls != 0 || publisher.calls != 0 || !strings.Contains(resumeOutput.String(), "plan-review operation review-gate") || !strings.Contains(resumeOutput.String(), "qualification required") {
 		t.Fatalf("retained review was not rendered before expensive work: build=%d publish=%d output=%q", builder.calls, publisher.calls, resumeOutput.String())
 	}
+
+	publisher.result.Status = "pending"
+	var confirmedOutput strings.Builder
+	err = operations.Deploy(t.Context(), projectcli.DeployOptions{Credentials: credentials, Environment: "prod", Intent: "resume", OperationHandle: "review-gate", ConfirmPlan: planDigest, Format: "json"}, &confirmedOutput)
+	if err == nil || !strings.Contains(err.Error(), "pending_approval") {
+		t.Fatalf("pending publication error = %v output=%q", err, confirmedOutput.String())
+	}
+	confirmed, err := store.Load("review-gate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if confirmed.PublicationStatus != "pending" || confirmed.FailureDetail != "" || strings.Contains(confirmedOutput.String(), "failureDetail") {
+		t.Fatalf("pending publication retained obsolete plan confirmation failure: descriptor=%#v output=%q", confirmed, confirmedOutput.String())
+	}
 }
 
 func TestDeployOperationRejectsStalePlanBeforeBuild(t *testing.T) {

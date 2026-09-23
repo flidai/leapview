@@ -11,6 +11,7 @@ import (
 	analyticsenvironment "github.com/flidai/leapview/internal/analytics/environment"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	developmentinput "github.com/flidai/leapview/internal/project/developmentinput"
 	developmentprofile "github.com/flidai/leapview/internal/project/developmentprofile"
 	"github.com/spf13/cobra"
 )
@@ -159,6 +160,14 @@ func discoverLocalCheckout(start string) (string, error) {
 	}
 	start = current
 	for {
+		// An initialized project is its own checkout even when created inside
+		// another repository. Use its authored marker before an ancestor .git.
+		projectMarker := filepath.Join(current, filepath.FromSlash(developmentinput.DefaultRelativePath))
+		if info, statErr := os.Lstat(projectMarker); statErr == nil && info.Mode().IsRegular() {
+			return filepath.Clean(current), nil
+		} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect initialized project marker: %w", statErr)
+		}
 		marker := filepath.Join(current, ".git")
 		if info, statErr := os.Lstat(marker); statErr == nil && (info.IsDir() || info.Mode().IsRegular()) {
 			return filepath.Clean(current), nil
