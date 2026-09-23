@@ -153,7 +153,7 @@ test('ECharts handle reapplies compact layout after updates and restores desktop
   expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
 })
 
-test('ECharts handle switches proportional label layout only across responsive breakpoints', () => {
+test('ECharts handle reapplies width-sensitive legends and switches proportional labels across responsive breakpoints', () => {
   const calls: Record<string, any>[] = []
   const chart = {
     on() {}, off() {}, resize() {}, dispose() {},
@@ -172,7 +172,8 @@ test('ECharts handle switches proportional label layout only across responsive b
   const first = calls.at(-1)!.series[0]
   const count = calls.length
   handle.resize(360, 300)
-  expect(calls.length).toBe(count)
+  expect(calls.length).toBe(count + 1)
+  expect(calls.at(-1)!.legend).toMatchObject({ type: 'scroll', width: expect.any(Number) })
   expect(first.radius).toEqual(['54%', '76%'])
   expect(first.left).toBeUndefined()
   expect(first.right).toBeUndefined()

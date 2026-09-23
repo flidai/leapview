@@ -1,4 +1,5 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
+import { compactScrollLegendGeometry } from './compact-scroll-legend'
 
 const COMPACT_WIDTH = 480
 const COMPACT_HEIGHT = 280
@@ -32,30 +33,41 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
   const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
   const proportionalSeries = responsiveProportionalSeries(option.series, width, height)
-  if (option.grid === undefined) return proportionalSeries === undefined ? {} : { series: proportionalSeries }
-  const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
+  const responsivePie = hasPieSeries(option.series)
+  const patch: Record<string, any> = {}
   const bottomLegend = compact && hasBottomLegend(option.legend)
-  const slider = compact && hasSliderDataZoom(option.dataZoom)
-  const compactBottom = 12 + (bottomLegend ? 28 : 0) + (slider ? 42 : 0)
-  const grid = grids.map((value: Record<string, any>) => {
-    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-    return {
-      ...source,
-      ...(compact ? {
-        left: compactInset(source.left, 8),
-        right: compactInset(source.right, 8),
-        top: compactInset(source.top, 10),
-        bottom: compactBottomInset(source.bottom, compactBottom, option.visualMap !== undefined),
-      } : {}),
-    }
-  })
-  const patch: Record<string, any> = { grid: Array.isArray(option.grid) ? grid : grid[0] }
+  if (option.grid !== undefined) {
+    const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
+    const slider = compact && hasSliderDataZoom(option.dataZoom)
+    const compactBottom = 12 + (bottomLegend ? 28 : 0) + (slider ? 42 : 0)
+    const grid = grids.map((value: Record<string, any>) => {
+      const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+      return {
+        ...source,
+        ...(compact ? {
+          left: compactInset(source.left, 8),
+          right: compactInset(source.right, 8),
+          top: compactInset(source.top, 10),
+          bottom: compactBottomInset(source.bottom, compactBottom, option.visualMap !== undefined),
+        } : {}),
+      }
+    })
+    patch.grid = Array.isArray(option.grid) ? grid : grid[0]
+  }
   if (proportionalSeries !== undefined) patch.series = proportionalSeries
-  if (option.legend !== undefined) patch.legend = compact ? compactLegend(option.legend, width) : desktopLegend(option.legend)
+  if (option.legend !== undefined && (option.grid !== undefined || responsivePie)) {
+    patch.legend = compact ? compactLegend(option.legend, width) : desktopLegend(option.legend)
+  }
   if (option.dataZoom !== undefined) patch.dataZoom = compact
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
     : stripDataZoomNavigation(option.dataZoom)
   return patch
+}
+
+function hasPieSeries(value: unknown): boolean {
+  const series = Array.isArray(value) ? value : [value]
+  return series.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
+    && (entry as Record<string, unknown>).type === 'pie')
 }
 
 function responsiveProportionalSeries(value: unknown, width: number, height: number): unknown[] | undefined {
@@ -155,6 +167,12 @@ function desktopLegend(value: unknown): unknown {
     // Clear compact sizing, retaining the scroll component and its selection state.
     return {
       type: 'scroll', left: 'center', right: 'auto', width: 'auto', height: 'auto', ...legend,
+      textStyle: {
+        ...((legend.textStyle && typeof legend.textStyle === 'object' && !Array.isArray(legend.textStyle))
+          ? legend.textStyle as Record<string, unknown>
+          : {}),
+        width: null, overflow: null, ellipsis: null, backgroundColor: null,
+      },
     }
   })
   return Array.isArray(value) ? result : result[0]
@@ -165,13 +183,14 @@ function compactLegend(value: unknown, width: number): unknown {
   const result = legends.map((entry) => {
     if (!isHorizontalBottomLegend(entry)) return entry
     const legend = entry
-    return {
+    const responsive = {
       ...legend,
       type: 'scroll', bottom: 0, left: 'center', right: 'auto',
       width: Math.max(0, width - 16), height: 24,
       pageIconColor: (legend.textStyle as Record<string, unknown> | undefined)?.color,
       pageTextStyle: legend.textStyle,
     }
+    return { ...responsive, ...compactScrollLegendGeometry(responsive, width) }
   })
   return Array.isArray(value) ? result : result[0]
 }
