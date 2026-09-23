@@ -58,8 +58,9 @@ set_firewall_rules() {
   local payload="$1"
   local response action_ids action_id
   response="$(hcloud_request POST "/firewalls/$firewall_id/actions/set_rules" "$payload")"
-  action_ids="$(jq -er '[.action.id?, .actions[]?.id?] | map(select(type == "number")) | unique | .[]' <<<"$response")"
+  action_ids="$(jq -r '[.action.id?, .actions[]?.id?] | map(select(type == "number")) | unique | .[]' <<<"$response")"
   while IFS= read -r action_id; do
+    [[ -n "$action_id" ]] || continue
     wait_hcloud_action "$action_id"
   done <<<"$action_ids"
 }
