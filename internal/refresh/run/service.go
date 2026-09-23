@@ -624,13 +624,13 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 			// attempting to supersede it violates the durable run guard and
 			// strands the run in prepared after the platform job fails.
 			if job.TriggerType != TriggerSchedule {
-				if failErr := markRunFailedForWorker(ctx, s.Runs, job, err.Error()); failErr != nil {
+				if failErr := markRunFailedForWorker(ctx, s.Runs, job, SafeWorkerFailureMessage(err)); failErr != nil {
 					return errors.Join(err, fmt.Errorf("fail stale refresh tree: %w", failErr))
 				}
 				return err
 			}
 			if fenced, ok := s.Runs.(LeaseFencedSupersedeRepository); ok {
-				if supersedeErr := fenced.MarkRunTreeSupersededClaimed(ctx, job, err.Error()); supersedeErr != nil {
+				if supersedeErr := fenced.MarkRunTreeSupersededClaimed(ctx, job, SafeWorkerFailureMessage(err)); supersedeErr != nil {
 					return fmt.Errorf("supersede stale refresh tree: %w", supersedeErr)
 				}
 			} else {
@@ -638,7 +638,7 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 			}
 			return err
 		}
-		if failErr := markRunFailedForWorker(ctx, s.Runs, job, err.Error()); failErr != nil {
+		if failErr := markRunFailedForWorker(ctx, s.Runs, job, SafeWorkerFailureMessage(err)); failErr != nil {
 			return errors.Join(err, fmt.Errorf("fail refresh tree: %w", failErr))
 		}
 		return err

@@ -18,6 +18,8 @@ enum RouteKind {
   dashboard: "dashboard",
   dashboardBuilder: "dashboard_builder",
   pipelines: "pipelines",
+  pipelineDetail: "pipeline_detail",
+  pipelineRunDetail: "pipeline_run_detail",
   chat: "chat",
   connections: "connections",
   connectionAsset: "connection_asset",
@@ -761,6 +763,9 @@ model PipelineListItemSignal {
   `href`: string;
   `id`: string;
   `lastSuccessful`?: string;
+  `latestRunHref`?: string;
+  `lastPublishedAt`?: string;
+  `publicationStatus`: "confirmed" | "none" | "unavailable";
   `nextRun`?: string;
   `pipelineId`: string;
   `running`: boolean;
@@ -821,11 +826,215 @@ model PipelinePageSignal {
 model PipelineRunMonitorSignal {
   `query`: string;
   `range`: string;
+  `pipeline`: string;
   `status`: string;
   `trigger`: string;
   `page`: int64;
   `pageSize`: int32;
   `total`: int64;
+}
+
+@apigen.contract(#{ kind: "ui-envelope", tags: #["project", "pipelines", "detail", "envelope"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "pipelines" })
+model PipelineDetailEnvelope {
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chrome" })
+  `chrome`: ChromeSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
+  `page`: PipelineDetailPageSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "pipelineCommand" })
+  `pipelineCommand`: PipelineCommandSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "pipelineCommandStatus" })
+  `pipelineCommandStatus`: PipelineCommandStatusSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
+  `runtime`: RouteRuntimeSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
+  `status`: DashboardStatus;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "pipelines", "detail", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
+model PipelineDetailPageSignal {
+  `kind`: RouteKind;
+  `title`: string;
+  `description`: string;
+  `environment`: string;
+  `activeTab`: string;
+  `canRun`: boolean;
+  `asset`: PipelineDetailAssetSignal;
+  `tabs`: PipelineDetailTabSignal[];
+  `semanticModel`?: PipelineDetailLinkSignal;
+  `graph`: AssetLineageGraphSignal;
+  `dashboardConsumers`: PipelineDetailLinkSignal[];
+  `dashboardConsumersNote`: string;
+  `schedules`: PipelineDetailScheduleSignal[];
+  `timezone`: string;
+  `nextRunAt`?: string;
+  `concurrencyPolicy`: string;
+  `concurrencyDescription`: string;
+  `startingDeadlineSeconds`: int64;
+  `latestRun`?: PipelineDetailRunSignal;
+  `recentRuns`: PipelineDetailRunSignal[];
+  `runsTable`?: RecordTableSignal;
+  `runMonitor`?: PipelineRunMonitorSignal;
+  `publication`?: PipelineDetailPublicationSignal;
+  `publicationStatus`: "none" | "confirmed" | "unavailable";
+  `definitionYaml`: string;
+}
+
+model PipelineDetailAssetSignal {
+  `id`: string;
+  `key`: string;
+  `title`: string;
+  `description`?: string;
+  `href`: string;
+  `sourceFile`: string;
+  `contentHash`: string;
+}
+
+model PipelineDetailTabSignal {
+  `id`: string;
+  `label`: string;
+  `href`: string;
+  `active`: boolean;
+}
+
+model PipelineDetailLinkSignal {
+  `id`: string;
+  `label`: string;
+  `href`: string;
+  `type`: string;
+}
+
+model PipelineDetailScheduleSignal {
+  `cron`: string;
+}
+
+model PipelineDetailRunSignal {
+  `id`: string;
+  `status`: string;
+  `startedAt`?: string;
+  `finishedAt`?: string;
+  `duration`?: string;
+  `trigger`?: string;
+  `error`?: string;
+  `href`: string;
+}
+
+model PipelineDetailPublicationSignal {
+  `snapshotId`: int64;
+  `servingStateId`: string;
+  `publishedAt`?: string;
+  `runId`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-envelope", tags: #["project", "pipelines", "run", "envelope"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "pipelines" })
+model PipelineRunDetailEnvelope {
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chrome" })
+  `chrome`: ChromeSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
+  `page`: PipelineRunDetailPageSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
+  `runtime`: RouteRuntimeSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
+  `status`: DashboardStatus;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "pipelines", "run", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
+model PipelineRunDetailPageSignal {
+  `kind`: RouteKind;
+  `title`: string;
+  `description`: string;
+  `activeTab`: string;
+  `environment`: string;
+  `pipelineId`: string;
+  `pipelineTitle`: string;
+  `pipelineHref`: string;
+  `runId`: string;
+  `status`: string;
+  `statusLabel`: string;
+  `runError`?: string;
+  `execution`: PipelineRunExecutionSignal;
+  `events`: PipelineRunEventSignal[];
+  `eventsTruncated`: boolean;
+  `eventsUnavailable`?: boolean;
+  `details`: PipelineRunDetailsSignal;
+}
+
+model PipelineRunExecutionSignal {
+  `createdAt`: string;
+  `startedAt`?: string;
+  `finishedAt`?: string;
+  `duration`?: string;
+  /** No durable validator outcome is recorded for the current refresh workflow. */
+  `validationOutcome`: "passed" | "failed" | "unknown";
+  /** Whether the validator persisted an elapsed-time measurement. */
+  `validationTimingAvailable`: boolean;
+  `publicationOutcome`: "pending" | "published" | "not_published" | "unverified";
+  `publication`?: PipelineRunPublicationSignal;
+  `graph`?: AssetLineageGraphSignal;
+  `graphUnavailableReason`?: string;
+  `modelsUnavailable`?: boolean;
+  `attemptsUnavailable`?: boolean;
+  `attemptsTruncated`?: boolean;
+  `attempts`: PipelineRunAttemptSignal[];
+  `models`: PipelineRunModelSignal[];
+}
+
+model PipelineRunPublicationSignal {
+  `publishedAt`: string;
+  `snapshotId`: int64;
+  `servingStateId`: string;
+}
+
+model PipelineRunModelSignal {
+  `modelId`: string;
+  `status`?: string;
+  `statusLabel`?: string;
+  `duration`?: string;
+  `error`?: string;
+  `attemptsUnavailable`?: boolean;
+  `attemptsTruncated`?: boolean;
+  `attempts`: PipelineRunAttemptSignal[];
+}
+
+model PipelineRunAttemptSignal {
+  `number`: int64;
+  `status`: string;
+  `claimedAt`: string;
+  `startedAt`?: string;
+  `finishedAt`?: string;
+  `duration`?: string;
+  `error`?: string;
+}
+
+model PipelineRunEventSignal {
+  `id`: string;
+  `type`: string;
+  `createdAt`: string;
+}
+
+model PipelineRunDetailsSignal {
+  `trigger`: string;
+  `triggeredBy`?: string;
+  `principalId`?: string;
+  `servingStateId`: string;
+  `pipelinePlanId`?: string;
+  `planDigest`: string;
+  `artifactDigest`?: string;
+  `selectionDigest`?: string;
+  `executionDigest`?: string;
+  `provenanceDigest`?: string;
+  `governanceDigest`?: string;
+  `evidenceDigest`?: string;
+  `semanticModelId`: string;
+  `materializationScope`: string[];
+  `sourceInputs`?: string[];
+  `qualificationChecks`?: string[];
+  `matchingScheduleIds`: string[];
+  `historicalPipelineVersionAvailable`: boolean;
+  `historicalPipelineName`?: string;
 }
 
 model ChatArtifactSignal {

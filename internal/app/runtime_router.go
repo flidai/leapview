@@ -824,13 +824,17 @@ func buildApplicationSurfaces(
 	if reader, ok := any(servingStateRepo).(projecthttp.AssetVersionsReader); ok {
 		projectAssetVersions = reader
 	}
+	var projectHistoricalGraph projecthttp.HistoricalGraphReader
+	if reader, ok := any(servingStateRepo).(projecthttp.HistoricalGraphReader); ok {
+		projectHistoricalGraph = reader
+	}
 	var projectActiveServingState projecthttp.ActiveServingStateReader
 	if reader, ok := any(servingStateRepo).(projecthttp.ActiveServingStateReader); ok {
 		projectActiveServingState = reader
 	}
 	var dashboardAppearances projecthttp.DashboardAppearanceStore
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
+		Graph: capabilities.ProjectGraph, HistoricalGraph: projectHistoricalGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardAppearances, DashboardCatalog: capabilities.Authoring,
@@ -960,11 +964,14 @@ func buildApplicationSurfaces(
 	if routes.projectBrowser != nil {
 		routes.projectBrowser.RefreshState = routes.refreshModule
 		routes.projectBrowser.RunMonitor = routes.refreshModule
+		routes.projectBrowser.RunDetailReader = routes.refreshModule
+		routes.projectBrowser.RunPublicationReader = routes.refreshModule
 	}
 	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, persistence, moduleWorkflow, storage, data.AdditionalWorkers); err != nil {
 		return fail(err)
 	}
 	if platform.asyncJobs != nil {
+		routes.projectBrowser.RunEventReader = platform.asyncJobs
 		handlers := make([]jobs.Handler, 0, 4)
 		if routes.releaseModule != nil {
 			handlers = append(handlers, routes.releaseModule.JobHandlers()...)

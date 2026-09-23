@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -13,6 +14,7 @@ import (
 	projectview "github.com/flidai/leapview/internal/project"
 	catalog "github.com/flidai/leapview/internal/project/navigation"
 	uisignals "github.com/flidai/leapview/internal/project/ui/signals"
+	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	g "maragu.dev/gomponents"
 )
 
@@ -25,10 +27,13 @@ type PipelineMonitorCapacity struct {
 }
 
 type PipelineMonitorPipeline struct {
-	Asset     projectview.DevelopAssetView
-	Refresh   AssetRefreshState
-	CanRun    bool
-	CanCancel bool
+	Asset              projectview.DevelopAssetView
+	Refresh            AssetRefreshState
+	CanRun             bool
+	CanCancel          bool
+	SemanticModelTitle string
+	PublicationAt      time.Time
+	PublicationStatus  string
 }
 
 type PipelineMonitorState struct {
@@ -42,11 +47,11 @@ type PipelineMonitorState struct {
 }
 
 type PipelineRunMonitor struct {
-	Query, Range, Status, Trigger    string
-	Page                             int64
-	PageSize                         int32
-	Total, Failed, Completed, Active int64
-	Runs                             []PipelineMonitorRun
+	Query, Range, Pipeline, Status, Trigger string
+	Page                                    int64
+	PageSize                                int32
+	Total, Failed, Completed, Active        int64
+	Runs                                    []PipelineMonitorRun
 }
 
 type PipelineMonitorRun struct {
@@ -56,12 +61,12 @@ type PipelineMonitorRun struct {
 
 func PipelinesPage(nav catalog.Catalog, state PipelineMonitorState, activeTab, roleLabel string, chromeOptions ...webpage.Provider) g.Node {
 	page := pipelineMonitorPageSignal(state, activeTab)
-	active := page.ActiveTab
+	active := "pipelines"
 	attrs := []g.Node{g.Attr("slot", "page")}
 	if state.RunCommand.OperationID() != "" && state.CancelCommand.OperationID() != "" {
 		commandURL := "/pipelines/command"
 		if page.ActiveTab == "runs" && page.RunMonitor != nil {
-			values := url.Values{"view": {"runs"}, "q": {page.RunMonitor.Query}, "range": {page.RunMonitor.Range},
+			values := url.Values{"view": {"runs"}, "q": {page.RunMonitor.Query}, "range": {page.RunMonitor.Range}, "pipeline": {page.RunMonitor.Pipeline},
 				"status": {page.RunMonitor.Status}, "trigger": {page.RunMonitor.Trigger}, "page": {fmt.Sprint(page.RunMonitor.Page)}}
 			commandURL += "?" + values.Encode()
 		}
@@ -78,7 +83,7 @@ func PipelinesPage(nav catalog.Catalog, state PipelineMonitorState, activeTab, r
 
 func PipelinesBootstrapSignals(nav catalog.Catalog, state PipelineMonitorState, activeTab, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
 	page := pipelineMonitorPageSignal(state, activeTab)
-	signals := projectRouteBootstrapSignals(catalogWithoutProjectContext(nav), page.ActiveTab, roleLabel, page, uisignals.RouteKindPipelines, nil, chromeOptions)
+	signals := projectRouteBootstrapSignals(catalogWithoutProjectContext(nav), "pipelines", roleLabel, page, uisignals.RouteKindPipelines, nil, chromeOptions)
 	signals["pipelineCommand"] = uisignals.PipelineCommandSignal{}
 	signals["pipelineCommandStatus"] = uisignals.PipelineCommandStatusSignal{}
 	return signals
@@ -104,7 +109,16 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 	for _, pipeline := range pipelines {
 		status := strings.ToLower(strings.TrimSpace(pipeline.Refresh.Latest.Status))
 		if status == "" {
-			status = "not refreshed"
+			switch {
+			case pipeline.Refresh.Latest.ID != "":
+				status = "unknown"
+			case len(pipeline.Refresh.Runs) > 0:
+				status = firstNonEmpty(strings.ToLower(strings.TrimSpace(pipeline.Refresh.Runs[0].Status)), "unknown")
+			case pipeline.Refresh.LatestSuccessful.ID != "":
+				status = firstNonEmpty(strings.ToLower(strings.TrimSpace(pipeline.Refresh.LatestSuccessful.Status)), "succeeded")
+			default:
+				status = "never run"
+			}
 		}
 		assetHref := strings.TrimSpace(pipeline.Asset.Href)
 		if assetHref == "" {
@@ -116,19 +130,31 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 			// Resource IDs are the only stable identity that command handlers
 			// and authorization understand. Keep the symbolic key for labels and
 			// search only; never use it as a row or command identity.
-			ID:            pipeline.Asset.ID,
-			Title:         firstNonEmpty(pipeline.Asset.Title, pipeline.Asset.Key, pipeline.Asset.ID),
-			Description:   uisignals.Optional(pipeline.Asset.Description),
-			Href:          assetHref,
-			SemanticModel: emptyDash(metaString(pipeline.Asset.Payload, "SemanticModel", "semanticModel")),
-			Schedule:      pipelineScheduleLabel(pipeline.Asset.Payload),
-			PipelineID:    pipeline.Asset.ID,
-			Running:       status == "queued" || status == "running" || status == "prepared",
-			Status:        status,
-			Duration:      uisignals.Optional(refreshRunDuration(pipeline.Refresh.Latest)),
+			ID:                pipeline.Asset.ID,
+			Title:             firstNonEmpty(pipeline.Asset.Title, pipeline.Asset.Key, pipeline.Asset.ID),
+			Description:       uisignals.Optional(pipeline.Asset.Description),
+			Href:              assetHref,
+			SemanticModel:     pipelineSemanticModelDisplayName(firstNonEmpty(pipeline.SemanticModelTitle, metaString(pipeline.Asset.Payload, "SemanticModel", "semanticModel"))),
+			Schedule:          pipelineScheduleLabel(pipeline.Asset.Payload),
+			PipelineID:        pipeline.Asset.ID,
+			Running:           status == "queued" || status == "running" || status == "prepared",
+			Status:            status,
+			PublicationStatus: firstNonEmpty(pipeline.PublicationStatus, "none"),
+			LatestRunHref:     uisignals.Optional(pipelineRunHref(pipeline.Asset.ID, pipeline.Refresh.Latest.ID)),
+			Duration:          uisignals.Optional(refreshRunDuration(pipeline.Refresh.Latest)),
 			LastSuccessful: uisignals.Optional(
 				pipeline.Refresh.LatestSuccessful.FinishedAt,
 			),
+		}
+		if pipeline.Refresh.Latest.ID == "" {
+			item.LatestRunHref = nil
+		}
+		if !pipeline.PublicationAt.IsZero() {
+			item.LastPublishedAt = uisignals.Optional(pipeline.PublicationAt.UTC().Format(time.RFC3339))
+			item.PublicationStatus = "confirmed"
+		} else if version := pipeline.Refresh.DataVersion; version.Source == refreshschedule.DataVersionSourceRefresh && version.PipelineID == pipeline.Asset.ID && version.RunID != "" && !version.RefreshedAt.IsZero() {
+			item.LastPublishedAt = uisignals.Optional(version.RefreshedAt.UTC().Format(time.RFC3339))
+			item.PublicationStatus = "confirmed"
 		}
 		if !pipeline.Refresh.NextRun.IsZero() {
 			item.NextRun = uisignals.Optional(pipeline.Refresh.NextRun.UTC().Format(time.RFC3339))
@@ -164,12 +190,12 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 				monitorRows = append(monitorRows, pipeline)
 			}
 			page.RunsTable = pipelineRunsTable(monitorRows)
-			page.RunMonitor = &uisignals.PipelineRunMonitorSignal{Query: monitor.Query, Range: monitor.Range, Status: monitor.Status, Trigger: monitor.Trigger,
+			page.RunMonitor = &uisignals.PipelineRunMonitorSignal{Query: monitor.Query, Range: monitor.Range, Pipeline: monitor.Pipeline, Status: monitor.Status, Trigger: monitor.Trigger,
 				Page: monitor.Page, PageSize: monitor.PageSize, Total: monitor.Total}
 			page.Metrics = []uisignals.PipelineMetricSignal{
 				{Label: "Active now", Value: fmt.Sprint(monitor.Active), Detail: uisignals.Pointer("All time · current state"), Tone: uisignals.Pointer("accent")},
-				{Label: "Failed in range", Value: fmt.Sprint(monitor.Failed), Detail: uisignals.Pointer("Selected time range"), Tone: uisignals.Pointer(metricFailureTone(int(monitor.Failed)))},
-				{Label: "Completed in range", Value: fmt.Sprint(monitor.Completed), Detail: uisignals.Pointer("Succeeded runs"), Tone: uisignals.Pointer("success")},
+				{Label: "Failed in range", Value: fmt.Sprint(monitor.Failed), Detail: uisignals.Pointer("Matches selected time range and filters"), Tone: uisignals.Pointer(metricFailureTone(int(monitor.Failed)))},
+				{Label: "Succeeded in range", Value: fmt.Sprint(monitor.Completed), Detail: uisignals.Pointer("Matches selected time range and filters"), Tone: uisignals.Pointer("success")},
 			}
 		} else {
 			page.Metrics = []uisignals.PipelineMetricSignal{
@@ -180,6 +206,36 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 		}
 	}
 	return page
+}
+
+func pipelineSemanticModelDisplayName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "—" {
+		return "—"
+	}
+	lower := strings.ToLower(value)
+	for _, prefix := range []string{"semantic-model:", "semantic_model:", "semantic:", "semantic-model/", "semantic_model/", "semantic/"} {
+		if strings.HasPrefix(lower, prefix) {
+			value = value[len(prefix):]
+			break
+		}
+	}
+	if strings.Contains(strings.ToLower(value), "semantic model") {
+		return value
+	}
+	words := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '_' || r == '-' || r == '.' || r == '/' || r == ':'
+	})
+	for index, word := range words {
+		if word != "" {
+			first, size := utf8.DecodeRuneInString(word)
+			words[index] = strings.ToUpper(string(first)) + word[size:]
+		}
+	}
+	if len(words) == 0 {
+		return "—"
+	}
+	return strings.Join(words, " ") + " Semantic Model"
 }
 
 func pipelineScheduleLabel(payload map[string]any) string {
@@ -208,9 +264,12 @@ func pipelineRunsTable(pipelines []PipelineMonitorPipeline) recordTable {
 	for _, pipeline := range pipelines {
 		href := strings.TrimSpace(pipeline.Asset.Href)
 		if href == "" {
-			href = "/pipelines/" + url.PathEscape(pipeline.Asset.ID) + "/refreshes"
+			href = "/pipelines/" + url.PathEscape(pipeline.Asset.ID) + "/details"
 		}
 		for _, run := range pipeline.Refresh.Runs {
+			if strings.TrimSpace(run.ParentRunID) != "" {
+				continue
+			}
 			key := pipeline.Asset.ID + "\x00" + run.ID
 			if _, ok := seen[key]; ok {
 				continue
@@ -251,6 +310,7 @@ func pipelineRunsTable(pipelines []PipelineMonitorPipeline) recordTable {
 				"asset_id":               pipeline.Asset.ID,
 				"pipeline_id":            pipeline.Asset.ID,
 				"run_id":                 run.ID,
+				"run_href":               pipelineRunHref(pipeline.Asset.ID, run.ID),
 				"status_value":           strings.ToLower(strings.TrimSpace(run.Status)),
 				"trigger_value":          strings.ToLower(strings.TrimSpace(run.TriggerType)),
 				"pipeline_search": strings.ToLower(strings.Join([]string{
@@ -276,6 +336,10 @@ func pipelineRunsTable(pipelines []PipelineMonitorPipeline) recordTable {
 		},
 		Rows: rows, Empty: "No pipeline runs have been recorded yet.", MinWidth: uisignals.Pointer("1050px"), RowAction: uisignals.Pointer("detail"),
 	}
+}
+
+func pipelineRunHref(pipelineID, runID string) string {
+	return "/pipelines/" + url.PathEscape(pipelineID) + "/runs/" + url.PathEscape(runID)
 }
 
 func metricFailureTone(failed int) string {

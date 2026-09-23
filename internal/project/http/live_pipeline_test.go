@@ -6,7 +6,56 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	projectview "github.com/flidai/leapview/internal/project"
 )
+
+func TestLegacyRunRoutesRedirectWithFilters(t *testing.T) {
+	tests := []struct{ path, want string }{
+		{"/runs?q=sales&range=7d&status=failed&pipeline=pipeline%3Asales", "/pipelines/runs?q=sales&range=7d&status=failed&pipeline=pipeline%3Asales"},
+		{"/pipelines?view=runs&q=sales&page=2", "/pipelines/runs?page=2&q=sales"},
+	}
+	for _, test := range tests {
+		r := httptest.NewRequest(stdhttp.MethodGet, test.path, nil)
+		w := httptest.NewRecorder()
+		h := &BrowserHandler{}
+		if r.URL.Path == "/runs" {
+			h.Runs(w, r)
+		} else {
+			h.Pipelines(w, r)
+		}
+		if w.Code != stdhttp.StatusPermanentRedirect || w.Header().Get("Location") != test.want {
+			t.Fatalf("%s: status=%d location=%q, want %q", test.path, w.Code, w.Header().Get("Location"), test.want)
+		}
+	}
+}
+
+func TestPipelineCollectionViewUsesCanonicalRunsPath(t *testing.T) {
+	for _, test := range []struct{ path, want string }{
+		{"/pipelines", "pipelines"},
+		{"/pipelines/runs", "runs"},
+		{"/pipelines?view=runs", "runs"},
+	} {
+		if got := pipelineCollectionView(httptest.NewRequest(stdhttp.MethodGet, test.path, nil)); got != test.want {
+			t.Fatalf("%s: view = %q, want %q", test.path, got, test.want)
+		}
+	}
+}
+
+func TestVisiblePipelineIDsScopesToAuthorizedExactPipeline(t *testing.T) {
+	visible := []projectview.DevelopAssetView{{ID: "pipeline:sales"}, {ID: "pipeline:sales-old"}}
+	for _, test := range []struct {
+		selected string
+		want     int
+	}{
+		{"", 2}, {"pipeline:sales", 1}, {"pipeline:private", 0},
+	} {
+		got := visiblePipelineIDs(visible, test.selected)
+		if len(got) != test.want || (test.selected != "" && len(got) > 0 && got[0] != test.selected) {
+			t.Fatalf("selected=%q: visible=%v", test.selected, got)
+		}
+	}
+}
 
 func TestPipelineRunMonitorFilterNormalizesAndBoundsRequest(t *testing.T) {
 	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
@@ -40,6 +89,8 @@ func TestLivePipelineRouteSupportsCanonicalAndLegacyAssetIDs(t *testing.T) {
 		want                 bool
 	}{
 		{name: "pipeline monitor", route: "pipelines", want: true},
+		{name: "pipeline detail", route: "pipeline_detail", assetID: "pipeline:daily", want: true},
+		{name: "pipeline run detail", route: "pipeline_run_detail", assetID: "pipeline:daily", want: true},
 		{name: "canonical pipeline asset", route: "data", assetID: "pipeline:daily", want: true},
 		{name: "legacy pipeline asset", route: "data", assetID: "refresh_pipeline:daily", want: true},
 		{name: "legacy asset route", route: "asset", assetID: "refresh_pipeline:daily", want: true},

@@ -508,7 +508,7 @@ func (m *Module) DataVersion(ctx context.Context, projectID, environment, modelI
 	if err != nil || !found {
 		return AssetDataVersion{}, found, err
 	}
-	return AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}, true, nil
+	return AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source, PipelineID: version.PipelineID.String(), RunID: version.RunID}, true, nil
 }
 
 // AssetRefreshState returns the durable presentation state for a refresh
@@ -580,7 +580,7 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 	if version, ok, err := m.dataVersionForIdentity(ctx, identity, modelID); err != nil {
 		return state, err
 	} else if ok {
-		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}
+		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source, PipelineID: version.PipelineID.String(), RunID: version.RunID}
 	}
 	return state, nil
 }
@@ -600,6 +600,30 @@ func (m *Module) MonitorRuns(ctx context.Context, projectID projectgraph.Resourc
 		return refreshrun.MonitorPage{}, err
 	}
 	return store.MonitorRuns(ctx, scope, filter)
+}
+
+// GetRun and ListChildRuns expose only project/environment-scoped durable run
+// evidence to browser investigation. The caller still authorizes the pipeline.
+func (m *Module) GetRun(ctx context.Context, scope refreshrun.ReadScope, runID string) (refreshrun.RunRecord, error) {
+	if err := scope.Validate(); err != nil {
+		return refreshrun.RunRecord{}, err
+	}
+	store, err := m.readRuns()
+	if err != nil {
+		return refreshrun.RunRecord{}, err
+	}
+	return store.GetRun(ctx, scope, runID)
+}
+
+func (m *Module) ListChildRuns(ctx context.Context, scope refreshrun.ReadScope, parentRunID string) ([]refreshrun.RunRecord, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	store, err := m.readRuns()
+	if err != nil {
+		return nil, err
+	}
+	return store.ListChildRuns(ctx, scope, parentRunID)
 }
 
 // ModelRefreshState returns the durable child-run history for one Model.
@@ -702,7 +726,7 @@ func (m *Module) SemanticModelRefreshState(ctx context.Context, projectID projec
 	if version, found, err := m.dataVersionForIdentity(ctx, identity, semanticModelID); err != nil {
 		return state, err
 	} else if found {
-		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}
+		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source, PipelineID: version.PipelineID.String(), RunID: version.RunID}
 	}
 	return state, nil
 }
@@ -752,7 +776,7 @@ func (m *Module) dataVersionForIdentity(ctx context.Context, identity projectgra
 
 func assetRefreshRun(run refreshrun.RunRecord) AssetRefreshRun {
 	return AssetRefreshRun{
-		ID: run.ID, Environment: run.Identity.Environment, ModelID: run.SemanticModelID.String(),
+		ID: run.ID, Environment: run.Identity.Environment, PipelineID: run.PipelineID.String(), ModelID: run.SemanticModelID.String(),
 		ServingStateID: run.Identity.GenerationID, PrincipalID: run.PrincipalID,
 		PrincipalDisplayName: run.PrincipalDisplayName, TriggerType: run.TriggerType,
 		ParentRunID: run.ParentRunID, TargetGeneration: run.TargetRevision,

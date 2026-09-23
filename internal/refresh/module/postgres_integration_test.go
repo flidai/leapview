@@ -1885,6 +1885,67 @@ func childRunIDs(children []refreshrun.RunRecord) []string {
 	return ids
 }
 
+func TestPostgresSemanticModelHistoryExcludesPipelineDependencyRuns(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-semantic-history", "catalog-semantic-history"),
+		SchedulerOwner:              "scheduler-semantic-history",
+		Jobs:                        queue,
+		CanonicalVerifier:           integrationCanonicalVerifier{physicalPoolID: "pool-semantic-history", catalogID: "catalog-semantic-history"},
+		CancelAuditWriter:           integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_semantic_history", Environment: "prod", GenerationID: "generation_semantic_history"}
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_semantic_history", PipelineID: "pipeline_daily", ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
+		SemanticModelID: "semantic_sales", ServingGenerationID: identity.GenerationID,
+		ArtifactDigest: "sha256:" + strings.Repeat("a", 64), SelectionDigest: "sha256:" + strings.Repeat("b", 64),
+		MaterializationScope: []string{"model_customers", "model_orders"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, children, err := persistence.Runs.CreateRunTree(t.Context(), refreshrun.RunTreeInput{
+		Root: refreshrun.RunInput{
+			RunID: "semantic-history-root", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan,
+			InvocationSource: "manual", PrincipalID: "principal:semantic-history", EstimatedMemoryBytes: 1,
+			TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerManual,
+			JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`,
+		},
+		DependencyTargets: []projectgraph.ResourceID{"model_customers", "model_orders"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 2 {
+		t.Fatalf("dependency runs = %d, want 2", len(children))
+	}
+
+	scope := refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}
+	runs, err := persistence.Runs.ListSemanticModelRuns(t.Context(), scope, "semantic_sales", refreshrun.RunPage{Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].ID != root.ID {
+		t.Fatalf("semantic-model history = %#v, want pipeline root %q only", runs, root.ID)
+	}
+	if _, err := db.Exec(t.Context(), `UPDATE refresh.run SET status='succeeded',started_at=clock_timestamp(),finished_at=clock_timestamp() WHERE project_id=$1 AND environment=$2 AND semantic_model_id=$3`, identity.ProjectID.String(), identity.Environment, "semantic_sales"); err != nil {
+		t.Fatal(err)
+	}
+	latest, ok, err := persistence.Runs.LatestSuccessfulSemanticModelRun(t.Context(), scope, "semantic_sales")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || latest.ID != root.ID {
+		t.Fatalf("latest successful semantic-model run = %#v, %v, want pipeline root %q", latest, ok, root.ID)
+	}
+}
+
 func TestPostgresWorkerSupersedeRollbackKeepsRefreshAndJobLive(t *testing.T) {
 	db := modulePostgresTestDB(t)
 	refreshRepo := refreshpostgres.New(db)
