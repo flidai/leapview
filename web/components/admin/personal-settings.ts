@@ -1,10 +1,8 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, query, state } from 'lit/decorators.js'
-import { ArrowLeft, CalendarDays, Camera, Check, ChevronDown, KeyRound, Monitor, Plus, Search, Terminal, Trash2, X } from 'lucide'
+import { ArrowLeft, CalendarDays, Camera, Check, ChevronDown, KeyRound, Plus, Search, Trash2, X } from 'lucide'
 import type {
-  PersonalAuthoringSessionSignal,
   PersonalCapabilityOptionSignal,
-  PersonalSessionSignal,
   PersonalSettingsSignal,
   PersonalTokenSignal,
 } from '../../generated/signals'
@@ -19,7 +17,8 @@ import { renderSettingsActions, renderSettingsRow, renderSettingsSection, settin
 import { submitAuthForm } from '../shared/auth-form'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import { avatarResponseError } from './avatar-response'
-import { formatDate, formatRelativeActivity, formatSessionDate, humanizeCapability, humanizeSessionKind, sessionFact } from './personal-settings-format'
+import { formatDate, humanizeCapability, humanizeSessionKind, sessionFact } from './personal-settings-format'
+import { renderAuthoringSessionRow, renderBrowserSessionRow, type PendingSessionRevocation, type SelectedSession } from './personal-settings-session-rows'
 import { personalSettingsStyles } from './personal-settings.styles'
 import '../shared/drawer'
 import '../shared/user-avatar'
@@ -45,18 +44,6 @@ type TokenPermissionAccessOption = {
   value: TokenPermissionAccess
   label: 'Read-only' | 'Read and write'
   capabilities: string[]
-}
-
-type PendingSessionRevocation = {
-  id: string
-  label: string
-  kind: 'browser' | 'authoring'
-  current?: boolean
-}
-
-type SelectedSession = {
-  id: string
-  kind: 'browser' | 'authoring'
 }
 
 type TokenPermissionDefinition = {
@@ -352,8 +339,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
             <table class="security-session-table">
               <thead><tr><th>Device</th><th>Access</th><th>Created</th><th>Updated</th><th aria-label="Actions"></th></tr></thead>
               <tbody>
-                ${browserSessions.map((session) => this.renderSession(session))}
-                ${authoringSessions.map((session) => this.renderAuthoringSession(session))}
+                ${browserSessions.map((session) => renderBrowserSessionRow(session, (selected) => { this.selectedSession = selected }, (pending) => this.requestSessionRevocation(pending)))}
+                ${authoringSessions.map((session) => renderAuthoringSessionRow(session, (selected) => { this.selectedSession = selected }, (pending) => this.requestSessionRevocation(pending)))}
                 ${browserSessions.length === 0 && authoringSessions.length === 0 ? html`<tr><td class="security-empty" colspan="5">No active sessions.</td></tr>` : nothing}
               </tbody>
             </table>
@@ -365,35 +352,6 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
         ${this.pendingSessionRevocation ? this.renderSessionRevokeConfirmation(this.pendingSessionRevocation) : nothing}
       </section>
     `
-  }
-
-  private renderSession(session: PersonalSessionSignal) {
-    const label = session.clientLabel || humanizeSessionKind(session.kind)
-    return html`<tr class=${session.current ? 'is-current' : ''}>
-      <td><button class="security-session-device" type="button" aria-label=${`View details for ${label}`} @click=${() => { this.selectedSession = { id: session.id, kind: 'browser' } }}>
-        <span class="security-session-icon" aria-hidden="true">${lucideIcon(Monitor, { size: 16, strokeWidth: 1.75 })}</span>
-        <span class="security-session-device-copy"><span class="security-session-title"><strong>${label}</strong>${session.current ? html`<span class="security-badge">Current</span>` : nothing}</span><span class="security-session-kind">${humanizeSessionKind(session.kind)}</span></span>
-      </button></td>
-      <td class="security-session-access">Account</td>
-      <td><time>${formatSessionDate(session.createdAt)}</time></td>
-      <td><time>${session.current ? 'Active now' : formatRelativeActivity(session.lastSeenAt)}</time></td>
-      <td class="security-session-action-cell"><button class="session-action" type="button" @click=${() => this.requestSessionRevocation({ id: session.id, label, kind: 'browser', current: session.current })}>${session.current ? 'Sign out' : 'Revoke'}</button></td>
-    </tr>`
-  }
-
-  private renderAuthoringSession(session: PersonalAuthoringSessionSignal) {
-    const label = session.clientId || humanizeSessionKind(session.kind)
-    const access = [session.projectId || 'All projects', session.capabilities.map(humanizeCapability).join(', ') || 'Scoped access'].join(' · ')
-    return html`<tr>
-      <td><button class="security-session-device" type="button" aria-label=${`View details for ${label}`} @click=${() => { this.selectedSession = { id: session.id, kind: 'authoring' } }}>
-        <span class="security-session-icon" aria-hidden="true">${lucideIcon(Terminal, { size: 16, strokeWidth: 1.75 })}</span>
-        <span class="security-session-device-copy"><span class="security-session-title"><strong>${label}</strong></span><span class="security-session-kind">${humanizeSessionKind(session.kind)}</span></span>
-      </button></td>
-      <td class="security-session-access">${access}</td>
-      <td><time>${formatSessionDate(session.createdAt)}</time></td>
-      <td><time>${session.lastUsedAt ? formatRelativeActivity(session.lastUsedAt) : 'Never used'}</time></td>
-      <td class="security-session-action-cell"><button class="session-action" type="button" @click=${() => this.requestSessionRevocation({ id: session.id, label, kind: 'authoring' })}>Revoke</button></td>
-    </tr>`
   }
 
   private renderPasswordDialog() {

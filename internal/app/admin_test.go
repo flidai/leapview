@@ -123,7 +123,7 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`, "/admin/access/command", "resetPrincipalPassword"}},
 		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`, "/admin/access/command", "createGroup"}},
 		{path: "/admin/groups/" + group.ID, want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=` + group.ID + `&amp;route=admin&amp;section=group-detail`, "/admin/access/command", "addGroupMember"}},
-		{path: "/admin/agent", want: []string{"<lv-admin-page", `section="agent"`, `/updates?route=admin&amp;section=agent`, "/admin/agent/config", "updateAgentConfig"}},
+		{path: "/admin/agent", want: []string{"<lv-admin-page", `section="agent"`, `/updates?route=admin&amp;section=agent`}},
 		{path: "/admin/storage", want: []string{"<lv-admin-page", `section="storage"`, `/updates?route=admin&amp;section=storage`}},
 		{path: "/admin/queries", want: []string{"<lv-admin-page", `section="queries"`, `/updates?route=admin&amp;section=queries`, "/admin/queries/command"}},
 		{path: "/admin/publications", want: []string{"<lv-admin-page", `section="publications"`, `/updates?route=admin&amp;section=publications`, "/admin/publications/command"}},

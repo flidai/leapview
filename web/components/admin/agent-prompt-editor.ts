@@ -89,7 +89,7 @@ class AgentPromptEditor extends LitElement {
     .prompt-source-label {
       overflow: hidden;
       color: var(--lv-fg-muted);
-      font: var(--lv-type-code);
+      font: var(--lv-type-code-block);
       text-overflow: ellipsis;
       white-space: nowrap;
     }

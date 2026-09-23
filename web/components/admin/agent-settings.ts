@@ -73,8 +73,8 @@ export class AgentSettings extends LitElement {
     }
 
     .status-value.is-degraded {
-      background: var(--lv-bg-attention-muted, var(--lv-bg-panel-muted));
-      color: var(--lv-fg-attention, var(--lv-fg-default));
+      background: var(--lv-bg-warning-muted, var(--lv-bg-panel-muted));
+      color: var(--lv-fg-warning);
     }
 
     .status-value.is-configured {
