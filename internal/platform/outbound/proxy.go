@@ -139,7 +139,7 @@ func (p *Proxy) authorized(request *http.Request) bool {
 		return false
 	}
 	want := p.username + ":" + p.password
-	return secret.Equal(string(decoded), want)
+	return secret.EqualFixedBytes(decoded, []byte(want))
 }
 
 func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
