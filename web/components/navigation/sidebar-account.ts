@@ -1,5 +1,5 @@
 import { css, html } from 'lit'
-import { ChevronDown, LogOut, Settings, ShieldCheck } from 'lucide'
+import { ChevronDown, LogOut, Settings } from 'lucide'
 import { toggleAnchoredPopover } from '../shared/anchored-popover'
 import { submitAuthForm } from '../shared/auth-form'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -14,18 +14,16 @@ export const sidebarAccountStyles = css`
   .user-name { display: block; font: var(--lv-type-body); font-weight: var(--base-text-weight-medium); }
   .user-chevron { display: flex; color: var(--lv-fg-muted); }
   .user-loading { grid-column: 1 / -1; }
-  .account-popover { position: fixed; inset: auto; box-sizing: border-box; margin: 0; padding: var(--base-size-8); overflow: auto; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay, var(--lv-bg-panel)); color: var(--lv-fg-default); box-shadow: var(--lv-shadow-floating-lg); }
-  .account-popover:popover-open { display: grid; gap: var(--base-size-8); }
-  .account-summary { display: grid; min-width: 0; grid-template-columns: var(--control-large-size) minmax(0, 1fr); align-items: center; gap: var(--base-size-8); padding: var(--base-size-8); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); }
+  .account-popover { position: fixed; inset: auto; box-sizing: border-box; margin: 0; padding: var(--base-size-4); overflow: auto; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay, var(--lv-bg-panel)); color: var(--lv-fg-default); box-shadow: var(--lv-shadow-floating-lg); }
+  .account-popover:popover-open { display: grid; gap: var(--base-size-4); }
+  .account-summary { display: grid; min-width: 0; grid-template-columns: var(--control-large-size) minmax(0, 1fr); align-items: center; gap: var(--base-size-8); padding: var(--base-size-4) var(--base-size-8) var(--base-size-8); border-bottom: var(--lv-border-muted); }
   .account-identity { min-width: 0; }
   .account-name, .account-role { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .account-name { font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-semibold); }
   .account-role { margin-top: var(--base-size-2); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-  .account-actions { display: grid; gap: var(--base-size-2); }
   .account-popover [role="menuitem"] { display: flex; box-sizing: border-box; width: 100%; min-height: var(--control-medium-size); align-items: center; gap: var(--base-size-8); padding: var(--base-size-4) var(--base-size-8); border: var(--lv-border-transparent); border-radius: var(--lv-radius-default); background: var(--lv-button-invisible-bg-rest); color: var(--lv-fg-default); font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-medium); text-align: left; text-decoration: none; cursor: pointer; }
-  .account-popover [role="menuitem"] svg { flex: 0 0 auto; color: var(--lv-fg-muted); }
+  .account-popover [role="menuitem"] svg { color: var(--lv-fg-muted); }
   .account-popover [role="menuitem"]:hover, .account-popover [role="menuitem"]:focus-visible { background: var(--lv-button-invisible-bg-hover, var(--control-bgColor-hover)); outline: var(--focus-outline); outline-offset: calc(-1 * var(--borderWidth-thick)); }
-  .account-signout { padding-top: var(--base-size-8); border-top: var(--lv-border-muted); }
   .account-popover .account-logout { color: var(--lv-fg-danger, var(--lv-fg-default)); }
   .account-popover .account-logout svg { color: currentColor; }
   .account-popover .account-logout:hover, .account-popover .account-logout:focus-visible { background: var(--lv-bg-danger-muted, var(--lv-button-invisible-bg-hover, var(--control-bgColor-hover))); }
@@ -48,13 +46,8 @@ export function renderSidebarAccount(account: Account) {
         <lv-user-avatar size="medium" .name=${name} .imageUrl=${account.avatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>
         <span class="account-identity"><strong class="account-name">${name}</strong>${account.role ? html`<span class="account-role">${account.role}</span>` : null}</span>
       </div>
-      <div class="account-actions" role="presentation">
-        <a role="menuitem" tabindex="-1" href=${href} @click=${(event: MouseEvent) => { closeAccount(event.currentTarget as HTMLElement); account.navigate(event, href) }}>${lucideIcon(Settings, { size: 16 })}<span>Personal settings</span></a>
-        <a role="menuitem" tabindex="-1" href="/admin/security" @click=${(event: MouseEvent) => { closeAccount(event.currentTarget as HTMLElement); account.navigate(event, '/admin/security') }}>${lucideIcon(ShieldCheck, { size: 16 })}<span>Security &amp; sessions</span></a>
-      </div>
-      <div class="account-signout" role="presentation">
-        <button class="account-logout" role="menuitem" tabindex="-1" type="button" @click=${() => submitAuthForm('/auth/logout')}>${lucideIcon(LogOut, { size: 16 })}<span>Sign out</span></button>
-      </div>
+      <a role="menuitem" tabindex="-1" href=${href} @click=${(event: MouseEvent) => { closeAccount(event.currentTarget as HTMLElement); account.navigate(event, href) }}>${lucideIcon(Settings, { size: 16 })}<span>Settings</span></a>
+      <button class="account-logout" role="menuitem" tabindex="-1" type="button" @click=${() => submitAuthForm('/auth/logout')}>${lucideIcon(LogOut, { size: 16 })}<span>Log out</span></button>
     </div>
   </div>`
 }
@@ -65,7 +58,7 @@ function elements(target: HTMLElement) {
 }
 function toggleAccount(event: Event) {
   const { trigger, menu } = elements(event.currentTarget as HTMLElement)
-  const open = toggleAnchoredPopover(trigger, menu, { minWidth: 232, maxWidth: 280, maxHeight: 280 })
+  const open = toggleAnchoredPopover(trigger, menu, { minWidth: 216, maxWidth: 264, maxHeight: 220 })
   trigger.setAttribute('aria-expanded', String(open))
   if (open) {
     // Align the measured menu above a bottom-of-sidebar trigger without an empty gap.
