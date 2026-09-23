@@ -93,13 +93,6 @@ func (e MutationEvidence) Validate() error {
 	return nil
 }
 
-// ScopedIdentity is the exact actor-scoped retry key. It is descriptive only;
-// persistence should use separate actor/key columns or equivalent uniqueness
-// constraints rather than parsing this string.
-func (e MutationEvidence) ScopedIdentity() string {
-	return e.ActorID + "\x00" + e.IdempotencyKey
-}
-
 // CanonicalFingerprint hashes one canonical JSON request value. Callers should
 // pass only the durable mutation request (not query results, SQL, UI state, or
 // generated IDs) so retries compare the intended operation.

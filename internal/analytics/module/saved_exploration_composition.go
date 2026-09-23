@@ -21,7 +21,6 @@ import (
 type SavedExplorationLifecycle = saved.Lifecycle
 type SavedExplorationVisibility = saved.Visibility
 type SavedExplorationStatus = saved.Status
-type SavedExplorationRevisionID = saved.RevisionID
 type SavedExplorationRevisionToken = saved.RevisionToken
 
 const (
@@ -35,8 +34,6 @@ const (
 var (
 	ErrSavedExplorationInvalid          = saved.ErrInvalid
 	ErrSavedExplorationUnavailable      = saved.ErrUnavailable
-	ErrSavedExplorationNotFound         = saved.ErrNotFound
-	ErrSavedExplorationUnauthorized     = saved.ErrUnauthorized
 	ErrSavedExplorationMissingPrincipal = dataquery.ErrMissingPrincipal
 )
 

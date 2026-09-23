@@ -70,12 +70,6 @@ func NewCanonicalExplorationSpecPayload(version uint32, specJSON []byte) (Explor
 	return newPayload(version, canonicalJSON)
 }
 
-// ParseExplorationSpecPayload is an alias for the raw-spec constructor useful
-// at persistence and transport boundaries.
-func ParseExplorationSpecPayload(version uint32, specJSON []byte) (ExplorationSpecPayload, error) {
-	return NewCanonicalExplorationSpecPayload(version, specJSON)
-}
-
 // DecodeExplorationSpecPayload decodes the complete versioned canonical
 // envelope emitted by MarshalJSON or Canonical.
 func DecodeExplorationSpecPayload(data []byte) (ExplorationSpecPayload, error) {

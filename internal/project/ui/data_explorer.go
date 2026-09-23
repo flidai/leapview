@@ -224,10 +224,6 @@ func dataExplorerCanonicalSpec(command uisignals.DataExploreCommand) exploration
 
 const dataExplorerDefaultLimit = int64(100)
 
-func DataExplorerBootstrapSignals(catalog catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, providers ...webpage.Provider) map[string]any {
-	return DataExplorerBootstrapSignalsWithAgent(catalog, page, explorer, DataExplorerAgentBootstrap{}, providers...)
-}
-
 func DataExplorerBootstrapSignalsWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, providers ...webpage.Provider) map[string]any {
 	return dataExplorerBootstrapSignalsWithSaved(page, explorer, agent, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(false)}, providers...)
 }

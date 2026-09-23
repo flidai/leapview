@@ -654,9 +654,3 @@ func PublicNotFound(err error) error {
 	}
 	return err
 }
-
-// IsNotFoundOrUnauthorized is useful for adapters that need to classify a
-// repository result before applying PublicNotFound.
-func IsNotFoundOrUnauthorized(err error) bool {
-	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnauthorized)
-}
