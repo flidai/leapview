@@ -611,6 +611,7 @@ tasks:
       - task: data-resource-contracts:generate
       - task: desktop-discovery:generate
       - task: visualization-ir:generate
+      - task: exploration-contracts:generate
       - task: dashboard-contracts:generate
       - task: pipeline-contracts:generate
       - task: layout-contract:generate
@@ -1168,10 +1169,12 @@ tasks:
     desc: Generate UI signal Go and TypeScript contracts from TypeSpec
     deps:
       - api:generate
+      - exploration-contracts:generate
     method: checksum
     sources:
       - Taskfile.yml
       - api/apigen.yaml
+      - api/exploration/**/*.tsp
       - api/signals/**/*.tsp
       - api/visualization/**/*.tsp
       - internal/app/tools/signalcontracts/**/*.go
@@ -1215,6 +1218,28 @@ tasks:
       - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target visualization-ir
       - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target visualization-ir
       - bun scripts/generate_visualization_validator.ts
+
+  exploration-contracts:generate:
+    desc: Generate the canonical renderer-neutral ExplorationSpec contract
+    deps:
+      - node:deps
+      - apigen:build
+    method: checksum
+    sources:
+      - Taskfile.yml
+      - api/apigen.yaml
+      - api/exploration/**/*.tsp
+      - pkg/apigen/**/*.go
+      - pkg/apigen/typespec/src/**/*.ts
+      - pkg/apigen/typespec/dist/src/**/*
+    generates:
+      - api/gen/exploration-ir.json
+      - internal/analytics/exploration/models.gen.go
+      - web/generated/exploration/index.ts
+      - api/gen/exploration.schema.json
+    cmds:
+      - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target exploration-contracts
+      - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target exploration-contracts
 
   dashboard-contracts:generate:
     desc: Generate the canonical Dashboard authoring document contract

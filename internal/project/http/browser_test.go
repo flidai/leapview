@@ -892,7 +892,7 @@ func TestConnectionAssetBootstrapUsesConnectionPageSignalOnCanonicalStream(t *te
 func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	const projectID = "project:test"
 	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
-		"orders": {ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status", Type: "string", Datatype: semanticmodel.DataTypeString}}},
+		"orders": {ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
 	}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}
 	compiled, err := semanticquery.CompileDatasetBindings(model)
 	if err != nil {
@@ -1000,7 +1000,7 @@ func TestDataExplorerSignalPatchRefreshesAgentContext(t *testing.T) {
 	if context.Surface != "data" || context.ModelID != "semantic-model:visuals" || projectsignals.ValueOrZero(context.DatasetID) != "orders" {
 		t.Fatalf("agent context = %#v", context)
 	}
-	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Dimensions[0] != "orders.status" || len(context.Exploration.Metrics) != 1 || context.Exploration.Metrics[0] != "revenue" {
+	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Dimensions[0].Field != "orders.status" || len(context.Exploration.Metrics) != 1 || context.Exploration.Metrics[0].Field != "revenue" {
 		t.Fatalf("agent exploration = %#v", context.Exploration)
 	}
 }

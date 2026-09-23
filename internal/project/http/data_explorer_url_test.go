@@ -88,7 +88,7 @@ func TestDataExplorerDocumentDefersSemanticExecutionToCanonicalUpdates(t *testin
 	if executor.calls != 0 {
 		t.Fatalf("document executed %d analytical queries, want 0", executor.calls)
 	}
-	for _, want := range []string{"mode=explore", "semanticModel=semantic%3Asales", "dataset=orders", "dimension=orders.status"} {
+	for _, want := range []string{"mode=explore", "v=2", "state=", "semantic%3Asales", "orders.status"} {
 		if !strings.Contains(document.Body.String(), want) {
 			t.Fatalf("document shell missing normalized updates URL component %q:\n%s", want, document.Body.String())
 		}
@@ -136,7 +136,7 @@ func TestDataExplorerRestoredURLCanonicalizesSpacedOperandsBeforeExecution(t *te
 		t.Fatalf("spaced document executed %d analytical queries, want 0", executor.calls)
 	}
 	body := document.Body.String()
-	if !strings.Contains(body, "dimension=orders.status") || strings.Contains(body, "dimension=+orders.status+") {
+	if !strings.Contains(body, "orders.status") || strings.Contains(body, "+orders.status+") {
 		t.Fatalf("spaced field was not canonicalized in updates URL:\n%s", body)
 	}
 }

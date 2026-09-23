@@ -44,6 +44,7 @@ type explorerModelBinding struct {
 // output: manifest entries that do not have a visible serving asset are never
 // exposed to the browser.
 func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project projectmanifest.ResourceManifest, command projectsignals.DataExploreCommand, compiledModels map[string]*semanticquery.CompiledModel, consumers ...map[string]*semanticquery.SemanticAccessConsumer) DataExplorerProjection {
+	command = dataExploreCommandWithCanonicalSpec(command)
 	var consumersByModel map[string]*semanticquery.SemanticAccessConsumer
 	if len(consumers) != 0 {
 		consumersByModel = consumers[0]
@@ -224,6 +225,7 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		}
 		result.Warnings = append(result.Warnings, "Grain changed from "+explorerLabel(previousBase)+" to "+explorerLabel(baseTable)+" to support the selected fields.")
 	}
+	command = dataExploreCommandRefreshSpec(command)
 	result.Command = command
 	result.Fields = explorerFields(model, baseTable, command, compiled, access)
 	return result
@@ -397,13 +399,30 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 				path = append(path, relationship.ID)
 			}
 		}
+		if !access.allowsDimension(name, modelTable, binding.Physical.Field) {
+			continue
+		}
+		physicalID := strings.TrimSpace(binding.Physical.Field)
+		if !strings.Contains(physicalID, ".") {
+			physicalID = strings.TrimSpace(modelTable) + "." + physicalID
+		}
+		duplicatePhysical := false
+		for _, field := range out {
+			if field.ID == physicalID {
+				duplicatePhysical = true
+				break
+			}
+		}
+		if duplicatePhysical {
+			continue
+		}
 		fieldType := firstExplorerNonEmpty(string(semantic.Datatype), semantic.Type, string(binding.Physical.Datatype), binding.Physical.Type)
 		reason := ""
 		if !compatible {
 			reason = "Not available from " + explorerLabel(baseTable) + " because no compiled binding reaches this semantic dimension."
 		}
 		out = append(out, projectsignals.DataExploreFieldSignal{
-			ID: name, Label: firstExplorerNonEmpty(authored.Label, explorerLabel(name)), Kind: "dimension", ModelTable: modelTable,
+			ID: name, Label: firstExplorerNonEmpty(authored.Label, explorerLabel(name)), Kind: "dimension", DatasetID: modelTable,
 			Description: projectsignals.Optional(authored.Description), Type: projectsignals.Optional(fieldType), Selected: selectedDimensions[name],
 			Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RelationshipPath: projectsignals.OptionalSlice(path),
 		})

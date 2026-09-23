@@ -1792,10 +1792,11 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 	command = normalizeDataExplorerCommand(command)
 	project := h.navigationCatalog(r).Project
 	page := projectsignals.DataExplorerPageSignal{Kind: projectsignals.RouteKindData, Title: "Data Explorer", Description: projectsignals.Optional("Explore governed semantic data."), Tabs: []projectsignals.ResourceTabSignal{}, Context: projectsignals.DataExplorerContextSignal{Active: true, Environment: h.Environment, ProjectID: project.ID, ProjectTitle: projectsignals.Optional(project.Title)}}
-	exploreCommand := projectsignals.DataExploreCommand{Dimensions: []string{}, Metrics: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: dataExplorerDefaultLimit}
+	exploreCommand := projectsignals.DataExploreCommand{Spec: defaultExplorationSpec(), Dimensions: []string{}, Metrics: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: dataExplorerDefaultLimit}
 	if command.Explore != nil {
 		exploreCommand = *command.Explore
 	}
+	exploreCommand = dataExploreCommandWithCanonicalSpec(exploreCommand)
 	if value := strings.TrimSpace(r.URL.Query().Get("semanticModel")); value != "" && exploreCommand.SemanticModelID == nil {
 		exploreCommand.SemanticModelID = projectsignals.Optional(value)
 	}

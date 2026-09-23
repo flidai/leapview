@@ -3,9 +3,10 @@ import { property } from 'lit/decorators.js'
 import type { DataExploreCommand, DataExploreResultSignal } from '../../generated/signals'
 import '../shared/windowed-table'
 import type { WindowedTableColumn, WindowedTablePayload, WindowedTableRequest } from '../shared/windowed-table'
+import { emptyExplorationSpec } from './data-explorer-spec'
 
 const emptyCommand: DataExploreCommand = {
-  dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0,
+  spec: emptyExplorationSpec, dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0,
 }
 
 const emptyResult: DataExploreResultSignal = {

@@ -1433,7 +1433,7 @@ model DashboardInteractionCommand {
 @apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard" })
 model DashboardVisualizationSignal {
-  `schemaVersion`: 4;
+  `schemaVersion`: 14;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;
@@ -1592,8 +1592,27 @@ model DataExplorerCommand {
 model DataExploreCommand {
   `spec`: LeapViewExploration.ExplorationSpec;
   `columnWidths`?: Record<float64>;
+  // Deprecated compatibility projection. The server rebuilds these fields
+  // from spec before execution and never persists them independently.
+  `datasetId`?: string;
+  `dimensions`: string[];
+  `filters`: DataExploreFilterSignal[];
+  `limit`: int64;
+  `metrics`: string[];
+  `semanticModelId`?: string;
   `requestSeq`: int64;
   `resetVersion`: int64;
+  `sort`: DataExploreSortSignal[];
+  `time`?: DataExploreTimeSignal;
+}
+
+model DataExploreAgentContextSignal {
+  `dimensions`: string[];
+  `filters`: DataExploreFilterSignal[];
+  `limit`: int64;
+  `metrics`: string[];
+  `sort`: DataExploreSortSignal[];
+  `time`?: DataExploreTimeSignal;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })

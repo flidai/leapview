@@ -224,10 +224,92 @@ func explorationSpecWithState(spec exploration.ExplorationSpec, state dataExplor
 	} else {
 		spec.Time = nil
 	}
+	spec.Filters = make([]exploration.ExplorationFilter, 0, len(state.Filters))
+	for _, filter := range state.Filters {
+		values := make([]exploration.ExplorationFilterValue, 0, len(filter.Values))
+		for _, value := range filter.Values {
+			values = append(values, exploration.ExplorationFilterValue{Value: &exploration.StringExplorationFilterValue{ExplorationFilterValueBase: exploration.ExplorationFilterValueBase{Kind: "string"}, Kind: "string", Value: value}})
+		}
+		var expression exploration.ExplorationFilterExpressionVariant
+		switch filter.Operator {
+		case "is_null", "is_not_null":
+			expression = &exploration.NullCheckExplorationFilterExpression{ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "null_check"}, Kind: "null_check", Operator: filter.Operator}
+		case "in", "not_in":
+			expression = &exploration.SetExplorationFilterExpression{ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "set"}, Kind: "set", Operator: filter.Operator, Values: values}
+		default:
+			if len(values) == 0 {
+				continue
+			}
+			expression = &exploration.ComparisonExplorationFilterExpression{ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "comparison"}, Kind: "comparison", Operator: filter.Operator, Value: values[0]}
+		}
+		spec.Filters = append(spec.Filters, exploration.ExplorationFilter{Field: filter.Field, DatasetID: filter.Dataset, Expression: exploration.ExplorationFilterExpression{Value: expression}})
+	}
 	if state.Limit > 0 {
 		spec.Limit = int32(state.Limit)
 	}
 	return spec
+}
+
+func dataExploreCommandWithCanonicalSpec(command projectsignals.DataExploreCommand) projectsignals.DataExploreCommand {
+	if command.Spec.SchemaVersion == 0 && strings.TrimSpace(command.Spec.ModelID) == "" {
+		spec := defaultExplorationSpec()
+		state := dataExploreState{
+			ModelID: command.SemanticModelID, DatasetID: command.DatasetID,
+			Dimensions: append([]string(nil), command.Dimensions...), Metrics: append([]string(nil), command.Metrics...),
+			Filters: make([]dataExploreFilter, 0, len(command.Filters)), Sort: make([]dataExploreSort, 0, len(command.Sort)), Limit: command.Limit,
+		}
+		for _, filter := range command.Filters {
+			state.Filters = append(state.Filters, dataExploreFilter{Dataset: filter.DatasetID, Field: filter.Field, Operator: filter.Operator, Values: append([]string(nil), filter.Values...)})
+		}
+		for _, sort := range command.Sort {
+			state.Sort = append(state.Sort, dataExploreSort{Field: sort.Field, Direction: sort.Direction})
+		}
+		if command.Time != nil {
+			state.Time = &dataExploreTime{Field: command.Time.Field, Grain: command.Time.Grain, Alias: command.Time.Alias}
+		}
+		command.Spec = explorationSpecWithState(spec, state)
+		return command
+	}
+	state := dataExploreStateFromSpec(command.Spec)
+	command.SemanticModelID, command.DatasetID = state.ModelID, state.DatasetID
+	command.Dimensions, command.Metrics, command.Limit = state.Dimensions, state.Metrics, state.Limit
+	command.Filters = make([]projectsignals.DataExploreFilterSignal, 0, len(state.Filters))
+	for _, filter := range state.Filters {
+		command.Filters = append(command.Filters, projectsignals.DataExploreFilterSignal{DatasetID: filter.Dataset, Field: filter.Field, Operator: filter.Operator, Values: filter.Values})
+	}
+	command.Sort = make([]projectsignals.DataExploreSortSignal, 0, len(state.Sort))
+	for _, sort := range state.Sort {
+		command.Sort = append(command.Sort, projectsignals.DataExploreSortSignal{Field: sort.Field, Direction: sort.Direction})
+	}
+	if state.Time == nil {
+		command.Time = nil
+	} else {
+		command.Time = &projectsignals.DataExploreTimeSignal{Field: state.Time.Field, Grain: state.Time.Grain, Alias: state.Time.Alias}
+	}
+	return command
+}
+
+func dataExploreCommandRefreshSpec(command projectsignals.DataExploreCommand) projectsignals.DataExploreCommand {
+	spec := command.Spec
+	if spec.SchemaVersion == 0 {
+		spec = defaultExplorationSpec()
+	}
+	state := dataExploreState{
+		ModelID: command.SemanticModelID, DatasetID: command.DatasetID,
+		Dimensions: append([]string(nil), command.Dimensions...), Metrics: append([]string(nil), command.Metrics...),
+		Filters: make([]dataExploreFilter, 0, len(command.Filters)), Sort: make([]dataExploreSort, 0, len(command.Sort)), Limit: command.Limit,
+	}
+	for _, filter := range command.Filters {
+		state.Filters = append(state.Filters, dataExploreFilter{Dataset: filter.DatasetID, Field: filter.Field, Operator: filter.Operator, Values: append([]string(nil), filter.Values...)})
+	}
+	for _, sort := range command.Sort {
+		state.Sort = append(state.Sort, dataExploreSort{Field: sort.Field, Direction: sort.Direction})
+	}
+	if command.Time != nil {
+		state.Time = &dataExploreTime{Field: command.Time.Field, Grain: command.Time.Grain, Alias: command.Time.Alias}
+	}
+	command.Spec = explorationSpecWithState(spec, state)
+	return command
 }
 
 func explorationDimensionRefs(spec exploration.ExplorationSpec) []exploration.ExplorationDimensionRef {

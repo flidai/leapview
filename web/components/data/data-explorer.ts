@@ -33,6 +33,7 @@ import { dataExplorerURL } from './data-explorer-url'
 import '../chat/chat-drawer'
 import './preview-table'
 import './explore-table'
+import { emptyExplorationSpec } from './data-explorer-spec'
 
 const emptyPreview: DataPreviewSignal = {
   columns: [],
@@ -54,7 +55,7 @@ const emptyExplorer: DataExplorerSignal = {
   selectedObject: undefined,
   preview: emptyPreview,
   explore: {
-    command: { semanticModelId: '', datasetId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} },
+    command: { spec: emptyExplorationSpec, semanticModelId: '', datasetId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} },
     semanticModels: [], datasets: [], fields: [],
     result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
   },

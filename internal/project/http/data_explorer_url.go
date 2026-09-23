@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
@@ -47,8 +48,27 @@ func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *
 }
 
 const dataExploreURLVersion = "1"
+const dataExploreCanonicalURLVersion = "2"
 
 func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreCommand, error) {
+	if version := strings.TrimSpace(values.Get("v")); version == dataExploreCanonicalURLVersion {
+		if len(values["state"]) != 1 || strings.TrimSpace(values.Get("state")) == "" {
+			return projectsignals.DataExploreCommand{}, errors.New("version 2 explore URLs require exactly one state parameter")
+		}
+		for _, key := range []string{"semanticModel", "dataset", "dimension", "metric", "filter", "sort", "time", "limit"} {
+			if _, present := values[key]; present {
+				return projectsignals.DataExploreCommand{}, fmt.Errorf("version 2 state cannot be combined with legacy parameter %q", key)
+			}
+		}
+		var spec exploration.ExplorationSpec
+		if err := decodeDataExploreURLValue(values.Get("state"), &spec); err != nil {
+			return projectsignals.DataExploreCommand{}, fmt.Errorf("state: %w", err)
+		}
+		if err := exploration.ValidateShape(&spec); err != nil {
+			return projectsignals.DataExploreCommand{}, fmt.Errorf("state: %w", err)
+		}
+		return dataExploreCommandWithCanonicalSpec(projectsignals.DataExploreCommand{Spec: spec}), nil
+	}
 	command := projectsignals.DataExploreCommand{
 		Dimensions: append([]string{}, values["dimension"]...),
 		Metrics:    append([]string{}, values["metric"]...),
@@ -127,7 +147,7 @@ func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreC
 		}
 		command.Limit = limit
 	}
-	return command, nil
+	return dataExploreCommandWithCanonicalSpec(command), nil
 }
 
 func decodeDataExploreURLValue(value string, target any) error {

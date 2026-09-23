@@ -5174,9 +5174,9 @@ paths:
                     - id: echarts
                       kinds:
                         - cartesian
-                      schemaVersion: 7
+                      schemaVersion: 1
                       version: example
-                  schemaVersion: 7
+                  schemaVersion: 1
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -7280,7 +7280,7 @@ paths:
                         spatialLatitudeFieldID: example
                         spatialLongitudeFieldID: example
                     rendererID: example
-                    schemaVersion: 11
+                    schemaVersion: 1
                     selection:
                       - datum:
                           blockID: example
@@ -7923,7 +7923,7 @@ paths:
                     spatialLatitudeFieldID: example
                     spatialLongitudeFieldID: example
                 rendererID: example
-                schemaVersion: 11
+                schemaVersion: 1
                 selection:
                   - datum:
                       blockID: example
@@ -25061,7 +25061,7 @@ paths:
                           spatialLatitudeFieldID: example
                           spatialLongitudeFieldID: example
                       rendererID: example
-                      schemaVersion: 11
+                      schemaVersion: 1
                       selection:
                         - datum:
                             blockID: example
@@ -62635,9 +62635,9 @@ components:
             - id: echarts
               kinds:
                 - cartesian
-              schemaVersion: 7
+              schemaVersion: 1
               version: example
-          schemaVersion: 7
+          schemaVersion: 1
     Capability:
       type: string
       enum:
@@ -65444,7 +65444,7 @@ components:
                   spatialLatitudeFieldID: example
                   spatialLongitudeFieldID: example
               rendererID: example
-              schemaVersion: 11
+              schemaVersion: 1
               selection:
                 - datum:
                     blockID: example
@@ -65515,7 +65515,7 @@ components:
                 spatialLatitudeFieldID: example
                 spatialLongitudeFieldID: example
             rendererID: example
-            schemaVersion: 11
+            schemaVersion: 1
             selection:
               - datum:
                   blockID: example
@@ -66008,7 +66008,7 @@ components:
                   spatialLatitudeFieldID: example
                   spatialLongitudeFieldID: example
               rendererID: example
-              schemaVersion: 11
+              schemaVersion: 1
               selection:
                 - datum:
                     blockID: example
@@ -70524,7 +70524,7 @@ components:
                   spatialLatitudeFieldID: example
                   spatialLongitudeFieldID: example
               rendererID: example
-              schemaVersion: 11
+              schemaVersion: 1
               selection:
                 - datum:
                     blockID: example
@@ -70572,7 +70572,7 @@ components:
                 spatialLatitudeFieldID: example
                 spatialLongitudeFieldID: example
             rendererID: example
-            schemaVersion: 11
+            schemaVersion: 1
             selection:
               - datum:
                   blockID: example
@@ -84692,9 +84692,7 @@ components:
       properties:
         schemaVersion:
           type: integer
-          enum:
-            - 7
-          example: 7
+          example: 1
         renderers:
           type: array
           items:
@@ -84703,16 +84701,16 @@ components:
             - id: echarts
               kinds:
                 - cartesian
-              schemaVersion: 7
+              schemaVersion: 1
               version: example
       example:
         renderers:
           - id: echarts
             kinds:
               - cartesian
-            schemaVersion: 7
+            schemaVersion: 1
             version: example
-        schemaVersion: 7
+        schemaVersion: 1
     VisualizationCardinality:
       type: object
       required:
@@ -85256,9 +85254,7 @@ components:
       properties:
         schemaVersion:
           type: integer
-          enum:
-            - 11
-          example: 11
+          example: 1
         visualID:
           type: string
           example: example
@@ -85342,7 +85338,7 @@ components:
             spatialLatitudeFieldID: example
             spatialLongitudeFieldID: example
         rendererID: example
-        schemaVersion: 11
+        schemaVersion: 1
         selection:
           - datum:
               blockID: example
@@ -87001,9 +86997,7 @@ components:
           example: example
         schemaVersion:
           type: integer
-          enum:
-            - 7
-          example: 7
+          example: 1
         kinds:
           type: array
           items:
@@ -87014,7 +87008,7 @@ components:
         id: echarts
         kinds:
           - cartesian
-        schemaVersion: 7
+        schemaVersion: 1
         version: example
     VisualizationRendererID:
       type: string

@@ -1,10 +1,11 @@
 package ui
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/url"
-	"strconv"
 
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	"github.com/flidai/leapview/internal/dashboard"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -67,32 +68,73 @@ func dataExplorerUpdatesURL(command uisignals.DataExplorerCommand) string {
 		return "/updates?" + values.Encode()
 	}
 	explore := command.Explore
-	values.Set("v", "1")
+	spec := dataExplorerCanonicalSpec(*explore)
 	values.Set("mode", "explore")
-	values.Set("semanticModel", uisignals.ValueOrZero(explore.SemanticModelID))
-	values.Set("dataset", uisignals.ValueOrZero(explore.DatasetID))
-	for _, dimension := range explore.Dimensions {
-		values.Add("dimension", dimension)
-	}
-	for _, metric := range explore.Metrics {
-		values.Add("metric", metric)
-	}
-	for _, filter := range explore.Filters {
-		encoded, _ := json.Marshal(filter)
-		values.Add("filter", string(encoded))
-	}
-	for _, sorting := range explore.Sort {
-		encoded, _ := json.Marshal(sorting)
-		values.Add("sort", string(encoded))
-	}
-	if explore.Time != nil {
-		encoded, _ := json.Marshal(explore.Time)
-		values.Set("time", string(encoded))
-	}
-	if explore.Limit != dataExplorerDefaultLimit {
-		values.Set("limit", strconv.FormatInt(explore.Limit, 10))
-	}
+	values.Set("v", "2")
+	encoded, _ := canonicalExplorationJSON(spec)
+	values.Set("state", string(encoded))
 	return "/updates?" + values.Encode()
+}
+
+func canonicalExplorationJSON(value any) ([]byte, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var normalized any
+	if err := decoder.Decode(&normalized); err != nil {
+		return nil, err
+	}
+	return json.Marshal(normalized)
+}
+
+func dataExplorerCanonicalSpec(command uisignals.DataExploreCommand) exploration.ExplorationSpec {
+	spec := command.Spec
+	if spec.SchemaVersion != 0 || spec.ModelID != "" {
+		return spec
+	}
+	spec = exploration.ExplorationSpec{SchemaVersion: 1, ModelID: uisignals.ValueOrZero(command.SemanticModelID), DatasetID: command.DatasetID, Limit: int32(command.Limit)}
+	if spec.Limit == 0 {
+		spec.Limit = int32(dataExplorerDefaultLimit)
+	}
+	spec.Dimensions = make([]exploration.ExplorationDimensionRef, 0, len(command.Dimensions))
+	for _, field := range command.Dimensions {
+		spec.Dimensions = append(spec.Dimensions, exploration.ExplorationDimensionRef{Field: field})
+	}
+	spec.Metrics = make([]exploration.ExplorationMetricRef, 0, len(command.Metrics))
+	for _, field := range command.Metrics {
+		spec.Metrics = append(spec.Metrics, exploration.ExplorationMetricRef{Field: field})
+	}
+	spec.Filters = make([]exploration.ExplorationFilter, 0, len(command.Filters))
+	for _, filter := range command.Filters {
+		values := make([]exploration.ExplorationFilterValue, 0, len(filter.Values))
+		for _, value := range filter.Values {
+			values = append(values, exploration.ExplorationFilterValue{Value: &exploration.StringExplorationFilterValue{ExplorationFilterValueBase: exploration.ExplorationFilterValueBase{Kind: "string"}, Kind: "string", Value: value}})
+		}
+		var expression exploration.ExplorationFilterExpressionVariant
+		switch filter.Operator {
+		case "is_null", "is_not_null":
+			expression = &exploration.NullCheckExplorationFilterExpression{ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "null_check"}, Kind: "null_check", Operator: filter.Operator}
+		case "in", "not_in":
+			expression = &exploration.SetExplorationFilterExpression{ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "set"}, Kind: "set", Operator: filter.Operator, Values: values}
+		default:
+			if len(values) == 0 {
+				continue
+			}
+			expression = &exploration.ComparisonExplorationFilterExpression{ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "comparison"}, Kind: "comparison", Operator: filter.Operator, Value: values[0]}
+		}
+		spec.Filters = append(spec.Filters, exploration.ExplorationFilter{Field: filter.Field, DatasetID: filter.DatasetID, Expression: exploration.ExplorationFilterExpression{Value: expression}})
+	}
+	spec.Sort = make([]exploration.ExplorationSort, 0, len(command.Sort))
+	for _, sort := range command.Sort {
+		spec.Sort = append(spec.Sort, exploration.ExplorationSort{Field: sort.Field, Direction: exploration.ExplorationSortDirection(sort.Direction)})
+	}
+	if command.Time != nil {
+		spec.Time = &exploration.ExplorationTimeSelection{Field: command.Time.Field, Grain: exploration.ExplorationTimeGrain(command.Time.Grain), Alias: command.Time.Alias}
+	}
+	return spec
 }
 
 const dataExplorerDefaultLimit = int64(100)
@@ -129,16 +171,13 @@ func DataExplorerBootstrapSignalsWithAgent(_ catalog.Catalog, page uisignals.Dat
 
 func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal) uisignals.AgentContextSignal {
 	command := explorer.Explore.Command
-	modelID := uisignals.ValueOrZero(command.SemanticModelID)
-	datasetID := uisignals.ValueOrZero(command.DatasetID)
+	spec := dataExplorerCanonicalSpec(command)
+	modelID := spec.ModelID
+	datasetID := uisignals.ValueOrZero(spec.DatasetID)
 	return uisignals.AgentContextSignal{
 		Surface: "data", ModelID: modelID, DatasetID: &datasetID,
 		DashboardID: "", DashboardTitle: "", PageID: "", PageTitle: "",
-		Exploration: &uisignals.DataExploreAgentContextSignal{
-			Dimensions: append([]string(nil), command.Dimensions...), Metrics: append([]string(nil), command.Metrics...),
-			Filters: append([]uisignals.DataExploreFilterSignal(nil), command.Filters...),
-			Sort:    append([]uisignals.DataExploreSortSignal(nil), command.Sort...), Time: command.Time, Limit: command.Limit,
-		},
+		Exploration: &spec,
 		Filters: uisignals.DashboardFilterState{
 			AppliedControls: map[string]uisignals.DashboardAppliedFilterState{},
 			DraftControls:   map[string]uisignals.DashboardFilterExpression{}, DirtyBindings: []string{},

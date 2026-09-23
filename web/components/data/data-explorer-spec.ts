@@ -3,6 +3,7 @@ import type {
   ExplorationFilterExpression,
   ExplorationFilterValue,
   ExplorationSpec,
+  ExplorationTimeGrain,
 } from '../../generated/exploration'
 import type { DataExploreCommand } from '../../generated/signals'
 import type { DataExploreDatasetSignal, DataExploreFieldSignal, DataExplorerObjectSignal } from '../../generated/signals'
@@ -19,6 +20,11 @@ export const emptyExplorationSpec: ExplorationSpec = {
 
 export const emptyDataExploreCommand: DataExploreCommand = {
   spec: emptyExplorationSpec,
+  dimensions: [],
+  metrics: [],
+  filters: [],
+  sort: [],
+  limit: 100,
   requestSeq: 0,
   resetVersion: 0,
   columnWidths: {},
@@ -33,9 +39,30 @@ export function explorationSpecFor(command: Pick<Partial<DataExploreCommand>, 's
   return command?.spec ?? emptyExplorationSpec
 }
 
+export function explorationSpecFromCommand(command: DataExploreCommand): ExplorationSpec {
+  const base = explorationSpecFor(command)
+  const dimensionsByField = new Map(base.dimensions.map((item) => [item.field, item]))
+  const metricsByField = new Map(base.metrics.map((item) => [item.field, item]))
+  const filters = command.filters.map((filter) => makeExplorationFilter(filter.field, filter.operator, filter.values))
+    .filter((filter): filter is ExplorationFilter => filter !== undefined)
+    .map((filter, index) => ({ ...filter, datasetId: command.filters[index]?.datasetId }))
+  return {
+    ...base,
+    schemaVersion: 1,
+    modelId: command.semanticModelId?.trim() || base.modelId,
+    datasetId: command.datasetId?.trim() || undefined,
+    dimensions: command.dimensions.map((field) => dimensionsByField.get(field) ?? { field }),
+    metrics: command.metrics.map((field) => metricsByField.get(field) ?? { field }),
+    filters,
+    sort: command.sort.map((item) => ({ field: item.field, direction: item.direction as 'asc' | 'desc' })),
+    time: command.time ? { ...base.time, field: command.time.field, grain: command.time.grain as ExplorationTimeGrain, alias: command.time.alias } : undefined,
+    limit: command.limit || 100,
+  }
+}
+
 export function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataExploreFieldSignal[]): string[] {
   const tableID = objectTableID(object)
-  const localFields = fields.filter((field) => field.kind !== 'metric' && field.modelTable === tableID)
+  const localFields = fields.filter((field) => field.kind !== 'metric' && field.datasetId === tableID)
   const localByColumn = new Map(localFields.map((field) => [fieldColumnID(field), field.id]))
   const ordered = (object.columns ?? []).map((column) => localByColumn.get(column.key) ?? `${tableID}.${column.key}`)
   const seen = new Set(ordered)
@@ -46,7 +73,7 @@ export function localPreviewDimensions(object: DataExplorerObjectSignal, fields:
 }
 
 export function objectTableID(object: DataExplorerObjectSignal): string {
-  return object.table?.trim() || object.title.trim()
+  return object.datasetId?.trim() || object.title.trim()
 }
 
 export function fieldColumnID(field: DataExploreFieldSignal): string {
@@ -114,7 +141,7 @@ function explorationSortRefs(spec: ExplorationSpec): ExplorationSortRef[] {
 }
 
 export function exploreContextMatchesObject(command: DataExploreCommand, object: DataExplorerObjectSignal): boolean {
-  return explorationSpecFor(command).modelId === (object.modelId ?? '')
+  return explorationSpecFor(command).modelId === (object.semanticModelId ?? '')
 }
 
 export function fieldLabel(id: string, fields: DataExploreFieldSignal[]): string {

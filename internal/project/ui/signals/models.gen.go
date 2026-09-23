@@ -5,22 +5,23 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
 type AgentContextSignal struct {
-	Surface        string                         `json:"surface" yaml:"surface"`
-	DashboardID    string                         `json:"dashboardId" yaml:"dashboardId"`
-	DashboardTitle string                         `json:"dashboardTitle" yaml:"dashboardTitle"`
-	PageID         string                         `json:"pageId" yaml:"pageId"`
-	PageTitle      string                         `json:"pageTitle" yaml:"pageTitle"`
-	ModelID        string                         `json:"modelId" yaml:"modelId"`
-	DatasetID      *string                        `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
-	Exploration    *DataExploreAgentContextSignal `json:"exploration,omitempty" yaml:"exploration,omitempty"`
-	Generation     int64                          `json:"generation" yaml:"generation"`
-	Filters        DashboardFilterState           `json:"filters" yaml:"filters"`
-	ReferenceLimit int32                          `json:"referenceLimit" yaml:"referenceLimit"`
-	References     []AgentReferenceSignal         `json:"references" yaml:"references"`
+	Surface        string                       `json:"surface" yaml:"surface"`
+	DashboardID    string                       `json:"dashboardId" yaml:"dashboardId"`
+	DashboardTitle string                       `json:"dashboardTitle" yaml:"dashboardTitle"`
+	PageID         string                       `json:"pageId" yaml:"pageId"`
+	PageTitle      string                       `json:"pageTitle" yaml:"pageTitle"`
+	ModelID        string                       `json:"modelId" yaml:"modelId"`
+	DatasetID      *string                      `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
+	Exploration    *exploration.ExplorationSpec `json:"exploration,omitempty" yaml:"exploration,omitempty"`
+	Generation     int64                        `json:"generation" yaml:"generation"`
+	Filters        DashboardFilterState         `json:"filters" yaml:"filters"`
+	ReferenceLimit int32                        `json:"referenceLimit" yaml:"referenceLimit"`
+	References     []AgentReferenceSignal       `json:"references" yaml:"references"`
 }
 
 type AgentReferenceKeySignal struct {
@@ -1035,27 +1036,19 @@ type DashboardUnfilteredExpression struct {
 	Kind string `json:"kind" yaml:"kind"`
 }
 
-type DataExploreAgentContextSignal struct {
-	Dimensions []string                  `json:"dimensions" yaml:"dimensions"`
-	Filters    []DataExploreFilterSignal `json:"filters" yaml:"filters"`
-	Limit      int64                     `json:"limit" yaml:"limit"`
-	Metrics    []string                  `json:"metrics" yaml:"metrics"`
-	Sort       []DataExploreSortSignal   `json:"sort" yaml:"sort"`
-	Time       *DataExploreTimeSignal    `json:"time,omitempty" yaml:"time,omitempty"`
-}
-
 type DataExploreCommand struct {
-	ColumnWidths    *map[string]float64       `json:"columnWidths,omitempty" yaml:"columnWidths,omitempty"`
-	DatasetID       *string                   `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
-	Dimensions      []string                  `json:"dimensions" yaml:"dimensions"`
-	Filters         []DataExploreFilterSignal `json:"filters" yaml:"filters"`
-	Limit           int64                     `json:"limit" yaml:"limit"`
-	Metrics         []string                  `json:"metrics" yaml:"metrics"`
-	SemanticModelID *string                   `json:"semanticModelId,omitempty" yaml:"semanticModelId,omitempty"`
-	RequestSeq      int64                     `json:"requestSeq" yaml:"requestSeq"`
-	ResetVersion    int64                     `json:"resetVersion" yaml:"resetVersion"`
-	Sort            []DataExploreSortSignal   `json:"sort" yaml:"sort"`
-	Time            *DataExploreTimeSignal    `json:"time,omitempty" yaml:"time,omitempty"`
+	Spec            exploration.ExplorationSpec `json:"spec" yaml:"spec"`
+	ColumnWidths    *map[string]float64         `json:"columnWidths,omitempty" yaml:"columnWidths,omitempty"`
+	DatasetID       *string                     `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
+	Dimensions      []string                    `json:"dimensions" yaml:"dimensions"`
+	Filters         []DataExploreFilterSignal   `json:"filters" yaml:"filters"`
+	Limit           int64                       `json:"limit" yaml:"limit"`
+	Metrics         []string                    `json:"metrics" yaml:"metrics"`
+	SemanticModelID *string                     `json:"semanticModelId,omitempty" yaml:"semanticModelId,omitempty"`
+	RequestSeq      int64                       `json:"requestSeq" yaml:"requestSeq"`
+	ResetVersion    int64                       `json:"resetVersion" yaml:"resetVersion"`
+	Sort            []DataExploreSortSignal     `json:"sort" yaml:"sort"`
+	Time            *DataExploreTimeSignal      `json:"time,omitempty" yaml:"time,omitempty"`
 }
 
 type DataExploreDatasetSignal struct {
