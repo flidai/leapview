@@ -42,6 +42,19 @@ limit. The two waves never overlap. Compilation, test listing, an empty shard,
 any shard failure, or a package-sweep failure fails the lane. Shard logs are
 retained until all workers have been joined and are printed even on failure.
 
+## Nightly clearance blockers
+
+Branch-dispatched nightly scans need `origin/main` for their history baseline.
+The security job now fetches full history instead of only the dispatched branch.
+A regression requires that checkout contract.
+
+Nightly dependency clearance also rejected four unwaived `fast-uri` findings.
+The root override moves from 3.1.5 to the patched 3.1.6 release, with only that
+resolved package changed in the lockfile and fresh vulnerability evidence. The
+[upstream advisory](https://github.com/advisories/GHSA-5jgf-p345-68v8) identifies
+3.1.6 as patched. The root live audit now returns no findings. No exception or
+severity threshold changes are involved.
+
 ## Verification and rollout
 
 Executable fixtures cover the exact tagged compilation, complete/disjoint test
