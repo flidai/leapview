@@ -211,6 +211,11 @@ manual dispatch and ready-for-review events; existing path filters still apply.
 Push, merge-group, and scheduled validation retain their existing behavior.
 Selected jobs still use full preparation and all of their existing validation
 commands. Converting a running PR to draft does not cancel an existing run.
+Health reporting records successful/skipped PR runs with the complete known
+job inventory skipped (including planner and gate) as `skipped_pr`. These runs
+need no plan artifact or execution timestamps and are excluded from latency,
+rerun, and selection metrics. Missing jobs, unknown jobs, failures, cancellations,
+and executed jobs still follow the normal evidence checks.
 
 Cross-language quality is a separate PR-only lane for changes that select
 frontend or documentation work without selecting Go package validation. It

@@ -524,6 +524,7 @@ func renderMarkdown(report platformci.HealthReport, days int) string {
 	fmt.Fprintf(&output, "| Metric | Value |\n|---|---:|\n| Runs | %d |\n", report.RunCount)
 	fmt.Fprintf(&output, "| Success / failure / cancelled / skipped / unknown conclusion | %d / %d / %d / %d / %d |\n", report.Successes, report.Failures, report.Cancellations, report.Skipped, report.UnknownConclusions)
 	fmt.Fprintf(&output, "| Deferred stack layers | %d |\n| Incomplete evidence | %d |\n| Missing durations | %d |\n", report.Deferred, report.Incomplete, report.MissingDurations)
+	fmt.Fprintf(&output, "| Intentionally skipped PR runs | %d |\n", report.SkippedPR)
 	for _, row := range []struct {
 		name   string
 		metric platformci.DurationMetric
@@ -534,6 +535,7 @@ func renderMarkdown(report platformci.HealthReport, days int) string {
 	}
 	fmt.Fprintf(&output, "| Reruns | %d (%.1f%%) |\n| Supported PR plans / unknown PR selection | %d / %d |\n| Audit samples / misses | %d / %d |\n", report.Reruns, report.RerunPercent, report.PlannedRuns, report.UnknownSelection, report.AuditSamples, report.AuditMisses)
 	output.WriteString("\nLatency uses latest-attempt timestamps, including failed and cancelled attempts with complete timestamps. Unknown evidence is not proof of success.\n")
+	output.WriteString("\nPR runs with the complete known job inventory skipped, including planning and the gate, are recorded separately and excluded from execution metrics. They require no plan artifact or execution timestamps.\n")
 	output.WriteString("\n## Planned selection\n\nRates use supported plans only; they are not execution rates.\n\n| Job | Planned | Rate |\n|---|---:|---:|\n")
 	names := make([]string, 0, len(report.Selection))
 	for name := range report.Selection {
