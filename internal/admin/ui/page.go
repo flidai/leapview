@@ -61,7 +61,10 @@ type AdminPublication struct {
 }
 
 type AdminAgentData struct {
+	Configured      bool
 	Enabled         bool
+	Status          string
+	StatusDetail    string
 	Model           string
 	ReasoningEffort string
 	SystemPrompt    string
@@ -248,11 +251,6 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 			g.Attr("data-on:lv-audit-log-command", "$adminAuditLogCommand = evt.detail; "+uiactions.QueryPost("/admin/audit/command", "adminAuditLogCommand", "adminAuditLog")),
 		)
 	}
-	if active == "agent" {
-		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-agent-system-prompt-save", "$adminAgentCommand = evt.detail; "+uiactions.CommandPatch(data.AgentConfigCommand, "/admin/agent/config", data.Agent.Revision)),
-		)
-	}
 	if active == "queries" {
 		adminAttrs = append(adminAttrs,
 			g.Attr("data-on:lv-query-history-command", "$adminQueryHistoryCommand = evt.detail; evt.detail.action == 'select_detail' ? ($adminQueryDetail = {eventId: evt.detail.eventId, loading: true, error: ''}) : evt.detail.action == 'close_detail' ? ($adminQueryDetail = {eventId: '', loading: false, error: ''}) : ($adminQueryHistory.loading = true, $adminQueryHistory.error = ''); "+uiactions.QueryPost("/admin/queries/command")),
@@ -285,7 +283,7 @@ func AdminBootstrapSignals(active string, data AdminData, providers ...webpage.P
 		"status":  uisignals.DashboardStatus{},
 	}
 	if active == "agent" {
-		signals["adminAgentCommand"] = uisignals.AdminAgentCommandSignal{SystemPrompt: data.Agent.SystemPrompt}
+		signals["adminAgentCommand"] = uisignals.AdminAgentCommandSignal{SystemPrompt: uisignals.Pointer(data.Agent.SystemPrompt)}
 	}
 	if active == "queries" {
 		queryHistory := AdminQueryHistorySignalFromData(data.QueryHistory)
@@ -615,9 +613,13 @@ func adminAgentSignal(data AdminAgentData) uisignals.AdminAgentSignal {
 		})
 	}
 	return uisignals.AdminAgentSignal{
+		Configured:      data.Configured,
 		Enabled:         data.Enabled,
+		Status:          data.Status,
+		StatusDetail:    uisignals.Optional(data.StatusDetail),
 		Model:           uisignals.Optional(data.Model),
 		ReasoningEffort: uisignals.Optional(data.ReasoningEffort),
+		Revision:        data.Revision,
 		SystemPrompt:    data.SystemPrompt,
 		CanWrite:        data.CanWrite,
 		UpdatePath:      data.UpdatePath,

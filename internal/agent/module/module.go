@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool"
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
@@ -15,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	agentapi "github.com/flidai/leapview/internal/agent/api"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
+	"github.com/flidai/leapview/internal/agent/configreload"
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
 	agentopenai "github.com/flidai/leapview/internal/agent/openai"
@@ -88,6 +90,8 @@ type Config struct {
 	Persistence      *Persistence
 	Production       bool
 	Model            ModelConfig
+	ModelConfigFile  string
+	ReloadInterval   time.Duration
 	Service          *agent.Service
 	Jobs             JobStore
 	RunWorkloadClass string
@@ -207,6 +211,16 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		service.ConfigureDefaultModel(func(modelConfig agent.Config) agentcore.Model {
 			return agentopenai.NewModel(modelConfig, nil)
 		})
+		if config.ModelConfigFile != "" {
+			reloader, reloadErr := configreload.NewFileReloader(config.ModelConfigFile, service, config.Logger, config.ReloadInterval)
+			if reloadErr != nil {
+				return nil, reloadErr
+			}
+			if _, reloadErr = reloader.Reload(); reloadErr != nil {
+				return nil, fmt.Errorf("load agent configuration file: %w", reloadErr)
+			}
+			go reloader.Run(ctx)
+		}
 	}
 	var dispatchAPIGen func(agent.Scope, string, http.ResponseWriter, *http.Request) bool
 	if config.DispatchAPIGen != nil {

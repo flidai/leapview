@@ -24,7 +24,7 @@ The built-in agent and deployment MCP catalog expose `docs_search` and `docs_rea
 
 Pass a returned ID to `docs_read`. Reads are line- and byte-bounded and return `nextOffset` when more content remains. Continue from that offset only when the current window is insufficient. The tools can read authored guides and generated CLI, API, configuration, and visual references, but cannot access arbitrary deployment files or execute documented operations.
 
-## Configure the built-in model provider
+## Configure and reload the built-in model provider
 
 The built-in chat surface uses an OpenAI-compatible provider configuration:
 
@@ -40,7 +40,49 @@ Responses API for GPT-6 Luna so `high` reasoning remains compatible with its
 function tools. Supported effort values are `none`, `low`, `medium`, `high`,
 `xhigh`, and `max`.
 
-Store the API key in the deployment secret manager. The global administrator-controlled system prompt is configured in the agent administration page. Provider prompts and responses may contain business context; review the provider's data handling, retention, regional, and contractual requirements before enabling it.
+Store the API key in the deployment secret manager. The agent administration page shows the active system prompt in rendered and raw Markdown views. Provider prompts and responses may contain business context; review the provider's data handling, retention, regional, and contractual requirements before enabling it.
+
+Environment variables are startup configuration. A running process cannot receive
+changes made to its environment, so deployments that need live agent changes should
+mount a secret-backed JSON file and point LeapView to it:
+
+```sh
+LEAPVIEW_AGENT_CONFIG_FILE=/run/secrets/leapview-agent.json
+```
+
+The file contains one complete configuration revision:
+
+```json
+{
+  "enabled": true,
+  "apiKey": "<secret>",
+  "model": "gpt-6-luna",
+  "baseUrl": "https://api.openai.com/v1",
+  "reasoningEffort": "high"
+}
+```
+
+Keep the file owned by the LeapView process and not writable by its group or other
+users. Update it through the deployment secret manager or replace it atomically—for
+example, write a new `0600` file beside it and rename the file into place. LeapView
+checks for a new revision every two seconds. A valid revision is applied atomically
+to new requests; requests already in progress continue with the configuration they
+started with. Setting `enabled` to `false` disables new built-in agent requests
+without restarting the application.
+
+If a revision is invalid, LeapView keeps the last known-good configuration and
+reports a degraded state and a configuration error in server logs. Provider
+failures also report the agent as degraded, but do not silently disable it. The
+Agent administration page reports configuration separately from runtime state, so
+an agent can be `Configured` while its runtime state is `Enabled`, `Disabled`, or
+`Degraded`. API keys and provider base URLs remain server-side and are never sent
+to the browser or included in reload audit metadata.
+
+For a typical deployment workflow, update the secret value, allow the platform to
+project or atomically replace the mounted file, and confirm the Agent page reports
+the expected model, reasoning effort, and state. If the page reports `Degraded`,
+inspect the server-side configuration error, correct the secret revision, and
+replace the file again; no process restart or manual UI toggle is required.
 
 The MCP endpoint does not depend on this provider configuration. External MCP hosts can use LeapView tools when the built-in model is disabled.
 

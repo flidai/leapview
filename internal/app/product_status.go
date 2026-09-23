@@ -20,7 +20,8 @@ func productAdministrationStatus(config appconfig.Config, instanceID, publicURL,
 		SCIM:      adminmodule.ProductAvailability{Available: true, Enabled: strings.TrimSpace(config.SCIMBearerToken) != ""},
 		ManagedBy: "deployment",
 	}
-	agentConfigured := strings.TrimSpace(config.AgentAPIKey) != "" && strings.TrimSpace(config.AgentModel) != ""
+	agentFileConfigured := strings.TrimSpace(config.AgentConfigFile) != ""
+	agentConfigured := agentFileConfigured || strings.TrimSpace(config.AgentAPIKey) != "" && strings.TrimSpace(config.AgentModel) != ""
 	storageBackend := strings.TrimSpace(config.ManagedDataBackend)
 	if storageBackend == "" {
 		storageBackend = "local"
@@ -39,7 +40,7 @@ func productAdministrationStatus(config appconfig.Config, instanceID, publicURL,
 			StorageBackend: storageBackend,
 			Agent: adminmodule.ProductAgentStatus{
 				Available: true, Configured: agentConfigured, Provider: enabledLabel(agentConfigured, "openai-compatible"),
-				ModelConfigured: strings.TrimSpace(config.AgentModel) != "",
+				ModelConfigured: agentFileConfigured || strings.TrimSpace(config.AgentModel) != "",
 			},
 			Limits: adminmodule.ProductLimits{
 				QueryResultMaxRows: config.QueryResultMaxRows, QueryResultMaxBytes: config.QueryResultMaxBytes,

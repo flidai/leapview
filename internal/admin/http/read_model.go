@@ -194,7 +194,10 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 		return ui.AdminAgentData{}, err
 	}
 	data := ui.AdminAgentData{
+		Configured:      details.Configured,
 		Enabled:         details.Enabled,
+		Status:          details.Status,
+		StatusDetail:    details.StatusDetail,
 		Model:           details.Model,
 		ReasoningEffort: details.ReasoningEffort,
 		SystemPrompt:    details.SystemPrompt,

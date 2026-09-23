@@ -62,9 +62,12 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
     const state = await page.evaluate(async () => {
       const element = document.querySelector('lv-agent-settings') as any
       element.agent = {
+        configured: true,
         enabled: true,
+        status: 'enabled',
         model: 'fake-model',
         reasoningEffort: 'high',
+        revision: '"revision-1"',
         systemPrompt: 'Signal prompt',
         canWrite: true,
         updatePath: '/admin/agent/config',
@@ -90,46 +93,25 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
       await element.updateComplete
       const root = element.shadowRoot as ShadowRoot
       const overviewText = root.querySelector('.overview')?.textContent?.replace(/\s+/g, ' ').trim()
+      const hasStatusControl = Boolean(root.querySelector('button[role="switch"]'))
       const initialTabs = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="tab"]')).map((button) => ({ text: button.textContent?.trim(), selected: button.getAttribute('aria-selected') }))
       const promptEditor = root.querySelector('lv-agent-prompt-editor') as any
       await promptEditor.updateComplete
       const promptRoot = promptEditor.shadowRoot as ShadowRoot
       const headerText = promptRoot.querySelector('.prompt-header')?.textContent?.replace(/\s+/g, ' ').trim()
-      const modeLabels = Array.from(promptRoot.querySelectorAll<HTMLButtonElement>('.mode-toggle button')).map((button) => button.textContent?.replace(/\s+/g, ' ').trim())
+      const modeLabels = Array.from(promptRoot.querySelectorAll<HTMLButtonElement>('.mode-toggle button')).map((button) => button.getAttribute('aria-label'))
 
       let command: unknown = null
       element.addEventListener('lv-agent-system-prompt-save', (event: CustomEvent) => { command = event.detail })
-      promptRoot.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Edit"]')?.click()
+      promptRoot.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Raw Markdown"]')?.click()
       await promptEditor.updateComplete
-      const codeEditor = promptRoot.querySelector('lv-code-editor') as any
-      await codeEditor.updateComplete
-      codeEditor.dispatchEvent(new CustomEvent('lv-code-editor-change', {
-        bubbles: true,
-        composed: true,
-        detail: { value: 'Changed prompt' },
-      }))
-      await promptEditor.updateComplete
-      const dirtyState = {
-        status: promptRoot.querySelector('.prompt-status')?.textContent?.trim(),
-        hasDiscard: Boolean(promptRoot.querySelector('.discard-button')),
+      const rawState = {
+        activeMode: promptRoot.querySelector('.mode-toggle button[aria-pressed="true"]')?.getAttribute('aria-label'),
+        sourceLabel: promptRoot.querySelector('.prompt-source-label')?.textContent?.trim(),
+        source: promptRoot.querySelector('.raw-markdown')?.textContent,
+        hasCodeEditor: Boolean(promptRoot.querySelector('lv-code-editor')),
         hasSave: Boolean(promptRoot.querySelector('.save-button')),
       }
-      promptRoot.querySelector<HTMLButtonElement>('.discard-button')?.click()
-      await promptEditor.updateComplete
-      const discardedState = {
-        status: promptRoot.querySelector('.prompt-status')?.textContent?.trim() ?? '',
-        hasDiscard: Boolean(promptRoot.querySelector('.discard-button')),
-        editorValue: (promptRoot.querySelector('lv-code-editor') as any).value,
-      }
-      const codeEditorAfterDiscard = promptRoot.querySelector('lv-code-editor') as any
-      codeEditorAfterDiscard.dispatchEvent(new CustomEvent('lv-code-editor-change', {
-        bubbles: true,
-        composed: true,
-        detail: { value: 'Saved prompt' },
-      }))
-      await promptEditor.updateComplete
-      promptRoot.querySelector<HTMLButtonElement>('.save-button')?.click()
-      await promptEditor.updateComplete
 
       const toolsTab = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((button) => button.textContent?.trim() === 'Tools')!
       toolsTab.click()
@@ -164,11 +146,11 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
 
       return {
         overviewText,
+        hasStatusControl,
         initialTabs,
         headerText,
         modeLabels,
-        dirtyState,
-        discardedState,
+        rawState,
         command,
         hasSharedList: Boolean(list),
         firstColumnPositions,
@@ -187,16 +169,17 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
     })
 
     expect(state.overviewText).toContain('Enabled')
+    expect(state.hasStatusControl).toBe(false)
     expect(state.overviewText).toContain('fake-model')
     expect(state.overviewText).toContain('Reasoning High')
     expect(state.overviewText).toContain('Tools 2')
     expect(state.overviewText).toContain('Editable')
+    expect(state.overviewText).toContain('Configuration Configured')
     expect(state.initialTabs).toEqual([{ text: 'Instructions', selected: 'true' }, { text: 'Tools', selected: 'false' }])
-    expect(state.headerText).toContain('Guide the agent')
-    expect(state.modeLabels).toEqual(['Preview', 'Edit'])
-    expect(state.dirtyState).toEqual({ status: 'Unsaved changes', hasDiscard: true, hasSave: true })
-    expect(state.discardedState).toEqual({ status: '', hasDiscard: false, editorValue: 'Signal prompt' })
-    expect(state.command).toEqual({ systemPrompt: 'Saved prompt' })
+    expect(state.headerText).toContain('rendered instructions')
+    expect(state.modeLabels).toEqual(['Rendered Markdown', 'Raw Markdown'])
+    expect(state.rawState).toEqual({ activeMode: 'Raw Markdown', sourceLabel: '/SYSTEM.md', source: 'Signal prompt', hasCodeEditor: false, hasSave: false })
+    expect(state.command).toBeNull()
     expect(state.hasSharedList).toBe(true)
     expect(state.firstColumnPositions).toEqual(['static', 'static'])
     expect(state.groups).toEqual(['Data & queries', 'Dashboards'])
@@ -221,7 +204,7 @@ test('agent settings makes deployment ownership and mobile tools layout explicit
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-agent-settings'))
     await page.locator('lv-agent-settings').evaluate((element: any) => {
-      element.agent = { enabled: false, model: '', systemPrompt: '', canWrite: false, updatePath: '', tools: [{ name: 'read_data', description: '', effect: 'read', tags: ['analytics'], defaults: {}, inputSchema: {}, outputSchema: {} }] }
+      element.agent = { configured: false, enabled: false, status: 'disabled', model: '', revision: '"revision-1"', systemPrompt: '', canWrite: false, updatePath: '', tools: [{ name: 'read_data', description: '', effect: 'read', tags: ['analytics'], defaults: {}, inputSchema: {}, outputSchema: {} }] }
     })
 
     const settings = page.locator('lv-agent-settings')
@@ -239,12 +222,15 @@ test('agent settings makes deployment ownership and mobile tools layout explicit
     await drawer.waitFor({ state: 'attached' })
     const state = {
       text: (await settings.locator('.settings-stack').textContent())?.replace(/\s+/g, ' ').trim(),
+      hasStatusControl: await settings.locator('button[role="switch"]').count() > 0,
       managedBadge: managedBadgeText,
       hasSharedList: await list.count() === 1,
       drawerModal: await drawer.evaluate((element: any) => element.modal),
       drawerWidth: Math.round((await drawer.locator('.drawer').boundingBox())?.width ?? 0),
     }
     expect(state.text).toContain('Read-only')
+    expect(state.text).toContain('Not configured')
+    expect(state.hasStatusControl).toBe(false)
     expect(state.text).toContain('Deployment managed')
     expect(state.managedBadge).toBe('Deployment managed')
     expect(state.hasSharedList).toBe(true)

@@ -1,6 +1,10 @@
 package agent
 
-import "strings"
+import (
+	"fmt"
+	"net/url"
+	"strings"
+)
 
 type Config struct {
 	APIKey          string
@@ -25,4 +29,22 @@ func (c Config) NormalizedReasoningEffort() string {
 		return effort
 	}
 	return "high"
+}
+
+func (c Config) Validate(enabled bool) error {
+	if enabled && !c.Enabled() {
+		return fmt.Errorf("enabled agent configuration requires apiKey and model")
+	}
+	if baseURL := strings.TrimSpace(c.BaseURL); baseURL != "" {
+		parsed, err := url.Parse(baseURL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("agent baseUrl must be an HTTP(S) origin or path without credentials, query, or fragment")
+		}
+	}
+	switch c.NormalizedReasoningEffort() {
+	case "none", "low", "medium", "high", "xhigh", "max":
+		return nil
+	default:
+		return fmt.Errorf("agent reasoningEffort must be none, low, medium, high, xhigh, or max")
+	}
 }
