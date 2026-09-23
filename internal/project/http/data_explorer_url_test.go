@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectview "github.com/flidai/leapview/internal/project"
@@ -356,6 +357,54 @@ func TestValidateRestoredDataExploreStateRejectsEmptyMembershipFilters(t *testin
 		if err == nil || !strings.Contains(err.Error(), "at least one value") {
 			t.Fatalf("empty %s filter error = %v, want non-empty arity diagnostic", operator, err)
 		}
+	}
+}
+
+func TestValidateRestoredDataExploreStateAcceptsCanonicalRangeFilter(t *testing.T) {
+	dataset := "orders"
+	rangeFilter := exploration.ExplorationFilter{
+		Field: "orders.score", DatasetID: &dataset,
+		Expression: exploration.ExplorationFilterExpression{Value: &exploration.RangeExplorationFilterExpression{
+			ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "range"}, Kind: "range",
+			Lower: &exploration.ExplorationFilterBound{Inclusive: true, Value: exploration.ExplorationFilterValue{Value: &exploration.IntegerExplorationFilterValue{ExplorationFilterValueBase: exploration.ExplorationFilterValueBase{Kind: "integer"}, Kind: "integer", Value: "1"}}},
+		}},
+	}
+	command := projectsignals.DataExploreCommand{
+		Spec:            exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &dataset, Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{rangeFilter}, Sort: []exploration.ExplorationSort{}, Limit: 100},
+		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: &dataset,
+		Filters: []projectsignals.DataExploreFilterSignal{{Field: "orders.score", DatasetID: &dataset, Operator: "range", Values: []string{}}},
+	}
+	projection := DataExplorerProjection{
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
+		Fields:         []projectsignals.DataExploreFieldSignal{{ID: "orders.score", DatasetID: "orders", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("number")}},
+		Command:        projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: &dataset},
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(&semanticmodel.Model{
+		Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders"}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRestoredDataExploreState(command, projection, nil, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}); err != nil {
+		t.Fatalf("canonical range filter rejected: %v", err)
+	}
+}
+
+func TestValidateRestoredDataExploreStateRejectsMismatchedCanonicalRangeFilter(t *testing.T) {
+	dataset := "orders"
+	command := projectsignals.DataExploreCommand{
+		Spec: exploration.ExplorationSpec{Filters: []exploration.ExplorationFilter{{
+			Field: "orders.other_score", DatasetID: &dataset,
+			Expression: exploration.ExplorationFilterExpression{Value: &exploration.RangeExplorationFilterExpression{
+				ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "range"}, Kind: "range",
+			}},
+		}}},
+		Filters: []projectsignals.DataExploreFilterSignal{{Field: "orders.score", DatasetID: &dataset, Operator: "range", Values: []string{}}},
+	}
+	if err := validateRestoredExploreFilter(0, command.Filters[0], command.Spec); err == nil || !strings.Contains(err.Error(), "requires canonical version 2 state") {
+		t.Fatalf("mismatched canonical range error = %v, want canonical-state diagnostic", err)
 	}
 }
 

@@ -224,8 +224,14 @@ func explorationSpecWithState(spec exploration.ExplorationSpec, state dataExplor
 	} else {
 		spec.Time = nil
 	}
+	oldFilters := append([]exploration.ExplorationFilter(nil), spec.Filters...)
+	usedOldFilters := make([]bool, len(oldFilters))
 	spec.Filters = make([]exploration.ExplorationFilter, 0, len(state.Filters))
 	for _, filter := range state.Filters {
+		if previous, ok := matchingCanonicalFilter(oldFilters, usedOldFilters, filter); ok {
+			spec.Filters = append(spec.Filters, previous)
+			continue
+		}
 		values := make([]exploration.ExplorationFilterValue, 0, len(filter.Values))
 		for _, value := range filter.Values {
 			values = append(values, exploration.ExplorationFilterValue{Value: &exploration.StringExplorationFilterValue{ExplorationFilterValueBase: exploration.ExplorationFilterValueBase{Kind: "string"}, Kind: "string", Value: value}})
@@ -248,6 +254,43 @@ func explorationSpecWithState(spec exploration.ExplorationSpec, state dataExplor
 		spec.Limit = int32(state.Limit)
 	}
 	return spec
+}
+
+func matchingCanonicalFilter(filters []exploration.ExplorationFilter, used []bool, state dataExploreFilter) (exploration.ExplorationFilter, bool) {
+	for index, filter := range filters {
+		if used[index] || filter.Field != state.Field || projectsignals.ValueOrZero(filter.DatasetID) != projectsignals.ValueOrZero(state.Dataset) {
+			continue
+		}
+		candidate := dataExploreStateFromSpec(exploration.ExplorationSpec{Filters: []exploration.ExplorationFilter{filter}}).Filters
+		if len(candidate) != 1 || candidate[0].Operator != state.Operator {
+			continue
+		}
+		switch state.Operator {
+		case "range", "relative_period", "unfiltered":
+			if len(state.Values) != 0 {
+				continue
+			}
+		default:
+			if !stringSlicesEqual(candidate[0].Values, state.Values) {
+				continue
+			}
+		}
+		used[index] = true
+		return filter, true
+	}
+	return exploration.ExplorationFilter{}, false
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func dataExploreCommandWithCanonicalSpec(command projectsignals.DataExploreCommand) projectsignals.DataExploreCommand {

@@ -43,7 +43,7 @@ import {
 import '../chat/chat-drawer'
 import './preview-table'
 import './explore-table'
-import { emptyExplorationSpec, explorationSpecFromCommand } from './data-explorer-spec'
+import { emptyExplorationSpec, explorationSpecFromCommand, makeExplorationFilter } from './data-explorer-spec'
 import {
   datasetGrainLabel,
   fieldLabel,
@@ -1409,10 +1409,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       </label>
       <label>Value<input .value=${this.filterValue} ?disabled=${this.filterOperator === 'is_null' || this.filterOperator === 'is_not_null'} @input=${(event: Event) => {
         this.filterValue = this.panelController.setFilterValue((event.target as HTMLInputElement).value).filterValue
-      }} @keydown=${(event: KeyboardEvent) => { if (event.key === 'Enter') this.applyExploreFilter(command) }} /></label>
+      }} @keydown=${(event: KeyboardEvent) => { if (event.key === 'Enter') this.applyExploreFilter(command, fields) }} /></label>
       <div class="query-actions">
         <button type="button" class="text-button" @click=${() => this.closeFilter()}>Cancel</button>
-        <button type="button" class="text-button" @click=${() => this.applyExploreFilter(command)}>Apply</button>
+        <button type="button" class="text-button" @click=${() => this.applyExploreFilter(command, fields)}>Apply</button>
       </div>
     </section>`
   }
@@ -1500,16 +1500,33 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.filterValue = state.filterValue
   }
 
-  private applyExploreFilter(command: DataExploreCommand) {
+  private applyExploreFilter(command: DataExploreCommand, fields: DataExploreFieldSignal[]) {
     if (!this.filterField) return
     const needsValue = this.filterOperator !== 'is_null' && this.filterOperator !== 'is_not_null'
     const values = needsValue
       ? this.filterValue.split(',').map((value) => value.trim()).filter(Boolean)
       : []
     if (needsValue && !values.length) return
-    const filter: DataExploreFilterSignal = { field: this.filterField, operator: this.filterOperator, values }
+    const field = fields.find((candidate) => candidate.id === this.filterField)
+    const filter: DataExploreFilterSignal = {
+      datasetId: field?.datasetId,
+      field: this.filterField,
+      operator: this.filterOperator,
+      values,
+    }
+    const canonicalFilter = makeExplorationFilter(filter.field, filter.operator, filter.values, field?.type)
+    if (!canonicalFilter) return
+    const spec = explorationSpecFromCommand(command)
+    spec.filters = [
+      ...spec.filters.filter((current) => current.field !== filter.field),
+      { ...canonicalFilter, datasetId: filter.datasetId },
+    ]
     this.closeFilter()
-    this.emitExplore({ ...command, filters: [...command.filters.filter((current) => current.field !== filter.field), filter] })
+    this.emitExplore({
+      ...command,
+      spec,
+      filters: [...command.filters.filter((current) => current.field !== filter.field), filter],
+    })
   }
 
   private removeExploreFilter(index: number, command: DataExploreCommand) {

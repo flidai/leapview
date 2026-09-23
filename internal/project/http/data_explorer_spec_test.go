@@ -30,4 +30,30 @@ func TestDataExploreStateRoundTripPreservesCanonicalReferences(t *testing.T) {
 	}
 }
 
+func TestDataExploreStateRoundTripPreservesTypedAndRichFilters(t *testing.T) {
+	dataset := "orders"
+	spec := defaultExplorationSpec()
+	spec.Filters = []exploration.ExplorationFilter{
+		{
+			Field: "orders.quantity", DatasetID: &dataset,
+			Expression: exploration.ExplorationFilterExpression{Value: &exploration.ComparisonExplorationFilterExpression{
+				ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "comparison"}, Kind: "comparison", Operator: "greater_than",
+				Value: exploration.ExplorationFilterValue{Value: &exploration.IntegerExplorationFilterValue{ExplorationFilterValueBase: exploration.ExplorationFilterValueBase{Kind: "integer"}, Kind: "integer", Value: "2"}},
+			}},
+		},
+		{
+			Field: "orders.amount", DatasetID: &dataset,
+			Expression: exploration.ExplorationFilterExpression{Value: &exploration.RangeExplorationFilterExpression{
+				ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "range"}, Kind: "range",
+				Lower: &exploration.ExplorationFilterBound{Inclusive: true, Value: exploration.ExplorationFilterValue{Value: &exploration.DecimalExplorationFilterValue{ExplorationFilterValueBase: exploration.ExplorationFilterValueBase{Kind: "decimal"}, Kind: "decimal", Value: "1.5"}}},
+			}},
+		},
+	}
+
+	restored := explorationSpecWithState(spec, dataExploreStateFromSpec(spec))
+	if !reflect.DeepEqual(restored.Filters, spec.Filters) {
+		t.Fatalf("filters = %#v, want %#v", restored.Filters, spec.Filters)
+	}
+}
+
 func stringPointer(value string) *string { return &value }

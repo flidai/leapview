@@ -43,9 +43,16 @@ export function explorationSpecFromCommand(command: DataExploreCommand): Explora
   const base = explorationSpecFor(command)
   const dimensionsByField = new Map(base.dimensions.map((item) => [item.field, item]))
   const metricsByField = new Map(base.metrics.map((item) => [item.field, item]))
-  const filters = command.filters.map((filter) => makeExplorationFilter(filter.field, filter.operator, filter.values))
-    .filter((filter): filter is ExplorationFilter => filter !== undefined)
-    .map((filter, index) => ({ ...filter, datasetId: command.filters[index]?.datasetId }))
+  const usedFilters = new Set<number>()
+  const filters = command.filters.flatMap((filter) => {
+    const previousIndex = base.filters.findIndex((candidate, index) => !usedFilters.has(index) && explorationFilterMatchesSignal(candidate, filter))
+    if (previousIndex >= 0) {
+      usedFilters.add(previousIndex)
+      return [base.filters[previousIndex]!]
+    }
+    const created = makeExplorationFilter(filter.field, filter.operator, filter.values)
+    return created ? [{ ...created, datasetId: filter.datasetId }] : []
+  })
   const spec: ExplorationSpec = {
     ...base,
     schemaVersion: 1,
@@ -224,6 +231,18 @@ export function makeExplorationFilter(field: string, operator: string, values: s
     expression = { kind: 'comparison', operator: operator as ComparisonFilterOperator, value: typedValues[0]! }
   }
   return { field, expression }
+}
+
+function explorationFilterMatchesSignal(filter: ExplorationFilter, signal: DataExploreCommand['filters'][number]): boolean {
+  if (filter.field !== signal.field || (filter.datasetId ?? '') !== (signal.datasetId ?? '')) return false
+  const expression = filter.expression
+  const operator = 'operator' in expression ? expression.operator : expression.kind
+  if (operator !== signal.operator) return false
+  if (expression.kind === 'range' || expression.kind === 'relative_period' || expression.kind === 'unfiltered') {
+    return signal.values.length === 0
+  }
+  const values = filterValues(filter)
+  return values.length === signal.values.length && values.every((value, index) => value === signal.values[index])
 }
 
 function filterValue(value: ExplorationFilterValue): string {

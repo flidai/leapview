@@ -41,6 +41,9 @@ test('query controller advances request and reset sequences', () => {
   expect(next.dimensions).toEqual(['orders.status'])
   expect(next.requestSeq).toBe(2)
   expect(next.resetVersion).toBe(5)
+  expect(next.spec.modelId).toBe('sales')
+  expect(next.spec.datasetId).toBe('orders')
+  expect(next.spec.dimensions).toEqual([{ field: 'orders.status' }])
 })
 
 test('visible column toggles preserve one visible fallback and reset all to defaults', () => {

@@ -229,7 +229,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 		if err != nil {
 			return fmt.Errorf("filter %d: %w", index+1, err)
 		}
-		if err := validateRestoredExploreFilter(index, filter); err != nil {
+		if err := validateRestoredExploreFilter(index, filter, command.Spec); err != nil {
 			return err
 		}
 		if filter.DatasetID == nil || strings.TrimSpace(projectsignals.ValueOrZero(filter.DatasetID)) == "" {
@@ -298,7 +298,7 @@ func restoredFilterDatasetParticipation(command projectsignals.DataExploreComman
 	return participating
 }
 
-func validateRestoredExploreFilter(index int, filter projectsignals.DataExploreFilterSignal) error {
+func validateRestoredExploreFilter(index int, filter projectsignals.DataExploreFilterSignal, spec exploration.ExplorationSpec) error {
 	operator := strings.TrimSpace(filter.Operator)
 	valueCount := len(filter.Values)
 	requiresOne := false
@@ -312,6 +312,11 @@ func validateRestoredExploreFilter(index int, filter projectsignals.DataExploreF
 		}
 	case "is_null", "is_not_null":
 		requiresZero = true
+	case "range", "relative_period", "unfiltered":
+		requiresZero = true
+		if index >= len(spec.Filters) || !canonicalFilterMatchesSignal(spec.Filters[index], filter, operator) {
+			return fmt.Errorf("filter %d operator %q requires canonical version 2 state; update or remove the stale filter", index+1, operator)
+		}
 	default:
 		return fmt.Errorf("filter %d uses unsupported operator %q; choose a supported filter operator", index+1, filter.Operator)
 	}
@@ -322,6 +327,25 @@ func validateRestoredExploreFilter(index int, filter projectsignals.DataExploreF
 		return fmt.Errorf("filter %d operator %q does not accept values; update or remove the stale filter", index+1, operator)
 	}
 	return nil
+}
+
+func canonicalFilterMatchesSignal(filter exploration.ExplorationFilter, signal projectsignals.DataExploreFilterSignal, kind string) bool {
+	if filter.Field != signal.Field || projectsignals.ValueOrZero(filter.DatasetID) != projectsignals.ValueOrZero(signal.DatasetID) {
+		return false
+	}
+	if filter.Expression.Value == nil {
+		return false
+	}
+	switch filter.Expression.Value.(type) {
+	case *exploration.RangeExplorationFilterExpression:
+		return kind == "range"
+	case *exploration.RelativePeriodExplorationFilterExpression:
+		return kind == "relative_period"
+	case *exploration.UnfilteredExplorationFilterExpression:
+		return kind == "unfiltered"
+	default:
+		return false
+	}
 }
 
 // restoredCompiledSemanticTimeGrain mirrors planner resolution: only a
