@@ -2,6 +2,7 @@ package ci
 
 import (
 	"os"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -45,7 +46,7 @@ func TestNightlyWorkflowFullValidationAndStrictGate(t *testing.T) {
 		if step.Run == "node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare" && step.If == "" {
 			prepared = true
 		}
-		if step.Run == "task ci:full:extras" && step.If == "" {
+		if step.Run == "task ci:full:extras:hosted" && step.If == "" {
 			if !prepared {
 				t.Fatal("full nightly validation must prepare its own inputs first")
 			}
@@ -98,5 +99,34 @@ func TestNightlyWorkflowFullValidationAndStrictGate(t *testing.T) {
 		if results.Env[key] != expected {
 			t.Errorf("nightly CI gate result %s = %q, want %q", key, results.Env[key], expected)
 		}
+	}
+}
+
+// Nightly must retain the same independently scheduled frontend and backend
+// coverage as merge validation, including failure artifacts and browser setup.
+func TestNightlyUsesMergeValidationLayout(t *testing.T) {
+	read := func(path string) map[string]any {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var workflow struct{ Jobs map[string]map[string]any }
+		if err := yaml.Unmarshal(data, &workflow); err != nil {
+			t.Fatal(err)
+		}
+		result := map[string]any{}
+		for _, name := range []string{"frontend-validation", "full-validation"} {
+			job := workflow.Jobs[name]
+			delete(job, "name")
+			steps := job["steps"].([]any)
+			// Checkout differs only because merge candidates require full history.
+			job["steps"] = steps[1:]
+			result[name] = job
+		}
+		return result
+	}
+	if !reflect.DeepEqual(read("../../../.github/workflows/nightly.yml"), read("../../../.github/workflows/merge-validation.yml")) {
+		t.Fatal("nightly must retain the merge layout, budgets, coverage, and failure artifacts")
 	}
 }
