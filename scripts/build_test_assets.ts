@@ -12,6 +12,18 @@ type FixtureBuild = {
 const externalModules = [datastarRuntimeURL]
 
 const fixtures = new Map<string, FixtureBuild>([
+  ['settings-layout', single('settings-layout', 'web/components/shared/settings-layout.test-fixture.ts', '.tmp/settings-layout-test/settings-layout.test-fixture.js')],
+  ['product-settings', single('product-settings', 'web/components/admin/product-settings.ts', '.tmp/product-settings-test/product-settings-under-test.js')],
+  ['agent-settings', {
+    label: 'agent-settings',
+    clean: ['.tmp/agent-settings-test'],
+    options: {
+      entrypoints: ['web/components/admin/agent-settings.ts'],
+      target: 'browser',
+      format: 'esm',
+      outdir: '.tmp/agent-settings-test',
+    },
+  }],
   ['app-shell', single('app-shell', 'web/components/app/app-shell.ts', '.tmp/app-shell-test/app-shell-under-test.js')],
   [
     'catalog-page',

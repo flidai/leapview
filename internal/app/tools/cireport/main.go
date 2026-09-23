@@ -565,7 +565,54 @@ func renderMarkdown(report platformci.HealthReport, days int) string {
 	} else {
 		output.WriteString("\nNo measured thresholds exceeded. Audit coverage and sample counts are reported above.\n")
 	}
+	renderDiagnostics(&output, report.Runs)
 	return output.String()
+}
+
+// Keep cancellations visible, but distinguish their missing evidence from
+// reporting gaps in completed validation. The JSON retains every affected run.
+func renderDiagnostics(output *strings.Builder, runs []platformci.HealthRun) {
+	type diagnostic struct{ problem, conclusion string }
+	groups := map[diagnostic]map[int64]bool{}
+	for _, run := range runs {
+		for _, problem := range run.Problems {
+			key := diagnostic{problem, run.Conclusion}
+			if groups[key] == nil {
+				groups[key] = map[int64]bool{}
+			}
+			groups[key][run.ID] = true
+		}
+	}
+	if len(groups) == 0 {
+		return
+	}
+	keys := make([]diagnostic, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].problem != keys[j].problem {
+			return keys[i].problem < keys[j].problem
+		}
+		return keys[i].conclusion < keys[j].conclusion
+	})
+	output.WriteString("\n## Run diagnostics\n\nCounts are per problem and run conclusion; a run can have multiple problems. Cancelled runs remain in the evidence totals. Up to three example run IDs are shown; the JSON artifact contains every run.\n\n| Problem | Run conclusion | Runs | Example run IDs |\n|---|---|---:|---|\n")
+	for _, key := range keys {
+		ids := make([]int64, 0, len(groups[key]))
+		for id := range groups[key] {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		var examples []string
+		for _, id := range ids[:min(3, len(ids))] {
+			examples = append(examples, fmt.Sprint(id))
+		}
+		conclusion := key.conclusion
+		if conclusion == "" {
+			conclusion = "unknown"
+		}
+		fmt.Fprintf(output, "| %s | %s | %d | %s |\n", markdownCell(wireJobText(key.problem)), markdownCell(conclusion), len(ids), strings.Join(examples, ", "))
+	}
 }
 
 func markdownCell(value string) string {
