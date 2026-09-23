@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -229,6 +230,7 @@ func (a *Agent) runLoop(ctx context.Context, run *runState) (RunResult, error) {
 			ToolCalls:       toolCalls,
 			FinishReason:    finish,
 			Usage:           resp.Usage,
+			ProviderState:   append(json.RawMessage(nil), resp.ProviderState...),
 		}
 		a.appendTranscript(assistant)
 		result.FinalMessage = assistant

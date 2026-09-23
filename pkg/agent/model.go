@@ -43,6 +43,7 @@ type ModelResponse struct {
 	FinishReason     FinishReason
 	Usage            Usage
 	ProviderMetadata map[string]any
+	ProviderState    json.RawMessage
 }
 
 type FinishReason string
