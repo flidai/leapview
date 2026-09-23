@@ -14,8 +14,10 @@ export function echartsNavigationDefaults(envelope: VisualizationEnvelope): ECha
 }
 
 export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
-  if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 || option.grid === undefined) return {}
+  if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
   const compact = width < 480 || height < 280
+  const proportionalSeries = responsiveProportionalSeries(option.series, compact)
+  if (option.grid === undefined) return proportionalSeries === undefined ? {} : { series: proportionalSeries }
   const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
   const bottomLegend = compact && hasBottomLegend(option.legend)
   const slider = compact && hasSliderDataZoom(option.dataZoom)
@@ -33,11 +35,40 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
     }
   })
   const patch: Record<string, any> = { grid: Array.isArray(option.grid) ? grid : grid[0] }
+  if (proportionalSeries !== undefined) patch.series = proportionalSeries
   if (option.legend !== undefined) patch.legend = compact ? compactLegend(option.legend, width) : desktopLegend(option.legend)
   if (option.dataZoom !== undefined) patch.dataZoom = compact
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
     : stripDataZoomNavigation(option.dataZoom)
   return patch
+}
+
+function responsiveProportionalSeries(value: unknown, compact: boolean): unknown[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  let hasOutsidePieLabels = false
+  const series = value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, unknown>
+    const label = source.label
+    if (
+      source.type !== 'pie'
+      || !label || typeof label !== 'object' || Array.isArray(label)
+      || (label as Record<string, unknown>).show === false
+      || (label as Record<string, unknown>).position !== 'outside'
+    ) return entry
+    hasOutsidePieLabels = true
+    return {
+      ...source,
+      label: {
+        ...(label as Record<string, unknown>),
+        // Edge alignment keeps text inside narrow cards. In roomy views it
+        // stretches guide lines to the host boundary, so anchor labels to
+        // their natural guide-line ends instead.
+        alignTo: compact ? 'edge' : 'labelLine',
+      },
+    }
+  })
+  return hasOutsidePieLabels ? series : undefined
 }
 
 function compactInset(value: unknown, fallback: number): unknown {

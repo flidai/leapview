@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import { defaultRendererContext } from '../host-controller'
 import { echartsOption, responsiveEChartsPatch } from './echarts'
@@ -55,18 +56,71 @@ test('proportional responsive sizing keeps authored radii and the bottom legend 
     expect.objectContaining({ type: 'text', bottom: 28, style: expect.objectContaining({ text: 'Order status' }) }),
   ]))
 
-  for (const [width, height] of [[373, 282], [600, 360], [330, 220]]) {
-    expect(responsiveEChartsPatch(option, width, height)).toEqual({})
+  for (const [width, height, alignTo] of [[373, 282, 'edge'], [600, 360, 'labelLine'], [330, 220, 'edge']] as const) {
+    const patch = responsiveEChartsPatch(option, width, height)
+    expect(patch.series[0].id).toBe('series:primary:donut')
+    expect(patch.series[0].radius).toEqual(['54%', '76%'])
+    expect(patch.series[0].label.alignTo).toBe(alignTo)
   }
   expect(JSON.stringify(option)).toBe(before)
 })
 
-test('proportional responsive helper leaves pie, donut, and funnel geometry to ECharts', () => {
+test('proportional responsive helper keeps compact labels bounded and expanded labels near the ring', () => {
   for (const mark of ['pie', 'donut', 'funnel'] as const) {
     const envelope = proportionalWithIconFormat(mark)
     const option = echartsOption(envelope, defaultRendererContext) as any
-    expect(responsiveEChartsPatch(option, 320, 240)).toEqual({})
+    const compact = responsiveEChartsPatch(option, 320, 240)
+    const expanded = responsiveEChartsPatch(option, 1200, 720)
+    if (mark === 'funnel') {
+      expect(compact).toEqual({})
+      expect(expanded).toEqual({})
+    } else {
+      expect(compact.series[0].label.alignTo).toBe('edge')
+      expect(expanded.series[0].label.alignTo).toBe('labelLine')
+      expect(compact.series[0].id).toBe(`series:primary:${mark}`)
+      expect(expanded.series[0].id).toBe(`series:primary:${mark}`)
+    }
     expect(option.series[0].id).toBe(`series:primary:${mark}`)
+  }
+})
+
+test('expanded donut guide lines stay local to the ring', () => {
+  const envelope = proportionalWithIconFormat('donut')
+  if (envelope.dataState.kind !== 'inline') throw new Error('Expected inline fixture')
+  envelope.dataState.datasets[0].rows = [
+    ['delivered', 96478], ['shipped', 1107], ['canceled', 625], ['unavailable', 609],
+    ['invoiced', 314], ['processing', 301], ['created', 5], ['approved', 2],
+  ]
+  const source = echartsOption(envelope, defaultRendererContext) as any
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 1200, height: 720 })
+  try {
+    chart.setOption({ ...source, animation: false })
+    const initialSeries = (chart as any).getModel().getSeriesByIndex(0)
+    chart.dispatchAction({ type: 'legendUnSelect', name: 'delivered' })
+    chart.setOption(responsiveEChartsPatch(source, 1200, 720))
+    chart.renderToSVGString()
+    const series = (chart as any).getModel().getSeriesByIndex(0)
+    const data = series.getData()
+    const visibleGuides = Array.from({ length: data.count() }).flatMap((_, index) => {
+      const points = data.getItemGraphicEl(index)?.getTextGuideLine()?.shape?.points
+      return Array.isArray(points) && points.length >= 3 ? [points] : []
+    })
+    expect(series).toBe(initialSeries)
+    expect(series.id).toBe('series:primary:donut')
+    expect((chart as any).getModel().getComponent('legend').isSelected('delivered')).toBe(false)
+    expect(data.count()).toBe(7)
+    expect(visibleGuides.length).toBeGreaterThan(0)
+    for (const points of visibleGuides) {
+      const end = points.at(-1)!
+      const elbow = points.at(-2)!
+      expect(Math.hypot(end[0] - elbow[0], end[1] - elbow[1])).toBeLessThanOrEqual(12)
+    }
+    chart.resize({ width: 320, height: 240 })
+    chart.setOption(responsiveEChartsPatch(source, 320, 240))
+    expect((chart as any).getModel().getSeriesByIndex(0)).toBe(initialSeries)
+    expect((chart as any).getModel().getComponent('legend').isSelected('delivered')).toBe(false)
+  } finally {
+    chart.dispose()
   }
 })
 
@@ -86,6 +140,7 @@ test('proportional labels honor hidden and inside presentation settings without 
   expect(insideSeries.label).toMatchObject({ show: true, position: 'inside' })
   expect(insideSeries.label.formatter({ value: ['Status 0', 1] })).toBe('1')
   expect(insideSeries.labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
+  expect(responsiveEChartsPatch(echartsOption(inside, defaultRendererContext) as any, 1200, 720)).toEqual({})
 })
 
 test('empty and loading donuts show only the shared status graphic', () => {

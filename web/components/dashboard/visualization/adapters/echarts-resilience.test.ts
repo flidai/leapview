@@ -43,7 +43,7 @@ test('ECharts responsive patch is deterministic and preserves stable option iden
   expect(responsiveEChartsPatch(option, 0, 240)).toEqual({})
 })
 
-test('ECharts responsive patch leaves proportional geometry and legend bands to ECharts', () => {
+test('ECharts responsive patch changes only outside pie label alignment', () => {
   for (const mark of ['pie', 'donut', 'funnel'] as const) {
     const envelope = proportionalFixture(mark) as any
     envelope.spec.presentation.legend = 'bottom'
@@ -54,7 +54,25 @@ test('ECharts responsive patch leaves proportional geometry and legend bands to 
     }]
     const option = echartsOption(envelope, defaultRendererContext) as Record<string, any>
     const before = JSON.stringify(option)
-    expect(responsiveEChartsPatch(option, 320, 240)).toEqual({})
+    const compact = responsiveEChartsPatch(option, 320, 240)
+    const expanded = responsiveEChartsPatch(option, 1200, 720)
+    if (mark === 'funnel') {
+      expect(compact).toEqual({})
+      expect(expanded).toEqual({})
+    } else {
+      expect(compact.series[0]).toMatchObject({
+        id: `series:primary:${mark}`,
+        bottom: '12%',
+        label: { alignTo: 'edge' },
+      })
+      expect(expanded.series[0]).toMatchObject({
+        id: `series:primary:${mark}`,
+        bottom: '12%',
+        label: { alignTo: 'labelLine' },
+      })
+      expect(compact.series[0].radius).toEqual(option.series[0].radius)
+      expect(expanded.series[0].radius).toEqual(option.series[0].radius)
+    }
     expect(option.series[0].id).toBe(`series:primary:${mark}`)
     expect(JSON.stringify(option)).toBe(before)
   }
@@ -134,7 +152,7 @@ test('ECharts handle reapplies compact layout after updates and restores desktop
   expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
 })
 
-test('ECharts handle leaves proportional resize geometry to the native chart', () => {
+test('ECharts handle switches proportional label alignment only across the compact breakpoint', () => {
   const calls: Record<string, any>[] = []
   const chart = {
     on() {}, off() {}, resize() {}, dispose() {},
@@ -157,6 +175,14 @@ test('ECharts handle leaves proportional resize geometry to the native chart', (
   expect(first.radius).toEqual(['54%', '76%'])
   expect(first.left).toBeUndefined()
   expect(first.right).toBeUndefined()
+  expect(first.label.alignTo).toBe('edge')
+
+  handle.resize(1200, 720)
+  expect(calls.at(-1)!.series[0]).toMatchObject({ id: 'series:primary:donut', label: { alignTo: 'labelLine' } })
+  expect(calls.at(-1)!.series[0].radius).toEqual(['54%', '76%'])
+
+  handle.resize(420, 240)
+  expect(calls.at(-1)!.series[0]).toMatchObject({ id: 'series:primary:donut', label: { alignTo: 'edge' } })
 })
 
 function legendHandle() {

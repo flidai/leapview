@@ -185,10 +185,17 @@ export class EChartsHandle implements RendererHandle {
     const envelope = this.envelope
     if (!envelope || !this.context || this.lastWidth <= 0 || this.lastHeight <= 0) return
     const compact = this.lastWidth < 480 || this.lastHeight < 280
-    if (!force && compact === this.compactLayout && (!compact || this.compactWidth === this.lastWidth)) return
+    const sameLayout = compact === this.compactLayout
+    if (!force && sameLayout && (!compact || this.compactWidth === this.lastWidth)) return
+    const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
+    // Exact compact widths only affect scroll legends. Avoid reapplying an
+    // unchanged proportional series while a card is continuously resized.
+    if (!force && compact && sameLayout && patch.legend === undefined) {
+      this.compactWidth = this.lastWidth
+      return
+    }
     this.compactWidth = this.lastWidth
     this.compactLayout = compact
-    const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
     if (patch.dataZoom !== undefined) patch.dataZoom = overlayDataZoomNavigation(patch.dataZoom, this.captureViewState().dataZoom)
     if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: !force })
   }
