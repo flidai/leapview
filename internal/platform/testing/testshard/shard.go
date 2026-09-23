@@ -8,12 +8,12 @@ import (
 	"strings"
 )
 
-// ParseList extracts top-level Go test names from go test -list output.
+// ParseList extracts runnable tests, examples, and fuzz seeds from Go test -list output.
 func ParseList(output string) []string {
 	var tests []string
 	for line := range strings.Lines(output) {
 		name := strings.TrimSpace(line)
-		if strings.HasPrefix(name, "Test") && token.IsIdentifier(name) {
+		if (strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Example") || strings.HasPrefix(name, "Fuzz")) && token.IsIdentifier(name) {
 			tests = append(tests, name)
 		}
 	}

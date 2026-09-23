@@ -10,10 +10,12 @@ func TestParseListReturnsOnlyTopLevelTests(t *testing.T) {
 	output := `TestZulu
 BenchmarkIgnored
 TestAlpha
+ExampleDemo
+FuzzDecode
 ok  	github.com/flidai/leapview/internal/app	0.123s
 `
 
-	if got, want := ParseList(output), []string{"TestZulu", "TestAlpha"}; !reflect.DeepEqual(got, want) {
+	if got, want := ParseList(output), []string{"TestZulu", "TestAlpha", "ExampleDemo", "FuzzDecode"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ParseList() = %v, want %v", got, want)
 	}
 }

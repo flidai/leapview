@@ -49,6 +49,17 @@ case "${1:-list}" in
     exec_dir="$(mktemp -d)"
     trap 'rm -r -- "$exec_dir"' EXIT
     go build -o "$exec_dir/postgres-package-exec" ./internal/platform/postgres/postgrestest/cmd/packageexec
+    # Run the large application package as a separate wave of four isolated
+    # shards. Do not overlap it with the four-worker package sweep.
+    remaining=()
+    for package in "${packages[@]}"; do
+      if [[ "$package" == "$module/internal/app" ]]; then
+        bash "$root/scripts/postgres-app-shards.sh" "$exec_dir"
+      else
+        remaining+=("$package")
+      fi
+    done
+    if ((${#remaining[@]} == 0)); then exit 0; fi
     # Bound this conformance lane at four package workers. Tests within each
     # package must stay serial because PostgreSQL roles are cluster-wide and
     # some conformance tests require exact production role names. The wrapper
@@ -59,7 +70,7 @@ case "${1:-list}" in
     # package contains many container-backed tests; allow it more than Go's
     # default ten-minute package timeout on slower hosted runners.
     LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1 \
-      go test -exec "$exec_dir/postgres-package-exec" -tags 'integration duckdb_arrow' -p 4 -parallel 1 -count=1 -timeout=30m -v -skip '^TestMinIOParquetSourceRefreshContract$' "${packages[@]}"
+      go test -exec "$exec_dir/postgres-package-exec" -tags 'integration duckdb_arrow' -p 4 -parallel 1 -count=1 -timeout=30m -v -skip '^TestMinIOParquetSourceRefreshContract$' "${remaining[@]}"
     ;;
   *)
     printf 'usage: %s [list|run]\n' "$0" >&2
