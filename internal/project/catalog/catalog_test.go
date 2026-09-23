@@ -64,15 +64,24 @@ func catalogFixture(t *testing.T, grants []accesssnapshot.Grant) (*Service, proj
 
 func grant(t *testing.T, project projectgraph.ProjectGraph, id string, subject access.SubjectRef, resource projectgraph.ResourceID, kind projectgraph.Kind) accesssnapshot.Grant {
 	t.Helper()
+	_ = project
 	ref, err := access.NewResourceRef(resource, kind)
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonical, err := access.NewCanonicalGrant(project, subject, ref, access.CapabilityResourceRead)
+	action, ok := ReadActionForKind(kind)
+	if !ok {
+		t.Fatalf("no catalog read action for %s", kind)
+	}
+	pair, err := access.NewExactPermissionPair(action, "project_demo", ref)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return accesssnapshot.Grant{ID: id, Canonical: canonical}
+	result, err := accesssnapshot.NewTypedGrant(id, id, subject, []access.PermissionPair{pair})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func TestDevelopmentBypassReturnsExactActiveGraphWithEmptyGrants(t *testing.T) {
@@ -126,6 +135,55 @@ func TestSearchUsesDirectAndGroupGrantsAndDoesNotEnumerateDeniedResources(t *tes
 	}
 }
 
+func TestTypedRoleReadsOnlyItsAuthorizedCatalogKinds(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "dashboard_sales", Kind: projectgraph.KindDashboard, Name: "sales"},
+		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
+		{ID: "source_private", Kind: projectgraph.KindSource, Name: "private"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_typed")
+	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
+	binding, err := access.NewTypedRoleBinding("typed-reader", "viewer", principal, access.PermissionRoleViewer, identity.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelRef, err := access.NewResourceRef("model_orders", projectgraph.KindModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readModel, err := access.NewExactPermissionPair(access.ActionModelRead, identity.ProjectID, modelRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelGrant, err := accesssnapshot.NewTypedGrant("typed-model", "model reader", principal, []access.PermissionPair{readModel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, project, []accesssnapshot.RoleBinding{binding}, []accesssnapshot.Grant{modelGrant}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := service.List(t.Context(), ListRequest{PrincipalID: principal.ID, Limit: 20})
+	if err != nil || len(listed.Items) != 2 {
+		t.Fatalf("typed catalog list = %#v, %v; want dashboard and model only", listed.Items, err)
+	}
+	for _, ref := range []Ref{{ID: "dashboard_sales", Kind: projectgraph.KindDashboard}, {ID: "model_orders", Kind: projectgraph.KindModel}} {
+		if _, err := service.Resolve(t.Context(), principal.ID, ref, access.CapabilityResourceRead, false); err != nil {
+			t.Errorf("typed resolve %#v: %v", ref, err)
+		}
+	}
+	if _, err := service.Resolve(t.Context(), principal.ID, Ref{ID: "source_private", Kind: projectgraph.KindSource}, access.CapabilityResourceRead, false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ungranted source resolve = %v, want not found", err)
+	}
+}
+
 func TestResolveRejectsUnknownAndWrongKindIDs(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
@@ -147,22 +205,22 @@ func TestResolveRejectsUnknownAndWrongKindIDs(t *testing.T) {
 	}
 }
 
-func TestResolveProjectRequiresProjectAdminCapability(t *testing.T) {
+func TestResolveProjectRequiresTypedProjectSettingsRead(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
-	ref, err := access.NewResourceRef("project_demo", projectgraph.KindProjectNamespace)
+	pair, err := access.NewProjectPermissionPair(access.ActionProjectSettingsRead, "project_demo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonical, err := access.NewCanonicalGrant(project, principal, ref, access.CapabilityProjectAdmin)
+	grant, err := accesssnapshot.NewTypedGrant("grant_admin", "project settings reader", principal, []access.PermissionPair{pair})
 	if err != nil {
 		t.Fatal(err)
 	}
 	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
-	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{{ID: "grant_admin", Canonical: canonical}}, nil)
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{grant}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +230,32 @@ func TestResolveProjectRequiresProjectAdminCapability(t *testing.T) {
 	}
 	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: "project_demo", Kind: projectgraph.KindProjectNamespace}, access.CapabilityResourceRead, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("project read resolve = %v, want not found", err)
+	}
+}
+
+func TestLegacyCapabilityGrantDoesNotExposeCatalogResource(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "dashboard_sales", Kind: projectgraph.KindDashboard, Name: "sales"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
+	resource, _ := access.NewResourceRef("dashboard_sales", projectgraph.KindDashboard)
+	legacy, err := access.NewCanonicalGrant(project, principal, resource, access.CapabilityResourceRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{{ID: "legacy", Canonical: legacy}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, _ := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
+	page, err := service.List(t.Context(), ListRequest{PrincipalID: principal.ID})
+	if err != nil || len(page.Items) != 0 {
+		t.Fatalf("legacy grant list = %#v, %v; want no visible resources", page, err)
+	}
+	if _, err := service.Resolve(t.Context(), principal.ID, Ref{ID: resource.ID(), Kind: resource.Kind()}, access.CapabilityResourceRead, false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("legacy grant resolve = %v, want not found", err)
 	}
 }
 

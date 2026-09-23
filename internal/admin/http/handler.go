@@ -40,8 +40,10 @@ type Handler struct {
 		access.Repository
 		adminsettings.ServiceAccountReader
 	}
-	AuthorizationProjection adminsettings.AuthorizationProjectionReader
-	CurrentCredential       func(*nethttp.Request) (access.APICredential, bool)
+	AuthorizationProjection   adminsettings.AuthorizationProjectionReader
+	RoleBindingAdministration func(context.Context) (access.RoleBindingAdministrationState, error)
+	RoleBindingMutation       func(*nethttp.Request, access.RoleBindingAdministrationCommand) (access.RoleBindingAdministrationState, error)
+	CurrentCredential         func(*nethttp.Request) (access.APICredential, bool)
 }
 
 type publicationCommandSignals struct {
@@ -98,6 +100,9 @@ func (h Handler) NewAPIToken(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "api-token-new")
 }
 func (h Handler) General(w nethttp.ResponseWriter, r *nethttp.Request) { h.renderPage(w, r, "general") }
+func (h Handler) AccessOverview(w nethttp.ResponseWriter, r *nethttp.Request) {
+	h.renderPage(w, r, "access")
+}
 func (h Handler) ServiceAccounts(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "service-accounts")
 }
@@ -536,7 +541,19 @@ func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals m
 		}
 		signals["adminServiceAccounts"] = state
 		signals["adminServiceAccountCommand"] = adminsettings.ServiceAccountCommand{}
-	case "principals", "groups", "principal-detail", "group-detail":
+		actorID := ""
+		if h.ReadModel.CurrentPrincipal != nil {
+			if principal, ok := h.ReadModel.CurrentPrincipal(r); ok {
+				actorID = principal.ID
+			}
+		}
+		accessState, err := h.loadAccessAdministration(r, actorID, "", "")
+		if err != nil {
+			return err
+		}
+		signals["adminAccess"] = accessState
+		signals["adminAccessCommand"] = adminsettings.AccessAdministrationCommand{}
+	case "access", "principals", "groups", "principal-detail", "group-detail":
 		if h.SettingsRepository == nil {
 			return nil
 		}
@@ -548,7 +565,7 @@ func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals m
 		}
 		selectedPrincipalID := strings.TrimSpace(r.URL.Query().Get("principal"))
 		selectedGroupID := strings.TrimSpace(r.URL.Query().Get("group"))
-		state, err := h.loadAccessAdministration(r.Context(), actorID, selectedPrincipalID, selectedGroupID)
+		state, err := h.loadAccessAdministration(r, actorID, selectedPrincipalID, selectedGroupID)
 		if err != nil {
 			return err
 		}
@@ -607,7 +624,7 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 		return h.readModel().StorageData(r), nil
 	case "storage-detail":
 		return h.readModel().StorageTableData(r, r.URL.Query().Get("schema"), r.URL.Query().Get("table"))
-	case "profile", "security", "api-tokens", "api-token-new", "archived-chats", "general", "service-accounts", "service-accounts-new", "authentication", "audit", "system":
+	case "profile", "security", "api-tokens", "api-token-new", "archived-chats", "general", "access", "service-accounts", "service-accounts-new", "authentication", "audit", "system":
 		return h.readModel().SettingsData(r)
 	}
 	data, err := h.adminData(r)

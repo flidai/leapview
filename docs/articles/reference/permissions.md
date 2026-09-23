@@ -60,6 +60,7 @@ Catalog presence defines stable vocabulary, not blanket runtime availability. `U
 | `platform.access.read` | Platform administration | `instance` | — | — | — | no | yes | Inspect instance access assignments. |
 | `platform.access.manage` | Platform administration | `instance` | — | — | — | no | yes | Manage instance access assignments. |
 | `platform.audit.read` | Platform administration | `instance` | — | — | — | no | yes | Read authorized instance audit evidence. |
+| `instance.project.claim` | Instance bootstrap | `instance` | — | — | — | no | no | Establish the first Project claim for this instance. |
 
 ## Versioned role expansions
 

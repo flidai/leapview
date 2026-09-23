@@ -19,7 +19,7 @@ func TestInitializeInstancePrepareFailureRollsBackEveryBootstrapRow(t *testing.T
 		t.Fatal(err)
 	}
 	input := access.InstanceInitializationInput{
-		Email: "prepare-rollback@example.test", Environment: "production", Now: time.Now().UTC(),
+		InstanceID: "instance_prepare_rollback", Email: "prepare-rollback@example.test", Environment: "production", Now: time.Now().UTC(),
 	}
 	prepareErr := errors.New("persist recovery bundle")
 	var prepared access.InitialInstanceCredentials
@@ -30,7 +30,7 @@ func TestInitializeInstancePrepareFailureRollsBackEveryBootstrapRow(t *testing.T
 	if !errors.Is(err, prepareErr) {
 		t.Fatalf("prepare failure = %v, want %v", err, prepareErr)
 	}
-	if prepared.Email != input.Email || prepared.TemporaryPassword == "" || prepared.PublisherToken == "" || prepared.PublisherTokenExpiresAt.IsZero() {
+	if prepared.Email != input.Email || prepared.TemporaryPassword == "" || prepared.ProjectClaimToken == "" || prepared.ProjectClaimTokenExpiresAt.IsZero() {
 		t.Fatalf("prepare callback did not receive complete credentials: %#v", prepared)
 	}
 	if !emptyInitialCredentials(got) {
@@ -53,11 +53,22 @@ func TestInitializeInstancePrepareFailureRollsBackEveryBootstrapRow(t *testing.T
 	if err != nil {
 		t.Fatalf("retry after prepare failure: %v", err)
 	}
-	if got.Email != input.Email || got.TemporaryPassword == "" || got.PublisherToken == "" || got.PublisherTokenExpiresAt.IsZero() {
+	if got.Email != input.Email || got.TemporaryPassword == "" || got.ProjectClaimToken == "" || got.ProjectClaimTokenExpiresAt.IsZero() {
 		t.Fatalf("retry credentials are incomplete: %#v", got)
 	}
-	if retried.Email != got.Email || retried.TemporaryPassword != got.TemporaryPassword || retried.PublisherToken != got.PublisherToken || !retried.PublisherTokenExpiresAt.Equal(got.PublisherTokenExpiresAt) {
+	if retried.Email != got.Email || retried.TemporaryPassword != got.TemporaryPassword || retried.ProjectClaimToken != got.ProjectClaimToken || !retried.ProjectClaimTokenExpiresAt.Equal(got.ProjectClaimTokenExpiresAt) {
 		t.Fatalf("retry callback credentials differ from result: callback=%#v result=%#v", retried, got)
+	}
+	credential, err := repo.CredentialForAPIToken(t.Context(), got.ProjectClaimToken)
+	if err != nil {
+		t.Fatalf("resolve initial claim credential: %v", err)
+	}
+	wantPermissions, err := access.InitialProjectClaimPermissions(input.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential.Token.PermissionProfile != access.PermissionCatalogProfile || len(credential.Token.Permissions) != 1 || credential.Token.Permissions[0] != wantPermissions[0] || len(credential.Token.Capabilities) != 0 {
+		t.Fatalf("initial claim credential permissions = %#v/%#v, want only %#v", credential.Token.Permissions, credential.Token.Capabilities, wantPermissions)
 	}
 	initialized, err = repo.Initialized(t.Context())
 	if err != nil {
@@ -78,7 +89,7 @@ func TestInitializeInstanceConcurrentCallsConvergeOnOneDurableBootstrap(t *testi
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	input := access.InstanceInitializationInput{
-		Email: "concurrent-bootstrap@example.test", Environment: "production", Now: time.Now().UTC(),
+		InstanceID: "instance_concurrent_bootstrap", Email: "concurrent-bootstrap@example.test", Environment: "production", Now: time.Now().UTC(),
 	}
 	const callers = 8
 	start := make(chan struct{})
@@ -154,7 +165,7 @@ func TestInitializeInstanceConcurrentCallsConvergeOnOneDurableBootstrap(t *testi
 	if successes != 1 || conflicts != callers-1 {
 		t.Fatalf("concurrent initialization outcomes: successes=%d conflicts=%d, want 1/%d", successes, conflicts, callers-1)
 	}
-	if success.credentials.Email != input.Email || success.credentials.TemporaryPassword == "" || success.credentials.PublisherToken == "" || success.credentials.PublisherTokenExpiresAt.IsZero() {
+	if success.credentials.Email != input.Email || success.credentials.TemporaryPassword == "" || success.credentials.ProjectClaimToken == "" || success.credentials.ProjectClaimTokenExpiresAt.IsZero() {
 		t.Fatalf("winning initializer credentials are incomplete: %#v", success.credentials)
 	}
 	preparedMu.Lock()
@@ -167,14 +178,14 @@ func TestInitializeInstanceConcurrentCallsConvergeOnOneDurableBootstrap(t *testi
 	if preparedCount != 1 {
 		t.Fatalf("credential prepare callback count = %d, want 1", preparedCount)
 	}
-	if preparedCredentials.Email != success.credentials.Email || preparedCredentials.TemporaryPassword != success.credentials.TemporaryPassword || preparedCredentials.PublisherToken != success.credentials.PublisherToken || !preparedCredentials.PublisherTokenExpiresAt.Equal(success.credentials.PublisherTokenExpiresAt) {
+	if preparedCredentials.Email != success.credentials.Email || preparedCredentials.TemporaryPassword != success.credentials.TemporaryPassword || preparedCredentials.ProjectClaimToken != success.credentials.ProjectClaimToken || !preparedCredentials.ProjectClaimTokenExpiresAt.Equal(success.credentials.ProjectClaimTokenExpiresAt) {
 		t.Fatalf("prepared winner credentials differ from returned result: callback=%#v result=%#v", preparedCredentials, success.credentials)
 	}
 	assertInitializationRows(t, db, input.Email, 1)
 }
 
 func emptyInitialCredentials(credentials access.InitialInstanceCredentials) bool {
-	return credentials.Email == "" && credentials.TemporaryPassword == "" && credentials.PublisherToken == "" && credentials.PublisherTokenExpiresAt.IsZero()
+	return credentials.Email == "" && credentials.TemporaryPassword == "" && credentials.ProjectClaimToken == "" && credentials.ProjectClaimTokenExpiresAt.IsZero()
 }
 
 func assertInitializationRows(t *testing.T, db auditDatabase, email string, want int64) {
@@ -188,7 +199,7 @@ func assertInitializationRows(t *testing.T, db auditDatabase, email string, want
 			(SELECT count(*) FROM access.platform_role_binding WHERE role = $3 AND principal_id IN (SELECT id FROM access.principal WHERE lower(email) = lower($2)) AND revoked_at IS NULL),
 			(SELECT count(*) FROM access.api_token WHERE name = $4 AND principal_id IN (SELECT id FROM access.principal WHERE lower(email) = lower($2)) AND revoked_at IS NULL),
 			(SELECT count(*) FROM audit.audit_event WHERE action = $5)`,
-		access.InstanceInitializedSetting, email, string(access.PlatformRoleAdmin), access.APITokenNameInitialPublisher, "instance.initialized").
+		access.InstanceInitializedSetting, email, string(access.PlatformRoleAdmin), access.APITokenNameInitialProjectClaim, "instance.initialized").
 		Scan(&marker, &principals, &credentials, &roles, &tokens, &audits)
 	if err != nil {
 		t.Fatalf("read initialization rows: %v", err)

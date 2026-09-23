@@ -231,7 +231,7 @@ test('security settings use a unified session list, focused password dialog, and
             { id: 'session-other', kind: 'desktop', clientLabel: 'LeapView Desktop', current: false, createdAt: '2026-09-16T08:00:00Z', lastSeenAt: '2026-09-17T07:00:00Z', expiresAt: '2026-09-18T08:00:00Z', absoluteExpiresAt: '2026-10-17T08:00:00Z', revokedAt: '' },
           ],
           authoringSessions: [
-            { id: 'authoring-1', kind: 'cli', clientId: 'LeapView CLI', targetId: 'target-1', projectId: 'sales', capabilities: ['RESOURCE_READ'], createdAt: '2026-09-15T08:00:00Z', lastUsedAt: '2026-09-17T06:00:00Z', expiresAt: '2026-09-24T08:00:00Z', revokedAt: '' },
+            { id: 'authoring-1', kind: 'cli', clientId: 'LeapView CLI', targetId: 'target-1', projectId: 'sales', permissionProfile: 'leapview.permissions/v1', permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target: { scope: 'resource', projectId: 'sales', resourceKind: 'dashboard', resourceId: 'target-1' } }], createdAt: '2026-09-15T08:00:00Z', lastUsedAt: '2026-09-17T06:00:00Z', expiresAt: '2026-09-24T08:00:00Z', revokedAt: '' },
           ],
         },
         tokens: { items: [], capabilities: [] },
@@ -312,7 +312,7 @@ test('security settings use a unified session list, focused password dialog, and
     expect(state.sessionActions).toEqual(['Log out all browser and desktop sessions', 'Revoke'])
     expect(state.authoringText).toContain('LeapView CLI')
     expect(state.authoringText).toContain('sales')
-    expect(state.authoringText).toContain('Resource read')
+    expect(state.authoringText).toContain('dashboard read')
     expect(state.passwordInputsBeforeOpen).toBe(0)
     expect(state.passwordDialogOpened).toBe(true)
     expect(state.passwordDialogClosed).toBe(true)
@@ -346,11 +346,11 @@ test('personal API tokens use exact typed permission selectors', async () => {
         profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
         security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
         tokens: { items: [], permissionOptionsReady: true, capabilities: [
-          { value: 'project-settings', label: 'Administer project', description: 'Manage project-level access and settings.', category: 'Administration', permissions: [{ action: 'project.settings.read', profile, target: { scope: 'project', projectId: 'project_1' } }] },
-          { value: 'dashboard-use', label: 'Use resource', description: 'Open and use the project resource.', category: 'Resource', permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-use') }] },
-          { value: 'dashboard-read', label: 'Read resource', description: 'View the resource and its governed data.', category: 'Resource', permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-read') }] },
-          { value: 'dashboard-edit', label: 'Edit resource', description: 'Create and update the resource.', category: 'Resource', permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-edit') }] },
-          { value: 'dashboard-manage', label: 'Manage resource', description: 'Delete and administer the resource.', category: 'Resource', permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-manage') }] },
+          { value: 'project-settings', actionLabel: 'View project settings', label: 'View project settings', description: 'Current project', category: 'Project administration', permissions: [{ action: 'project.settings.read', profile, target: { scope: 'project', projectId: 'project_1' } }] },
+          { value: 'dashboard-sales', actionLabel: 'View dashboard', label: 'Sales overview', description: 'Dashboard · View dashboard', category: 'Dashboards', permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-sales') }] },
+          { value: 'dashboard-operations', actionLabel: 'View dashboard', label: 'Operations', description: 'Dashboard · View dashboard', category: 'Dashboards', permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-operations') }] },
+          { value: 'dashboard-finance', actionLabel: 'View dashboard', label: 'Finance', description: 'Dashboard · View dashboard', category: 'Dashboards', permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-finance') }] },
+          { value: 'dashboard-future', actionLabel: 'View dashboard', label: 'View dashboard', description: 'Current and future dashboards', category: 'Dashboards', permissions: [{ action: 'dashboard.read', profile, target: { scope: 'project', projectId: 'project_1', resourceKind: 'dashboard', includeFuture: true } }] },
         ] },
       } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
@@ -430,14 +430,38 @@ test('personal API tokens use exact typed permission selectors', async () => {
         help: root.querySelector('.permission-menu-help')?.textContent?.replace(/\s+/g, ' ').trim(),
         categorySummaries: Array.from(root.querySelectorAll('.permission-category')).map((category) => category.textContent?.replace(/\s+/g, ' ').trim()),
       }
-      search.value = 'read resource'
+      search.value = 'view dashboard'
       search.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await personal.updateComplete
       const filteredPermissions = Array.from(root.querySelectorAll('.permission-option .settings-label')).map((label) => label.textContent?.trim())
-      const readPermission = root.querySelector('input[type="checkbox"][value="typed-2"]') as HTMLInputElement
-      const readDescription = root.querySelector('.permission-option .settings-description') as HTMLElement
-      const readDescribedBy = readPermission.getAttribute('aria-describedby') === readDescription.id
-      readPermission.click()
+      ;(root.querySelector('.permission-option') as HTMLButtonElement).click()
+      await personal.updateComplete
+      const actionMenuClosedAfterSelection = !root.querySelector('.permission-menu')
+      const scopeConfiguration = {
+        title: root.querySelector('.permission-policy-header .settings-label')?.textContent?.trim(),
+        scopeOptions: Array.from(root.querySelectorAll('.permission-scope-option .settings-label')).map((label) => label.textContent?.trim()),
+        defaultScope: (root.querySelector('.permission-policy input[type="radio"]:checked') as HTMLInputElement)?.value,
+        incompleteStatus: root.querySelector('.permission-policy-status')?.textContent?.trim(),
+        createDisabled: (root.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
+      }
+      ;(root.querySelector('.permission-policy input[type="radio"][value="current"]') as HTMLInputElement).click()
+      await personal.updateComplete
+      const allCurrentExactCount = root.querySelectorAll('.permission-technical-row').length
+      ;(root.querySelector('.permission-policy input[type="radio"][value="specific"]') as HTMLInputElement).click()
+      await personal.updateComplete
+      ;(root.querySelector('.permission-resource-trigger') as HTMLButtonElement).click()
+      await personal.updateComplete
+      const resourcePicker = {
+        resources: Array.from(root.querySelectorAll('.permission-resource-option span')).map((label) => label.textContent?.trim()),
+        initiallySelected: root.querySelectorAll('.permission-resource-option input:checked').length,
+        searchFocused: root.activeElement === root.querySelector('.permission-resource-menu .permission-search input'),
+      }
+      ;(root.querySelector('input[type="checkbox"][value="typed-1"]') as HTMLInputElement).click()
+      ;(root.querySelector('input[type="checkbox"][value="typed-3"]') as HTMLInputElement).click()
+      await personal.updateComplete
+      ;(root.querySelector('.permission-resource-menu-footer .primary') as HTMLButtonElement).click()
+      await personal.updateComplete
+      add.click()
       await personal.updateComplete
       const selectedMenuState = {
         count: root.querySelector('.permission-menu-count')?.textContent?.replace(/\s+/g, ' ').trim(),
@@ -447,7 +471,7 @@ test('personal API tokens use exact typed permission selectors', async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
       await personal.updateComplete
       await Promise.resolve()
-      const selectedPermissions = Array.from(root.querySelectorAll('.selected-permission .settings-label')).map((label) => label.textContent?.trim())
+      const selectedPermissions = Array.from(root.querySelectorAll('.permission-policy-header > .settings-field > .settings-label')).map((label) => label.textContent?.trim())
       const technicalDetails = root.querySelector('.permission-technical-details') as HTMLDetailsElement
       const selectedPresentation = {
         fixedPermissionVisible: Boolean(root.querySelector('.permission-access-fixed')),
@@ -465,31 +489,35 @@ test('personal API tokens use exact typed permission selectors', async () => {
       await personal.updateComplete
       const confirmation = root.querySelector('[data-token-confirm-dialog]') as HTMLDialogElement
       const confirmationText = confirmation.textContent?.replace(/\s+/g, ' ').trim()
+      const confirmationPermission = {
+        action: confirmation.querySelector('.token-confirm-permissions li strong')?.textContent?.trim(),
+        scope: confirmation.querySelector('.token-confirm-permissions li span')?.textContent?.trim(),
+      }
       ;(confirmation.querySelector('.token-confirm-actions .primary') as HTMLButtonElement).click()
       await personal.updateComplete
       const pending = {
         name: (root.querySelector('#token-name') as HTMLInputElement).value,
-        selectedPermissions: root.querySelectorAll('.selected-permission').length,
+        selectedPermissions: root.querySelectorAll('.permission-policy[data-configured="true"]').length,
         buttonText: (root.querySelector('.token-confirm-actions .primary') as HTMLButtonElement).textContent?.trim(),
       }
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: '403' } } }))
       await personal.updateComplete
       const failed = {
         name: (root.querySelector('#token-name') as HTMLInputElement).value,
-        selectedPermissions: root.querySelectorAll('.selected-permission').length,
+        selectedPermissions: root.querySelectorAll('.permission-policy[data-configured="true"]').length,
         error: root.querySelector('[role="alert"]')?.textContent?.trim(),
         createDisabled: (root.querySelector('.token-confirm-actions .primary') as HTMLButtonElement).disabled,
       }
       ;(root.querySelector('.token-confirm-actions .primary') as HTMLButtonElement).click()
       window.history.replaceState(window.history.state, '', '/admin/api-tokens/new')
       mergePatch({ personalSettings: { tokens: { items: [
-        { id: 'token-1', name: 'Sales automation', description: 'Used by the weekly sales reporting job.', permissionProfile: profile, permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-read') }], capabilities: [], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '2026-10-17T06:40:00Z', revokedAt: '' },
+        { id: 'token-1', name: 'Sales automation', description: 'Used by the weekly sales reporting job.', permissionProfile: profile, permissions: [{ action: 'dashboard.read', profile, target: permissionTarget('dashboard-operations') }], capabilities: [], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '2026-10-17T06:40:00Z', revokedAt: '' },
       ], newToken: 'lv_created_secret' } } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await personal.updateComplete
       const succeeded = {
         createViewClosed: !root.querySelector('#token-name'),
-        selectedPermissions: root.querySelectorAll('.selected-permission').length,
+        selectedPermissions: root.querySelectorAll('.permission-policy[data-configured="true"]').length,
         tokenNames: Array.from(root.querySelectorAll('.token-name')).map((element) => element.textContent?.trim()),
         description: root.querySelector('.token-description')?.textContent?.trim(),
         notice: root.querySelector('lv-one-time-secret')?.shadowRoot?.querySelector('[role="status"]')?.textContent?.trim(),
@@ -518,7 +546,10 @@ test('personal API tokens use exact typed permission selectors', async () => {
         menuLayout,
         menuHeader,
         filteredPermissions,
-        readDescribedBy,
+        actionMenuClosedAfterSelection,
+        scopeConfiguration,
+        allCurrentExactCount,
+        resourcePicker,
         selectedMenuState,
         selectedPermissions,
         selectedPresentation,
@@ -526,6 +557,7 @@ test('personal API tokens use exact typed permission selectors', async () => {
         searchFocused,
         triggerFocused,
         confirmationText,
+        confirmationPermission,
         command,
         pending,
         failed,
@@ -582,37 +614,51 @@ test('personal API tokens use exact typed permission selectors', async () => {
     expect(state.initial.expiration.triggerWidth).toBeGreaterThanOrEqual(190)
     expect(state.initial.expiration.triggerWidth).toBeLessThanOrEqual(260)
     expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
-    expect(state.menuLayout.listScrollable).toBe(true)
+    expect(state.menuLayout.listScrollable).toBe(false)
     expect(state.menuLayout.listOverflowY).toBe('auto')
     expect(state.menuLayout.width).toBeGreaterThanOrEqual(400)
     expect(state.menuLayout.searchHeight).toBeGreaterThanOrEqual(40)
     expect(state.menuLayout.optionRowsLargeEnough).toBe(true)
     expect(state.menuHeader).toEqual({
-      title: 'Select token permissions',
+      title: 'Add token permission',
       labelledByTitle: true,
       selectedCount: '0 selected',
-      help: 'Select the specific actions and resources this token can use.',
-      categorySummaries: ['Administration 0 selected', 'Resource 0 selected'],
+      help: 'Choose an action. Its resource scope will appear in the form.',
+      categorySummaries: ['Dashboards 0 selected', 'Project administration 0 selected'],
     })
-    expect(state.filteredPermissions).toEqual(['Read resource'])
-    expect(state.readDescribedBy).toBe(true)
-    expect(state.selectedMenuState).toEqual({ count: '1 selected', selected: 'true', categorySummary: 'Resource 1 selected' })
-    expect(state.selectedPermissions).toEqual(['Read resource'])
+    expect(state.filteredPermissions).toEqual(['View dashboard'])
+    expect(state.actionMenuClosedAfterSelection).toBe(true)
+    expect(state.scopeConfiguration).toEqual({
+      title: 'View dashboard',
+      scopeOptions: ['Specific dashboards', 'All current dashboards', 'All current and future dashboards'],
+      defaultScope: 'specific',
+      incompleteStatus: 'Needs scope',
+      createDisabled: true,
+    })
+    expect(state.allCurrentExactCount).toBe(3)
+    expect(state.resourcePicker).toEqual({
+      resources: ['Sales overview', 'Operations', 'Finance'],
+      initiallySelected: 3,
+      searchFocused: true,
+    })
+    expect(state.selectedMenuState).toEqual({ count: '1 selected', selected: 'true', categorySummary: 'Dashboards 1 selected' })
+    expect(state.selectedPermissions).toEqual(['View dashboard'])
     expect(state.selectedPresentation).toEqual({
       fixedPermissionVisible: false,
       technicalOpen: false,
       technicalSummary: 'Technical details 1 exact permission',
       technicalAction: 'dashboard.read',
-      technicalTarget: 'dashboard dashboard-read · project project_1',
+      technicalTarget: 'dashboard dashboard-operations · project project_1',
     })
     expect(state.menuClosed).toBe(true)
     expect(state.searchFocused).toBe(true)
     expect(state.triggerFocused).toBe(true)
     expect(state.command).toMatchObject({
-      action: 'create', name: 'Sales automation', description: 'Used by the weekly sales reporting job.', permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target: { scope: 'resource', projectId: 'project_1', resourceKind: 'dashboard', resourceId: 'dashboard-read' } }],
+      action: 'create', name: 'Sales automation', description: 'Used by the weekly sales reporting job.', permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target: { scope: 'resource', projectId: 'project_1', resourceKind: 'dashboard', resourceId: 'dashboard-operations' } }],
     })
     expect(state.command.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
     expect(state.confirmationText).toContain('will be ready for use immediately')
+    expect(state.confirmationPermission).toEqual({ action: 'View dashboard', scope: 'Operations' })
     expect(state.pending).toEqual({ name: 'Sales automation', selectedPermissions: 1, buttonText: 'Generating…' })
     expect(state.failed).toEqual({
       name: 'Sales automation', selectedPermissions: 1,

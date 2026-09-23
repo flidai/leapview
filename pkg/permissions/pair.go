@@ -352,14 +352,14 @@ func kindAllowed(kinds []Kind, candidate Kind) bool {
 }
 
 // Allows reports whether granted permits requested. Exact pairs only match
-// the same exact pair. A future selector matches an exact resource of the
-// declared kind in the declared Project and never another future selector.
+// the same exact pair. A future selector matches itself or an exact resource
+// of the declared kind in the declared Project, never a different selector.
 func (catalog *CompiledCatalog) Allows(granted, requested Pair) bool {
 	if catalog == nil || catalog.ValidatePair(granted) != nil || catalog.ValidatePair(requested) != nil || granted.Profile != requested.Profile || granted.Action != requested.Action {
 		return false
 	}
 	if granted.Target.Scope == ScopeProject && granted.Target.IncludeFuture {
-		return requested.Target.Scope == ScopeResource && granted.Target.ProjectID == requested.Target.ProjectID && granted.Target.ResourceKind == requested.Target.ResourceKind
+		return pairKey(granted) == pairKey(requested) || (requested.Target.Scope == ScopeResource && granted.Target.ProjectID == requested.Target.ProjectID && granted.Target.ResourceKind == requested.Target.ResourceKind)
 	}
 	return pairKey(granted) == pairKey(requested)
 }

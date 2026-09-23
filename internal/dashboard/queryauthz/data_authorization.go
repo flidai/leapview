@@ -41,11 +41,6 @@ type Options struct {
 	PrincipalFromContext      func(context.Context) (Principal, bool)
 	CredentialFromContext     func(context.Context) (access.APICredential, bool)
 	AuditRecorder             access.CanonicalAuditRecorder
-	// SemanticConsumption is the bounded compatibility binding between the
-	// catalog's semantic.consume action and the still-legacy principal grants.
-	// Dashboard execution requires RESOURCE_USE on the exact SemanticModel as
-	// well as a matching typed credential pair when a typed token is present.
-	SemanticConsumption SemanticConsumptionRequirement
 }
 
 type Metrics struct {
@@ -57,7 +52,6 @@ type Metrics struct {
 	principalFromContext      func(context.Context) (Principal, bool)
 	credentialFromContext     func(context.Context) (access.APICredential, bool)
 	auditRecorder             access.CanonicalAuditRecorder
-	semanticConsumption       SemanticConsumptionRequirement
 }
 
 var _ queryruntime.SpatialTileStreamExpirer = Metrics{}
@@ -84,15 +78,15 @@ func (m Metrics) concretePlanner(modelID string) (*semanticquery.Planner, bool) 
 
 type DeniedError struct {
 	PrincipalID string
-	Capability  access.Capability
+	Action      access.Action
 	Credential  bool
 }
 
 func (e DeniedError) Error() string {
 	if e.Credential {
-		return fmt.Sprintf("data query credential lacks %s", e.Capability)
+		return fmt.Sprintf("data query credential lacks %s", e.Action)
 	}
-	return fmt.Sprintf("principal %q lacks %s on data object", e.PrincipalID, e.Capability)
+	return fmt.Sprintf("principal %q lacks %s on data object", e.PrincipalID, e.Action)
 }
 
 func IsDenied(err error) bool {
@@ -110,7 +104,6 @@ func New(metrics queryruntime.Metrics, options Options) Metrics {
 		principalFromContext:      options.PrincipalFromContext,
 		credentialFromContext:     options.CredentialFromContext,
 		auditRecorder:             options.AuditRecorder,
-		semanticConsumption:       options.SemanticConsumption.withDefault(),
 	}
 }
 
@@ -141,13 +134,6 @@ func (m Metrics) ExecuteDataQuery(ctx context.Context, request dataquery.Query) 
 	if m.Metrics == nil {
 		return dataquery.Result{}, errors.New("query metrics are not configured")
 	}
-	if m.snapshotFromContext == nil {
-		bound, err := m.bindSemanticQuery(ctx, request)
-		if err != nil {
-			return rejectedDataQueryResult(err)
-		}
-		return m.Metrics.ExecuteDataQuery(bound, request)
-	}
 	governed, transform, err := m.GovernDataQuery(ctx, request)
 	if err != nil {
 		return rejectedDataQueryResult(err)
@@ -176,13 +162,6 @@ func (m Metrics) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Qu
 	executor, ok := m.Metrics.(arrowquery.Executor)
 	if !ok {
 		return dataquery.Result{}, errors.New("query metrics do not support native Arrow execution")
-	}
-	if m.snapshotFromContext == nil {
-		bound, err := m.bindSemanticQuery(ctx, request)
-		if err != nil {
-			return rejectedDataQueryResult(err)
-		}
-		return executor.ExecuteDataQueryArrow(bound, request, sink)
 	}
 	governed, transform, err := m.GovernDataQuery(ctx, request)
 	if err != nil {
@@ -284,7 +263,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		}
 		governed.EffectivePolicyFingerprint = effectivePolicyFingerprint(
 			governed,
-			access.CapabilityResourceRead,
+			nil,
 			objects,
 			policies,
 			effectivePolicyContext{},
@@ -302,13 +281,13 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	if authenticated {
 		if principalID != "" && principalID != principal.ID {
 			request.PrincipalID = principal.ID
-			err := DeniedError{PrincipalID: principal.ID, Capability: capabilityAction}
+			err := DeniedError{PrincipalID: principal.ID, Action: dataQueryActionForDenial(ctx, request)}
 			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 			return request, nil, err
 		}
 		if !candidateQuery && request.CandidateID != "" {
 			request.PrincipalID = principal.ID
-			err := DeniedError{PrincipalID: principal.ID, Capability: capabilityAction}
+			err := DeniedError{PrincipalID: principal.ID, Action: dataQueryActionForDenial(ctx, request)}
 			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 			return request, nil, err
 		}
@@ -316,7 +295,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 			var err error
 			request, err = validateCandidateQueryCapability(candidateCapability, principal, request)
 			if err != nil {
-				denied := DeniedError{PrincipalID: principal.ID, Capability: capabilityAction}
+				denied := DeniedError{PrincipalID: principal.ID, Action: dataQueryActionForDenial(ctx, request)}
 				_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 				return request, nil, denied
 			}
@@ -330,11 +309,15 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 			}
 			principalID = request.PrincipalID
 		}
-		if principal.DevBypass && !candidateQuery && !viewAsQuery {
+		// Development browser sessions retain their explicit bypass. Credentials
+		// always pass through the typed action and target checks below.
+		_, hasCredential := m.currentCredential(ctx)
+		if principal.DevBypass && !candidateQuery && !viewAsQuery && !hasCredential {
 			request.PrincipalID = principal.ID
+			requiredPermissions, _ := dataQueryPermissionPairs(ctx, request, objects)
 			request.EffectivePolicyFingerprint = effectivePolicyFingerprint(
 				request,
-				capabilityAction,
+				requiredPermissions,
 				objects,
 				nil,
 				effectivePolicyContext{
@@ -365,23 +348,25 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsDataQuery(ctx, snapshot, principalID, credential.Token, request, objects, capabilityAction) {
-		err := DeniedError{PrincipalID: principalID, Capability: capabilityAction, Credential: true}
+	requiredPermissions, err := dataQueryPermissionPairs(ctx, request, objects)
+	if err != nil {
+		err = DeniedError{PrincipalID: principalID, Action: dataQueryActionForDenial(ctx, request)}
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	if err := m.requireSemanticConsumption(ctx, snapshot, principalID, request, objects); err != nil {
-		_ = m.recordDataAccessAudit(ctx, request, m.semanticConsumption.withDefault().Capability, "denied", err)
+	if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsDataQuery(ctx, snapshot, principalID, credential.Token, requiredPermissions) {
+		err := DeniedError{PrincipalID: principalID, Action: dataQueryActionForDenial(ctx, request), Credential: true}
+		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
 	bootstrapCandidateOwner := candidateQuery && candidateCapability.BootstrapAuthorized &&
 		!viewAsQuery && request.PrincipalID == candidateCapability.OwnerPrincipalID
 	if !bootstrapCandidateOwner {
-		if ok, err := m.authorizeDataQuery(ctx, snapshot, principalID, capabilityAction, request, objects); err != nil {
+		if ok, err := m.authorizeDataQuery(ctx, snapshot, principalID, requiredPermissions); err != nil {
 			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
 			return request, nil, err
 		} else if !ok {
-			err := DeniedError{PrincipalID: principalID, Capability: capabilityAction}
+			err := DeniedError{PrincipalID: principalID, Action: dataQueryActionForDenial(ctx, request)}
 			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 			return request, nil, err
 		}
@@ -397,7 +382,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	}
 	governed.EffectivePolicyFingerprint = effectivePolicyFingerprint(
 		governed,
-		capabilityAction,
+		requiredPermissions,
 		objects,
 		policies,
 		effectivePolicyContext{
@@ -425,76 +410,6 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		}
 		return nil
 	}, nil
-}
-
-func (m Metrics) authorizeDataQuery(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, capability access.Capability, request dataquery.Query, objects []access.ResourceRef) (bool, error) {
-	if err := capability.Validate(); err != nil {
-		return false, err
-	}
-	subjects, err := m.subjects(ctx, principalID)
-	if err != nil {
-		return false, err
-	}
-	if handled, allowed, typedErr := authorizeTypedSemanticQuery(ctx, snapshot, subjects, request, objects); typedErr != nil {
-		return false, typedErr
-	} else if handled {
-		return allowed, nil
-	}
-	allows := func(resource access.ResourceRef) (bool, error) {
-		for _, subject := range subjects {
-			ok, err := snapshot.Allows(subject, resource, capability)
-			if err != nil {
-				return false, err
-			}
-			if ok {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-	if request.Kind == dataquery.KindSemanticAggregate && request.Target == "" {
-		for _, object := range objects {
-			if object.Kind() != projectgraph.KindSemanticModel {
-				continue
-			}
-			ok, err := allows(object)
-			if err != nil || !ok {
-				return ok, err
-			}
-		}
-		return true, nil
-	}
-	// A direct semantic/physical grant is sufficient for governed execution;
-	// when a query has only physical dependencies, every dependency must be
-	// authorized. This preserves the old semantic-or-physical closure without
-	// reducing authorization to a project-wide read check.
-	for _, object := range objects {
-		if object.Kind() == projectgraph.KindSemanticModel || object.Kind() == projectgraph.KindModel {
-			ok, err := allows(object)
-			if err != nil {
-				return false, err
-			}
-			if ok {
-				return true, nil
-			}
-		}
-	}
-	physical := make([]access.ResourceRef, 0, len(objects))
-	for _, object := range objects {
-		if object.Kind() == projectgraph.KindSource || object.Kind() == projectgraph.KindModel {
-			physical = append(physical, object)
-		}
-	}
-	if len(physical) == 0 {
-		return false, nil
-	}
-	for _, object := range physical {
-		ok, err := allows(object)
-		if err != nil || !ok {
-			return ok, err
-		}
-	}
-	return true, nil
 }
 
 func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, request dataquery.Query, includePublicInteractions bool) ([]access.ResourceRef, []access.ResourceRef, error) {
@@ -1080,16 +995,16 @@ func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Qu
 }
 
 type effectivePolicyIdentity struct {
-	PrincipalID      string                      `json:"principalId"`
-	ActorPrincipalID string                      `json:"actorPrincipalId,omitempty"`
-	ProjectID        projectgraph.ResourceID     `json:"projectId"`
-	Capability       access.Capability           `json:"capability"`
-	CandidateID      string                      `json:"candidateId,omitempty"`
-	CandidateDigest  string                      `json:"candidateDigest,omitempty"`
-	CredentialID     string                      `json:"credentialId,omitempty"`
-	Mode             string                      `json:"mode,omitempty"`
-	Objects          []string                    `json:"objects"`
-	Policies         []accesssnapshot.DataPolicy `json:"policies"`
+	PrincipalID         string                      `json:"principalId"`
+	ActorPrincipalID    string                      `json:"actorPrincipalId,omitempty"`
+	ProjectID           projectgraph.ResourceID     `json:"projectId"`
+	RequiredPermissions []access.PermissionPair     `json:"requiredPermissions"`
+	CandidateID         string                      `json:"candidateId,omitempty"`
+	CandidateDigest     string                      `json:"candidateDigest,omitempty"`
+	CredentialID        string                      `json:"credentialId,omitempty"`
+	Mode                string                      `json:"mode,omitempty"`
+	Objects             []string                    `json:"objects"`
+	Policies            []accesssnapshot.DataPolicy `json:"policies"`
 }
 
 type effectivePolicyContext struct {
@@ -1101,7 +1016,7 @@ type effectivePolicyContext struct {
 
 func effectivePolicyFingerprint(
 	request dataquery.Query,
-	capability access.Capability,
+	requiredPermissions []access.PermissionPair,
 	objects []access.ResourceRef,
 	policies []accesssnapshot.DataPolicy,
 	policyContext effectivePolicyContext,
@@ -1111,6 +1026,8 @@ func effectivePolicyFingerprint(
 		objectIDs = append(objectIDs, object.CanonicalID())
 	}
 	sort.Strings(objectIDs)
+	permissionCopy := append([]access.PermissionPair(nil), requiredPermissions...)
+	sort.Slice(permissionCopy, func(i, j int) bool { return permissionCopy[i].Key() < permissionCopy[j].Key() })
 	policyCopy := append([]accesssnapshot.DataPolicy(nil), policies...)
 	sort.Slice(policyCopy, func(i, j int) bool {
 		left, _ := json.Marshal(policyCopy[i])
@@ -1118,16 +1035,16 @@ func effectivePolicyFingerprint(
 		return string(left) < string(right)
 	})
 	identity := effectivePolicyIdentity{
-		PrincipalID:      request.PrincipalID,
-		ActorPrincipalID: policyContext.ActorPrincipalID,
-		ProjectID:        request.ProjectID,
-		Capability:       capability,
-		CandidateID:      request.CandidateID,
-		CandidateDigest:  policyContext.CandidateDigest,
-		CredentialID:     policyContext.CredentialID,
-		Mode:             policyContext.Mode,
-		Objects:          objectIDs,
-		Policies:         policyCopy,
+		PrincipalID:         request.PrincipalID,
+		ActorPrincipalID:    policyContext.ActorPrincipalID,
+		ProjectID:           request.ProjectID,
+		RequiredPermissions: permissionCopy,
+		CandidateID:         request.CandidateID,
+		CandidateDigest:     policyContext.CandidateDigest,
+		CredentialID:        policyContext.CredentialID,
+		Mode:                policyContext.Mode,
+		Objects:             objectIDs,
+		Policies:            policyCopy,
 	}
 	bytes, _ := json.Marshal(identity)
 	sum := sha256.Sum256(bytes)
@@ -1318,36 +1235,6 @@ func (m Metrics) subjects(ctx context.Context, principalID string) ([]access.Sub
 		return nil, errors.New("authorization subjects are not configured")
 	}
 	return m.subjectsFromContext(ctx, principalID)
-}
-
-func (m Metrics) capabilityAllowed(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, token access.APIToken, capability access.Capability) (bool, error) {
-	subjects, err := m.subjects(ctx, principalID)
-	if err != nil {
-		return false, err
-	}
-	effective, err := snapshot.EffectiveCapabilities(subjects)
-	if err != nil {
-		return false, err
-	}
-	for _, value := range access.IntersectTokenCapabilities(token.Capabilities, effective) {
-		if value == capability {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (m Metrics) tokenAllowsCapability(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, token access.APIToken, capability access.Capability) bool {
-	if token.Capabilities == nil {
-		// A missing token allowlist is an invalid/legacy persisted form. It
-		// must never fall back to the principal's current authority.
-		return false
-	}
-	allowed, err := m.capabilityAllowed(ctx, snapshot, principalID, token, capability)
-	if err == nil && allowed {
-		return true
-	}
-	return false
 }
 
 func (m Metrics) persistCanonicalAudit(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, event access.CanonicalAuditEvent) error {

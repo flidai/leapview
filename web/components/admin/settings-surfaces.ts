@@ -7,8 +7,12 @@ import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import { settingsSurfaceStyles } from './settings-surfaces.styles'
+import { auditActorLabel, auditEventSummary, auditFilterOptions, auditMetadataText, auditPresetItems, auditPresets, auditPrincipalHref, auditResourceHref, auditStatusCell, auditTable, formatAuditTimestamp, humanizeAuditValue } from './settings-audit-view-model'
+import type { AuditPreset, AuditPresetID } from './settings-audit-view-model'
+import { serviceAccountDateLabel, serviceAccountListColumns, serviceAccountListItems, serviceDateInputValueInDays, serviceEndOfDayInDays, serviceSecretExpirationOptions, serviceSecretListColumns, serviceSecretListItems } from './settings-service-account-view-model'
+import type { ServiceSecretExpirationPreset } from './settings-service-account-view-model'
 import { identitySourceLabel, principalInitials, currentPrincipalAvatarUrl, initialsForValue, memberActionLabel, formatAccessDate, humanizeAccessValue, principalActivityLabel, formValue } from './settings-surfaces.helpers'
-import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditEventSignal, AuditLogFilters, AuditLogSignal, ServiceAccountSecretSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
+import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AccessRoleAssignmentSignal, AuditEventSignal, AuditLogSignal, ServiceAccountSecretSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
 import '../shared/entity-list'
 import '../shared/user-avatar'
 import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
@@ -34,7 +38,93 @@ function ownsAdminActionFetch(element: Element, event: Event): boolean {
   return owner === actionHost
 }
 
-const emptyAccessAdministration: AccessAdministrationSignal = { principals: [], groups: [], projects: [], sessions: [], roleAssignments: [], activity: [], loading: true }
+const emptyAccessAdministration: AccessAdministrationSignal = { principals: [], groups: [], projects: [], sessions: [], roleAssignments: [], rolePresets: [], policyRevision: 0, activity: [], loading: true }
+
+function subjectAssignments(signal: AccessAdministrationSignal, subjectType: string, subjectId: string, inheritedGroupIDs: string[] = []): AccessRoleAssignmentSignal[] {
+  const groups = new Set(inheritedGroupIDs)
+  return signal.roleAssignments.filter((assignment) =>
+    (assignment.subjectType === subjectType && assignment.subjectId === subjectId) ||
+    (subjectType === 'principal' && assignment.subjectType === 'group' && groups.has(assignment.subjectId)),
+  )
+}
+
+function accessSubjectHref(assignment: AccessRoleAssignmentSignal): string {
+  if (assignment.subjectType === 'group') return `/admin/groups/${encodeURIComponent(assignment.subjectId)}`
+  return `/admin/principals/${encodeURIComponent(assignment.subjectId)}`
+}
+
+function rolePermissionSummary(permissions: string[]): string {
+  if (!permissions.length) return 'Legacy role permissions'
+  const nouns = new Set(permissions.map((permission) => permission.split('.')[0]).filter(Boolean))
+  return `${permissions.length} permission${permissions.length === 1 ? '' : 's'} across ${nouns.size} area${nouns.size === 1 ? '' : 's'}`
+}
+
+function roleActivationStatus(assignment: AccessRoleAssignmentSignal): string {
+  return assignment.status || 'Activation status unavailable'
+}
+
+function roleMutationNotice(signal: AccessAdministrationSignal) {
+  return signal.roleMutationUnavailableReason ? html`<p class="notice" role="note">${signal.roleMutationUnavailableReason}</p>` : nothing
+}
+
+class LeapViewRoleGrantDialog extends DatastarLit(LitElement) {
+  static styles = [settingsSurfaceStyles]
+  @property({ type: Boolean }) open = false
+  @property() subjectType = ''
+  @property() subjectId = ''
+  @property() subjectName = ''
+  @state() private selectedSubject = ''
+  @state() private selectedRole = ''
+
+  get accessState(): AccessAdministrationSignal { return this.signal('adminAccess', emptyAccessAdministration) }
+
+  override updated(): void {
+    const dialog = this.renderRoot.querySelector<HTMLDialogElement>('dialog')
+    if (this.open && dialog && !dialog.open) {
+      if (this.subjectId) this.selectedSubject = `${this.subjectType}:${this.subjectId}`
+      dialog.showModal()
+    } else if (!this.open && dialog?.open) dialog.close()
+  }
+
+  render() {
+    if (!this.open) return nothing
+    const signal = this.accessState
+    const principals = signal.principals.map((principal) => ({ value: `principal:${principal.id}`, label: principal.displayName || principal.email || principal.id, kind: principal.kind === 'service' ? 'Service account' : 'User' }))
+    const groups = signal.groups.map((group) => ({ value: `group:${group.id}`, label: group.name || group.id, kind: 'Group' }))
+    const subjects = [...groups, ...principals]
+    return html`<dialog aria-labelledby="grant-role-title" @cancel=${this.close} @click=${this.closeOnBackdrop}>
+      <section class="modal role-grant-modal">
+        <header class="modal-header"><div class="modal-title"><h2 id="grant-role-title">Grant project access</h2><p class="muted">Assign a maintained role to an identity. The exact permissions are captured with the grant.</p></div><button class="modal-close" type="button" aria-label="Close" @click=${this.close}>${lucideIcon(X, { size: 18 })}</button></header>
+        <form class="modal-body" @submit=${this.submit}>
+          <div class="role-scope"><span>Scope</span><strong>Current project</strong></div>
+          ${this.subjectId ? html`<div class="role-scope"><span>Identity</span><strong>${this.subjectName || this.subjectId}</strong></div>` : html`
+            <label>Identity<select required .value=${this.selectedSubject} @change=${(event: Event) => { this.selectedSubject = (event.target as HTMLSelectElement).value }}><option value="">Select a user, group, or service account</option>${subjects.map((subject) => html`<option value=${subject.value}>${subject.label} · ${subject.kind}</option>`)}</select></label>`}
+          <fieldset class="role-options"><legend>Role</legend>${signal.rolePresets.map((preset) => html`
+            <label class=${`role-option ${this.selectedRole === preset.role ? 'selected' : ''}`}>
+              <input type="radio" name="role" value=${preset.role} .checked=${this.selectedRole === preset.role} @change=${() => { this.selectedRole = preset.role }}>
+              <span><strong>${preset.name}</strong><small>${preset.description}</small><small class="role-permission-summary">${rolePermissionSummary(preset.permissions)}</small></span>
+            </label>`)}
+          </fieldset>
+          <p class="muted">Fine-grained access remains resource-owned. Use resource sharing for one dashboard or model; use roles for ongoing project responsibilities.</p>
+          ${roleMutationNotice(signal)}
+          <div class="modal-actions"><button type="button" @click=${this.close}>Cancel</button><button class="primary" type="submit" ?disabled=${!this.selectedRole || !(this.subjectId || this.selectedSubject) || signal.loading || !!signal.roleMutationUnavailableReason}>Grant access</button></div>
+        </form>
+      </section>
+    </dialog>`
+  }
+
+  private submit = (event: SubmitEvent): void => {
+    event.preventDefault()
+    if (this.accessState.roleMutationUnavailableReason) return
+    const selected = this.subjectId ? `${this.subjectType}:${this.subjectId}` : this.selectedSubject
+    const separator = selected.indexOf(':')
+    if (separator < 1 || !this.selectedRole) return
+    this.dispatchEvent(new CustomEvent('lv-access-admin-command', { bubbles: true, composed: true, detail: { action: 'grant_role', subjectType: selected.slice(0, separator), subjectId: selected.slice(separator + 1), role: this.selectedRole, expectedRevision: this.accessState.policyRevision } }))
+    this.close()
+  }
+  private close = (event?: Event): void => { event?.preventDefault(); this.selectedRole = ''; this.dispatchEvent(new CustomEvent('lv-role-grant-close', { bubbles: true, composed: true })) }
+  private closeOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.close() }
+}
 
 abstract class LeapViewAccessAdministrationBase extends DatastarLit(LitElement) {
   static styles = [entityDetailStyles, settingsSurfaceStyles]
@@ -110,6 +200,7 @@ abstract class LeapViewAccessAdministrationBase extends DatastarLit(LitElement) 
 
 class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
   @state() private copiedPrincipalID = false
+  @state() private roleDialogOpen = false
   render() {
     const signal = this.accessState
     if (signal.loading && !signal.principals.length) return html`<p class="muted" aria-live="polite">Loading users…</p>`
@@ -143,6 +234,7 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
     const source = identitySourceLabel(principal)
     const status = principal.disabledAt ? 'Disabled' : principal.blockedAt ? 'Blocked' : 'Active'
     const projects = new Map((signal.projects || []).map((project) => [project.id, project.name || project.id]))
+    const assignments = subjectAssignments(signal, 'principal', principal.id, principal.groups.map((group) => group.id))
     const actions = html`
       ${principal.capabilities.canBlock ? html`<button class="primary-detail-action" @click=${() => this.blockPrincipal(principal)}>${lucideIcon(CircleSlash2, { size: 16, strokeWidth: 2 })}<span>Block access</span></button>` : nothing}
       ${principal.capabilities.canUnblock ? html`<button class="primary-detail-action" @click=${() => this.emit({ action: 'unblock_principal', principalId: principal.id })}>Unblock access</button>` : nothing}
@@ -158,7 +250,7 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
     const notice = principal.identitySource === 'external' ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>${source} owns this identity.</strong> Profile fields and synchronized memberships are read-only in LeapView. Block access locally or revoke sessions here; update or permanently remove the user in ${source}.</p></div>`
       : principal.identitySource === 'system' ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>System-managed account.</strong> Profile fields are read-only because this account is provisioned by LeapView configuration. Block access locally or revoke sessions here; update it through its provisioning source.</p></div>` : nothing
     const avatarUrl = currentPrincipalAvatarUrl(this.signal<{ sidebar?: { userAvatarUrl?: string } }>('chrome', {}), principal.id)
-    return renderEntityDetail({
+    return html`${renderEntityDetail({
       label: 'User administration', feedback: this.feedback(), backHref: '/admin/principals', backLabel: 'All users',
       avatar: avatarUrl ? html`<lv-user-avatar class="detail-user-avatar" .name=${principal.displayName || principal.email} .imageUrl=${avatarUrl} aria-hidden="true"></lv-user-avatar>` : principalInitials(principal), title: principal.displayName || principal.email || principal.id, subtitle: principal.email,
       badges: html`<span class="badge">${source}</span><span class=${`badge status-${status.toLowerCase()}`} data-user-status>${status}</span>`,
@@ -180,8 +272,9 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
           </form>` : nothing}
         </section>
         <section class="detail-section" aria-labelledby="user-access-title">
-          <div class="card-header"><h2 id="user-access-title">Access</h2></div>
-          <div class="detail-subsection">${signal.roleAssignments.length ? html`<h3>Project roles</h3><div class="table-wrap"><table><thead><tr><th>Project</th><th>Role</th><th>Granted through</th></tr></thead><tbody>${signal.roleAssignments.map((assignment) => html`<tr><td>${projects.get(assignment.projectId) || assignment.projectId}</td><td>${humanizeAccessValue(assignment.role)}</td><td>${assignment.sourceType === 'group' ? html`<a href=${`/admin/groups/${encodeURIComponent(assignment.sourceId)}`}>Via ${assignment.sourceName}</a>` : 'Direct assignment'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Project roles</strong><span>No project roles assigned.</span></div>`}</div>
+          <div class="card-header"><div class="card-header-copy"><h2 id="user-access-title">Access</h2><p class="muted">Direct roles and access inherited through groups.</p></div><button class="section-action" type="button" @click=${() => { this.roleDialogOpen = true }}>${lucideIcon(Plus, { size: 16 })}<span>Grant role</span></button></div>
+          ${roleMutationNotice(signal)}
+          <div class="detail-subsection">${assignments.length ? html`<h3>Project roles</h3><div class="table-wrap"><table><thead><tr><th>Project</th><th>Role</th><th>Granted through</th><th></th></tr></thead><tbody>${assignments.map((assignment) => html`<tr><td>${projects.get(assignment.projectId) || 'Current project'}</td><td><strong>${humanizeAccessValue(assignment.role)}</strong><div class="role-source">${rolePermissionSummary(assignment.permissions)} · ${roleActivationStatus(assignment)}</div></td><td>${assignment.subjectType === 'group' ? html`<a href=${accessSubjectHref(assignment)}>Via ${assignment.subjectName}</a>` : 'Direct assignment'}</td><td>${assignment.subjectType === 'principal' ? html`<button class="danger" type="button" ?disabled=${!!signal.roleMutationUnavailableReason} @click=${() => this.revokeRole(assignment)}>Remove</button>` : nothing}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Project roles</strong><span>No project roles assigned.</span></div>`}</div>
           <div class="detail-subsection">${principal.groups.length ? html`<h3>Groups</h3><div class="table-wrap"><table><thead><tr><th>Group</th><th>Source</th></tr></thead><tbody>${principal.groups.map((group) => html`<tr><td><a href=${`/admin/groups/${encodeURIComponent(group.id)}`}>${group.name || group.id}</a></td><td>${group.provider || 'local'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Groups</strong><span>No group memberships.</span></div>`}</div>
         </section>
         <section class="detail-section" aria-labelledby="user-security-title">
@@ -194,7 +287,7 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
           ${signal.activity.length ? html`<ol class="activity-list">${signal.activity.map((activity) => html`<li class="activity-item"><span class="activity-dot" aria-hidden="true"></span><div class="activity-copy"><span>${principalActivityLabel(activity)}</span>${activity.status && activity.status !== 'success' ? html`<span class="error">${humanizeAccessValue(activity.status)}</span>` : nothing}</div><time datetime=${activity.createdAt}>${formatAccessDate(activity.createdAt)}</time></li>`)}</ol>` : html`<p class="muted">No recent administrative activity.</p>`}
         </section>
       `,
-    })
+    })}<lv-role-grant-dialog .open=${this.roleDialogOpen} subjectType="principal" subjectId=${principal.id} subjectName=${principal.displayName || principal.email || principal.id} @lv-role-grant-close=${() => { this.roleDialogOpen = false }}></lv-role-grant-dialog>`
   }
 
   private async copyPrincipalID(principalID: string): Promise<void> {
@@ -223,11 +316,15 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
   private deletePrincipal(principal: AccessPrincipalSignal): void {
     if (window.confirm(`Delete ${principal.displayName || principal.email}? This cannot be undone.`)) this.emit({ action: 'delete_principal', principalId: principal.id })
   }
+  private revokeRole(assignment: AccessRoleAssignmentSignal): void {
+    if (window.confirm(`Remove the ${humanizeAccessValue(assignment.role)} role from ${assignment.subjectName}?`)) this.emit({ action: 'revoke_role', bindingId: assignment.bindingId, subjectId: assignment.subjectId, expectedRevision: this.accessState.policyRevision })
+  }
 }
 
 class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
   @state() private detailDialog: 'rename' | 'add-member' | '' = ''
   @state() private selectedMemberIds: string[] = []
+  @state() private roleDialogOpen = false
 
   protected updated(): void {
     super.updated()
@@ -269,6 +366,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
     const candidates = signal.principals.filter((principal) => principal.kind === 'user' && !memberIDs.has(principal.id))
     const provider = group.provider || 'external'
     const local = provider.toLowerCase() === 'local'
+    const assignments = subjectAssignments(signal, 'group', group.id)
     const actions = group.capabilities.canUpdate || group.capabilities.canDelete ? html`
       <details class="action-menu">
         <summary>More actions</summary>
@@ -296,6 +394,11 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
             ${group.externalId ? html`<div class="fact"><dt>External ID</dt><dd><code>${group.externalId}</code></dd></div>` : nothing}
           </dl>
         </section>
+        <section class="detail-section" aria-labelledby="group-access-title">
+          <div class="section-heading"><div class="card-header-copy"><h2 id="group-access-title">Access</h2><p class="muted">Every member inherits these project roles.</p></div><button class="section-action" type="button" @click=${() => { this.roleDialogOpen = true }}>${lucideIcon(Plus, { size: 16 })}<span>Grant role</span></button></div>
+          ${roleMutationNotice(signal)}
+          ${assignments.length ? html`<div class="table-wrap"><table><thead><tr><th>Role</th><th>Scope</th><th></th></tr></thead><tbody>${assignments.map((assignment) => html`<tr><td><strong>${humanizeAccessValue(assignment.role)}</strong><div class="role-source">${rolePermissionSummary(assignment.permissions)} · ${roleActivationStatus(assignment)}</div></td><td>Current project</td><td><button class="danger" type="button" ?disabled=${!!signal.roleMutationUnavailableReason} @click=${() => this.revokeRole(assignment)}>Remove</button></td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Project roles</strong><span>No project roles assigned.</span></div>`}
+        </section>
         <section class="detail-section" aria-labelledby="group-members-title">
           <div class="section-heading">
             <h2 id="group-members-title">Members</h2>
@@ -304,7 +407,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
           ${group.members.length ? html`<div class="table-wrap"><table class="member-table"><thead><tr><th>Member</th><th>Email</th><th></th></tr></thead><tbody>${group.members.map((member) => html`<tr><td><a href=${`/admin/principals/${encodeURIComponent(member.id)}`}>${member.displayName || member.email}</a></td><td>${member.email}</td><td>${group.capabilities.canManageMembers ? html`<button @click=${() => this.removeMember(group, member.id, member.displayName || member.email)}>Remove</button>` : nothing}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Members</strong><span>No members.</span></div>`}
         </section>
       `,
-    })}${this.renderDetailDialog(signal, group, candidates)}`
+    })}${this.renderDetailDialog(signal, group, candidates)}<lv-role-grant-dialog .open=${this.roleDialogOpen} subjectType="group" subjectId=${group.id} subjectName=${group.name || group.id} @lv-role-grant-close=${() => { this.roleDialogOpen = false }}></lv-role-grant-dialog>`
   }
 
   private renderDetailDialog(signal: AccessAdministrationSignal, group: AccessGroupSignal, candidates: AccessPrincipalSignal[]) {
@@ -381,176 +484,70 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
     this.emit({ action: 'add_group_member', groupId: group.id, principalIds: [...this.selectedMemberIds] })
     this.closeDetailDialog()
   }
+  private revokeRole(assignment: AccessRoleAssignmentSignal): void {
+    if (window.confirm(`Remove the ${humanizeAccessValue(assignment.role)} role from ${assignment.subjectName}?`)) this.emit({ action: 'revoke_role', bindingId: assignment.bindingId, subjectId: assignment.subjectId, expectedRevision: this.accessState.policyRevision })
+  }
   private removeMember(group: AccessGroupSignal, principalId: string, label: string): void { if (window.confirm(`Remove ${label} from ${group.name}?`)) this.emit({ action: 'remove_group_member', groupId: group.id, principalId }) }
   private deleteGroup(group: AccessGroupSignal): void { if (window.confirm(`Delete ${group.name}? Access granted through this group will be removed.`)) this.emit({ action: 'delete_group', groupId: group.id }) }
 }
 
-function auditFilterOptions(items: AuditEventSignal[], key: 'action' | 'resourceKind', allLabel: string, currentValue = '') {
-  const values = Array.from(new Set([...items.map((item) => item[key]), currentValue].filter(Boolean))).sort((left, right) => left.localeCompare(right))
-  return [{ value: '', label: allLabel }, ...values.map((value) => ({ value, label: humanizeAuditValue(value) }))]
-}
+class LeapViewAccessOverview extends DatastarLit(LitElement) {
+  static styles = [pageHeaderStyles, settingsSurfaceStyles]
+  @state() private view: 'identity' | 'resource' = 'identity'
+  @state() private query = ''
+  @state() private grantOpen = false
+  get accessState(): AccessAdministrationSignal { return this.signal('adminAccess', emptyAccessAdministration) }
 
-function humanizeAuditValue(value?: string): string {
-  const normalized = (value || '')
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[._-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase()
-  return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : '—'
-}
+  render() {
+    const signal = this.accessState
+    const query = this.query.trim().toLowerCase()
+    const assignments = signal.roleAssignments.filter((assignment) => !query || [assignment.subjectName, assignment.role, assignment.projectId, ...assignment.permissions].join(' ').toLowerCase().includes(query))
+    return html`<section class="access-overview surface" aria-label="Access overview">
+      ${renderPageHeader('Access overview', 'Explore configured project roles by identity or project, and see where they come from.')}
+      ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
+      ${signal.message ? html`<p class="notice" role="status">${signal.message}</p>` : nothing}
+      ${roleMutationNotice(signal)}
+      <div class="access-summary">
+        <div><span class="muted">Project</span><strong>Current project</strong><code>${signal.projectId || 'Unavailable'}</code></div>
+        <div><span class="muted">Role assignments</span><strong>${signal.roleAssignments.length}</strong><small>Policy revision ${signal.policyRevision}</small></div>
+        <button class="primary" type="button" @click=${() => { this.grantOpen = true }}>${lucideIcon(Plus, { size: 16 })}<span>Grant access</span></button>
+      </div>
+      <div class="access-toolbar">
+        <div class="access-tabs" role="tablist" aria-label="Access view"><button role="tab" aria-selected=${this.view === 'identity'} @click=${() => { this.view = 'identity' }}>By identity</button><button role="tab" aria-selected=${this.view === 'resource'} @click=${() => { this.view = 'resource' }}>By resource</button></div>
+        <label class="access-search"><span>Search access</span><input type="search" placeholder="Search identities or roles" .value=${this.query} @input=${(event: Event) => { this.query = (event.target as HTMLInputElement).value }}></label>
+      </div>
+      ${assignments.length ? this.view === 'identity' ? this.renderByIdentity(assignments) : this.renderByResource(assignments) : html`<div class="access-empty"><strong>No role assignments found.</strong><span>Grant a maintained role to a user, group, or service account.</span></div>`}
+      <aside class="notice"><strong>Project roles only.</strong> This view does not include resource-specific shares or other access paths. API tokens and service-account secrets authenticate an identity and may narrow its authority; they do not independently grant a role.</aside>
+      <lv-role-grant-dialog .open=${this.grantOpen} @lv-role-grant-close=${() => { this.grantOpen = false }}></lv-role-grant-dialog>
+    </section>`
+  }
 
-function formatAuditTimestamp(value: string): string {
-  if (!value) return 'Unknown time'
-  const timestamp = new Date(value)
-  if (Number.isNaN(timestamp.valueOf())) return value
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp)
-}
+  private renderByIdentity(assignments: AccessRoleAssignmentSignal[]) {
+    const groups = new Map<string, AccessRoleAssignmentSignal[]>()
+    for (const assignment of assignments) {
+      const key = `${assignment.subjectType}:${assignment.subjectId}`
+      groups.set(key, [...(groups.get(key) ?? []), assignment])
+    }
+    return html`<div class="access-identity-list">${Array.from(groups.values()).map((rows) => {
+      const first = rows[0]
+      return html`<article class="access-identity-card"><header><div><strong><a href=${accessSubjectHref(first)}>${first.subjectName}</a></strong><span class="badge">${first.subjectType === 'group' ? 'Group' : 'Identity'}</span></div><small>${rows.length} role${rows.length === 1 ? '' : 's'}</small></header>${rows.map((assignment) => this.renderAssignment(assignment))}</article>`
+    })}</div>`
+  }
 
-function formatAuditTableTimestamp(value: string): string {
-  if (!value) return 'Unknown time'
-  const timestamp = new Date(value)
-  if (Number.isNaN(timestamp.valueOf())) return value
-  const now = new Date()
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  const sameDay = (left: Date, right: Date) => left.getFullYear() === right.getFullYear()
-    && left.getMonth() === right.getMonth()
-    && left.getDate() === right.getDate()
-  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(timestamp)
-  if (sameDay(timestamp, now)) return `Today, ${time}`
-  if (sameDay(timestamp, yesterday)) return `Yesterday, ${time}`
-  const date = new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(timestamp.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' as const }),
-  }).format(timestamp)
-  return `${date}, ${time}`
-}
+  private renderByResource(assignments: AccessRoleAssignmentSignal[]) {
+    return html`<section class="access-resource-card"><header><div><strong>Current project</strong><code>${this.accessState.projectId || ''}</code></div><span>${assignments.length} assignment${assignments.length === 1 ? '' : 's'}</span></header><div class="table-wrap"><table><thead><tr><th>Identity</th><th>Role</th><th>Authority</th><th>Status</th><th></th></tr></thead><tbody>${assignments.map((assignment) => html`<tr><td><a href=${accessSubjectHref(assignment)}>${assignment.subjectName}</a><div class="role-source">${humanizeAccessValue(assignment.subjectType)}</div></td><td>${humanizeAccessValue(assignment.role)}</td><td>${rolePermissionSummary(assignment.permissions)}</td><td>${roleActivationStatus(assignment)}</td><td><button class="danger" type="button" ?disabled=${!!this.accessState.roleMutationUnavailableReason} @click=${() => this.revokeRole(assignment)}>Remove</button></td></tr>`)}</tbody></table></div></section>`
+  }
 
-function auditActorLabel(event: AuditEventSignal): string {
-  return event.principalName?.trim() || event.principalEmail?.trim() || (event.principalId ? 'Unknown user' : 'System')
-}
+  private renderAssignment(assignment: AccessRoleAssignmentSignal) {
+    return html`<div class="access-assignment"><div><strong>${humanizeAccessValue(assignment.role)}</strong><span>${rolePermissionSummary(assignment.permissions)} · ${roleActivationStatus(assignment)}</span></div><details><summary>Why?</summary><p>This role is assigned to ${assignment.subjectName}. The saved policy captures ${assignment.permissions.length || assignment.capabilities.length} exact permission${(assignment.permissions.length || assignment.capabilities.length) === 1 ? '' : 's'} at revision ${assignment.policyRevision}. ${roleActivationStatus(assignment)}.</p></details><button class="danger" type="button" ?disabled=${!!this.accessState.roleMutationUnavailableReason} @click=${() => this.revokeRole(assignment)}>Remove</button></div>`
+  }
 
-function auditActorDescription(event: AuditEventSignal): string {
-  const email = event.principalEmail?.trim() || ''
-  return email && email !== auditActorLabel(event) ? email : ''
-}
-
-function auditResourceDescription(event: AuditEventSignal): string {
-  if (!event.resourceId?.trim()) return ''
-  switch ((event.resourceKind || '').trim().toLowerCase()) {
-    case 'agent_tool':
-    case 'tool':
-    case 'dashboard':
-    case 'model':
-    case 'semantic_model':
-    case 'project':
-    case 'publication':
-      return humanizeAuditValue(event.resourceId)
-    default:
-      return ''
+  private revokeRole(assignment: AccessRoleAssignmentSignal): void {
+    if (!window.confirm(`Remove the ${humanizeAccessValue(assignment.role)} role from ${assignment.subjectName}?`)) return
+    this.dispatchEvent(new CustomEvent('lv-access-admin-command', { bubbles: true, composed: true, detail: { action: 'revoke_role', bindingId: assignment.bindingId, subjectId: assignment.subjectId, expectedRevision: this.accessState.policyRevision } }))
   }
 }
 
-function auditStatusCell(status?: string) {
-  const normalized = (status || '').toLowerCase()
-  if (!normalized) return { label: '—', tone: 'muted' as const, icon: 'dot' as const }
-  if (normalized === 'success' || normalized === 'succeeded' || normalized === 'ok') return { label: 'Succeeded', tone: 'success' as const, icon: 'check' as const }
-  if (normalized === 'failure' || normalized === 'failed' || normalized === 'error') return { label: 'Failed', tone: 'danger' as const, icon: 'x' as const }
-  if (normalized === 'pending' || normalized === 'queued' || normalized === 'running') return { label: humanizeAuditValue(status), tone: 'attention' as const, icon: 'clock' as const }
-  return { label: humanizeAuditValue(status), tone: 'muted' as const, icon: 'dot' as const }
-}
-
-type AuditPresetID = 'security' | 'access' | 'credentials' | 'failed'
-
-type AuditPreset = {
-  id: AuditPresetID
-  label: string
-  description: string
-  filters: AuditLogFilters
-}
-
-const auditPresets: AuditPreset[] = [
-  { id: 'security', label: 'Security', description: 'Principal and account security events', filters: { resourceKind: 'principal' } },
-  { id: 'access', label: 'Role changes', description: 'Recorded role-binding changes', filters: { resourceKind: 'role_binding' } },
-  { id: 'credentials', label: 'Service accounts', description: 'Service-account and credential events', filters: { resourceKind: 'service_principal' } },
-  // AuditLogFilters deliberately has no status field. Failed events are therefore
-  // narrowed in the already-loaded rows while the command remains contract-valid.
-  { id: 'failed', label: 'Failed events', description: 'Failed events in the loaded result set', filters: {} },
-]
-
-function auditPresetItems(signal: AuditLogSignal, preset: AuditPresetID | ''): AuditEventSignal[] {
-  if (preset !== 'failed') return signal.items
-  return signal.items.filter((event) => {
-    const status = (event.status || '').toLowerCase()
-    return status === 'failure' || status === 'failed' || status === 'error'
-  })
-}
-
-function auditPrincipalHref(principalID?: string): string {
-  return principalID ? `/admin/principals/${encodeURIComponent(principalID)}` : ''
-}
-
-function auditResourceHref(event: AuditEventSignal): string {
-  if (!event.resourceId) return ''
-  switch ((event.resourceKind || '').toLowerCase()) {
-    case 'principal':
-    case 'user':
-      return `/admin/principals/${encodeURIComponent(event.resourceId)}`
-    case 'group':
-      return `/admin/groups/${encodeURIComponent(event.resourceId)}`
-    default:
-      return ''
-  }
-}
-
-function auditEventSummary(event: AuditEventSignal): string {
-  const actor = auditActorLabel(event)
-  const action = humanizeAuditValue(event.action).toLowerCase()
-  const resourceDescription = auditResourceDescription(event)
-  const resource = event.resourceKind
-    ? ` on ${humanizeAuditValue(event.resourceKind)}${resourceDescription ? ` ${resourceDescription}` : ''}`
-    : ''
-  return `${actor} ${action}${resource}`
-}
-
-function auditMetadataText(event: AuditEventSignal): string {
-  if (!event.metadata || Object.keys(event.metadata).length === 0) return '{}'
-  try {
-    return JSON.stringify(event.metadata, null, 2)
-  } catch {
-    return String(event.metadata)
-  }
-}
-
-function auditTable(signal: AuditLogSignal, items = signal.items) {
-  return {
-    columns: [
-      { id: 'time', header: 'Time', kind: 'entity' as const, width: '180px' },
-      { id: 'action', header: 'Action', kind: 'badge' as const, width: '190px' },
-      { id: 'actor', header: 'Actor', kind: 'entity' as const, width: '180px', mobileHidden: true },
-      { id: 'resource', header: 'Resource', kind: 'entity' as const, width: '220px', mobileHidden: true },
-      { id: 'capability', header: 'Capability', width: '150px', mobileHidden: true },
-      { id: 'status', header: 'Status', kind: 'status' as const, width: '120px', mobileHidden: true },
-    ],
-    rows: items.map((event) => ({
-      id: event.id,
-      time: { label: formatAuditTableTimestamp(event.createdAt) },
-      action: { label: humanizeAuditValue(event.action), tone: 'accent' as const },
-      actor: event.principalId
-        ? { label: auditActorLabel(event), description: auditActorDescription(event), href: event.principalName || event.principalEmail ? auditPrincipalHref(event.principalId) : '' }
-        : { label: 'System', description: 'Automated operation' },
-      resource: { label: humanizeAuditValue(event.resourceKind), description: auditResourceDescription(event), href: auditResourceHref(event) },
-      capability: humanizeAuditValue(event.capability),
-      status: auditStatusCell(event.status),
-    })),
-    empty: signal.loading && !signal.items.length ? 'Loading audit events…' : 'No audit events match these filters.',
-    minWidth: '720px',
-    density: 'tight' as const,
-    rowAction: 'open',
-  }
-}
 
 class LeapViewProjectRegistry extends DatastarLit(LitElement) {
   static styles = settingsSurfaceStyles
@@ -625,112 +622,6 @@ function projectTimestamp(value = ''): number {
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
-type ServiceSecretExpirationPreset = '30' | '60' | '90' | 'custom'
-
-function serviceAccountListItems(accounts: ServiceAccountSignal[], busy: boolean): EntityListItem[] {
-  return accounts.map((account) => ({
-    id: account.id,
-    title: account.displayName || account.id,
-    description: account.id,
-    icon: 'application',
-    iconTreatment: 'plain',
-    columns: {
-      status: account.disabledAt ? 'Disabled' : 'Active',
-      created: serviceAccountDateLabel(account.createdAt),
-      updated: serviceAccountDateLabel(account.updatedAt),
-      actions: '',
-    },
-    columnTitles: {
-      created: account.createdAt || '',
-      updated: account.updatedAt || '',
-    },
-    sortValues: {
-      created: account.createdAt || '',
-      updated: account.updatedAt || '',
-    },
-    actions: [{ label: 'Manage credentials', action: 'select', icon: 'details', disabled: busy }],
-  }))
-}
-
-function serviceAccountListColumns(): EntityListColumn[] {
-  return [
-    { id: 'name', label: 'Service account', width: '42%' },
-    { id: 'status', label: 'Status', width: '16%', render: 'status' },
-    { id: 'created', label: 'Created', width: '18%', render: 'datetime' },
-    { id: 'updated', label: 'Updated', width: '18%', render: 'datetime' },
-    { id: 'actions', label: 'Actions', width: '6%', align: 'right', sortable: false, render: 'actions' },
-  ]
-}
-
-function serviceSecretListItems(secrets: ServiceAccountSecretSignal[], busy: boolean): EntityListItem[] {
-  return secrets.map((secret) => {
-    const expired = Boolean(secret.expiresAt && Date.parse(secret.expiresAt) <= Date.now())
-    const status = secret.revokedAt ? 'Revoked' : expired ? 'Expired' : 'Active'
-    return {
-      id: secret.id,
-      title: secret.name || secret.id,
-      description: secret.id,
-      icon: 'key',
-      iconTreatment: 'plain',
-      columns: {
-        created: serviceAccountDateLabel(secret.createdAt),
-        expires: secret.expiresAt ? serviceAccountDateLabel(secret.expiresAt) : 'Never',
-        status,
-        actions: '',
-      },
-      columnTitles: {
-        created: secret.createdAt || '',
-        expires: secret.expiresAt || '',
-      },
-      sortValues: {
-        created: secret.createdAt || '',
-        expires: secret.expiresAt || '',
-      },
-      actions: [{ label: secret.revokedAt ? 'Credential revoked' : 'Revoke credential', action: 'revoke', icon: 'cancel', disabled: busy || Boolean(secret.revokedAt) }],
-    }
-  })
-}
-
-function serviceSecretListColumns(): EntityListColumn[] {
-  return [
-    { id: 'name', label: 'Credential', width: '38%' },
-    { id: 'created', label: 'Created', width: '20%', render: 'datetime' },
-    { id: 'expires', label: 'Expires', width: '20%', render: 'datetime' },
-    { id: 'status', label: 'Status', width: '16%', render: 'status' },
-    { id: 'actions', label: 'Actions', width: '6%', align: 'right', sortable: false, render: 'actions' },
-  ]
-}
-
-function serviceAccountDateLabel(value?: string): string {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.valueOf())) return value
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date)
-}
-
-function serviceSecretExpirationOptions(): Array<{ value: ServiceSecretExpirationPreset, label: string }> {
-  return ([30, 60, 90] as const).map((days) => ({
-    value: String(days) as ServiceSecretExpirationPreset,
-    label: `${days} days (${serviceEndOfDayInDays(days).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })})`,
-  })).concat([
-    { value: 'custom', label: 'Custom date' },
-  ])
-}
-
-function serviceEndOfDayInDays(days: number): Date {
-  const date = new Date()
-  date.setDate(date.getDate() + days)
-  date.setHours(23, 59, 59, 999)
-  return date
-}
-
-function serviceDateInputValueInDays(days: number): string {
-  const date = serviceEndOfDayInDays(days)
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
 
 class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   static styles = [pageHeaderStyles, entityDetailStyles, settingsSurfaceStyles]
@@ -742,6 +633,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   @state() private pendingSecretRevocation: ServiceAccountSecretSignal | null = null
   @state() private secretExpirationPreset: ServiceSecretExpirationPreset = '90'
   @state() private secretCustomExpiration = ''
+  @state() private roleDialogOpen = false
   private pendingSignalKey = ''
   private pendingAction = ''
 
@@ -756,6 +648,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   }
 
   get accounts(): ServiceAccountsSignal { return this.signal('adminServiceAccounts', { items: [], secrets: [], loading: false, hasMore: false }) }
+  get accessState(): AccessAdministrationSignal { return this.signal('adminAccess', emptyAccessAdministration) }
 
   override updated(): void {
     const signal = this.accounts
@@ -797,6 +690,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   }
 
   private renderDetail(signal: ServiceAccountsSignal, account: ServiceAccountSignal) {
+    const assignments = subjectAssignments(this.accessState, 'principal', account.id)
     return html`${renderEntityDetail({
       label: 'Service account details',
       feedback: this.renderFeedback(signal),
@@ -819,6 +713,11 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
             <div class="fact"><dt>Last updated</dt><dd>${serviceAccountDateLabel(account.updatedAt)}</dd></div>
           </dl>
         </section>
+        <section class="detail-section" aria-label="Access">
+          <div class="section-heading"><div class="card-header-copy"><h2>Access</h2><p class="muted">Roles define what this machine identity may do. Credentials can only attenuate that authority.</p></div><button class="service-detail-action" type="button" @click=${() => { this.roleDialogOpen = true }}>${lucideIcon(Plus, { size: 15 })}<span>Grant role</span></button></div>
+          ${roleMutationNotice(this.accessState)}
+          ${assignments.length ? html`<div class="table-wrap"><table><thead><tr><th>Role</th><th>Scope</th><th></th></tr></thead><tbody>${assignments.map((assignment) => html`<tr><td><strong>${humanizeAccessValue(assignment.role)}</strong><div class="role-source">${rolePermissionSummary(assignment.permissions)} · ${roleActivationStatus(assignment)}</div></td><td>Current project</td><td><button class="danger" type="button" ?disabled=${!!this.accessState.roleMutationUnavailableReason} @click=${() => this.revokeRole(assignment)}>Remove</button></td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Project roles</strong><span>No project roles assigned.</span></div>`}
+        </section>
         <section class="detail-section" aria-label="Credentials">
           <div class="section-heading">
             <div class="card-header-copy"><h2>Credentials</h2><p class="muted">Create a separate credential for each application or automation.</p></div>
@@ -837,6 +736,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
         </section>
       `,
     })}
+    <lv-role-grant-dialog .open=${this.roleDialogOpen} subjectType="principal" subjectId=${account.id} subjectName=${account.displayName || account.id} @lv-role-grant-close=${() => { this.roleDialogOpen = false }}></lv-role-grant-dialog>
     ${this.renderCreateSecretDialog(account)}
     ${this.renderDeleteAccountDialog(account)}
     ${this.renderRevokeSecretDialog(account)}
@@ -849,6 +749,11 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
       ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
       ${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
     </div>`
+  }
+
+  private revokeRole(assignment: AccessRoleAssignmentSignal): void {
+    if (!window.confirm(`Remove the ${humanizeAccessValue(assignment.role)} role from ${assignment.subjectName}?`)) return
+    this.dispatchEvent(new CustomEvent('lv-access-admin-command', { bubbles: true, composed: true, detail: { action: 'revoke_role', bindingId: assignment.bindingId, subjectId: assignment.subjectId, expectedRevision: this.accessState.policyRevision } }))
   }
 
   private renderCreatedSecret(secret: string) {
@@ -1233,10 +1138,12 @@ class LeapViewAuditLog extends DatastarLit(LitElement) {
 }
 
 if (!customElements.get('lv-project-registry')) customElements.define('lv-project-registry', LeapViewProjectRegistry)
+if (!customElements.get('lv-role-grant-dialog')) customElements.define('lv-role-grant-dialog', LeapViewRoleGrantDialog)
+if (!customElements.get('lv-access-overview')) customElements.define('lv-access-overview', LeapViewAccessOverview)
 if (!customElements.get('lv-service-accounts')) customElements.define('lv-service-accounts', LeapViewServiceAccounts)
 if (!customElements.get('lv-audit-log')) customElements.define('lv-audit-log', LeapViewAuditLog)
 if (!customElements.get('lv-principal-administration')) customElements.define('lv-principal-administration', LeapViewPrincipalAdministration)
 if (!customElements.get('lv-group-administration')) customElements.define('lv-group-administration', LeapViewGroupAdministration)
 
-export { LeapViewProjectRegistry, LeapViewServiceAccounts, LeapViewAuditLog, LeapViewPrincipalAdministration, LeapViewGroupAdministration }
+export { LeapViewProjectRegistry, LeapViewRoleGrantDialog, LeapViewAccessOverview, LeapViewServiceAccounts, LeapViewAuditLog, LeapViewPrincipalAdministration, LeapViewGroupAdministration }
 export { setDatastarLitRuntimeForTests } from '../shared/datastar-lit'

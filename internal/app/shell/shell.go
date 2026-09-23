@@ -243,6 +243,7 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 		{
 			Label: "Access",
 			Items: filterItems([]conditionalItem{
+				{allowed: allowed.ManageIdentity, item: Item{ID: "access", Label: "Access overview", Href: "/admin/access", Icon: "users"}},
 				{allowed: allowed.ManageIdentity, item: Item{ID: "principals", Label: "Users", Href: "/admin/principals", Icon: "users"}},
 				{allowed: allowed.ManageIdentity, item: Item{ID: "groups", Label: "Groups", Href: "/admin/groups", Icon: "users-round"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "service-accounts", Label: "Service accounts", Href: "/admin/service-accounts", Icon: "bot"}},

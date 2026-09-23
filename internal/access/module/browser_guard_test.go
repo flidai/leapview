@@ -243,7 +243,7 @@ func TestRequirePlatformAdminRejectsNonAdmin(t *testing.T) {
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
 	}
-	if body := recorder.Body.String(); !strings.Contains(body, "administration page") || !strings.Contains(body, "Return to Insights") {
+	if body := recorder.Body.String(); !strings.Contains(body, "administration page") || !strings.Contains(body, "Open your profile") {
 		t.Fatalf("forbidden administration recovery body = %q", body)
 	}
 }
@@ -322,14 +322,18 @@ func TestRequirePlatformAdminAttenuatesScopedTokensAndHonorsRevocation(t *testin
 		})).ServeHTTP(recorder, request(secret))
 		return recorder.Code
 	}
-	platformSecret, platformToken, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "platform", Capabilities: []access.Capability{access.CapabilityPlatformAdmin}, ExpiresAt: time.Now().Add(time.Hour)})
+	platformPair, err := access.NewInstancePermissionPair(access.ActionPlatformAccessManage, "instance_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformSecret, platformToken, err := repository.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{PrincipalID: principal.ID, Name: "platform", Permissions: []access.PermissionPair{platformPair}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("create platform token: %v", err)
 	}
-	if got := call(platformSecret); got != http.StatusNoContent {
-		t.Fatalf("platform token status = %d, want 204", got)
+	if got := call(platformSecret); got != http.StatusForbidden {
+		t.Fatalf("unmarked platform token status = %d, want 403 without typed instance action", got)
 	}
-	denySecret, _, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "deny-all", Capabilities: []access.Capability{}, ExpiresAt: time.Now().Add(time.Hour)})
+	denySecret, _, err := repository.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{PrincipalID: principal.ID, Name: "deny-all", Permissions: []access.PermissionPair{}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +409,7 @@ func TestRequestPlatformAdminCredentialAttenuation(t *testing.T) {
 	check("empty token", access.APICredential{Token: access.APIToken{ID: "empty", Capabilities: []access.Capability{}}}, false)
 	check("narrow token", access.APICredential{Token: access.APIToken{ID: "narrow", Capabilities: []access.Capability{access.CapabilityResourceRead}}}, false)
 	check("project admin token", access.APICredential{Token: access.APIToken{ID: "project", Capabilities: []access.Capability{access.CapabilityProjectAdmin}}}, false)
-	check("platform admin token", access.APICredential{Token: access.APIToken{ID: "platform", Capabilities: []access.Capability{access.CapabilityPlatformAdmin}}}, true)
+	check("platform admin token", access.APICredential{Token: access.APIToken{ID: "platform", Capabilities: []access.Capability{access.CapabilityPlatformAdmin}}}, false)
 
 	typedCredential := access.APICredential{
 		Principal: access.Principal{ID: principal.ID},

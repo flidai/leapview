@@ -80,7 +80,11 @@ type Handler struct {
 	CurrentProjectID               func(context.Context) (projectgraph.ResourceID, error)
 	DurableGrantService            DurableGrantServiceProvider
 	DurableGrantInstanceID         string
-	RequestEffectiveCapabilities   EffectiveCapabilitiesProvider
+	// ProjectClaim resolves the immutable deployment-owned project claim used
+	// by the initial publisher-token handoff. The request path is checked
+	// against this durable value before Access mutates credentials.
+	ProjectClaim                 func(context.Context) (projectID, claimedBy string, err error)
+	RequestEffectiveCapabilities EffectiveCapabilitiesProvider
 	// PlatformAdmin evaluates the durable instance-wide role. It is retained as
 	// a narrow callback for non-module callers; RequestPlatformAdmin additionally
 	// applies request-credential attenuation.
@@ -165,23 +169,16 @@ func (h Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Reque
 			return false
 		}
 		if credential.Token.ID != "" {
-			if len(credential.Token.Capabilities) == 0 || !containsCapability(credential.Token.Capabilities, access.CapabilityPlatformAdmin) {
-				writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
-				return false
-			}
+			// Without the request-level typed instance marker, this fallback
+			// cannot establish which platform action the token was allowed to
+			// perform. Never promote a historical broad capability to one.
+			writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
+			return false
 		}
 	}
 	return true
 }
 
-func containsCapability(capabilities []access.Capability, expected access.Capability) bool {
-	for _, capability := range capabilities {
-		if capability == expected {
-			return true
-		}
-	}
-	return false
-}
 func (h Handler) rejectAuthoringCredential(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {
 	if credential, ok := h.currentCredential(r); ok && credential.Authoring != nil {
 		writeJSONError(w, errors.New("authoring credentials cannot perform this mutation"), stdhttp.StatusForbidden)

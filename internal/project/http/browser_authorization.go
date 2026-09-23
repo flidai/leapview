@@ -65,24 +65,7 @@ func typedBrowserCredential(credential *access.APICredential) bool {
 }
 
 func catalogReadAction(kind projectgraph.Kind) (access.Action, bool) {
-	switch kind {
-	case projectgraph.KindDashboard:
-		return access.ActionDashboardRead, true
-	case projectgraph.KindSemanticModel:
-		return access.ActionSemanticRead, true
-	case projectgraph.KindModel:
-		return access.ActionModelRead, true
-	case projectgraph.KindSource:
-		return access.ActionSourceRead, true
-	case projectgraph.KindPipeline:
-		return access.ActionPipelineRead, true
-	case projectgraph.KindConnection:
-		return access.ActionConnectionRead, true
-	default:
-		// ProjectNamespace and any future graph kinds have no implicit typed
-		// browser-read action. A typed credential must name a supported action.
-		return "", false
-	}
+	return projectcatalog.ReadActionForKind(kind)
 }
 
 func typedCatalogRefDecision(credential *access.APICredential, projectID projectgraph.ResourceID, ref projectcatalog.Ref) (typed, allowed bool) {

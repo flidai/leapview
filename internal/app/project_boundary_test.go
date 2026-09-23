@@ -332,7 +332,7 @@ func TestProjectBoundaryPreservesBootstrapAndPlatformAuditFilter(t *testing.T) {
 func TestProjectBoundaryGeneratedLocatorsCannotRetarget(t *testing.T) {
 	store := testStore(t)
 	principal := testPrincipal(t, t.Context(), store, "boundary@example.com", "Boundary")
-	token, _ := testScopedAPIToken(t, t.Context(), store, access.APITokenInput{PrincipalID: principal.ID, Name: "boundary", Capabilities: []access.Capability{access.CapabilityProjectAdmin, access.CapabilityResourceRead, access.CapabilityResourceUse}})
+	token, _ := testScopedAPIToken(t, t.Context(), store, access.ScopedAPITokenInput{PrincipalID: principal.ID, Name: "boundary", Permissions: []access.PermissionPair{}})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})}))
 	router := server.Routes()
 	parameters := regexp.MustCompile(`\{[^}]+\}`)
@@ -345,14 +345,22 @@ func TestProjectBoundaryGeneratedLocatorsCannotRetarget(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			path := strings.ReplaceAll(contract.Path, "{project}", "foreign_project")
 			path = parameters.ReplaceAllString(path, "0198f2c0-7c7a-7f00-8a11-000000000001")
+			wantStatus := http.StatusNotFound
+			if operation == "exchangeProjectClaimPublisher" {
+				// This route includes a project path segment to match the durable
+				// claim, but its generated authorization is instance-scoped. The
+				// ordinary scoped token used by this inventory is rejected before
+				// the handler can compare that path with the claim.
+				wantStatus = http.StatusForbidden
+			}
 			request := httptest.NewRequest(contract.Method, path, strings.NewReader(`{}`))
 			request.Header.Set("Authorization", "Bearer "+token)
 			request.Header.Set("Idempotency-Key", "boundary-"+operation)
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
-			if response.Code != http.StatusNotFound {
-				t.Fatalf("foreign locator %s: %d %s", path, response.Code, response.Body)
+			if response.Code != wantStatus {
+				t.Fatalf("foreign locator %s: %d %s, want %d", path, response.Code, response.Body, wantStatus)
 			}
 		})
 	}

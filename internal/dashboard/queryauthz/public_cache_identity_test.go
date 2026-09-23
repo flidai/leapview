@@ -3,7 +3,6 @@ package authz
 import (
 	"testing"
 
-	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 )
 
@@ -13,7 +12,7 @@ func TestPublicCacheAudiencePolicyIdentity(t *testing.T) {
 		PrincipalID: dashboardPublicationSubjectID(canonicalProject, "public-sales"),
 	}
 	fingerprint := func(q dataquery.Query) string {
-		return effectivePolicyFingerprint(q, access.CapabilityResourceRead, nil, nil, effectivePolicyContext{})
+		return effectivePolicyFingerprint(q, nil, nil, nil, effectivePolicyContext{})
 	}
 	warm := fingerprint(public)
 	foreground := public

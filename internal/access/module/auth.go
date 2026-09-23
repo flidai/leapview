@@ -36,6 +36,8 @@ const oidcStateMaxAge = 10 * time.Minute
 const oidcStateClockSkew = time.Minute
 const maxAuthReturnTargetBytes = 2500
 const LocalAuthMaxFormBytes int64 = 8 * 1024
+const defaultBrowserSessionTTL = 8 * time.Hour
+const maxBrowserSessionTTL = 30 * 24 * time.Hour
 
 var (
 	errUnauthorized = errors.New("unauthorized")
@@ -100,10 +102,12 @@ type Auth struct {
 	devAPIToken      string
 	apiTokenOnly     bool
 	localAuth        bool
+	developmentLogin bool
 	enabled          bool
 	configured       bool
 	azureTenant      string
 	cookieSecure     bool
+	sessionTTL       time.Duration
 	sessionCookieKey string
 	csrfCookie       string
 	oidcCookie       string
@@ -116,19 +120,22 @@ type Auth struct {
 }
 
 type AuthConfig struct {
-	Disabled        bool
-	DevBypass       bool
-	DevAPIToken     string
-	APITokenOnly    bool
-	LocalAuth       bool
-	AzureClientID   string
-	AzureSecret     string
-	AzureCallback   string
-	AzureTenant     string
-	CSRFKey         string
-	CookieSecure    bool
-	BootstrapTenant string
-	OIDCProviders   []OIDCProviderConfig
+	Disabled          bool
+	DevBypass         bool
+	DevAPIToken       string
+	APITokenOnly      bool
+	LocalAuth         bool
+	DevelopmentLogin  bool
+	AzureClientID     string
+	AzureSecret       string
+	AzureCallback     string
+	AzureTenant       string
+	CSRFKey           string
+	CookieSecure      bool
+	BrowserSessionTTL time.Duration
+	CookieNamespace   string
+	BootstrapTenant   string
+	OIDCProviders     []OIDCProviderConfig
 }
 
 type OIDCProviderConfig struct {
@@ -150,6 +157,16 @@ func NewAuth(repo access.Repository, cfg AuthConfig) (*Auth, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.BrowserSessionTTL < 0 || cfg.BrowserSessionTTL > maxBrowserSessionTTL {
+		return nil, fmt.Errorf("browser session TTL must be between 0 and %s", maxBrowserSessionTTL)
+	}
+	if !validCookieNamespace(cfg.CookieNamespace) {
+		return nil, errors.New("cookie namespace must contain 1 to 16 lowercase letters or digits")
+	}
+	sessionTTL := cfg.BrowserSessionTTL
+	if sessionTTL == 0 {
+		sessionTTL = defaultBrowserSessionTTL
+	}
 	auth := &Auth{
 		repo:             repo,
 		sessions:         repo,
@@ -157,12 +174,14 @@ func NewAuth(repo access.Repository, cfg AuthConfig) (*Auth, error) {
 		devAPIToken:      strings.TrimSpace(cfg.DevAPIToken),
 		apiTokenOnly:     cfg.APITokenOnly,
 		localAuth:        cfg.LocalAuth,
+		developmentLogin: cfg.DevelopmentLogin,
 		azureTenant:      cfg.AzureTenant,
 		cookieSecure:     cfg.CookieSecure,
-		sessionCookieKey: hardenedCookieName(sessionCookieName, cfg.CookieSecure),
-		csrfCookie:       hardenedCookieName(csrfCookieName, cfg.CookieSecure),
-		oidcCookie:       hardenedCookieName(oidcStateCookieName, cfg.CookieSecure),
-		returnCookie:     hardenedCookieName(authReturnCookieName, cfg.CookieSecure),
+		sessionTTL:       sessionTTL,
+		sessionCookieKey: hardenedCookieName(namespacedCookieName(sessionCookieName, cfg.CookieNamespace), cfg.CookieSecure),
+		csrfCookie:       hardenedCookieName(namespacedCookieName(csrfCookieName, cfg.CookieNamespace), cfg.CookieSecure),
+		oidcCookie:       hardenedCookieName(namespacedCookieName(oidcStateCookieName, cfg.CookieNamespace), cfg.CookieSecure),
+		returnCookie:     hardenedCookieName(namespacedCookieName(authReturnCookieName, cfg.CookieNamespace), cfg.CookieSecure),
 	}
 	providers := make([]oidcauth.Config, 0, len(cfg.OIDCProviders))
 	for _, provider := range cfg.OIDCProviders {
@@ -229,6 +248,28 @@ func hardenedCookieName(name string, secure bool) string {
 		return hostCookiePrefix + name
 	}
 	return name
+}
+
+func validCookieNamespace(value string) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) > 16 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func namespacedCookieName(name, namespace string) string {
+	if namespace == "" {
+		return name
+	}
+	return name + "_" + namespace
 }
 
 // SessionCookieName returns the environment-appropriate browser session
@@ -329,7 +370,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 			Provider: "oidc", TenantID: issuer, Subject: stableSubject(claims.Subject, email), Email: email, DisplayName: oidcDisplayName(claims),
 		})
 		if mutationErr == nil {
-			token, mutationErr = txRepo.CreateSession(r.Context(), principal.ID, 8*time.Hour)
+			token, mutationErr = txRepo.CreateSession(r.Context(), principal.ID, a.sessionTTL)
 		}
 		return authAuditInput(r, "session.created", principal.ID, "session", "", "", "success", map[string]any{"provider": provider}), mutationErr
 	})
@@ -338,7 +379,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recordAccessAudit(r, a.repo, "sign_in", principal.ID, "principal", principal.ID, "", "success", map[string]any{"provider": provider})
-	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(8*time.Hour)))
+	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(a.sessionTTL)))
 	http.Redirect(w, r, a.authenticationRedirectTarget(w, r, "/"), http.StatusFound)
 }
 
@@ -423,23 +464,58 @@ func (a *Auth) LocalLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=invalid_credentials", http.StatusSeeOther)
 		return
 	}
-	var token string
-	err = runAuthAuditedMutation(r, a.repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		token, mutationErr = txRepo.CreateSession(r.Context(), principal.ID, 8*time.Hour)
-		return authAuditInput(r, "session.created", principal.ID, "session", "", "", "success", map[string]any{"provider": "local"}), mutationErr
-	})
+	token, err := a.createBrowserSession(r, principal.ID, "local")
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	recordAccessAudit(r, a.repo, "sign_in", principal.ID, "principal", principal.ID, "", "success", map[string]any{"provider": "local"})
-	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(8*time.Hour)))
+	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(a.sessionTTL)))
 	if credential.MustChangePassword {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	http.Redirect(w, r, a.authenticationRedirectTarget(w, r, "/"), http.StatusFound)
+}
+
+// DevelopmentLogin creates the same durable, audited browser session as an
+// ordinary local login without moving the development password through the
+// browser. Composition only enables this endpoint for an explicitly
+// loopback-bound, non-production development server.
+func (a *Auth) DevelopmentLogin(w http.ResponseWriter, r *http.Request) {
+	if a == nil || !a.localAuth || !a.developmentLogin {
+		http.NotFound(w, r)
+		return
+	}
+	if a.repo == nil {
+		http.Error(w, "development login is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	principal, err := a.repo.PrincipalByID(r.Context(), DevelopmentPrincipalID)
+	if err != nil || principal.Kind != access.PrincipalKindUser || principal.AccessDisabled() {
+		http.Error(w, "development login is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	token, err := a.createBrowserSession(r, principal.ID, "development")
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(a.sessionTTL)))
+	http.Redirect(w, r, a.authenticationRedirectTarget(w, r, "/admin"), http.StatusFound)
+}
+
+func (a *Auth) createBrowserSession(r *http.Request, principalID, provider string) (string, error) {
+	var token string
+	err := runAuthAuditedMutation(r, a.repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
+		var mutationErr error
+		token, mutationErr = txRepo.CreateSession(r.Context(), principalID, a.sessionTTL)
+		return authAuditInput(r, "session.created", principalID, "session", "", "", "success", map[string]any{"provider": provider}), mutationErr
+	})
+	if err != nil {
+		return "", err
+	}
+	recordAccessAudit(r, a.repo, "sign_in", principalID, "principal", principalID, "", "success", map[string]any{"provider": provider})
+	return token, nil
 }
 
 func (a *Auth) LocalPassword(w http.ResponseWriter, r *http.Request) {
@@ -561,7 +637,7 @@ func (a *Auth) mustChangeLocalPassword(r *http.Request, principalID string, cred
 	if !a.localAuth || r.URL.Path == "/auth/local/password" || r.URL.Path == "/auth/logout" || r.URL.Path == "/auth/logout-all" {
 		return false
 	}
-	if credential != nil && credential.Token.Name == access.APITokenNameInitialPublisher {
+	if credential != nil && credential.Token.Name == access.APITokenNameInitialProjectClaim {
 		return false
 	}
 	local, ok := a.repo.(localCredentialManager)
@@ -1100,5 +1176,9 @@ type OIDCClient = oidcClient
 const AuthReturnCookieName = authReturnCookieName
 
 func (a *Auth) LocalAuthEnabled() bool { return a != nil && a.localAuth }
+
+func (a *Auth) DevelopmentLoginEnabled() bool {
+	return a != nil && a.localAuth && a.developmentLogin
+}
 
 func (a *Auth) SSOConfigured() bool { return a != nil && a.configured }

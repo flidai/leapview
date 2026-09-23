@@ -8,19 +8,15 @@ import (
 	"github.com/flidai/leapview/internal/access"
 )
 
-// Operation coverage statuses are deliberately small and stable: consumers
-// can distinguish an operation that has an exact typed contract from one that
-// is still on bounded legacy compatibility, without interpreting an empty
-// action as support.
+// Operation coverage distinguishes exact typed contracts from operations
+// that are unavailable because their authorization contract is incomplete.
 const (
 	APIGenOperationSupported   = "supported"
-	APIGenOperationLegacyOnly  = "legacy-only"
 	APIGenOperationUnsupported = "unsupported"
 	APIGenOperationPublic      = "public"
 
 	APIGenOperationQualified   = "qualified"
 	APIGenOperationMapped      = "mapped-pending-qualification"
-	APIGenOperationLegacy      = "legacy-compatibility"
 	APIGenOperationUnqualified = "unqualified"
 )
 
@@ -36,7 +32,6 @@ type APIGenOperationCoverage struct {
 	Path               string   `json:"path"`
 	TypedAction        string   `json:"typedAction,omitempty"`
 	Resolver           string   `json:"resolver,omitempty"`
-	LegacyMode         string   `json:"legacyMode"`
 	ObjectScope        string   `json:"objectScope,omitempty"`
 	EntryPoints        []string `json:"entryPoints,omitempty"`
 	CommandOwner       string   `json:"commandOwner,omitempty"`
@@ -59,9 +54,8 @@ type APIGenOperationCoverageMatrix struct {
 }
 
 // BuildAPIGenOperationCoverage mechanically projects generated APIGen
-// contracts into the operation matrix. Validation errors are retained on the
-// row as unsupported reasons so the artifact remains honest and useful during
-// migration instead of hiding unmapped operations.
+// contracts into the operation matrix. Validation errors are retained as
+// unsupported reasons instead of hiding unmapped operations.
 func BuildAPIGenOperationCoverage(operations map[string]APIGenOperationContract) APIGenOperationCoverageMatrix {
 	ids := make([]string, 0, len(operations))
 	for operationID := range operations {
@@ -78,8 +72,6 @@ func BuildAPIGenOperationCoverage(operations map[string]APIGenOperationContract)
 }
 
 // ValidateAPIGenOperationCoverage checks the matrix's structural invariants.
-// It does not require every route to have migrated: legacy-only is an
-// explicit, bounded status and is returned to callers for prioritization.
 func ValidateAPIGenOperationCoverage(matrix APIGenOperationCoverageMatrix) error {
 	if matrix.SchemaVersion != 1 {
 		return fmt.Errorf("unsupported operation coverage schema version %d", matrix.SchemaVersion)
@@ -118,7 +110,6 @@ func projectOperationCoverage(operationID string, contract APIGenOperationContra
 		Path:          contract.Path,
 		TypedAction:   strings.TrimSpace(contract.Action),
 		Resolver:      strings.TrimSpace(contract.Resolver),
-		LegacyMode:    "none",
 		EntryPoints:   []string{"http"},
 		SupportStatus: APIGenOperationPublic,
 		Qualification: APIGenOperationQualified,
@@ -148,12 +139,10 @@ func projectOperationCoverage(operationID string, contract APIGenOperationContra
 	hasResolver := row.Resolver != ""
 	switch {
 	case hasAction != hasResolver:
-		row.LegacyMode = "ambiguous"
 		row.SupportStatus = APIGenOperationUnsupported
 		row.Qualification = APIGenOperationUnqualified
 		row.Reason = "typed action and resolver must be declared together"
 	case hasAction:
-		row.LegacyMode = "typed-attenuated"
 		service := access.NewTypedOperationRequirementService()
 		requirement, err := service.Requirement(access.Action(row.TypedAction), row.Resolver)
 		if err != nil {
@@ -175,15 +164,17 @@ func projectOperationCoverage(operationID string, contract APIGenOperationContra
 			}
 		}
 	case contract.Protected && contract.AuthzMode == "privilege":
-		row.LegacyMode = "capability"
-		row.SupportStatus = APIGenOperationLegacyOnly
-		row.Qualification = APIGenOperationLegacy
-		row.Reason = "no typed action/resolver metadata; legacy capability is bounded compatibility"
+		row.SupportStatus = APIGenOperationUnsupported
+		row.Qualification = APIGenOperationUnqualified
+		row.Reason = "privileged operation has no typed action/resolver and cannot authorize"
 	case contract.Protected:
-		row.LegacyMode = "authenticated"
-		row.SupportStatus = APIGenOperationLegacyOnly
-		row.Qualification = APIGenOperationLegacy
-		row.Reason = "authenticated operation has no typed action/resolver metadata"
+		if row.ObjectScope != "" && row.ObjectScope != "principal" && row.ObjectScope != "platform" {
+			row.SupportStatus = APIGenOperationUnsupported
+			row.Qualification = APIGenOperationUnqualified
+			row.Reason = "authenticated operation has no typed action/resolver for its target"
+		} else {
+			row.SupportStatus = APIGenOperationSupported
+		}
 	}
 	return row
 }

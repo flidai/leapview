@@ -1,15 +1,20 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	stdhttp "net/http"
+	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
+
+const adminRoleBindingEnvelopeTTL = 5 * time.Minute
 
 // roleBindingCreateRequest is deliberately narrower than access.RoleBinding:
 // permission pairs and legacy capabilities are never accepted from an HTTP
@@ -30,17 +35,211 @@ type roleBindingDeleteRequest struct {
 }
 
 func (h Handler) authorizationPolicyScope(r *stdhttp.Request) (access.AuthorizationPolicyScope, error) {
+	return h.authorizationPolicyScopeForProject(chi.URLParam(r, "project"))
+}
+
+func (h Handler) authorizationPolicyScopeForProject(projectID string) (access.AuthorizationPolicyScope, error) {
 	if h.AuthorizationPolicyTargetID == "" || h.AuthorizationPolicyEnvironment == "" {
 		return access.AuthorizationPolicyScope{}, fmt.Errorf("%w: target and environment are not configured", access.ErrAuthorizationPolicyInvalidScope)
 	}
 	scope := access.AuthorizationPolicyScope{
-		TargetID: h.AuthorizationPolicyTargetID, ProjectID: chi.URLParam(r, "project"),
+		TargetID: h.AuthorizationPolicyTargetID, ProjectID: projectID,
 		Environment: h.AuthorizationPolicyEnvironment,
 	}
 	if err := access.ValidateAuthorizationPolicyScope(scope); err != nil {
 		return access.AuthorizationPolicyScope{}, err
 	}
 	return scope, nil
+}
+
+// RoleBindingAdministration returns the current target-owned role policy and
+// the versioned role catalog for product administration. The current project
+// is server-bound; callers cannot select another policy namespace.
+func (h Handler) RoleBindingAdministration(ctx context.Context) (access.RoleBindingAdministrationState, error) {
+	if h.CurrentProjectID == nil {
+		return access.RoleBindingAdministrationState{}, errors.New("active project identity is unavailable")
+	}
+	projectID, err := h.CurrentProjectID(ctx)
+	if err != nil {
+		return access.RoleBindingAdministrationState{}, err
+	}
+	scope, err := h.authorizationPolicyScopeForProject(projectID.String())
+	if err != nil {
+		return access.RoleBindingAdministrationState{}, err
+	}
+	repository, err := h.repository()
+	if err != nil {
+		return access.RoleBindingAdministrationState{}, err
+	}
+	reader, ok := repository.(access.AuthorizationPolicyReader)
+	if !ok {
+		return access.RoleBindingAdministrationState{}, errors.New("authorization policy reader is unavailable")
+	}
+	policy, err := reader.AuthorizationPolicy(ctx, scope)
+	if err != nil {
+		return access.RoleBindingAdministrationState{}, err
+	}
+	return access.RoleBindingAdministrationState{
+		Scope: scope, Revision: policy.Revision, Digest: policy.Digest,
+		RoleBindings: append([]access.RoleBinding(nil), policy.RoleBindings...),
+		RolePresets:  access.PermissionRolePresets(),
+	}, nil
+}
+
+// ApplyRoleBindingAdministration performs the same access-owned authorization,
+// envelope, CAS, persistence, and audit checks as the public role-binding API.
+// It exists so the browser command loop does not need bearer-only API access.
+func (h Handler) ApplyRoleBindingAdministration(r *stdhttp.Request, command access.RoleBindingAdministrationCommand) (access.RoleBindingAdministrationState, error) {
+	if r == nil || h.CurrentProjectID == nil {
+		return access.RoleBindingAdministrationState{}, errors.New("role administration is unavailable")
+	}
+	projectID, err := h.CurrentProjectID(r.Context())
+	if err != nil {
+		return access.RoleBindingAdministrationState{}, err
+	}
+	scope, err := h.authorizationPolicyScopeForProject(projectID.String())
+	if err != nil {
+		return access.RoleBindingAdministrationState{}, err
+	}
+	repository, err := h.repository()
+	if err != nil {
+		return access.RoleBindingAdministrationState{}, err
+	}
+	idempotencyKey := strings.TrimSpace(command.IdempotencyKey)
+	if idempotencyKey == "" {
+		return access.RoleBindingAdministrationState{}, errors.New("idempotency key is required")
+	}
+
+	switch strings.TrimSpace(command.Action) {
+	case "grant_role":
+		bindingID := strings.TrimSpace(command.BindingID)
+		if bindingID == "" {
+			bindingID = "role-binding-" + idempotencyKey
+		}
+		binding, err := access.NewTypedRoleBinding(bindingID, string(command.Role), command.Subject, command.Role, projectID)
+		if err != nil {
+			return access.RoleBindingAdministrationState{}, err
+		}
+		if h.DurableGrantService == nil {
+			return access.RoleBindingAdministrationState{}, errors.New("durable grant service is unavailable")
+		}
+		service, err := h.DurableGrantService(r)
+		if err != nil {
+			return access.RoleBindingAdministrationState{}, err
+		}
+		envelope, err := service.IssueGrantAdminEnvelope(r.Context(), access.GrantAdminEnvelopeRequest{
+			TargetProjectID: projectID, Permissions: access.ClonePermissionPairs(binding.Permissions),
+			RecipientSelector: string(binding.Subject.Kind) + ":" + binding.Subject.ID,
+			RoleVersion:       access.PermissionRoleVersion(binding.PermissionRole), TTL: adminRoleBindingEnvelopeTTL,
+			IdempotencyKey: idempotencyKey + ":envelope",
+		})
+		if err != nil {
+			return access.RoleBindingAdministrationState{}, err
+		}
+		var policy access.AuthorizationPolicy
+		err = executeAuditedMutation(r, repository, accessgen.GenCommandOperationCreateProjectRoleBinding(), func(tx access.Repository) (access.AuditEventInput, error) {
+			writer, writeOK := tx.(access.AuthorizationPolicyWriter)
+			envelopes, envelopeOK := tx.(access.CurrentGrantAdminEnvelopeReader)
+			if !writeOK || !envelopeOK {
+				return access.AuditEventInput{}, errors.New("transactional role administration is unavailable")
+			}
+			actorID := h.currentPrincipalID(r)
+			currentEnvelope, readErr := envelopes.CurrentGrantAdminEnvelopeForMutation(r.Context(), envelope.ID, actorID)
+			if readErr != nil {
+				return access.AuditEventInput{}, readErr
+			}
+			if err := access.ValidateGrantAdminEnvelopeRoleBinding(currentEnvelope, actorID, projectID, binding.Subject, binding.PermissionRole, binding.Permissions); err != nil {
+				return access.AuditEventInput{}, err
+			}
+			if err := h.authorizeProjectRoleBindingMutation(r, currentEnvelope, actorID, projectID, binding.Permissions); err != nil {
+				return access.AuditEventInput{}, err
+			}
+			policy, err = writer.UpsertAuthorizationRoleBinding(r.Context(), access.AuthorizationRoleBindingInput{Scope: scope, Binding: binding, ExpectedRevision: command.ExpectedRevision, IdempotencyKey: idempotencyKey})
+			if err != nil {
+				return access.AuditEventInput{}, err
+			}
+			metadata, err := accessgen.EncodeGenCreateProjectRoleBindingAuditPayload(accessgen.GenSchemaRoleBindingAuditPayload{TargetId: scope.TargetID, ProjectId: scope.ProjectID, Environment: scope.Environment, BindingId: binding.ID, SubjectType: string(binding.Subject.Kind), SubjectId: binding.Subject.ID, Role: string(binding.PermissionRole), PolicyRevision: policy.Revision, PolicyDigest: policy.Digest})
+			if err != nil {
+				return access.AuditEventInput{}, err
+			}
+			event := auditInput(r, "role_binding.created", actorID, "role_binding", binding.ID, access.CapabilityProjectAdmin, "success", nil)
+			event.MetadataJSON = metadata
+			return event, nil
+		})
+		if err != nil {
+			return access.RoleBindingAdministrationState{}, err
+		}
+	case "revoke_role":
+		if err := access.ValidateAuthorizationRoleBindingID(command.BindingID); err != nil {
+			return access.RoleBindingAdministrationState{}, err
+		}
+		manage, err := access.NewProjectPermissionPair(access.ActionProjectAccessManage, projectID)
+		if err != nil {
+			return access.RoleBindingAdministrationState{}, err
+		}
+		if h.CurrentEffectivePermissionOptions == nil {
+			return access.RoleBindingAdministrationState{}, access.ErrForbidden
+		}
+		authority, err := h.CurrentEffectivePermissionOptions(r.Context(), h.currentPrincipalID(r))
+		if err != nil || validateProjectRoleBindingPermissionCeiling(authority, []access.PermissionPair{manage}) != nil {
+			return access.RoleBindingAdministrationState{}, access.ErrForbidden
+		}
+		if credential, found := h.currentCredential(r); found {
+			if credential.Token.ID == "" || credential.Token.PrincipalID != h.currentPrincipalID(r) || credential.Token.PermissionProfile != access.PermissionCatalogProfile || credential.Token.Permissions == nil || validateProjectRoleBindingPermissionCeiling(credential.Token.Permissions, []access.PermissionPair{manage}) != nil {
+				return access.RoleBindingAdministrationState{}, access.ErrForbidden
+			}
+		} else {
+			if h.CurrentSession == nil {
+				return access.RoleBindingAdministrationState{}, access.ErrForbidden
+			}
+			if sessionID, found := h.CurrentSession(r); !found || sessionID == "" {
+				return access.RoleBindingAdministrationState{}, access.ErrForbidden
+			}
+		}
+		var policy access.AuthorizationPolicy
+		err = executeAuditedMutation(r, repository, accessgen.GenCommandOperationDeleteProjectRoleBinding(), func(tx access.Repository) (access.AuditEventInput, error) {
+			reader, readOK := tx.(access.AuthorizationPolicyReader)
+			writer, writeOK := tx.(access.AuthorizationPolicyWriter)
+			if !readOK || !writeOK {
+				return access.AuditEventInput{}, errors.New("transactional role administration is unavailable")
+			}
+			current, err := reader.AuthorizationPolicyRevision(r.Context(), scope, command.ExpectedRevision)
+			if err != nil {
+				return access.AuditEventInput{}, err
+			}
+			var removed access.RoleBinding
+			for _, binding := range current.RoleBindings {
+				if binding.ID == command.BindingID {
+					removed = binding
+					break
+				}
+			}
+			if removed.ID == "" {
+				return access.AuditEventInput{}, access.ErrAuthorizationPolicyNotFound
+			}
+			policy, err = writer.RemoveAuthorizationRoleBinding(r.Context(), access.AuthorizationRoleBindingDeleteInput{Scope: scope, BindingID: command.BindingID, ExpectedRevision: command.ExpectedRevision, IdempotencyKey: idempotencyKey})
+			if err != nil {
+				return access.AuditEventInput{}, err
+			}
+			role := string(removed.PermissionRole)
+			if role == "" {
+				role = string(removed.Role)
+			}
+			metadata, err := accessgen.EncodeGenDeleteProjectRoleBindingAuditPayload(accessgen.GenSchemaRoleBindingAuditPayload{TargetId: scope.TargetID, ProjectId: scope.ProjectID, Environment: scope.Environment, BindingId: removed.ID, SubjectType: string(removed.Subject.Kind), SubjectId: removed.Subject.ID, Role: role, PolicyRevision: policy.Revision, PolicyDigest: policy.Digest})
+			if err != nil {
+				return access.AuditEventInput{}, err
+			}
+			event := auditInput(r, "role_binding.removed", h.currentPrincipalID(r), "role_binding", removed.ID, access.CapabilityProjectAdmin, "success", nil)
+			event.MetadataJSON = metadata
+			return event, nil
+		})
+		if err != nil {
+			return access.RoleBindingAdministrationState{}, err
+		}
+	default:
+		return access.RoleBindingAdministrationState{}, errors.New("unknown role administration action")
+	}
+	return h.RoleBindingAdministration(r.Context())
 }
 
 func roleBindingDTO(binding access.RoleBinding, policy access.AuthorizationPolicy) map[string]any {

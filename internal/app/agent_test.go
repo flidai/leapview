@@ -58,10 +58,10 @@ func TestGlobalAgentAPIListsPrincipalConversations(t *testing.T) {
 		t.Fatalf("global conversation response retains workspaceId: %s", listRec.Body.String())
 	}
 
-	scopedToken, _, err := testAccessRepository(store).CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-		PrincipalID:  principal.ID,
-		Name:         "agent-workspace-bound",
-		Capabilities: []access.Capability{access.CapabilityResourceUse, access.CapabilityResourceRead},
+	scopedToken, _, err := store.fixture.Graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
+		PrincipalID: principal.ID,
+		Name:        "agent-identity-only",
+		Permissions: []access.PermissionPair{},
 	})
 	if err != nil {
 		t.Fatalf("create workspace-bound token: %v", err)

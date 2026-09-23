@@ -8,21 +8,35 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
+
+func qualificationAdminBinding(t *testing.T, id, name, principalID, projectID string) access.RoleBinding {
+	t.Helper()
+	binding, err := access.NewTypedRoleBinding(
+		id, name, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID},
+		access.PermissionRoleProjectAdmin, projectgraph.ResourceID(projectID),
+	)
+	require.NoError(t, err)
+	return binding
+}
+
+func qualificationBindingResponse(binding access.RoleBinding, revision int64, digest string) qualificationRoleBindingResponse {
+	return qualificationRoleBindingResponse{
+		ID: binding.ID, Name: binding.Name, SubjectType: string(binding.Subject.Kind), SubjectID: binding.Subject.ID,
+		Role: string(binding.PermissionRole), PermissionProfile: binding.PermissionProfile,
+		Permissions: access.ClonePermissionPairs(binding.Permissions), PolicyRevision: revision, PolicyDigest: digest,
+	}
+}
 
 func TestBootstrapQualificationRoleBindingsUsesPublicCASAPI(t *testing.T) {
 	administratorID := "10000000-0000-4000-8000-000000000001"
 	reviewerID := "10000000-0000-4000-8000-000000000002"
-	wantCapabilities := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
-	capabilities := make([]string, len(wantCapabilities))
-	for index, capability := range wantCapabilities {
-		capabilities[index] = string(capability)
-	}
 	scope := access.AuthorizationPolicyScope{TargetID: "target:test", ProjectID: "project:test", Environment: "evaluation"}
 	roleBindings := []access.RoleBinding{
-		{ID: "project-bootstrap-owner", Name: "Project bootstrap owner", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: administratorID}, Role: access.ProjectRoleAdmin, Capabilities: wantCapabilities},
-		{ID: "qualification-reviewer-" + reviewerID, Name: "Qualification reviewer", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: reviewerID}, Role: access.ProjectRoleAdmin, Capabilities: wantCapabilities},
+		qualificationAdminBinding(t, "project-bootstrap-owner", "Project bootstrap owner", administratorID, scope.ProjectID),
+		qualificationAdminBinding(t, "qualification-reviewer-"+reviewerID, "Qualification reviewer", reviewerID, scope.ProjectID),
 	}
 	firstDigest, err := access.AuthorizationPolicyDigest(scope, roleBindings[:1])
 	require.NoError(t, err)
@@ -36,12 +50,12 @@ func TestBootstrapQualificationRoleBindingsUsesPublicCASAPI(t *testing.T) {
 				t.Errorf("role-binding policy request = %s %s", request.Method, request.URL.String())
 			}
 			response.Header().Set("Content-Type", "application/json")
-			items := []qualificationRoleBindingResponse{{ID: roleBindings[0].ID, Name: roleBindings[0].Name, SubjectType: "principal", SubjectID: administratorID, Role: string(access.ProjectRoleAdmin), Capabilities: capabilities, PolicyRevision: 1, PolicyDigest: firstDigest}}
+			items := []qualificationRoleBindingResponse{qualificationBindingResponse(roleBindings[0], 1, firstDigest)}
 			revision, digest := int64(1), firstDigest
 			if getCount == 2 {
 				items = []qualificationRoleBindingResponse{
-					{ID: roleBindings[0].ID, Name: roleBindings[0].Name, SubjectType: "principal", SubjectID: administratorID, Role: string(access.ProjectRoleAdmin), Capabilities: capabilities, PolicyRevision: 2, PolicyDigest: finalDigest},
-					{ID: roleBindings[1].ID, Name: roleBindings[1].Name, SubjectType: "principal", SubjectID: reviewerID, Role: string(access.ProjectRoleAdmin), Capabilities: capabilities, PolicyRevision: 2, PolicyDigest: finalDigest},
+					qualificationBindingResponse(roleBindings[0], 2, finalDigest),
+					qualificationBindingResponse(roleBindings[1], 2, finalDigest),
 				}
 				revision, digest = 2, finalDigest
 			}
@@ -70,6 +84,7 @@ func TestBootstrapQualificationRoleBindingsUsesPublicCASAPI(t *testing.T) {
 			Role             string          `json:"role"`
 			ExpectedRevision *int64          `json:"expectedRevision"`
 			Capabilities     json.RawMessage `json:"capabilities"`
+			Permissions      json.RawMessage `json:"permissions"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Errorf("decode role-binding request: %v", err)
@@ -77,16 +92,12 @@ func TestBootstrapQualificationRoleBindingsUsesPublicCASAPI(t *testing.T) {
 			return
 		}
 		if body.ID != roleBindings[1].ID || body.Name != roleBindings[1].Name || body.SubjectType != "principal" || body.SubjectID != reviewerID ||
-			body.Role != string(access.ProjectRoleAdmin) || body.ExpectedRevision == nil || *body.ExpectedRevision != 1 || body.Capabilities != nil {
+			body.Role != string(access.PermissionRoleProjectAdmin) || body.ExpectedRevision == nil || *body.ExpectedRevision != 1 || body.Capabilities != nil || body.Permissions != nil {
 			t.Errorf("role-binding request body = %+v", body)
 		}
 		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(http.StatusCreated)
-		if err := json.NewEncoder(response).Encode(qualificationRoleBindingResponse{
-			ID: roleBindings[1].ID, Name: roleBindings[1].Name, SubjectType: "principal", SubjectID: reviewerID,
-			Role: string(access.ProjectRoleAdmin), Capabilities: capabilities,
-			PolicyRevision: 2, PolicyDigest: finalDigest,
-		}); err != nil {
+		if err := json.NewEncoder(response).Encode(qualificationBindingResponse(roleBindings[1], 2, finalDigest)); err != nil {
 			t.Errorf("encode role-binding response: %v", err)
 		}
 	}))
@@ -105,15 +116,10 @@ func TestBootstrapQualificationRoleBindingsUsesPublicCASAPI(t *testing.T) {
 func TestBootstrapQualificationRoleBindingsReusesExistingReviewer(t *testing.T) {
 	administratorID := "10000000-0000-4000-8000-000000000001"
 	reviewerID := "10000000-0000-4000-8000-000000000002"
-	wantCapabilities := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
-	capabilities := make([]string, len(wantCapabilities))
-	for index, capability := range wantCapabilities {
-		capabilities[index] = string(capability)
-	}
 	scope := access.AuthorizationPolicyScope{TargetID: "target:test", ProjectID: "project:test", Environment: "evaluation"}
 	bindings := []access.RoleBinding{
-		{ID: "project-bootstrap-owner", Name: "Project bootstrap owner", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: administratorID}, Role: access.ProjectRoleAdmin, Capabilities: wantCapabilities},
-		{ID: "qualification-reviewer-" + reviewerID, Name: "Qualification reviewer", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: reviewerID}, Role: access.ProjectRoleAdmin, Capabilities: wantCapabilities},
+		qualificationAdminBinding(t, "project-bootstrap-owner", "Project bootstrap owner", administratorID, scope.ProjectID),
+		qualificationAdminBinding(t, "qualification-reviewer-"+reviewerID, "Qualification reviewer", reviewerID, scope.ProjectID),
 	}
 	digest, err := access.AuthorizationPolicyDigest(scope, bindings)
 	require.NoError(t, err)
@@ -126,8 +132,8 @@ func TestBootstrapQualificationRoleBindingsReusesExistingReviewer(t *testing.T) 
 		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(qualificationRoleBindingListResponse{
 			Items: []qualificationRoleBindingResponse{
-				{ID: bindings[0].ID, Name: bindings[0].Name, SubjectType: "principal", SubjectID: administratorID, Role: "admin", Capabilities: capabilities, PolicyRevision: 2, PolicyDigest: digest},
-				{ID: bindings[1].ID, Name: bindings[1].Name, SubjectType: "principal", SubjectID: reviewerID, Role: "admin", Capabilities: capabilities, PolicyRevision: 2, PolicyDigest: digest},
+				qualificationBindingResponse(bindings[0], 2, digest),
+				qualificationBindingResponse(bindings[1], 2, digest),
 			},
 			TargetID: scope.TargetID, ProjectID: scope.ProjectID, Environment: scope.Environment, PolicyRevision: 2, PolicyDigest: digest,
 		})
@@ -144,18 +150,11 @@ func TestBootstrapQualificationRoleBindingsReusesExistingReviewer(t *testing.T) 
 }
 
 func TestBootstrapQualificationRoleBindingsRejectsMalformedPolicyEvidence(t *testing.T) {
-	wantCapabilities := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
-	capabilities := make([]string, len(wantCapabilities))
-	for index, capability := range wantCapabilities {
-		capabilities[index] = string(capability)
-	}
+	owner := qualificationAdminBinding(t, "project-bootstrap-owner", "Project bootstrap owner", "10000000-0000-4000-8000-000000000001", "project:test")
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(qualificationRoleBindingListResponse{
-			Items: []qualificationRoleBindingResponse{{
-				ID: "project-bootstrap-owner", Name: "Project bootstrap owner", SubjectType: "principal", SubjectID: "10000000-0000-4000-8000-000000000001",
-				Role: string(access.ProjectRoleAdmin), Capabilities: capabilities, PolicyRevision: 1, PolicyDigest: "sha256:not-a-digest",
-			}},
+			Items:    []qualificationRoleBindingResponse{qualificationBindingResponse(owner, 1, "sha256:not-a-digest")},
 			TargetID: "target:test", ProjectID: "project:test", Environment: "evaluation", PolicyRevision: 1, PolicyDigest: "sha256:not-a-digest",
 		})
 	}))

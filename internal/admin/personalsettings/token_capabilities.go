@@ -33,6 +33,7 @@ func permissionOptionsSignal(permissionPairs []access.PermissionPair) []Capabili
 		label, description, category := permissionOptionPresentation(definition, pair)
 		options = append(options, CapabilityOptionSignal{
 			Value:       key,
+			ActionLabel: permissionActionLabel(pair.Action),
 			Label:       label,
 			Description: description,
 			Category:    category,

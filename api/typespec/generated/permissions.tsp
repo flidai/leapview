@@ -65,6 +65,7 @@ enum PermissionAction {
   platformAccessRead: "platform.access.read";
   platformAccessManage: "platform.access.manage";
   platformAuditRead: "platform.audit.read";
+  instanceProjectClaim: "instance.project.claim";
 }
 
 enum PermissionCatalogProfile {

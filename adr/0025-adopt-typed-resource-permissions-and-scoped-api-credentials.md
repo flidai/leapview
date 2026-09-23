@@ -39,27 +39,41 @@ expansions, generated TypeSpec/SQL/presentation/documentation artifacts,
 PostgreSQL typed-token persistence, and a typed personal-token picker. New
 public token issuance requires an explicit permission array; omission fails,
 an empty array creates an authentication-only credential, and a restricted
-token cannot mint a broader child. Migration 022 revokes active legacy API
+token cannot mint a broader child. Migration 025 revokes active legacy API
 tokens with an explicit audit outcome because their generic capability lists
-cannot be converted to resource pairs without widening authority.
+cannot be converted to resource pairs without widening authority. Migration
+031 installs the current generated pair validator, including the one-time
+`instance.project.claim` action, and closes the database-level active-token
+invariant so only typed scopes may remain active or be issued.
+Migration 032 retires capability-only authoring sessions and outstanding
+device challenges, backfills their historical rows with an empty typed scope,
+and requires typed action/target pairs for new authoring credentials.
+
+The personal-token picker follows Cloudflare's custom-token policy builder as
+its primary interaction reference. A user chooses an action, then binds it to a
+resource scope in the same permission block. Exact resources are the default;
+"all current" visibly expands to exact pairs, while "all current and future"
+is offered only when the caller already holds the matching typed future-resource
+authority. A review summary precedes issuance and the exact persisted pairs
+remain available as technical details.
 
 Typed project assignments capture the exact, profile-pinned expansion of a
 role at issuance time. New role-binding API and bootstrap writes use that
-form, while historical capability bindings remain readable only for explicitly
-unmigrated operations. Typed operation descriptors bind actions to server-owned
+form; historical capability bindings are retained only as migration and audit
+evidence, not as live authorization. Typed operation descriptors bind actions to server-owned
 dashboard, semantic-model, source, model, pipeline, connection, project,
 delivery, or instance resolvers. Evaluation unions coherent principal and
 group assignments, requires every prerequisite pair independently, intersects
 typed API-token ceilings, and rejects typed credentials on unmapped routes.
 The deterministic operation-coverage matrix distinguishes qualified,
-mapped-pending-qualification, intentionally legacy, and unsupported paths.
+mapped-pending-qualification, and unsupported paths; it does not advertise
+capability-only authorization as a supported compatibility mode.
 
 Project bootstrap establishes three explicit, composable assignments for the
-claiming principal: `project_admin`, `editor`, and `release_operator`. A legacy
-Owner or Admin binding may satisfy only the administrator prerequisite; it is
-preserved rather than translated, and the typed editing and release assignments
-are still recorded independently. Bootstrap verifies the exact project-bound
-role expansion returned by the server and never treats administration as a
+claiming principal: `project_admin`, `editor`, and `release_operator`.
+Capability-only Owner or Admin bindings cannot substitute for the typed
+administrator assignment. Bootstrap verifies the exact project-bound role
+expansion returned by the server and never treats administration as a
 wildcard for resource mutation or delivery.
 
 The reusable action/target mechanics live in `pkg/permissions` behind an
@@ -72,15 +86,24 @@ adapts its product catalog into the pure mechanics package. Public authority
 envelopes carry `permissions.Pair` without exposing private access types and
 are rebound to the active product catalog before execution.
 
-Migration 025 adds immutable typed grants, typed role bindings, and typed policy
-bindings without guessing meanings for historical rows. Migration 026 adds
+Legacy-capability retirement is fail-closed at each live boundary: generated
+API, browser, governed query, delivery, Agent, and managed-data authorization
+now require typed action/target authority; a generic capability is not a
+fallback. Authoring OAuth sessions persist a project-bound typed permission
+set, and new API tokens cannot be issued with capability-only scope. For
+managed-data staging, an absent successor Connection requires project-scoped
+`connection.create` on the predecessor snapshot; an existing Connection
+requires `connection.manage` on that exact object. The distinction avoids
+turning Editor's creation authority into ongoing management authority.
+
+Migration 028 adds immutable typed grants, typed role bindings, and typed policy
+bindings without guessing meanings for historical rows. Migration 029 adds
 independently durable exact-resource shares, execution grants, and bounded
 grant-administration envelopes with resource UIDs, expiry, revocation,
 idempotency, and audited PostgreSQL mutations. Trusted issuance constructs the
 issuer and credential ceiling from current server-side authority; request DTOs
-cannot supply those fields. Ambiguous legacy assignments deliberately remain
-legacy rather than being widened, so downstream compatibility cannot be
-removed until every affected surface is qualified.
+cannot supply those fields. Ambiguous historical assignments are retained as
+audit/migration evidence and never authorize live typed operations.
 
 Qualified paths include private dashboard consumption and authoring, governed
 semantic query entry points, credential-filtered project catalog discovery,
@@ -99,12 +122,16 @@ is no longer served.
 The first project-claim bootstrap is the sole role-binding exception: before a
 serving policy can issue a grant-administration envelope, the target accepts
 only the three deterministic, profile-pinned bindings above for the durable
-claiming principal. The request must carry the exact project bootstrap marker
-and a live, capability-attenuated platform-administrator API credential; the
-target rechecks the claim and bootstrap-open state at mutation time. No other
-subject, role, binding ID, or closed-bootstrap mutation uses this path. Normal
-role-binding creation continues to require the envelope and current
-principal/credential ceiling checks.
+claiming principal. Initialization issues a short-lived, instance-scoped
+`instance.project.claim` credential, not a broad project publisher. The exact
+claim exchanges it for a publisher credential bound to the newly claimed
+Project; acknowledgement with the publisher credential revokes the claim
+credential. Until acknowledgement, exact claim retries replace the prior
+publisher so a lost response does not strand bootstrap. The target rechecks
+the claim and bootstrap-open state at mutation time. No other subject, role,
+binding ID, or closed-bootstrap mutation uses this path. Normal role-binding
+creation continues to require the envelope and current principal/credential
+ceiling checks.
 
 The Go catalog is the runtime authority and generated checks prevent contract
 drift. The ADR-0026 ledger remains authoritative for deliberately unsupported or
@@ -168,16 +195,20 @@ replacing the semantic policy or deployment architectures already selected.
 - Use coarse BI project roles as the API scope contract. Convenient defaults
   would become the maximum available granularity for automation.
 - Adopt typed resource actions, named role presets, and independently scoped
-  credentials using Unity Catalog and GitHub as references.
+  credentials using Unity Catalog for authorization architecture, Cloudflare
+  custom API tokens for policy construction, and GitHub for its simpler
+  resource-selection patterns.
 
 ## Decision outcome
 
 Choose typed resource actions with named role presets and independently scoped
-credentials. Unity Catalog is the primary architectural reference; GitHub's
-fine-grained personal tokens are the credential and token-UI reference. OAuth
-RFC 9700 is the normative OAuth security baseline. LeapView owns its permission
-contract and does not claim Databricks, Snowflake, GitHub, or Looker API
-compatibility.
+credentials. Unity Catalog is the primary architectural reference. Cloudflare's
+custom API-token builder is the primary credential-picker reference because it
+keeps a permission and its resource boundary together in one policy block;
+GitHub's fine-grained token flow is a secondary reference for selecting named
+resources. OAuth RFC 9700 is the normative OAuth security baseline. LeapView
+owns its permission contract and does not claim Databricks, Cloudflare,
+Snowflake, GitHub, or Looker API compatibility.
 
 ### Authorization and scope
 
@@ -258,11 +289,15 @@ mean full inherited access. Authentication or narrowly defined self-service
 operations are a separate contract. Browser sessions retain their normal role
 evaluation; they are not implicitly converted into restricted API tokens.
 
-The token UI presents target/resource scope, allowed actions, and expiry. Common
-workflow presets are visible expansions of those choices. Selecting Publish
-selects the publish action; a read/write selector is offered only when both
-levels correspond to real actions for that permission family. The count and
-summary describe the restrictions actually persisted.
+The token UI presents target/resource scope, allowed actions, and expiry as
+policy blocks: choose one action, then choose the resource scope governed by
+that action. Resource actions offer specific resources, all resources that
+exist now, and—only when already authorized—an explicit current-and-future
+scope. Project and instance actions keep their fixed scope. Common workflow
+presets are visible expansions of those choices. Selecting Publish selects the
+publish action; a read/write selector is offered only when both levels
+correspond to real actions for that permission family. The review summary and
+technical details describe the restrictions actually persisted.
 
 Future-resource inclusion requires explicit selection. New action definitions
 never automatically enter existing token allowlists. Losing principal access
@@ -360,7 +395,8 @@ ADR does not certify that the current runtime already satisfies it.
 
 ## Research basis
 
-Official documentation and Flid reference sources were reviewed on 2026-09-17.
+Official documentation and Flid reference sources were reviewed on 2026-09-17,
+with credential-picker references reviewed again on 2026-09-21.
 Product behavior supplies precedent; only the cited IETF documents are protocol
 standards, and conformance requires implementation evidence.
 
@@ -373,7 +409,11 @@ standards, and conformance requires implementation evidence.
   grant administration can enable self-granting and must be treated as trusted
   authority, not harmless metadata access.
 - [GitHub personal access tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens):
-  resource selection and fine-grained permissions restrict the owner's access.
+  a secondary reference for named-resource selection and fine-grained
+  permissions that restrict the owner's access.
+- [Cloudflare custom API tokens](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/):
+  permission groups and resource boundaries are configured together as visible
+  policy blocks before token issuance.
 - [RFC 9700 section 2.3](https://www.rfc-editor.org/rfc/rfc9700.html#section-2.3)
   and [RFC 9396](https://www.rfc-editor.org/rfc/rfc9396.html): audience,
   resource, and action restrictions for OAuth credentials and structured consent.

@@ -59,26 +59,6 @@ type Grant struct {
 // serving snapshots cannot drift into subtly different role contracts.
 type RoleBinding = access.RoleBinding
 
-// RoleAllowsCapability reports whether any supplied subject has the captured
-// capability in an explicit project-wide role binding. Role capabilities are
-// immutable snapshot data, so callers do not consult mutable role templates
-// while authorizing a serving generation.
-func RoleAllowsCapability(snapshot AuthorizationSnapshot, subjects []access.SubjectRef, capability access.Capability) bool {
-	for _, binding := range snapshot.RoleBindings() {
-		for _, subject := range subjects {
-			if binding.Subject != subject {
-				continue
-			}
-			for _, captured := range binding.Capabilities {
-				if captured == capability {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 type DataPolicy struct {
 	ID             string
 	Name           string
@@ -87,46 +67,6 @@ type DataPolicy struct {
 	PolicyType     string
 	ExpressionJSON string
 	Compiled       accesspolicy.Compiled
-}
-
-// Allows evaluates one exact canonical subject/resource/capability tuple
-// against this immutable snapshot. It deliberately does not walk graph
-// parents, infer kinds from IDs, expand roles, or consult serving state outside
-// the snapshot. Group membership is resolved by the global identity layer and
-// should be passed as a group SubjectRef by the caller.
-func (s AuthorizationSnapshot) Allows(subject access.SubjectRef, resource access.ResourceRef, capability access.Capability) (bool, error) {
-	if err := s.ValidateBound(); err != nil {
-		return false, err
-	}
-	if err := subject.Validate(); err != nil {
-		return false, err
-	}
-	if err := resource.ValidateAgainst(s.project); err != nil {
-		return false, err
-	}
-	if err := access.ValidateProjectNamespace(resource, s.identity); err != nil {
-		return false, err
-	}
-	if err := access.ValidateCapabilityForKind(resource.Kind(), capability); err != nil {
-		return false, err
-	}
-	for _, grant := range s.grants {
-		canonical := grant.Canonical
-		if canonical.Subject() == subject && canonical.Resource().ID() == resource.ID() && canonical.Resource().Kind() == resource.Kind() && canonical.Capability() == capability {
-			return true, nil
-		}
-	}
-	for _, binding := range s.roleBindings {
-		if binding.Subject != subject {
-			continue
-		}
-		for _, captured := range binding.Capabilities {
-			if captured == capability {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
 }
 
 // EffectiveCapabilities returns the canonical capabilities that are currently
@@ -412,8 +352,14 @@ func (s AuthorizationSnapshot) RestrictToCurrentRoleBindings(current []RoleBindi
 	}
 	byID := make(map[string]RoleBinding, len(current))
 	for _, binding := range current {
-		if err := access.ValidateAuthorizationRoleBinding(binding); err != nil {
-			return AuthorizationSnapshot{}, fmt.Errorf("current role binding %q: %w", binding.ID, err)
+		var validationErr error
+		if binding.TypedRoleBinding() {
+			validationErr = access.ValidateTypedRoleBindingForProject(binding, s.identity.ProjectID)
+		} else {
+			validationErr = access.ValidateAuthorizationRoleBinding(binding)
+		}
+		if validationErr != nil {
+			return AuthorizationSnapshot{}, fmt.Errorf("current role binding %q: %w", binding.ID, validationErr)
 		}
 		if _, duplicate := byID[binding.ID]; duplicate {
 			return AuthorizationSnapshot{}, fmt.Errorf("duplicate current role binding %q", binding.ID)

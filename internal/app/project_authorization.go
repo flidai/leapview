@@ -33,7 +33,7 @@ type canonicalAccessModule interface {
 	AuthorizationSubjects(context.Context, string) ([]access.SubjectRef, error)
 }
 
-type connectionAuthorization func(context.Context, string, string, string, access.Capability) (bool, error)
+type connectionAuthorization func(context.Context, string, string, string, access.Action) (bool, error)
 
 const managedDataTusMutationTimeout = 5 * time.Minute
 
@@ -49,12 +49,13 @@ func authorizeAuthoringResource(
 	principalID string,
 	projectID projectgraph.ResourceID,
 	resource access.ResourceRef,
-	capability access.Capability,
+	action access.Action,
 ) (bool, error) {
 	if authoringDevelopmentBypass(ctx, principalID) {
 		return true, nil
 	}
-	return authorizeProjectResources(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, capability)
+	typed, allowed, err := authorizeTypedResourceAction(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, action)
+	return typed && allowed, err
 }
 
 func authorizeAuthoringProject(
@@ -63,36 +64,55 @@ func authorizeAuthoringProject(
 	runtimeHost canonicalRuntimeHost,
 	principalID string,
 	projectID projectgraph.ResourceID,
-	capability access.Capability,
+	action access.Action,
 ) (bool, error) {
 	if authoringDevelopmentBypass(ctx, principalID) {
 		return true, nil
 	}
-	return authorizeProjectRole(ctx, accessModule, runtimeHost, principalID, projectID, capability)
+	typed, allowed, err := authorizeTypedAuthoringProjectAction(ctx, accessModule, runtimeHost, principalID, projectID, action)
+	return typed && allowed, err
 }
 
 // bootstrapAwareConnectionAuthorization permits managed-data handlers to
 // consume the opaque request marker emitted by the APIGen staging guard. The
 // guard has already bound the credential to the durable project claim, target,
-// principal, and capability. This also covers a successor connection that is
+// principal, and typed action. This also covers a successor connection that is
 // intentionally absent from the active predecessor snapshot.
 func bootstrapAwareConnectionAuthorization(
 	snapshot connectionAuthorization,
 ) connectionAuthorization {
-	return func(ctx context.Context, principalID, projectID, connectionID string, capability access.Capability) (bool, error) {
-		if marker, ok := accessmodule.ManagedDataStagingAuthorizationFromContext(ctx); ok && marker.PrincipalID == strings.TrimSpace(principalID) && marker.ProjectID.String() == strings.TrimSpace(projectID) && marker.ConnectionID.String() == strings.TrimSpace(connectionID) && marker.Capability == capability {
+	return func(ctx context.Context, principalID, projectID, connectionID string, action access.Action) (bool, error) {
+		markerCapability, hasMarkerCapability := managedDataMarkerCapability(action)
+		if marker, ok := accessmodule.ManagedDataStagingAuthorizationFromContext(ctx); ok && hasMarkerCapability && marker.PrincipalID == strings.TrimSpace(principalID) && marker.ProjectID.String() == strings.TrimSpace(projectID) && marker.ConnectionID.String() == strings.TrimSpace(connectionID) && marker.Capability == markerCapability {
 			return true, nil
 		}
 		if snapshot == nil {
 			return false, fmt.Errorf("active authorization snapshot is unavailable")
 		}
-		return snapshot(ctx, principalID, projectID, connectionID, capability)
+		return snapshot(ctx, principalID, projectID, connectionID, action)
 	}
 }
 
-// authorizeProjectResources evaluates canonical resource grants against the
-// exact leased generation. Group subjects are resolved once per request and
-// any matching subject is sufficient for each resource.
+// managedDataMarkerCapability keeps the opaque staging marker's historical
+// audit field aligned with the typed handler action. The marker is only a
+// downstream hand-off: APIGen must already have validated typed assignment
+// and token-ceiling pairs before it can be attached to the request.
+func managedDataMarkerCapability(action access.Action) (access.Capability, bool) {
+	switch action {
+	case access.ActionConnectionRead:
+		return access.CapabilityResourceRead, true
+	case access.ActionConnectionUse:
+		return access.CapabilityResourceUse, true
+	case access.ActionConnectionManage:
+		return access.CapabilityResourceEdit, true
+	default:
+		return "", false
+	}
+}
+
+// authorizeProjectResources evaluates the exact typed action/target pairs
+// against the leased generation's complete principal/group authority. API
+// credentials can only attenuate that authority.
 func authorizeProjectResources(
 	ctx context.Context,
 	accessModule canonicalAccessModule,
@@ -100,11 +120,10 @@ func authorizeProjectResources(
 	principalID string,
 	projectID projectgraph.ResourceID,
 	resources []access.ResourceRef,
-	capability access.Capability,
+	action access.Action,
 ) (bool, error) {
-	return authorizeProjectResourcesWithCapability(ctx, accessModule, runtimeHost, principalID, projectID, resources, false, func(access.ResourceRef) access.Capability {
-		return capability
-	})
+	typed, allowed, err := authorizeProjectResourcesWithTypedAction(ctx, accessModule, runtimeHost, principalID, projectID, resources, action)
+	return typed && allowed, err
 }
 
 func authorizeProjectResourcesWithTypedAction(
@@ -114,143 +133,16 @@ func authorizeProjectResourcesWithTypedAction(
 	principalID string,
 	projectID projectgraph.ResourceID,
 	resources []access.ResourceRef,
-	capability access.Capability,
 	action access.Action,
-) (bool, error) {
-	return authorizeProjectResourcesWithCapability(ctx, accessModule, runtimeHost, principalID, projectID, resources, false, func(access.ResourceRef) access.Capability {
-		return capability
-	}, func(access.ResourceRef) (access.Action, bool) {
-		return action, true
-	})
-}
-
-func authorizeDeliveryProjectResources(
-	ctx context.Context,
-	accessModule canonicalAccessModule,
-	runtimeHost canonicalRuntimeHost,
-	principalID string,
-	projectID projectgraph.ResourceID,
-	resources []access.ResourceRef,
-	capability access.Capability,
-) (bool, error) {
-	return authorizeProjectResourcesWithCapability(ctx, accessModule, runtimeHost, principalID, projectID, resources, true, func(resource access.ResourceRef) access.Capability {
-		return deliveryResourceCapability(resource, capability)
-	})
-}
-
-func authorizeProjectResourcesWithCapability(
-	ctx context.Context,
-	accessModule canonicalAccessModule,
-	runtimeHost canonicalRuntimeHost,
-	principalID string,
-	projectID projectgraph.ResourceID,
-	resources []access.ResourceRef,
-	_ bool,
-	capabilityFor func(access.ResourceRef) access.Capability,
-	typedActionFor ...func(access.ResourceRef) (access.Action, bool),
-) (bool, error) {
-	if accessModule == nil || runtimeHost == nil {
-		return false, fmt.Errorf("authorization modules are required")
-	}
-	if capabilityFor == nil {
-		return false, fmt.Errorf("resource capability resolver is required")
-	}
-	if err := projectID.Validate(); err != nil {
-		return false, err
-	}
-	for _, resource := range resources {
-		if err := resource.Validate(); err != nil {
-			return false, err
-		}
-	}
-	lease, err := runtimeHost.Acquire(ctx)
-	if err != nil {
-		return false, err
-	}
-	if lease == nil {
-		return false, fmt.Errorf("runtime host returned a nil lease")
-	}
-	defer lease.Release()
-	if lease.Identity().ProjectID != projectID {
-		return false, fmt.Errorf("runtime project %q does not match requested project %q", lease.Identity().ProjectID, projectID)
-	}
-	authorizedLease, ok := lease.(interface {
-		AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
-	})
-	if !ok {
-		return false, fmt.Errorf("active runtime lease does not expose authorization snapshot")
-	}
-	subjects, err := accessModule.AuthorizationSubjects(ctx, principalID)
-	if err != nil {
-		return false, err
-	}
-	var typedActionResolver func(access.ResourceRef) (access.Action, bool)
-	if len(typedActionFor) > 1 {
-		return false, fmt.Errorf("at most one typed action resolver is supported")
-	}
-	if len(typedActionFor) == 1 {
-		typedActionResolver = typedActionFor[0]
-	}
-	var typed, allowed bool
-	snapshot := authorizedLease.AuthorizationSnapshot()
-	if snapshot.Identity() != lease.Identity() {
-		return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
-	}
-	if err := snapshot.ValidateBound(); err != nil {
-		return false, err
-	}
-	if typedActionResolver != nil {
-		typed, allowed, err = typedPermissionDecisionForSnapshot(ctx, principalID, projectID, resources, typedActionResolver, snapshot, subjects)
-	} else {
-		typed, allowed, err = typedDashboardReadDecisionForSnapshot(ctx, principalID, projectID, resources, capabilityFor, snapshot, subjects)
-	}
-	if err != nil {
-		return false, err
-	}
-	if typed {
-		// A migrated typed operation is decided entirely from typed principal /
-		// group authority plus the optional credential ceiling. Do not run the
-		// legacy capability projection after a successful typed decision: a
-		// typed-only assignment must be sufficient on its own.
-		return allowed, nil
-	}
-	for _, resource := range resources {
-		capability := capabilityFor(resource)
-		// Project-scoped browser operations use resource capabilities from an
-		// explicit project role bundle, just like APIGen. The project kind only
-		// accepts PROJECT_ADMIN as a direct grant, so calling snapshot.Allows for
-		// RESOURCE_EDIT/USE/MANAGE would otherwise reject a valid contributor,
-		// editor, or data-deployer before the feature service can authorize it.
-		if handled, roleAllowed := projectRootRoleDecision(snapshot, subjects, resource, capability); handled {
-			if !roleAllowed {
-				return false, nil
-			}
-			continue
-		}
-		allowed := false
-		for _, subject := range subjects {
-			candidate, err := snapshot.Allows(subject, resource, capability)
-			if err != nil {
-				return false, err
-			}
-			if candidate {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return false, nil
-		}
-	}
-	return true, nil
+) (typed bool, allowed bool, err error) {
+	return authorizeTypedResourceAction(ctx, accessModule, runtimeHost, principalID, projectID, resources, action)
 }
 
 // authorizeManagedDataConnection returns found=false only when the active,
 // identity-bound snapshot proves that the exact connection is absent. In that
-// case allowed reports whether a project role in the same snapshot grants the
-// requested capability. Every lease, identity, snapshot, and subject failure
-// remains an error so callers cannot mistake infrastructure failure for a
-// staging opportunity.
+// case staging requires the project-scoped connection.create pair. Every
+// lease, identity, snapshot, and subject failure remains an error so callers
+// cannot mistake infrastructure failure for a staging opportunity.
 func authorizeManagedDataConnection(
 	ctx context.Context,
 	accessModule canonicalAccessModule,
@@ -258,7 +150,7 @@ func authorizeManagedDataConnection(
 	principalID string,
 	projectID projectgraph.ResourceID,
 	resource access.ResourceRef,
-	capability access.Capability,
+	action access.Action,
 ) (found, allowed bool, err error) {
 	if accessModule == nil || runtimeHost == nil {
 		return false, false, fmt.Errorf("authorization modules are required")
@@ -292,90 +184,67 @@ func authorizeManagedDataConnection(
 		return false, false, err
 	}
 	graphResource, exists := snapshot.Project().Resource(resource.ID())
-	if !exists || graphResource.Kind != resource.Kind() {
-		return false, accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
+	if exists && graphResource.Kind != resource.Kind() {
+		return false, false, fmt.Errorf("active project resource %q has kind %q, want %q", resource.ID(), graphResource.Kind, resource.Kind())
 	}
-	for _, subject := range subjects {
-		candidate, candidateErr := snapshot.Allows(subject, resource, capability)
-		if candidateErr != nil {
-			return true, false, candidateErr
+	if !exists {
+		// A newly introduced connection is authorized by the containing
+		// project's typed connection.create assignment. The caller still runs
+		// the APIGen staging guard before accepting the upload.
+		project, projectErr := access.NewResourceRef(projectID, projectgraph.KindProjectNamespace)
+		if projectErr != nil {
+			return false, false, projectErr
 		}
-		if candidate {
-			return true, true, nil
+		projectTyped, projectAllowed, decisionErr := typedPermissionDecisionForSnapshot(ctx, principalID, projectID, []access.ResourceRef{project}, func(access.ResourceRef) (access.Action, bool) {
+			return access.ActionConnectionCreate, true
+		}, snapshot, subjects)
+		if decisionErr != nil || !projectTyped || !projectAllowed {
+			return false, false, decisionErr
 		}
+		return false, projectAllowed, nil
 	}
-	return true, false, nil
+	typed, allowed, decisionErr := typedPermissionDecisionForSnapshot(ctx, principalID, projectID, []access.ResourceRef{resource}, func(access.ResourceRef) (access.Action, bool) {
+		return action, true
+	}, snapshot, subjects)
+	if decisionErr != nil {
+		return true, false, decisionErr
+	}
+	return true, typed && allowed, nil
 }
 
-// authorizeProjectRole evaluates a project-wide role binding against the
-// exact leased generation. Delivery publication uses this only when a plan's
-// graph-impact evidence is empty; a direct grant on an unrelated resource
-// must never widen that no-impact fallback.
-func authorizeProjectRole(
-	ctx context.Context,
-	accessModule canonicalAccessModule,
-	runtimeHost canonicalRuntimeHost,
-	principalID string,
-	projectID projectgraph.ResourceID,
-	capability access.Capability,
-) (bool, error) {
-	if accessModule == nil || runtimeHost == nil {
-		return false, fmt.Errorf("authorization modules are required")
-	}
-	if err := projectID.Validate(); err != nil {
-		return false, err
-	}
-	lease, err := runtimeHost.Acquire(ctx)
+func managedDataStagingPermissionPairs(projectID projectgraph.ResourceID) ([]access.PermissionPair, error) {
+	create, err := access.NewProjectPermissionPair(access.ActionConnectionCreate, projectID)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	if lease == nil {
-		return false, fmt.Errorf("runtime host returned a nil lease")
-	}
-	defer lease.Release()
-	if lease.Identity().ProjectID != projectID {
-		return false, fmt.Errorf("runtime project %q does not match requested project %q", lease.Identity().ProjectID, projectID)
-	}
-	authorizedLease, ok := lease.(interface {
-		AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
-	})
-	if !ok {
-		return false, fmt.Errorf("active runtime lease does not expose authorization snapshot")
-	}
-	subjects, err := accessModule.AuthorizationSubjects(ctx, principalID)
+	required, err := access.RequiredPermissionPairs(create)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	snapshot := authorizedLease.AuthorizationSnapshot()
-	if snapshot.Identity() != lease.Identity() {
-		return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
-	}
-	return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
+	return required, nil
 }
 
-// protectProjectResources authorizes a browser request against the immutable
-// graph-bound snapshot carried by the leased serving generation. Resource IDs
-// and capabilities are resolved before the handler runs; no alternate
-// selector is accepted at this boundary.
+// protectProjectResources authorizes a browser request against typed action
+// pairs in the immutable leased generation. Resource IDs are resolved before
+// the handler runs; no alternate selector is accepted at this boundary.
 func protectProjectResources(
 	accessModule canonicalAccessModule,
 	runtimeHost canonicalRuntimeHost,
-	capability access.Capability,
+	action access.Action,
 	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
-	return protectProjectResourcesWithTypedAction(accessModule, runtimeHost, capability, "", resolve, next)
+	return protectProjectResourcesWithTypedAction(accessModule, runtimeHost, action, resolve, next)
 }
 
 func protectProjectResourcesWithTypedAction(
 	accessModule canonicalAccessModule,
 	runtimeHost canonicalRuntimeHost,
-	capability access.Capability,
 	action access.Action,
 	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
-	if accessModule == nil || runtimeHost == nil || resolve == nil {
+	if accessModule == nil || runtimeHost == nil || resolve == nil || action == "" {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		}
@@ -406,15 +275,7 @@ func protectProjectResourcesWithTypedAction(
 			next(w, r)
 			return
 		}
-		var allowed bool
-		var err error
-		if action == "" {
-			allowed, err = authorizeProjectResources(r.Context(), accessModule, runtimeHost, principal.ID, projectID, resources, capability)
-		} else {
-			allowed, err = authorizeProjectResourcesWithCapability(r.Context(), accessModule, runtimeHost, principal.ID, projectID, resources, false, func(access.ResourceRef) access.Capability {
-				return capability
-			}, func(access.ResourceRef) (access.Action, bool) { return action, true })
-		}
+		_, allowed, err := authorizeProjectResourcesWithTypedAction(r.Context(), accessModule, runtimeHost, principal.ID, projectID, resources, action)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
@@ -433,28 +294,35 @@ type repositoryDashboardAuthorizer interface {
 }
 
 // protectProjectAuthoringResource authenticates and authorizes builder routes
-// against the durable dashboard lifecycle. This is intentionally separate
-// from protectProjectResources, whose immutable graph snapshot cannot contain
-// a freshly created private draft.
+// against the typed action/target pair and durable dashboard lifecycle.
 func protectProjectAuthoringResource(
 	accessModule canonicalAccessModule,
 	runtimeHost canonicalRuntimeHost,
 	authorizer repositoryDashboardAuthorizer,
-	capability access.Capability,
+	action access.Action,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
-	return protectProjectAuthoringResourceWithTypedAction(accessModule, runtimeHost, authorizer, capability, "", next)
+	return protectProjectAuthoringResourceWithTypedAction(accessModule, runtimeHost, authorizer, action, next)
 }
 
 func protectProjectAuthoringResourceWithTypedAction(
 	accessModule canonicalAccessModule,
 	runtimeHost canonicalRuntimeHost,
 	authorizer repositoryDashboardAuthorizer,
-	capability access.Capability,
-	typedAction access.Action,
+	action access.Action,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
-	if accessModule == nil || runtimeHost == nil || authorizer == nil || (capability != access.CapabilityResourceEdit && capability != access.CapabilityResourceManage) {
+	if accessModule == nil || runtimeHost == nil || action == "" || next == nil {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		}
+	}
+	if action != access.ActionDashboardRead && action != access.ActionDashboardUpdate && action != access.ActionDashboardDelete {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		}
+	}
+	if action != access.ActionDashboardRead && authorizer == nil {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		}
@@ -479,38 +347,28 @@ func protectProjectAuthoringResourceWithTypedAction(
 			next(w, r)
 			return
 		}
-		if typedAction != "" {
-			resource, resourceErr := access.NewResourceRef(projectgraph.ResourceID(dashboardID), projectgraph.KindDashboard)
-			if resourceErr != nil {
-				http.NotFound(w, r)
-				return
-			}
-			// Preserve an immediate closed-contract denial for malformed or
-			// attenuated credentials before acquiring a serving lease. The full
-			// decision below additionally resolves principal/group assignments
-			// from that same immutable generation.
-			credentialTyped, credentialAllowed := typedPermissionDecision(r.Context(), projectID, []access.ResourceRef{resource}, func(access.ResourceRef) (access.Action, bool) {
-				return typedAction, true
-			})
-			if credentialTyped && !credentialAllowed {
-				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
-				return
-			}
-			typed, allowed, typedErr := authorizeTypedResourceAction(r.Context(), accessModule, runtimeHost, principal.ID, projectID, []access.ResourceRef{resource}, typedAction)
-			if typedErr != nil {
-				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-				return
-			}
-			if typed && !allowed {
-				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
-				return
-			}
+		resource, resourceErr := access.NewResourceRef(projectgraph.ResourceID(dashboardID), projectgraph.KindDashboard)
+		if resourceErr != nil {
+			http.NotFound(w, r)
+			return
+		}
+		// The exact action is checked against principal/group assignments and,
+		// for bearer credentials, the token's typed permission ceiling.
+		typed, allowed, typedErr := authorizeTypedResourceAction(r.Context(), accessModule, runtimeHost, principal.ID, projectID, []access.ResourceRef{resource}, action)
+		if typedErr != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if !typed || !allowed {
+			uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
+			return
 		}
 		var err error
-		if capability == access.CapabilityResourceManage {
-			err = authorizer.AuthorizeDashboardManage(r.Context(), projectID, principal.ID, authoring.DashboardID(dashboardID))
-		} else {
+		switch action {
+		case access.ActionDashboardUpdate:
 			err = authorizer.AuthorizeDashboardEdit(r.Context(), projectID, principal.ID, authoring.DashboardID(dashboardID))
+		case access.ActionDashboardDelete:
+			err = authorizer.AuthorizeDashboardManage(r.Context(), projectID, principal.ID, authoring.DashboardID(dashboardID))
 		}
 		if err != nil {
 			if errors.Is(err, access.ErrForbidden) {
@@ -580,11 +438,12 @@ func candidatePreviewBootstrapAuthorized(
 func protectCandidateProjectResources(
 	accessModule canonicalAccessModule,
 	runtimeHost canonicalRuntimeHost,
-	capability access.Capability,
+	bootstrapCapability access.Capability,
+	action access.Action,
 	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
-	if accessModule == nil || runtimeHost == nil || resolve == nil {
+	if accessModule == nil || runtimeHost == nil || resolve == nil || action == "" || bootstrapCapability == "" {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		}
@@ -622,7 +481,7 @@ func protectCandidateProjectResources(
 				return
 			}
 			marked := r.WithContext(withCandidatePreviewBootstrapAuthorization(
-				r.Context(), runtimeHost.ProjectID(), principal.ID, capability,
+				r.Context(), runtimeHost.ProjectID(), principal.ID, bootstrapCapability,
 			))
 			next(w, marked)
 			return
@@ -630,7 +489,7 @@ func protectCandidateProjectResources(
 		// Delegate the active path to the canonical guard so project role,
 		// group, snapshot identity, and dev-bypass behavior remain identical
 		// to every other authenticated project route.
-		protectProjectResources(accessModule, runtimeHost, capability, resolve, next).ServeHTTP(w, r)
+		protectProjectResources(accessModule, runtimeHost, action, resolve, next).ServeHTTP(w, r)
 	})).ServeHTTP
 }
 
@@ -771,26 +630,27 @@ func protectManagedDataTransportWithBootstrapTimeout(
 					http.NotFound(w, r)
 					return
 				}
-				var bootstrapAccess bool
-				if authoringModule, ok := accessModule.(interface {
-					AuthorizeAuthoringBootstrapRequest(context.Context, *http.Request, string, access.Capability) (bool, error)
-				}); ok {
-					bootstrapAccess, err = authoringModule.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), access.CapabilityResourceEdit)
-					if err != nil {
-						http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-						return
-					}
+				stagingPairs, pairErr := managedDataStagingPermissionPairs(projectID)
+				if pairErr != nil {
+					http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+					return
 				}
-				bootstrapModule, bootstrapModuleOK := accessModule.(interface {
-					AuthorizeBootstrapRequest(context.Context, *http.Request, access.Capability) (bool, error)
+				typedBootstrap, ok := accessModule.(interface {
+					AuthorizeTypedAuthoringBootstrapRequest(context.Context, *http.Request, string, []access.PermissionPair) (bool, error)
+					AuthorizeTypedBootstrapRequest(context.Context, *http.Request, []access.PermissionPair) (bool, error)
 				})
-				if !bootstrapAccess && !bootstrapModuleOK {
+				if !ok {
+					http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+					return
+				}
+				bootstrapAccess, authErr := typedBootstrap.AuthorizeTypedAuthoringBootstrapRequest(r.Context(), r, projectID.String(), stagingPairs)
+				if authErr != nil {
 					http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 					return
 				}
 				if !bootstrapAccess {
-					bootstrapAccess, err = bootstrapModule.AuthorizeBootstrapRequest(r.Context(), r, access.CapabilityResourceEdit)
-					if err != nil {
+					bootstrapAccess, authErr = typedBootstrap.AuthorizeTypedBootstrapRequest(r.Context(), r, stagingPairs)
+					if authErr != nil {
 						http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 						return
 					}
@@ -811,7 +671,7 @@ func protectManagedDataTransportWithBootstrapTimeout(
 				next.ServeHTTP(w, r)
 				return
 			}
-			found, allowed, authErr := authorizeManagedDataConnection(r.Context(), accessModule, runtimeHost, principal.ID, activeProjectID, resource, access.CapabilityResourceEdit)
+			found, allowed, authErr := authorizeManagedDataConnection(r.Context(), accessModule, runtimeHost, principal.ID, activeProjectID, resource, access.ActionConnectionManage)
 			if authErr != nil {
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
@@ -832,19 +692,19 @@ func protectManagedDataTransportWithBootstrapTimeout(
 				http.NotFound(w, r)
 				return
 			}
+			stagingPairs, pairErr := managedDataStagingPermissionPairs(projectID)
+			if pairErr != nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
 			authoringModule, ok := accessModule.(interface {
-				AuthorizeManagedDataStagingRequest(context.Context, *http.Request, string, access.Capability) (bool, error)
+				RequestAllowsTypedPermissions(*http.Request, projectgraph.ResourceID, []access.PermissionPair) bool
 			})
 			if !ok {
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
 			}
-			authorized, authoringErr := authoringModule.AuthorizeManagedDataStagingRequest(r.Context(), r, projectID.String(), access.CapabilityResourceEdit)
-			if authoringErr != nil {
-				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-				return
-			}
-			if !authorized {
+			if !authoringModule.RequestAllowsTypedPermissions(r, projectID, stagingPairs) {
 				http.NotFound(w, r)
 				return
 			}
@@ -860,7 +720,7 @@ func protectManagedDataTransportWithBootstrapTimeout(
 			next.ServeHTTP(w, r)
 			return
 		}
-		allowed, err := authorizeProjectResources(r.Context(), accessModule, runtimeHost, principal.ID, activeProjectID, []access.ResourceRef{resource}, access.CapabilityResourceEdit)
+		_, allowed, err := authorizeTypedResourceAction(r.Context(), accessModule, runtimeHost, principal.ID, activeProjectID, []access.ResourceRef{resource}, access.ActionConnectionManage)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return

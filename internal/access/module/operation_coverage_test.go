@@ -31,19 +31,20 @@ func TestBuildAPIGenOperationCoverageIsDeterministicAndExplicit(t *testing.T) {
 	for _, row := range matrix.Operations {
 		rows[row.OperationID] = row
 	}
-	if row := rows["queryModel"]; row.SupportStatus != APIGenOperationSupported || row.Qualification != APIGenOperationMapped || row.LegacyMode != "typed-attenuated" || len(row.Dependencies) != 1 || row.Dependencies[0] != string(access.ActionSemanticConsume) {
+	if row := rows["queryModel"]; row.SupportStatus != APIGenOperationSupported || row.Qualification != APIGenOperationMapped || len(row.Dependencies) != 1 || row.Dependencies[0] != string(access.ActionSemanticConsume) {
 		t.Fatalf("typed row = %#v", row)
 	}
-	if row := rows["legacyRoute"]; row.SupportStatus != APIGenOperationLegacyOnly || row.Qualification != APIGenOperationLegacy {
-		t.Fatalf("legacy row = %#v", row)
+	if row := rows["legacyRoute"]; row.SupportStatus != APIGenOperationUnsupported || row.Qualification != APIGenOperationUnqualified || row.Reason == "" {
+		t.Fatalf("unmapped privileged row = %#v", row)
 	}
 	if row := rows["partial"]; row.SupportStatus != APIGenOperationUnsupported || row.Qualification != APIGenOperationUnqualified || row.Reason == "" {
 		t.Fatalf("partial row = %#v", row)
 	}
-	valid := BuildAPIGenOperationCoverage(map[string]APIGenOperationContract{
-		"queryModel": operations["queryModel"], "legacyRoute": operations["legacyRoute"],
-	})
+	valid := BuildAPIGenOperationCoverage(map[string]APIGenOperationContract{"queryModel": operations["queryModel"]})
 	if err := ValidateAPIGenOperationCoverage(valid); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateAPIGenOperationCoverage(BuildAPIGenOperationCoverage(map[string]APIGenOperationContract{"legacyRoute": operations["legacyRoute"]})); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateAPIGenOperationCoverage(matrix); err == nil {

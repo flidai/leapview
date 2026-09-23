@@ -82,17 +82,23 @@ func TestCompileAuthorizationSnapshotRejectsKindCapabilityAndImplicitRoles(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowed, err := snapshot.Allows(bindings[0].Subject, resource, access.CapabilityResourcePublish)
-	if err != nil || !allowed {
-		t.Fatalf("captured role did not authorize exact dashboard capability: allowed=%v err=%v", allowed, err)
+	dashboardPublish, err := access.NewExactPermissionPair(access.ActionDashboardPublish, compileTestIdentity().ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typed, err := snapshot.EffectiveTypedPermissions([]access.SubjectRef{bindings[0].Subject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access.PermissionSetAllows(typed, dashboardPublish) {
+		t.Fatal("legacy admin role was implicitly expanded into typed dashboard.publish authority")
 	}
 	model, err := access.NewResourceRef("model_orders", graph.KindModel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowed, err = snapshot.Allows(bindings[0].Subject, model, access.CapabilityResourcePublish)
-	if !errors.Is(err, access.ErrCapabilityNotAllowed) || allowed {
-		t.Fatalf("captured role authorized unsupported model capability: allowed=%v err=%v", allowed, err)
+	if _, err := access.NewExactPermissionPair(access.ActionDashboardPublish, compileTestIdentity().ProjectID, model); err == nil {
+		t.Fatal("typed dashboard.publish action accepted a model target")
 	}
 }
 

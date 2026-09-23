@@ -153,10 +153,9 @@ func (m *Module) authorizeVisualQuery(ctx context.Context, scope agenttools.Scop
 	if scope.DevAuthBypass {
 		return agentcore.ToolResult{}, true
 	}
-	if scope.Credential.PermissionProfile == "" && scope.Credential.Permissions == nil {
-		if !agentCredentialAllowsCapability(scopeFromTools(scope), access.CapabilityResourceUse) {
-			return agenttools.ToolError("forbidden", "credential is not allowed to query this visual"), false
-		}
+	if !scope.Credential.Restricted {
+		// An unrestricted browser session is still checked by the governed
+		// semantic query boundary; there is no token ceiling to apply here.
 		return agentcore.ToolResult{}, true
 	}
 	model, err := projectgraph.NewResourceID(strings.TrimSpace(request.Model))
@@ -292,18 +291,12 @@ func (m *Module) authorizeAPIGenOperation(ctx context.Context, scope agentcap.Sc
 				return agenttools.ToolError("forbidden", "credential is not allowed to call this operation"), false
 			}
 		}
-	} else if typedCredential {
-		// Typed credentials are exact action/target ceilings. They must not be
-		// projected back into a legacy capability-only operation.
-		m.recordToolAudit(ctx, scope, capability, "agent_tool", operationID, "denied", fmt.Errorf("typed credential cannot use legacy operation authority"))
-		return agenttools.ToolError("forbidden", "typed credential scope cannot use this operation"), false
+	} else {
+		m.recordToolAudit(ctx, scope, capability, "agent_tool", operationID, "denied", fmt.Errorf("operation has no typed action and resolver"))
+		return agenttools.ToolError("forbidden", "operation has no typed permission contract"), false
 	}
 	if !hasCapability {
 		return agenttools.ToolError("forbidden", "operation has no generated resource capability metadata"), false
-	}
-	if (!typedOperation || !typedCredential) && !agentCredentialAllowsCapability(scope, capability) {
-		m.recordToolAudit(ctx, scope, capability, "agent_tool", operationID, "denied", fmt.Errorf("credential restriction"))
-		return agenttools.ToolError("forbidden", "credential is not allowed to call this tool"), false
 	}
 	m.recordToolAudit(ctx, scope, capability, "agent_tool", operationID, "success", nil)
 	return agentcore.ToolResult{}, true
@@ -436,22 +429,6 @@ func (m *Module) recordToolAudit(ctx context.Context, scope agentcap.Scope, capa
 	})
 }
 
-func agentCredentialAllowsCapability(scope agentcap.Scope, capability access.Capability) bool {
-	credential := scope.Credential
-	if !credential.Restricted {
-		return true
-	}
-	if credential.Capabilities == nil {
-		return false
-	}
-	for _, allowed := range credential.Capabilities {
-		if strings.EqualFold(strings.TrimSpace(allowed), string(capability)) {
-			return true
-		}
-	}
-	return false
-}
-
 // CredentialAllowsResource applies the credential ceiling to a resolved
 // graph resource. Typed credentials are checked against the exact
 // action/resource pair (including catalog prerequisites); they never fall
@@ -459,9 +436,6 @@ func agentCredentialAllowsCapability(scope agentcap.Scope, capability access.Cap
 func CredentialAllowsResource(scope Scope, id projectgraph.ResourceID, kind projectgraph.Kind, capability access.Capability) bool {
 	if !scope.Credential.Restricted || scope.DevAuthBypass {
 		return true
-	}
-	if scope.Credential.PermissionProfile == "" && scope.Credential.Permissions == nil {
-		return agentCredentialAllowsCapability(scopeFromModule(scope), capability)
 	}
 	action, ok := typedResourceAction(kind, capability)
 	if !ok || scope.Credential.PermissionProfile != access.PermissionCatalogProfile {

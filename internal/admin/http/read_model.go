@@ -216,26 +216,8 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 			Tags:         append([]string(nil), tool.Tags...),
 		})
 	}
-	if !m.AuthConfigured {
-		return data, nil
-	}
-	principal, ok := m.currentPrincipal(r)
-	if !ok || principal.DevBypass {
-		return data, nil
-	}
-	if m.CurrentEffectiveCapabilities == nil {
-		return data, nil
-	}
-	capabilities, err := m.CurrentEffectiveCapabilities(r.Context(), principal.ID)
-	if err != nil {
-		return data, err
-	}
-	for _, capability := range capabilities {
-		if capability == access.CapabilityProjectAdmin {
-			data.CanWrite = true
-			break
-		}
-	}
+	// Authenticated write authority must come from typed effective permissions.
+	// Until this read model receives that projection, keep CanWrite fail-closed.
 	return data, nil
 }
 

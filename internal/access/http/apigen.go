@@ -154,6 +154,12 @@ func (d *APIGenDispatcher) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhtt
 func (d *APIGenDispatcher) ListProjectRoleBindings(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListProjectRoleBindingsParams) {
 	d.handler.ListProjectRoleBindings(w, r)
 }
+func (d *APIGenDispatcher) ExchangeProjectClaimPublisher(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenExchangeProjectClaimPublisherHeaders) {
+	d.handler.ExchangeProjectClaimPublisher(w, r)
+}
+func (d *APIGenDispatcher) AcknowledgeProjectClaimPublisher(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenAcknowledgeProjectClaimPublisherHeaders) {
+	d.handler.AcknowledgeProjectClaimPublisher(w, r)
+}
 func (d *APIGenDispatcher) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenCreateProjectRoleBindingHeaders) {
 	if headers.IdempotencyKey != "" {
 		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)

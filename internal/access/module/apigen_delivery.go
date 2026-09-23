@@ -56,8 +56,8 @@ func (a *APIGenAuthorizer) protectDelivery(operationID string, capability access
 // recheck their durable active-generation and immutable-snapshot fences before
 // committing state. The allowlisted delivery operations accept an exact-scope
 // authoring credential through this branch; publication approval has its own
-// reviewer-only marker, while all other bootstrap requests remain restricted
-// to explicit REST API tokens by AuthorizeBootstrapRequest.
+// reviewer-only marker, while all other bootstrap requests require exact
+// typed project permission pairs on a REST API token.
 func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, capability access.Capability, next http.Handler) http.Handler {
 	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := a.module.CurrentPrincipal(r)
@@ -77,9 +77,19 @@ func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, cap
 			return
 		}
 		if decision.Handled {
+			requirement, typed := a.typedRequirement(operationID)
+			if !typed {
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			pairs, pairErr := requirement.ResolvePairs(projectID)
+			if pairErr != nil {
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
 			if operationID != "approveDeliveryPublicationApproval" && isAuthoringDeliveryBootstrapOperation(operationID) {
 				if credential, found := a.module.requestCredential(r); found && credential.Authoring != nil {
-					authorized, authErr := a.module.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), capability)
+					authorized, authErr := a.module.AuthorizeTypedAuthoringBootstrapRequest(r.Context(), r, projectID.String(), pairs)
 					if authErr != nil {
 						a.module.logger.WarnContext(r.Context(), "generated API authoring bootstrap credential authorization failed", "operation", operationID, "project", projectID, "capability", capability, "error", authErr)
 						http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -99,7 +109,7 @@ func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, cap
 					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 					return
 				}
-				authorized, authErr := a.module.AuthorizePublicationApprovalBootstrapRequest(r.Context(), r, projectID.String())
+				authorized, authErr := a.module.AuthorizeTypedPublicationApprovalBootstrapRequest(r, projectID, pairs)
 				if authErr != nil {
 					a.module.logger.WarnContext(r.Context(), "generated API publication approval bootstrap credential authorization failed", "operation", operationID, "project", projectID, "capability", capability, "error", authErr)
 					http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -117,7 +127,7 @@ func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, cap
 				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 				return
 			}
-			authorized, authErr := a.module.AuthorizeBootstrapRequest(r.Context(), r, capability)
+			authorized, authErr := a.module.AuthorizeTypedBootstrapRequest(r.Context(), r, pairs)
 			if authErr != nil {
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
@@ -156,14 +166,15 @@ func (a *APIGenAuthorizer) authorizeDeliveryRequest(w http.ResponseWriter, r *ht
 		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 		return
 	}
-	if requirement, typedOperation := a.typedRequirement(operationID); typedOperation {
-		pairs, pairErr := requirement.ResolvePairs(projectID)
-		credential, hasCredential := a.module.requestCredential(r)
-		typedToken := hasCredential && strings.TrimSpace(credential.Token.ID) != "" && (credential.Token.PermissionProfile != "" || credential.Token.Permissions != nil)
-		if pairErr != nil || (typedToken && (credential.Token.PermissionProfile != access.PermissionCatalogProfile || !permissionPairsAllowAll(credential.Token.Permissions, pairs))) || (!typedToken && hasCredential && strings.TrimSpace(credential.Token.ID) != "") {
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
+	requirement, typedOperation := a.typedRequirement(operationID)
+	if !typedOperation {
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+	pairs, pairErr := requirement.ResolvePairs(projectID)
+	if pairErr != nil || !a.module.RequestAllowsTypedPermissions(r, projectID, pairs) {
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
 	}
 	next.ServeHTTP(w, r)
 }

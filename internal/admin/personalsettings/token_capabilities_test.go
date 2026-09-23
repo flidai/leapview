@@ -49,15 +49,15 @@ func TestPermissionOptionsSignalPreservesExactActionTargets(t *testing.T) {
 		t.Fatalf("options reused a value across action-target pairs: %#v", options)
 	}
 
-	wantPresentation := map[access.Action][3]string{
-		access.ActionProjectSettingsRead:  {"View project settings", "Current project", "Project administration"},
-		access.ActionPlatformAccessManage: {"Manage platform access", "This instance", "Platform administration"},
-		access.ActionSemanticRead:         {"Operations", "Semantic model · Discover metadata", "Semantic models"},
+	wantPresentation := map[access.Action][4]string{
+		access.ActionProjectSettingsRead:  {"View project settings", "View project settings", "Current project", "Project administration"},
+		access.ActionPlatformAccessManage: {"Manage platform access", "Manage platform access", "This instance", "Platform administration"},
+		access.ActionSemanticRead:         {"Discover metadata", "Operations", "Semantic model · Discover metadata", "Semantic models"},
 	}
 	for _, option := range options {
 		pair := (*option.Permissions)[0]
 		want := wantPresentation[access.Action(pair.Action)]
-		if got := [3]string{option.Label, option.Description, option.Category}; !reflect.DeepEqual(got, want) {
+		if got := [4]string{option.ActionLabel, option.Label, option.Description, option.Category}; !reflect.DeepEqual(got, want) {
 			t.Errorf("presentation for %q = %#v, want %#v", pair.Action, got, want)
 		}
 	}

@@ -160,6 +160,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 #### CLI commands
 
 - [CLI command reference](/docs/cli/reference): Browse every generated LeapView command.
+- [leapview acknowledge-project-claim-publisher](/docs/cli/acknowledge-project-claim-publisher): Acknowledge durable handoff of a Project publisher credential
 - [leapview admin](/docs/cli/admin): Administrative utilities
 - [leapview agent](/docs/cli/agent): Use the LeapView governed BI agent
 - [leapview api](/docs/cli/api): Call any generated LeapView API operation

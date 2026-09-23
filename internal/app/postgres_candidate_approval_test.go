@@ -15,6 +15,7 @@ import (
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/servingstate"
 )
@@ -36,7 +37,7 @@ func (f candidateApprovalStateReaderFake) ArtifactByServingState(context.Context
 	return f.artifact, nil
 }
 
-func TestCandidateApprovalCapabilitiesUsesPersistedProjectAdminPolicy(t *testing.T) {
+func TestCandidateApprovalPermissionsUsesPersistedTypedReviewerPolicy(t *testing.T) {
 	sourceRoot := qualificationEvaluationSourceRoot(t)
 	project, err := projectcompiler.Compile(sourceRoot)
 	if err != nil {
@@ -91,10 +92,19 @@ func TestCandidateApprovalCapabilitiesUsesPersistedProjectAdminPolicy(t *testing
 		ManifestJSON:          string(manifestJSON),
 		SizeBytes:             info.SizeBytes,
 	}
+	reviewer, err := access.NewSubjectRef(access.SubjectKindPrincipal, qualificationReviewerPrincipalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewerBinding, err := access.NewTypedRoleBinding("role-binding:qualification-reviewer", "qualification reviewer", reviewer, access.PermissionRoleReleaseApprover, projectgraph.ResourceID("project:leapview-evaluation"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	accessPolicyJSON, err := json.Marshal(projectmanifest.AccessPolicy{RoleBindings: map[string]projectmanifest.RoleBinding{
 		"qualification-reviewer": {
-			ID: "role-binding:qualification-reviewer", Name: "qualification-reviewer",
-			Role: "admin", Subject: projectmanifest.Subject{Kind: "principal", PrincipalID: qualificationReviewerPrincipalID},
+			ID: reviewerBinding.ID, Name: reviewerBinding.Name,
+			PermissionProfile: reviewerBinding.PermissionProfile, PermissionRole: reviewerBinding.PermissionRole, Permissions: reviewerBinding.Permissions,
+			Subject: projectmanifest.Subject{Kind: "principal", PrincipalID: qualificationReviewerPrincipalID},
 		},
 	}})
 	if err != nil {
@@ -114,22 +124,30 @@ func TestCandidateApprovalCapabilitiesUsesPersistedProjectAdminPolicy(t *testing
 		return []access.SubjectRef{reviewer}, subjectErr
 	}
 
-	projectID, environment, capabilities, err := candidateApprovalCapabilities(
+	projectID, environment, permissions, err := candidateApprovalPermissions(
 		t.Context(), candidateApprovalStateReaderFake{state: state, artifact: artifact}, store, subjects,
 		string(generationID), qualificationReviewerPrincipalID,
 	)
 	if err != nil {
-		t.Fatalf("candidate approval capabilities: %v", err)
+		t.Fatalf("candidate approval permissions: %v", err)
 	}
 	if projectID != "project:leapview-evaluation" || environment != "evaluation" {
 		t.Fatalf("candidate identity = (%q, %q)", projectID, environment)
 	}
-	for _, capability := range capabilities {
-		if capability == access.CapabilityProjectAdmin {
-			return
-		}
+	approvePair, err := access.NewProjectPermissionPair(access.ActionDeliveryApprove, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("qualification reviewer capabilities = %v, want PROJECT_ADMIN", capabilities)
+	if !access.PermissionSetAllows(permissions, approvePair) {
+		t.Fatalf("qualification reviewer permissions = %v, want exact delivery.approve project pair", permissions)
+	}
+	publishPair, err := access.NewProjectPermissionPair(access.ActionDeliveryPublish, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access.PermissionSetAllows(permissions, publishPair) {
+		t.Fatalf("release approver unexpectedly has delivery.publish authority: %v", permissions)
+	}
 }
 
 func qualificationEvaluationSourceRoot(t *testing.T) string {

@@ -2,11 +2,13 @@ package http
 
 import (
 	"context"
+	"errors"
 	nethttp "net/http"
 	"net/url"
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	adminsettings "github.com/flidai/leapview/internal/admin/settings"
 	"github.com/flidai/leapview/internal/admin/ui"
@@ -30,7 +32,20 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 	}
 	command := adminsettings.NormalizeAccessAdministrationCommand(signals.Command)
 	section := strings.TrimSpace(r.URL.Query().Get("section"))
-	started, err := beginAccessAdministrationInvocation(r, command)
+	projectID := ""
+	if command.Action == "grant_role" || command.Action == "revoke_role" {
+		if h.ReadModel.CurrentProjectID == nil {
+			nethttp.Error(w, "active project identity is unavailable", nethttp.StatusServiceUnavailable)
+			return
+		}
+		resolved, resolveErr := h.ReadModel.CurrentProjectID(r.Context())
+		if resolveErr != nil {
+			nethttp.Error(w, resolveErr.Error(), nethttp.StatusServiceUnavailable)
+			return
+		}
+		projectID = resolved.String()
+	}
+	started, err := beginAccessAdministrationInvocation(r, command, projectID)
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 		return
@@ -42,6 +57,43 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 			actorID = principal.ID
 		}
 	}
+	if command.Action == "grant_role" || command.Action == "revoke_role" {
+		if h.RoleBindingMutation == nil {
+			nethttp.Error(w, "role administration is unavailable", nethttp.StatusServiceUnavailable)
+			return
+		}
+		subject := access.SubjectRef{}
+		if command.Action == "grant_role" {
+			var subjectErr error
+			subject, subjectErr = access.NewSubjectRef(access.SubjectKind(command.SubjectType), command.SubjectID)
+			if subjectErr != nil {
+				nethttp.Error(w, subjectErr.Error(), nethttp.StatusBadRequest)
+				return
+			}
+		}
+		_, mutationErr := h.RoleBindingMutation(r, access.RoleBindingAdministrationCommand{
+			Action: command.Action, BindingID: command.BindingID, Subject: subject,
+			Role: access.PermissionRole(command.Role), ExpectedRevision: command.ExpectedRevision,
+			IdempotencyKey: strings.TrimSpace(r.Header.Get("Idempotency-Key")),
+		})
+		state, loadErr := h.loadAccessAdministration(r, actorID, command.PrincipalID, command.GroupID)
+		if loadErr != nil {
+			nethttp.Error(w, loadErr.Error(), nethttp.StatusInternalServerError)
+			return
+		}
+		if mutationErr != nil {
+			state.Error = mutationErr.Error()
+			if state.RoleMutationUnavailableReason != "" {
+				state.Error = state.RoleMutationUnavailableReason
+			}
+		} else if command.Action == "grant_role" {
+			state.Message = "Role assigned. New authority becomes active with the next authorized release."
+		} else {
+			state.Message = "Role removed. Revocation is enforced immediately by current-policy restriction."
+		}
+		_ = pagestream.PatchResponse(w, r, map[string]any{"adminAccess": state})
+		return
+	}
 	result, err := adminsettings.ApplyAccessAdministrationCommand(r.Context(), h.SettingsRepository, actorID, command)
 	if err != nil {
 		selectedPrincipalID, selectedGroupID := command.PrincipalID, command.GroupID
@@ -51,7 +103,7 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 		if section == "groups" {
 			selectedGroupID = ""
 		}
-		state, loadErr := h.loadAccessAdministration(r.Context(), actorID, selectedPrincipalID, selectedGroupID)
+		state, loadErr := h.loadAccessAdministration(r, actorID, selectedPrincipalID, selectedGroupID)
 		if loadErr != nil {
 			nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 			return
@@ -65,7 +117,7 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 		if strings.Contains(command.Action, "group") {
 			destination = "/admin/groups"
 		}
-		state, loadErr := h.loadAccessAdministration(r.Context(), actorID, "", "")
+		state, loadErr := h.loadAccessAdministration(r, actorID, "", "")
 		if loadErr != nil {
 			nethttp.Error(w, loadErr.Error(), nethttp.StatusInternalServerError)
 			return
@@ -82,7 +134,7 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 	if section == "groups" {
 		selectedGroupID = ""
 	}
-	state, err := h.loadAccessAdministration(r.Context(), actorID, selectedPrincipalID, selectedGroupID)
+	state, err := h.loadAccessAdministration(r, actorID, selectedPrincipalID, selectedGroupID)
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 		return
@@ -104,19 +156,40 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 	_ = pagestream.PatchResponse(w, r, patch)
 }
 
-func (h Handler) loadAccessAdministration(ctx context.Context, actorID, selectedPrincipalID, selectedGroupID string) (adminsettings.AccessAdministrationSignal, error) {
+const devBypassRoleMutationUnavailable = "Role changes require a signed-in account with a real session or scoped API credential. This dev server uses authentication bypass, which cannot issue or revoke roles. Restart with LEAPVIEW_DEV_AUTH_BYPASS=false and sign in."
+
+func (h Handler) loadAccessAdministration(r *nethttp.Request, actorID, selectedPrincipalID, selectedGroupID string) (adminsettings.AccessAdministrationSignal, error) {
 	var readers []adminsettings.AuthorizationProjectionReader
 	if h.AuthorizationProjection != nil {
 		readers = append(readers, h.AuthorizationProjection)
 	}
-	state, err := adminsettings.LoadAccessAdministration(ctx, h.SettingsRepository, actorID, selectedPrincipalID, selectedGroupID, readers...)
+	state, err := adminsettings.LoadAccessAdministration(r.Context(), h.SettingsRepository, actorID, selectedPrincipalID, selectedGroupID, readers...)
+	if h.ReadModel.CurrentPrincipal != nil {
+		if principal, ok := h.ReadModel.CurrentPrincipal(r); ok && principal.DevBypass {
+			state.RoleMutationUnavailableReason = devBypassRoleMutationUnavailable
+		}
+	}
+	if err == nil && h.RoleBindingAdministration != nil {
+		policy, policyErr := h.RoleBindingAdministration(r.Context())
+		if policyErr != nil {
+			if errors.Is(policyErr, access.ErrAuthorizationPolicyInvalidScope) || errors.Is(policyErr, access.ErrAuthorizationPolicyNotFound) {
+				return state, nil
+			}
+			return state, policyErr
+		}
+		adminsettings.ApplyRoleBindingAdministrationState(&state, adminsettings.RoleBindingAdministrationStateFromAccess(policy))
+	}
 	return state, err
 }
 
-func beginAccessAdministrationInvocation(r *nethttp.Request, command adminsettings.AccessAdministrationCommand) (*nethttp.Request, error) {
+func beginAccessAdministrationInvocation(r *nethttp.Request, command adminsettings.AccessAdministrationCommand, projectID ...string) (*nethttp.Request, error) {
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
 	idempotencyKey := "ui:" + requestID
+	boundProjectID := ""
+	if len(projectID) > 0 {
+		boundProjectID = strings.TrimSpace(projectID[0])
+	}
 	begin := func(binding uicommand.Binding, start func() (context.Context, error)) (*nethttp.Request, error) {
 		if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), binding.OperationID()); err != nil {
 			return r, err
@@ -186,6 +259,16 @@ func beginAccessAdministrationInvocation(r *nethttp.Request, command adminsettin
 	case "remove_group_member":
 		return begin(accessgen.GenUIActionRemoveGroupMember(), func() (context.Context, error) {
 			ctx, _, err := accessgen.BeginGenRemoveGroupMemberCommand(r.Context(), accessgen.GenRemoveGroupMemberCommandInvocation{Surface: apigencommand.SurfaceUI, Group: command.GroupID, RequestID: requestID, CorrelationID: correlationID})
+			return ctx, err
+		})
+	case "grant_role":
+		return begin(accessgen.GenUIActionCreateProjectRoleBinding(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenCreateProjectRoleBindingCommand(r.Context(), accessgen.GenCreateProjectRoleBindingCommandInvocation{Surface: apigencommand.SurfaceUI, Project: boundProjectID, IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID})
+			return ctx, err
+		})
+	case "revoke_role":
+		return begin(accessgen.GenUIActionDeleteProjectRoleBinding(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenDeleteProjectRoleBindingCommand(r.Context(), accessgen.GenDeleteProjectRoleBindingCommandInvocation{Surface: apigencommand.SurfaceUI, Project: boundProjectID, IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
 	default:

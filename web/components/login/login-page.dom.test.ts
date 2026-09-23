@@ -18,6 +18,7 @@ beforeAll(async () => {
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument({
+        developmentLogin: url.searchParams.get('developmentLogin') === 'true',
         localAuth: url.searchParams.get('localAuth') === 'true',
         ssoAuth: url.searchParams.has('ssoAuth') ? url.searchParams.get('ssoAuth') === 'true' : true,
         mustChangePassword: url.searchParams.get('mustChangePassword') === 'true',
@@ -292,6 +293,37 @@ test('local authentication renders the local login contract', async () => {
   }
 })
 
+test('development login is a one-click ordinary form without exposing credentials', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/?developmentLogin=true&localAuth=true&ssoAuth=false`)
+    await page.waitForFunction(() => customElements.get('lv-login-page'))
+    await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
+
+    const state = await page.locator('lv-login-page').evaluate((element: any) => {
+      const root = element.shadowRoot as ShadowRoot
+      const form = root.querySelector('form[action="/auth/development/login"]') as HTMLFormElement | null
+      return {
+        action: form?.getAttribute('action'),
+        method: form?.getAttribute('method'),
+        label: form?.querySelector('button')?.textContent?.trim(),
+        csrf: Boolean(form?.querySelector('input[name="gorilla.csrf.Token"]')),
+        passwords: form?.querySelectorAll('input[type="password"]').length,
+      }
+    })
+
+    expect(state).toEqual({
+      action: '/auth/development/login',
+      method: 'post',
+      label: 'Continue as Local Developer',
+      csrf: true,
+      passwords: 0,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('password visibility toggles preserve values and never submit the form', async () => {
   const page = await browser.newPage()
   try {
@@ -510,6 +542,7 @@ test('login theme toggle preserves an accessibility theme until the user changes
 })
 
 type TestDocumentOptions = {
+  developmentLogin?: boolean
   localAuth?: boolean
   ssoAuth?: boolean
   mustChangePassword?: boolean
@@ -521,6 +554,7 @@ function testDocument(options: TestDocumentOptions = {}): string {
   const page = {
     kind: 'login',
     title: 'LeapView',
+    developmentLogin: options.developmentLogin ?? false,
     localAuth: options.localAuth ?? false,
     ssoAuth: options.ssoAuth ?? true,
     mustChangePassword: options.mustChangePassword ?? false,

@@ -99,6 +99,8 @@ type Config struct {
 	ProductStatus                     product.Status
 	SettingsAccess                    SettingsAccess
 	AuthorizationProjection           adminsettings.AuthorizationProjectionReader
+	RoleBindingAdministration         func(context.Context) (access.RoleBindingAdministrationState, error)
+	RoleBindingMutation               func(*http.Request, access.RoleBindingAdministrationCommand) (access.RoleBindingAdministrationState, error)
 	CurrentEffectiveCapabilities      func(context.Context, string) ([]access.Capability, error)
 	CurrentEffectivePermissionOptions func(context.Context, string) ([]access.PermissionPair, error)
 	AuthorizeTypedDashboardAction     func(context.Context, string, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (bool, error)
@@ -157,10 +159,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	m.handler = adminhttp.Handler{
 		ReadModel: readModel, Layout: config.Layout,
 		EnsureClientID: config.EnsureClientID, Broker: config.Broker,
-		PublicationMutation:     m.mutatePublication,
-		SettingsRepository:      config.SettingsAccess,
-		AuthorizationProjection: config.AuthorizationProjection,
-		CurrentCredential:       config.CurrentCredential,
+		PublicationMutation:       m.mutatePublication,
+		SettingsRepository:        config.SettingsAccess,
+		AuthorizationProjection:   config.AuthorizationProjection,
+		RoleBindingAdministration: config.RoleBindingAdministration,
+		RoleBindingMutation:       config.RoleBindingMutation,
+		CurrentCredential:         config.CurrentCredential,
 	}
 	if config.SettingsAccess != nil {
 		personalService := &personalsettings.Service{

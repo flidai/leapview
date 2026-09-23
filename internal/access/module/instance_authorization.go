@@ -18,7 +18,15 @@ func (a *APIGenAuthorizer) protectInstance(operationID string, next http.Handler
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
-		if principal.DevBypass {
+		// The first project claim is a one-time credential exchange, not an
+		// ordinary platform-admin operation. A browser session (including a
+		// development bypass session) cannot consume the claim authority.
+		claimOperation := operationID == "bootstrapProjectClaim" || operationID == "exchangeProjectClaimPublisher"
+		if claimOperation && bearerToken(r) == "" {
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+		if principal.DevBypass && !claimOperation {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -33,12 +41,16 @@ func (a *APIGenAuthorizer) protectInstance(operationID string, next http.Handler
 		}
 		credential, hasCredential := a.module.requestCredential(r)
 		if !hasCredential {
+			if claimOperation {
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
 		// Authoring credentials and legacy capability-only API tokens cannot
 		// invoke an operation that has migrated to instance typed authority.
-		if credential.Authoring != nil || strings.TrimSpace(credential.Token.ID) == "" {
+		if credential.Authoring != nil || strings.TrimSpace(credential.Token.ID) == "" || credential.Token.PrincipalID != principal.ID || credential.Principal.ID != principal.ID {
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}

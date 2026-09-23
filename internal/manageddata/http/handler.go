@@ -149,7 +149,7 @@ func (h *Handler) CreateManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceEdit) {
+	if !h.authorizeConnection(w, r, project, connection, access.ActionConnectionManage) {
 		return
 	}
 	var body apigenapi.ManagedDataUploadSessionCreateRequest
@@ -265,7 +265,7 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceEdit) {
+	if !h.authorizeConnection(w, r, project, connection, access.ActionConnectionManage) {
 		return
 	}
 	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession())
@@ -318,7 +318,7 @@ func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceEdit) {
+	if !h.authorizeConnection(w, r, project, connection, access.ActionConnectionManage) {
 		return
 	}
 	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession())
@@ -440,7 +440,7 @@ func (h *Handler) SignManagedDataS3MultipartPart(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	if _, ok := h.recoverUploadWithCapability(w, r, project, connection, uploadSession, access.CapabilityResourceEdit); !ok {
+	if _, ok := h.recoverUploadWithAction(w, r, project, connection, uploadSession, access.ActionConnectionManage); !ok {
 		return
 	}
 	if _, ok := h.actor(w, r); !ok {
@@ -578,7 +578,7 @@ func (h *Handler) collection(w stdhttp.ResponseWriter, r *stdhttp.Request, proje
 		h.writeError(w, r, ErrInvalid)
 		return manageddata.Collection{}, false
 	}
-	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceRead) {
+	if !h.authorizeConnection(w, r, project, connection, access.ActionConnectionRead) {
 		return manageddata.Collection{}, false
 	}
 	collection, err := h.options.Repository.CollectionByProjectConnection(r.Context(), project, connection)
@@ -594,7 +594,7 @@ func (h *Handler) collection(w stdhttp.ResponseWriter, r *stdhttp.Request, proje
 }
 
 func (h *Handler) recoverUpload(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession string) (control.UploadResult, bool) {
-	result, err := h.recoverUploadResult(r, project, connection, uploadSession, access.CapabilityResourceRead)
+	result, err := h.recoverUploadResult(r, project, connection, uploadSession, access.ActionConnectionRead)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrUnavailable):
@@ -608,7 +608,7 @@ func (h *Handler) recoverUpload(w stdhttp.ResponseWriter, r *stdhttp.Request, pr
 }
 
 func (h *Handler) recoverUploadCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID, project, connection, uploadSession string) (control.UploadResult, bool) {
-	result, err := h.recoverUploadResult(r, project, connection, uploadSession, access.CapabilityResourceEdit)
+	result, err := h.recoverUploadResult(r, project, connection, uploadSession, access.ActionConnectionManage)
 	if err != nil {
 		h.writeCommandError(w, r, operationID, err)
 		return control.UploadResult{}, false
@@ -616,8 +616,8 @@ func (h *Handler) recoverUploadCommand(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	return result, true
 }
 
-func (h *Handler) recoverUploadWithCapability(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession string, capability access.Capability) (control.UploadResult, bool) {
-	result, err := h.recoverUploadResult(r, project, connection, uploadSession, capability)
+func (h *Handler) recoverUploadWithAction(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession string, action access.Action) (control.UploadResult, bool) {
+	result, err := h.recoverUploadResult(r, project, connection, uploadSession, action)
 	if err != nil {
 		h.writeError(w, r, err)
 		return control.UploadResult{}, false
@@ -625,14 +625,14 @@ func (h *Handler) recoverUploadWithCapability(w stdhttp.ResponseWriter, r *stdht
 	return result, true
 }
 
-func (h *Handler) recoverUploadResult(r *stdhttp.Request, project, connection, uploadSession string, capability access.Capability) (control.UploadResult, error) {
+func (h *Handler) recoverUploadResult(r *stdhttp.Request, project, connection, uploadSession string, action access.Action) (control.UploadResult, error) {
 	if h.options.Uploads == nil {
 		return control.UploadResult{}, ErrUnavailable
 	}
 	if !validUploadScope(project, connection, uploadSession) {
 		return control.UploadResult{}, ErrInvalid
 	}
-	if err := h.authorizeConnectionContext(r, project, connection, capability); err != nil {
+	if err := h.authorizeConnectionContext(r, project, connection, action); err != nil {
 		return control.UploadResult{}, err
 	}
 	result, err := h.options.Uploads.RecoverUpload(r.Context(), control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession})
@@ -645,15 +645,15 @@ func (h *Handler) recoverUploadResult(r *stdhttp.Request, project, connection, u
 	return result, nil
 }
 
-func (h *Handler) authorizeConnection(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection string, capability access.Capability) bool {
-	if err := h.authorizeConnectionContext(r, project, connection, capability); err != nil {
+func (h *Handler) authorizeConnection(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection string, action access.Action) bool {
+	if err := h.authorizeConnectionContext(r, project, connection, action); err != nil {
 		h.writeError(w, r, err)
 		return false
 	}
 	return true
 }
 
-func (h *Handler) authorizeConnectionContext(r *stdhttp.Request, project, connection string, capability access.Capability) error {
+func (h *Handler) authorizeConnectionContext(r *stdhttp.Request, project, connection string, action access.Action) error {
 	// Route parameters are still validated for development principals. The
 	// bypass skips only the mutable authorization snapshot; it never admits an
 	// arbitrary project/connection selector or malformed resource identity.
@@ -673,7 +673,7 @@ func (h *Handler) authorizeConnectionContext(r *stdhttp.Request, project, connec
 	if h.options.AuthorizeConnection == nil {
 		return ErrUnavailable
 	}
-	allowed, err := h.options.AuthorizeConnection(r.Context(), strings.TrimSpace(principal.ID), project, connection, capability)
+	allowed, err := h.options.AuthorizeConnection(r.Context(), strings.TrimSpace(principal.ID), project, connection, action)
 	if err != nil {
 		return err
 	}

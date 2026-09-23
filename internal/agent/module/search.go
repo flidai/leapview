@@ -67,11 +67,11 @@ func (m *Module) SearchReferences(r *http.Request, _ agent.TurnContext, query st
 
 func toolsCredentialScope(credential access.APICredential) agenttools.CredentialScope {
 	if credential.Authoring != nil {
-		capabilities := make([]string, len(credential.Authoring.Scope.Capabilities))
-		for index, capability := range credential.Authoring.Scope.Capabilities {
-			capabilities[index] = string(capability)
+		permissions := access.ClonePermissionPairs(credential.Authoring.Scope.Permissions)
+		return agenttools.CredentialScope{
+			ProjectID: credential.Authoring.Scope.ProjectID.String(), PermissionProfile: access.PermissionCatalogProfile,
+			Permissions: permissions, Restricted: true,
 		}
-		return agenttools.CredentialScope{ProjectID: credential.Authoring.Scope.ProjectID.String(), Capabilities: capabilities, Restricted: true}
 	}
 	if strings.TrimSpace(credential.Token.ID) == "" {
 		return agenttools.CredentialScope{}

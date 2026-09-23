@@ -5,33 +5,43 @@ env:
 
 tasks:
   dev:
-    desc: Start the managed LeapView dev server for this worktree
+    desc: Start the managed LeapView dev server with real local authentication
     cmds:
       - task: postgres:dev:up
       - task: generate
       - task: build
       - task: bootstrap
       - task: map-assets:install
-      - ./scripts/dev-server.sh start
+      - LEAPVIEW_DEV_SKIP_PUBLISH=1 ./scripts/dev-server.sh start
+
+  dev:bypass:
+    desc: Start the managed dev server with explicit local authentication bypass
+    cmds:
+      - task: postgres:dev:up
+      - task: generate
+      - task: build
+      - task: bootstrap
+      - task: map-assets:install
+      - LEAPVIEW_DEV_AUTH_BYPASS=true LEAPVIEW_LOCAL_AUTH=false ./scripts/dev-server.sh start
 
   dev:movielens:
-    desc: Start the managed LeapView dev server with the MovieLens 32M experiment project
+    desc: Seed and run the MovieLens 32M fixture with explicit auth bypass
     cmds:
       - task: postgres:dev:up
       - task: generate
       - task: build
       - task: bootstrap:movielens
-      - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 LEAPVIEW_DEV_MCP_MODEL_QUERY=movie_ratings LEAPVIEW_DEV_MCP_METRIC=rating_count ./scripts/dev-server.sh start dashboards/experiments/movielens movielens .data/movielens
+      - LEAPVIEW_DEV_AUTH_BYPASS=true LEAPVIEW_LOCAL_AUTH=false LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 LEAPVIEW_DEV_MCP_MODEL_QUERY=movie_ratings LEAPVIEW_DEV_MCP_METRIC=rating_count ./scripts/dev-server.sh start dashboards/experiments/movielens movielens .data/movielens
 
   dev:cfo:
-    desc: Start the managed LeapView dev server with the CFO finance demo
+    desc: Seed and run the CFO finance fixture with explicit auth bypass
     cmds:
       - task: postgres:dev:up
       - task: generate
       - task: build
       - task: bootstrap:cfo
       - task: map-assets:install
-      - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 LEAPVIEW_DEV_MCP_MODEL_QUERY=finance LEAPVIEW_DEV_MCP_METRIC=net_sales ./scripts/dev-server.sh start dashboards/experiments/cfo-demo finance_files .data/cfo-demo
+      - LEAPVIEW_DEV_AUTH_BYPASS=true LEAPVIEW_LOCAL_AUTH=false LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 LEAPVIEW_DEV_MCP_MODEL_QUERY=finance LEAPVIEW_DEV_MCP_METRIC=net_sales ./scripts/dev-server.sh start dashboards/experiments/cfo-demo finance_files .data/cfo-demo
 
   dbt:warehouse:build:
     desc: Build and verify the pinned dbt-duckdb warehouse-boundary Parquet publication
@@ -142,10 +152,20 @@ tasks:
     cmds:
       - ./scripts/dev-server.sh status
 
-  dev:publish:
-    desc: Sync Olist data and publish the exact current development candidate
+  dev:credentials:
+    desc: Show the private local development login after task dev has initialized it
     cmds:
-      - ./scripts/dev-server.sh publish
+      - ./scripts/dev-server.sh credentials
+
+  dev:auth-smoke:
+    desc: Verify real login, group role activation after release, and revocation
+    cmds:
+      - ./scripts/dev-server.sh auth-smoke
+
+  dev:publish:
+    desc: Publish the current development candidate with real scoped authority
+    cmds:
+      - LEAPVIEW_DEV_SKIP_DATA_SYNC=1 ./scripts/dev-server.sh publish
 
   dev:logs:
     desc: Tail managed LeapView dev server logs
@@ -310,11 +330,22 @@ tasks:
   ci:test:docs-site:
     desc: Validate authored documentation and the independently deployable public site
     cmds:
-      - task: docs:generate
-      - task: docs:check
       - |
-        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json)"
-        test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
+        bash scripts/check_generated_snapshots.sh \
+          .env.example \
+          docs/api/openapi.yaml \
+          docs/llms.txt \
+          docs/reference/agent-tools \
+          docs/articles/reference/data-resource-connectors.md \
+          internal/agent/contracts \
+          internal/project/contracts \
+          api/gen/data-resources-ir.json \
+          web/generated/data-resources \
+          schemas/config \
+          schemas/desktop \
+          schemas/json \
+          -- task --force docs:generate
+      - task: docs:check
       - task: site:build
       - bun run test:docs-diagrams
       - bun run test:site
@@ -323,6 +354,7 @@ tasks:
   ci:test:frontend:core:
     desc: Run global browser contracts, typechecks, and core application tests
     cmds:
+      - bun test scripts/generated_snapshot_check.test.ts
       - node --test scripts/ci_watchdog.test.mjs
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/node_deps_contract.test.ts
@@ -989,17 +1021,42 @@ tasks:
 
   generated:check:
     desc: Verify intentional public contract snapshots are current
-    deps:
-      - generate
     cmds:
+      - |
+        bash scripts/check_generated_snapshots.sh \
+          .env.example \
+          adr/specifications/standards-conformance-matrix.md \
+          docs/api/openapi.yaml \
+          docs/llms.txt \
+          docs/reference/agent-tools \
+          docs/articles/reference/data-resource-connectors.md \
+          docs/articles/reference/permissions.md \
+          api/typespec/generated/permissions.tsp \
+          internal/access/generated/permission_catalog.json \
+          internal/access/postgres/permission_contract.sql \
+          internal/agent/contracts \
+          internal/project/contracts \
+          internal/project/ui/signals/models.gen.go \
+          api/gen/data-resources-ir.json \
+          api/gen/pipeline-ir.json \
+          web/generated/data-resources \
+          web/generated/pipeline \
+          schemas/config \
+          schemas/desktop \
+          schemas/json \
+          pkg/duckdbsql/metadata_generated.go \
+          pkg/duckdbsql/ast_schema_generated.go \
+          pkg/duckdbsql/function_docs_generated.go \
+          pkg/duckdbsql/upstream.lock.json \
+          pkg/duckdbsql/internal/cmd/duckdbsqlgen/ast_schema_snapshot.json \
+          pkg/duckdbsql/internal/cmd/duckdbsqlgen/enum_schema_snapshot.json \
+          pkg/duckdbsql/internal/upstream/function_docs.lock.json \
+          -- task --force generate
       - task: adr0016-conformance:check
       - task: duckdbsql:generated:check
       - task: generated:git-check
       - task: config:check
       - task: permission-contracts:check
-      - |
-        changed="$(git status --porcelain -- .env.example adr/specifications/standards-conformance-matrix.md docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md docs/articles/reference/permissions.md api/typespec/generated/permissions.tsp internal/access/generated/permission_catalog.json internal/access/postgres/permission_contract.sql internal/agent/contracts internal/project/contracts internal/project/ui/signals/models.gen.go api/gen/data-resources-ir.json api/gen/pipeline-ir.json web/generated/data-resources web/generated/pipeline schemas/config schemas/desktop schemas/json pkg/duckdbsql/metadata_generated.go pkg/duckdbsql/ast_schema_generated.go pkg/duckdbsql/function_docs_generated.go pkg/duckdbsql/upstream.lock.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/ast_schema_snapshot.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/enum_schema_snapshot.json pkg/duckdbsql/internal/upstream/function_docs.lock.json)"
-        test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
 
   generated:git-check:
     desc: Verify build-only generated code is not tracked by Git
@@ -1665,6 +1722,7 @@ tasks:
   ci:pr:
     desc: Run the fast required contract for every pull-request update
     cmds:
+      - task: generated:check
       - task: ci:prepare
       # Hosted CI runs these lanes in parallel on separate runners. Keep local
       # execution sequential: concurrent Go builds can make Bun's bundler spin,

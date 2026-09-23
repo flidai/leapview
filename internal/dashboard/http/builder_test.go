@@ -265,7 +265,7 @@ func TestDashboardDraftCreateAndForkAuthorizationFailuresRenderBrowserRecovery(t
 			if recorder.Code != nethttp.StatusForbidden || !strings.Contains(recorder.Header().Get("Content-Type"), "text/html") {
 				t.Fatalf("response = %d %q body=%s", recorder.Code, recorder.Header().Get("Content-Type"), recorder.Body.String())
 			}
-			for _, want := range []string{"You don't have access to this dashboard", "Return to Insights", "No changes were made"} {
+			for _, want := range []string{"You don't have access to this dashboard", "Open your profile", "No changes were made"} {
 				if !strings.Contains(recorder.Body.String(), want) {
 					t.Fatalf("response missing %q: %s", want, recorder.Body.String())
 				}

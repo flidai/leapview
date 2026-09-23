@@ -51,22 +51,23 @@ func TestAccessApprovalAuthorizerUsesExactBootstrapAuthorization(t *testing.T) {
 
 func TestAccessApprovalAuthorizerRechecksCandidateSnapshotForFreshReviewer(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_demo")
+	approvePermission := approvalPermission(t, access.ActionDeliveryApprove, projectID)
 	target := depauth.DeliveryTarget{TargetID: "target_demo", ProjectID: projectID.String(), Environment: "production"}
 	tests := []struct {
-		name         string
-		action       depauth.ApprovalAction
-		marker       accessmodule.PublicationApprovalBootstrapAuthorization
-		project      string
-		environment  string
-		capabilities []access.Capability
-		resolveErr   error
-		wantDenied   bool
+		name        string
+		action      depauth.ApprovalAction
+		marker      accessmodule.PublicationApprovalBootstrapAuthorization
+		project     string
+		environment string
+		permissions []access.PermissionPair
+		resolveErr  error
+		wantDenied  bool
 	}{
-		{name: "exact candidate reviewer", action: depauth.ApprovalActionApprove, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: projectID, PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, project: projectID.String(), environment: target.Environment, capabilities: []access.Capability{access.CapabilityProjectAdmin}},
-		{name: "wrong action", action: depauth.ApprovalActionDeny, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: projectID, PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, project: projectID.String(), environment: target.Environment, capabilities: []access.Capability{access.CapabilityProjectAdmin}, wantDenied: true},
-		{name: "foreign marker project", action: depauth.ApprovalActionApprove, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: "project_foreign", PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, project: projectID.String(), environment: target.Environment, capabilities: []access.Capability{access.CapabilityProjectAdmin}, wantDenied: true},
-		{name: "candidate project mismatch", action: depauth.ApprovalActionApprove, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: projectID, PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, project: "project_foreign", environment: target.Environment, capabilities: []access.Capability{access.CapabilityProjectAdmin}, wantDenied: true},
-		{name: "candidate environment mismatch", action: depauth.ApprovalActionApprove, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: projectID, PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, project: projectID.String(), environment: "staging", capabilities: []access.Capability{access.CapabilityProjectAdmin}, wantDenied: true},
+		{name: "exact candidate reviewer", action: depauth.ApprovalActionApprove, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: projectID, PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, project: projectID.String(), environment: target.Environment, permissions: approvePermission},
+		{name: "wrong action", action: depauth.ApprovalActionDeny, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: projectID, PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, project: projectID.String(), environment: target.Environment, permissions: approvePermission, wantDenied: true},
+		{name: "foreign marker project", action: depauth.ApprovalActionApprove, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: "project_foreign", PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, project: projectID.String(), environment: target.Environment, permissions: approvePermission, wantDenied: true},
+		{name: "candidate project mismatch", action: depauth.ApprovalActionApprove, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: projectID, PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, project: "project_foreign", environment: target.Environment, permissions: approvePermission, wantDenied: true},
+		{name: "candidate environment mismatch", action: depauth.ApprovalActionApprove, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: projectID, PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, project: projectID.String(), environment: "staging", permissions: approvePermission, wantDenied: true},
 		{name: "candidate grant missing", action: depauth.ApprovalActionApprove, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: projectID, PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, project: projectID.String(), environment: target.Environment, wantDenied: true},
 		{name: "candidate lookup fails", action: depauth.ApprovalActionApprove, marker: accessmodule.PublicationApprovalBootstrapAuthorization{ProjectID: projectID, PrincipalID: "reviewer", Capability: access.CapabilityProjectAdmin}, resolveErr: errors.New("candidate unavailable"), wantDenied: true},
 	}
@@ -82,11 +83,11 @@ func TestAccessApprovalAuthorizerRechecksCandidateSnapshotForFreshReviewer(t *te
 			authorizer.publicationApprovalAuthorization = func(context.Context) (accessmodule.PublicationApprovalBootstrapAuthorization, bool) {
 				return test.marker, true
 			}
-			authorizer.SetCandidateResolver(func(_ context.Context, generationID, principalID string) (string, string, []access.Capability, error) {
+			authorizer.SetCandidateResolver(func(_ context.Context, generationID, principalID string) (string, string, []access.PermissionPair, error) {
 				if generationID != "generation_demo" || principalID != "reviewer" {
 					t.Fatalf("candidate authorization identity = %q/%q", generationID, principalID)
 				}
-				return test.project, test.environment, test.capabilities, test.resolveErr
+				return test.project, test.environment, test.permissions, test.resolveErr
 			})
 			err = authorizer.AuthorizeApproval(t.Context(), depauth.ApprovalAuthorizationInput{
 				Action: test.action, Request: depauth.ApprovalRequestInput{TargetID: target.TargetID, GenerationID: "generation_demo"}, Actor: depauth.ApprovalActor{PrincipalID: "reviewer"},
@@ -102,7 +103,9 @@ func TestAccessApprovalAuthorizerRechecksCandidateSnapshotForFreshReviewer(t *te
 }
 
 func TestAccessApprovalAuthorizerRetainsActiveSnapshotAuthorization(t *testing.T) {
-	target := depauth.DeliveryTarget{TargetID: "target_demo", ProjectID: "project_demo", Environment: "production"}
+	projectID := projectgraph.ResourceID("project_demo")
+	target := depauth.DeliveryTarget{TargetID: "target_demo", ProjectID: projectID.String(), Environment: "production"}
+	approvePermission := approvalPermission(t, access.ActionDeliveryApprove, projectID)
 	authorizer, err := NewAccessApprovalAuthorizer(target.TargetID, func(context.Context, string) (depauth.DeliveryTarget, error) { return target, nil })
 	if err != nil {
 		t.Fatal(err)
@@ -112,11 +115,11 @@ func TestAccessApprovalAuthorizerRetainsActiveSnapshotAuthorization(t *testing.T
 	}
 	authorizer.SetResolvers(
 		func(context.Context) (string, error) { return target.ProjectID, nil },
-		func(_ context.Context, principalID string) ([]access.Capability, error) {
+		func(_ context.Context, principalID string) ([]access.PermissionPair, error) {
 			if principalID != "reviewer" {
-				t.Fatalf("effective capability principal = %q", principalID)
+				t.Fatalf("effective permission principal = %q", principalID)
 			}
-			return []access.Capability{access.CapabilityProjectAdmin}, nil
+			return approvePermission, nil
 		},
 	)
 	if err := authorizer.AuthorizeApproval(t.Context(), depauth.ApprovalAuthorizationInput{
@@ -124,4 +127,13 @@ func TestAccessApprovalAuthorizerRetainsActiveSnapshotAuthorization(t *testing.T
 	}); err != nil {
 		t.Fatalf("AuthorizeApproval() error = %v", err)
 	}
+}
+
+func approvalPermission(t *testing.T, action access.Action, projectID projectgraph.ResourceID) []access.PermissionPair {
+	t.Helper()
+	pair, err := access.NewProjectPermissionPair(action, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []access.PermissionPair{pair}
 }

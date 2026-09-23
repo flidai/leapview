@@ -43,7 +43,7 @@ func TestStandardOAuthClientUsesRFC8628DeviceFlow(t *testing.T) {
 				"session_kind":  "human_cli",
 				"target_id":     "lvinst_prod",
 				"project_id":    "analytics",
-				"scope":         "RESOURCE_EDIT RESOURCE_PUBLISH",
+			"scope":         "dashboard.update dashboard.publish",
 			})
 		default:
 			http.NotFound(w, r)
@@ -53,9 +53,9 @@ func TestStandardOAuthClientUsesRFC8628DeviceFlow(t *testing.T) {
 
 	client := StandardOAuthClient{HTTPClient: server.Client()}
 	authorization, err := client.Begin(context.Background(), DeviceAuthorizationRequest{
-		Origin:       server.URL,
-		ProjectID:    "analytics",
-		Capabilities: []string{"RESOURCE_EDIT", "RESOURCE_PUBLISH"},
+		Origin:    server.URL,
+		ProjectID: "analytics",
+		Actions:   []access.Action{access.ActionDashboardUpdate, access.ActionDashboardPublish},
 	})
 	if err != nil {
 		t.Fatalf("Begin() error = %v", err)
@@ -83,7 +83,7 @@ func TestStandardOAuthClientUsesRFC8628DeviceFlow(t *testing.T) {
 	}
 	if deviceRequest.Get("client_id") != access.AuthoringCLIClientID ||
 		deviceRequest.Get("project_id") != "analytics" ||
-		deviceRequest.Get("scope") != "RESOURCE_EDIT RESOURCE_PUBLISH" {
+		deviceRequest.Get("scope") != "dashboard.update dashboard.publish" {
 		t.Fatalf("device request = %v", deviceRequest)
 	}
 	if tokenRequest.Get("grant_type") != authoringDeviceGrantType ||
@@ -110,7 +110,7 @@ func TestStandardOAuthClientRefreshesThroughTokenSource(t *testing.T) {
 			"session_kind":  "human_cli",
 			"target_id":     "lvinst_prod",
 			"project_id":    "analytics",
-			"scope":         "RESOURCE_EDIT",
+			"scope":         "dashboard.update",
 		})
 	}))
 	defer server.Close()
@@ -148,7 +148,7 @@ func TestStandardOAuthClientUsesClientCredentialsForWorkloadIdentity(t *testing.
 			"session_kind": "workload",
 			"target_id":    "lvinst_prod",
 			"project_id":   "analytics",
-			"scope":        "RESOURCE_EDIT RESOURCE_PUBLISH",
+			"scope":        "dashboard.update dashboard.publish",
 		})
 	}))
 	defer server.Close()
@@ -158,7 +158,7 @@ func TestStandardOAuthClientUsesClientCredentialsForWorkloadIdentity(t *testing.
 		WorkloadIdentityRequest{
 			Origin: server.URL, InstanceID: "lvinst_prod", ProjectID: "analytics",
 			ClientID: "sp-ci", ClientSecret: "service-secret",
-			Capabilities: []string{"RESOURCE_EDIT", "RESOURCE_PUBLISH"}, Lifetime: 10 * time.Minute,
+			Actions: []access.Action{access.ActionDashboardUpdate, access.ActionDashboardPublish}, Lifetime: 10 * time.Minute,
 		},
 	)
 	if err != nil {
@@ -171,7 +171,7 @@ func TestStandardOAuthClientUsesClientCredentialsForWorkloadIdentity(t *testing.
 		request.Get("client_id") != "sp-ci" ||
 		request.Get("client_secret") != "service-secret" ||
 		request.Get("project_id") != "analytics" ||
-		request.Get("scope") != "RESOURCE_EDIT RESOURCE_PUBLISH" ||
+		request.Get("scope") != "dashboard.update dashboard.publish" ||
 		request.Get("lifetime_seconds") != "600" {
 		t.Fatalf("request=%v", request)
 	}

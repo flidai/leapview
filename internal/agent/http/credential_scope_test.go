@@ -19,16 +19,24 @@ func TestAgentCredentialScopeRejectsOmittedTokenCapabilities(t *testing.T) {
 	}
 }
 
-func TestAgentCredentialScopePreservesAuthoringProjectAndCapabilities(t *testing.T) {
+func TestAgentCredentialScopePreservesAuthoringProjectAndPermissions(t *testing.T) {
+	resource, err := access.NewResourceRef("model:sales", projectgraph.KindSemanticModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := access.NewExactPermissionPair(access.ActionSemanticRead, "project:analytics", resource)
+	if err != nil {
+		t.Fatal(err)
+	}
 	scope, err := access.NewAuthoringScope(
 		"instance-prod", projectgraph.ResourceID("project:analytics"),
-		[]access.Capability{access.CapabilityResourcePublish},
+		[]access.PermissionPair{pair},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := agentCredentialScope(access.APICredential{Authoring: &access.AuthoringSession{Scope: scope}})
-	if !got.Restricted || got.ProjectID != "project:analytics" || len(got.Capabilities) != 1 || got.Capabilities[0] != "RESOURCE_PUBLISH" {
+	if !got.Restricted || got.ProjectID != "project:analytics" || got.PermissionProfile != access.PermissionCatalogProfile || len(got.Permissions) != 1 || got.Permissions[0] != pair {
 		t.Fatalf("authoring credential scope = %#v", got)
 	}
 }

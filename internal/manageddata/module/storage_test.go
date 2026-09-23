@@ -19,24 +19,24 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/storage"
 )
 
-func allowAllConnectionAuthorization(context.Context, string, string, string, access.Capability) (bool, error) {
+func allowAllConnectionAuthorization(context.Context, string, string, string, access.Action) (bool, error) {
 	return true, nil
 }
 
 func TestSetAuthorizeConnectionUpdatesModuleEventAuthorization(t *testing.T) {
 	module := &Module{}
 	called := false
-	module.SetAuthorizeConnection(func(_ context.Context, principalID, projectID, connectionID string, capability access.Capability) (bool, error) {
+	module.SetAuthorizeConnection(func(_ context.Context, principalID, projectID, connectionID string, action access.Action) (bool, error) {
 		called = true
-		if principalID != "principal:test" || projectID != "project:test" || connectionID != "connection:test" || capability != access.CapabilityResourceRead {
-			t.Fatalf("unexpected authorization tuple %q %q %q %q", principalID, projectID, connectionID, capability)
+		if principalID != "principal:test" || projectID != "project:test" || connectionID != "connection:test" || action != access.ActionConnectionRead {
+			t.Fatalf("unexpected authorization tuple %q %q %q %q", principalID, projectID, connectionID, action)
 		}
 		return true, nil
 	})
 	if module.authorizeConnection == nil {
 		t.Fatal("module event authorizer was not installed")
 	}
-	allowed, err := module.authorizeConnection(t.Context(), "principal:test", "project:test", "connection:test", access.CapabilityResourceRead)
+	allowed, err := module.authorizeConnection(t.Context(), "principal:test", "project:test", "connection:test", access.ActionConnectionRead)
 	if err != nil || !allowed || !called {
 		t.Fatalf("module event authorization allowed=%v called=%v error=%v", allowed, called, err)
 	}

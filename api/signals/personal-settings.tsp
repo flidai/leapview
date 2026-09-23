@@ -55,7 +55,8 @@ model PersonalAuthoringSessionSignal {
   `clientId`: string;
   `targetId`: string;
   `projectId`: string;
-  `capabilities`: string[];
+  `permissionProfile`: string;
+  `permissions`: PersonalPermissionPairSignal[];
   `createdAt`: string;
   `lastUsedAt`: string;
   `expiresAt`: string;
@@ -96,6 +97,8 @@ model PersonalPermissionPairSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model PersonalCapabilityOptionSignal {
   `value`: string;
+  /** Human-facing action name used to group resource targets into one policy block. */
+  `actionLabel`: string;
   `label`: string;
   `description`: string;
   `category`: string;

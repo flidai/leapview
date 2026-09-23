@@ -178,7 +178,7 @@ func TestCancelUploadCompletesOnlyItsGeneratedCommandGuard(t *testing.T) {
 }
 
 func TestDevelopmentBypassOnlySkipsConnectionSnapshotAuthorization(t *testing.T) {
-	deny := func(context.Context, string, string, string, access.Capability) (bool, error) { return false, nil }
+	deny := func(context.Context, string, string, string, access.Action) (bool, error) { return false, nil }
 	for _, test := range []struct {
 		name       string
 		principal  managedhttp.Principal
@@ -504,7 +504,7 @@ func newHandler(repo managedhttp.Repository, uploads managedhttp.UploadCoordinat
 func handlerOptions(repo managedhttp.Repository, uploads managedhttp.UploadCoordinator, multipart s3multipart.Coordinator) managedhttp.Options {
 	return managedhttp.Options{
 		Repository: repo, Uploads: uploads, Multipart: multipart, Environment: "prod",
-		AuthorizeConnection: func(context.Context, string, string, string, access.Capability) (bool, error) { return true, nil },
+		AuthorizeConnection: func(context.Context, string, string, string, access.Action) (bool, error) { return true, nil },
 		EnqueueFinalize:     func(context.Context, control.UploadRequest) error { return nil },
 		BuildAuditIntent: func(context.Context, managedhttp.CommandAuditInput) (*access.AuditIntent, error) {
 			return &access.AuditIntent{}, nil

@@ -12,16 +12,17 @@ import (
 )
 
 type authorizationCall struct {
-	kind       string
-	actor      string
-	project    graph.ResourceID
-	resource   access.ResourceRef
-	capability access.Capability
+	kind     string
+	actor    string
+	project  graph.ResourceID
+	resource access.ResourceRef
+	action   access.Action
 }
 
 type authorizationPolicy struct {
-	resourceAllowed bool
-	projectAllowed  map[access.Capability]bool
+	resourceAllowed map[access.Action]bool
+	projectAllowed  map[access.Action]bool
+	untypedAction   access.Action
 	err             error
 	calls           []authorizationCall
 }
@@ -29,13 +30,13 @@ type authorizationPolicy struct {
 func (p *authorizationPolicy) adapter(t *testing.T) *Adapter {
 	t.Helper()
 	adapter, err := New(Options{
-		AuthorizeResource: func(_ context.Context, actor string, project graph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
-			p.calls = append(p.calls, authorizationCall{kind: "resource", actor: actor, project: project, resource: resource, capability: capability})
-			return p.resourceAllowed, p.err
+		AuthorizeTypedResource: func(_ context.Context, actor string, project graph.ResourceID, resource access.ResourceRef, action access.Action) (bool, bool, error) {
+			p.calls = append(p.calls, authorizationCall{kind: "resource", actor: actor, project: project, resource: resource, action: action})
+			return action != p.untypedAction, p.resourceAllowed[action], p.err
 		},
-		AuthorizeProjectCapability: func(_ context.Context, actor string, project graph.ResourceID, capability access.Capability) (bool, error) {
-			p.calls = append(p.calls, authorizationCall{kind: "project", actor: actor, project: project, capability: capability})
-			return p.projectAllowed[capability], p.err
+		AuthorizeTypedProject: func(_ context.Context, actor string, project graph.ResourceID, action access.Action) (bool, bool, error) {
+			p.calls = append(p.calls, authorizationCall{kind: "project", actor: actor, project: project, action: action})
+			return action != p.untypedAction, p.projectAllowed[action], p.err
 		},
 	})
 	if err != nil {
@@ -44,19 +45,19 @@ func (p *authorizationPolicy) adapter(t *testing.T) *Adapter {
 	return adapter
 }
 
-func TestProjectDashboardMapsEveryActionToExactResourceCapability(t *testing.T) {
+func TestProjectDashboardMapsEveryActionToExactTypedResourcePair(t *testing.T) {
 	tests := []struct {
-		action     authoring.AuthorizationAction
-		capability access.Capability
+		action authoring.AuthorizationAction
+		want   access.Action
 	}{
-		{authoring.AuthorizationActionView, access.CapabilityResourceRead},
-		{authoring.AuthorizationActionEdit, access.CapabilityResourceEdit},
-		{authoring.AuthorizationActionPublish, access.CapabilityResourcePublish},
-		{authoring.AuthorizationActionArchive, access.CapabilityResourceManage},
+		{authoring.AuthorizationActionView, access.ActionDashboardRead},
+		{authoring.AuthorizationActionEdit, access.ActionDashboardUpdate},
+		{authoring.AuthorizationActionPublish, access.ActionDashboardPublish},
+		{authoring.AuthorizationActionArchive, access.ActionDashboardDelete},
 	}
 	for _, test := range tests {
 		t.Run(string(test.action), func(t *testing.T) {
-			policy := &authorizationPolicy{resourceAllowed: true, projectAllowed: map[access.Capability]bool{}}
+			policy := &authorizationPolicy{resourceAllowed: map[access.Action]bool{test.want: true}}
 			err := policy.adapter(t).Authorize(t.Context(), service.AuthorizationRequest{
 				ActorID: " actor-1 ", ProjectID: "project-1", DashboardID: "dashboard-1",
 				Target: service.AuthorizationTargetProjectDashboard, Action: test.action,
@@ -64,245 +65,118 @@ func TestProjectDashboardMapsEveryActionToExactResourceCapability(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(policy.calls) != 1 || policy.calls[0].kind != "resource" || policy.calls[0].capability != test.capability || policy.calls[0].resource.CanonicalID() != "dashboard-1" {
+			if len(policy.calls) != 1 || policy.calls[0].kind != "resource" || policy.calls[0].action != test.want ||
+				policy.calls[0].actor != "actor-1" || policy.calls[0].project != "project-1" ||
+				policy.calls[0].resource.CanonicalID() != "dashboard-1" || policy.calls[0].resource.Kind() != graph.KindDashboard {
 				t.Fatalf("authorization calls = %#v", policy.calls)
 			}
 		})
 	}
 }
 
-func TestNewDashboardRequiresProjectEditAndOwnerOrAdmin(t *testing.T) {
-	policy := &authorizationPolicy{resourceAllowed: true, projectAllowed: map[access.Capability]bool{access.CapabilityResourceEdit: true}}
+func TestNewDashboardRequiresTypedCreateAndSemanticRead(t *testing.T) {
 	request := service.AuthorizationRequest{
-		ActorID: "author", ProjectID: "project", DashboardID: "dashboard-new", OwnerPrincipalID: "author", SemanticModel: "semantic-model",
+		ActorID: "author", ProjectID: "project", DashboardID: "dashboard-new", OwnerPrincipalID: "other-owner", SemanticModel: "semantic-model",
 		Target: service.AuthorizationTargetNewDashboard, Visibility: authoring.VisibilityPrivate, Action: authoring.AuthorizationActionEdit,
 	}
-	if err := policy.adapter(t).Authorize(t.Context(), request); err != nil {
-		t.Fatal(err)
+	policy := &authorizationPolicy{
+		resourceAllowed: map[access.Action]bool{access.ActionSemanticRead: true},
+		projectAllowed:  map[access.Action]bool{access.ActionDashboardCreate: true},
 	}
-	if len(policy.calls) != 2 || policy.calls[0].kind != "project" || policy.calls[0].capability != access.CapabilityResourceEdit ||
-		policy.calls[1].kind != "resource" || policy.calls[1].resource.Kind() != graph.KindSemanticModel || policy.calls[1].capability != access.CapabilityResourceRead {
+	if err := policy.adapter(t).Authorize(t.Context(), request); err != nil {
+		t.Fatalf("typed dashboard creation for another owner = %v", err)
+	}
+	if len(policy.calls) != 2 || policy.calls[0].kind != "project" || policy.calls[0].action != access.ActionDashboardCreate ||
+		policy.calls[1].kind != "resource" || policy.calls[1].action != access.ActionSemanticRead ||
+		policy.calls[1].resource.Kind() != graph.KindSemanticModel || policy.calls[1].resource.CanonicalID() != "semantic-model" {
 		t.Fatalf("authorization calls = %#v", policy.calls)
 	}
 
-	policy = &authorizationPolicy{projectAllowed: map[access.Capability]bool{access.CapabilityResourceEdit: true}}
-	request.OwnerPrincipalID = "other"
-	if err := policy.adapter(t).Authorize(t.Context(), request); !errors.Is(err, access.ErrForbidden) {
-		t.Fatalf("non-owner create error = %v", err)
-	}
-	policy = &authorizationPolicy{resourceAllowed: true, projectAllowed: map[access.Capability]bool{access.CapabilityResourceEdit: true, access.CapabilityProjectAdmin: true}}
-	if err := policy.adapter(t).Authorize(t.Context(), request); err != nil {
-		t.Fatalf("admin create error = %v", err)
+	policy = &authorizationPolicy{projectAllowed: map[access.Action]bool{access.ActionDashboardCreate: true}}
+	err := policy.adapter(t).Authorize(t.Context(), request)
+	if !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("missing semantic read error = %v, want forbidden", err)
 	}
 }
 
-func TestNewDashboardRequiresGovernedSemanticModelRead(t *testing.T) {
-	policy := &authorizationPolicy{projectAllowed: map[access.Capability]bool{access.CapabilityResourceEdit: true}}
+func TestAuthoredDashboardRequiresExactTypedActionRegardlessOfOwnerOrVisibility(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		actor      string
+		owner      string
+		visibility authoring.Visibility
+	}{
+		{name: "owner private", actor: "owner", owner: "owner", visibility: authoring.VisibilityPrivate},
+		{name: "organization reader", actor: "reader", owner: "owner", visibility: authoring.VisibilityOrganization},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			policy := &authorizationPolicy{resourceAllowed: map[access.Action]bool{access.ActionDashboardRead: true}}
+			err := policy.adapter(t).Authorize(t.Context(), service.AuthorizationRequest{
+				ActorID: test.actor, ProjectID: "project", DashboardID: "dashboard", OwnerPrincipalID: test.owner,
+				Target: service.AuthorizationTargetAuthoredDashboard, Visibility: test.visibility, Action: authoring.AuthorizationActionView,
+			})
+			if err != nil {
+				t.Fatalf("typed dashboard read = %v", err)
+			}
+			if len(policy.calls) != 1 || policy.calls[0].kind != "resource" || policy.calls[0].action != access.ActionDashboardRead {
+				t.Fatalf("authorization calls = %#v", policy.calls)
+			}
+		})
+	}
+
+	// Ownership and visibility metadata do not replace an exact assignment.
+	policy := &authorizationPolicy{}
 	err := policy.adapter(t).Authorize(t.Context(), service.AuthorizationRequest{
-		ActorID: "actor", ProjectID: "project", DashboardID: "allocated-dashboard", OwnerPrincipalID: "actor", SemanticModel: "semantic-model",
-		Target: service.AuthorizationTargetNewDashboard, Visibility: authoring.VisibilityPrivate, Action: authoring.AuthorizationActionEdit,
+		ActorID: "owner", ProjectID: "project", DashboardID: "dashboard", OwnerPrincipalID: "owner",
+		Target: service.AuthorizationTargetAuthoredDashboard, Visibility: authoring.VisibilityPrivate, Action: authoring.AuthorizationActionView,
 	})
 	if !errors.Is(err, access.ErrForbidden) {
-		t.Fatalf("missing semantic-model access error = %v, want forbidden", err)
-	}
-	if len(policy.calls) != 2 || policy.calls[1].kind != "resource" || policy.calls[1].resource.Kind() != graph.KindSemanticModel || policy.calls[1].capability != access.CapabilityResourceRead {
-		t.Fatalf("authorization calls = %#v", policy.calls)
+		t.Fatalf("owner without a typed action = %v, want forbidden", err)
 	}
 }
 
-func TestAuthoredDashboardCombinesVisibilityOwnershipAndProjectCapability(t *testing.T) {
+func TestAuthoredDashboardDependencyChangeRequiresIndependentSemanticRead(t *testing.T) {
 	request := service.AuthorizationRequest{
-		ActorID: "reader", ProjectID: "project", DashboardID: "dashboard-authored", OwnerPrincipalID: "owner",
-		Target: service.AuthorizationTargetAuthoredDashboard, Visibility: authoring.VisibilityOrganization, Action: authoring.AuthorizationActionView,
-	}
-	policy := &authorizationPolicy{projectAllowed: map[access.Capability]bool{access.CapabilityResourceRead: true}}
-	if err := policy.adapter(t).Authorize(t.Context(), request); err != nil {
-		t.Fatalf("organization read error = %v", err)
-	}
-
-	for _, visibility := range []authoring.Visibility{authoring.VisibilityPrivate, authoring.VisibilityRestricted} {
-		policy = &authorizationPolicy{projectAllowed: map[access.Capability]bool{access.CapabilityResourceRead: true}}
-		request.Visibility = visibility
-		if err := policy.adapter(t).Authorize(t.Context(), request); !errors.Is(err, access.ErrForbidden) {
-			t.Fatalf("%s non-owner read error = %v", visibility, err)
-		}
-	}
-
-	request.ActorID = "owner"
-	request.Visibility = authoring.VisibilityPrivate
-	policy = &authorizationPolicy{projectAllowed: map[access.Capability]bool{access.CapabilityResourceRead: true}}
-	if err := policy.adapter(t).Authorize(t.Context(), request); err != nil {
-		t.Fatalf("owner read error = %v", err)
-	}
-
-	request.ActorID = "editor"
-	request.Action = authoring.AuthorizationActionEdit
-	policy = &authorizationPolicy{projectAllowed: map[access.Capability]bool{access.CapabilityResourceEdit: true}}
-	if err := policy.adapter(t).Authorize(t.Context(), request); !errors.Is(err, access.ErrForbidden) {
-		t.Fatalf("non-owner edit error = %v", err)
-	}
-	policy = &authorizationPolicy{projectAllowed: map[access.Capability]bool{access.CapabilityResourceEdit: true, access.CapabilityProjectAdmin: true}}
-	if err := policy.adapter(t).Authorize(t.Context(), request); err != nil {
-		t.Fatalf("admin edit error = %v", err)
-	}
-}
-
-func TestAuthoredDashboardDependencyChangeRequiresIndependentSemanticModelRead(t *testing.T) {
-	policy := &authorizationPolicy{resourceAllowed: true, projectAllowed: map[access.Capability]bool{
-		access.CapabilityResourceEdit: true,
-	}}
-	err := policy.adapter(t).Authorize(t.Context(), service.AuthorizationRequest{
 		ActorID: "owner", ProjectID: "project", DashboardID: "dashboard", OwnerPrincipalID: "owner",
 		SemanticModel: "semantic-replacement", DependencyChange: true,
 		Target: service.AuthorizationTargetAuthoredDashboard, Visibility: authoring.VisibilityPrivate,
 		Action: authoring.AuthorizationActionEdit,
-	})
-	if err != nil {
+	}
+	policy := &authorizationPolicy{resourceAllowed: map[access.Action]bool{
+		access.ActionDashboardUpdate: true,
+		access.ActionSemanticRead:    true,
+	}}
+	if err := policy.adapter(t).Authorize(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
-	if len(policy.calls) != 2 || policy.calls[0].kind != "project" || policy.calls[0].capability != access.CapabilityResourceEdit ||
-		policy.calls[1].kind != "resource" || policy.calls[1].resource.Kind() != graph.KindSemanticModel ||
-		policy.calls[1].resource.CanonicalID() != "semantic-replacement" || policy.calls[1].capability != access.CapabilityResourceRead {
+	if len(policy.calls) != 2 || policy.calls[0].action != access.ActionDashboardUpdate ||
+		policy.calls[1].resource.Kind() != graph.KindSemanticModel || policy.calls[1].action != access.ActionSemanticRead {
 		t.Fatalf("dependency authorization calls = %#v", policy.calls)
 	}
 
-	policy = &authorizationPolicy{projectAllowed: map[access.Capability]bool{access.CapabilityResourceEdit: true}}
-	err = policy.adapter(t).Authorize(t.Context(), service.AuthorizationRequest{
-		ActorID: "owner", ProjectID: "project", DashboardID: "dashboard", OwnerPrincipalID: "owner",
-		SemanticModel: "semantic-replacement", DependencyChange: true,
-		Target: service.AuthorizationTargetAuthoredDashboard, Visibility: authoring.VisibilityPrivate,
-		Action: authoring.AuthorizationActionEdit,
+	policy = &authorizationPolicy{resourceAllowed: map[access.Action]bool{access.ActionDashboardUpdate: true}}
+	if err := policy.adapter(t).Authorize(t.Context(), request); !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("missing semantic read error = %v, want forbidden", err)
+	}
+}
+
+func TestMissingTypedDecisionFailsClosed(t *testing.T) {
+	policy := &authorizationPolicy{
+		resourceAllowed: map[access.Action]bool{access.ActionDashboardUpdate: true},
+		untypedAction:   access.ActionDashboardUpdate,
+	}
+	err := policy.adapter(t).Authorize(t.Context(), service.AuthorizationRequest{
+		ActorID: "actor", ProjectID: "project", DashboardID: "dashboard",
+		Target: service.AuthorizationTargetProjectDashboard, Action: authoring.AuthorizationActionEdit,
 	})
 	if !errors.Is(err, access.ErrForbidden) {
-		t.Fatalf("missing dependency authority error = %v, want forbidden", err)
-	}
-}
-
-func TestAuthoredLifecycleActionsUsePublishAndManageCapabilities(t *testing.T) {
-	for _, test := range []struct {
-		action authoring.AuthorizationAction
-		want   access.Capability
-	}{{authoring.AuthorizationActionPublish, access.CapabilityResourcePublish}, {authoring.AuthorizationActionArchive, access.CapabilityResourceManage}} {
-		policy := &authorizationPolicy{projectAllowed: map[access.Capability]bool{test.want: true}}
-		err := policy.adapter(t).Authorize(t.Context(), service.AuthorizationRequest{
-			ActorID: "owner", ProjectID: "project", DashboardID: "dashboard", OwnerPrincipalID: "owner",
-			Target: service.AuthorizationTargetAuthoredDashboard, Visibility: authoring.VisibilityPrivate, Action: test.action,
-		})
-		if err != nil || len(policy.calls) != 1 || policy.calls[0].capability != test.want {
-			t.Fatalf("%s authorization = %#v, %v", test.action, policy.calls, err)
-		}
-	}
-}
-
-func TestTypedAssignmentsAuthorizeAuthoredDashboardWithoutLegacyRole(t *testing.T) {
-	legacyCalls := 0
-	adapter, err := New(Options{
-		AuthorizeResource: func(context.Context, string, graph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
-			legacyCalls++
-			return true, nil
-		},
-		AuthorizeProjectCapability: func(context.Context, string, graph.ResourceID, access.Capability) (bool, error) {
-			legacyCalls++
-			return true, nil
-		},
-		AuthorizeTypedResource: func(_ context.Context, _ string, project graph.ResourceID, resource access.ResourceRef, action access.Action) (bool, bool, error) {
-			if project != "project" || resource.CanonicalID() != "dashboard" || action != access.ActionDashboardUpdate {
-				t.Fatalf("typed dashboard request = %q/%q/%q", project, resource.CanonicalID(), action)
-			}
-			return true, true, nil
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = adapter.Authorize(t.Context(), service.AuthorizationRequest{
-		ActorID: "group-member", ProjectID: "project", DashboardID: "dashboard", OwnerPrincipalID: "different-owner",
-		Target: service.AuthorizationTargetAuthoredDashboard, Visibility: authoring.VisibilityPrivate, Action: authoring.AuthorizationActionEdit,
-	})
-	if err != nil {
-		t.Fatalf("typed authored dashboard authorization = %v", err)
-	}
-	if legacyCalls != 0 {
-		t.Fatalf("legacy authorization calls = %d, want 0", legacyCalls)
-	}
-}
-
-func TestTypedAssignmentDenialDoesNotFallBackToLegacyAuthoringRole(t *testing.T) {
-	legacyCalls := 0
-	adapter, err := New(Options{
-		AuthorizeResource: func(context.Context, string, graph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
-			legacyCalls++
-			return true, nil
-		},
-		AuthorizeProjectCapability: func(context.Context, string, graph.ResourceID, access.Capability) (bool, error) {
-			legacyCalls++
-			return true, nil
-		},
-		AuthorizeTypedResource: func(context.Context, string, graph.ResourceID, access.ResourceRef, access.Action) (bool, bool, error) {
-			return true, false, nil
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = adapter.Authorize(t.Context(), service.AuthorizationRequest{
-		ActorID: "group-member", ProjectID: "project", DashboardID: "dashboard", OwnerPrincipalID: "group-member",
-		Target: service.AuthorizationTargetAuthoredDashboard, Visibility: authoring.VisibilityPrivate, Action: authoring.AuthorizationActionEdit,
-	})
-	if !errors.Is(err, access.ErrForbidden) {
-		t.Fatalf("typed denial error = %v, want forbidden", err)
-	}
-	if legacyCalls != 0 {
-		t.Fatalf("legacy authorization calls = %d, want 0", legacyCalls)
-	}
-}
-
-func TestTypedAssignmentsAuthorizeNewDashboardAndSemanticDependency(t *testing.T) {
-	var typedProjectAction access.Action
-	var typedResources []access.Action
-	adapter, err := New(Options{
-		AuthorizeResource: func(context.Context, string, graph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
-			return false, nil
-		},
-		AuthorizeProjectCapability: func(context.Context, string, graph.ResourceID, access.Capability) (bool, error) {
-			return false, nil
-		},
-		AuthorizeTypedProject: func(_ context.Context, _ string, project graph.ResourceID, action access.Action) (bool, bool, error) {
-			if project != "project" {
-				t.Fatalf("typed project target = %q", project)
-			}
-			typedProjectAction = action
-			return true, true, nil
-		},
-		AuthorizeTypedResource: func(_ context.Context, _ string, project graph.ResourceID, resource access.ResourceRef, action access.Action) (bool, bool, error) {
-			if project != "project" || resource.Kind() != graph.KindSemanticModel || resource.CanonicalID() != "semantic" {
-				t.Fatalf("typed semantic target = %q/%q", resource.Kind(), resource.CanonicalID())
-			}
-			typedResources = append(typedResources, action)
-			return true, true, nil
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = adapter.Authorize(t.Context(), service.AuthorizationRequest{
-		ActorID: "group-member", ProjectID: "project", DashboardID: "new-dashboard", OwnerPrincipalID: "different-owner", SemanticModel: "semantic",
-		Target: service.AuthorizationTargetNewDashboard, Visibility: authoring.VisibilityPrivate, Action: authoring.AuthorizationActionEdit,
-	})
-	if err != nil {
-		t.Fatalf("typed new dashboard authorization = %v", err)
-	}
-	if typedProjectAction != access.ActionDashboardCreate {
-		t.Fatalf("typed project action = %q, want %q", typedProjectAction, access.ActionDashboardCreate)
-	}
-	if len(typedResources) != 1 || typedResources[0] != access.ActionSemanticRead {
-		t.Fatalf("typed semantic actions = %v, want semantic.read", typedResources)
+		t.Fatalf("untyped allowed result = %v, want forbidden", err)
 	}
 }
 
 func TestAuthorizePreservesDecisionErrorsAndRejectsInvalidContracts(t *testing.T) {
 	backendErr := errors.New("authorization backend unavailable")
-	policy := &authorizationPolicy{resourceAllowed: true, projectAllowed: map[access.Capability]bool{}, err: backendErr}
+	policy := &authorizationPolicy{err: backendErr}
 	if err := policy.adapter(t).Authorize(t.Context(), validRequest()); !errors.Is(err, backendErr) || errors.Is(err, access.ErrForbidden) {
 		t.Fatalf("backend error = %v", err)
 	}
@@ -311,7 +185,7 @@ func TestAuthorizePreservesDecisionErrorsAndRejectsInvalidContracts(t *testing.T
 	}
 	invalid := validRequest()
 	invalid.Target = "unknown"
-	if err := (&authorizationPolicy{projectAllowed: map[access.Capability]bool{}}).adapter(t).Authorize(t.Context(), invalid); err == nil {
+	if err := (&authorizationPolicy{}).adapter(t).Authorize(t.Context(), invalid); err == nil {
 		t.Fatal("unknown target succeeded")
 	}
 }

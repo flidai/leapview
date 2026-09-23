@@ -116,7 +116,19 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 				if err != nil {
 					return false, err
 				}
-				return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
+				if resource.Kind() != projectgraph.KindPipeline {
+					return false, nil
+				}
+				var action access.Action
+				switch capability {
+				case access.CapabilityResourceRead:
+					action = access.ActionPipelineRead
+				case access.CapabilityResourceUse:
+					action = access.ActionPipelineRun
+				default:
+					return false, nil
+				}
+				return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, action)
 			},
 		},
 		Admission: workloadController(&runtime.workloads), LeaseTimeout: storage.jobLeaseTimeout,

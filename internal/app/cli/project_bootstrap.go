@@ -89,8 +89,19 @@ func bootstrapProjectCommand(ctx context.Context, root *rootOptions) *cobra.Comm
 			if err := validateProjectClaimBootstrapResponse(response.Body, authority, instance.Environment); err != nil {
 				return err
 			}
+			publisherKey := uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview/project-claim-publisher/"+instance.Id+"/"+authority.IssuerID+"/"+authority.ProjectUID+"/"+instance.Environment)).String()
+			publisherResponse, err := accessgen.NewGenClient(capabilityAPITransport{target: credentials.Target, token: credentials.Token, client: http.DefaultClient}).ExchangeProjectClaimPublisher(ctx, accessgen.GenExchangeProjectClaimPublisherClientRequest{
+				Project: response.Body.ProjectUid,
+				Headers: accessgen.GenExchangeProjectClaimPublisherClientHeaders{IdempotencyKey: publisherKey},
+			})
+			if err != nil {
+				return fmt.Errorf("exchange Project claim publisher: %w", err)
+			}
+			if err := validateProjectClaimPublisherResponse(publisherResponse.Body); err != nil {
+				return err
+			}
 			policyRevision, policyDigest, err := bootstrapProjectOwnerPolicy(
-				ctx, accessgen.NewGenClient(capabilityAPITransport{target: credentials.Target, token: credentials.Token, client: http.DefaultClient}),
+				ctx, accessgen.NewGenClient(capabilityAPITransport{target: credentials.Target, token: publisherResponse.Body.PublisherToken, client: http.DefaultClient}),
 				instance.Id, response.Body.ProjectUid, response.Body.Environment, response.Body.ClaimedBy,
 			)
 			if err != nil {
@@ -105,15 +116,51 @@ func bootstrapProjectCommand(ctx context.Context, root *rootOptions) *cobra.Comm
 					"environment":                 response.Body.Environment,
 					"authorizationPolicyRevision": policyRevision,
 					"authorizationPolicyDigest":   policyDigest,
+					"claimCredentialId":           publisherResponse.Body.ClaimCredentialId,
+					"publisherToken":              publisherResponse.Body.PublisherToken,
+					"publisherTokenExpiresAt":     publisherResponse.Body.PublisherTokenExpiresAt,
 				})
 			}
-			fmt.Fprintf(command.OutOrStdout(), "Bootstrapped %s with ProjectUID %s (%s), authorization policy revision %d (%s)\n", credentials.Target, response.Body.ProjectUid, response.Body.Environment, policyRevision, policyDigest)
+			fmt.Fprintf(command.OutOrStdout(), "Bootstrapped %s with ProjectUID %s (%s), authorization policy revision %d (%s); publisher handoff awaiting acknowledgement\n", credentials.Target, response.Body.ProjectUid, response.Body.Environment, policyRevision, policyDigest)
 			return nil
 		},
 	}
 	command.Flags().StringVar(&root.token, "token", root.token, "instance-admin API token")
 	command.Flags().StringVar(&externallyIssuedUID, "project-uid", "", "externally issued ProjectUID (first bootstrap only)")
 	command.Flags().StringVar(&format, "format", format, "output format: text or json")
+	return command
+}
+
+func acknowledgeProjectClaimPublisherCommand(ctx context.Context, root *rootOptions) *cobra.Command {
+	var claimCredentialID string
+	command := &cobra.Command{
+		Use:   "acknowledge-project-claim-publisher <target> <project>",
+		Short: "Acknowledge durable handoff of a Project publisher credential",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(command *cobra.Command, args []string) error {
+			resolved, err := (capabilityAPIClient{}).Resolve(ctx, cliapi.Credentials{Target: args[0], Token: root.token})
+			if err != nil {
+				return err
+			}
+			claimCredentialID = strings.TrimSpace(claimCredentialID)
+			if claimCredentialID == "" || claimCredentialID != strings.TrimSpace(claimCredentialID) {
+				return errors.New("claim credential ID is required")
+			}
+			key := uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview/project-claim-publisher-ack/"+claimCredentialID+"/"+args[1])).String()
+			_, err = accessgen.NewGenClient(capabilityAPITransport{target: resolved.Target, token: resolved.Token, client: http.DefaultClient}).AcknowledgeProjectClaimPublisher(ctx, accessgen.GenAcknowledgeProjectClaimPublisherClientRequest{
+				Project: args[1],
+				Headers: accessgen.GenAcknowledgeProjectClaimPublisherClientHeaders{IdempotencyKey: key},
+				Body:    accessgen.GenSchemaProjectClaimPublisherAcknowledgeRequest{ClaimCredentialId: claimCredentialID},
+			})
+			if err != nil {
+				return fmt.Errorf("acknowledge Project claim publisher: %w", err)
+			}
+			_, err = fmt.Fprintf(command.OutOrStdout(), "Acknowledged Project claim publisher for %s\n", args[1])
+			return err
+		},
+	}
+	command.Flags().StringVar(&root.token, "token", root.token, "project publisher API token")
+	command.Flags().StringVar(&claimCredentialID, "claim-credential-id", "", "one-time claim credential ID")
 	return command
 }
 
@@ -186,45 +233,12 @@ func bootstrapProjectOwnerPolicy(ctx context.Context, client *accessgen.GenClien
 	if validationErr != nil {
 		return 0, "", fmt.Errorf("current bootstrap policy is incompatible: %w", validationErr)
 	}
-	if !bootstrapPrincipalHasAdministrator(bindings, principalID) {
-		// A short-lived release created empty revision-one heads from legacy `{}`
-		// serving policies. Recover only after proving the current policy is
-		// canonical and empty, then append project_admin through ordinary CAS.
-		if createErr != nil && len(bindings) == 0 {
-			repaired, repairErr := create(bootstrapBindingSpecs[0], listed.Body.PolicyRevision)
-			if repairErr != nil {
-				return 0, "", fmt.Errorf("create initial project-admin binding: %w (repair canonical empty policy at revision %d: %v)", createErr, listed.Body.PolicyRevision, repairErr)
-			}
-			if repairErr := validateBootstrapOwnerBinding(repaired.Body, targetID, projectID, environment, principalID); repairErr != nil {
-				return 0, "", fmt.Errorf("repair canonical empty bootstrap policy: %w", repairErr)
-			}
-			current, currentErr := client.ListProjectRoleBindings(ctx, accessgen.GenListProjectRoleBindingsClientRequest{
-				Project: projectID, Params: accessgen.GenListProjectRoleBindingsClientParams{Limit: &limit},
-			})
-			if currentErr != nil {
-				return 0, "", fmt.Errorf("verify repaired bootstrap policy: %w", currentErr)
-			}
-			bindings, currentErr = validateBootstrapPolicy(current.Body, targetID, projectID, environment)
-			if currentErr != nil || !bootstrapPrincipalHasAdministrator(bindings, principalID) {
-				if currentErr == nil {
-					currentErr = errors.New("claiming principal has no administrator role binding")
-				}
-				return 0, "", fmt.Errorf("repaired bootstrap policy is incompatible: %w", currentErr)
-			}
-			listed = current
-		} else {
-			return 0, "", errors.New("claiming principal has no administrator role binding")
-		}
+	if !bootstrapPrincipalHasProjectAdmin(bindings, principalID) {
+		return 0, "", errors.New("claiming principal has no typed project_admin role binding")
 	}
 
 	for _, spec := range bootstrapBindingSpecs {
 		if bootstrapPrincipalHasTypedRole(bindings, principalID, spec.role) {
-			continue
-		}
-		// Legacy owner/admin bindings are retained as-is. They satisfy the
-		// bootstrap administrator prerequisite, while the composable delivery
-		// roles below are still added explicitly.
-		if spec.role == access.PermissionRoleProjectAdmin && bootstrapPrincipalHasAdministrator(bindings, principalID) {
 			continue
 		}
 		for _, binding := range bindings {
@@ -317,9 +331,9 @@ func validateBootstrapOwnerBinding(binding accessgen.GenSchemaRoleBindingRespons
 	return nil
 }
 
-func bootstrapPrincipalHasAdministrator(bindings []access.RoleBinding, principalID string) bool {
+func bootstrapPrincipalHasProjectAdmin(bindings []access.RoleBinding, principalID string) bool {
 	for _, binding := range bindings {
-		if binding.Subject.Kind == access.SubjectKindPrincipal && binding.Subject.ID == principalID && bootstrapAdministratorRole(binding) {
+		if binding.Subject.Kind == access.SubjectKindPrincipal && binding.Subject.ID == principalID && binding.PermissionRole == access.PermissionRoleProjectAdmin {
 			return true
 		}
 	}
@@ -347,30 +361,7 @@ func validateBootstrapPolicy(policy accessgen.GenSchemaRoleBindingListResponse, 
 	}
 	bindings := make([]access.RoleBinding, 0, len(policy.Items))
 	for _, item := range policy.Items {
-		subject, err := access.NewSubjectRef(access.SubjectKind(item.SubjectType), item.SubjectId)
-		if err != nil {
-			return nil, err
-		}
-		var binding access.RoleBinding
-		if item.PermissionProfile != nil || item.Permissions != nil {
-			binding, err = bootstrapTypedRoleBinding(item.Id, item.Name, item.SubjectType, item.SubjectId, item.Role, item.PermissionProfile, item.Permissions, projectgraph.ResourceID(projectID))
-		} else {
-			role, roleErr := access.ParseProjectRole(item.Role)
-			if roleErr != nil {
-				return nil, roleErr
-			}
-			if item.Capabilities == nil {
-				return nil, errors.New("legacy role binding omitted capabilities")
-			}
-			capabilities := make([]access.Capability, len(*item.Capabilities))
-			for index, capability := range *item.Capabilities {
-				capabilities[index] = access.Capability(capability)
-			}
-			binding = access.RoleBinding{ID: item.Id, Name: item.Name, Subject: subject, Role: role, Capabilities: capabilities}
-			if err = access.ValidateAuthorizationRoleBinding(binding); err != nil {
-				return nil, err
-			}
-		}
+		binding, err := bootstrapTypedRoleBinding(item.Id, item.Name, item.SubjectType, item.SubjectId, item.Role, item.PermissionProfile, item.Permissions, projectgraph.ResourceID(projectID))
 		if err != nil {
 			return nil, err
 		}
@@ -387,10 +378,6 @@ func validateBootstrapPolicy(policy accessgen.GenSchemaRoleBindingListResponse, 
 		return nil, errors.New("authorization policy digest does not match its canonical bindings")
 	}
 	return bindings, nil
-}
-
-func bootstrapAdministratorRole(binding access.RoleBinding) bool {
-	return binding.PermissionRole == access.PermissionRoleProjectAdmin || binding.Role == access.ProjectRoleOwner || binding.Role == access.ProjectRoleAdmin
 }
 
 func bootstrapTypedRoleBinding(id, name, subjectType, subjectID, role string, profile *accessgen.GenSchemaPermissionCatalogProfile, pairs *[]accessgen.GenSchemaPermissionPair, projectID projectgraph.ResourceID) (access.RoleBinding, error) {
@@ -416,18 +403,6 @@ func bootstrapTypedRoleBinding(id, name, subjectType, subjectID, role string, pr
 	return binding, nil
 }
 
-func validateBootstrapCapabilities(actual []accessgen.GenSchemaCapability, expected []access.Capability) error {
-	if len(actual) != len(expected) {
-		return errors.New("bootstrap owner capabilities are not canonical")
-	}
-	for index := range expected {
-		if string(actual[index]) != string(expected[index]) {
-			return errors.New("bootstrap owner capabilities are not canonical")
-		}
-	}
-	return nil
-}
-
 func validateProjectClaimBootstrapResponse(response deploymentgen.ProjectClaimBootstrapResponse, authority cliapi.ProjectAuthority, environment string) error {
 	if response.ProjectUid != authority.ProjectUID {
 		return fmt.Errorf("bootstrap Project claim returned ProjectUID %q, want %q", response.ProjectUid, authority.ProjectUID)
@@ -441,6 +416,20 @@ func validateProjectClaimBootstrapResponse(response deploymentgen.ProjectClaimBo
 	claimedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(response.ClaimedAt))
 	if err != nil || claimedAt.IsZero() {
 		return fmt.Errorf("bootstrap Project claim returned invalid claimedAt %q", response.ClaimedAt)
+	}
+	return nil
+}
+
+func validateProjectClaimPublisherResponse(response accessgen.ProjectClaimPublisherExchangeResponse) error {
+	if _, err := uuid.Parse(strings.TrimSpace(response.ClaimCredentialId)); err != nil || response.ClaimCredentialId != strings.TrimSpace(response.ClaimCredentialId) {
+		return errors.New("Project claim publisher exchange returned an invalid claim credential ID")
+	}
+	if strings.TrimSpace(response.PublisherToken) == "" {
+		return errors.New("Project claim publisher exchange returned an empty publisher token")
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(response.PublisherTokenExpiresAt))
+	if err != nil || expiresAt.IsZero() || !expiresAt.After(time.Now().UTC()) {
+		return errors.New("Project claim publisher exchange returned an invalid expiry")
 	}
 	return nil
 }

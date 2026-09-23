@@ -326,6 +326,7 @@ func (a *APIGenAuthorizer) projectBoundaryProjectID(ctx context.Context) (projec
 func isBootstrapAPIGenOperation(operationID string) bool {
 	switch operationID {
 	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
+		"acknowledgeProjectClaimPublisher",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
 		"createProjectRoleBinding", "listProjectRoleBindings":
@@ -401,7 +402,12 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 			return
 		}
 		if isAuthoringBootstrapOperation(operationID) {
-			authorized, err := a.module.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), capability)
+			pairs, pairErr := a.bootstrapOperationPairs(operationID, r, projectID)
+			if pairErr != nil {
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			authorized, err := a.module.AuthorizeTypedAuthoringBootstrapRequest(r.Context(), r, projectID.String(), pairs)
 			if err != nil {
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
@@ -421,13 +427,29 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 			}
 		}
 		// Bootstrap is intentionally narrower than normal project RBAC: only a
-		// REST API token with an explicit capability allowlist may establish the
-		// first project operation.
+		// REST API token with exact typed action-target authority may establish
+		// the first project operation.
 		if bearerToken(r) == "" {
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
-		authorized, err := a.module.AuthorizeBootstrapRequest(r.Context(), r, capability)
+		pairs, pairErr := a.bootstrapOperationPairs(operationID, r, projectID)
+		if pairErr != nil {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		var authorized bool
+		if operationID == "acknowledgeProjectClaimPublisher" {
+			// ACK is authorized by the active publisher bearer itself. The
+			// publisher token's exact project.access.manage ceiling is the
+			// bootstrap authority; requiring a second, unrelated platform-role
+			// baseline here would make acknowledgement depend on a role change
+			// after exchange. The handler and transactional repository further
+			// bind it to the exact live publisher credential and claim.
+			authorized = a.module.RequestAllowsTypedPermissions(r, projectID, pairs)
+		} else {
+			authorized, err = a.module.AuthorizeTypedBootstrapRequest(r.Context(), r, pairs)
+		}
 		if err != nil {
 			a.module.logger.WarnContext(
 				r.Context(),
@@ -496,6 +518,35 @@ func managedDataConnectionID(r *http.Request, projectID projectgraph.ResourceID,
 	return resources[0].ID(), true
 }
 
+func (a *APIGenAuthorizer) bootstrapOperationPairs(operationID string, r *http.Request, projectID projectgraph.ResourceID) ([]access.PermissionPair, error) {
+	if isManagedDataBootstrapOperation(operationID) {
+		// Before activation there is no graph object to manage. The
+		// project-scoped create action is the only authority for staging its
+		// first upload; existing connections take the exact manage path below.
+		if _, ok := managedDataConnectionID(r, projectID, a.resourceResolverForContractMust(operationID)); !ok {
+			return nil, access.ErrTypedOperationTargetRequired
+		}
+		pair, err := access.NewProjectPermissionPair(access.ActionConnectionCreate, projectID)
+		if err != nil {
+			return nil, err
+		}
+		return []access.PermissionPair{pair}, nil
+	}
+	requirement, ok := a.typedRequirement(operationID)
+	if !ok {
+		return nil, access.ErrTypedOperationActionRequired
+	}
+	resolve := a.resourceResolverForContractMust(operationID)
+	if resolve == nil {
+		return nil, access.ErrTypedOperationTargetRequired
+	}
+	resources := resolve(r, projectID)
+	if len(resources) == 0 {
+		return nil, access.ErrTypedOperationTargetRequired
+	}
+	return requirement.ResolvePairs(projectID, resources...)
+}
+
 // protectManagedDataStaging preserves normal snapshot RBAC for every active
 // connection. The scoped authoring fallback is considered only for the exact
 // connection that the active predecessor graph proves is missing.
@@ -521,7 +572,19 @@ func (a *APIGenAuthorizer) protectManagedDataStaging(operationID string, capabil
 			next.ServeHTTP(w, r)
 			return
 		}
-		found, allowed, err := a.authorizeManagedDataConnection(r.Context(), principal.ID, projectID, resource, capability)
+		requirement, typed := a.typedRequirement(operationID)
+		if !typed {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		resourcePairs, pairErr := requirement.ResolvePairs(projectID, resource)
+		createPair, createErr := access.NewProjectPermissionPair(access.ActionConnectionCreate, projectID)
+		if pairErr != nil || createErr != nil {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		stagingPairs := []access.PermissionPair{createPair}
+		found, allowed, err := a.authorizeManagedDataConnection(r.Context(), principal.ID, projectID, resource, resourcePairs, stagingPairs)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
@@ -532,16 +595,7 @@ func (a *APIGenAuthorizer) protectManagedDataStaging(operationID string, capabil
 				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
 			}
-			effective, effectiveErr := a.module.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
-			if effectiveErr != nil {
-				if errors.Is(effectiveErr, access.ErrForbidden) {
-					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-					return
-				}
-				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-				return
-			}
-			if !containsCapability(effective, capability) {
+			if !a.module.RequestAllowsTypedPermissions(r, projectID, resourcePairs) {
 				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
 			}
@@ -557,12 +611,11 @@ func (a *APIGenAuthorizer) protectManagedDataStaging(operationID string, capabil
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
-		authorized, authErr := a.module.AuthorizeManagedDataStagingRequest(r.Context(), r, projectID.String(), capability)
-		if authErr != nil {
-			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		if bearerToken(r) == "" {
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
-		if !authorized {
+		if !a.module.RequestAllowsTypedPermissions(r, projectID, stagingPairs) {
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -572,10 +625,10 @@ func (a *APIGenAuthorizer) protectManagedDataStaging(operationID string, capabil
 
 // authorizeManagedDataConnection returns found=false only when one leased,
 // identity-bound snapshot proves the exact connection is absent. In that case
-// allowed reports whether the same snapshot carries a project role with the
-// requested capability; direct grants on unrelated resources cannot authorize
-// successor staging.
-func (a *APIGenAuthorizer) authorizeManagedDataConnection(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (found, allowed bool, err error) {
+// allowed reports whether typed principal/group authority covers the exact
+// existing connection, or project-level connection.create for a successor
+// that the graph proves is absent.
+func (a *APIGenAuthorizer) authorizeManagedDataConnection(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, existingPairs, stagingPairs []access.PermissionPair) (found, allowed bool, err error) {
 	lease, err := a.runtime.Acquire(ctx)
 	if err != nil {
 		return false, false, err
@@ -606,82 +659,9 @@ func (a *APIGenAuthorizer) authorizeManagedDataConnection(ctx context.Context, p
 	}
 	graphResource, exists := snapshot.Project().Resource(resource.ID())
 	if !exists || graphResource.Kind != resource.Kind() {
-		return false, accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
+		return false, snapshotAllowsTyped(snapshot, subjects, stagingPairs), nil
 	}
-	for _, subject := range subjects {
-		candidate, candidateErr := snapshot.Allows(subject, resource, capability)
-		if candidateErr != nil {
-			return true, false, candidateErr
-		}
-		if candidate {
-			return true, true, nil
-		}
-	}
-	return true, false, nil
-}
-
-func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resources []access.ResourceRef, capability access.Capability) (bool, error) {
-	lease, err := a.runtime.Acquire(ctx)
-	if err != nil {
-		return false, err
-	}
-	if lease == nil {
-		return false, fmt.Errorf("runtime host returned a nil lease")
-	}
-	defer lease.Release()
-	if lease.Identity().ProjectID != projectID {
-		return false, fmt.Errorf("runtime project %q does not match requested project %q", lease.Identity().ProjectID, projectID)
-	}
-	authorizedLease, ok := lease.(interface {
-		AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
-	})
-	if !ok {
-		return false, fmt.Errorf("active runtime lease does not expose authorization snapshot")
-	}
-	subjects, err := a.module.AuthorizationSubjects(ctx, principalID)
-	if err != nil {
-		return false, err
-	}
-	snapshot := authorizedLease.AuthorizationSnapshot()
-	if snapshot.Identity() != lease.Identity() {
-		return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
-	}
-	if err := snapshot.ValidateBound(); err != nil {
-		return false, err
-	}
-	for _, resource := range resources {
-		if resource.Kind() == projectgraph.KindProjectNamespace {
-			if resource.ID() != projectID {
-				return false, errAPIGenResourceNotFound
-			}
-		} else {
-			graphResource, exists := snapshot.Project().Resource(resource.ID())
-			if !exists || graphResource.Kind != resource.Kind() {
-				return false, errAPIGenResourceNotFound
-			}
-		}
-		if resource.Kind() == projectgraph.KindProjectNamespace && !access.SupportsCapability(resource.Kind(), capability) {
-			if !accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability) {
-				return false, nil
-			}
-			continue
-		}
-		allowed := false
-		for _, subject := range subjects {
-			candidate, err := snapshot.Allows(subject, resource, capability)
-			if err != nil {
-				return false, err
-			}
-			if candidate {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return false, nil
-		}
-	}
-	return true, nil
+	return true, snapshotAllowsTyped(snapshot, subjects, existingPairs), nil
 }
 
 func (a *APIGenAuthorizer) validateOperation(operationID string, contract APIGenOperationContract) error {

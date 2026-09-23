@@ -632,8 +632,9 @@ CREATE TABLE access.api_token (
     CHECK (octet_length(token_fingerprint)=32),
     CHECK (octet_length(verifier) BETWEEN 32 AND 512),
     CHECK (access.valid_permission_pairs(permission_profile, permissions)),
-    CHECK ((permission_profile IS NULL AND permissions IS NULL)
-        OR (permission_profile = 'leapview.permissions/v1' AND capabilities IS NULL)),
+    CONSTRAINT access_api_token_typed_scope_check
+        CHECK ((permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL AND capabilities IS NULL)
+            OR (permission_profile IS NULL AND permissions IS NULL AND revoked_at IS NOT NULL)),
     CHECK (expires_at > created_at AND expires_at <= created_at + interval '365 days')
 );
 CREATE INDEX access_api_token_principal_idx ON access.api_token(principal_id, created_at DESC);
@@ -723,7 +724,7 @@ BEGIN
 END; $$;
 CREATE OR REPLACE FUNCTION access.reject_device_authorization_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF OLD.id<>NEW.id OR OLD.client_id<>NEW.client_id OR OLD.device_code_hash<>NEW.device_code_hash OR OLD.user_code_hash<>NEW.user_code_hash OR OLD.target_id<>NEW.target_id OR OLD.project_id<>NEW.project_id OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.created_at<>NEW.created_at OR OLD.expires_at<>NEW.expires_at THEN
+    IF OLD.id<>NEW.id OR OLD.client_id<>NEW.client_id OR OLD.device_code_hash<>NEW.device_code_hash OR OLD.user_code_hash<>NEW.user_code_hash OR OLD.target_id<>NEW.target_id OR OLD.project_id<>NEW.project_id OR OLD.permission_profile<>NEW.permission_profile OR OLD.permissions IS DISTINCT FROM NEW.permissions OR OLD.created_at<>NEW.created_at OR OLD.expires_at<>NEW.expires_at THEN
         RAISE EXCEPTION 'device authorization identity is immutable';
     END IF;
     IF OLD.status='pending' AND NEW.status NOT IN ('pending','approved','denied') THEN
@@ -1065,7 +1066,8 @@ CREATE TABLE access.device_authorization (
     user_code_hash text NOT NULL UNIQUE CHECK (user_code_hash ~ '^[0-9a-f]{64}$'),
     target_id text NOT NULL CHECK (target_id = btrim(target_id) AND length(target_id)<=255),
     project_id text NOT NULL CHECK (project_id = btrim(project_id) AND length(project_id)<=255),
-    capabilities jsonb NOT NULL CHECK (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048),
+    permission_profile text NOT NULL CHECK (permission_profile='leapview.permissions/v1'),
+    permissions jsonb NOT NULL CHECK (access.valid_permission_pairs(permission_profile, permissions) AND octet_length(permissions::text)<=16384),
     status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','denied','consumed')),
     principal_id uuid REFERENCES access.principal(id),
     expires_at timestamptz NOT NULL,
@@ -1089,7 +1091,8 @@ CREATE TABLE access.authoring_session (
     principal_id uuid NOT NULL REFERENCES access.principal(id),
     target_id text NOT NULL CHECK (length(target_id)<=255),
     project_id text NOT NULL CHECK (length(project_id)<=255),
-    capabilities jsonb NOT NULL CHECK (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048),
+    permission_profile text NOT NULL CHECK (permission_profile='leapview.permissions/v1'),
+    permissions jsonb NOT NULL CHECK (access.valid_permission_pairs(permission_profile, permissions) AND octet_length(permissions::text)<=16384),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     last_used_at timestamptz,
     expires_at timestamptz NOT NULL,
@@ -1192,7 +1195,7 @@ BEGIN
     IF TG_TABLE_NAME='desktop_authorization_code' THEN
         IF OLD.code_hash<>NEW.code_hash OR OLD.principal_id<>NEW.principal_id OR OLD.client_id<>NEW.client_id OR OLD.instance_id<>NEW.instance_id OR OLD.profile_id<>NEW.profile_id OR OLD.redirect_uri<>NEW.redirect_uri OR OLD.code_challenge<>NEW.code_challenge OR OLD.return_path<>NEW.return_path OR OLD.expires_at<>NEW.expires_at OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'desktop authorization identity is immutable'; END IF;
     ELSIF TG_TABLE_NAME='authoring_session' THEN
-        IF OLD.id<>NEW.id OR OLD.kind<>NEW.kind OR OLD.client_id<>NEW.client_id OR OLD.principal_id<>NEW.principal_id OR OLD.target_id<>NEW.target_id OR OLD.project_id<>NEW.project_id OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authoring session identity is immutable'; END IF;
+        IF OLD.id<>NEW.id OR OLD.kind<>NEW.kind OR OLD.client_id<>NEW.client_id OR OLD.principal_id<>NEW.principal_id OR OLD.target_id<>NEW.target_id OR OLD.project_id<>NEW.project_id OR OLD.permission_profile<>NEW.permission_profile OR OLD.permissions IS DISTINCT FROM NEW.permissions OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authoring session identity is immutable'; END IF;
     ELSIF TG_TABLE_NAME='authoring_credential' THEN
         IF OLD.id<>NEW.id OR OLD.session_id<>NEW.session_id OR OLD.access_token_hash<>NEW.access_token_hash OR OLD.refresh_token_hash IS DISTINCT FROM NEW.refresh_token_hash OR OLD.access_expires_at<>NEW.access_expires_at OR OLD.refresh_expires_at IS DISTINCT FROM NEW.refresh_expires_at OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authoring credential identity is immutable'; END IF;
     END IF;

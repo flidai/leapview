@@ -134,11 +134,15 @@ func TestSCIMDisableRevokesCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	apiToken, _, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-		PrincipalID:  userID,
-		Name:         "disabled-user-token",
-		Capabilities: []access.Capability{access.CapabilityResourceRead},
-		ExpiresAt:    time.Now().Add(time.Hour),
+	scoped, ok := repo.(access.ScopedAPITokenRepository)
+	if !ok {
+		t.Fatal("SCIM test repository does not support typed API tokens")
+	}
+	apiToken, _, err := scoped.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
+		PrincipalID: userID,
+		Name:        "disabled-user-token",
+		Permissions: []access.PermissionPair{},
+		ExpiresAt:   time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("create api token: %v", err)

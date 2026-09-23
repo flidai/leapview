@@ -13533,7 +13533,7 @@ paths:
         owner: LeapViewAPI.Deployment
         privilege: PLATFORM_ADMIN
       x-authz:
-        action: platform.access.manage
+        action: instance.project.claim
         mode: privilege
         resolver: instance
         privilege: PLATFORM_ADMIN
@@ -16249,15 +16249,22 @@ paths:
                 $ref: '#/components/schemas/AuthoringSessionListResponse'
               example:
                 items:
-                  - capabilities:
-                      - PLATFORM_ADMIN
-                    clientId: example
+                  - clientId: example
                     createdAt: "2026-01-02T15:04:05Z"
                     current: true
                     expiresAt: "2026-01-02T15:04:05Z"
                     id: example
                     kind: example
                     lastUsedAt: "2026-01-02T15:04:05Z"
+                    permissionProfile: leapview.permissions/v1
+                    permissions:
+                      - action: dashboard.read
+                        profile: leapview.permissions/v1
+                        target:
+                          projectId: project:analytics
+                          resourceId: dashboard:sales
+                          resourceKind: dashboard
+                          scope: resource
                     projectId: example
                     revokedAt: "2026-01-02T15:04:05Z"
                     targetId: example
@@ -16766,12 +16773,14 @@ paths:
           guarantee: transactional
           payload:
             fields:
-              - name: capabilities
-                sensitivity: public
               - name: clientId
                 sensitivity: internal
               - name: kind
                 sensitivity: internal
+              - name: permissionProfile
+                sensitivity: public
+              - name: permissions
+                sensitivity: public
               - name: projectId
                 sensitivity: internal
               - name: targetId
@@ -41714,6 +41723,628 @@ paths:
         resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
+  /api/v1/projects/{project}/project-claim-publisher/acknowledge:
+    post:
+      operationId: acknowledgeProjectClaimPublisher
+      summary: Acknowledge receipt of the project-claim publisher credential
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers
+            may be useful. '
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectClaimPublisherAcknowledgeRequest'
+            example:
+              claimCredentialId: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: claimCredentialId
+                sensitivity: internal
+              - name: publisherCredentialId
+                sensitivity: internal
+              - name: revokedPublisherCredentialIds
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ProjectClaimPublisherAuditPayload
+            schema_version: 1
+          required: true
+          success_action: project.claim_publisher.acknowledged
+        authz_mode: privilege
+        failures:
+          - code: PROJECT_CLAIM_PUBLISHER_FORBIDDEN
+            kind: forbidden
+            public_detail: The project claim publisher exchange is not available to
+              this credential.
+            status_code: 403
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: project
+          type: project
+        privilege: PROJECT_ADMIN
+      x-authz:
+        action: project.access.manage
+        mode: privilege
+        resolver: project
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
+  /api/v1/projects/{project}/project-claim-publisher/exchange:
+    post:
+      operationId: exchangeProjectClaimPublisher
+      summary: Exchange the one-use project-claim credential for a bounded publisher
+        credential
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created
+            as a result.
+          headers:
+            location:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectClaimPublisherExchangeResponse'
+              example:
+                claimCredentialId: example
+                publisherToken: example
+                publisherTokenExpiresAt: "2026-01-02T15:04:05Z"
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: claimCredentialId
+                sensitivity: internal
+              - name: publisherCredentialId
+                sensitivity: internal
+              - name: revokedPublisherCredentialIds
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: ProjectClaimPublisherAuditPayload
+            schema_version: 1
+          required: true
+          success_action: project.claim_publisher.exchanged
+        authz_mode: privilege
+        failures:
+          - code: PROJECT_CLAIM_PUBLISHER_FORBIDDEN
+            kind: forbidden
+            public_detail: The project claim publisher exchange is not available to
+              this credential.
+            status_code: 403
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: project
+          type: project
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: instance.project.claim
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/projects/{project}/query-events:
     get:
       operationId: listQueryEvents
@@ -46597,6 +47228,8 @@ paths:
               subjectType: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -46644,6 +47277,8 @@ paths:
         target:
           parameter: project
           type: project
+        ui:
+          action_id: role-binding.create
         privilege: PROJECT_ADMIN
       x-authz:
         action: project.access.manage
@@ -46939,6 +47574,8 @@ paths:
               expectedRevision: 1
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -46986,6 +47623,8 @@ paths:
         target:
           parameter: project
           type: project
+        ui:
+          action_id: role-binding.remove
         privilege: PROJECT_ADMIN
       x-authz:
         action: project.access.manage
@@ -61915,15 +62554,22 @@ components:
           items:
             $ref: '#/components/schemas/AuthoringSessionResponse'
           example:
-            - capabilities:
-                - PLATFORM_ADMIN
-              clientId: example
+            - clientId: example
               createdAt: "2026-01-02T15:04:05Z"
               current: true
               expiresAt: "2026-01-02T15:04:05Z"
               id: example
               kind: example
               lastUsedAt: "2026-01-02T15:04:05Z"
+              permissionProfile: leapview.permissions/v1
+              permissions:
+                - action: dashboard.read
+                  profile: leapview.permissions/v1
+                  target:
+                    projectId: project:analytics
+                    resourceId: dashboard:sales
+                    resourceKind: dashboard
+                    scope: resource
               projectId: example
               revokedAt: "2026-01-02T15:04:05Z"
               targetId: example
@@ -61931,15 +62577,22 @@ components:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
-          - capabilities:
-              - PLATFORM_ADMIN
-            clientId: example
+          - clientId: example
             createdAt: "2026-01-02T15:04:05Z"
             current: true
             expiresAt: "2026-01-02T15:04:05Z"
             id: example
             kind: example
             lastUsedAt: "2026-01-02T15:04:05Z"
+            permissionProfile: leapview.permissions/v1
+            permissions:
+              - action: dashboard.read
+                profile: leapview.permissions/v1
+                target:
+                  projectId: project:analytics
+                  resourceId: dashboard:sales
+                  resourceKind: dashboard
+                  scope: resource
             projectId: example
             revokedAt: "2026-01-02T15:04:05Z"
             targetId: example
@@ -61954,7 +62607,8 @@ components:
         - clientId
         - targetId
         - projectId
-        - capabilities
+        - permissionProfile
+        - permissions
         - createdAt
         - expiresAt
       properties:
@@ -61979,12 +62633,20 @@ components:
           maxLength: 200
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
-        capabilities:
+        permissionProfile:
+          $ref: '#/components/schemas/PermissionCatalogProfile'
+        permissions:
           type: array
           items:
-            $ref: '#/components/schemas/Capability'
+            $ref: '#/components/schemas/PermissionPair'
           example:
-            - PLATFORM_ADMIN
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
         createdAt:
           type: string
           format: date-time
@@ -62002,8 +62664,6 @@ components:
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
-        capabilities:
-          - PLATFORM_ADMIN
         clientId: example
         createdAt: "2026-01-02T15:04:05Z"
         current: true
@@ -62011,6 +62671,15 @@ components:
         id: example
         kind: example
         lastUsedAt: "2026-01-02T15:04:05Z"
+        permissionProfile: leapview.permissions/v1
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
         projectId: example
         revokedAt: "2026-01-02T15:04:05Z"
         targetId: example
@@ -62021,7 +62690,8 @@ components:
         - clientId
         - targetId
         - projectId
-        - capabilities
+        - permissionProfile
+        - permissions
       properties:
         kind:
           type: string
@@ -62038,17 +62708,32 @@ components:
           maxLength: 200
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
-        capabilities:
+        permissionProfile:
+          $ref: '#/components/schemas/PermissionCatalogProfile'
+        permissions:
           type: array
           items:
-            $ref: '#/components/schemas/Capability'
+            $ref: '#/components/schemas/PermissionPair'
           example:
-            - PLATFORM_ADMIN
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
       example:
-        capabilities:
-          - PLATFORM_ADMIN
         clientId: example
         kind: example
+        permissionProfile: leapview.permissions/v1
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
         projectId: example
         targetId: example
     AuthorizationBatchCheckRequest:
@@ -76541,6 +77226,7 @@ components:
         - platform.access.read
         - platform.access.manage
         - platform.audit.read
+        - instance.project.claim
       example: dashboard.read
     PermissionCatalogProfile:
       type: string
@@ -78251,6 +78937,61 @@ components:
         issuerId: example
         projectUid: example
         result: example
+    ProjectClaimPublisherAcknowledgeRequest:
+      type: object
+      required:
+        - claimCredentialId
+      properties:
+        claimCredentialId:
+          type: string
+          example: example
+      example:
+        claimCredentialId: example
+    ProjectClaimPublisherAuditPayload:
+      type: object
+      required:
+        - claimCredentialId
+        - publisherCredentialId
+        - revokedPublisherCredentialIds
+      properties:
+        claimCredentialId:
+          type: string
+          example: example
+        publisherCredentialId:
+          type: string
+          example: example
+        revokedPublisherCredentialIds:
+          type: array
+          items:
+            type: string
+          example:
+            - example
+      example:
+        claimCredentialId: example
+        publisherCredentialId: example
+        revokedPublisherCredentialIds:
+          - example
+    ProjectClaimPublisherExchangeResponse:
+      type: object
+      required:
+        - claimCredentialId
+        - publisherToken
+        - publisherTokenExpiresAt
+      properties:
+        claimCredentialId:
+          type: string
+          example: example
+        publisherToken:
+          type: string
+          example: example
+        publisherTokenExpiresAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+      example:
+        claimCredentialId: example
+        publisherToken: example
+        publisherTokenExpiresAt: "2026-01-02T15:04:05Z"
     ProjectResponse:
       type: object
       required:

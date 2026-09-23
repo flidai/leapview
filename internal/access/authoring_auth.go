@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -54,12 +54,12 @@ const (
 // action; this scope additionally prevents replay against another LeapView
 // instance, project, or action.
 type AuthoringScope struct {
-	TargetID     string
-	ProjectID    graph.ResourceID
-	Capabilities []Capability
+	TargetID    string
+	ProjectID   graph.ResourceID
+	Permissions []PermissionPair
 }
 
-func NewAuthoringScope(targetID string, projectID graph.ResourceID, capabilities []Capability) (AuthoringScope, error) {
+func NewAuthoringScope(targetID string, projectID graph.ResourceID, permissions []PermissionPair) (AuthoringScope, error) {
 	targetID = strings.TrimSpace(targetID)
 	if targetID == "" {
 		return AuthoringScope{}, fmt.Errorf("authoring target ID is required")
@@ -67,32 +67,120 @@ func NewAuthoringScope(targetID string, projectID graph.ResourceID, capabilities
 	if err := projectID.Validate(); err != nil {
 		return AuthoringScope{}, fmt.Errorf("authoring project ID: %w", err)
 	}
-	if len(capabilities) == 0 {
-		return AuthoringScope{}, fmt.Errorf("at least one authoring action is required")
+	if len(permissions) == 0 {
+		return AuthoringScope{}, fmt.Errorf("at least one authoring permission is required")
 	}
-	validated := make([]Capability, 0, len(capabilities))
-	seen := make(map[Capability]struct{}, len(capabilities))
-	for _, requested := range capabilities {
+	validated := ClonePermissionPairs(permissions)
+	for index, requested := range validated {
 		if err := requested.Validate(); err != nil {
-			return AuthoringScope{}, fmt.Errorf("unknown authoring capability %q: %w", requested, err)
+			return AuthoringScope{}, fmt.Errorf("invalid authoring permission %d: %w", index, err)
 		}
-		if _, duplicate := seen[requested]; duplicate {
-			return AuthoringScope{}, fmt.Errorf("duplicate authoring capability %q", requested)
+		if requested.Target.Scope == PermissionScopeInstance || requested.Target.ProjectID != projectID {
+			return AuthoringScope{}, fmt.Errorf("authoring permissions must target project %q", projectID)
 		}
-		seen[requested] = struct{}{}
-		validated = append(validated, requested)
 	}
-	slices.Sort(validated)
-	return AuthoringScope{TargetID: targetID, ProjectID: projectID, Capabilities: validated}, nil
+	if err := ValidatePermissionPairs(validated); err != nil {
+		return AuthoringScope{}, fmt.Errorf("invalid authoring permission set: %w", err)
+	}
+	sort.Slice(validated, func(left, right int) bool { return validated[left].Key() < validated[right].Key() })
+	return AuthoringScope{TargetID: targetID, ProjectID: projectID, Permissions: validated}, nil
 }
 
-func (scope AuthoringScope) Authorize(targetID, projectID string, capability Capability) error {
-	if strings.TrimSpace(targetID) != scope.TargetID ||
-		strings.TrimSpace(projectID) != scope.ProjectID.String() ||
-		!slices.Contains(scope.Capabilities, capability) {
+// AuthorizePairs applies an authoring credential's exact typed ceiling. A
+// future-resource selector is honored only for its one action and resource
+// kind; it never broadens across the Project or into instance administration.
+func (scope AuthoringScope) AuthorizePairs(targetID, projectID string, requested []PermissionPair) error {
+	if strings.TrimSpace(targetID) != scope.TargetID || strings.TrimSpace(projectID) != scope.ProjectID.String() || len(requested) == 0 {
 		return ErrAuthoringScopeDenied
 	}
+	if err := ValidatePermissionPairs(requested); err != nil {
+		return ErrAuthoringScopeDenied
+	}
+	for _, pair := range requested {
+		if pair.Target.Scope == PermissionScopeInstance || pair.Target.ProjectID != scope.ProjectID {
+			return ErrAuthoringScopeDenied
+		}
+		allowed := false
+		for _, granted := range scope.Permissions {
+			if PermissionPairAllows(granted, pair) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return ErrAuthoringScopeDenied
+		}
+	}
 	return nil
+}
+
+// ProjectPermissionPairsForActions binds requested action names to a concrete
+// Project before they enter an authoring credential. Project actions receive
+// an exact project target. Resource actions receive one explicit future
+// selector per catalog resource kind so newly authored objects stay inside
+// the requested action and Project boundary.
+func ProjectPermissionPairsForActions(projectID graph.ResourceID, actions []Action) ([]PermissionPair, error) {
+	if err := projectID.Validate(); err != nil {
+		return nil, fmt.Errorf("authoring project ID: %w", err)
+	}
+	if len(actions) == 0 {
+		return nil, fmt.Errorf("at least one authoring action is required")
+	}
+	pairs := make([]PermissionPair, 0, len(actions))
+	seen := make(map[Action]struct{}, len(actions))
+	for _, action := range actions {
+		if _, duplicate := seen[action]; duplicate {
+			return nil, fmt.Errorf("duplicate authoring action %q", action)
+		}
+		seen[action] = struct{}{}
+		definition, exists := Permission(action)
+		if !exists {
+			return nil, fmt.Errorf("unknown authoring action %q", action)
+		}
+		switch definition.Scope {
+		case PermissionScopeProject:
+			pair, err := NewProjectPermissionPair(action, projectID)
+			if err != nil {
+				return nil, fmt.Errorf("authoring action %q: %w", action, err)
+			}
+			pairs = append(pairs, pair)
+		case PermissionScopeResource:
+			for _, kind := range definition.ResourceKinds {
+				pair, err := NewFutureProjectPermissionPair(action, projectID, kind)
+				if err != nil {
+					return nil, fmt.Errorf("authoring action %q for %q: %w", action, kind, err)
+				}
+				pairs = append(pairs, pair)
+			}
+		default:
+			return nil, fmt.Errorf("authoring action %q is not project-scoped", action)
+		}
+	}
+	if err := ValidatePermissionPairs(pairs); err != nil {
+		return nil, err
+	}
+	sort.Slice(pairs, func(left, right int) bool { return pairs[left].Key() < pairs[right].Key() })
+	return pairs, nil
+}
+
+// DefaultAuthoringActions returns the typed CLI scope needed for the normal
+// edit-and-deliver workflow. It is only a credential ceiling: durable project
+// permissions still independently authorize every operation.
+func DefaultAuthoringActions() []Action {
+	seen := map[Action]struct{}{}
+	actions := make([]Action, 0, 48)
+	for _, role := range []PermissionRole{PermissionRoleEditor, PermissionRolePublisher, PermissionRoleReleaseOperator} {
+		roleActions, _ := PermissionRoleActions(role)
+		for _, action := range roleActions {
+			if _, duplicate := seen[action]; duplicate {
+				continue
+			}
+			seen[action] = struct{}{}
+			actions = append(actions, action)
+		}
+	}
+	sort.Slice(actions, func(left, right int) bool { return actions[left] < actions[right] })
+	return actions
 }
 
 type DeviceAuthorization struct {
@@ -428,12 +516,12 @@ func (service *AuthoringAuthService) ExchangeWorkloadIdentity(ctx context.Contex
 	return tokenSet(accessToken, "", now, credential), nil
 }
 
-func (service *AuthoringAuthService) Authenticate(ctx context.Context, accessToken, targetID, projectID string, capability Capability) (AuthoringCredential, error) {
+func (service *AuthoringAuthService) Authenticate(ctx context.Context, accessToken, targetID, projectID string, requested []PermissionPair) (AuthoringCredential, error) {
 	credential, err := service.Resolve(ctx, accessToken)
 	if err != nil {
 		return AuthoringCredential{}, err
 	}
-	if err := credential.Session.Scope.Authorize(targetID, projectID, capability); err != nil {
+	if err := credential.Session.Scope.AuthorizePairs(targetID, projectID, requested); err != nil {
 		return AuthoringCredential{}, err
 	}
 	return credential, nil
@@ -483,7 +571,7 @@ func (service *AuthoringAuthService) RevokeAccessToken(ctx context.Context, acce
 }
 
 func (service *AuthoringAuthService) validateScope(scope AuthoringScope) error {
-	validated, err := NewAuthoringScope(scope.TargetID, scope.ProjectID, scope.Capabilities)
+	validated, err := NewAuthoringScope(scope.TargetID, scope.ProjectID, scope.Permissions)
 	if err != nil {
 		return err
 	}

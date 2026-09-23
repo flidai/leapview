@@ -44,9 +44,13 @@ func TestExecutionScopeConfinesDevelopmentBypassToEnabledServers(t *testing.T) {
 	}
 }
 
-func TestAgentToolCredentialRejectsOmittedCapabilityScope(t *testing.T) {
-	scope := agentcap.Scope{Credential: agentcap.CredentialScope{Restricted: true}}
-	if agentCredentialAllowsCapability(scope, access.CapabilityResourceRead) {
-		t.Fatal("omitted token scope unexpectedly authorized agent capability")
+func TestAgentToolCredentialRejectsOmittedTypedPermissionScope(t *testing.T) {
+	scope := Scope{ProjectID: "project:active", Credential: CredentialScope{Restricted: true}}
+	if CredentialAllowsResource(scope, "dashboard:one", "dashboard", access.CapabilityResourceRead) {
+		t.Fatal("omitted typed scope unexpectedly authorized agent resource")
+	}
+	scope.Credential.Capabilities = []string{string(access.CapabilityResourceRead)}
+	if CredentialAllowsResource(scope, "dashboard:one", "dashboard", access.CapabilityResourceRead) {
+		t.Fatal("legacy capability unexpectedly authorized agent resource")
 	}
 }

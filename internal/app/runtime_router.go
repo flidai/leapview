@@ -822,6 +822,9 @@ func buildApplicationSurfaces(
 			return accessmodule.APICredentialFromContext(r.Context())
 		},
 		AuthorizeCreateDashboard: func(r *http.Request, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			if capability != access.CapabilityResourceEdit {
+				return false, fmt.Errorf("unsupported dashboard-create browser capability %q", capability)
+			}
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			if !ok {
 				return false, nil
@@ -833,10 +836,8 @@ func buildApplicationSurfaces(
 			if err != nil {
 				return false, err
 			}
-			if capability == access.CapabilityResourceEdit {
-				return authorizeProjectResourcesWithTypedAction(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, capability, access.ActionDashboardCreate)
-			}
-			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, capability)
+			_, allowed, err := authorizeProjectResourcesWithTypedAction(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, access.ActionDashboardCreate)
+			return allowed, err
 		},
 		Authenticate: routes.accessModule.Authenticate,
 	}
@@ -880,7 +881,21 @@ func buildApplicationSurfaces(
 			routes.managedDataModule.SetAuthorizeConnection(manageddatamodule.ConnectionAuthorizer(authorizeConnection))
 		}
 		if routes.releaseModule != nil {
-			routes.releaseModule.SetAuthorizeConnection(snapshotAuthorizeConnection)
+			routes.releaseModule.SetAuthorizeConnection(func(ctx context.Context, principalID, projectID, connectionID string, action access.Action) (bool, error) {
+				if action != access.ActionConnectionRead {
+					return false, fmt.Errorf("unsupported release catalog connection action %q", action)
+				}
+				project := projectgraph.ResourceID(projectID)
+				if err := project.Validate(); err != nil {
+					return false, nil
+				}
+				connection, err := access.NewResourceRef(projectgraph.ResourceID(connectionID), projectgraph.KindConnection)
+				if err != nil {
+					return false, nil
+				}
+				typed, allowed, err := authorizeTypedResourceAction(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, project, []access.ResourceRef{connection}, access.ActionConnectionRead)
+				return typed && allowed, err
+			})
 		}
 	}
 	moduleWorkflow.deploymentConfig = workflow.DeploymentConfig
@@ -968,14 +983,14 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					if requestLocalDevelopmentAuthorization(ctx, principalID) {
 						return nil
 					}
-					var capability access.Capability
+					var action access.Action
 					switch permission {
 					case analyticsmodule.PermissionManageConnectionMetadata:
-						capability = access.CapabilityResourceManage
+						action = access.ActionConnectionManage
 					case analyticsmodule.PermissionTestConnection:
-						capability = access.CapabilityResourceUse
+						action = access.ActionConnectionUse
 					case analyticsmodule.PermissionViewConnectionHealth:
-						capability = access.CapabilityResourceRead
+						action = access.ActionConnectionRead
 					default:
 						return analyticsmodule.ErrConnectionBindingUnauthorized
 					}
@@ -985,7 +1000,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					}
 					allowed, err := authorizeProjectResources(
 						ctx, routes.accessModule, runtime.runtimeHostModule, principalID,
-						binding.Scope.ProjectID, []access.ResourceRef{resource}, capability,
+						binding.Scope.ProjectID, []access.ResourceRef{resource}, action,
 					)
 					if err != nil {
 						return err
@@ -1059,7 +1074,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if err != nil {
 					return false, err
 				}
-				return authorizeProjectResourcesWithTypedAction(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{resource}, capability, access.ActionPipelineRun)
+				allowed, authErr := authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{resource}, access.ActionPipelineRun)
+				return allowed, authErr
 			}
 		}
 		routes.projectBrowser.AuthorizeConnectionCreate = func(r *http.Request, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
@@ -1077,7 +1093,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if err != nil {
 				return false, err
 			}
-			return authorizeProjectResourcesWithTypedAction(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, capability, access.ActionConnectionCreate)
+			allowed, err := authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, access.ActionConnectionCreate)
+			return allowed, err
 		}
 		routes.projectBrowser.AuthorizeDashboard = func(r *http.Request, dashboardID string, capability access.Capability) (bool, error) {
 			if capability != access.CapabilityResourceManage {
@@ -1095,7 +1112,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if err != nil {
 				return false, err
 			}
-			return authorizeProjectResourcesWithTypedAction(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{dashboard}, capability, access.ActionDashboardUpdate)
+			allowed, err := authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{dashboard}, access.ActionDashboardUpdate)
+			return allowed, err
 		}
 		routes.projectBrowser.AuthorizeConnection = func(r *http.Request, connectionID string, capability access.Capability) (bool, error) {
 			if capability != access.CapabilityResourceManage {
@@ -1113,7 +1131,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if err != nil {
 				return false, err
 			}
-			return authorizeProjectResourcesWithTypedAction(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{connection}, capability, access.ActionConnectionManage)
+			allowed, err := authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{connection}, access.ActionConnectionManage)
+			return allowed, err
 		}
 		if platform.apiProtocol != nil {
 			routes.projectBrowser.MutationMiddleware = func(next http.Handler) http.Handler {
@@ -1198,8 +1217,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		config.API = apiConfig
 		config.PublicationAuthorization = deploymentmodule.PublicationAuthorizationConfig{
-			States: persistence.servingStateRepo, AuthorizeResource: func(ctx context.Context, actor string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
-				return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, actor, projectID, []access.ResourceRef{resource}, capability)
+			States: persistence.servingStateRepo, AuthorizeResource: func(ctx context.Context, actor string, projectID projectgraph.ResourceID, resource access.ResourceRef, action access.Action) (bool, error) {
+				return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, actor, projectID, []access.ResourceRef{resource}, action)
 			},
 			Bypass: func(actor string) bool {
 				return (platform.auth == nil || platform.auth.DevBypass()) && actor == accessmodule.LocalDeveloperPrincipal().ID
@@ -1269,11 +1288,14 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return principal.ID
 				},
 				AuthorizeListResource: func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error) {
+					if capability != access.CapabilityResourceRead || resource.Kind() != projectgraph.KindDashboard {
+						return false, nil
+					}
 					projectID, err := runtime.resolveProjectID(ctx)
 					if err != nil {
 						return false, err
 					}
-					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
+					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, access.ActionDashboardRead)
 				},
 				AuthorizeTypedDashboardAction: func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, bool, error) {
 					if action == "" {
@@ -1499,9 +1521,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if identity.Credential.Authoring != nil {
 					scope.Credential.ProjectID = identity.Credential.Authoring.Scope.ProjectID.String()
 					scope.Credential.Restricted = true
-					for _, capability := range identity.Credential.Authoring.Scope.Capabilities {
-						scope.Credential.Capabilities = append(scope.Credential.Capabilities, string(capability))
-					}
+					scope.Credential.PermissionProfile = access.PermissionCatalogProfile
+					scope.Credential.Permissions = access.ClonePermissionPairs(identity.Credential.Authoring.Scope.Permissions)
 				} else if identity.Credential.Token.ID != "" {
 					scope.Credential.Restricted = true
 					scope.Credential.PermissionProfile = identity.Credential.Token.PermissionProfile
@@ -1659,6 +1680,33 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			CurrentEffectiveCapabilities:      routes.accessModule.CurrentEffectiveCapabilities,
 			CurrentEffectivePermissionOptions: routes.accessModule.CurrentEffectivePermissionOptions,
+			RoleBindingAdministration: func(ctx context.Context) (access.RoleBindingAdministrationState, error) {
+				state, err := routes.accessModule.RoleBindingAdministration(ctx)
+				if err != nil || runtime.runtimeHostModule == nil {
+					return state, err
+				}
+				lease, err := runtime.runtimeHostModule.Acquire(ctx)
+				if err != nil {
+					return state, nil // Never present a configured assignment as active without a serving snapshot.
+				}
+				defer lease.Release()
+				authorizedLease, ok := lease.(interface {
+					AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+				})
+				if !ok {
+					return state, nil
+				}
+				snapshot := authorizedLease.AuthorizationSnapshot()
+				if snapshot.ValidateBound() != nil || snapshot.Identity() != lease.Identity() || string(snapshot.Identity().ProjectID) != state.Scope.ProjectID {
+					return state, nil
+				}
+				state.ActiveSnapshotReady = true
+				for _, binding := range snapshot.RoleBindings() {
+					state.ActiveBindingIDs = append(state.ActiveBindingIDs, binding.ID)
+				}
+				return state, nil
+			},
+			RoleBindingMutation: routes.accessModule.ApplyRoleBindingAdministration,
 			AuthorizeTypedDashboardAction: func(ctx context.Context, principalID string, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, error) {
 				return authorizeTypedDashboardAction(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, dashboardID, action)
 			},
@@ -1887,6 +1935,16 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		return fmt.Errorf("build APIGen authorizer: %w", err)
 	}
 	if claimReader := moduleWorkflow.deploymentConfig.ProjectClaims; claimReader != nil {
+		routes.accessModule.SetProjectClaimResolver(func(ctx context.Context) (string, string, error) {
+			claim, err := claimReader.GetProjectClaim(ctx)
+			if err != nil {
+				return "", "", err
+			}
+			if err := claim.Validate(); err != nil || string(claim.Environment) != policy.defaultEnvironment {
+				return "", "", deployment.ErrProjectClaimInvalid
+			}
+			return claim.ProjectID.String(), claim.ClaimedBy, nil
+		})
 		bootstrapAuthorizer := func(ctx context.Context, _ *http.Request, operationID string, projectID projectgraph.ResourceID, _ access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
 			return bootstrapAPIGenDecision(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, claimReader, policy.defaultEnvironment, operationID, projectID, runtimeConfig.DeliveryTargetReader, runtimeConfig.InstanceID)
 		}
@@ -1912,7 +1970,15 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if claim.ProjectID != projectID || string(claim.Environment) != scope.Environment || claim.ClaimedBy != actorID || !access.IsProjectClaimBootstrapBinding(binding, projectID, actorID) {
 				return false, nil
 			}
-			return routes.accessModule.AuthorizeBootstrapRequest(r.Context(), r, access.CapabilityProjectAdmin)
+			manage, pairErr := access.NewProjectPermissionPair(access.ActionProjectAccessManage, projectID)
+			if pairErr != nil {
+				return false, pairErr
+			}
+			required, pairErr := access.RequiredPermissionPairs(manage)
+			if pairErr != nil {
+				return false, pairErr
+			}
+			return routes.accessModule.AuthorizeTypedBootstrapRequest(r.Context(), r, required)
 		})
 	}
 	if err := apigencommand.ValidateDependencies(apiaggregate.GetAPIGenCommandRuntimeContracts(), map[apigencommand.Dependency]bool{

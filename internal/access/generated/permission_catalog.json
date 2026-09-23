@@ -712,6 +712,17 @@
       "prerequisites": [],
       "delegable": false,
       "uiSelectable": true
+    },
+    {
+      "action": "instance.project.claim",
+      "family": "Instance bootstrap",
+      "description": "Establish the first Project claim for this instance.",
+      "scope": "instance",
+      "resourceKinds": [],
+      "checkKinds": [],
+      "prerequisites": [],
+      "delegable": false,
+      "uiSelectable": false
     }
   ],
   "roles": [

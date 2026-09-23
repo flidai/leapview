@@ -99,7 +99,8 @@ func (r *Repository) APITokenAuthorityEvidence(ctx context.Context, principalID,
 	if err != nil {
 		return access.APIToken{}, err
 	}
-	if token.ID != tokenID || token.PrincipalID != principalID || token.TokenFingerprint == "" || token.RevokedAt != "" {
+	if token.ID != tokenID || token.PrincipalID != principalID || token.TokenFingerprint == "" || token.RevokedAt != "" ||
+		token.PermissionProfile != access.PermissionCatalogProfile || token.Permissions == nil {
 		return access.APIToken{}, access.ErrForbidden
 	}
 	expiresAt, err := time.Parse(time.RFC3339Nano, token.ExpiresAt)

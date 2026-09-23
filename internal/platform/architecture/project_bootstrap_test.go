@@ -20,11 +20,14 @@ func TestDevelopmentPublishingBootstrapsIssuerIdentityBeforeProjectWork(t *testi
 	publish := script[start:]
 	bootstrap := strings.Index(publish, `bootstrap_output="$(go run ./cmd/leapview "${bootstrap_args[@]}")" || return 1`)
 	identity := strings.Index(publish, `project_id="$(jq -er '.projectUid | strings | select(length > 0)' <<<"$bootstrap_output")" || return 1`)
-	for _, command := range []string{"go run ./cmd/leapview data sync", "go run ./cmd/leapview dev --once"} {
+	for _, command := range []string{"go run ./cmd/leapview data sync", `go run ./cmd/leapview "${dev_args[@]}"`} {
 		operation := strings.Index(publish, command)
 		if bootstrap < 0 || identity <= bootstrap || operation <= identity {
 			t.Fatalf("%s must follow successful bootstrap and issuer identity resolution", command)
 		}
+	}
+	if devArgs := strings.Index(publish, "local dev_args=(dev --once"); devArgs <= identity {
+		t.Fatal("one-shot development command must be constructed after issuer identity resolution")
 	}
 	if strings.Contains(publish, "project:leapview-showcase") {
 		t.Fatal("development setup must not substitute a static Project UID for durable issuer state")

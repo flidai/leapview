@@ -7,7 +7,8 @@ import (
 )
 
 func TestAPIGenOperationCoverageMatrixIsMechanicallyChecked(t *testing.T) {
-	matrix := accessmodule.BuildAPIGenOperationCoverage(accessAPIGenOperationContracts())
+	contracts := accessAPIGenOperationContracts()
+	matrix := accessmodule.BuildAPIGenOperationCoverage(contracts)
 	if err := accessmodule.ValidateAPIGenOperationCoverage(matrix); err != nil {
 		t.Fatal(err)
 	}
@@ -15,6 +16,9 @@ func TestAPIGenOperationCoverageMatrixIsMechanicallyChecked(t *testing.T) {
 		t.Fatalf("operation coverage rows = %d, want %d", len(matrix.Operations), expectedAPIGenAggregateOperationCount)
 	}
 	for _, row := range matrix.Operations {
+		if contract := contracts[row.OperationID]; contract.AuthzMode == "privilege" && (row.TypedAction == "" || row.Resolver == "") {
+			t.Errorf("privilege-protected operation %q lacks an exact typed action and resolver", row.OperationID)
+		}
 		if row.SupportStatus == accessmodule.APIGenOperationUnsupported && row.Reason == "" {
 			t.Errorf("unsupported operation %q has no reason", row.OperationID)
 		}

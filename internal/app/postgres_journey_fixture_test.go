@@ -324,11 +324,11 @@ func (f *PostgresJourneyFixture) assembleNativeDashboard(t *testing.T, options P
 	}
 	authoring, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
 		Persistence: f.Graph.DashboardPersistence,
-		AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
-			return true, nil
+		AuthorizeTypedResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Action) (bool, bool, error) {
+			return true, true, nil
 		},
-		AuthorizeProjectCapability: func(context.Context, string, projectgraph.ResourceID, access.Capability) (bool, error) {
-			return true, nil
+		AuthorizeTypedProject: func(context.Context, string, projectgraph.ResourceID, access.Action) (bool, bool, error) {
+			return true, true, nil
 		},
 		AcquireRuntime: acquire,
 	})

@@ -62,14 +62,15 @@ func sessionSignal(value access.Session, currentSessionID string) SessionSignal 
 }
 
 func authoringSessionSignal(value access.AuthoringSession) AuthoringSessionSignal {
-	capabilities := make([]string, 0, len(value.Scope.Capabilities))
-	for _, capability := range value.Scope.Capabilities {
-		capabilities = append(capabilities, string(capability))
+	permissions := make([]uisignals.PersonalPermissionPairSignal, 0, len(value.Scope.Permissions))
+	for _, permission := range value.Scope.Permissions {
+		permissions = append(permissions, permissionPairSignal(permission))
 	}
 	return AuthoringSessionSignal{
 		ID: value.ID, Kind: string(value.Kind), ClientID: value.ClientID,
 		TargetID: value.Scope.TargetID, ProjectID: value.Scope.ProjectID.String(),
-		Capabilities: capabilities, CreatedAt: formatTime(value.CreatedAt),
+		PermissionProfile: access.PermissionCatalogProfile, Permissions: permissions,
+		CreatedAt: formatTime(value.CreatedAt),
 		LastUsedAt: formatTime(value.LastUsedAt), ExpiresAt: formatTime(value.ExpiresAt),
 		RevokedAt: formatTime(value.RevokedAt),
 	}

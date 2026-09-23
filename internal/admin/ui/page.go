@@ -215,7 +215,7 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 			g.Attr("data-on:lv-service-account-command", "$adminServiceAccountCommand = evt.detail; evt.detail.action == 'select' ? ("+serviceAccountSelect+") : ("+serviceAccountMutation+")"),
 		)
 	}
-	if active == "principals" || active == "groups" || active == "principal-detail" || active == "group-detail" {
+	if active == "access" || active == "principals" || active == "groups" || active == "principal-detail" || active == "group-detail" || active == "service-accounts" || active == "service-accounts-new" {
 		accessCommands := map[string]uicommand.Binding{
 			"create_principal":    accessgen.GenUIActionCreatePrincipal(),
 			"update_principal":    accessgen.GenUIActionUpdatePrincipal(),
@@ -230,6 +230,8 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 			"delete_group":        accessgen.GenUIActionDeleteGroup(),
 			"add_group_member":    accessgen.GenUIActionAddGroupMember(),
 			"remove_group_member": accessgen.GenUIActionRemoveGroupMember(),
+			"grant_role":          accessgen.GenUIActionCreateProjectRoleBinding(),
+			"revoke_role":         accessgen.GenUIActionDeleteProjectRoleBinding(),
 		}
 		commandQuery := url.Values{"section": []string{active}}
 		if data.SelectedPrincipal != nil {
@@ -358,6 +360,9 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 		ListQuery:  uisignals.Optional(data.ListQuery),
 	}
 	switch active {
+	case "access":
+		page.HeaderTitle = "Access overview"
+		page.HeaderDetail = "See who can access the current project and why."
 	case "principals":
 		page.HeaderTitle = "Users"
 		page.HeaderDetail = "Manage user identities, account status, and access."

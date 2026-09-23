@@ -368,8 +368,7 @@ func (h Handler) UpdatePrincipal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 // OAuthToken issues an identity-only REST API credential for service-principal
-// automation. Authoring and MCP grants are dispatched by the access module;
-// this handler owns the legacy service-principal client-credentials exchange.
+// automation. Authoring and MCP grants are dispatched by the access module.
 func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()
 	if err != nil {
@@ -408,15 +407,19 @@ func (h Handler) OAuthToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	ttl := time.Hour
 	var token string
 	err = runAuditedMutation(r, repo, func(tx access.Repository) (access.AuditEventInput, error) {
+		scoped, ok := tx.(access.ScopedAPITokenRepository)
+		if !ok {
+			return auditInput(r, "oauth.token.created", principal.ID, "api_token", "", "", "failure", nil), fmt.Errorf("typed API token repository is unavailable")
+		}
 		var mutationErr error
-		token, _, mutationErr = tx.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{
+		token, _, mutationErr = scoped.CreateScopedAPITokenWithMetadata(r.Context(), access.ScopedAPITokenInput{
 			PrincipalID: principal.ID,
 			Name:        "oauth-client-credentials",
 			// OAuth client-credentials here is intentionally identity-only. An
 			// explicit empty allowlist is required; omission is invalid and must
 			// never inherit the service principal's current authority.
-			Capabilities: []access.Capability{},
-			ExpiresAt:    time.Now().Add(ttl),
+			Permissions: []access.PermissionPair{},
+			ExpiresAt:   time.Now().Add(ttl),
 		})
 		return auditInput(r, "oauth.token.created", principal.ID, "api_token", "", "", "success", map[string]any{"grantType": "client_credentials"}), mutationErr
 	})

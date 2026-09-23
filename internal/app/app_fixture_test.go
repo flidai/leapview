@@ -124,21 +124,13 @@ func testPlatformPrincipal(t *testing.T, ctx context.Context, store *testControl
 }
 
 func testAPIToken(t *testing.T, ctx context.Context, store *testControlStore, principalID, name string) string {
-	t.Helper()
-	capabilities := append(
-		[]access.Capability{access.CapabilityPlatformAdmin},
-		access.LegacyProjectCapabilities()...,
+	return testTypedInstanceAPIToken(t, ctx, store, principalID, name,
+		access.ActionPlatformSettingsRead,
+		access.ActionPlatformSettingsUpdate,
+		access.ActionPlatformAccessRead,
+		access.ActionPlatformAccessManage,
+		access.ActionPlatformAuditRead,
 	)
-	secret, _, err := testAccessRepository(store).CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-		PrincipalID:  principalID,
-		Name:         name,
-		Capabilities: capabilities,
-		ExpiresAt:    time.Now().Add(time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("create api token: %v", err)
-	}
-	return secret
 }
 
 func testTypedInstanceAPIToken(t *testing.T, ctx context.Context, store *testControlStore, principalID, name string, actions ...access.Action) string {

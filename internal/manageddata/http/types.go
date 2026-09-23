@@ -52,7 +52,7 @@ type Repository = control.MetadataRepository
 // connection resources. The caller resolves principal groups and evaluates
 // the active serving-generation snapshot; this transport layer never queries
 // mutable access storage.
-type ConnectionAuthorizer func(context.Context, string, string, string, access.Capability) (bool, error)
+type ConnectionAuthorizer func(context.Context, string, string, string, access.Action) (bool, error)
 
 type UploadCoordinator interface {
 	BeginUpload(context.Context, control.BeginUploadRequest) (control.UploadResult, error)

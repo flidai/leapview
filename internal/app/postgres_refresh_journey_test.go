@@ -24,6 +24,7 @@ import (
 )
 
 const (
+	postgresRefreshJourneyInstance   = "instance_00000000000000000000000000000099"
 	postgresRefreshJourneyGeneration = "journey-generation"
 	postgresRefreshJourneyPipeline   = "pipeline:journey-refresh"
 	postgresRefreshJourneyModel      = "semantic:journey"
@@ -45,7 +46,7 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 	}
 	runtime, runPermission := newPostgresRefreshJourneyRuntime(t, identity)
 	fixture := NewPostgresJourneyFixture(t, PostgresJourneyFixtureOptions{
-		TargetID: "instance_00000000000000000000000000000099", NativeDashboard: true, BrowserSessionAuth: true,
+		TargetID: postgresRefreshJourneyInstance, NativeDashboard: true, BrowserSessionAuth: true,
 		RuntimeHost: runtime,
 	})
 	if _, err := fixture.SeedPrincipal(t.Context(), access.PrincipalInput{
@@ -75,9 +76,13 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 		Class: "session", ID: session.ID, Fingerprint: session.TokenFingerprint,
 		PrincipalID: session.PrincipalID, ExpiresAt: sessionExpiresAt.UTC(),
 	}
-	apiToken, _, err := fixture.Graph.Access.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{
+	platformRead, err := access.NewInstancePermissionPair(access.ActionPlatformSettingsRead, postgresRefreshJourneyInstance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiToken, _, err := fixture.Graph.Access.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{
 		PrincipalID: postgresRefreshJourneyPrincipal, Name: "refresh-journey-transport",
-		Capabilities: append([]access.Capability{access.CapabilityPlatformAdmin}, access.LegacyProjectCapabilities()...), ExpiresAt: time.Now().Add(time.Hour),
+		Permissions: []access.PermissionPair{runPermission, platformRead}, ExpiresAt: time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("create refresh API transport token: %v", err)
@@ -204,7 +209,9 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 		t.Fatalf("missing refresh GET = %d body=%s", missing.Code, missing.Body.String())
 	}
 
-	storage := dispatch(request(http.MethodGet, "/admin/storage", nil))
+	storageRequest := fixture.Request(t.Context(), http.MethodGet, "/admin/storage", nil)
+	storageRequest.AddCookie(&http.Cookie{Name: fixture.AccessModule.Auth().SessionCookieName(), Value: sessionToken})
+	storage := dispatch(storageRequest)
 	if storage.Code != http.StatusOK || !strings.Contains(storage.Body.String(), `section="storage"`) {
 		t.Fatalf("admin storage shell = %d body=%s", storage.Code, storage.Body.String())
 	}

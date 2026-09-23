@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -1047,92 +1046,12 @@ func (r *Repository) RevokeSessionForPrincipal(ctx context.Context, pid, id stri
 	return err
 }
 
-func capabilitiesJSON(caps []access.Capability) ([]byte, error) {
-	if caps == nil {
-		return nil, access.ErrTokenCapabilitiesRequired
-	}
-	if err := access.ValidateTokenCapabilities(caps, access.CanonicalCapabilities()); err != nil {
-		return nil, err
-	}
-	return json.Marshal(caps)
-}
-
 func databaseExpiryValid(ctx context.Context, db DBTX, expiresAt time.Time) (bool, error) {
 	valid, err := accessdb.New(db).CheckExpiry(ctx, pgTimestamp(expiresAt))
 	if err != nil || valid == nil {
 		return false, err
 	}
 	return *valid, nil
-}
-
-func (r *Repository) CreateAPIToken(ctx context.Context, pid, name string) (string, error) {
-	// This legacy convenience method has no capability parameter. Preserve its
-	// historical broad helper behavior by materializing an explicit allowlist;
-	// token creation itself never persists an omitted (NULL) scope.
-	t, _, e := r.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: pid, Name: name, Capabilities: access.LegacyProjectCapabilities()})
-	return t, e
-}
-func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.APITokenInput) (string, access.APIToken, error) {
-	db, err := r.requireDB()
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	pid, err := uuidID("principal id", in.PrincipalID)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	name, err := bounded(strings.TrimSpace(in.Name), "token name", 255)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	description := strings.TrimSpace(in.Description)
-	if len(description) > 1024 {
-		return "", access.APIToken{}, fmt.Errorf("token description must not exceed 1024 bytes")
-	}
-	caps, err := capabilitiesJSON(in.Capabilities)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	if in.ExpiresAt.IsZero() {
-		in.ExpiresAt = time.Now().Add(defaultAPITokenTTL)
-	}
-	tok, err := tokenSecret("lv_pat_")
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	ver, err := secretVerifier(tok)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	id, err := newUUID()
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	tokenID, err := pgUUID(id)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	principalID, err := pgUUID(pid)
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	tag, err := accessdb.New(db).CreateAPIToken(ctx, accessdb.CreateAPITokenParams{ID: tokenID, PrincipalID: principalID, Name: name, Description: description,
-		TokenFingerprint: r.secretFingerprint(tok), Verifier: ver, Capabilities: caps, ExpiresAt: pgTimestamp(in.ExpiresAt)})
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	if tag.RowsAffected() == 0 {
-		valid, checkErr := databaseExpiryValid(ctx, db, in.ExpiresAt)
-		if checkErr != nil {
-			return "", access.APIToken{}, checkErr
-		}
-		if !valid {
-			return "", access.APIToken{}, fmt.Errorf("api token expiry is invalid")
-		}
-		return "", access.APIToken{}, pgx.ErrNoRows
-	}
-	row, e := r.apiToken(ctx, id)
-	return tok, row, e
 }
 
 func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, error) {
@@ -1149,6 +1068,9 @@ func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, 
 		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt),
 		LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
 	if row.PermissionProfile != nil {
+		if *row.PermissionProfile != access.PermissionCatalogProfile || row.Permissions == nil {
+			return access.APIToken{}, fmt.Errorf("API token permission profile is invalid")
+		}
 		permissions, err := access.DecodePermissionPairs(row.Permissions)
 		if err != nil {
 			return access.APIToken{}, fmt.Errorf("decode API token permissions: %w", err)
@@ -1158,15 +1080,9 @@ func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, 
 		t.Capabilities = []access.Capability{}
 		return t, nil
 	}
-	// NULL/null is a legacy omitted scope. It is deliberately represented as
-	// explicit deny-all so old credentials cannot regain current authority.
+	// Capability-only rows are legacy records. Preserve their metadata for
+	// lifecycle/audit views, but never decode their scope into current authority.
 	t.Capabilities = []access.Capability{}
-	if len(row.Capabilities) > 0 && string(row.Capabilities) != "null" {
-		var capabilities []access.Capability
-		if err := json.Unmarshal(row.Capabilities, &capabilities); err == nil && capabilities != nil && access.ValidateTokenCapabilities(capabilities, access.CanonicalCapabilities()) == nil {
-			t.Capabilities = capabilities
-		}
-	}
 	return t, nil
 }
 

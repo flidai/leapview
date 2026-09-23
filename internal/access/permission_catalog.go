@@ -21,9 +21,7 @@ var (
 )
 
 // Action is one typed operation in the resource authorization contract. It is
-// deliberately separate from Capability, which remains the bounded legacy
-// migration vocabulary until persisted grants and credentials have moved to
-// action/resource pairs.
+// deliberately separate from the historical Capability vocabulary.
 type Action = permissions.Action
 
 const (
@@ -85,6 +83,10 @@ const (
 	ActionPlatformAccessRead     Action = "platform.access.read"
 	ActionPlatformAccessManage   Action = "platform.access.manage"
 	ActionPlatformAuditRead      Action = "platform.audit.read"
+	// ActionInstanceProjectClaim is a one-use bootstrap authority. It permits
+	// establishing the instance's first Project claim, not general platform
+	// access administration.
+	ActionInstanceProjectClaim Action = "instance.project.claim"
 )
 
 type PermissionScope = permissions.Scope
@@ -181,6 +183,7 @@ var permissionCatalog = []PermissionDefinition{
 	instancePermission(ActionPlatformAccessRead, "Platform administration", "Inspect instance access assignments."),
 	instancePermission(ActionPlatformAccessManage, "Platform administration", "Manage instance access assignments."),
 	instancePermission(ActionPlatformAuditRead, "Platform administration", "Read authorized instance audit evidence."),
+	{Action: ActionInstanceProjectClaim, Family: "Instance bootstrap", Description: "Establish the first Project claim for this instance.", Scope: PermissionScopeInstance},
 }
 
 var permissionMechanicsCatalog = mustCompilePermissionMechanicsCatalog(permissionCatalog)

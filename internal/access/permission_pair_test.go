@@ -169,6 +169,9 @@ func TestTypedTokenPermissionAttenuationRejectsFutureWideningAndAmbiguousScope(t
 	if err := ValidateTokenPermissionAttenuation(APIToken{PermissionProfile: PermissionCatalogProfile, Permissions: []PermissionPair{future}}, []PermissionPair{exact}); err != nil {
 		t.Fatalf("future credential exact attenuation was denied: %v", err)
 	}
+	if err := ValidateTokenPermissionAttenuation(APIToken{PermissionProfile: PermissionCatalogProfile, Permissions: []PermissionPair{future}}, []PermissionPair{future}); err != nil {
+		t.Fatalf("identical future selector was denied: %v", err)
+	}
 
 	for _, ambiguous := range []APIToken{
 		{Capabilities: LegacyProjectCapabilities()},

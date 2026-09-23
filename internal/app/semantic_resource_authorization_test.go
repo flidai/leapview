@@ -182,11 +182,15 @@ func semanticResourceRuntime(t *testing.T, projectID projectgraph.ResourceID, id
 		if err != nil {
 			t.Fatal(err)
 		}
-		canonical, err := access.NewCanonicalGrant(graph, subject, resource, access.CapabilityResourceRead)
+		pair, err := access.NewExactPermissionPair(access.ActionSemanticRead, identity.ProjectID, resource)
 		if err != nil {
 			t.Fatal(err)
 		}
-		grants = []accesssnapshot.Grant{{ID: "grant:semantic-read", Name: "semantic_read", Canonical: canonical}}
+		grant, err := accesssnapshot.NewTypedGrant("typed:semantic-read", "semantic_read", subject, []access.PermissionPair{pair})
+		if err != nil {
+			t.Fatal(err)
+		}
+		grants = []accesssnapshot.Grant{grant}
 	}
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, grants, nil)
 	if err != nil {

@@ -8,14 +8,13 @@ import (
 	"github.com/flidai/leapview/internal/project/graph"
 )
 
-// EffectiveTypedPermissionOptions returns the exact action-target pairs that
-// can be selected for a token from the supplied principal/group subjects. A
-// typed assignment is the authoritative source; future-resource selectors
-// are expanded against the immutable graph so the picker never silently
-// persists a wildcard. Legacy capability grants remain a bounded projection
-// for the three qualified vertical slices below: dashboard reads, semantic
-// consumption, and pipeline runs. No typed or legacy authority is inferred
-// across action, resource, project, or subject boundaries.
+// EffectiveTypedPermissionOptions returns the action-target pairs that can be
+// selected for a token from the supplied principal/group subjects. A typed
+// assignment is the authoritative source. Future-resource selectors remain
+// explicit options and are also expanded against the immutable graph so the UI
+// can offer either an intentional wildcard or a current-resource snapshot.
+// Historical generic capabilities do not create token options: only explicit
+// typed authority can be delegated to a new credential.
 func (s AuthorizationSnapshot) EffectiveTypedPermissionOptions(subjects []access.SubjectRef) ([]access.PermissionPair, error) {
 	if err := s.ValidateBound(); err != nil {
 		return nil, err
@@ -49,11 +48,12 @@ func (s AuthorizationSnapshot) EffectiveTypedPermissionOptions(subjects []access
 		result = append(result, pair)
 	}
 
-	// Project-scoped typed pairs are already exact action-target pairs. They
-	// do not name a graph resource because they authorize operations such as
-	// project administration or creation on the bound project.
+	// Project-scoped typed pairs are already complete action-target pairs.
+	// Administrative and creation pairs name the Project. Future-resource pairs
+	// retain their explicit wildcard so issuance can distinguish them from the
+	// exact current-resource expansion below.
 	for _, pair := range typedAuthority {
-		if pair.Target.Scope == access.PermissionScopeProject && !pair.Target.IncludeFuture {
+		if pair.Target.Scope == access.PermissionScopeProject {
 			add(pair)
 		}
 	}
@@ -82,30 +82,6 @@ func (s AuthorizationSnapshot) EffectiveTypedPermissionOptions(subjects []access
 			}
 		}
 
-		// Preserve the bounded legacy compatibility projection. Pipeline runs
-		// intentionally require an exact legacy grant; a broad legacy role's
-		// RESOURCE_USE must not become operational execution authority.
-		action, capability, ok := compatibilityAction(resource.Kind)
-		if ok {
-			allowed := false
-			for _, subject := range validatedSubjects {
-				permitted, err := s.compatibilityPermissionAllowed(subject, resourceRef, capability, action)
-				if err != nil {
-					return nil, err
-				}
-				if permitted {
-					allowed = true
-					break
-				}
-			}
-			if allowed {
-				pair, err := access.NewExactPermissionPair(action, s.Identity().ProjectID, resourceRef)
-				if err != nil {
-					return nil, err
-				}
-				add(pair)
-			}
-		}
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return typedPermissionPairKey(result[i]) < typedPermissionPairKey(result[j])
@@ -120,40 +96,6 @@ func permissionDefinitionSupportsKind(definition access.PermissionDefinition, ki
 		}
 	}
 	return false
-}
-
-func (s AuthorizationSnapshot) compatibilityPermissionAllowed(subject access.SubjectRef, resource access.ResourceRef, capability access.Capability, action access.Action) (bool, error) {
-	// A legacy Project role's RESOURCE_USE applied to every compatible graph
-	// kind. Treating that broad bundle as pipeline.run would, for example,
-	// turn the old Viewer role into operational execution authority. Pipeline
-	// run is therefore projected only from an exact legacy resource grant.
-	if action == access.ActionPipelineRun {
-		for _, grant := range s.Grants() {
-			canonical := grant.Canonical
-			if canonical.Subject() == subject && canonical.Resource() == resource && canonical.Capability() == capability {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-	// This helper is the explicit, bounded compatibility path used by the
-	// legacy token picker. It is deliberately separate from AllowsTyped: only
-	// the qualified dashboard-read and semantic-consume projections are
-	// retained while surfaces migrate. Typed evaluation never calls this path.
-	return s.Allows(subject, resource, capability)
-}
-
-func compatibilityAction(kind graph.Kind) (access.Action, access.Capability, bool) {
-	switch kind {
-	case graph.KindDashboard:
-		return access.ActionDashboardRead, access.CapabilityResourceRead, true
-	case graph.KindSemanticModel:
-		return access.ActionSemanticConsume, access.CapabilityResourceUse, true
-	case graph.KindPipeline:
-		return access.ActionPipelineRun, access.CapabilityResourceUse, true
-	default:
-		return "", "", false
-	}
 }
 
 func typedPermissionPairKey(pair access.PermissionPair) string {

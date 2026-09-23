@@ -134,7 +134,7 @@ func TestPostgresPublicDashboardJourney(t *testing.T) {
 		return recorder
 	}
 	resource, _ := access.NewResourceRef("executive-sales", projectgraph.KindDashboard)
-	if allowed, authErr := authorizeProjectResources(t.Context(), accessSurface, runtime, principal.ID, postgresJourneyProject, []access.ResourceRef{resource}, access.CapabilityResourceRead); authErr != nil || !allowed {
+	if allowed, authErr := authorizeProjectResources(t.Context(), accessSurface, runtime, principal.ID, postgresJourneyProject, []access.ResourceRef{resource}, access.ActionDashboardRead); authErr != nil || !allowed {
 		t.Fatalf("journey dashboard authorization allowed=%v err=%v", allowed, authErr)
 	}
 

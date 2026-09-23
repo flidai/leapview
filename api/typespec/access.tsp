@@ -153,6 +153,26 @@ model RoleBindingMutationResponse {
   policyDigest: string;
 }
 
+model ProjectClaimPublisherExchangeResponse {
+  claimCredentialId: string;
+  publisherToken: string;
+  publisherTokenExpiresAt: utcDateTime;
+}
+
+model ProjectClaimPublisherAcknowledgeRequest {
+  claimCredentialId: string;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model ProjectClaimPublisherAuditPayload {
+  @apigen.auditInternal
+  claimCredentialId: string;
+  @apigen.auditInternal
+  publisherCredentialId: string;
+  @apigen.auditInternal
+  revokedPublisherCredentialIds: string[];
+}
+
 model GroupCreateRequest {
   name: string;
   displayName?: string;
@@ -229,6 +249,14 @@ model DeviceAuthorizationNotFoundFailure {}
   publicDetail: "The authoring session is invalid.",
 })
 model InvalidAuthoringCredentialFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "forbidden",
+  statusCode: 403,
+  code: "PROJECT_CLAIM_PUBLISHER_FORBIDDEN",
+  publicDetail: "The project claim publisher exchange is not available to this credential.",
+})
+model ProjectClaimPublisherForbiddenFailure {}
 
 @apigen.failureDefinition(#{
   kind: "not_found",
@@ -346,7 +374,9 @@ model AuthoringSessionRevokedAuditPayload {
   @apigen.auditInternal
   projectId: ResourceId;
   @apigen.auditPublic
-  capabilities: Capability[];
+  permissionProfile: PermissionCatalogProfile;
+  @apigen.auditPublic
+  permissions: PermissionPair[];
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
@@ -736,7 +766,8 @@ model AuthoringSessionResponse {
   clientId: string;
   targetId: string;
   projectId: ResourceId;
-  capabilities: Capability[];
+  permissionProfile: PermissionCatalogProfile;
+  permissions: PermissionPair[];
   createdAt: utcDateTime;
   lastUsedAt?: utcDateTime;
   expiresAt: utcDateTime;
@@ -1107,6 +1138,30 @@ interface Groups {
 
 alias ListProjectRolesOK = OkJson<RoleListResponse>;
 
+alias ExchangeProjectClaimPublisherOK = CreatedJson<ProjectClaimPublisherExchangeResponse>;
+
+@tag("Access")
+@summary("Exchange the one-use project-claim credential for a bounded publisher credential")
+@route("/projects/{project}/project-claim-publisher/exchange")
+@post
+@apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "instance.project.claim", resolver: "instance" })
+@extension("x-leapview-object-scope", "instance")
+@apigen.command(#{ auditAction: "project.claim_publisher.exchanged", guarantee: "transactional" })
+@apigen.auditPayload(ProjectClaimPublisherAuditPayload)
+@apigen.failsWith(ProjectClaimPublisherForbiddenFailure)
+op exchangeProjectClaimPublisher(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): ExchangeProjectClaimPublisherOK | CommonErrors;
+
+@tag("Access")
+@summary("Acknowledge receipt of the project-claim publisher credential")
+@route("/projects/{project}/project-claim-publisher/acknowledge")
+@post
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.manage", resolver: "project" })
+@extension("x-leapview-object-scope", "project")
+@apigen.command(#{ auditAction: "project.claim_publisher.acknowledged", guarantee: "transactional" })
+@apigen.auditPayload(ProjectClaimPublisherAuditPayload)
+@apigen.failsWith(ProjectClaimPublisherForbiddenFailure)
+op acknowledgeProjectClaimPublisher(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ProjectClaimPublisherAcknowledgeRequest): EmptyResponse | CommonErrors;
+
 @tag("Access")
 @summary("List project roles")
 @route("/projects/{project}/roles")
@@ -1142,6 +1197,7 @@ op listProjectRoleBindings(@path project: ResourceId, @query limit?: ListLimit, 
 @apigen.failsWith(RoleBindingConflictFailure)
 @apigen.failsWith(RoleBindingNotFoundFailure)
 @apigen.auditPayload(RoleBindingAuditPayload)
+@apigen.ui("role-binding.create")
 op createProjectRoleBinding(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingCreateRequest): CreateProjectRoleBindingCreated | CommonErrors;
 
 @tag("Access")
@@ -1155,6 +1211,7 @@ op createProjectRoleBinding(@path @apigen.target project: ResourceId, @header("I
 @apigen.failsWith(RoleBindingConflictFailure)
 @apigen.failsWith(RoleBindingNotFoundFailure)
 @apigen.auditPayload(RoleBindingAuditPayload)
+@apigen.ui("role-binding.remove")
 op deleteProjectRoleBinding(@path @apigen.target project: ResourceId, @path binding: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingDeleteRequest): DeleteProjectRoleBindingOK | CommonErrors;
 
 alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;

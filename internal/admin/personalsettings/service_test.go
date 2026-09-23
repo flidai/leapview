@@ -113,8 +113,21 @@ func (f *fakeAuthoring) ListSessions(context.Context, string) ([]access.Authorin
 }
 func (f *fakeAuthoring) RevokeSession(context.Context, string, string) error { return nil }
 
-func testService(repo *fakeRepository) *Service {
-	return &Service{Repository: repo, Preferences: repo, IdentityManagement: repo, Avatar: fakeAvatar{}, Authoring: &fakeAuthoring{sessions: []access.AuthoringSession{{ID: "authoring-1", Kind: access.AuthoringSessionHumanCLI, ClientID: access.AuthoringCLIClientID, CreatedAt: time.Unix(1, 0), Scope: access.AuthoringScope{TargetID: "instance", ProjectID: "project", Capabilities: []access.Capability{access.CapabilityResourcePublish}}}}}, LocalPasswordEnabled: true}
+func testService(t *testing.T, repo *fakeRepository) *Service {
+	t.Helper()
+	projectID, err := projectgraph.NewResourceID("project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	permissions, err := access.ProjectPermissionPairsForActions(projectID, []access.Action{access.ActionDashboardPublish})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := access.NewAuthoringScope("instance", projectID, permissions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Service{Repository: repo, Preferences: repo, IdentityManagement: repo, Avatar: fakeAvatar{}, Authoring: &fakeAuthoring{sessions: []access.AuthoringSession{{ID: "authoring-1", Kind: access.AuthoringSessionHumanCLI, ClientID: access.AuthoringCLIClientID, CreatedAt: time.Unix(1, 0), Scope: scope}}}, LocalPasswordEnabled: true}
 }
 
 func TestServiceLoadBuildsPersonalSettingsSignal(t *testing.T) {
@@ -132,7 +145,7 @@ func TestServiceLoadBuildsPersonalSettingsSignal(t *testing.T) {
 		},
 		theme: access.ThemeDark,
 	}
-	service := testService(repo)
+	service := testService(t, repo)
 	state, err := service.Load(context.Background(), "principal-1", "desktop-1", true)
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +162,7 @@ func TestServiceLoadBuildsPersonalSettingsSignal(t *testing.T) {
 	if !state.Security.Sessions[1].Current || state.Security.Sessions[1].ClientLabel != "LeapView Desktop" {
 		t.Fatalf("sessions = %#v", state.Security.Sessions)
 	}
-	if len(state.Security.AuthoringSessions) != 1 || state.Security.AuthoringSessions[0].Capabilities[0] != string(access.CapabilityResourcePublish) {
+	if len(state.Security.AuthoringSessions) != 1 || len(state.Security.AuthoringSessions[0].Permissions) != 1 || state.Security.AuthoringSessions[0].Permissions[0].Action != string(access.ActionDashboardPublish) {
 		t.Fatalf("authoring sessions = %#v", state.Security.AuthoringSessions)
 	}
 	if len(state.Tokens.Items) != 1 || state.Tokens.Items[0].ID != "token-1" {
@@ -172,7 +185,7 @@ func TestServiceLoadProjectsExactTypedPermissionOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := testService(repo)
+	service := testService(t, repo)
 	service.CurrentEffectivePermissionOptions = func(context.Context, string) ([]access.PermissionPair, error) {
 		return []access.PermissionPair{pair}, nil
 	}
@@ -197,7 +210,7 @@ func TestServiceLoadProjectsExactTypedPermissionOptions(t *testing.T) {
 
 func TestServiceLoadFailsClosedWhenTypedPermissionProviderIsMissing(t *testing.T) {
 	repo := &fakeRepository{principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser}}
-	service := testService(repo)
+	service := testService(t, repo)
 	state, err := service.Load(context.Background(), repo.principal.ID, "", true)
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +230,7 @@ func TestServiceTypedTokenRequiresDurableExactPermissionAuthority(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := testService(repo)
+	service := testService(t, repo)
 	service.CurrentEffectivePermissionOptions = func(context.Context, string) ([]access.PermissionPair, error) {
 		return []access.PermissionPair{allowed}, nil
 	}
@@ -238,7 +251,7 @@ func TestServiceTypedTokenAllowsDurableExactPermissionAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := testService(repo)
+	service := testService(t, repo)
 	service.CurrentEffectivePermissionOptions = func(context.Context, string) ([]access.PermissionPair, error) {
 		return []access.PermissionPair{pair}, nil
 	}
@@ -276,7 +289,7 @@ func TestServiceLoadIncludesOnlyUniqueActiveSessions(t *testing.T) {
 			{ID: "desktop", Kind: access.SessionKindDesktop, ClientID: "  Desktop app  ", AbsoluteExpiresAt: stamp(now.Add(time.Hour))},
 		},
 	}
-	service := testService(repo)
+	service := testService(t, repo)
 	service.Now = func() time.Time { return now }
 	service.Authoring = &fakeAuthoring{sessions: []access.AuthoringSession{
 		{ID: "cli", Kind: access.AuthoringSessionHumanCLI, ExpiresAt: now.Add(time.Hour)},
@@ -305,7 +318,7 @@ func TestServiceLoadIncludesOnlyUniqueActiveSessions(t *testing.T) {
 
 func TestServiceMutationsAuditAndValidateIdentity(t *testing.T) {
 	repo := &fakeRepository{principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser, Email: "user@example.com"}, identity: access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal, HasLocalPassword: true}}
-	service := testService(repo)
+	service := testService(t, repo)
 	if err := service.ApplyProfile(context.Background(), "principal-1", ProfileCommand{Action: "save", DisplayName: "Updated"}); err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +365,7 @@ func TestServiceRequiresTypedPermissionTokenCreation(t *testing.T) {
 	repo := &fakeRepository{
 		principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser},
 	}
-	service := testService(repo)
+	service := testService(t, repo)
 
 	state, err := service.Load(context.Background(), repo.principal.ID, "", true)
 	if err != nil {

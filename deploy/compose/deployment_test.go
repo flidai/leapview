@@ -400,6 +400,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	installed := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_installed.go"))
 	authoring := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_authoring.go"))
 	client := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_client.go"))
+	policy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_authorization_policy.go"))
 	deploymentClient := read(t, filepath.Join(root, "internal", "deployment", "api", "gen", "client.apigen.gen.go"))
 	worker := read(t, filepath.Join(root, "deploy", "compose", "qualification", "authoring-worker.mjs"))
 	clientImage := read(t, filepath.Join(root, "deploy", "compose", "qualification", "Dockerfile.authoring-client"))
@@ -423,9 +424,14 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(client, "LEAPVIEW_API_TOKEN") {
 		t.Error("authoring must use browser-approved login")
 	}
-	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "RequestDeliveryPublicationApproval", "ApproveDeliveryPublicationApproval", "dbus-run-session", "PROJECT_ADMIN", "capabilities"} {
+	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "RequestDeliveryPublicationApproval", "ApproveDeliveryPublicationApproval", "dbus-run-session", "ActionProjectAccessManage", "ActionProjectAccessDelegate"} {
 		if !strings.Contains(authoring, required) {
 			t.Errorf("typed authoring controller missing %q", required)
+		}
+	}
+	for _, required := range []string{"NewTypedRoleBinding", "PermissionRoleProjectAdmin", "ProjectID", "PolicyRevision"} {
+		if !strings.Contains(policy, required) {
+			t.Errorf("typed authoring policy flow missing %q", required)
 		}
 	}
 	for _, required := range []string{"approval-requests", "/delivery/candidates/{candidate}/publish"} {
@@ -444,10 +450,13 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 			t.Errorf("browser worker missing %q", required)
 		}
 	}
-	for _, required := range []string{"lv-personal-token-command", "new CustomEvent", "capabilities: params.capabilities"} {
+	for _, required := range []string{"lv-personal-token-command", "new CustomEvent", "permissions: params.permissions"} {
 		if !strings.Contains(worker, required) {
 			t.Errorf("browser worker must create exact-scope API tokens through the stable UI command contract: missing %q", required)
 		}
+	}
+	if strings.Contains(worker, "capabilities") {
+		t.Error("browser worker must send typed permission pairs instead of legacy capabilities")
 	}
 	if !strings.Contains(worker, "new URL('/admin/api-tokens/new', baseURL)") || strings.Contains(worker, "new URL('/admin/api-tokens', baseURL)") || strings.Contains(worker, "#token-expiry") {
 		t.Error("browser worker must open the token creation route and avoid the removed raw-expiry control")
@@ -599,7 +608,7 @@ if [[ " $* " == *" config validate --production "* ]]; then
   exec %q config validate --production
 fi
 if [[ " $* " == *" admin initialize --format json "* ]]; then
-  printf '{"email":"admin@example.com","temporaryPassword":"temporary","publisherToken":"publisher","publisherTokenExpiresAt":"2026-07-19T00:00:00Z"}\n'
+  printf '{"email":"admin@example.com","temporaryPassword":"temporary","projectClaimToken":"claim","projectClaimTokenExpiresAt":"2099-07-19T00:00:00Z"}\n'
 fi
 `, validator)
 			if err := os.WriteFile(fakeDocker, []byte(script), 0o700); err != nil {
@@ -682,7 +691,7 @@ if [[ " $* " == *" config validate --production "* ]]; then
   set +a
   exec "$root/config-validator"
 elif [[ " $* " == *" admin initialize --format json "* ]]; then
-  printf '{"email":"admin@example.com","temporaryPassword":"temporary","publisherToken":"publisher","publisherTokenExpiresAt":"2026-07-19T00:00:00Z"}\n'
+  printf '{"email":"admin@example.com","temporaryPassword":"temporary","projectClaimToken":"claim","projectClaimTokenExpiresAt":"2099-07-19T00:00:00Z"}\n'
 fi
 `), 0o700); err != nil {
 			t.Fatal(err)

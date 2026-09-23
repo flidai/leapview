@@ -105,7 +105,7 @@ func (m Metrics) semanticConsumer(ctx context.Context, modelID string) (*semanti
 	}
 	principal, ok := m.principalFromContext(ctx)
 	if !ok || principal.ID == "" || principal.DevBypass {
-		return nil, DeniedError{Capability: access.CapabilityResourceUse}
+		return nil, DeniedError{Action: access.ActionSemanticConsume}
 	}
 	if err := snapshot.ValidateBound(); err != nil {
 		return nil, err

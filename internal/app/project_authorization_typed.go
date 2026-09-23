@@ -36,53 +36,6 @@ func typedPermissionPair(action access.Action, projectID projectgraph.ResourceID
 	return access.PermissionPair{}, fmt.Errorf("typed action %q has unsupported scope %q", action, definition.Scope)
 }
 
-// typedPermissionDecision keeps the token-only decision used by small
-// compatibility boundaries. Full browser authorization uses the snapshot
-// variant below so principal/group assignments are included.
-func typedPermissionDecision(
-	ctx context.Context,
-	projectID projectgraph.ResourceID,
-	resources []access.ResourceRef,
-	actionFor func(access.ResourceRef) (access.Action, bool),
-) (typed bool, allowed bool) {
-	credential, found := accessmodule.APICredentialFromContext(ctx)
-	if !found || strings.TrimSpace(credential.Token.ID) == "" ||
-		(credential.Token.PermissionProfile == "" && credential.Token.Permissions == nil) {
-		return false, false
-	}
-	if credential.Token.PermissionProfile != access.PermissionCatalogProfile || credential.Token.Permissions == nil {
-		return true, false
-	}
-	if err := access.ValidatePermissionPairs(credential.Token.Permissions); err != nil {
-		return true, false
-	}
-	if principal, ok := accessmodule.PrincipalFromContext(ctx); ok {
-		if credential.Principal.ID != "" && credential.Principal.ID != principal.ID {
-			return true, false
-		}
-		if credential.Token.PrincipalID != "" && credential.Token.PrincipalID != principal.ID {
-			return true, false
-		}
-	}
-	if credential.Principal.ID != "" && credential.Token.PrincipalID != "" && credential.Principal.ID != credential.Token.PrincipalID {
-		return true, false
-	}
-	if len(resources) == 0 || actionFor == nil {
-		return true, false
-	}
-	for _, resource := range resources {
-		action, mapped := actionFor(resource)
-		if !mapped {
-			return true, false
-		}
-		pair, err := typedPermissionPair(action, projectID, resource)
-		if err != nil || !access.PermissionSetAllows(credential.Token.Permissions, pair) {
-			return true, false
-		}
-	}
-	return true, true
-}
-
 // typedPermissionDecisionForSnapshot evaluates a migrated operation against
 // the immutable serving-state authority for the complete principal/group
 // subject closure. A typed bearer token is never an authority source: it can
@@ -99,23 +52,35 @@ func typedPermissionDecisionForSnapshot(
 	if len(resources) == 0 || actionFor == nil {
 		return true, false, nil
 	}
+	principalID = strings.TrimSpace(principalID)
+	if principalID == "" {
+		return true, false, nil
+	}
+	if err := projectID.Validate(); err != nil {
+		return false, false, err
+	}
+	if err := snapshot.ValidateBound(); err != nil {
+		return false, false, err
+	}
+	if snapshot.Identity().ProjectID != projectID {
+		return true, false, nil
+	}
 	granted, err := snapshot.EffectiveTypedPermissions(subjects)
 	if err != nil {
 		return false, false, err
 	}
 	credential, hasCredential := accessmodule.APICredentialFromContext(ctx)
-	credentialToken := hasCredential && strings.TrimSpace(credential.Token.ID) != ""
-	// Any typed assignment or bearer credential marks this operation as typed.
-	// This prevents legacy authority from widening a migrated operation when a
-	// typed token has no matching durable assignment.
-	typed = len(granted) > 0 || credentialToken
-	if !typed {
-		return false, false, nil
-	}
-	if len(granted) == 0 {
-		return true, false, nil
-	}
+	// Browser and project operations always have a typed contract. Absence of
+	// a typed assignment is a denial; it never selects a legacy capability
+	// decision. An API credential, when present, is an additional ceiling.
+	typed = true
 	for _, resource := range resources {
+		if resource.Kind() != projectgraph.KindProjectNamespace {
+			graphResource, exists := snapshot.Project().Resource(resource.ID())
+			if !exists || graphResource.Kind != resource.Kind() {
+				return true, false, nil
+			}
+		}
 		action, mapped := actionFor(resource)
 		if !mapped {
 			return true, false, nil
@@ -128,13 +93,16 @@ func typedPermissionDecisionForSnapshot(
 			return true, false, nil
 		}
 	}
-	if !credentialToken {
+	if !hasCredential {
+		if len(granted) == 0 {
+			return true, false, nil
+		}
 		return true, true, nil
 	}
 	// A token reaching a migrated browser operation must be a catalog token
 	// bound to this principal. Its pair set is an attenuation ceiling, not a
 	// replacement for the principal/group assignment set above.
-	if credential.Token.PermissionProfile != access.PermissionCatalogProfile || credential.Token.Permissions == nil ||
+	if strings.TrimSpace(credential.Token.ID) == "" || credential.Token.PermissionProfile != access.PermissionCatalogProfile || credential.Token.Permissions == nil ||
 		strings.TrimSpace(credential.Token.PrincipalID) == "" || credential.Token.PrincipalID != strings.TrimSpace(principalID) ||
 		(credential.Principal.ID != "" && credential.Principal.ID != strings.TrimSpace(principalID)) {
 		return true, false, nil
@@ -153,49 +121,6 @@ func typedPermissionDecisionForSnapshot(
 		}
 	}
 	return true, true, nil
-}
-
-func typedDashboardReadDecisionForSnapshot(
-	ctx context.Context,
-	principalID string,
-	projectID projectgraph.ResourceID,
-	resources []access.ResourceRef,
-	capabilityFor func(access.ResourceRef) access.Capability,
-	snapshot accesssnapshot.AuthorizationSnapshot,
-	subjects []access.SubjectRef,
-) (bool, bool, error) {
-	if len(resources) == 0 || capabilityFor == nil {
-		return false, false, nil
-	}
-	for _, resource := range resources {
-		if resource.Kind() != projectgraph.KindDashboard || capabilityFor(resource) != access.CapabilityResourceRead {
-			// This compatibility helper is installed on generic resource
-			// routes too. Typed dashboard authority must not accidentally deny
-			// unrelated legacy connection/source/model operations.
-			return false, false, nil
-		}
-	}
-	return typedPermissionDecisionForSnapshot(ctx, principalID, projectID, resources, func(resource access.ResourceRef) (access.Action, bool) {
-		return access.ActionDashboardRead, true
-	}, snapshot, subjects)
-}
-
-// typedDashboardReadDecision binds the dashboard Viewer operation to the
-// typed dashboard.read action. It is intentionally narrow: this helper is
-// used by the browser/API dashboard resource-read callback, and does not
-// infer typed authority for mutations or unrelated resource families.
-func typedDashboardReadDecision(
-	ctx context.Context,
-	projectID projectgraph.ResourceID,
-	resources []access.ResourceRef,
-	capabilityFor func(access.ResourceRef) access.Capability,
-) (typed bool, allowed bool) {
-	return typedPermissionDecision(ctx, projectID, resources, func(resource access.ResourceRef) (access.Action, bool) {
-		if resource.Kind() != projectgraph.KindDashboard || capabilityFor == nil || capabilityFor(resource) != access.CapabilityResourceRead {
-			return "", false
-		}
-		return access.ActionDashboardRead, true
-	})
 }
 
 // authorizeTypedDashboardAction evaluates the exact dashboard action against
@@ -222,10 +147,9 @@ func authorizeTypedDashboardAction(
 	return typed && allowed, nil
 }
 
-// authorizeTypedResourceAction returns whether typed authority was present and
-// whether the exact action/resource operation is allowed. The distinction is
-// important to authoring adapters: legacy capability fallback is valid only
-// when no typed authority or typed credential is in play.
+// authorizeTypedResourceAction evaluates the exact action/resource operation
+// against the leased principal/group assignments. An API credential can only
+// further attenuate that resolved typed authority.
 func authorizeTypedResourceAction(
 	ctx context.Context,
 	accessModule canonicalAccessModule,

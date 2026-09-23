@@ -100,7 +100,8 @@ func TestDeveloperWorkflowsUseExactCandidatePublishing(t *testing.T) {
 			"./scripts/dev-server.sh publish",
 		},
 		filepath.Join("scripts", "dev-server.sh"): {
-			"go run ./cmd/leapview dev --once",
+			"dev_args=(dev --once",
+			`go run ./cmd/leapview "${dev_args[@]}"`,
 			"go run ./cmd/leapview publish",
 		},
 		filepath.Join("scripts", "agent_e2e.sh"): {

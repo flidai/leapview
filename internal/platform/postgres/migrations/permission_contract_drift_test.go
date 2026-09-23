@@ -34,7 +34,7 @@ func TestPermissionValidatorMigrationMatchesGeneratedContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read generated permission contract: %v", err)
 	}
-	migration, err := os.ReadFile(filepath.Join(filepath.Dir(source), "027_typed_permission_validation_hardening.sql"))
+	migration, err := os.ReadFile(filepath.Join(filepath.Dir(source), "031_reject_active_legacy_api_tokens.sql"))
 	if err != nil {
 		t.Fatalf("read permission validation migration: %v", err)
 	}

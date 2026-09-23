@@ -25,6 +25,84 @@ func TestLocalPasswordPolicyFailurePreservesSession(t *testing.T) {
 	}
 }
 
+func TestLocalLoginUsesConfiguredBrowserSessionLifetime(t *testing.T) {
+	store := testStore(t)
+	created, err := store.repository.CreateLocalUser(t.Context(), access.LocalUserInput{Email: "long-session@example.com"})
+	if err != nil {
+		t.Fatalf("create local user: %v", err)
+	}
+	auth := mustNewAuth(t, store.repository, AuthConfig{
+		LocalAuth: true, CSRFKey: strings.Repeat("k", 32),
+		BrowserSessionTTL: 30 * 24 * time.Hour, CookieNamespace: "worktree123",
+	})
+	form := url.Values{"email": {created.Principal.Email}, "password": {created.Password}}
+	request := httptest.NewRequest(http.MethodPost, "/auth/local/login", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	auth.LocalLogin(response, request)
+	if response.Code != http.StatusFound {
+		t.Fatalf("login status = %d body=%s", response.Code, response.Body.String())
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != "lv_session_worktree123" {
+		t.Fatalf("login cookies = %#v", cookies)
+	}
+	if remaining := time.Until(cookies[0].Expires); remaining < 29*24*time.Hour || remaining > 30*24*time.Hour {
+		t.Fatalf("session cookie lifetime = %s, want about 30 days", remaining)
+	}
+	session, err := store.repository.CredentialForSessionToken(t.Context(), cookies[0].Value)
+	if err != nil {
+		t.Fatalf("read durable session: %v", err)
+	}
+	expires, err := time.Parse(time.RFC3339Nano, session.ExpiresAt)
+	if err != nil || time.Until(expires) < 29*24*time.Hour {
+		t.Fatalf("durable session expiry = %q: %v", session.ExpiresAt, err)
+	}
+}
+
+func TestDevelopmentLoginCreatesOrdinaryDurableBrowserSession(t *testing.T) {
+	store := testStore(t)
+	if _, err := store.repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{
+		PrincipalID: DevelopmentPrincipalID,
+		Email:       "dev@localhost",
+		DisplayName: "Local Developer",
+		Role:        access.PlatformRoleAdmin,
+	}); err != nil {
+		t.Fatalf("seed development principal: %v", err)
+	}
+	auth := mustNewAuth(t, store.repository, AuthConfig{
+		LocalAuth: true, DevelopmentLogin: true, CSRFKey: strings.Repeat("k", 32),
+		BrowserSessionTTL: 30 * 24 * time.Hour, CookieNamespace: "worktree123",
+	})
+	request := httptest.NewRequest(http.MethodPost, "/auth/development/login", nil)
+	response := httptest.NewRecorder()
+	auth.DevelopmentLogin(response, request)
+
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "/admin" {
+		t.Fatalf("development login response = %d location=%q body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != "lv_session_worktree123" || !cookies[0].HttpOnly {
+		t.Fatalf("development login cookies = %#v", cookies)
+	}
+	session, err := store.repository.CredentialForSessionToken(t.Context(), cookies[0].Value)
+	if err != nil {
+		t.Fatalf("read durable session: %v", err)
+	}
+	if session.PrincipalID != DevelopmentPrincipalID || session.Kind != access.SessionKindBrowser || session.TokenFingerprint == "" {
+		t.Fatalf("durable development session = %#v", session)
+	}
+}
+
+func TestDevelopmentLoginIsUnavailableUnlessExplicitlyEnabled(t *testing.T) {
+	auth := mustNewAuth(t, nil, AuthConfig{LocalAuth: true, CSRFKey: strings.Repeat("k", 32)})
+	response := httptest.NewRecorder()
+	auth.DevelopmentLogin(response, httptest.NewRequest(http.MethodPost, "/auth/development/login", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("development login status = %d, want 404", response.Code)
+	}
+}
+
 func TestLocalPasswordChangeExpiresCookieAndRequiresFreshSignIn(t *testing.T) {
 	store, auth, created, session := localPasswordAuthFixture(t)
 	response := exerciseLocalPassword(t, auth, session, created.Password, "replacement-password")

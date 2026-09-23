@@ -1,31 +1,27 @@
 package module
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/flidai/leapview/internal/access"
 )
 
-type bootstrapCredentialRepository struct {
-	access.Repository
-	token access.APIToken
-	err   error
-}
-
-func TestAuthorizeBootstrapRequestAllowsOnlyConfiguredLocalDevelopmentBearer(t *testing.T) {
+func TestAuthorizeTypedBootstrapRequestAllowsOnlyConfiguredLocalDevelopmentBearer(t *testing.T) {
 	module := browserGuardModule(nil, Principal{ID: "dev", DevBypass: true}, true)
 	module.auth = mustNewAuth(t, nil, AuthConfig{DevBypass: true, DevAPIToken: "local-secret"})
+	pair, err := access.NewProjectPermissionPair(access.ActionDeliveryPlan, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
 	serve := func(token string) (bool, error) {
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/connections/connection_demo/upload-sessions", nil)
 		request.Header.Set("Authorization", "Bearer "+token)
 		var allowed bool
 		var authorizeErr error
 		module.Authenticate(http.HandlerFunc(func(_ http.ResponseWriter, authenticated *http.Request) {
-			allowed, authorizeErr = module.AuthorizeBootstrapRequest(authenticated.Context(), authenticated, access.CapabilityResourceEdit)
+			allowed, authorizeErr = module.AuthorizeTypedBootstrapRequest(authenticated.Context(), authenticated, []access.PermissionPair{pair})
 		})).ServeHTTP(httptest.NewRecorder(), request)
 		return allowed, authorizeErr
 	}
@@ -40,55 +36,37 @@ func TestAuthorizeBootstrapRequestAllowsOnlyConfiguredLocalDevelopmentBearer(t *
 	}
 }
 
-func TestBootstrapTokenCapabilityAllowsProjectAdminForProjectOperations(t *testing.T) {
-	admin := []access.Capability{access.CapabilityProjectAdmin}
-	for _, required := range []access.Capability{
-		access.CapabilityResourceRead,
-		access.CapabilityResourceEdit,
-		access.CapabilityResourcePublish,
+func TestAuthorizeTypedBootstrapRequestRejectsLegacyAndOtherProjectPairs(t *testing.T) {
+	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{}, false)
+	module.auth = &Auth{}
+	required, err := access.NewProjectPermissionPair(access.ActionDeliveryPlan, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherProject, err := access.NewProjectPermissionPair(access.ActionDeliveryPlan, "project_other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		token access.APIToken
+		want  bool
+	}{
+		{name: "exact project action", token: access.APIToken{ID: "typed", PrincipalID: "admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{required}}, want: true},
+		{name: "other project", token: access.APIToken{ID: "other", PrincipalID: "admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{otherProject}}},
+		{name: "legacy capability", token: access.APIToken{ID: "legacy", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityProjectAdmin}}},
 	} {
-		if !bootstrapTokenAllowsCapability(admin, required) {
-			t.Fatalf("PROJECT_ADMIN token does not satisfy %s", required)
-		}
-	}
-	if bootstrapTokenAllowsCapability([]access.Capability{access.CapabilityResourceRead}, access.CapabilityResourceEdit) {
-		t.Fatal("narrow token unexpectedly satisfied RESOURCE_EDIT")
-	}
-	if bootstrapTokenAllowsCapability(admin, access.CapabilityPlatformAdmin) {
-		t.Fatal("PROJECT_ADMIN token unexpectedly satisfied PLATFORM_ADMIN")
-	}
-	if !bootstrapTokenAllowsCapability([]access.Capability{access.CapabilityPlatformAdmin}, access.CapabilityPlatformAdmin) {
-		t.Fatal("PLATFORM_ADMIN token did not satisfy PLATFORM_ADMIN")
-	}
-}
-
-func (r bootstrapCredentialRepository) BootstrapAPITokenEvidence(context.Context, string, string, time.Time) (access.APIToken, error) {
-	return r.token, r.err
-}
-
-func TestAuthorizeBootstrapCredentialRequiresExactExpiry(t *testing.T) {
-	expiresAt := time.Date(2026, 8, 16, 12, 34, 56, 123456789, time.UTC)
-	repository := bootstrapCredentialRepository{token: access.APIToken{
-		ID: "credential_1", PrincipalID: "principal_1", ExpiresAt: expiresAt.Format(time.RFC3339Nano),
-	}}
-	module, err := newSurface(surfaceConfig{Repository: func() (access.Repository, error) { return repository, nil }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := module.AuthorizeBootstrapCredential(t.Context(), "principal_1", "credential_1", expiresAt, expiresAt.Add(-time.Minute)); err != nil {
-		t.Fatalf("exact expiry authorization = %v, want success", err)
-	}
-	if err := module.AuthorizeBootstrapCredential(t.Context(), "principal_1", "credential_1", expiresAt.Add(time.Nanosecond), expiresAt.Add(-time.Minute)); err == nil {
-		t.Fatal("mismatched expiry authorization succeeded")
-	}
-	otherID := bootstrapCredentialRepository{token: access.APIToken{
-		ID: "credential_other", PrincipalID: "principal_1", ExpiresAt: expiresAt.Format(time.RFC3339Nano),
-	}}
-	module, err = newSurface(surfaceConfig{Repository: func() (access.Repository, error) { return otherID, nil }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := module.AuthorizeBootstrapCredential(t.Context(), "principal_1", "credential_1", expiresAt, expiresAt.Add(-time.Minute)); err == nil {
-		t.Fatal("mismatched credential ID authorization succeeded")
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery", nil)
+			request.Header.Set("Authorization", "Bearer test-secret")
+			request = request.WithContext(WithPrincipal(request.Context(), Principal{ID: "admin", Kind: access.PrincipalKindUser}))
+			request = request.WithContext(WithAPICredential(request.Context(), access.APICredential{
+				Principal: access.Principal{ID: "admin", Kind: access.PrincipalKindUser}, Token: tc.token,
+			}))
+			allowed, err := module.AuthorizeTypedBootstrapRequest(request.Context(), request, []access.PermissionPair{required})
+			if err != nil || allowed != tc.want {
+				t.Fatalf("allowed=%t error=%v, want %t", allowed, err, tc.want)
+			}
+		})
 	}
 }

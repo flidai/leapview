@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -25,6 +27,107 @@ type roleBindingPolicyRepositoryStub struct {
 	envelopeCalls int
 	writerCalls   int
 	directCalls   int
+}
+
+type roleBindingEnvelopeWriter struct {
+	access.DurableGrantWriter
+	repo *roleBindingPolicyRepositoryStub
+}
+
+func (w roleBindingEnvelopeWriter) CreateGrantAdminEnvelope(_ context.Context, input access.GrantAdminEnvelopeInput) (access.GrantAdminEnvelope, error) {
+	w.repo.envelope = access.GrantAdminEnvelope{
+		ID: "envelope-1", BoundPrincipalID: input.BoundPrincipalID, Issuer: input.Issuer,
+		TargetProjectID: input.TargetProjectID, Permissions: input.Permissions,
+		RecipientSelector: input.RecipientSelector, RoleVersion: input.RoleVersion,
+	}
+	return w.repo.envelope, nil
+}
+
+func TestRoleBindingAdministrationGrantsViaCurrentCredentialEnvelopeAndAuditedPolicy(t *testing.T) {
+	const actorID = "00000000-0000-7000-8000-000000000101"
+	const recipientID = "00000000-0000-7000-8000-000000000102"
+	const projectID = projectgraph.ResourceID("project_demo")
+	scope := access.AuthorizationPolicyScope{TargetID: "target-server", ProjectID: projectID.String(), Environment: "prod"}
+	permissions, err := access.ExpandPermissionRole(access.PermissionRoleViewer, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manage, err := access.NewProjectPermissionPair(access.ActionProjectAccessManage, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delegate, err := access.NewProjectPermissionPair(access.ActionProjectAccessDelegate, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ceiling := append([]access.PermissionPair{manage, delegate}, permissions...)
+	repo := &roleBindingPolicyRepositoryStub{policy: access.AuthorizationPolicy{Scope: scope, Revision: 2, Digest: "sha256:" + strings.Repeat("a", 64)}}
+	service, err := access.NewDurableGrantService(roleBindingEnvelopeWriter{repo: repo}, access.CurrentAuthorityResolverFunc(func(context.Context, access.CurrentAuthorityRequest) (access.CurrentAuthoritySnapshot, error) {
+		return access.CurrentAuthoritySnapshot{
+			Principal:             access.Principal{ID: actorID, Kind: access.PrincipalKindUser},
+			Permissions:           ceiling,
+			Policy:                access.GrantIssuancePolicy{Scope: scope, Revision: 2, Digest: repo.policy.Digest},
+			Credential:            access.CredentialEvidence{Class: access.GrantCredentialClassAPIToken, ID: "token-1", Fingerprint: "fingerprint-token-1", PrincipalID: actorID, ExpiresAt: time.Now().Add(time.Hour)},
+			CredentialPermissions: ceiling,
+		}, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := Handler{
+		Repository:                  func() (access.Repository, error) { return repo, nil },
+		AuthorizationPolicyTargetID: scope.TargetID, AuthorizationPolicyEnvironment: scope.Environment,
+		CurrentProjectID:                  func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
+		CurrentPrincipal:                  func(*http.Request) (Principal, bool) { return Principal{ID: actorID}, true },
+		CurrentEffectivePermissionOptions: func(context.Context, string) ([]access.PermissionPair, error) { return ceiling, nil },
+		CurrentCredential: func(*http.Request) (access.APICredential, bool) {
+			return access.APICredential{Principal: access.Principal{ID: actorID}, Token: access.APIToken{ID: "token-1", PrincipalID: actorID, TokenFingerprint: "fingerprint-token-1", PermissionProfile: access.PermissionCatalogProfile, Permissions: ceiling}}, true
+		},
+		DurableGrantService: func(*http.Request) (*access.DurableGrantService, error) { return service, nil },
+	}
+	request := httptest.NewRequest(http.MethodPost, "/admin/access/command", nil)
+	state, err := handler.ApplyRoleBindingAdministration(request, access.RoleBindingAdministrationCommand{
+		Action: "grant_role", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: recipientID},
+		Role: access.PermissionRoleViewer, ExpectedRevision: 2, IdempotencyKey: "grant-key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.writerCalls != 1 || repo.directCalls != 0 || repo.envelopeCalls != 1 {
+		t.Fatalf("writer=%d direct=%d envelopes=%d", repo.writerCalls, repo.directCalls, repo.envelopeCalls)
+	}
+	if state.Revision != 3 || len(state.RoleBindings) != 1 || state.RoleBindings[0].Subject.ID != recipientID {
+		t.Fatalf("state = %#v", state)
+	}
+	if repo.audit.Action != "role_binding.created" || repo.envelope.RoleVersion != access.PermissionRoleVersion(access.PermissionRoleViewer) {
+		t.Fatalf("audit=%#v envelope=%#v", repo.audit, repo.envelope)
+	}
+}
+
+func TestRoleBindingAdministrationRevokeRejectsCredentialWithoutManage(t *testing.T) {
+	const actorID = "00000000-0000-7000-8000-000000000101"
+	const projectID = projectgraph.ResourceID("project_demo")
+	manage, err := access.NewProjectPermissionPair(access.ActionProjectAccessManage, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &roleBindingPolicyRepositoryStub{}
+	handler := Handler{
+		Repository:                  func() (access.Repository, error) { return repo, nil },
+		AuthorizationPolicyTargetID: "target-server", AuthorizationPolicyEnvironment: "prod",
+		CurrentProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
+		CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: actorID}, true },
+		CurrentEffectivePermissionOptions: func(context.Context, string) ([]access.PermissionPair, error) {
+			return []access.PermissionPair{manage}, nil
+		},
+		CurrentCredential: func(*http.Request) (access.APICredential, bool) {
+			return access.APICredential{Principal: access.Principal{ID: actorID}, Token: access.APIToken{ID: "token-1", PrincipalID: actorID, PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{}}}, true
+		},
+	}
+	_, err = handler.ApplyRoleBindingAdministration(httptest.NewRequest(http.MethodPost, "/admin/access/command", nil), access.RoleBindingAdministrationCommand{Action: "revoke_role", BindingID: "binding-1", ExpectedRevision: 1, IdempotencyKey: "idem-1"})
+	if !errors.Is(err, access.ErrForbidden) || repo.writerCalls != 0 {
+		t.Fatalf("error=%v writerCalls=%d", err, repo.writerCalls)
+	}
 }
 
 func (s *roleBindingPolicyRepositoryStub) AuthorizationPolicy(_ context.Context, scope access.AuthorizationPolicyScope) (access.AuthorizationPolicy, error) {

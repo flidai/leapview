@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
@@ -22,7 +23,7 @@ func serveBootstrapOwnerBinding(t *testing.T, w http.ResponseWriter, r *http.Req
 	if r.URL.EscapedPath() != "/api/v1/projects/"+url.PathEscape(projectID)+"/role-bindings" {
 		return false
 	}
-	if r.Header.Get("Authorization") != "Bearer instance-admin" {
+	if r.Header.Get("Authorization") != "Bearer publisher-secret" {
 		t.Errorf("owner binding request = %s %s headers=%v", r.Method, r.URL.String(), r.Header)
 		http.Error(w, "invalid owner binding request", http.StatusBadRequest)
 		return true
@@ -82,6 +83,26 @@ func serveBootstrapOwnerBinding(t *testing.T, w http.ResponseWriter, r *http.Req
 			ownerDigest, _ := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, bindings[:1])
 			return ownerDigest
 		}(),
+	})
+	return true
+}
+
+func serveProjectClaimPublisherExchange(t *testing.T, w http.ResponseWriter, r *http.Request, projectID string) bool {
+	t.Helper()
+	if r.URL.Path != "/api/v1/projects/"+projectID+"/project-claim-publisher/exchange" {
+		return false
+	}
+	if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer instance-admin" || r.Header.Get("Idempotency-Key") == "" {
+		t.Errorf("publisher exchange request = %s %s headers=%v", r.Method, r.URL.String(), r.Header)
+		http.Error(w, "invalid publisher exchange", http.StatusBadRequest)
+		return true
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"claimCredentialId":       "00000000-0000-0000-0000-000000000001",
+		"publisherToken":          "publisher-secret",
+		"publisherTokenExpiresAt": time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano),
 	})
 	return true
 }
@@ -158,6 +179,9 @@ func TestBootstrapProjectPersistsAuthorityBeforeTargetRequests(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"lvinst_test","canonicalOrigin":"http://` + r.Host + `","environment":"production"}`))
 			return
 		}
+		if serveProjectClaimPublisherExchange(t, w, r, "project:issued") {
+			return
+		}
 		if serveBootstrapOwnerBinding(t, w, r, "lvinst_test", "project:issued", "production", "admin") {
 			return
 		}
@@ -203,8 +227,6 @@ func TestBootstrapProjectPersistsAuthorityBeforeTargetRequests(t *testing.T) {
 
 func TestBootstrapProjectOwnerPolicyVerifiesExistingPolicyWithoutReplacingIt(t *testing.T) {
 	const targetID, projectID, environment, principalID = "lvinst_existing", "project:existing", "production", "principal-existing"
-	capabilities := access.ProjectRoleCapabilities(access.ProjectRoleOwner)
-	binding := access.RoleBinding{ID: "existing-owner", Name: "Existing owner", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, Role: access.ProjectRoleOwner, Capabilities: capabilities}
 	projectAdmin, err := access.NewTypedRoleBinding(bootstrapOwnerBindingID, bootstrapOwnerBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleProjectAdmin, projectgraph.ResourceID(projectID))
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +239,7 @@ func TestBootstrapProjectOwnerPolicyVerifiesExistingPolicyWithoutReplacingIt(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	bindings := []access.RoleBinding{binding, projectAdmin, editor, releaseOperator}
+	bindings := []access.RoleBinding{projectAdmin, editor, releaseOperator}
 	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, bindings)
 	if err != nil {
 		t.Fatal(err)
@@ -235,15 +257,7 @@ func TestBootstrapProjectOwnerPolicyVerifiesExistingPolicyWithoutReplacingIt(t *
 			getCount++
 			items := make([]any, 0, len(bindings))
 			for _, item := range bindings {
-				if item.TypedRoleBinding() {
-					items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": "principal", "subjectId": principalID, "role": string(item.PermissionRole), "permissionProfile": item.PermissionProfile, "permissions": item.Permissions, "policyRevision": 7, "policyDigest": digest})
-				} else {
-					encodedCapabilities := make([]string, len(item.Capabilities))
-					for index, capability := range item.Capabilities {
-						encodedCapabilities[index] = string(capability)
-					}
-					items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": "principal", "subjectId": principalID, "role": string(item.Role), "capabilities": encodedCapabilities, "policyRevision": 7, "policyDigest": digest})
-				}
+				items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": "principal", "subjectId": principalID, "role": string(item.PermissionRole), "permissionProfile": item.PermissionProfile, "permissions": item.Permissions, "policyRevision": 7, "policyDigest": digest})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": 7, "policyDigest": digest,
@@ -265,7 +279,7 @@ func TestBootstrapProjectOwnerPolicyVerifiesExistingPolicyWithoutReplacingIt(t *
 	}
 }
 
-func TestBootstrapProjectOwnerPolicyAddsTypedDeliveryRolesToLegacyPolicy(t *testing.T) {
+func TestBootstrapProjectOwnerPolicyRejectsLegacyPolicy(t *testing.T) {
 	const targetID, projectID, environment, principalID = "lvinst_legacy", "project:legacy", "production", "principal-legacy"
 	scope := access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}
 	legacy := access.RoleBinding{ID: bootstrapOwnerBindingID, Name: bootstrapOwnerBindingName, Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin)}
@@ -331,16 +345,16 @@ func TestBootstrapProjectOwnerPolicyAddsTypedDeliveryRolesToLegacyPolicy(t *test
 	defer server.Close()
 
 	client := accessgen.NewGenClient(capabilityAPITransport{target: server.URL, token: "instance-admin", client: server.Client()})
-	gotRevision, _, err := bootstrapProjectOwnerPolicy(t.Context(), client, targetID, projectID, environment, principalID)
-	if err != nil {
-		t.Fatal(err)
+	_, _, err := bootstrapProjectOwnerPolicy(t.Context(), client, targetID, projectID, environment, principalID)
+	if err == nil || !strings.Contains(err.Error(), "permission profile") {
+		t.Fatalf("legacy bootstrap policy error = %v, want fail-closed typed policy rejection", err)
 	}
-	if gotRevision != 9 || len(posts) != 3 || posts[0].Role != string(access.PermissionRoleProjectAdmin) || posts[1].Role != string(access.PermissionRoleEditor) || posts[2].Role != string(access.PermissionRoleReleaseOperator) {
-		t.Fatalf("bootstrap role posts = %#v, revision %d", posts, gotRevision)
+	if len(posts) != 1 || posts[0].Role != string(access.PermissionRoleProjectAdmin) {
+		t.Fatalf("legacy policy received unexpected mutations: %#v", posts)
 	}
 }
 
-func TestBootstrapProjectOwnerPolicyRepairsCanonicalEmptyRevision(t *testing.T) {
+func TestBootstrapProjectOwnerPolicyRejectsEmptyCurrentRevision(t *testing.T) {
 	const targetID, projectID, environment, principalID = "lvinst_empty", "project:empty", "production", "principal-empty"
 	scope := access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}
 	emptyDigest, err := access.AuthorizationPolicyDigest(scope, nil)
@@ -419,12 +433,12 @@ func TestBootstrapProjectOwnerPolicyRepairsCanonicalEmptyRevision(t *testing.T) 
 	defer server.Close()
 
 	client := accessgen.NewGenClient(capabilityAPITransport{target: server.URL, token: "instance-admin", client: server.Client()})
-	revision, digest, err := bootstrapProjectOwnerPolicy(t.Context(), client, targetID, projectID, environment, principalID)
-	if err != nil {
-		t.Fatal(err)
+	_, _, err = bootstrapProjectOwnerPolicy(t.Context(), client, targetID, projectID, environment, principalID)
+	if err == nil || !strings.Contains(err.Error(), "typed project_admin") {
+		t.Fatalf("empty policy error = %v, want fail-closed typed project_admin rejection", err)
 	}
-	if revision != 3 || digest != finalDigest || postCount != 2 || getCount != 2 {
-		t.Fatalf("repaired policy = revision %d digest %q requests %d/%d", revision, digest, postCount, getCount)
+	if postCount != 1 || getCount != 1 {
+		t.Fatalf("empty policy received compatibility repair mutations: requests %d/%d", postCount, getCount)
 	}
 }
 
@@ -434,7 +448,10 @@ func TestBootstrapProjectOwnerPolicyReportsCurrentHeadAfterHistoricalReplay(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	viewer := access.RoleBinding{ID: "viewer-binding", Name: "Viewer", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "viewer-principal"}, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}
+	viewer, err := access.NewTypedRoleBinding("viewer-binding", "Viewer", access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "viewer-principal"}, access.PermissionRoleViewer, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
 	revisionOneDigest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, []access.RoleBinding{owner})
 	if err != nil {
 		t.Fatal(err)
@@ -456,13 +473,6 @@ func TestBootstrapProjectOwnerPolicyReportsCurrentHeadAfterHistoricalReplay(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	encodeCapabilities := func(values []access.Capability) []string {
-		encoded := make([]string, len(values))
-		for index, capability := range values {
-			encoded[index] = string(capability)
-		}
-		return encoded
-	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method {
@@ -475,11 +485,7 @@ func TestBootstrapProjectOwnerPolicyReportsCurrentHeadAfterHistoricalReplay(t *t
 		case http.MethodGet:
 			items := make([]any, 0, len(currentBindings))
 			for _, item := range currentBindings {
-				if item.TypedRoleBinding() {
-					items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": "principal", "subjectId": item.Subject.ID, "role": string(item.PermissionRole), "permissionProfile": item.PermissionProfile, "permissions": item.Permissions, "policyRevision": 4, "policyDigest": currentDigest})
-				} else {
-					items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": "principal", "subjectId": item.Subject.ID, "role": "viewer", "capabilities": encodeCapabilities(item.Capabilities), "policyRevision": 4, "policyDigest": currentDigest})
-				}
+				items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": string(item.Subject.Kind), "subjectId": item.Subject.ID, "role": string(item.PermissionRole), "permissionProfile": item.PermissionProfile, "permissions": item.Permissions, "policyRevision": 4, "policyDigest": currentDigest})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": 4, "policyDigest": currentDigest,
@@ -563,6 +569,9 @@ func TestBootstrapProjectReusesAuthorityAcrossTargetsAndRejectsReplacementBefore
 			w.Header().Set("Content-Type", "application/json")
 			if r.URL.Path == "/api/v1/instance" {
 				_, _ = w.Write([]byte(`{"id":"lvinst_` + environment + `","canonicalOrigin":"http://` + r.Host + `","environment":"` + environment + `"}`))
+				return
+			}
+			if received.ProjectUID != "" && serveProjectClaimPublisherExchange(t, w, r, received.ProjectUID) {
 				return
 			}
 			if received.ProjectUID != "" && serveBootstrapOwnerBinding(t, w, r, "lvinst_"+environment, received.ProjectUID, environment, "admin") {

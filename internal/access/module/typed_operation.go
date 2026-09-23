@@ -8,9 +8,8 @@ import (
 )
 
 // APIGenTypedOperationRequirementService adapts generated APIGen authz
-// metadata to the product-owned typed-operation requirement service. An
-// operation with no typed metadata remains on the legacy capability path for
-// now; a typed credential reaching it is denied by ResolvePairs.
+// metadata to the product-owned typed-operation requirement service.
+// Privilege-protected operations without typed metadata fail closed.
 type APIGenTypedOperationRequirementService struct {
 	requirements map[string]access.TypedOperationRequirement
 }

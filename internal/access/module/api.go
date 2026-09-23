@@ -97,6 +97,10 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.ListProjectRoleBindings(w, r)
 	case "createProjectRoleBinding":
 		m.handler.CreateProjectRoleBinding(w, r)
+	case "exchangeProjectClaimPublisher":
+		m.handler.ExchangeProjectClaimPublisher(w, r)
+	case "acknowledgeProjectClaimPublisher":
+		m.handler.AcknowledgeProjectClaimPublisher(w, r)
 	case "issueResourceShareGrant":
 		m.handler.IssueResourceShareGrant(w, r)
 	case "revokeResourceShareGrant":

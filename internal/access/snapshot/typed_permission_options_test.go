@@ -60,7 +60,7 @@ func typedOptionsPairs(t *testing.T, snapshot AuthorizationSnapshot, subjects ..
 	return pairs
 }
 
-func TestEffectiveTypedPermissionOptionsProjectsDirectQualifiedGrants(t *testing.T) {
+func TestEffectiveTypedPermissionOptionsDoesNotProjectLegacyDirectGrants(t *testing.T) {
 	project := typedOptionsGraph(t)
 	snapshot, err := NewAuthorizationSnapshot(typedOptionsIdentity(), project, []Grant{
 		typedOptionsGrant(t, project, "dashboard-read", "alice", "dashboard_a", graph.KindDashboard, access.CapabilityResourceRead),
@@ -70,11 +70,7 @@ func TestEffectiveTypedPermissionOptionsProjectsDirectQualifiedGrants(t *testing
 	require.NoError(t, err)
 
 	pairs := typedOptionsPairs(t, snapshot, typedOptionsSubjects(t, "alice")...)
-	require.Equal(t, []access.PermissionPair{
-		exactTypedPair(t, access.ActionDashboardRead, "dashboard_a", graph.KindDashboard),
-		exactTypedPair(t, access.ActionPipelineRun, "pipeline_a", graph.KindPipeline),
-		exactTypedPair(t, access.ActionSemanticConsume, "semantic_a", graph.KindSemanticModel),
-	}, pairs)
+	require.Empty(t, pairs)
 }
 
 func TestEffectiveTypedPermissionOptionsUnionsTypedPrincipalAndGroupAuthority(t *testing.T) {
@@ -95,7 +91,7 @@ func TestEffectiveTypedPermissionOptionsUnionsTypedPrincipalAndGroupAuthority(t 
 	require.NotContains(t, pairs, exactTypedPair(t, access.ActionPipelineRun, "pipeline_a", graph.KindPipeline))
 }
 
-func TestEffectiveTypedPermissionOptionsExpandsTypedFutureAuthorityToCurrentExactPairs(t *testing.T) {
+func TestEffectiveTypedPermissionOptionsOffersExplicitFutureAndCurrentExactScopes(t *testing.T) {
 	project := typedOptionsGraph(t)
 	subject := mustSubject(t, access.SubjectKindPrincipal, "alice")
 	binding, err := access.NewTypedRoleBinding("viewer", "viewer", subject, access.PermissionRoleViewer, typedOptionsIdentity().ProjectID)
@@ -104,15 +100,21 @@ func TestEffectiveTypedPermissionOptionsExpandsTypedFutureAuthorityToCurrentExac
 	require.NoError(t, err)
 
 	pairs := typedOptionsPairs(t, snapshot, subject)
+	dashboardFuture, err := access.NewFutureProjectPermissionPair(access.ActionDashboardRead, typedOptionsIdentity().ProjectID, graph.KindDashboard)
+	require.NoError(t, err)
+	semanticFuture, err := access.NewFutureProjectPermissionPair(access.ActionSemanticConsume, typedOptionsIdentity().ProjectID, graph.KindSemanticModel)
+	require.NoError(t, err)
 	require.Equal(t, []access.PermissionPair{
+		dashboardFuture,
 		exactTypedPair(t, access.ActionDashboardRead, "dashboard_a", graph.KindDashboard),
 		exactTypedPair(t, access.ActionDashboardRead, "dashboard_b", graph.KindDashboard),
+		semanticFuture,
 		exactTypedPair(t, access.ActionSemanticConsume, "semantic_a", graph.KindSemanticModel),
 		exactTypedPair(t, access.ActionSemanticConsume, "semantic_b", graph.KindSemanticModel),
 	}, pairs)
 }
 
-func TestEffectiveTypedPermissionOptionsProjectsQualifiedRoleAccess(t *testing.T) {
+func TestEffectiveTypedPermissionOptionsDoesNotProjectLegacyRoleAccess(t *testing.T) {
 	project := typedOptionsGraph(t)
 	subject := mustSubject(t, access.SubjectKindPrincipal, "alice")
 	snapshot, err := NewAuthorizationSnapshotWithRoleBindings(typedOptionsIdentity(), project, []RoleBinding{{
@@ -121,17 +123,7 @@ func TestEffectiveTypedPermissionOptionsProjectsQualifiedRoleAccess(t *testing.T
 	require.NoError(t, err)
 
 	pairs := typedOptionsPairs(t, snapshot, subject)
-	require.Len(t, pairs, 4)
-	for _, pair := range pairs {
-		switch pair.Target.ResourceKind {
-		case graph.KindDashboard:
-			require.Equal(t, access.ActionDashboardRead, pair.Action)
-		case graph.KindSemanticModel:
-			require.Equal(t, access.ActionSemanticConsume, pair.Action)
-		default:
-			t.Fatalf("unexpected role-derived target = %#v", pair)
-		}
-	}
+	require.Empty(t, pairs)
 }
 
 func TestEffectiveTypedPermissionOptionsDoesNotTurnViewerRoleIntoPipelineRun(t *testing.T) {
@@ -166,14 +158,16 @@ func TestEffectiveTypedPermissionOptionsPreservesCrossResourceIsolation(t *testi
 
 func TestEffectiveTypedPermissionOptionsHasStableOrderAndDeduplication(t *testing.T) {
 	project := typedOptionsGraph(t)
+	alice := mustSubject(t, access.SubjectKindPrincipal, "alice")
+	sales := mustSubject(t, access.SubjectKindGroup, "sales")
+	dashboard := exactTypedPair(t, access.ActionDashboardRead, "dashboard_a", graph.KindDashboard)
+	semantic := exactTypedPair(t, access.ActionSemanticConsume, "semantic_a", graph.KindSemanticModel)
 	snapshot, err := NewAuthorizationSnapshot(typedOptionsIdentity(), project, []Grant{
-		typedOptionsGrant(t, project, "dashboard-principal", "alice", "dashboard_a", graph.KindDashboard, access.CapabilityResourceRead),
-		typedOptionsGrant(t, project, "dashboard-group", "sales", "dashboard_a", graph.KindDashboard, access.CapabilityResourceRead),
-		typedOptionsGrant(t, project, "semantic", "alice", "semantic_a", graph.KindSemanticModel, access.CapabilityResourceUse),
+		typedOptionsTypedGrant(t, "dashboard-principal", alice, dashboard),
+		typedOptionsTypedGrant(t, "dashboard-group", sales, dashboard),
+		typedOptionsTypedGrant(t, "semantic", alice, semantic),
 	}, nil)
 	require.NoError(t, err)
-	sales := mustSubject(t, access.SubjectKindGroup, "sales")
-	alice := mustSubject(t, access.SubjectKindPrincipal, "alice")
 	pairs := typedOptionsPairs(t, snapshot, alice, sales, alice)
 	require.Equal(t, []access.PermissionPair{
 		exactTypedPair(t, access.ActionDashboardRead, "dashboard_a", graph.KindDashboard),

@@ -307,6 +307,7 @@ func bootstrapCandidateSourceOperation(operationID string) bool {
 func bootstrapOperationAllowed(operationID string) bool {
 	switch operationID {
 	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval",
+		"exchangeProjectClaimPublisher", "acknowledgeProjectClaimPublisher",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload", "createProjectRoleBinding", "listProjectRoleBindings":
 		return true
@@ -315,27 +316,6 @@ func bootstrapOperationAllowed(operationID string) bool {
 	default:
 		return false
 	}
-}
-
-// deliveryProjectAllows evaluates project-scoped administrative authority on
-// the exact project root. Unlike the role-only fallback used for graph-wide
-// resource operations, approval decisions intentionally accept either an
-// explicit project role or a canonical grant on the project resource.
-func deliveryProjectAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
-	project, err := access.NewResourceRef(projectID, projectgraph.KindProjectNamespace)
-	if err != nil {
-		return false, err
-	}
-	for _, subject := range subjects {
-		allowed, err := snapshot.Allows(subject, project, capability)
-		if err != nil {
-			return false, err
-		}
-		if allowed {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // deliveryProjectAllowsTypedOperation evaluates the generated delivery action
@@ -431,73 +411,147 @@ func deliveryAuthorizationResources(plan deployment.DeliveryPlan) (deliveryAutho
 	return deliveryAuthorizationImpact{Existing: resources, HasAdditions: len(added) > 0}, nil
 }
 
-func deliveryAuthorizationImpactAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, impact deliveryAuthorizationImpact, capability access.Capability) (bool, error) {
-	if impact.HasAdditions && !accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability) {
+func deliverySnapshotAllows(
+	snapshot accesssnapshot.AuthorizationSnapshot,
+	subjects []access.SubjectRef,
+	projectID projectgraph.ResourceID,
+	resources []access.ResourceRef,
+	actionFor func(access.ResourceRef) (access.Action, bool),
+) (bool, error) {
+	if len(resources) == 0 || actionFor == nil {
 		return false, nil
 	}
-	if len(impact.Existing) == 0 {
-		if impact.HasAdditions {
-			return true, nil
-		}
-		return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
+	granted, err := snapshot.EffectiveTypedPermissions(subjects)
+	if err != nil {
+		return false, err
 	}
-	return deliverySnapshotAllows(snapshot, subjects, impact.Existing, capability)
-}
-func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resources []access.ResourceRef, capability access.Capability) (bool, error) {
 	for _, resource := range resources {
-		resourceCapability := deliveryResourceCapability(resource, capability)
-		if handled, roleAllowed := projectRootRoleDecision(snapshot, subjects, resource, resourceCapability); handled {
-			if !roleAllowed {
-				return false, nil
-			}
-			continue
+		action, mapped := actionFor(resource)
+		if !mapped {
+			return false, nil
 		}
-		allowed := false
-		for _, subject := range subjects {
-			candidate, err := snapshot.Allows(subject, resource, resourceCapability)
-			if err != nil {
-				return false, err
-			}
-			if candidate {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
+		pair, err := typedPermissionPair(action, projectID, resource)
+		if err != nil || !access.PermissionSetAllows(granted, pair) {
 			return false, nil
 		}
 	}
 	return true, nil
 }
 
-// projectRootRoleDecision applies the project-root half of canonical browser
-// and delivery authorization. Project roots deliberately accept only
-// PROJECT_ADMIN as direct grants, so a resource capability scoped to the root
-// must be satisfied by an explicit project role bundle.
-func projectRootRoleDecision(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resource access.ResourceRef, capability access.Capability) (handled, allowed bool) {
-	if resource.Kind() != projectgraph.KindProjectNamespace || access.SupportsCapability(resource.Kind(), capability) {
-		return false, false
+func deliveryAuthorizationImpactAllows(
+	snapshot accesssnapshot.AuthorizationSnapshot,
+	subjects []access.SubjectRef,
+	projectID projectgraph.ResourceID,
+	impact deliveryAuthorizationImpact,
+	addedAction access.Action,
+	resourceAction func(access.ResourceRef) (access.Action, bool),
+) (bool, error) {
+	if impact.HasAdditions {
+		project, err := access.NewResourceRef(projectID, projectgraph.KindProjectNamespace)
+		if err != nil {
+			return false, err
+		}
+		if allowed, err := deliverySnapshotAllows(snapshot, subjects, projectID, []access.ResourceRef{project}, func(access.ResourceRef) (access.Action, bool) {
+			return addedAction, addedAction != ""
+		}); err != nil || !allowed {
+			return false, err
+		}
 	}
-	return true, accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability)
+	if len(impact.Existing) == 0 {
+		return impact.HasAdditions, nil
+	}
+	return deliverySnapshotAllows(snapshot, subjects, projectID, impact.Existing, resourceAction)
 }
 
-func deliveryResourceCapability(resource access.ResourceRef, capability access.Capability) access.Capability {
-	if capability == access.CapabilityResourceUse &&
-		!access.SupportsCapability(resource.Kind(), capability) &&
-		access.SupportsCapability(resource.Kind(), access.CapabilityResourceRead) {
-		// Building a plan requires use authority for executable resources and
-		// read authority for dashboards, which are consumed but not executable.
-		return access.CapabilityResourceRead
+func publicationTypedAction(resource access.ResourceRef, capability access.Capability) (access.Action, bool) {
+	var action access.Action
+	switch resource.Kind() {
+	case projectgraph.KindProjectNamespace:
+		switch capability {
+		case access.CapabilityProjectAdmin:
+			action = access.ActionProjectAccessManage
+		case access.CapabilityResourceRead:
+			action = access.ActionDeliveryRead
+		case access.CapabilityResourceUse:
+			action = access.ActionDeliveryBuild
+		case access.CapabilityResourceEdit:
+			action = access.ActionDeliveryPlan
+		case access.CapabilityResourcePublish:
+			action = access.ActionDeliveryPublish
+		case access.CapabilityResourceManage:
+			action = access.ActionDeliveryApprove
+		}
+	case projectgraph.KindDashboard:
+		switch capability {
+		case access.CapabilityResourceRead, access.CapabilityResourceUse:
+			action = access.ActionDashboardRead
+		case access.CapabilityResourceEdit:
+			action = access.ActionDashboardUpdate
+		case access.CapabilityResourceManage:
+			action = access.ActionDashboardDelete
+		case access.CapabilityResourcePublish:
+			action = access.ActionDashboardPublish
+		}
+	case projectgraph.KindConnection:
+		switch capability {
+		case access.CapabilityResourceRead:
+			action = access.ActionConnectionRead
+		case access.CapabilityResourceUse:
+			action = access.ActionConnectionUse
+		case access.CapabilityResourceEdit, access.CapabilityResourceManage, access.CapabilityResourcePublish:
+			action = access.ActionConnectionManage
+		}
+	case projectgraph.KindPipeline:
+		switch capability {
+		case access.CapabilityResourceRead:
+			action = access.ActionPipelineRead
+		case access.CapabilityResourceUse:
+			action = access.ActionPipelineRun
+		case access.CapabilityResourceEdit:
+			action = access.ActionPipelineUpdate
+		case access.CapabilityResourceManage:
+			action = access.ActionPipelineDelete
+		case access.CapabilityResourcePublish:
+			action = access.ActionPipelineUpdate
+		}
+	case projectgraph.KindSemanticModel:
+		switch capability {
+		case access.CapabilityResourceRead, access.CapabilityResourceUse:
+			action = access.ActionSemanticRead
+		case access.CapabilityResourceEdit:
+			action = access.ActionSemanticUpdate
+		case access.CapabilityResourceManage:
+			action = access.ActionSemanticDelete
+		case access.CapabilityResourcePublish:
+			action = access.ActionSemanticUpdate
+		}
+	case projectgraph.KindSource:
+		switch capability {
+		case access.CapabilityResourceRead, access.CapabilityResourceUse:
+			action = access.ActionSourceRead
+		case access.CapabilityResourceEdit:
+			action = access.ActionSourceUpdate
+		case access.CapabilityResourceManage:
+			action = access.ActionSourceDelete
+		case access.CapabilityResourcePublish:
+			action = access.ActionSourceUpdate
+		}
+	case projectgraph.KindModel:
+		switch capability {
+		case access.CapabilityResourceRead, access.CapabilityResourceUse:
+			action = access.ActionModelRead
+		case access.CapabilityResourceEdit:
+			action = access.ActionModelUpdate
+		case access.CapabilityResourceManage:
+			action = access.ActionModelDelete
+		case access.CapabilityResourcePublish:
+			action = access.ActionModelUpdate
+		}
 	}
-	if capability == access.CapabilityResourcePublish &&
-		!access.SupportsCapability(resource.Kind(), capability) &&
-		access.SupportsCapability(resource.Kind(), access.CapabilityResourceEdit) {
-		// Publishing a plan requires publish authority for publishable
-		// dashboards and edit authority for the non-publishable graph
-		// resources changed by that same immutable plan.
-		return access.CapabilityResourceEdit
+	if action == "" || access.ValidateActionForKind(action, resource.Kind()) != nil {
+		return "", false
 	}
-	return capability
+	return action, true
 }
 
 // nativeDeliveryAuthorizationPlan resolves the canonical PostgreSQL delivery

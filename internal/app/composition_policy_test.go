@@ -2,6 +2,7 @@ package app
 
 import (
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/deployment"
@@ -19,6 +20,18 @@ func TestAccessAuthConfigRequiresExplicitDevelopmentBypass(t *testing.T) {
 	production := accessAuthConfig(config.Config{DevAuthBypass: true}, true, true)
 	if production.DevBypass {
 		t.Fatal("production authentication config accepted development bypass")
+	}
+}
+
+func TestAccessAuthConfigKeepsDevelopmentSessionSettingsOutOfProduction(t *testing.T) {
+	cfg := config.Config{DevBrowserSessionTTL: 30 * 24 * time.Hour, DevCookieNamespace: "12345", DevQuickLogin: true}
+	development := accessAuthConfig(cfg, false, false)
+	if development.BrowserSessionTTL != 30*24*time.Hour || development.CookieNamespace != "12345" || !development.DevelopmentLogin {
+		t.Fatalf("development auth config = %#v", development)
+	}
+	production := accessAuthConfig(cfg, true, true)
+	if production.BrowserSessionTTL != 0 || production.CookieNamespace != "" || production.DevelopmentLogin {
+		t.Fatalf("production inherited development auth config = %#v", production)
 	}
 }
 

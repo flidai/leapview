@@ -461,18 +461,9 @@ type SCIMGroupFilter struct {
 	DisplayName string
 }
 
-type APITokenInput struct {
-	PrincipalID  string
-	Name         string
-	Description  string
-	Capabilities []Capability
-	ExpiresAt    time.Time
-}
-
 // ScopedAPITokenInput is the ADR-0025 credential contract. Permissions is
 // required: nil is omission and invalid, while an explicit empty slice creates
-// an identity-only token. The legacy APITokenInput remains only for bounded
-// migration/bootstrap callers until generic capabilities are retired.
+// an identity-only token.
 type ScopedAPITokenInput struct {
 	PrincipalID string
 	Name        string
@@ -481,7 +472,7 @@ type ScopedAPITokenInput struct {
 	ExpiresAt   time.Time
 }
 
-const APITokenNameInitialPublisher = "initial-publisher"
+const APITokenNameInitialProjectClaim = "initial-project-claim"
 
 type APIToken struct {
 	ID          string
@@ -521,14 +512,6 @@ type SessionAuthorityEvidenceReader interface {
 // production credential contract while it is being removed.
 type ScopedAPITokenRepository interface {
 	CreateScopedAPITokenWithMetadata(context.Context, ScopedAPITokenInput) (string, APIToken, error)
-}
-
-// BootstrapAPITokenEvidenceReader is the narrow durable revalidation port
-// used by the protected first-activation path. Implementations must resolve
-// the token by its durable ID (never by request-held capabilities), bind it
-// to the actor, and require a currently enabled platform administrator.
-type BootstrapAPITokenEvidenceReader interface {
-	BootstrapAPITokenEvidence(context.Context, string, string, time.Time) (APIToken, error)
 }
 
 type APICredential struct {
@@ -681,8 +664,6 @@ type Repository interface {
 	ListSessions(ctx context.Context, principalID string) ([]Session, error)
 	RevokeSession(ctx context.Context, id string) error
 	RevokeSessionForPrincipal(ctx context.Context, principalID, id string) error
-	CreateAPIToken(ctx context.Context, principalID, name string) (string, error)
-	CreateAPITokenWithMetadata(ctx context.Context, input APITokenInput) (string, APIToken, error)
 	PrincipalForAPIToken(ctx context.Context, token string) (Principal, error)
 	CredentialForAPIToken(ctx context.Context, token string) (APICredential, error)
 	ListAPITokens(ctx context.Context, principalID string) ([]APIToken, error)

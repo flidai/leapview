@@ -136,7 +136,7 @@ func (m *Module) ListUploadSessionEvents(w http.ResponseWriter, r *http.Request,
 			apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "CONNECTION_AUTHORIZATION_UNAVAILABLE", "Connection authorization is unavailable", nil)
 			return
 		}
-		allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, connectionID, access.CapabilityResourceRead)
+		allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, connectionID, access.ActionConnectionRead)
 		if err != nil {
 			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
 			return

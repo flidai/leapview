@@ -60,9 +60,11 @@ type Service struct {
 	Authoring          AuthoringReader
 	// CurrentEffectivePermissionOptions is the typed action-target picker
 	// authority boundary.
-	// Implementations must return only exact, already-authorized action-target
-	// pairs for the principal in the active project snapshot. An empty result is
-	// explicit no project/resource authority.
+	// Implementations must return only already-authorized action-target options
+	// for the principal in the active project snapshot. Exact resource pairs and
+	// explicit typed future-resource selectors are both preserved; the browser
+	// must never infer a wildcard. An empty result is explicit no
+	// project/resource authority.
 	CurrentEffectivePermissionOptions func(context.Context, string) ([]access.PermissionPair, error)
 	LocalPasswordEnabled              bool
 	Now                               func() time.Time

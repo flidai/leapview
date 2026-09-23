@@ -140,7 +140,7 @@ type Principal struct {
 // ConnectionAuthorizer is the module-owned authorization port. The HTTP
 // adapter receives a converted copy at construction time, keeping transport
 // types out of the module configuration contract.
-type ConnectionAuthorizer func(context.Context, string, string, string, access.Capability) (bool, error)
+type ConnectionAuthorizer func(context.Context, string, string, string, access.Action) (bool, error)
 
 // PostgreSQLCleanupAuthority is the capability marker for the separately
 // authenticated managed-data maintenance facade. Production composition may

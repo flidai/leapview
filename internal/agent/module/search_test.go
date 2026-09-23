@@ -110,11 +110,15 @@ func TestSearchReferencesAutocompleteFiltersByAuthorization(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		canonical, err := access.NewCanonicalGrant(graph, subject, resource, access.CapabilityResourceRead)
+		pair, err := access.NewExactPermissionPair(access.ActionModelRead, identity.ProjectID, resource)
 		if err != nil {
 			t.Fatal(err)
 		}
-		grants = append(grants, accesssnapshot.Grant{ID: "grant_" + fixture.principal, Canonical: canonical})
+		grant, err := accesssnapshot.NewTypedGrant("grant_"+fixture.principal, "model reader", subject, []access.PermissionPair{pair})
+		if err != nil {
+			t.Fatal(err)
+		}
+		grants = append(grants, grant)
 	}
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, grants, nil)
 	if err != nil {

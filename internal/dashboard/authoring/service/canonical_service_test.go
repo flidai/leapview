@@ -294,33 +294,34 @@ func TestCanonicalServiceRestoresRetainedRevisionAsNewDraft(t *testing.T) {
 	}
 }
 
-func TestCanonicalServiceCreateUsesProjectCapabilityBeforeDashboardExists(t *testing.T) {
+func TestCanonicalServiceCreateUsesTypedProjectAndSemanticActionsBeforeDashboardExists(t *testing.T) {
 	repository, compiler := newCanonicalRepository(), &canonicalCompiler{}
 	var authorized []access.ResourceRef
-	var projectCapabilities []access.Capability
+	var projectActions []access.Action
 	adapter, err := accessadapter.New(accessadapter.Options{
-		AuthorizeResource: func(_ context.Context, _ string, _ graph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+		AuthorizeTypedResource: func(_ context.Context, _ string, _ graph.ResourceID, resource access.ResourceRef, action access.Action) (bool, bool, error) {
 			authorized = append(authorized, resource)
-			if resource.Kind() != graph.KindSemanticModel || capability != access.CapabilityResourceRead {
-				t.Fatalf("resource authorization = %#v %q, want semantic-model RESOURCE_READ", resource, capability)
+			if resource.Kind() != graph.KindSemanticModel || action != access.ActionSemanticRead {
+				t.Fatalf("resource authorization = %#v %q, want semantic.read", resource, action)
 			}
-			return true, nil
+			return true, true, nil
 		},
-		AuthorizeProjectCapability: func(_ context.Context, _ string, _ graph.ResourceID, capability access.Capability) (bool, error) {
-			projectCapabilities = append(projectCapabilities, capability)
-			return capability == access.CapabilityResourceEdit || capability == access.CapabilityProjectAdmin, nil
+		AuthorizeTypedProject: func(_ context.Context, _ string, _ graph.ResourceID, action access.Action) (bool, bool, error) {
+			projectActions = append(projectActions, action)
+			return true, action == access.ActionDashboardCreate, nil
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	svc := newCanonicalService(t, repository, adapter, compiler, "dashboard-created", "draft-created", "revision-created")
-	created, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "model:test", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-project-role"})
+	created, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "model:test", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-typed-pair"})
 	if err != nil {
-		t.Fatalf("project-scoped create failed: %v", err)
+		t.Fatalf("typed project-scoped create failed: %v", err)
 	}
-	if created.Lifecycle.ID != "dashboard-created" || len(authorized) != 1 || authorized[0].Kind() != graph.KindSemanticModel || len(projectCapabilities) != 2 || projectCapabilities[0] != access.CapabilityResourceEdit || projectCapabilities[1] != access.CapabilityProjectAdmin {
-		t.Fatalf("create result=%#v resources=%#v project capabilities=%#v", created, authorized, projectCapabilities)
+	if created.Lifecycle.ID != "dashboard-created" || len(authorized) != 1 || authorized[0].Kind() != graph.KindSemanticModel ||
+		len(projectActions) != 1 || projectActions[0] != access.ActionDashboardCreate {
+		t.Fatalf("create result=%#v resources=%#v project actions=%#v", created, authorized, projectActions)
 	}
 }
 

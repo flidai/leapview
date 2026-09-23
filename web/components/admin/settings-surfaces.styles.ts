@@ -66,6 +66,36 @@ export const settingsSurfaceStyles = css`
   .inline-value code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .text-button { min-height: auto; flex: 0 0 auto; border-color: transparent; background: transparent; color: var(--lv-fg-link); padding: var(--base-size-2); }
   .role-source { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .role-grant-modal { width: min(42rem, calc(100vw - var(--base-size-32))); }
+  .role-scope { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: var(--base-size-12); }
+  .role-scope > span { color: var(--lv-fg-muted); }
+  .role-options { display: grid; gap: var(--base-size-8); margin: 0; border: 0; padding: 0; }
+  .role-options legend { margin-bottom: var(--base-size-8); color: var(--lv-fg-default); font-weight: var(--base-text-weight-semibold); }
+  .role-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--base-size-8); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); padding: var(--base-size-12); color: var(--lv-fg-default); cursor: pointer; }
+  .role-option.selected { border-color: var(--lv-border-accent); background: var(--lv-bg-accent-muted); }
+  .role-option input { min-height: auto; margin-top: 3px; }
+  .role-option > span { display: grid; gap: var(--base-size-4); }
+  .role-option small { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .role-option .role-permission-summary { color: var(--lv-fg-accent); }
+  .access-overview { gap: var(--base-size-20); }
+  .access-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .6fr) auto; align-items: center; gap: var(--base-size-16); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); padding: var(--base-size-16); }
+  .access-summary > div { display: grid; gap: var(--base-size-4); }
+  .access-summary button { display: inline-flex; align-items: center; gap: var(--base-size-6); }
+  .access-toolbar { display: flex; align-items: end; justify-content: space-between; gap: var(--base-size-12); }
+  .access-tabs { display: flex; gap: var(--base-size-4); }
+  .access-tabs button[aria-selected='true'] { border-color: var(--lv-border-accent); background: var(--lv-bg-accent-muted); color: var(--lv-fg-accent); }
+  .access-search { min-width: min(20rem, 100%); }
+  .access-identity-list { display: grid; gap: var(--base-size-12); }
+  .access-identity-card, .access-resource-card { display: grid; gap: var(--base-size-8); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); padding: var(--base-size-16); }
+  .access-identity-card > header, .access-resource-card > header { display: flex; align-items: start; justify-content: space-between; gap: var(--base-size-12); }
+  .access-identity-card > header > div, .access-resource-card > header > div { display: flex; flex-wrap: wrap; align-items: center; gap: var(--base-size-8); }
+  .access-assignment { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 1fr) auto; align-items: start; gap: var(--base-size-12); border-top: var(--lv-border-muted); padding-top: var(--base-size-12); }
+  .access-assignment > div { display: grid; gap: var(--base-size-4); }
+  .access-assignment > div span, .access-assignment details { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .access-assignment summary { color: var(--lv-fg-link); cursor: pointer; }
+  .access-assignment details p { margin-top: var(--base-size-6); }
+  .access-empty { display: grid; gap: var(--base-size-4); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); padding: var(--base-size-24); text-align: center; }
+  .access-empty span { color: var(--lv-fg-muted); }
   .detail-subsection { display: grid; gap: var(--base-size-12); }
   .detail-empty-row { display: grid; grid-template-columns: minmax(10rem, 0.45fr) minmax(0, 1fr); gap: var(--base-size-16); color: var(--lv-fg-muted); }
   .detail-empty-row strong { color: var(--lv-fg-muted); font-weight: var(--base-text-weight-normal); }
@@ -136,6 +166,10 @@ export const settingsSurfaceStyles = css`
     .activity-item > time { grid-column: 2; }
     .audit-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .audit-actions { grid-column: 1 / -1; }
+    .access-summary { grid-template-columns: minmax(0, 1fr) auto; }
+    .access-summary button { grid-column: 1 / -1; width: fit-content; }
+    .access-assignment { grid-template-columns: minmax(0, 1fr) auto; }
+    .access-assignment details { grid-column: 1 / -1; }
   }
   @media (max-width: 480px) {
     .detail-empty-row { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
@@ -148,5 +182,9 @@ export const settingsSurfaceStyles = css`
     .audit-drawer-fact { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
     .audit-footer { align-items: stretch; }
     .audit-footer .audit-load-more { width: 100%; }
+    .access-toolbar { align-items: stretch; flex-direction: column; }
+    .access-tabs, .access-search { width: 100%; min-width: 0; }
+    .access-tabs button { flex: 1; }
+    .access-summary { grid-template-columns: minmax(0, 1fr); }
   }
 `

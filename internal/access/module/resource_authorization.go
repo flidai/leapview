@@ -54,80 +54,61 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
+		for _, resource := range resources {
+			if resource.Kind() == projectgraph.KindProjectNamespace {
+				if resource.ID() != projectID {
+					http.NotFound(w, r)
+					return
+				}
+				continue
+			}
+			graphResource, found := snapshot.Project().Resource(resource.ID())
+			if !found || graphResource.Kind != resource.Kind() {
+				http.NotFound(w, r)
+				return
+			}
+		}
 		credential, hasCredential := APICredentialFromContext(r.Context())
 		typedToken := hasCredential && strings.TrimSpace(credential.Token.ID) != "" &&
 			(credential.Token.PermissionProfile != "" || credential.Token.Permissions != nil)
 		requirement, typedOperation := a.typedRequirement(operationID)
-		if typedOperation {
-			// A migrated operation is evaluated against typed principal/group
-			// authority first. Legacy capability rows are intentionally ignored;
-			// this permits a typed-only grant to work and prevents a typed token
-			// from silently falling back to a broad capability.
-			pairs, pairErr := requirement.ResolvePairs(projectID, resources...)
-			if pairErr != nil || !snapshotAllowsTyped(snapshot, subjects, pairs) {
-				for _, resource := range resources {
-					a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resource, capability)
-				}
-				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-				return
-			}
-			if typedToken {
-				// Authentication normally binds these identities before this
-				// middleware runs, but keep the typed operation boundary
-				// self-contained for injected credentials and alternate transports.
-				// A token's pair set is an attenuation ceiling for the current
-				// principal; it is never a substitute for that principal's
-				// immutable typed assignment.
-				if credential.Principal.ID != principal.ID || credential.Token.PrincipalID != principal.ID ||
-					credential.Token.PermissionProfile != access.PermissionCatalogProfile || pairErr != nil || !permissionPairsAllowAll(credential.Token.Permissions, pairs) {
-					a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
-					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-					return
-				}
-			} else if hasCredential && strings.TrimSpace(credential.Token.ID) != "" {
-				// A legacy bearer token cannot invoke a migrated typed operation.
-				a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
-				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-				return
-			}
-		} else if typedToken {
-			// Typed credentials reaching an unmigrated operation must fail closed;
-			// no action/resolver pair exists from which to derive an exact target.
+		if !typedOperation {
+			// Generated privilege routes without an action/target contract are
+			// invalid. No historical capability grant can substitute for one.
 			a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
-		} else {
-			allowed, legacyErr := snapshotAllowsLegacy(snapshot, subjects, resources, capability)
-			if legacyErr != nil {
-				slog.Default().WarnContext(r.Context(), "generated API legacy resource authorization failed", "capability", capability, "project", projectID, "error", legacyErr)
-				if errors.Is(legacyErr, access.ErrResourceNotFound) {
-					http.NotFound(w, r)
-					return
-				}
-				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-				return
+		}
+		// Every generated privilege operation is evaluated against typed principal/group
+		// authority first. Legacy capability rows are intentionally ignored;
+		// this permits a typed-only grant to work and prevents a typed token
+		// from silently falling back to a broad capability.
+		pairs, pairErr := requirement.ResolvePairs(projectID, resources...)
+		if pairErr != nil || !snapshotAllowsTyped(snapshot, subjects, pairs) {
+			for _, resource := range resources {
+				a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resource, capability)
 			}
-			if !allowed {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		if typedToken {
+			// Authentication normally binds these identities before this
+			// middleware runs, but keep the typed operation boundary
+			// self-contained for injected credentials and alternate transports.
+			// A token's pair set is an attenuation ceiling for the current
+			// principal; it is never a substitute for that principal's
+			// immutable typed assignment.
+			if credential.Principal.ID != principal.ID || credential.Token.PrincipalID != principal.ID ||
+				credential.Token.PermissionProfile != access.PermissionCatalogProfile || pairErr != nil || !permissionPairsAllowAll(credential.Token.Permissions, pairs) {
 				a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
 				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
 			}
-			effective, err := a.module.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
-			if err != nil {
-				slog.Default().WarnContext(r.Context(), "generated API effective capability resolution failed", "capability", capability, "project", projectID, "error", err)
-				if errors.Is(err, access.ErrForbidden) {
-					a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
-					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-					return
-				}
-				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-				return
-			}
-			if !containsCapability(effective, capability) {
-				a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
-				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-				return
-			}
+		} else if hasCredential && strings.TrimSpace(credential.Token.ID) != "" {
+			// A legacy bearer token cannot invoke a migrated typed operation.
+			a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
 		}
 		next.ServeHTTP(w, r)
 	}))
@@ -160,32 +141,6 @@ func snapshotAllowsTyped(snapshot accesssnapshot.AuthorizationSnapshot, subjects
 	// required while authority may be split across principal and group grants.
 	granted, err := snapshot.EffectiveTypedPermissions(subjects)
 	return err == nil && permissionPairsAllowAll(granted, requested)
-}
-
-func snapshotAllowsLegacy(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resources []access.ResourceRef, capability access.Capability) (bool, error) {
-	for _, resource := range resources {
-		if resource.Kind() == projectgraph.KindProjectNamespace && !access.SupportsCapability(resource.Kind(), capability) {
-			if !accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability) {
-				return false, nil
-			}
-			continue
-		}
-		allowed := false
-		for _, subject := range subjects {
-			candidate, err := snapshot.Allows(subject, resource, capability)
-			if err != nil {
-				return false, err
-			}
-			if candidate {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return false, nil
-		}
-	}
-	return true, nil
 }
 
 // authorizationSnapshot acquires one immutable lease and resolves the full
@@ -242,13 +197,4 @@ func (a *APIGenAuthorizer) recordResourceAuthorizationDenial(r *http.Request, op
 	if err := access.PersistAuditEvent(r.Context(), repository, input); err != nil {
 		a.module.logger.WarnContext(r.Context(), "generated API authorization denial audit failed", "operation", operationID, "error", err)
 	}
-}
-
-func containsCapability(capabilities []access.Capability, expected access.Capability) bool {
-	for _, capability := range capabilities {
-		if capability == expected {
-			return true
-		}
-	}
-	return false
 }

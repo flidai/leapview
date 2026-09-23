@@ -116,16 +116,19 @@ test('managed development keeps bypass HTTP loopback-only and preserves caller o
   expect(capture).toContain('LEAPVIEW_ADDR: `127.0.0.1:${port}`')
 })
 
-test('managed development keeps an explicit PORT outside worktree allocation', async () => {
+test('managed development reuses a pinned port and fails instead of silently changing origins', async () => {
   const source = await readFile('scripts/dev-server.sh', 'utf8')
   const ensurePort = source.indexOf('ensure_port()')
-  const explicitPort = source.indexOf('if [[ -n "${PORT:-}" ]]', ensurePort)
-  const managedRange = source.indexOf('local end=$((PORT_START + PORT_COUNT - 1))', explicitPort)
+  const runner = source.indexOf('runner_name()', ensurePort)
 
-  expect(explicitPort).toBeGreaterThanOrEqual(0)
-  expect(source.slice(explicitPort, managedRange)).toContain('echo "$candidate"')
-  expect(source.slice(explicitPort, managedRange)).toContain('Explicit PORT')
-  expect(source.slice(explicitPort, managedRange)).not.toContain('PORT_START')
+  expect(source).toContain('PREFERRED_PORT_FILE="$TMP_DIR/dev-server.preferred-port"')
+  expect(source).toContain('echo "$port" > "$PREFERRED_PORT_FILE"')
+  expect(source.slice(ensurePort, runner)).toContain('Development port $candidate is occupied')
+  expect(source.slice(ensurePort, runner)).not.toContain('PORT_START')
+  expect(source.slice(ensurePort, runner)).not.toContain('offset')
+  expect(source).toContain('LEAPVIEW_DEV_BROWSER_SESSION_TTL="${LEAPVIEW_DEV_BROWSER_SESSION_TTL:-720h}"')
+  expect(source).toContain('LEAPVIEW_DEV_QUICK_LOGIN="${LEAPVIEW_DEV_QUICK_LOGIN:-true}"')
+  expect(source).toContain('LEAPVIEW_DEV_COOKIE_NAMESPACE="${LEAPVIEW_DEV_COOKIE_NAMESPACE:-$cookie_namespace}"')
 })
 
 test('frontend and desktop test typechecks retain semantic checking', async () => {

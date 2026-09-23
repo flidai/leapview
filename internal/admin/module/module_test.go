@@ -185,47 +185,6 @@ func TestAdminPublicationRouteRejectsClientProjectSelectorsBeforeIdempotency(t *
 	}
 }
 
-func TestCapabilityAllowedIntersectsSnapshotAndCredentialScope(t *testing.T) {
-	allowed := true
-	m := &Module{currentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
-		if !allowed {
-			return nil, nil
-		}
-		return []access.Capability{access.CapabilityResourcePublish}, nil
-	}}
-	scope, err := access.NewAuthoringScope("instance", "sales", []access.Capability{access.CapabilityResourcePublish})
-	if err != nil {
-		t.Fatal(err)
-	}
-	credential := access.APICredential{Authoring: &access.AuthoringSession{Scope: scope}}
-	r := httptest.NewRequest(http.MethodPost, "/", nil)
-	if ok, err := m.capabilityAllowed(r, "principal", "operations", access.CapabilityResourcePublish, credential, true); err != nil || ok {
-		t.Fatalf("cross-project authoring credential allowed = %v, err=%v", ok, err)
-	}
-	if ok, err := m.capabilityAllowed(r, "principal", "sales", access.CapabilityResourcePublish, credential, true); err != nil || !ok {
-		t.Fatalf("matching authoring credential allowed = %v, err=%v", ok, err)
-	}
-	allowed = false
-	if ok, err := m.capabilityAllowed(r, "principal", "sales", access.CapabilityResourcePublish, credential, true); err != nil || ok {
-		t.Fatalf("revoked authoring capability allowed = %v, err=%v", ok, err)
-	}
-}
-
-func TestCapabilityAllowedRejectsTokenOmissionAndDenyAll(t *testing.T) {
-	m := &Module{currentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
-		return []access.Capability{access.CapabilityResourcePublish}, nil
-	}}
-	r := httptest.NewRequest(http.MethodPost, "/", nil)
-	omitted := access.APICredential{Token: access.APIToken{Capabilities: nil}}
-	if ok, err := m.capabilityAllowed(r, "principal", "sales", access.CapabilityResourcePublish, omitted, true); err != nil || ok {
-		t.Fatalf("omitted token allowlist allowed = %v, err=%v", ok, err)
-	}
-	denyAll := access.APICredential{Token: access.APIToken{Capabilities: []access.Capability{}}}
-	if ok, err := m.capabilityAllowed(r, "principal", "sales", access.CapabilityResourcePublish, denyAll, true); err != nil || ok {
-		t.Fatalf("deny-all token allowed = %v, err=%v", ok, err)
-	}
-}
-
 func TestAdminPublicationsDoNotDiscloseForeignProjectRows(t *testing.T) {
 	service := &adminPublicationInvocationService{publications: []publication.Publication{
 		{ID: "publication-local", ProjectID: "project:test", Name: "local"},

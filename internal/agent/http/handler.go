@@ -832,12 +832,9 @@ type adminAgentCommandSignals struct {
 
 func agentCredentialScope(credential access.APICredential) agent.CredentialScope {
 	if credential.Authoring != nil {
-		capabilities := make([]string, len(credential.Authoring.Scope.Capabilities))
-		for index, capability := range credential.Authoring.Scope.Capabilities {
-			capabilities[index] = string(capability)
-		}
 		return agent.CredentialScope{
-			ProjectID: credential.Authoring.Scope.ProjectID.String(), Capabilities: capabilities, Restricted: true,
+			ProjectID: credential.Authoring.Scope.ProjectID.String(), PermissionProfile: access.PermissionCatalogProfile,
+			Permissions: access.ClonePermissionPairs(credential.Authoring.Scope.Permissions), Restricted: true,
 		}
 	}
 	if credential.Token.ID == "" {

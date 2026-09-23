@@ -196,6 +196,9 @@ BEGIN
         ELSIF action_name = 'platform.audit.read' THEN
             expected_scope := 'instance';
             allowed_resource_kinds := ARRAY[]::text[];
+        ELSIF action_name = 'instance.project.claim' THEN
+            expected_scope := 'instance';
+            allowed_resource_kinds := ARRAY[]::text[];
         ELSE
             RETURN FALSE;
         END IF;

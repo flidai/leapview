@@ -26,7 +26,7 @@ import (
 )
 
 // Current main's generated surface plus the two target-policy operations.
-const expectedAPIGenAggregateOperationCount = 191
+const expectedAPIGenAggregateOperationCount = 193
 
 func TestAPIGenTypedAuthzMetadataReachesAccessBoundary(t *testing.T) {
 	contracts := accessAPIGenOperationContracts()
@@ -158,7 +158,7 @@ func TestAPIGenAccessCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 	accessContracts := accessgen.GetAPIGenOperationContracts()
-	if got, want := len(accessContracts), 71; got != want {
+	if got, want := len(accessContracts), 73; got != want {
 		t.Fatalf("Access generated operations = %d, want %d", got, want)
 	}
 	allowedTags := map[string]bool{"Access": true, "Audit": true, "Current User": true}

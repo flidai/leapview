@@ -234,51 +234,6 @@ func (m *Module) activeProjectID(ctx context.Context) (projectgraph.ResourceID, 
 	return projectID, nil
 }
 
-func (m *Module) capabilityAllowed(r *http.Request, principalID, projectID string, required access.Capability, credential access.APICredential, hasCredential bool) (bool, error) {
-	if m.currentEffectiveCapabilities == nil {
-		return m.access == nil && !hasCredential, nil
-	}
-	effective, err := m.currentEffectiveCapabilities(r.Context(), principalID)
-	if err != nil {
-		return false, err
-	}
-	effectiveHas := false
-	for _, capability := range effective {
-		if capability == required {
-			effectiveHas = true
-			break
-		}
-	}
-	if !effectiveHas {
-		return false, nil
-	}
-	if !hasCredential {
-		return true, nil
-	}
-	if credential.Authoring != nil {
-		if credential.Authoring.Scope.ProjectID.String() != strings.TrimSpace(projectID) {
-			return false, nil
-		}
-		for _, capability := range credential.Authoring.Scope.Capabilities {
-			if capability == required {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-	// A nil token capability list is an invalid/legacy persisted form and
-	// denies every capability; an explicit empty list does the same.
-	if credential.Token.Capabilities == nil {
-		return false, nil
-	}
-	for _, capability := range credential.Token.Capabilities {
-		if capability == required {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (m *Module) principal(r *http.Request) (adminPrincipal, bool) {
 	if m.currentPrincipal == nil {
 		return adminPrincipal{}, false

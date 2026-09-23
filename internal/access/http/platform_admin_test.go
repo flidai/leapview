@@ -100,7 +100,7 @@ func TestPlatformAdminGuardDurableRoleCredentialAttenuation(t *testing.T) {
 		t.Fatalf("project admin token status = %d, want %d", got, stdhttp.StatusForbidden)
 	}
 	credential = access.APICredential{Token: access.APIToken{ID: "admin", Capabilities: []access.Capability{access.CapabilityPlatformAdmin}}}
-	if got := call(); got != stdhttp.StatusOK {
-		t.Fatalf("platform admin token status = %d, want %d", got, stdhttp.StatusOK)
+	if got := call(); got != stdhttp.StatusForbidden {
+		t.Fatalf("legacy platform admin token status = %d, want %d", got, stdhttp.StatusForbidden)
 	}
 }

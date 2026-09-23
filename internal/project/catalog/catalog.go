@@ -380,7 +380,7 @@ func (s *Service) Resolve(ctx context.Context, principalID string, ref Ref, capa
 		return resultFor(resource), nil
 	}
 	for _, subject := range subjects {
-		allowed, err := snapshot.Allows(subject, mustResourceRef(ref), capability)
+		allowed, err := allowsCatalogResource(snapshot, subject, resource, capability)
 		if err != nil {
 			return Result{}, err
 		}
@@ -439,16 +439,12 @@ func mustResourceRef(ref Ref) access.ResourceRef {
 }
 
 func allowsAny(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resource projectgraph.Resource) (bool, error) {
-	ref, err := access.NewResourceRef(resource.ID, resource.Kind)
-	if err != nil {
-		return false, err
-	}
 	capability := access.CapabilityResourceRead
 	if resource.Kind == projectgraph.KindProjectNamespace {
 		capability = access.CapabilityProjectAdmin
 	}
 	for _, subject := range subjects {
-		allowed, err := snapshot.Allows(subject, ref, capability)
+		allowed, err := allowsCatalogResource(snapshot, subject, resource, capability)
 		if err != nil {
 			return false, err
 		}
@@ -457,6 +453,54 @@ func allowsAny(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.
 		}
 	}
 	return false, nil
+}
+
+// Catalog discovery is authorized only by the exact typed read action.
+// Capability arguments remain at the existing port boundary, but they never
+// turn a historical generic grant into current catalog authority.
+func allowsCatalogResource(snapshot accesssnapshot.AuthorizationSnapshot, subject access.SubjectRef, resource projectgraph.Resource, capability access.Capability) (bool, error) {
+	ref, err := access.NewResourceRef(resource.ID, resource.Kind)
+	if err != nil {
+		return false, err
+	}
+	if capability == access.CapabilityResourceRead {
+		if action, ok := ReadActionForKind(resource.Kind); ok {
+			pair, err := access.NewExactPermissionPair(action, snapshot.Identity().ProjectID, ref)
+			if err != nil {
+				return false, err
+			}
+			return snapshot.AllowsTyped(subject, pair)
+		}
+	}
+	if capability == access.CapabilityProjectAdmin && resource.Kind == projectgraph.KindProjectNamespace {
+		pair, err := access.NewProjectPermissionPair(access.ActionProjectSettingsRead, snapshot.Identity().ProjectID)
+		if err != nil {
+			return false, err
+		}
+		return snapshot.AllowsTyped(subject, pair)
+	}
+	return false, nil
+}
+
+// ReadActionForKind is the typed discovery action shared by catalog decisions
+// and browser credential attenuation. Unsupported kinds grant no implicit read.
+func ReadActionForKind(kind projectgraph.Kind) (access.Action, bool) {
+	switch kind {
+	case projectgraph.KindDashboard:
+		return access.ActionDashboardRead, true
+	case projectgraph.KindSemanticModel:
+		return access.ActionSemanticRead, true
+	case projectgraph.KindModel:
+		return access.ActionModelRead, true
+	case projectgraph.KindSource:
+		return access.ActionSourceRead, true
+	case projectgraph.KindPipeline:
+		return access.ActionPipelineRead, true
+	case projectgraph.KindConnection:
+		return access.ActionConnectionRead, true
+	default:
+		return "", false
+	}
 }
 
 func resultFor(resource projectgraph.Resource) Result {

@@ -110,17 +110,3 @@ WHERE (NOT sqlc.arg(has_project)::boolean
        (occurred_at, audit_id) < (sqlc.arg(cursor_time)::timestamptz, sqlc.arg(cursor_id)::uuid))
 ORDER BY occurred_at DESC, audit_id DESC
 LIMIT sqlc.arg(page_size)::int;
-
--- name: HasBootstrapAPITokenEvidence :one
-SELECT EXISTS (
-    SELECT 1
-    FROM access.api_token t
-    JOIN access.principal p ON p.id = t.principal_id
-    JOIN access.platform_role_binding b ON b.principal_id = p.id
-    WHERE t.id = sqlc.arg(token_id)::uuid
-      AND t.principal_id = sqlc.arg(principal_id)::uuid
-      AND t.revoked_at IS NULL AND t.expires_at > clock_timestamp()
-      AND p.status = 'active' AND p.revoked_at IS NULL
-      AND p.disabled_at IS NULL AND p.blocked_at IS NULL
-      AND b.role = 'platform_admin' AND b.revoked_at IS NULL
-);

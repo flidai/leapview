@@ -26,6 +26,16 @@ func TestPermissionCatalogIsValidAndDefensive(t *testing.T) {
 	}
 }
 
+func TestInstanceProjectClaimIsNarrowAndNotSelectable(t *testing.T) {
+	claim, ok := Permission(ActionInstanceProjectClaim)
+	if !ok || claim.Scope != PermissionScopeInstance || claim.UISelectable || claim.Delegable {
+		t.Fatalf("bootstrap claim definition = %+v, found=%t", claim, ok)
+	}
+	if _, err := NewInstancePermissionPair(ActionInstanceProjectClaim, "instance_demo"); err != nil {
+		t.Fatalf("claim action must resolve to a typed instance pair: %v", err)
+	}
+}
+
 func TestPermissionCatalogSeparatesCreationFromObjectAuthority(t *testing.T) {
 	definition, ok := Permission(ActionDashboardCreate)
 	if !ok {

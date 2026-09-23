@@ -38,7 +38,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 		case routeDashboard:
 			return protectPageStreamResource(
 				routes.accessModule, runtime.runtimeHostModule,
-				access.CapabilityResourceRead, access.ActionDashboardRead, dashboardPageStreamResource,
+				access.ActionDashboardRead, dashboardPageStreamResource,
 				next,
 			), true
 		case routeDashboardBuilder:
@@ -52,7 +52,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 			switch strings.TrimSpace(section) {
 			case "", "profile", "security", "api-tokens", "api-token-new", "archived-chats":
 				return routes.accessModule.Authenticate(next), true
-			case "general", "service-accounts", "service-accounts-new", "authentication", "storage", "storage-detail", "agent", "system", "principals", "principal-detail", "groups", "group-detail", "queries", "audit", "publications":
+			case "general", "access", "service-accounts", "service-accounts-new", "authentication", "storage", "storage-detail", "agent", "system", "principals", "principal-detail", "groups", "group-detail", "queries", "audit", "publications":
 				return routes.accessModule.RequirePlatformAdmin(next), true
 			default:
 				return nil, false
@@ -107,7 +107,6 @@ func dashboardPageStreamResource(r *http.Request, _ projectgraph.ResourceID) []a
 func protectPageStreamResource(
 	accessModule *accessmodule.Module,
 	runtimeHost *runtimehostmodule.Module,
-	capability access.Capability,
 	action access.Action,
 	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
 	next http.Handler,
@@ -124,6 +123,6 @@ func protectPageStreamResource(
 			http.NotFound(w, r)
 			return
 		}
-		protectProjectResourcesWithTypedAction(accessModule, runtimeHost, capability, action, resolve, next.ServeHTTP).ServeHTTP(w, r)
+		protectProjectResourcesWithTypedAction(accessModule, runtimeHost, action, resolve, next.ServeHTTP).ServeHTTP(w, r)
 	})
 }

@@ -41,9 +41,17 @@ func (i *testAccessInitializer) InitializeInstance(_ context.Context, input acce
 }
 
 type testBootstrap struct {
+	id      string
 	bound   string
 	missing bool
 	binds   int
+}
+
+func (b *testBootstrap) InstanceID(context.Context) (string, error) {
+	if b.id == "" {
+		return "instance_test", nil
+	}
+	return b.id, nil
 }
 
 func (b *testBootstrap) InstanceEnvironment(context.Context) (string, error) {
@@ -76,8 +84,8 @@ func TestProductionInitializeUsesNativeAccessAndDurableRecovery(t *testing.T) {
 	home := t.TempDir()
 	cfg := productionAdminConfig(home)
 	initializer := &testAccessInitializer{credentials: access.InitialInstanceCredentials{
-		Email: cfg.BootstrapEmail, TemporaryPassword: "temporary-password", PublisherToken: "publisher-token",
-		PublisherTokenExpiresAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+		Email: cfg.BootstrapEmail, TemporaryPassword: "temporary-password", ProjectClaimToken: "claim-token",
+		ProjectClaimTokenExpiresAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
 	}}
 	bootstrap := &testBootstrap{missing: true}
 	var prepared, opened, verified, acquired int
@@ -111,8 +119,11 @@ func TestProductionInitializeUsesNativeAccessAndDurableRecovery(t *testing.T) {
 		t.Fatalf("native state bind=%d/%q initializer=%d input=%#v", bootstrap.binds, bootstrap.bound, initializer.initCalls, initializer.lastInput)
 	}
 	credentials, err := adminoffline.DecodeInitialCredentials(out.Bytes())
-	if err != nil || credentials.PublisherToken != "publisher-token" {
+	if err != nil || credentials.ProjectClaimToken != "claim-token" {
 		t.Fatalf("output credentials=%#v err=%v output=%q", credentials, err, out.String())
+	}
+	if initializer.lastInput.InstanceID != "instance_test" {
+		t.Fatalf("initializer instance ID = %q, want durable instance identity", initializer.lastInput.InstanceID)
 	}
 	recoveryPath := filepath.Join(home, adminoffline.CredentialRecoveryFileName)
 	if _, err := os.Stat(recoveryPath); err != nil {
@@ -127,8 +138,8 @@ func TestProductionInitializeReplayAndAcknowledgeRedactsRecovery(t *testing.T) {
 	home := t.TempDir()
 	cfg := productionAdminConfig(home)
 	initializer := &testAccessInitializer{credentials: access.InitialInstanceCredentials{
-		Email: cfg.BootstrapEmail, TemporaryPassword: "temporary-password", PublisherToken: "publisher-token",
-		PublisherTokenExpiresAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+		Email: cfg.BootstrapEmail, TemporaryPassword: "temporary-password", ProjectClaimToken: "claim-token",
+		ProjectClaimTokenExpiresAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
 	}}
 	bootstrap := &testBootstrap{bound: cfg.Environment}
 	var acquired int

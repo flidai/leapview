@@ -7,6 +7,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
 func TestDashboardSemanticConsumptionRequiresSemanticModelUse(t *testing.T) {
@@ -32,6 +33,42 @@ func TestDashboardSemanticConsumptionRequiresSemanticModelUse(t *testing.T) {
 	}
 }
 
+func TestLegacyCapabilitiesCannotAuthorizeGovernedSemanticQueriesOrTokenCeilings(t *testing.T) {
+	_, _, semantic, _, _ := canonicalGraph(t)
+	legacy := canonicalLegacySnapshot(t, []struct {
+		id         string
+		resource   access.ResourceRef
+		capability access.Capability
+	}{{"legacy-semantic", semantic, access.CapabilityResourceUse}}, nil)
+	request := dashboardSemanticConsumptionQuery(semantic.CanonicalID())
+	if _, _, err := canonicalMetricsWithSnapshot(t, legacy, nil).GovernDataQuery(context.Background(), request); !IsDenied(err) {
+		t.Fatalf("legacy principal capability query error = %v, want denial", err)
+	}
+	metrics := canonicalMetricsWithSnapshot(t, legacy, nil)
+	metrics.credentialFromContext = func(context.Context) (access.APICredential, bool) {
+		return access.APICredential{Token: access.APIToken{Capabilities: []access.Capability{access.CapabilityResourceUse}}}, true
+	}
+	if _, _, err := metrics.GovernDataQuery(context.Background(), request); !IsDenied(err) {
+		t.Fatalf("legacy capability token query error = %v, want denial", err)
+	}
+}
+
+func TestMissingAuthorizationSnapshotRejectsDataExecution(t *testing.T) {
+	request := dashboardSemanticConsumptionQuery("semantic_sales")
+	capture := &canonicalArrowCapture{}
+	metrics := New(canonicalMetrics{model: &semanticmodel.Model{Name: "sales"}, arrowCapture: capture}, Options{})
+	result, err := metrics.ExecuteDataQuery(context.Background(), request)
+	if err == nil || result.ExecutionState != dataquery.ExecutionRejected {
+		t.Fatalf("query without an authorization snapshot = %#v, %v; want rejected", result, err)
+	}
+	if _, err := metrics.ExecuteDataQueryArrow(context.Background(), request, nil); err == nil {
+		t.Fatal("Arrow query without an authorization snapshot was accepted")
+	}
+	if capture.calls != 0 {
+		t.Fatalf("unauthorized query reached the executor %d times", capture.calls)
+	}
+}
+
 func TestDashboardReadDoesNotSubstituteForSemanticConsumption(t *testing.T) {
 	_, _, semantic, _, dashboard := canonicalGraph(t)
 	dashboardRead := canonicalSnapshot(t, []struct {
@@ -42,6 +79,19 @@ func TestDashboardReadDoesNotSubstituteForSemanticConsumption(t *testing.T) {
 	request := dashboardSemanticConsumptionQuery(semantic.CanonicalID())
 	if _, _, err := canonicalMetricsWithSnapshot(t, dashboardRead, nil).GovernDataQuery(context.Background(), request); !IsDenied(err) {
 		t.Fatalf("dashboard-read-only query error = %v, want denial", err)
+	}
+}
+
+func TestSemanticQueryWithoutTypedOperationMetadataFailsClosed(t *testing.T) {
+	_, _, semantic, _, _ := canonicalGraph(t)
+	snapshot := canonicalSnapshot(t, []struct {
+		id         string
+		resource   access.ResourceRef
+		capability access.Capability
+	}{{"semantic", semantic, access.CapabilityResourceUse}}, nil)
+	request := dataquery.Query{ProjectID: canonicalProject, ModelID: semantic.CanonicalID(), Kind: dataquery.KindSemanticRows}
+	if _, _, err := canonicalMetricsWithSnapshot(t, snapshot, nil).GovernDataQuery(context.Background(), request); !IsDenied(err) {
+		t.Fatalf("query without typed surface and operation error = %v, want denial", err)
 	}
 }
 
@@ -110,11 +160,6 @@ func TestTypedSemanticQueryRequiresConsumePrerequisite(t *testing.T) {
 
 func TestDashboardDraftPreviewRequiresTypedQueryAndConsume(t *testing.T) {
 	_, _, semantic, _, _ := canonicalGraph(t)
-	semanticSnapshot := canonicalSnapshot(t, []struct {
-		id         string
-		resource   access.ResourceRef
-		capability access.Capability
-	}{{"semantic", semantic, access.CapabilityResourceUse}}, nil)
 	request := dashboardSemanticConsumptionQuery(semantic.CanonicalID())
 	request.Operation = dataquery.OperationDashboardDraftPreview
 
@@ -126,6 +171,7 @@ func TestDashboardDraftPreviewRequiresTypedQueryAndConsume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	semanticSnapshot := canonicalSnapshotWithTypedPermissions(t, "alice", query, consume)
 	consumeOnly := canonicalMetricsWithTypedToken(t, semanticSnapshot, access.APIToken{
 		ID: "draft-preview-consume-only", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{consume},
 	})
