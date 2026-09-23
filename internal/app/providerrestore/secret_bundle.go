@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -23,11 +25,12 @@ type CredentialBundle struct {
 	ObjectRegion    string `json:"objectRegion"`
 	ObjectAccessKey string `json:"objectAccessKey"`
 	ObjectSecretKey string `json:"objectSecretKey"`
+	PostgresRootCA  string `json:"postgresRootCa"`
+	ObjectRootCA    string `json:"objectRootCa"`
 }
 
 type FileSecretBundleStore struct {
-	Root         string
-	ReferenceURI string
+	Root string
 }
 
 func (store FileSecretBundleStore) Save(_ context.Context, bundle CredentialBundle) (SecretBundleReference, error) {
@@ -52,17 +55,10 @@ func (store FileSecretBundleStore) Save(_ context.Context, bundle CredentialBund
 	if err := os.WriteFile(path, encoded, 0o600); err != nil {
 		return SecretBundleReference{}, err
 	}
-	referenceURI := (&url.URL{Scheme: "file", Path: path}).String()
-	if target := strings.TrimSpace(store.ReferenceURI); target != "" {
-		parsed, parseErr := url.Parse(target)
-		if parseErr != nil || parsed.Scheme != "file" || parsed.Host != "" || !filepath.IsAbs(parsed.Path) || parsed.Path != filepath.Clean(parsed.Path) {
-			return SecretBundleReference{}, fmt.Errorf("%w: provisioned secret bundle directory is invalid", ErrInvalid)
-		}
-		referenceURI = (&url.URL{Scheme: "file", Path: filepath.Join(parsed.Path, digest+".json")}).String()
-	}
+	referenceURI := (&url.URL{Scheme: "leapview-secret", Host: "host-provisioned", Path: "/recovery/" + digest}).String()
 	return SecretBundleReference{
 		Provider: "host-provisioned-root-file", URI: referenceURI, SHA256: digest, Version: "1",
-		Keys: []string{"postgres.control.url", "postgres.ducklake.url", "object.credentials"},
+		Keys: []string{"object.credentials", "object.root-ca", "postgres.control.url", "postgres.ducklake.url", "postgres.root-ca"},
 	}, nil
 }
 
@@ -85,11 +81,7 @@ func (store FileSecretBundleStore) Load(_ context.Context, reference SecretBundl
 	if err != nil {
 		return CredentialBundle{}, err
 	}
-	parsed, err := url.Parse(reference.URI)
-	if err != nil || filepath.Dir(filepath.Clean(parsed.Path)) != root || filepath.Base(parsed.Path) != reference.SHA256+".json" {
-		return CredentialBundle{}, fmt.Errorf("%w: secret bundle is outside its private store", ErrInconsistent)
-	}
-	file, err := os.Open(parsed.Path)
+	file, err := os.Open(filepath.Join(root, reference.SHA256+".json"))
 	if err != nil {
 		return CredentialBundle{}, err
 	}
@@ -126,18 +118,59 @@ func (store FileSecretBundleStore) root() (string, error) {
 }
 
 func validateCredentialBundle(bundle CredentialBundle) error {
-	if bundle.SchemaVersion != 1 || strings.TrimSpace(bundle.ObjectAccessKey) == "" || strings.TrimSpace(bundle.ObjectSecretKey) == "" || strings.TrimSpace(bundle.ObjectRegion) == "" {
+	if bundle.SchemaVersion != 2 || strings.TrimSpace(bundle.ObjectAccessKey) == "" || strings.TrimSpace(bundle.ObjectSecretKey) == "" || strings.TrimSpace(bundle.ObjectRegion) == "" {
 		return fmt.Errorf("%w: credential bundle is incomplete", ErrInvalid)
 	}
 	for _, value := range []string{bundle.ControlURL, bundle.DuckLakeURL} {
 		parsed, err := url.Parse(value)
-		if err != nil || parsed.Scheme != "postgres" || parsed.User == nil || parsed.Hostname() == "" || strings.TrimPrefix(parsed.Path, "/") == "" {
+		if err != nil || parsed.Scheme != "postgres" || parsed.User == nil || parsed.Hostname() == "" || strings.TrimPrefix(parsed.Path, "/") == "" || parsed.Query().Get("sslmode") != "verify-full" || !replacementReachableHostname(parsed.Hostname()) {
 			return fmt.Errorf("%w: credential bundle database URL is invalid", ErrInvalid)
 		}
 	}
 	endpoint, err := url.Parse(bundle.ObjectEndpoint)
-	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil || endpoint.Hostname() == "" {
+	if err != nil || endpoint.Scheme != "https" || endpoint.User != nil || endpoint.Hostname() == "" || !replacementReachableHostname(endpoint.Hostname()) {
 		return fmt.Errorf("%w: credential bundle object endpoint is invalid", ErrInvalid)
+	}
+	for _, raw := range []string{bundle.PostgresRootCA, bundle.ObjectRootCA} {
+		block, _ := pem.Decode([]byte(raw))
+		if block == nil || block.Type != "CERTIFICATE" {
+			return fmt.Errorf("%w: credential bundle TLS root is invalid", ErrInvalid)
+		}
+		certificate, parseErr := x509.ParseCertificate(block.Bytes)
+		if parseErr != nil || !certificate.IsCA {
+			return fmt.Errorf("%w: credential bundle TLS root is invalid", ErrInvalid)
+		}
+	}
+	return nil
+}
+
+// ValidateCredentialBundleForHandoff binds the private provider credentials to
+// the credential-free endpoints in the immutable recovery handoff. Callers must
+// perform this check before contacting any restored provider.
+func ValidateCredentialBundleForHandoff(handoff ReplacementHandoff, bundle CredentialBundle) error {
+	if err := validateCredentialBundle(bundle); err != nil {
+		return err
+	}
+	credentials := map[string]string{
+		"control": bundle.ControlURL, "ducklake": bundle.DuckLakeURL,
+	}
+	for _, endpoint := range handoff.Providers {
+		switch endpoint.Role {
+		case "control", "ducklake":
+			parsed, err := url.Parse(credentials[endpoint.Role])
+			if err != nil {
+				return fmt.Errorf("%w: private database credential is malformed", ErrInconsistent)
+			}
+			database := strings.TrimPrefix(parsed.Path, "/")
+			parsed.User, parsed.Path, parsed.RawPath = nil, "", ""
+			if parsed.String() != endpoint.Endpoint || database != endpoint.Database || endpoint.TLSRootCASecretKey != "postgres.root-ca" {
+				return fmt.Errorf("%w: private database credential does not match the handoff", ErrInconsistent)
+			}
+		case "objects":
+			if bundle.ObjectEndpoint != endpoint.Endpoint || bundle.ObjectRegion != endpoint.Region || endpoint.TLSRootCASecretKey != "object.root-ca" {
+				return fmt.Errorf("%w: private object credential does not match the handoff", ErrInconsistent)
+			}
+		}
 	}
 	return nil
 }

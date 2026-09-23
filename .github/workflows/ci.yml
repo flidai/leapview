@@ -18,6 +18,7 @@ env:
 jobs:
   prepare:
     name: Plan PR validation
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -377,7 +378,7 @@ jobs:
 
   ci-gate:
     name: CI gate
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
