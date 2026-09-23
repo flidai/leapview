@@ -173,16 +173,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          run_json="$(gh api repos/flidai/leapview/actions/runs/35828875225)"
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35894842492)"
           test "$(jq -r .conclusion <<<"$run_json")" = success
-          test "$(jq -r .head_sha <<<"$run_json")" = b36e6c1b965d3d816f1fa6215d06af83c1d48da4
+          test "$(jq -r .head_sha <<<"$run_json")" = 2caaf4d0c3e0ce637a22c376f63240c27dfaf20d
       - name: Admit exact image provenance
         uses: ./.github/actions/oci-admission
         with:
-          image: ghcr.io/flidai/leapview@sha256:b016b15d9db04a9cf66f5b058aab60a76dffc3229ea3f27fc83d820abb925f78
+          image: ghcr.io/flidai/leapview@sha256:35d1207a312279cc7bcf3c64a9284a8410d1f21c30920f2cbf1935113553eb24
           repository: ghcr.io/flidai/leapview
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: b36e6c1b965d3d816f1fa6215d06af83c1d48da4
+          source-revision: 2caaf4d0c3e0ce637a22c376f63240c27dfaf20d
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
@@ -208,7 +208,18 @@ jobs:
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE
         run: |
           set -euo pipefail
-          DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
+          DEMO_RUNNER_IP=""
+          for endpoint in https://api.ipify.org https://checkip.amazonaws.com; do
+            candidate="$(curl -4fsS --retry 2 --retry-delay 1 --retry-all-errors --connect-timeout 5 --max-time 10 "$endpoint" || true)"
+            if [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+              DEMO_RUNNER_IP="$candidate"
+              break
+            fi
+          done
+          [[ -n "$DEMO_RUNNER_IP" ]] || {
+            echo "unable to resolve the GitHub runner public IPv4 address" >&2
+            exit 1
+          }
           export DEMO_RUNNER_IP
           bash scripts/stage_demo_runtime.sh
 
@@ -231,9 +242,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          run_json="$(gh api repos/flidai/leapview/actions/runs/35828875225)"
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35894842492)"
           test "$(jq -r .conclusion <<<"$run_json")" = success
-          test "$(jq -r .head_sha <<<"$run_json")" = b36e6c1b965d3d816f1fa6215d06af83c1d48da4
+          test "$(jq -r .head_sha <<<"$run_json")" = 2caaf4d0c3e0ce637a22c376f63240c27dfaf20d
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
@@ -260,6 +271,17 @@ jobs:
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE
         run: |
           set -euo pipefail
-          DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
+          DEMO_RUNNER_IP=""
+          for endpoint in https://api.ipify.org https://checkip.amazonaws.com; do
+            candidate="$(curl -4fsS --retry 2 --retry-delay 1 --retry-all-errors --connect-timeout 5 --max-time 10 "$endpoint" || true)"
+            if [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+              DEMO_RUNNER_IP="$candidate"
+              break
+            fi
+          done
+          [[ -n "$DEMO_RUNNER_IP" ]] || {
+            echo "unable to resolve the GitHub runner public IPv4 address" >&2
+            exit 1
+          }
           export DEMO_RUNNER_IP
           bash scripts/rollout_demo_runtime.sh
