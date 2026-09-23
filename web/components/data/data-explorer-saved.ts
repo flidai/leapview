@@ -152,6 +152,7 @@ export type SavedExplorationViewOptions = {
   savedDuplicateTitle(): string
   savedVisibility(): SavedExplorationVisibility
   currentSavedVisibility(current: SavedExplorationCurrent): SavedExplorationVisibility
+  canSaveCurrent(): boolean
   activeSpec(): ExplorationSpec
   onSavedTitleInput(value: string): void
   onDuplicateTitleInput(value: string): void
@@ -179,7 +180,7 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
   const items = state.list?.items ?? []
   const unavailable = state.save?.state === 'error'
   if (!state.enabled) return nothing
-  const hasCanonicalState = Boolean(options.activeSpec().modelId?.trim())
+  const hasCanonicalState = options.canSaveCurrent() && Boolean(options.activeSpec().modelId?.trim())
   return html`
     <section class="saved-explorations" aria-label="Saved explorations">
       <div class="saved-explorations-header">
@@ -211,7 +212,7 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
             ${current.status === 'active' ? html`<button type="button" class="text-button" @click=${() => archiveSavedExploration(current, options)}>Archive</button>` : nothing}
           </div>
         </div>
-      ` : html`<div class="saved-exploration-actions"><input type="text" aria-label="Saved exploration name" placeholder="Name this exploration" .value=${options.savedTitle()} @input=${(event: Event) => options.onSavedTitleInput((event.target as HTMLInputElement).value)} />${savedVisibilitySelect(options.savedVisibility(), options.onSavedVisibilityInput)}<button type="button" class="text-button" @click=${() => createSavedExploration(options)}>Save current</button></div>`}
+      ` : hasCanonicalState ? html`<div class="saved-exploration-actions"><input type="text" aria-label="Saved exploration name" placeholder="Name this exploration" .value=${options.savedTitle()} @input=${(event: Event) => options.onSavedTitleInput((event.target as HTMLInputElement).value)} />${savedVisibilitySelect(options.savedVisibility(), options.onSavedVisibilityInput)}<button type="button" class="text-button" @click=${() => createSavedExploration(options)}>Save current</button></div>` : nothing}
     </section>
   `
 }

@@ -93,6 +93,42 @@ test('saved explorations render in their own row and emit the canonical current 
   }
 })
 
+test('empty saved controls stay hidden while browsing raw rows', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    const state = await page.evaluate(async () => {
+      const staleExploreCommand = {
+        spec: { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 },
+        semanticModelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [],
+        limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {},
+      }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [], command: { mode: 'browse', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: staleExploreCommand },
+          explore: { command: staleExploreCommand, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, warnings: [],
+        },
+        savedExplorations: { enabled: true, list: { items: [], includeArchived: false }, command: { action: 'create' }, save: { state: 'saved' } },
+      })
+      const element = document.createElement('lv-data-explorer') as any
+      document.body.append(element)
+      await element.updateComplete
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      const root = element.shadowRoot as ShadowRoot
+      return {
+        routeClasses: root.querySelector('.route')!.className,
+        savedControlsPresent: Boolean(root.querySelector('.saved-explorations')),
+      }
+    })
+    expect(state).toEqual({ routeClasses: 'route', savedControlsPresent: false })
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument() {
   return `
     <!doctype html>

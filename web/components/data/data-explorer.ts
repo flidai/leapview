@@ -1120,7 +1120,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const columns = this.headerColumns(explorer, semanticActive)
     const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
     const savedExplorations = this.savedExplorations
-    const savedVisible = savedExplorations.enabled && !this.embedded
+    const activeSpec = this.activeExplorationSpec()
+    const canSaveCurrent = semanticActive && Boolean(activeSpec.modelId?.trim())
+    const savedVisible = savedExplorations.enabled && !this.embedded && (
+      canSaveCurrent
+      || Boolean(savedExplorations.current)
+      || Boolean(savedExplorations.list?.items?.length)
+      || savedExplorations.save?.state === 'error'
+    )
     return html`
       <section class=${`route${semanticActive ? ' semantic' : ''}${savedVisible ? ' saved-enabled' : ''}${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
         <header class="header">
@@ -1158,7 +1165,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
           savedDuplicateTitle: () => this.savedDuplicateTitle,
           savedVisibility: () => this.savedVisibility,
           currentSavedVisibility: (current: SavedExplorationCurrent) => this.currentSavedVisibility || current.visibility,
-          activeSpec: () => this.activeExplorationSpec(),
+          canSaveCurrent: () => canSaveCurrent,
+          activeSpec: () => activeSpec,
           onSavedTitleInput: (value) => this.savedTitle = value,
           onDuplicateTitleInput: (value) => this.savedDuplicateTitle = value,
           onSavedVisibilityInput: (value) => this.savedVisibility = value,

@@ -46,7 +46,10 @@ func authorizeSemanticExploration(ctx context.Context, metrics any, modelID, dat
 			return err
 		}
 	}
-	fields := make([]string, 0, len(spec.Dimensions)+len(spec.Filters)+1)
+	// Grow filters and the optional time field incrementally. Summing attacker-
+	// controlled slice lengths for a capacity hint can overflow int before the
+	// allocation is evaluated.
+	var fields []string
 	for _, dimension := range spec.Dimensions {
 		fields = append(fields, dimension.Field)
 	}
