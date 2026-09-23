@@ -3,7 +3,6 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
-import { datastarRuntimeURL } from '../shared/datastar-runtime'
 import { typographyTestTokens } from '../test-typography-tokens'
 
 let server: Server
@@ -12,19 +11,8 @@ let browser: Browser
 
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/product-settings-test')
-const bundle = join(root, 'product-settings-under-test.js')
 
 beforeAll(async () => {
-  await Bun.$`rm -rf ${root}`.quiet()
-  const built = await Bun.build({
-    entrypoints: ['web/components/admin/product-settings.ts'],
-    target: 'browser',
-    format: 'esm',
-    external: [datastarRuntimeURL],
-    outdir: root,
-    naming: { entry: 'product-settings-under-test.js' },
-  })
-  if (!built.success) throw new Error('failed to build product settings test bundle')
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {

@@ -7,8 +7,6 @@ import { chromium, type Browser } from '@playwright/test'
 let server: Server, browser: Browser, baseURL: string
 const root = join(process.cwd(), '.tmp/settings-layout-test')
 beforeAll(async () => {
-  const built = await Bun.build({ entrypoints: ['web/components/shared/settings-layout.test-fixture.ts'], outdir: root, target: 'browser' })
-  if (!built.success) throw new Error('settings fixture build failed')
   server = createServer(async (request, response) => {
     if (request.url === '/') {
       response.setHeader('content-type', 'text/html')

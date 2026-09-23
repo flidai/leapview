@@ -13,14 +13,6 @@ const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/agent-settings-test')
 
 beforeAll(async () => {
-  await Bun.$`rm -rf ${root}`.quiet()
-  const built = await Bun.build({
-    entrypoints: ['web/components/admin/agent-settings.ts'],
-    target: 'browser',
-    format: 'esm',
-    outdir: root,
-  })
-  if (!built.success) throw new Error('failed to build agent settings test bundle')
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
