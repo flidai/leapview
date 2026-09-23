@@ -258,7 +258,6 @@ jobs:
         env:
           DEMO_ROLLOUT_ACTION: ${{ inputs.action }}
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           set -euo pipefail
           DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
