@@ -26,7 +26,7 @@ func TestRequiredSecurityWorkflowAggregatesEveryFailClosedLane(t *testing.T) {
 		"build-mode: autobuild",
 		"build-mode: ${{ matrix.build-mode }}",
 		"name: Security gate",
-		"if: ${{ always() }}",
+		"if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}",
 		"needs: [policy-validation, dependency-validation, source-validation, sast-validation]",
 		"go run ./internal/app/tools/securityresults",
 	} {

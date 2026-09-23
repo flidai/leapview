@@ -4,6 +4,7 @@ on:
   merge_group:
     types: [checks_requested]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - ".github/actions/desktop-preview-candidate/**"
       - ".github/workflows/electron-security-proof.yml"
@@ -24,6 +25,7 @@ concurrency:
 
 jobs:
   contract:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Policy and manifest contracts
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -37,6 +39,7 @@ jobs:
         run: node --test policy.test.mjs manifest-proof.test.mjs proof-lifecycle.test.mjs result-file.test.mjs
 
   packages:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Hardened package (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
@@ -236,6 +239,7 @@ jobs:
           go test -count=1 -run TestElectronPolicyIntegrationPreservesBrowserEquivalentAuthority -v ./internal/app/testing/maliciousinstance
 
   linux:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Policy integration (Linux x64)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -257,7 +261,7 @@ jobs:
 
   gate:
     name: Electron gate
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     needs: [contract, packages, macos, windows, linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
