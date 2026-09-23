@@ -1,4 +1,5 @@
 import "@yacobolo/apigen";
+import "../exploration/main.tsp";
 import "../dashboard/main.tsp";
 import "../visualization/main.tsp";
 import "./personal-settings.tsp";
@@ -847,7 +848,7 @@ model AgentContextSignal {
   `pageTitle`: string;
   `modelId`: string;
   `datasetId`?: string;
-  `exploration`?: DataExploreAgentContextSignal;
+  `exploration`?: LeapViewExploration.ExplorationSpec;
   `generation`: int64;
   `filters`: DashboardFilterState;
   `referenceLimit`: int32;
@@ -1586,29 +1587,13 @@ model DataExplorerCommand {
   `visibleColumns`?: string[];
 }
 
-model DataExploreAgentContextSignal {
-  `dimensions`: string[];
-  `filters`: DataExploreFilterSignal[];
-  `limit`: int64;
-  `metrics`: string[];
-  `sort`: DataExploreSortSignal[];
-  `time`?: DataExploreTimeSignal;
-}
-
 @apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
 model DataExploreCommand {
+  `spec`: LeapViewExploration.ExplorationSpec;
   `columnWidths`?: Record<float64>;
-  `datasetId`?: string;
-  `dimensions`: string[];
-  `filters`: DataExploreFilterSignal[];
-  `limit`: int64;
-  `metrics`: string[];
-  `semanticModelId`?: string;
   `requestSeq`: int64;
   `resetVersion`: int64;
-  `sort`: DataExploreSortSignal[];
-  `time`?: DataExploreTimeSignal;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })

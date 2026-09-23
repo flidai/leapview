@@ -2706,7 +2706,6 @@
               ],
               "type": "object"
             },
-            "maxItems": 50,
             "type": "array"
           },
           "filters": {
@@ -2766,7 +2765,6 @@
               },
               "type": "object"
             },
-            "maxItems": 100,
             "type": "array"
           },
           "limit": {
@@ -2792,7 +2790,6 @@
               ],
               "type": "object"
             },
-            "maxItems": 50,
             "type": "array"
           },
           "model": {
@@ -2829,7 +2826,6 @@
               ],
               "type": "object"
             },
-            "maxItems": 50,
             "type": "array"
           },
           "time": {
@@ -2893,9 +2889,15 @@
                   "additionalProperties": false,
                   "properties": {
                     "id": {
+                      "maxLength": 200,
+                      "minLength": 1,
                       "type": "string"
                     },
                     "type": {
+                      "enum": [
+                        "field",
+                        "metric"
+                      ],
                       "type": "string"
                     }
                   },
@@ -2909,6 +2911,10 @@
                   "type": "string"
                 },
                 "kind": {
+                  "enum": [
+                    "dimension",
+                    "metric"
+                  ],
                   "type": "string"
                 },
                 "label": {
@@ -2962,9 +2968,17 @@
                 "type": "string"
               },
               "source": {
+                "enum": [
+                  "publish",
+                  "refresh"
+                ],
                 "type": "string"
               },
               "status": {
+                "enum": [
+                  "current",
+                  "stale"
+                ],
                 "type": "string"
               }
             },
@@ -5167,7 +5181,6 @@
               ],
               "type": "object"
             },
-            "maxItems": 100,
             "type": "array"
           },
           "semanticModelId": {
