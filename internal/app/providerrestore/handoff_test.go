@@ -1,8 +1,13 @@
 package providerrestore
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
-	"net/url"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,14 +44,35 @@ func TestReplacementHandoffRejectsPlaceholderAndCredentialBearingIdentity(t *tes
 	if err := credentialQuery.Validate(set, credentialQuery.Artifact.Image); err == nil {
 		t.Fatal("credential-bearing provider endpoint query was accepted")
 	}
+
+	for name, endpoint := range map[string]string{
+		"plaintext postgres": "postgres://db.example.com:5432?sslmode=disable",
+		"producer alias":     "postgres://fai981-postgres:5432?sslmode=verify-full",
+		"loopback":           "postgres://127.0.0.1:5432?sslmode=verify-full",
+		"plaintext objects":  "http://objects.example.com",
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := handoff
+			invalid.Providers = append([]ProviderEndpoint(nil), handoff.Providers...)
+			index := 0
+			if name == "plaintext objects" {
+				index = 2
+			}
+			invalid.Providers[index].Endpoint = endpoint
+			if err := invalid.Validate(set, invalid.Artifact.Image); err == nil {
+				t.Fatalf("insecure or producer-only endpoint %q was accepted", endpoint)
+			}
+		})
+	}
 }
 
 func TestSecretBundleIsDigestBoundAndSeparateFromEvidence(t *testing.T) {
 	privateRoot := t.TempDir()
 	evidenceRoot := t.TempDir()
 	consumerRoot := filepath.Join(privateRoot, "consumer")
-	store := FileSecretBundleStore{Root: privateRoot, ReferenceURI: (&url.URL{Scheme: "file", Path: consumerRoot}).String()}
-	bundle := CredentialBundle{SchemaVersion: 1, ControlURL: "postgres://runtime:control-secret@127.0.0.1:5432/control?sslmode=disable", DuckLakeURL: "postgres://runtime:duck-secret@127.0.0.1:5432/ducklake?sslmode=disable", ObjectEndpoint: "https://objects.example.test", ObjectRegion: "us-east-1", ObjectAccessKey: "access-secret", ObjectSecretKey: "object-secret"}
+	store := FileSecretBundleStore{Root: privateRoot}
+	rootCA := testRootCA(t)
+	bundle := CredentialBundle{SchemaVersion: 2, ControlURL: "postgres://runtime:control-secret@db.example.com:5432/control?sslmode=verify-full", DuckLakeURL: "postgres://runtime:duck-secret@db.example.com:5432/ducklake?sslmode=verify-full", ObjectEndpoint: "https://objects.example.com", ObjectRegion: "us-east-1", ObjectAccessKey: "access-secret", ObjectSecretKey: "object-secret", PostgresRootCA: rootCA, ObjectRootCA: rootCA}
 	reference, err := store.Save(t.Context(), bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -55,11 +81,7 @@ func TestSecretBundleIsDigestBoundAndSeparateFromEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsedReference, err := url.Parse(reference.URI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	consumerPath := parsedReference.Path
+	consumerPath := filepath.Join(consumerRoot, reference.SHA256+".json")
 	if err := os.MkdirAll(filepath.Dir(consumerPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -83,18 +105,14 @@ func TestSecretBundleIsDigestBoundAndSeparateFromEvidence(t *testing.T) {
 			t.Fatalf("secret %q leaked into the reference", secret)
 		}
 	}
-	parsed, err := url.Parse(reference.URI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if relative, err := filepath.Rel(evidenceRoot, parsed.Path); err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	if relative, err := filepath.Rel(evidenceRoot, sourcePath); err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		t.Fatal("private bundle was written under evidence root")
 	}
-	raw, err := os.ReadFile(parsed.Path)
+	raw, err := os.ReadFile(sourcePath)
 	if err != nil || !strings.Contains(string(raw), "object-secret") {
 		t.Fatalf("private bundle did not contain expected credential: %v", err)
 	}
-	info, err := os.Stat(parsed.Path)
+	info, err := os.Stat(sourcePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,11 +164,25 @@ func validReplacementHandoff(set recoveryset.RecoverySet) ReplacementHandoff {
 		RecoverySetID: set.ID, FrontierDigest: set.FrontierDigest, TargetID: set.Delivery.TargetID,
 		Artifact: compatibility.ReleaseIdentity{Version: "0.2.0-rc.2", SourceRevision: "69652fb20101de80497cbf47ecfb402f700d6552", Image: testRunnableArtifact, Distribution: "oci", Platform: "linux/amd64"},
 		Providers: []ProviderEndpoint{
-			{Role: "control", Provider: "postgresql", ResourceID: "postgres-a", Endpoint: "postgres://db.example.test:5432", Database: "control", CredentialSecretKey: "postgres.control.url"},
-			{Role: "ducklake", Provider: "postgresql", ResourceID: "postgres-a", Endpoint: "postgres://db.example.test:5432", Database: "ducklake", CredentialSecretKey: "postgres.ducklake.url"},
-			{Role: "objects", Provider: "s3", ResourceID: "objects-a", Endpoint: "https://objects.example.test", Region: "us-east-1", Bucket: "restored", CredentialSecretKey: "object.credentials"},
+			{Role: "control", Provider: "postgresql", ResourceID: "postgres-a", Endpoint: "postgres://db.example.com:5432?sslmode=verify-full", Database: "control", CredentialSecretKey: "postgres.control.url", TLSRootCASecretKey: "postgres.root-ca"},
+			{Role: "ducklake", Provider: "postgresql", ResourceID: "postgres-a", Endpoint: "postgres://db.example.com:5432?sslmode=verify-full", Database: "ducklake", CredentialSecretKey: "postgres.ducklake.url", TLSRootCASecretKey: "postgres.root-ca"},
+			{Role: "objects", Provider: "s3", ResourceID: "objects-a", Endpoint: "https://objects.example.com", Region: "us-east-1", Bucket: "restored", CredentialSecretKey: "object.credentials", TLSRootCASecretKey: "object.root-ca"},
 		},
-		Secrets:     SecretBundleReference{Provider: "host-provisioned-root-file", URI: "file:///run/leapview/recovery/private.json", SHA256: strings64("c"), Version: "1", Keys: []string{"postgres.control.url", "postgres.ducklake.url", "object.credentials"}},
+		Secrets:     SecretBundleReference{Provider: "host-provisioned-root-file", URI: "leapview-secret://host-provisioned/recovery/" + strings64("c"), SHA256: strings64("c"), Version: "1", Keys: []string{"object.credentials", "object.root-ca", "postgres.control.url", "postgres.ducklake.url", "postgres.root-ca"}},
 		AvailableAt: time.Date(2026, 9, 22, 6, 0, 0, 0, time.UTC),
 	}
+}
+
+func testRootCA(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "LeapView qualification root"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }

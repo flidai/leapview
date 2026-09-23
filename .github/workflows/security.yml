@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   policy-validation:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Security policy contracts
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -37,6 +38,7 @@ jobs:
         run: task security:policy
 
   dependency-validation:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Dependency vulnerability policy
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -62,6 +64,7 @@ jobs:
         run: task security:dependencies
 
   source-validation:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Secret and IaC policy
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -81,6 +84,7 @@ jobs:
         run: task security:source
 
   sast-validation:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Selected SAST (${{ matrix.language }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -114,7 +118,7 @@ jobs:
 
   security-gate:
     name: Security gate
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     needs: [policy-validation, dependency-validation, source-validation, sast-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 5

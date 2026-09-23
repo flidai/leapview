@@ -61,6 +61,7 @@ type HealthReport struct {
 	Skipped            int       `json:"skipped"`
 	UnknownConclusions int       `json:"unknown_conclusions"`
 	Deferred           int       `json:"deferred"`
+	SkippedPR          int       `json:"skipped_pr"`
 	// Full is retained as a JSON compatibility alias for Merge, not a mixed population.
 	Full             DurationMetric             `json:"full"`
 	Merge            DurationMetric             `json:"merge"`
@@ -145,6 +146,31 @@ func healthSelection(plan Plan) map[string]bool {
 	return selection
 }
 
+// A skipped planner leaves the frontend matrix unexpanded and creates no plan.
+// Require the complete known inventory, including both planner and gate, to
+// distinguish this policy skip from missing evidence or a failed execution.
+func skippedPRRun(run HealthRun) bool {
+	if run.Workflow != "ci.yml" || run.Event != "pull_request" || run.Plan.Version != 0 || run.Plan.PR != nil || (run.Conclusion != "success" && run.Conclusion != "skipped") {
+		return false
+	}
+	expected := map[string]bool{}
+	for _, job := range ExpectedHealthJobs("ci.yml") {
+		if strings.HasPrefix(job, "frontend-validation/") {
+			job = "frontend-validation"
+		}
+		expected[job] = true
+	}
+	if len(run.Results) != len(expected) {
+		return false
+	}
+	for job := range expected {
+		if run.Results[job] != "skipped" {
+			return false
+		}
+	}
+	return true
+}
+
 func classifyHealthRun(run HealthRun) HealthRun {
 	run.Category = "unknown"
 	run.SelectionConfidence = "unknown"
@@ -155,6 +181,17 @@ func classifyHealthRun(run HealthRun) HealthRun {
 	run.SkippedJobs = nil
 	run.UnknownJobs = nil
 	run.Problems = nil
+	if skippedPRRun(run) {
+		run.Category = "skipped_pr"
+		run.SelectionConfidence = "verified"
+		run.ExpectedSource = "workflow_registry"
+		run.PlanIssue = ""
+		for job := range run.Results {
+			run.SkippedJobs = append(run.SkippedJobs, job)
+		}
+		sort.Strings(run.SkippedJobs)
+		return run
+	}
 	supported := validHealthPlan(run.Plan) && run.PlanIssue == "" && len(expectedPlanJobs(run.Plan)) > 0
 	exhaustive := false
 	if run.Workflow == "merge-validation.yml" && run.Event == "merge_group" {
@@ -265,6 +302,9 @@ func classifyHealthRun(run HealthRun) HealthRun {
 }
 
 func incompleteHealthEvidence(run HealthRun) bool {
+	if run.Category == "skipped_pr" {
+		return false
+	}
 	return run.Category == "unknown" ||
 		run.SelectionConfidence == "unknown" ||
 		run.SelectionConfidence == "incomplete" ||
@@ -322,7 +362,7 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 					}
 				}
 			}
-		} else if run.Workflow == "ci.yml" && run.Event == "pull_request" {
+		} else if run.Workflow == "ci.yml" && run.Event == "pull_request" && run.Category != "skipped_pr" {
 			report.UnknownSelection++
 		}
 		for _, job := range run.ExpectedJobs {
@@ -344,6 +384,10 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 			m := report.Jobs[job]
 			m.Unknown++
 			report.Jobs[job] = m
+		}
+		if run.Category == "skipped_pr" {
+			report.SkippedPR++
+			continue
 		}
 		if run.Deferred {
 			report.Deferred++
@@ -368,7 +412,7 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 	report.Selective = durationMetric(populations["selective"])
 	report.Unknown = durationMetric(populations["unknown"])
 	report.Queue = durationMetric(queues)
-	if executed := len(runs) - report.Deferred; executed > 0 {
+	if executed := len(runs) - report.Deferred - report.SkippedPR; executed > 0 {
 		report.RerunPercent = float64(report.Reruns) * 100 / float64(executed)
 	}
 	if report.PlannedRuns > 0 {

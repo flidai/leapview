@@ -238,11 +238,16 @@ test('account menu supports keyboard actions and submits the real CSRF logout fl
     await page.keyboard.press('Enter')
     const menu = page.getByRole('menu', { name: 'Account' })
     await menu.waitFor()
-    const settings = menu.getByRole('menuitem', { name: 'Settings', exact: true })
+    expect(await menu.locator('.account-summary').evaluate((summary) => ({
+      name: summary.querySelector('.account-name')?.textContent?.trim(),
+      role: summary.querySelector('.account-role')?.textContent?.trim(),
+      avatarCount: summary.querySelectorAll('lv-user-avatar').length,
+    }))).toEqual({ name: 'Current User', role: 'Member', avatarCount: 0 })
+    const settings = menu.getByRole('menuitem', { name: 'Personal settings', exact: true })
     expect(await settings.getAttribute('href')).toBe('/admin/profile')
     expect(await settings.evaluate(el => el === (el.getRootNode() as ShadowRoot).activeElement)).toBe(true)
     await page.keyboard.press('ArrowUp')
-    const logout = menu.getByRole('menuitem', { name: 'Log out', exact: true })
+    const logout = menu.getByRole('menuitem', { name: 'Sign out', exact: true })
     expect(await logout.evaluate(el => el === (el.getRootNode() as ShadowRoot).activeElement)).toBe(true)
     await page.keyboard.press('Escape')
     expect(await trigger.getAttribute('aria-expanded')).toBe('false')

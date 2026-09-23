@@ -168,7 +168,8 @@ func TestHostedDemoRequiresPrivateAgentProviderConfiguration(t *testing.T) {
 	} {
 		require.Contains(t, runbook, required)
 	}
-	require.Contains(t, workflow, "DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}")
+	require.Contains(t, workflow, "secret-path: /demo/deployment")
+	require.NotContains(t, workflow, "DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}")
 	for _, required := range []string{
 		"DEEPSEEK_API_KEY",
 		"leapview-demo-agent-api-key",

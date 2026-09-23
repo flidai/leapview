@@ -3066,7 +3066,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         ? previewValidation
       : !builder.hasUnpublishedChanges ? 'This revision is already published' : 'Publish this dashboard revision'
     const canDelete = this.canDeleteDashboard(builder)
-    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || builder.capabilities.canArchive || canDelete || Boolean(this.forkHref)
+    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || (builder.capabilities.canArchive && !canDelete) || canDelete || Boolean(this.forkHref)
     const appearanceColor = dashboardAppearanceColor(builder.appearance.color)
     return html`
       <header class="toolbar">
@@ -3115,7 +3115,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                 ${builder.capabilities.canExport
                   ? this.exportYAMLHref ? html`<a class="button" href=${this.exportYAMLHref} download>Export YAML</a>` : html`<button disabled title="YAML export is not available yet">Export YAML</button>`
                   : nothing}
-                ${builder.capabilities.canArchive ? html`<button type="button" class="archive-action" data-builder-action="archive" @click=${this.archiveDashboard}>${lucideIcon(Archive, { size: 14, strokeWidth: 2 })}<span>Archive dashboard</span></button>` : nothing}
+                ${builder.capabilities.canArchive && !canDelete ? html`<button type="button" class="archive-action" data-builder-action="archive" @click=${this.archiveDashboard}>${lucideIcon(Archive, { size: 14, strokeWidth: 2 })}<span>Archive dashboard</span></button>` : nothing}
                 ${canDelete ? html`<button type="button" class="delete-action" data-builder-action="delete" @click=${this.deleteDashboard}>${lucideIcon(Trash2, { size: 14, strokeWidth: 2 })}<span>Delete dashboard</span></button>` : nothing}
               </div>
             </details>` : nothing}

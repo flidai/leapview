@@ -2,6 +2,7 @@ name: Local Docker macOS tests
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - .github/workflows/localdocker-macos.yml
       - internal/app/cli/localdocker/**
@@ -12,6 +13,7 @@ permissions:
 
 jobs:
   endpoint:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Local Docker endpoint tests (macOS Apple silicon)
     runs-on: macos-15
     timeout-minutes: 15

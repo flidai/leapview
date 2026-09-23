@@ -213,6 +213,45 @@ func TestMissingExpiredAndMalformedPlanArtifacts(t *testing.T) {
 	}
 }
 
+func TestDraftSkipWithoutPlanRemainsVisibleAndHealthy(t *testing.T) {
+	var jobs []githubJob
+	for _, name := range []string{
+		"Plan PR validation", "CI gate", "APIGen tests (PR)",
+		"Go package tests (PR)", "Go application tests (PR)",
+		"Frontend tests (PR, ${{ matrix.shard }})", "PostgreSQL topology isolation (PR)",
+		"Spatial tile benchmarks (PR)", "dbt physical contract (PR)",
+		"Documentation and public site (PR)", "Cross-language quality (PR)",
+	} {
+		jobs = append(jobs, githubJob{Name: name, Conclusion: "skipped"})
+	}
+	api := client{http: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case strings.Contains(r.URL.Path, "/jobs"):
+			body, err := json.Marshal(map[string]any{"jobs": jobs})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return jsonResponse(string(body))
+		case strings.Contains(r.URL.Path, "/artifacts"):
+			return jsonResponse(`{"artifacts":[]}`)
+		default:
+			t.Fatalf("unexpected API request: %s", r.URL)
+			return nil, nil
+		}
+	})}}
+	run, err := api.healthRun(context.Background(), "owner/repo", githubRun{ID: 1, Attempt: 1, Workflow: "ci.yml", Event: "pull_request", Conclusion: "success"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := platformci.AnalyzeHealth([]platformci.HealthRun{run})
+	if report.SkippedPR != 1 || report.Incomplete != 0 || len(report.Alerts) != 0 || report.Jobs["frontend-validation"].Skipped != 1 {
+		t.Fatalf("draft skip produced a false health alert: %+v", report)
+	}
+	if !strings.Contains(renderMarkdown(report, 7), "| Intentionally skipped PR runs | 1 |") {
+		t.Fatal("intentional skip missing from report")
+	}
+}
+
 func TestObservedRunTimestampEdges(t *testing.T) {
 	start := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
 	jobStart := start.Add(5 * time.Second)
@@ -440,5 +479,35 @@ func TestHostedTestedMergeCandidateProvenance(t *testing.T) {
 				t.Fatalf("trusted=%v, want %v; issue=%q", got.PlanIssue == "", tc.wantTrusted, got.PlanIssue)
 			}
 		})
+	}
+}
+
+func TestMarkdownExplainsIncompleteEvidenceWithoutHidingCancellations(t *testing.T) {
+	report := platformci.AnalyzeHealth([]platformci.HealthRun{
+		{ID: 11, Workflow: "ci.yml", Event: "pull_request", Conclusion: "cancelled", DurationSeconds: -1, PlanIssue: "missing, expired or invalid ci-plan artifact"},
+		{ID: 12, Workflow: "ci.yml", Event: "pull_request", Conclusion: "cancelled", DurationSeconds: -1, PlanIssue: "missing, expired or invalid ci-plan artifact"},
+		{ID: 13, Workflow: "ci.yml", Event: "pull_request", Conclusion: "failure", DurationSeconds: -1, PlanIssue: "missing, expired or invalid ci-plan artifact"},
+	})
+	markdown := renderMarkdown(report, 7)
+	for _, want := range []string{
+		"| missing, expired or invalid ci-plan artifact | cancelled | 2 | 11, 12 |",
+		"| missing, expired or invalid ci-plan artifact | failure | 1 | 13 |",
+		"| duration unavailable | cancelled | 2 | 11, 12 |",
+		"3 runs have incomplete reporting evidence; health is not established",
+	} {
+		if !strings.Contains(markdown, want) {
+			t.Errorf("report missing %q:\n%s", want, markdown)
+		}
+	}
+}
+
+func TestMarkdownDiagnosticsBoundAndEscapeExamples(t *testing.T) {
+	report := platformci.HealthReport{}
+	for _, id := range []int64{5, 2, 4, 1, 3} {
+		report.Runs = append(report.Runs, platformci.HealthRun{ID: id, Conclusion: "failure", Problems: []string{"bad|name\nvalue", "bad|name\nvalue"}})
+	}
+	markdown := renderMarkdown(report, 7)
+	if !strings.Contains(markdown, "| bad&#124;name value | failure | 5 | 1, 2, 3 |") {
+		t.Fatalf("diagnostics must count each run once, escape cells and bound sorted examples:\n%s", markdown)
 	}
 }

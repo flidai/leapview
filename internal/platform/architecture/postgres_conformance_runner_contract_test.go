@@ -88,6 +88,46 @@ func TestPostgreSQLConformanceRunnerPropagatesGoErrors(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLConformanceRunsApplicationWaveExactlyOnce(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(strconv.FormatBool(fail), func(t *testing.T) {
+			fixture := newPostgreSQLConformanceFixture(t, map[string]string{
+				"internal/app/app_test.go":          "package app\nfunc TestApp(t *testing.T) { " + postgresSharedStart + " }\n",
+				"internal/pg/shared/shared_test.go": "package shared\nfunc TestShared(t *testing.T) { " + postgresSharedStart + " }\n",
+			})
+			marker := filepath.Join(fixture.root, "app-wave")
+			body := "#!/usr/bin/env bash\nset -eu\ntest -d \"$1\"\nprintf 'wave\\n' >> '" + marker + "'\n"
+			if fail {
+				body += "exit 39\n"
+			}
+			if err := os.WriteFile(filepath.Join(fixture.root, "scripts/postgres-app-shards.sh"), []byte(body), 0755); err != nil {
+				t.Fatal(err)
+			}
+			result := fixture.run(t, 0)
+			if fail {
+				if result.err == nil {
+					t.Fatal("application wave failure accepted")
+				}
+				if len(result.args) != 0 {
+					t.Fatal("package wave ran after application failure")
+				}
+			} else {
+				if result.err != nil {
+					t.Fatalf("runner: %v\n%s", result.err, result.output)
+				}
+				args := strings.Join(result.args, " ")
+				if strings.Contains(args, "github.com/flidai/leapview/internal/app") || !strings.Contains(args, "github.com/flidai/leapview/internal/pg/shared") {
+					t.Fatalf("wrong remaining inventory: %s", args)
+				}
+			}
+			data, err := os.ReadFile(marker)
+			if err != nil || string(data) != "wave\n" {
+				t.Fatalf("application wave did not run exactly once: %q, %v", data, err)
+			}
+		})
+	}
+}
+
 type postgresConformanceFixture struct {
 	root        string
 	script      string

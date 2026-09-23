@@ -173,16 +173,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          run_json="$(gh api repos/flidai/leapview/actions/runs/35517262458)"
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35828875225)"
           test "$(jq -r .conclusion <<<"$run_json")" = success
-          test "$(jq -r .head_sha <<<"$run_json")" = 2e228ec6b42ab5c18bea04ce037695642aaf8019
+          test "$(jq -r .head_sha <<<"$run_json")" = b36e6c1b965d3d816f1fa6215d06af83c1d48da4
       - name: Admit exact image provenance
         uses: ./.github/actions/oci-admission
         with:
-          image: ghcr.io/flidai/leapview@sha256:29d832a2504ccb39b4b7a4d55defa2c9968116d228449ca6adc981d6adcd1bc2
+          image: ghcr.io/flidai/leapview@sha256:b016b15d9db04a9cf66f5b058aab60a76dffc3229ea3f27fc83d820abb925f78
           repository: ghcr.io/flidai/leapview
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: 2e228ec6b42ab5c18bea04ce037695642aaf8019
+          source-revision: b36e6c1b965d3d816f1fa6215d06af83c1d48da4
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
@@ -205,7 +205,7 @@ jobs:
           secret-path: /demo/deployment
       - name: Stage immutable image with pinned SSH identity
         env:
-          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE
         run: |
           set -euo pipefail
           DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
@@ -231,9 +231,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          run_json="$(gh api repos/flidai/leapview/actions/runs/35517262458)"
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35828875225)"
           test "$(jq -r .conclusion <<<"$run_json")" = success
-          test "$(jq -r .head_sha <<<"$run_json")" = 2e228ec6b42ab5c18bea04ce037695642aaf8019
+          test "$(jq -r .head_sha <<<"$run_json")" = b36e6c1b965d3d816f1fa6215d06af83c1d48da4
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
@@ -257,8 +257,7 @@ jobs:
       - name: Run checked rollout with pinned SSH identity
         env:
           DEMO_ROLLOUT_ACTION: ${{ inputs.action }}
-          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE
         run: |
           set -euo pipefail
           DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"

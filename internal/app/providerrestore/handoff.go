@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	HandoffSchemaVersion = 1
+	HandoffSchemaVersion = 2
 	HandoffKind          = "leapview/fai981-replacement-handoff"
 	HandoffAvailable     = "available"
 )
@@ -33,6 +33,7 @@ type ProviderEndpoint struct {
 	Region              string `json:"region,omitempty"`
 	Bucket              string `json:"bucket,omitempty"`
 	CredentialSecretKey string `json:"credentialSecretKey"`
+	TLSRootCASecretKey  string `json:"tlsRootCaSecretKey"`
 }
 
 type SecretBundleReference struct {
@@ -100,6 +101,9 @@ func (handoff ReplacementHandoff) Validate(expectedSet recoveryset.RecoverySet, 
 		if !slices.Contains(handoff.Secrets.Keys, endpoint.CredentialSecretKey) {
 			return fmt.Errorf("%w: provider credential reference is absent from the secret bundle", ErrInconsistent)
 		}
+		if !slices.Contains(handoff.Secrets.Keys, endpoint.TLSRootCASecretKey) {
+			return fmt.Errorf("%w: provider TLS root reference is absent from the secret bundle", ErrInconsistent)
+		}
 	}
 	return nil
 }
@@ -110,26 +114,38 @@ func placeholderOCIIdentity(value string) bool {
 }
 
 func validateProviderEndpoint(endpoint ProviderEndpoint) error {
-	if strings.TrimSpace(endpoint.Role) == "" || endpoint.Role != strings.TrimSpace(endpoint.Role) || strings.TrimSpace(endpoint.Provider) == "" || strings.TrimSpace(endpoint.ResourceID) == "" || strings.TrimSpace(endpoint.Database) != endpoint.Database || strings.TrimSpace(endpoint.CredentialSecretKey) == "" {
+	if strings.TrimSpace(endpoint.Role) == "" || endpoint.Role != strings.TrimSpace(endpoint.Role) || strings.TrimSpace(endpoint.Provider) == "" || strings.TrimSpace(endpoint.ResourceID) == "" || strings.TrimSpace(endpoint.Database) != endpoint.Database || strings.TrimSpace(endpoint.CredentialSecretKey) == "" || strings.TrimSpace(endpoint.TLSRootCASecretKey) == "" {
 		return fmt.Errorf("%w: provider endpoint identity is incomplete", ErrInconsistent)
 	}
 	parsed, err := url.Parse(endpoint.Endpoint)
-	if err != nil || parsed.User != nil || parsed.Fragment != "" || parsed.Hostname() == "" || containsCredentialQuery(parsed) {
+	if err != nil || parsed.User != nil || parsed.Fragment != "" || parsed.Hostname() == "" || containsCredentialQuery(parsed) || !replacementReachableHostname(parsed.Hostname()) {
 		return fmt.Errorf("%w: provider endpoint is invalid or contains credentials", ErrInconsistent)
 	}
 	switch endpoint.Role {
 	case "control", "ducklake":
-		if parsed.Scheme != "postgres" || endpoint.Database == "" || endpoint.Bucket != "" {
+		query := parsed.Query()
+		if parsed.Scheme != "postgres" || endpoint.Database == "" || endpoint.Bucket != "" || parsed.Path != "" || len(query) != 1 || len(query["sslmode"]) != 1 || query.Get("sslmode") != "verify-full" {
 			return fmt.Errorf("%w: database handoff endpoint is invalid", ErrInconsistent)
 		}
 	case "objects":
-		if (parsed.Scheme != "http" && parsed.Scheme != "https") || endpoint.Bucket == "" || endpoint.Region == "" || endpoint.Database != "" {
+		if parsed.Scheme != "https" || endpoint.Bucket == "" || endpoint.Region == "" || endpoint.Database != "" || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" {
 			return fmt.Errorf("%w: object handoff endpoint is invalid", ErrInconsistent)
 		}
 	default:
 		return fmt.Errorf("%w: provider endpoint role is unknown", ErrInconsistent)
 	}
 	return nil
+}
+
+func replacementReachableHostname(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" || host == "localhost" || !strings.Contains(host, ".") || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".invalid") || strings.HasSuffix(host, ".test") || strings.HasSuffix(host, ".example") {
+		return false
+	}
+	if address := net.ParseIP(host); address != nil {
+		return !address.IsLoopback() && !address.IsUnspecified() && !address.IsLinkLocalUnicast() && !address.IsLinkLocalMulticast()
+	}
+	return true
 }
 
 func containsCredentialQuery(endpoint *url.URL) bool {
@@ -144,7 +160,7 @@ func containsCredentialQuery(endpoint *url.URL) bool {
 
 func validateSecretBundleReference(reference SecretBundleReference) error {
 	parsed, err := url.Parse(reference.URI)
-	if reference.Provider != "host-provisioned-root-file" || err != nil || parsed.Scheme != "file" || parsed.Host != "" || !filepath.IsAbs(parsed.Path) || parsed.Path != filepath.Clean(parsed.Path) || strings.TrimSpace(reference.Version) == "" || len(reference.Keys) == 0 {
+	if reference.Provider != "host-provisioned-root-file" || err != nil || parsed.Scheme != "leapview-secret" || parsed.Host != "host-provisioned" || parsed.Path != "/recovery/"+reference.SHA256 || parsed.RawQuery != "" || parsed.Fragment != "" || strings.TrimSpace(reference.Version) == "" || len(reference.Keys) == 0 {
 		return fmt.Errorf("%w: secret bundle reference is invalid", ErrInconsistent)
 	}
 	decoded, err := hex.DecodeString(reference.SHA256)

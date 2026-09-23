@@ -2363,7 +2363,7 @@ test('dashboard builder edits the dashboard icon and color from the title bar', 
   }
 })
 
-test('dashboard builder archives an owned dashboard from More without an extra confirmation step', async () => {
+test('dashboard builder archives an owned published dashboard from More without an extra confirmation step', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -2371,12 +2371,14 @@ test('dashboard builder archives an owned dashboard from More without an extra c
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { lifecycle: 'published', visibility: 'organization' } })
+      await element.updateComplete
       let command: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
       const archive = root.querySelector<HTMLButtonElement>('[data-builder-action="archive"]')
       archive?.click()
       await element.updateComplete
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ builder: { capabilities: { canArchive: false } } })
       await element.updateComplete
       return {
@@ -2411,6 +2413,7 @@ test('dashboard builder deletes only a private draft and redirects after confirm
       let command: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
       const deleteButton = root.querySelector<HTMLButtonElement>('[data-builder-action="delete"]')
+      const draftArchive = Boolean(root.querySelector('[data-builder-action="archive"]'))
       deleteButton?.click()
       await new Promise<void>((resolve) => queueMicrotask(resolve))
       await element.updateComplete
@@ -2423,6 +2426,7 @@ test('dashboard builder deletes only a private draft and redirects after confirm
       return {
         label: deleteButton?.textContent?.replace(/\s+/g, ' ').trim(),
         command,
+        draftArchive,
         publishedDelete,
         restrictedDelete: Boolean(root.querySelector('[data-builder-action="delete"]')),
       }
@@ -2430,6 +2434,7 @@ test('dashboard builder deletes only a private draft and redirects after confirm
     expect(dialogMessage).toContain('Delete Revenue draft?')
     expect(state.label).toBe('Delete dashboard')
     expect(state.command).toMatchObject({ action: 'delete', dashboardId: 'revenue', draftId: 'draft-7', revisionId: 'rev-7' })
+    expect(state.draftArchive).toBe(false)
     expect(state.publishedDelete).toBe(false)
     expect(state.restrictedDelete).toBe(false)
   } finally {

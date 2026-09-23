@@ -3525,7 +3525,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 	}{
 		"ci.yml":               {prepareCount: 5, frontendTimeout: "timeout-minutes: 30"},
 		"merge-validation.yml": {prepareCount: 4, frontendTimeout: "timeout-minutes: ${{ matrix.shard == 'site' && 120 || 20 }}"},
-		"nightly.yml":          {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
+		"nightly.yml":          {prepareCount: 4, frontendTimeout: "timeout-minutes: ${{ matrix.shard == 'site' && 120 || 20 }}"},
 	} {
 		data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
 		require.NoError(t, err)

@@ -200,10 +200,22 @@ workflow outputs, artifact provenance, gate results and reporting identifiers.
 The adapter does not make selection decisions. Architecture tests keep CI tooling
 out of the application runtime dependency graph.
 
-PR flow: `prepare` (planner only) -> selected validation jobs -> always-present
-`CI gate`. Security gate continues independently without changes. No merge or
-nightly workflow is modified. Selected jobs still use full preparation and all
-of their existing validation commands.
+PR flow: `prepare` (planner only) -> selected validation jobs -> `CI gate`.
+Draft PR events skip planning, validation, and the gate. Marking a PR ready for
+review starts CI automatically; `workflow_dispatch` runs CI on the selected
+branch even while its PR is a draft. For eligible runs, the gate still evaluates
+every outcome, including planning or validation failures.
+The same draft policy applies to Security gates, Electron security proof,
+Recovery evidence qualification, and Local Docker macOS tests. Each supports
+manual dispatch and ready-for-review events; existing path filters still apply.
+Push, merge-group, and scheduled validation retain their existing behavior.
+Selected jobs still use full preparation and all of their existing validation
+commands. Converting a running PR to draft does not cancel an existing run.
+Health reporting records successful/skipped PR runs with the complete known
+job inventory skipped (including planner and gate) as `skipped_pr`. These runs
+need no plan artifact or execution timestamps and are excluded from latency,
+rerun, and selection metrics. Missing jobs, unknown jobs, failures, cancellations,
+and executed jobs still follow the normal evidence checks.
 
 Cross-language quality is a separate PR-only lane for changes that select
 frontend or documentation work without selecting Go package validation. It
