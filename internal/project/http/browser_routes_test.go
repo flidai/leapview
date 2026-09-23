@@ -27,7 +27,7 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 		t.Fatalf("walk routes: %v", err)
 	}
 	sort.Strings(got)
-	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /runs", "GET /search", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /dashboards/{asset}/appearance"}
+	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/runs", "GET /pipelines/{asset}", "GET /pipelines/{asset}/{section}", "GET /pipelines/{asset}/runs/{run}", "GET /pipelines/{asset}/runs/{run}/{section}", "POST /pipelines/command", "GET /runs", "GET /search", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /dashboards/{asset}/appearance"}
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("routes = %v, want %v", got, want)
@@ -37,6 +37,32 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 			if route == "GET "+legacy || route == "POST "+legacy {
 				t.Fatalf("legacy route %q was mounted", legacy)
 			}
+		}
+	}
+}
+
+func TestLegacyPipelineDetailSectionsRedirectToWorkspace(t *testing.T) {
+	router := chi.NewRouter()
+	h := &BrowserHandler{
+		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{{
+			ID: "pipeline:sales", ProjectID: "project:test", ServingStateID: "state", Type: "pipeline", Key: "sales", PayloadJSON: `{}`,
+		}}}},
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:      func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
+	}
+	h.MountAuthenticated(router)
+	for _, test := range []struct{ section, want string }{
+		{"details", "overview"},
+		{"refreshes", "runs"},
+		{"lineage", "overview"},
+		{"versions", "definition"},
+	} {
+		request := httptest.NewRequest(stdhttp.MethodGet, "/pipelines/pipeline%3Asales/"+test.section+"?q=orders", nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		want := "/pipelines/pipeline:sales/" + test.want + "?q=orders"
+		if response.Code != stdhttp.StatusPermanentRedirect || response.Header().Get("Location") != want {
+			t.Fatalf("%s: status=%d location=%q, want %q", test.section, response.Code, response.Header().Get("Location"), want)
 		}
 	}
 }

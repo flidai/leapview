@@ -40,10 +40,27 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 			refresh.Unavailable = true
 		}
 		canUse := h.pipelineMutationAllowed(r, asset.ID)
+		publicationStatus := "none"
+		var publicationAt time.Time
+		if h.RunPublicationReader == nil || refresh.Unavailable {
+			publicationStatus = "unavailable"
+		} else if refresh.LatestSuccessful.ID != "" {
+			evidence, found, publicationErr := h.RunPublicationReader.RunPublication(r.Context(), refreshrun.ReadScope{ProjectID: projectID, Environment: h.Environment}, refresh.LatestSuccessful.ID)
+			if publicationErr != nil {
+				publicationStatus = "unavailable"
+			} else if found {
+				publicationStatus = "confirmed"
+				publicationAt = evidence.CommittedAt
+			}
+		}
+		semanticModelID := projectAssetPayloadResourceID(asset.Payload, "SemanticModel", "semanticModel", "SemanticModelID", "semanticModelId")
+		semanticModelTitle := pipelineSemanticModelTitle(semanticModelID.String(), assets)
 		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{
 			Asset: asset, Refresh: refresh,
-			CanRun:    canUse && !refresh.Unavailable && state.RunCommand.OperationID() != "",
-			CanCancel: canUse && !refresh.Unavailable && state.CancelCommand.OperationID() != "",
+			CanRun:             canUse && !refresh.Unavailable && state.RunCommand.OperationID() != "",
+			CanCancel:          canUse && !refresh.Unavailable && state.CancelCommand.OperationID() != "",
+			SemanticModelTitle: semanticModelTitle,
+			PublicationAt:      publicationAt, PublicationStatus: publicationStatus,
 		})
 		for _, run := range refresh.Runs {
 			if run.ID == "" {
@@ -63,14 +80,14 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 			}
 		}
 	}
-	if r.URL.Path == "/runs" || r.URL.Query().Get("view") == "runs" {
+	if pipelineCollectionView(r) == "runs" {
 		if h.RunMonitor == nil {
 			return projectui.PipelineMonitorState{}, errors.New("run monitor is unavailable")
 		}
 		filter, rangeLabel, page := pipelineRunMonitorFilter(r, time.Now().UTC())
-		filter.AllowedPipelineIDs = make([]string, 0, len(pipelines))
+		selectedPipeline := strings.TrimSpace(r.URL.Query().Get("pipeline"))
+		filter.AllowedPipelineIDs = visiblePipelineIDs(pipelines, selectedPipeline)
 		for _, pipeline := range pipelines {
-			filter.AllowedPipelineIDs = append(filter.AllowedPipelineIDs, pipeline.ID)
 			if filter.Search != "" && (strings.Contains(strings.ToLower(pipeline.Title), strings.ToLower(filter.Search)) || strings.Contains(strings.ToLower(pipeline.Key), strings.ToLower(filter.Search))) {
 				filter.PipelineIDs = append(filter.PipelineIDs, pipeline.ID)
 			}
@@ -79,11 +96,11 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 		if err != nil {
 			return projectui.PipelineMonitorState{}, err
 		}
-		monitor := &projectui.PipelineRunMonitor{Query: filter.Search, Range: rangeLabel, Status: filter.Status, Trigger: filter.Trigger,
+		monitor := &projectui.PipelineRunMonitor{Query: filter.Search, Range: rangeLabel, Pipeline: selectedPipeline, Status: filter.Status, Trigger: filter.Trigger,
 			Page: page, PageSize: 25, Total: result.Total, Failed: result.Failed, Completed: result.Completed, Active: result.Active}
 		for _, run := range result.Runs {
 			monitor.Runs = append(monitor.Runs, projectui.PipelineMonitorRun{PipelineID: run.PipelineID.String(), Run: projectui.AssetRefreshRun{
-				ID: run.ID, Environment: run.Identity.Environment, ModelID: run.SemanticModelID.String(), ServingStateID: run.Identity.GenerationID,
+				ID: run.ID, Environment: run.Identity.Environment, PipelineID: run.PipelineID.String(), ModelID: run.SemanticModelID.String(), ServingStateID: run.Identity.GenerationID,
 				PrincipalID: run.PrincipalID, PrincipalDisplayName: run.PrincipalDisplayName, TriggerType: run.TriggerType,
 				ParentRunID: run.ParentRunID, TargetGeneration: run.TargetRevision, Status: run.Status, CreatedAt: run.CreatedAt,
 				UpdatedAt: run.UpdatedAt, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Error: run.Error,
@@ -92,6 +109,64 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 		state.RunMonitor = monitor
 	}
 	return state, nil
+}
+
+func pipelineSemanticModelTitle(reference string, assets []projectview.DevelopAssetView) string {
+	reference = strings.TrimSpace(reference)
+	if reference == "" {
+		return ""
+	}
+	for _, asset := range assets {
+		if asset.Type == string(projectview.AssetTypeSemanticModel) && strings.TrimSpace(asset.ID) == reference {
+			return firstProjectText(asset.Title, asset.Key)
+		}
+	}
+	want := normalizeSemanticModelReference(reference)
+	for _, asset := range assets {
+		if asset.Type != string(projectview.AssetTypeSemanticModel) {
+			continue
+		}
+		if normalizeSemanticModelReference(asset.ID) == want || normalizeSemanticModelReference(asset.Key) == want {
+			return firstProjectText(asset.Title, asset.Key)
+		}
+	}
+	return ""
+}
+
+func firstProjectText(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func normalizeSemanticModelReference(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, prefix := range []string{"semantic-model:", "semantic_model:", "semantic:", "semantic-model/", "semantic_model/", "semantic/"} {
+		if strings.HasPrefix(value, prefix) {
+			return strings.TrimPrefix(value, prefix)
+		}
+	}
+	return value
+}
+
+func visiblePipelineIDs(pipelines []projectview.DevelopAssetView, selected string) []string {
+	ids := make([]string, 0, len(pipelines))
+	for _, pipeline := range pipelines {
+		if selected == "" || selected == pipeline.ID {
+			ids = append(ids, pipeline.ID)
+		}
+	}
+	return ids
+}
+
+func pipelineCollectionView(r *http.Request) string {
+	if r != nil && r.URL != nil && (r.URL.Path == "/pipelines/runs" || r.URL.Query().Get("view") == "runs") {
+		return "runs"
+	}
+	return "pipelines"
 }
 
 func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.MonitorFilter, string, int64) {

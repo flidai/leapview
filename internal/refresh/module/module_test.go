@@ -153,7 +153,7 @@ func TestAssetRefreshStateReadsScopedRunsAndDataVersion(t *testing.T) {
 	run := refreshrun.RunRecord{ID: "run_1", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TargetRevision: 3, Status: refreshrun.RunStatusSucceeded}
 	m := &Module{runs: &testRunPersistence{targetRuns: []refreshrun.RunRecord{run}, latest: run}, schedules: &testScheduleRepository{versions: map[string]refreshschedule.DataVersion{"generation_a/orders": {Identity: identity, SemanticModelID: "orders", SnapshotID: 42, RefreshedAt: time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC), Source: refreshschedule.DataVersionSourceRefresh}}, next: time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC)}, service: refreshrun.Service{ServingStates: reconciliationStates{state: servingstate.State{ID: "generation_a", ProjectID: "project_sales", Environment: "dev"}}}}
 	state, err := m.AssetRefreshState(t.Context(), "project_sales", "dev", "pipeline_daily", "orders")
-	if err != nil || len(state.Runs) != 1 || state.LatestSuccessful.ID != "run_1" || state.DataVersion.SnapshotID != 42 {
+	if err != nil || len(state.Runs) != 1 || state.Runs[0].PipelineID != "pipeline_daily" || state.LatestSuccessful.ID != "run_1" || state.DataVersion.SnapshotID != 42 {
 		t.Fatalf("asset state = %#v, err=%v", state, err)
 	}
 }

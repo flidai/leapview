@@ -703,10 +703,11 @@ test('semantic model exposes the same Refreshes history surface', async () => {
         activeTab: root.querySelector('.tabs a.active')?.textContent?.trim(),
         label: root.querySelector('#refreshes')?.getAttribute('aria-label'),
         rows: table?.querySelectorAll('tbody tr.record-row').length,
+        runLink: table?.querySelector('a.record-link')?.getAttribute('href'),
         rowAction: table?.table?.rowAction,
       }
     })
-    expect(state).toEqual({ activeTab: 'Refreshes', label: 'Refreshes', rows: 1, rowAction: 'open-refresh-run' })
+    expect(state).toEqual({ activeTab: 'Refreshes', label: 'Refreshes', rows: 1, runLink: '/pipelines/pipeline:sales/runs/run:semantic:sales', rowAction: 'open-refresh-run' })
   } finally {
     await page.close()
   }
@@ -1043,6 +1044,167 @@ test('pipeline detail run action emits canonical pipeline command detail', async
   }
 })
 
+test('pipeline Overview labels direct dependencies and reveals the complete graph on request', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipeline-detail-height`)
+    await page.waitForFunction(() => customElements.get('lv-pipeline-detail-page') && customElements.get('lv-asset-lineage-graph'))
+    expect(await page.locator('lv-pipeline-detail-page nav[aria-label="Breadcrumb"] h1 .breadcrumb-glyph svg').count()).toBe(1)
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 720 }]) {
+      await page.setViewportSize(viewport)
+      const graph = await page.locator('lv-pipeline-detail-page').evaluate(async (element: any) => {
+        await element.updateComplete
+        const root = element.shadowRoot as ShadowRoot
+        const host = root.querySelector<HTMLElement>('.lineage-graph')!
+        const graph = root.querySelector('lv-asset-lineage-graph') as any
+        await graph?.updateComplete
+        const bounds = host.getBoundingClientRect()
+        const contentHeight = (graph?.querySelector('.asset-lineage-root') as HTMLElement | null)?.getBoundingClientRect().height ?? 0
+        const page = root.querySelector<HTMLElement>('.page')!
+        return {
+          display: getComputedStyle(host).display, width: Math.round(bounds.width), height: Math.round(bounds.height),
+          bottom: Math.round(bounds.bottom), contentHeight: Math.round(contentHeight), runBadges: graph?.querySelectorAll('.asset-lineage-node-run-status').length ?? 0,
+          horizontalOverflow: page.scrollWidth > page.clientWidth,
+          graphNodeIDs: (graph?.graph?.nodes ?? []).map((node: any) => node.id),
+          heading: root.querySelector('#pipeline-dependencies-title')?.textContent?.trim(),
+          focusedNodeCount: graph?.querySelectorAll('.react-flow__node').length ?? 0,
+          scopeAction: graph?.querySelector('.asset-lineage-actions button')?.textContent?.trim(),
+          recentRunCount: root.querySelectorAll('.recent-run').length,
+          latestRunDate: root.querySelector('.summary-item:nth-child(3) a')?.textContent?.trim(),
+          latestRunHref: root.querySelector('.summary-item:nth-child(3) a')?.getAttribute('href'),
+        }
+      })
+      expect(graph.display).toBe('block')
+      expect(graph.width).toBeGreaterThan(0)
+      expect(graph.height).toBeGreaterThanOrEqual(288)
+      expect(graph.height).toBeLessThanOrEqual(512)
+      expect(graph.contentHeight).toBe(graph.height)
+      expect(graph.runBadges).toBe(0)
+      expect(graph.horizontalOverflow).toBe(false)
+      expect(graph.graphNodeIDs).toEqual(['source:sales', 'model:sales', 'semantic_model:sales'])
+      expect(graph.heading).toBe('Direct dependencies')
+      expect(graph.focusedNodeCount).toBe(2)
+      expect(graph.scopeAction).toBe('Show all upstream')
+      expect(graph.recentRunCount).toBe(0)
+      expect(graph.latestRunDate).toContain('UTC')
+      expect(graph.latestRunHref).toBe('/pipelines/pipeline:sales/runs/run:latest')
+      if (viewport.width === 1440) expect(graph.bottom).toBeLessThanOrEqual(viewport.height)
+    }
+    const lineage = page.locator('lv-pipeline-detail-page lv-asset-lineage-graph')
+    const dependencyHeading = page.locator('lv-pipeline-detail-page #pipeline-dependencies-title')
+    const scopeHint = page.locator('lv-pipeline-detail-page .graph-scope-hint')
+    expect(await scopeHint.count()).toBe(0)
+    await lineage.getByRole('button', { name: 'Show all upstream' }).click()
+    expect((await dependencyHeading.textContent())?.trim()).toBe('Full dependency graph')
+    expect(await scopeHint.count()).toBe(0)
+    expect(await lineage.locator('.react-flow__node').count()).toBe(3)
+    await lineage.getByRole('button', { name: 'Fit', exact: true }).click()
+    expect(await lineage.locator('.react-flow__node').count()).toBe(3)
+    await lineage.getByRole('button', { name: 'Show direct dependencies' }).click()
+    expect((await dependencyHeading.textContent())?.trim()).toBe('Direct dependencies')
+    expect(await scopeHint.count()).toBe(0)
+    expect(await lineage.locator('.react-flow__node').count()).toBe(2)
+    const defaultTimezone = await page.locator('lv-pipeline-detail-page').evaluate(async (element: any) => {
+      element.signals.page.timezone = ''
+      element.requestUpdate()
+      await element.updateComplete
+      return {
+        latest: element.shadowRoot.querySelector('.summary-item:nth-child(3) a')?.textContent?.trim(),
+      }
+    })
+    expect(defaultTimezone.latest).toContain('UTC')
+    const schedule = await page.locator('lv-pipeline-detail-page').evaluate(async (element: any) => {
+      element.signals.page.schedules = [{ cron: '0 * * * *' }]
+      element.signals.page.nextRunAt = '2026-09-23T14:00:00Z'
+      element.signals.page.timezone = 'UTC'
+      element.requestUpdate()
+      await element.updateComplete
+      return element.shadowRoot.querySelector('.summary-item:nth-child(2)')?.textContent?.replace(/\s+/g, ' ').trim()
+    })
+    expect(schedule).toContain('0 * * * *')
+    expect(schedule).toContain('Next')
+    expect(schedule).toContain('UTC')
+  } finally {
+    await page.close()
+  }
+})
+
+test('pipeline Runs uses filtered, paginated table links within the fixed pipeline context', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipeline-detail-runs`)
+    await page.waitForFunction(() => customElements.get('lv-pipeline-detail-page') && customElements.get('lv-entity-list'))
+    const runs = await page.locator('lv-pipeline-detail-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const table = root.querySelector('lv-entity-list') as any
+      await table?.updateComplete
+      const identity = root.querySelector<HTMLAnchorElement>('.entity-list-identity')
+      const started = root.querySelector<HTMLAnchorElement>('.entity-list-column-link')
+      const next = root.querySelector<HTMLAnchorElement>('.run-pagination-actions a:last-child')
+      const form = root.querySelector<HTMLFormElement>('.run-filters')!
+      return {
+        action: form.getAttribute('action'),
+        query: (form.querySelector('[name="q"]') as HTMLInputElement).value,
+        filters: Array.from(form.querySelectorAll('select')).map((select: any) => ({ name: select.name, value: select.value })),
+        hasPipelineSelector: Boolean(form.querySelector('[name="pipeline"]')),
+        headings: Array.from(root.querySelectorAll('.entity-list-table thead th')).map((cell) => cell.textContent?.trim()),
+        identity: { text: identity?.textContent?.trim(), href: identity?.getAttribute('href') },
+        startedHref: started?.getAttribute('href'),
+        startedText: started?.textContent?.trim(),
+        startedTitle: started?.closest('td')?.getAttribute('title'),
+        pagination: root.querySelector('.run-pagination')?.textContent?.replace(/\s+/g, ' ').trim(),
+        nextHref: next?.getAttribute('href'),
+        description: root.textContent?.includes('Recent runs (up to 50)'),
+      }
+    })
+    expect(runs.action).toBe('/pipelines/pipeline:sales/runs')
+    expect(runs.query).toBe('failed')
+    expect(runs.filters).toEqual([{ name: 'range', value: '7d' }, { name: 'status', value: 'failed' }, { name: 'trigger', value: 'schedule' }])
+    expect(runs.hasPipelineSelector).toBe(false)
+    expect(runs.headings).toEqual(['Status', 'Run ID', 'Started', 'Duration', 'Trigger'])
+    expect(runs.identity.href).toBe('/pipelines/pipeline:sales/runs/run:failed')
+    expect(runs.startedHref).toBe(runs.identity.href)
+    expect(runs.startedText).toContain('UTC')
+    expect(runs.startedTitle).toContain('UTC')
+    expect(runs.identity.text).toContain('run:failed')
+    expect(runs.pagination).toContain('Showing 26–50 of 60 runs')
+    expect(runs.nextHref).toContain('/pipelines/pipeline:sales/runs?q=failed&range=7d&status=failed&trigger=schedule&page=3')
+    expect(runs.description).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('pipeline Definition presents authored YAML before technical identity', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipeline-definition`)
+    await page.waitForFunction(() => customElements.get('lv-pipeline-detail-page'))
+    const definition = await page.locator('lv-pipeline-detail-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const yaml = root.querySelector('.definition-heading code')
+      const code = root.querySelector('pre.code')
+      const identity = root.querySelector('details.technical-identity') as HTMLDetailsElement | null
+      return {
+        heading: yaml?.textContent?.trim(),
+        code: code?.textContent,
+        identitySummary: identity?.querySelector('summary')?.textContent?.trim(),
+        identityClosed: !identity?.open,
+        order: Array.from(root.querySelector('.panel')?.children ?? []).map((item) => item.tagName.toLowerCase()),
+      }
+    })
+    expect(definition.heading).toContain('sales')
+    expect(definition.code).toContain('kind: Pipeline')
+    expect(definition.identitySummary).toBe('Technical details')
+    expect(definition.identityClosed).toBe(true)
+    expect(definition.order.indexOf('pre')).toBeLessThan(definition.order.indexOf('details'))
+  } finally {
+    await page.close()
+  }
+})
+
 test('pipeline Overview reports executions independently of a published data snapshot', async () => {
   const page = await browser.newPage()
   try {
@@ -1083,13 +1245,15 @@ test('pipeline Overview exposes a failed run and its diagnostic link', async () 
         status: root.querySelector('.semantic-overview-refresh-status strong')?.textContent?.trim(),
         error: root.querySelector('.semantic-overview-guidance')?.textContent?.trim(),
         latest: root.querySelector<HTMLAnchorElement>('.semantic-overview-actions a')?.getAttribute('href'),
+        recent: root.querySelector<HTMLAnchorElement>('.semantic-overview-run-list a')?.getAttribute('href'),
         runs: root.querySelectorAll('.semantic-overview-run-list li').length,
       }
     })
     expect(overview).toEqual({
       status: 'Failed',
       error: 'Source unavailable',
-      latest: '/pipelines/pipeline:sales/refreshes?refresh=run%3Afailed',
+      latest: '/pipelines/pipeline:sales/runs/run:failed',
+      recent: '/pipelines/pipeline:sales/runs/run:failed',
       runs: 1,
     })
   } finally {
@@ -1103,6 +1267,10 @@ test('pipeline terminal command failure clears loading and offers reload guidanc
     await page.goto(`${baseURL}/?root=pipelines`)
     await page.waitForFunction(() => customElements.get('lv-pipelines-page'))
     const state = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      // Model the fetch lifecycle for the in-flight Run action without making
+      // every Pipelines collection fixture appear busy by default.
+      element.signals.pipelineCommandStatus.loading = true
       await element.updateComplete
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: document.body, argsRaw: { status: 503 } } }))
       await new Promise<void>((resolve) => queueMicrotask(() => resolve()))

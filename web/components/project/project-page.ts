@@ -44,6 +44,8 @@ import { updateURLSearchParameter } from '../shared/url-search-state'
 import './connection-administration'
 import './dashboard-appearance-editor'
 import './pipelines-page'
+import './pipeline-detail-page'
+import './pipeline-run-page'
 import { projectBaseStyles } from './project-page-base.styles'
 import { projectOverviewStyles } from './project-page-overview.styles'
 import { emptyLineageStatus, renderAssetLineage } from './project-lineage'
@@ -581,6 +583,11 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       return
     }
     if (event.detail?.action === 'open-refresh-run') {
+      const runHref = fieldValue(event.detail.row ?? {}, 'runHref', '')
+      if (runHref && runHref !== '-' && runHref !== '—') {
+        window.location.assign(runHref)
+        return
+      }
       const runId = fieldValue(event.detail.row ?? {}, 'runId', '')
       if (!runId) return
       const wasOpen = this.refreshRunDrawer.open

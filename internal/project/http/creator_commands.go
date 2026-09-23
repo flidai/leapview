@@ -341,6 +341,10 @@ func (h *BrowserHandler) PipelineCommand(w stdhttp.ResponseWriter, r *stdhttp.Re
 }
 
 func (h *BrowserHandler) pipelineCommandSuccess(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.PipelineCommandSignal, message string) {
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("surface")), "pipeline_detail") {
+		h.pipelineDetailCommandSuccess(w, r, command, message)
+		return
+	}
 	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("surface")), "asset") {
 		h.pipelineAssetCommandSuccess(w, r, command, message)
 		return
@@ -360,6 +364,25 @@ func (h *BrowserHandler) pipelineCommandSuccess(w stdhttp.ResponseWriter, r *std
 		return
 	}
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"page": projectui.PipelinesPagePatch(state, r.URL.Query().Get("view")), "pipelineCommand": command, "pipelineCommandStatus": projectsignals.PipelineCommandStatusSignal{Message: message}})
+}
+
+func (h *BrowserHandler) pipelineDetailCommandSuccess(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.PipelineCommandSignal, message string) {
+	assetID := strings.TrimSpace(r.URL.Query().Get("asset"))
+	if assetID == "" || assetID != strings.TrimSpace(command.AssetID) || assetID != strings.TrimSpace(command.PipelineID) {
+		h.pipelineCommandPatch(w, r, command, "Pipeline command target is invalid.")
+		return
+	}
+	section := strings.TrimSpace(r.URL.Query().Get("section"))
+	if !pipelineDetailSectionValid(section) {
+		section = projectui.PipelineDetailOverview
+	}
+	nav, state, err := h.pipelineDetailPageState(r, assetID, section)
+	if err != nil {
+		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
+		return
+	}
+	page := projectui.PipelineDetailBootstrapSignals(nav, state, "", h.layout(r))["page"]
+	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"page": page, "pipelineCommand": command, "pipelineCommandStatus": projectsignals.PipelineCommandStatusSignal{Message: message}})
 }
 
 // pipelineAssetCommandSuccess refreshes the detail projection that initiated

@@ -272,6 +272,29 @@ func TestPipelineAssetCommandSuccessPreservesDetailProjection(t *testing.T) {
 	}
 }
 
+func TestPipelineDetailCommandSuccessPreservesPurposeBuiltPageContract(t *testing.T) {
+	h := newPipelineDetailHTTPTestHandler()
+	h.RefreshState = browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{
+		Latest: refreshpresentation.AssetRefreshRun{ID: "run:queued", Status: "queued"},
+	}}
+	command := signals.PipelineCommandSignal{Action: "run", AssetID: pipelineDetailHTTPAssetID, PipelineID: pipelineDetailHTTPAssetID}
+	request := httptest.NewRequest(http.MethodPost, "/pipelines/command?surface=pipeline_detail&asset=pipeline%3Adaily&section=overview", nil)
+	recorder := httptest.NewRecorder()
+	h.pipelineDetailCommandSuccess(recorder, request, command, "Pipeline command accepted.")
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"kind":"pipeline_detail"`) || !strings.Contains(body, `"activeTab":"overview"`) || !strings.Contains(body, `"pipelineCommandStatus"`) {
+		t.Fatalf("pipeline detail success patch = %s, want purpose-built detail page and command status", body)
+	}
+	if strings.Contains(body, `"kind":"pipelines"`) {
+		t.Fatalf("pipeline detail command replaced the page with collection contract: %s", body)
+	}
+	mismatch := httptest.NewRecorder()
+	h.pipelineDetailCommandSuccess(mismatch, httptest.NewRequest(http.MethodPost, "/pipelines/command?surface=pipeline_detail&asset=pipeline%3Aother", nil), command, "Pipeline command accepted.")
+	if got := mismatch.Body.String(); !strings.Contains(got, "Pipeline command target is invalid") || strings.Contains(got, `"page"`) {
+		t.Fatalf("mismatched detail target response = %s, want fail-closed status only", got)
+	}
+}
+
 func TestConnectionAdministrationViewRedactsCredentialReferences(t *testing.T) {
 	h := &BrowserHandler{
 		TargetID:                 "instance:test",

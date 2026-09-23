@@ -25,11 +25,14 @@ type AssetDataVersion struct {
 	ServingStateID string
 	RefreshedAt    time.Time
 	Source         string
+	PipelineID     string
+	RunID          string
 }
 
 type AssetRefreshRun struct {
 	ID                   string
 	Environment          string
+	PipelineID           string
 	ModelID              string
 	ServingStateID       string
 	PrincipalID          string
