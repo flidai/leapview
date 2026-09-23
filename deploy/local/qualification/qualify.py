@@ -600,7 +600,7 @@ def verify_manifests(package_root: Path, package_name: str, archive_digest: str)
         dt.datetime.fromisoformat(str(identity["buildTime"]).replace("Z", "+00:00"))
     except ValueError as exc:
         raise QualificationError("authoring package buildTime is not an ISO-8601 timestamp") from exc
-    expected_profile = "ubuntu-24.04-docker-engine" if target_os == "linux" else "macos-15-docker-desktop"
+    expected_profile = "ubuntu-24.04-docker-engine" if target_os == "linux" else "macos-15-docker-engine"
     if host != {"os": target_os, "architecture": target_arch, "supportProfile": expected_profile}:
         raise QualificationError("authoring manifest host identity does not match its archive name")
     image = authoring["applicationImage"]

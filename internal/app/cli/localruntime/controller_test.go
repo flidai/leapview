@@ -133,6 +133,44 @@ func (transport *localHTTPTransport) RoundTrip(request *http.Request) (*http.Res
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 }
 
+type restartingHTTPTransport struct {
+	localHTTPTransport
+	restarted bool
+	checks    int
+}
+
+func (transport *restartingHTTPTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if transport.restarted && request.URL.Path == "/readyz" {
+		transport.checks++
+		if transport.checks == 1 {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("starting")), Request: request}, nil
+		}
+	}
+	return transport.localHTTPTransport.RoundTrip(request)
+}
+
+func TestRetainedStartWaitsForApplicationBeforeEstablishingSessions(t *testing.T) {
+	checkout, packageRoot, stateRoot := t.TempDir(), testRuntimePackage(t), t.TempDir()
+	endpoint := &fakeEndpoint{host: "unix:///var/run/docker.sock", server: "daemon-1", fingerprint: "sha256:endpoint"}
+	transport := &restartingHTTPTransport{}
+	options := testControllerOptions(checkout, packageRoot, stateRoot, endpoint, &fakeRunner{artifacts: testQualificationArtifacts(t)})
+	options.HTTPClient = &http.Client{Transport: transport}
+	options.EstablishSessions = func(_ context.Context, request SessionRequest) (SessionResult, error) {
+		if transport.restarted && transport.checks < 2 {
+			return SessionResult{}, errors.New("login raced application startup")
+		}
+		return SessionResult{TargetName: request.TargetName, SessionID: "session-local"}, nil
+	}
+	controller, err := New(options)
+	require.NoError(t, err)
+	_, err = controller.Start(t.Context())
+	require.NoError(t, err)
+	transport.restarted = true
+	_, err = controller.Start(t.Context())
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, transport.checks, 2)
+}
+
 func TestStartPersistsExactIntentAndCompletesThroughExistingAuthorities(t *testing.T) {
 	checkout, packageRoot, stateRoot := t.TempDir(), testRuntimePackage(t), t.TempDir()
 	endpoint := &fakeEndpoint{host: "unix:///var/run/docker.sock", server: "daemon-1", fingerprint: "sha256:endpoint"}

@@ -122,7 +122,7 @@ func localDevStatusCommand(ctx context.Context, resolve localDockerResolver, fac
 			if err != nil {
 				return err
 			}
-			if status.Exists && status.TargetName != "" && readProfileStatus != nil {
+			if status.Exists && status.TargetName != "" && status.Services["leapview"] == "running" && readProfileStatus != nil {
 				status.DevelopmentProfile, err = readProfileStatus(ctx, status)
 				if err != nil {
 					return fmt.Errorf("read retained development profile status: %w", err)

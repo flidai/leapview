@@ -28,7 +28,7 @@
         "os": { "enum": ["linux", "darwin"] },
         "architecture": { "enum": ["amd64", "arm64"] },
         "supportProfile": {
-          "enum": ["ubuntu-24.04-docker-engine", "macos-15-docker-desktop"]
+          "enum": ["ubuntu-24.04-docker-engine", "macos-15-docker-engine"]
         }
       }
     },
@@ -44,7 +44,7 @@
     },
     {
       "if": { "properties": { "host": { "properties": { "os": { "const": "darwin" } } } } },
-      "then": { "properties": { "host": { "properties": { "supportProfile": { "const": "macos-15-docker-desktop" } } } } }
+      "then": { "properties": { "host": { "properties": { "supportProfile": { "const": "macos-15-docker-engine" } } } } }
     }
   ]
 }

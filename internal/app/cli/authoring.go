@@ -30,14 +30,15 @@ import (
 )
 
 type candidateSynchronizationTransport struct {
-	client          *deploymentgen.GenClient
-	principalClient *accessgen.GenClient
-	canonicalOrigin string
+	client                 *deploymentgen.GenClient
+	principalClient        *accessgen.GenClient
+	canonicalOrigin        string
+	developmentInputDigest string
 }
 
 type projectDevRemoteFactory struct {
 	client                 cliapi.Client
-	stageDevelopmentInputs func(context.Context, cliapi.Credentials, localDevelopmentSession) error
+	stageDevelopmentInputs func(context.Context, cliapi.Credentials, localDevelopmentSession) (string, error)
 	bootstrapOwnerPolicy   func(context.Context, apigenclient.Transport, localDevelopmentSession) error
 }
 
@@ -85,9 +86,13 @@ func (remote *profileApplyingDevRemote) Synchronize(ctx context.Context, request
 		GraphDigest: profile.GraphDigest, ProfileDigest: profile.Profile.ProfileDigest,
 		Connections: developmentProfileConnectionIntents(projectID, remote.local.state.Authority.Environment, profile),
 	}
+	idempotencyKey, err := developmentProfileIdempotencyKey(body)
+	if err != nil {
+		return projectdevloop.Candidate{}, err
+	}
 	response, err := remote.client.ApplyDevelopmentProfile(ctx, analyticsgen.GenApplyDevelopmentProfileClientRequest{
 		Project: projectID, Target: targetID,
-		Headers: analyticsgen.GenApplyDevelopmentProfileClientHeaders{IdempotencyKey: developmentProfileIdempotencyKey(applicationID, mode)},
+		Headers: analyticsgen.GenApplyDevelopmentProfileClientHeaders{IdempotencyKey: idempotencyKey},
 		Body:    body,
 	})
 	if err != nil {
@@ -104,8 +109,12 @@ func developmentProfileApplicationID(local localDevelopmentSession) string {
 	return "profile_" + uuid.NewSHA1(uuid.NameSpaceURL, []byte(identity)).String()
 }
 
-func developmentProfileIdempotencyKey(applicationID string, mode analyticsgen.DevelopmentProfileApplicationMode) string {
-	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview:development-profile:"+applicationID+"\x00"+string(mode))).String()
+func developmentProfileIdempotencyKey(body analyticsgen.DevelopmentProfileApplicationRequest) (string, error) {
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("encode development profile idempotency identity: %w", err)
+	}
+	return uuid.NewSHA1(uuid.NameSpaceURL, append([]byte("leapview:development-profile:"), encoded...)).String(), nil
 }
 
 func isDevelopmentProfileNotFound(err error) bool {
@@ -311,9 +320,11 @@ func (factory projectDevRemoteFactory) Remote(
 		return nil, fmt.Errorf("bootstrap local Project authorization policy: %w", err)
 	}
 	if factory.stageDevelopmentInputs != nil {
-		if err := factory.stageDevelopmentInputs(ctx, credentials, local); err != nil {
+		inputDigest, err := factory.stageDevelopmentInputs(ctx, credentials, local)
+		if err != nil {
 			return nil, fmt.Errorf("stage declared development inputs: %w", err)
 		}
+		nativeTransport.developmentInputDigest = inputDigest
 	}
 	return &profileApplyingDevRemote{remote: remote, client: analyticsgen.NewGenClient(generic), local: local}, nil
 }
@@ -497,7 +508,7 @@ func (transport *candidateSynchronizationTransport) SynchronizeNative(
 	planKey := deploymentIdempotencyKey(
 		"dev-delivery-plan", projectID, retained.TargetID, retained.Environment,
 		ownerID, request.Snapshot.CandidateKey, retained.SourceDigest,
-		retained.SourceAttestationDigest,
+		retained.SourceAttestationDigest, transport.developmentInputDigest,
 	)
 	planResponse, err := transport.client.CreateDeliveryPlan(
 		ctx,

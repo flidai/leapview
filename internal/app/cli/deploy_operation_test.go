@@ -37,7 +37,7 @@ func TestDeployOperationPersistsBeforeLostPublicationAcknowledgementAndResumesEx
 	credentials := cliapi.Credentials{Target: "https://target.example", ProjectID: "project-1"}
 
 	var initialOutput strings.Builder
-	err := operations.Deploy(t.Context(), projectcli.DeployOptions{SourceRoot: t.TempDir(), Credentials: credentials, Environment: "prod", Intent: "new", OperationHandle: "release-42", ConfirmPlan: provenanceDigest, Format: "json"}, &initialOutput)
+	err := operations.Deploy(t.Context(), projectcli.DeployOptions{SourceRoot: t.TempDir(), Credentials: credentials, TargetSelector: "named-target", Environment: "prod", Intent: "new", OperationHandle: "release-42", ConfirmPlan: provenanceDigest, Format: "json"}, &initialOutput)
 	if err == nil || !strings.Contains(err.Error(), "indeterminate") {
 		t.Fatalf("lost acknowledgement error = %v", err)
 	}
@@ -45,7 +45,7 @@ func TestDeployOperationPersistsBeforeLostPublicationAcknowledgementAndResumesEx
 	if err != nil {
 		t.Fatal(err)
 	}
-	if descriptor.Outcome != projectcli.DeploymentOperationIndeterminate || descriptor.PlanID != "plan-1" || descriptor.CandidateID != "candidate-1" || descriptor.PublicationIdempotencyKey == "" || descriptor.StatusURL != "https://target.example/candidates/candidate-1/review" || descriptor.SourceRevision != "commit-42" {
+	if descriptor.Outcome != projectcli.DeploymentOperationIndeterminate || descriptor.PlanID != "plan-1" || descriptor.CandidateID != "candidate-1" || descriptor.PublicationIdempotencyKey == "" || descriptor.StatusURL != "https://target.example/candidates/candidate-1/review" || descriptor.SourceRevision != "commit-42" || descriptor.TargetSelector != "named-target" {
 		t.Fatalf("retained descriptor = %#v", descriptor)
 	}
 	if descriptor.PlanEvidence.ImpactStatement != planEvidence.ImpactStatement || !strings.Contains(initialOutput.String(), `"planEvidence"`) {
@@ -230,12 +230,14 @@ func TestDeployOperationReconcilesPendingAndCommittedPublicationOutcomes(t *test
 			descriptor.TargetID, descriptor.PlanID, descriptor.CandidateID, descriptor.PublicationID = "target-1", "plan-1", "candidate-1", "publication-1"
 			descriptor.SourceDigest, descriptor.ProvenanceDigest, descriptor.PlanDigest = digest, digest, digest
 			descriptor.Outcome, descriptor.PublicationStatus, descriptor.GenerationID = projectcli.DeploymentOperationIndeterminate, "indeterminate", ""
+			descriptor.FailureDetail = "exact plan confirmation is required"
 			if err := store.Create(descriptor); err != nil {
 				t.Fatal(err)
 			}
 			client := &operationEvidenceClient{status: test.status, generation: test.generation}
 			operations := projectDeployOperations{client: client, planner: &operationPlanRecorder{}, builder: &operationBuildRecorder{}, publisher: &operationPublishRecorder{}, operations: store}
-			err = operations.Deploy(t.Context(), projectcli.DeployOptions{Credentials: cliapi.Credentials{Target: "https://target.example", ProjectID: "project-1"}, Environment: "prod", Intent: "resume", OperationHandle: descriptor.Handle, Format: "json"}, io.Discard)
+			var output bytes.Buffer
+			err = operations.Deploy(t.Context(), projectcli.DeployOptions{Credentials: cliapi.Credentials{Target: "https://target.example", ProjectID: "project-1"}, Environment: "prod", Intent: "resume", OperationHandle: descriptor.Handle, Format: "json"}, &output)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("Deploy() error = %v, wantErr %t", err, test.wantErr)
 			}
@@ -245,6 +247,9 @@ func TestDeployOperationReconcilesPendingAndCommittedPublicationOutcomes(t *test
 			}
 			if loaded.Outcome != test.want || loaded.PublicationStatus != test.status || loaded.GenerationID != test.generation {
 				t.Fatalf("reconciled descriptor = %#v", loaded)
+			}
+			if test.want == projectcli.DeploymentOperationActive && (loaded.FailureDetail != "" || strings.Contains(output.String(), "failureDetail")) {
+				t.Fatalf("active operation retained stale failure: descriptor=%#v output=%s", loaded, output.String())
 			}
 			if client.operation != deploymentgen.GenOperationGetDeliveryPublicationEvidence {
 				t.Fatalf("operation = %q", client.operation)

@@ -2,12 +2,16 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	accesscli "github.com/flidai/leapview/internal/access/cli"
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,9 +25,91 @@ type fakeOriginResolver struct {
 	calls int
 }
 
+type originResolverFunc func(context.Context, string, string) (accesscli.ResolvedCredential, error)
+
+func (resolve originResolverFunc) ResolveOrigin(ctx context.Context, origin, token string) (accesscli.ResolvedCredential, error) {
+	return resolve(ctx, origin, token)
+}
+
 func (resolver *fakeOriginResolver) ResolveOrigin(_ context.Context, origin, token string) (accesscli.ResolvedCredential, error) {
 	resolver.calls++
 	return accesscli.ResolvedCredential{AccessToken: "lv_cli_access_refreshed"}, nil
+}
+
+func TestAuthoringRetryTransportReusesRotatedTokenForLaterRequests(t *testing.T) {
+	resolver := &fakeOriginResolver{}
+	var sent []string
+	transport := &authoringRetryTransport{
+		base: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			token := strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer ")
+			sent = append(sent, token)
+			status := http.StatusUnauthorized
+			if token == "lv_cli_access_refreshed" {
+				status = http.StatusOK
+			}
+			return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("response")), Request: request}, nil
+		}), credentials: resolver,
+	}
+	for range 2 {
+		request, err := http.NewRequest(http.MethodGet, "https://prod.example.com/api/v1/projects/analytics", nil)
+		require.NoError(t, err)
+		request.Header.Set("Authorization", "Bearer lv_cli_access_expired")
+		response, err := transport.RoundTrip(request)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, response.StatusCode)
+		require.NoError(t, response.Body.Close())
+	}
+	require.Equal(t, []string{"lv_cli_access_expired", "lv_cli_access_refreshed", "lv_cli_access_refreshed"}, sent)
+	require.Equal(t, 1, resolver.calls)
+}
+
+func TestAuthoringRetryTransportConcurrentExpiredRequestsRotateOnce(t *testing.T) {
+	var refreshes atomic.Int32
+	transport := &authoringRetryTransport{
+		base: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			status := http.StatusUnauthorized
+			if request.Header.Get("Authorization") == "Bearer lv_cli_access_refreshed" {
+				status = http.StatusOK
+			}
+			return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("response")), Request: request}, nil
+		}),
+		credentials: originResolverFunc(func(_ context.Context, _, token string) (accesscli.ResolvedCredential, error) {
+			refreshes.Add(1)
+			if token != "lv_cli_access_expired" {
+				return accesscli.ResolvedCredential{}, cliapi.ErrProfileNotFound
+			}
+			return accesscli.ResolvedCredential{AccessToken: "lv_cli_access_refreshed"}, nil
+		}),
+	}
+	var group sync.WaitGroup
+	errors := make(chan error, 8)
+	for range 8 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			request, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:7090/api/v1/projects/analytics", nil)
+			if err != nil {
+				errors <- err
+				return
+			}
+			request.Header.Set("Authorization", "Bearer lv_cli_access_expired")
+			response, err := transport.RoundTrip(request)
+			if err != nil {
+				errors <- err
+				return
+			}
+			if response.StatusCode != http.StatusOK {
+				errors <- fmt.Errorf("response status %d", response.StatusCode)
+			}
+			_ = response.Body.Close()
+		}()
+	}
+	group.Wait()
+	close(errors)
+	for err := range errors {
+		require.NoError(t, err)
+	}
+	require.Equal(t, int32(1), refreshes.Load())
 }
 
 func TestAuthoringRetryTransportRefreshesOnceAfterMidSyncExpiry(t *testing.T) {

@@ -189,7 +189,11 @@ func (operations projectDeployOperations) deployWithOperation(ctx context.Contex
 		if len(unresolved) > 0 {
 			return deploymentSelectionFailure(options, out, "OPERATION_SELECTION_REQUIRED", "", fmt.Sprintf("retained operations require explicit --resume --operation (or --new): %s", strings.Join(unresolved, ", ")))
 		}
-		descriptor, err = projectcli.NewDeploymentOperation(options.OperationHandle, origin, options.Credentials.Target, projectID, environment, options.SourceRoot, "")
+		selector := strings.TrimSpace(options.TargetSelector)
+		if selector == "" {
+			selector = options.Credentials.Target
+		}
+		descriptor, err = projectcli.NewDeploymentOperation(options.OperationHandle, origin, selector, projectID, environment, options.SourceRoot, "")
 		if err != nil {
 			return err
 		}
@@ -346,6 +350,9 @@ func (operations projectDeployOperations) deployWithOperation(ctx context.Contex
 		default:
 			descriptor.Outcome = projectcli.DeploymentOperationIndeterminate
 		}
+		if descriptor.Outcome == projectcli.DeploymentOperationActive {
+			descriptor.FailureCode, descriptor.FailureDetail = "", ""
+		}
 		if err := store.Save(descriptor); err != nil {
 			return fmt.Errorf("persist deployment publication identity: %w", err)
 		}
@@ -485,6 +492,8 @@ func (operations projectDeployOperations) reconcileDescriptor(ctx context.Contex
 	if descriptor.Outcome == projectcli.DeploymentOperationActive && descriptor.GenerationID == "" {
 		descriptor.Outcome = projectcli.DeploymentOperationIndeterminate
 		descriptor.FailureDetail = "target reported committed publication without generation identity"
+	} else if descriptor.Outcome == projectcli.DeploymentOperationActive {
+		descriptor.FailureCode, descriptor.FailureDetail = "", ""
 	}
 	if descriptor.StatusURL == "" && descriptor.CandidateID != "" {
 		statusURL, statusErr := deploymentCandidateReviewURL(descriptor.TargetOrigin, descriptor.CandidateID)

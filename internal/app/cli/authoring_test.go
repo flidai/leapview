@@ -39,12 +39,12 @@ func TestProjectDevRemoteFactoryStagesDeclaredInputsBeforeWatching(t *testing.T)
 			ownerPolicyReady = true
 			return nil
 		},
-		stageDevelopmentInputs: func(_ context.Context, credentials cliapi.Credentials, local localDevelopmentSession) error {
+		stageDevelopmentInputs: func(_ context.Context, credentials cliapi.Credentials, local localDevelopmentSession) (string, error) {
 			require.True(t, ownerPolicyReady, "the owner policy must precede development input staging")
 			called = true
 			require.Equal(t, "lvproject_local", credentials.ProjectID)
 			require.Equal(t, "target-local", local.state.Authority.InstanceID)
-			return want
+			return "", want
 		},
 	}
 	ctx := context.WithValue(t.Context(), localDevelopmentSessionContextKey{}, localDevelopmentSession{state: state})
@@ -100,6 +100,14 @@ func TestProfileApplyingDevRemoteAppliesExactCheckpointBeforeSynchronization(t *
 	require.Equal(t, "profile_existing", transport.applied.ApplicationId)
 	require.Len(t, transport.applied.Connections, 1)
 	require.Equal(t, "LEAPVIEW_DEV_CONNECTION_WAREHOUSE", transport.applied.Connections[0].CredentialReference.SecretKey)
+	firstKey := transport.applyKeys[0]
+	_, err = remote.Synchronize(t.Context(), projectdevloop.SyncRequest{Snapshot: snapshot})
+	require.NoError(t, err)
+	require.Equal(t, firstKey, transport.applyKeys[1], "retrying the same request must keep its idempotency key")
+	snapshot.Digest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	_, err = remote.Synchronize(t.Context(), projectdevloop.SyncRequest{Snapshot: snapshot})
+	require.NoError(t, err)
+	require.NotEqual(t, firstKey, transport.applyKeys[2], "a distinct valid edit must use a distinct key")
 }
 
 type recordingProfileDelegate struct{ request projectdevloop.SyncRequest }
@@ -110,8 +118,9 @@ func (remote *recordingProfileDelegate) Synchronize(_ context.Context, request p
 }
 
 type developmentProfileTransportStub struct {
-	current analyticsgen.DevelopmentProfileApplicationResponse
-	applied *analyticsgen.DevelopmentProfileApplicationRequest
+	current   analyticsgen.DevelopmentProfileApplicationResponse
+	applied   *analyticsgen.DevelopmentProfileApplicationRequest
+	applyKeys []string
 }
 
 func (transport *developmentProfileTransportStub) DoAPIGen(_ context.Context, request apigenclient.Request, out any) (apigenclient.Response, error) {
@@ -122,6 +131,7 @@ func (transport *developmentProfileTransportStub) DoAPIGen(_ context.Context, re
 	case analyticsgen.GenOperationApplyDevelopmentProfile:
 		body := request.Body.(analyticsgen.DevelopmentProfileApplicationRequest)
 		transport.applied = &body
+		transport.applyKeys = append(transport.applyKeys, request.Headers.Get("Idempotency-Key"))
 		response = analyticsgen.DevelopmentProfileApplicationResponse{
 			ApplicationId: body.ApplicationId, Status: analyticsgen.DevelopmentProfileApplicationStatusApplied,
 			SourceDigest: body.SourceDigest, GraphDigest: body.GraphDigest, ProfileDigest: body.ProfileDigest, Revision: 4,
@@ -205,6 +215,18 @@ func TestNativeDeliveryKeysAreStableAcrossTransportInstances(t *testing.T) {
 		firstStub.nativePlanKey != secondStub.nativePlanKey ||
 		firstStub.nativeBuildKey != secondStub.nativeBuildKey {
 		t.Fatalf("native idempotency keys differ: first plan=%q build=%q second plan=%q build=%q", firstStub.nativePlanKey, firstStub.nativeBuildKey, secondStub.nativePlanKey, secondStub.nativeBuildKey)
+	}
+	first.developmentInputDigest = "sha256:" + strings.Repeat("a", 64)
+	if _, err := first.SynchronizeNative(t.Context(), request, 2); err != nil {
+		t.Fatal(err)
+	}
+	firstInputKey := firstStub.nativePlanKey
+	first.developmentInputDigest = "sha256:" + strings.Repeat("b", 64)
+	if _, err := first.SynchronizeNative(t.Context(), request, 2); err != nil {
+		t.Fatal(err)
+	}
+	if firstStub.nativePlanKey == firstInputKey {
+		t.Fatal("new declared data revision reused the prior native delivery plan operation")
 	}
 }
 
