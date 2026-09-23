@@ -131,6 +131,56 @@ func TestHealthPopulationsAndIncompleteEvidence(t *testing.T) {
 	}
 }
 
+func TestSkippedPRHasNoMissingEvidenceOrExecutionMetrics(t *testing.T) {
+	results := FullPRJobs().Selected()
+	base := HealthRun{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", Attempt: 2,
+		DurationSeconds: -1, QueueSeconds: -1, PlanIssue: "missing, expired or invalid ci-plan artifact", Results: map[string]string{"prepare": "skipped", "ci-gate": "skipped"}}
+	for job := range results {
+		base.Results[job] = "skipped"
+	}
+	for _, conclusion := range []string{"success", "skipped"} {
+		base.Conclusion = conclusion
+		r := AnalyzeHealth([]HealthRun{base})
+		if len(r.Alerts) != 0 || r.Incomplete != 0 || r.UnknownSelection != 0 || r.MissingDurations != 0 || r.Reruns != 0 || r.PlannedRuns != 0 || r.Runs[0].Category != "skipped_pr" {
+			t.Fatalf("intentional skip treated as execution or missing evidence: %+v", r)
+		}
+		if r.RunCount != 1 || r.SkippedPR != 1 || r.Jobs["prepare"].Skipped != 1 || len(r.Runs[0].Problems) != 0 {
+			t.Fatalf("skip evidence lost: %+v", r)
+		}
+	}
+	for _, scenario := range []string{"missing job", "unknown job", "failed planning", "executed planning", "cancelled", "manual", "merge", "plan present"} {
+		t.Run(scenario, func(t *testing.T) {
+			run := base
+			run.Results = make(map[string]string)
+			for job, result := range base.Results {
+				run.Results[job] = result
+			}
+			switch scenario {
+			case "missing job":
+				delete(run.Results, "ci-gate")
+			case "unknown job":
+				run.Results["unknown/new-job"] = "skipped"
+			case "failed planning":
+				run.Results["prepare"] = "failure"
+			case "executed planning":
+				run.Results["prepare"] = "success"
+			case "cancelled":
+				run.Conclusion = "cancelled"
+			case "manual":
+				run.Event = "workflow_dispatch"
+			case "merge":
+				run.Workflow, run.Event = "merge-validation.yml", "merge_group"
+			case "plan present":
+				run.Plan.Version = PRPlanVersion
+			}
+			r := AnalyzeHealth([]HealthRun{run})
+			if r.SkippedPR != 0 || len(r.Alerts) == 0 {
+				t.Fatalf("untrusted evidence suppressed: %+v", r)
+			}
+		})
+	}
+}
+
 func TestUnsupportedPlanRemainsUnknown(t *testing.T) {
 	r := AnalyzeHealth([]HealthRun{{Workflow: "ci.yml", Event: "pull_request", Plan: Plan{Version: 99, Effective: FullJobs()}, DurationSeconds: 20, QueueSeconds: -1}})
 	if len(r.Selection) != 0 || r.UnknownSelection != 1 || r.Selective.Count != 0 {

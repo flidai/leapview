@@ -215,8 +215,20 @@ func TestPRWorkflowConsumesPlannerOutputsAndAlwaysGates(t *testing.T) {
 		t.Fatal("workflow path filtering bypasses required gate")
 	}
 	gate := config.Jobs["ci-gate"]
-	if gate.If != "${{ always() }}" || !slices.Contains(gate.Needs, "prepare") {
-		t.Fatal("gate does not require planning on every outcome")
+	if config.Jobs["prepare"].If != "${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}" {
+		t.Error("PR planning must skip drafts while allowing manual dispatch")
+	}
+	if _, ok := config.On["workflow_dispatch"]; !ok {
+		t.Error("CI must support manual dispatch for draft branches")
+	}
+	prEvents, _ := config.On["pull_request"]["types"].([]any)
+	for _, event := range []string{"opened", "synchronize", "reopened", "ready_for_review"} {
+		if !slices.Contains(prEvents, any(event)) {
+			t.Errorf("CI must handle PR event %s", event)
+		}
+	}
+	if gate.If != "${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}" || !slices.Contains(gate.Needs, "prepare") {
+		t.Fatal("gate must skip drafts and require planning on every eligible outcome")
 	}
 	for neutral := range platformci.FullPRJobs().Selected() {
 		workflow := WorkflowJobID(neutral)
