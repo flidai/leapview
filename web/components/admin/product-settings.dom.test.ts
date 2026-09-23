@@ -80,12 +80,10 @@ test('product settings renders redacted sections and emits typed identity comman
       element.addEventListener('lv-product-settings-command', (event: CustomEvent) => { command = event.detail })
       const input = element.shadowRoot.querySelector('input[type="text"]') as HTMLInputElement
       const logoLabel = element.shadowRoot.querySelector('input[type="file"]')?.getAttribute('aria-label')
-      const attribution = element.shadowRoot.querySelector('.attribution') as HTMLAnchorElement | null
       const customPreview = {
         logo: Boolean(element.shadowRoot.querySelector('.identity-preview img')),
         name: element.shadowRoot.querySelector('.identity-name')?.textContent?.trim(),
-        attribution: attribution?.textContent?.trim(),
-        attributionHref: attribution?.getAttribute('href'),
+        attribution: Boolean(element.shadowRoot.querySelector('.attribution')),
       }
       input.value = 'Acme BI'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
@@ -104,7 +102,7 @@ test('product settings renders redacted sections and emits typed identity comman
         logo: Boolean(element.shadowRoot.querySelector('.identity-preview img')),
         fallback: Boolean(element.shadowRoot.querySelector('.identity-fallback')),
         name: element.shadowRoot.querySelector('.identity-name')?.textContent?.trim(),
-        attribution: element.shadowRoot.querySelector('.attribution'),
+        attribution: Boolean(element.shadowRoot.querySelector('.attribution')),
       }
       const fieldLabelFontSize = getComputedStyle(element.shadowRoot.querySelector('.settings-label')!).fontSize
       mergePatch({ productSettings: { active: 'authentication' } })
@@ -138,9 +136,9 @@ test('product settings renders redacted sections and emits typed identity comman
       }
     })
     expect(state.generalText).toContain('Instance identity')
-    expect(state.generalText).toContain('Powered by LeapView')
-    expect(state.customPreview).toEqual({ logo: true, name: 'Acme Analytics', attribution: 'Powered by LeapView', attributionHref: 'https://leapview.dev' })
-    expect(state.defaultPreview).toEqual({ logo: false, fallback: false, name: 'LeapView', attribution: null })
+    expect(state.generalText).not.toContain('Powered by LeapView')
+    expect(state.customPreview).toEqual({ logo: true, name: 'Acme Analytics', attribution: false })
+    expect(state.defaultPreview).toEqual({ logo: false, fallback: false, name: 'LeapView', attribution: false })
     expect(state.inputValue).toBe('Acme BI')
     expect(state.inputLabel).toBe('Instance name')
     expect(state.logoLabel).toBe('Change logo')
