@@ -6,8 +6,6 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 Funnel presentation supports `orientation`, `labelPosition`, `align`, and `sort`. Pie and donut geometry fields such as `rose`, `centerLabel`, `innerRadius`, and `outerRadius` do not apply to stages.
 
-Conditional icons on `mark_fill` or `series_color` prefix visible stage labels. Label density and overlap rules remain authoritative, so hidden or crowded labels are not forced into view.
-
 ## Ordered conversion stages
 
 Use actual sequential stages whose population narrows through one process. Numeric prefixes keep the business sequence explicit and stable.

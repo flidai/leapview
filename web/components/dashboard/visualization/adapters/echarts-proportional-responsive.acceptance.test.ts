@@ -24,17 +24,17 @@ function proportionalWithIconFormat(mark: 'pie' | 'donut' | 'funnel' = 'donut') 
   return envelope
 }
 
-test('proportional labels compose governed cues with formatted text and normal density policy', () => {
+test('proportional labels use formatted category and value text with normal density policy', () => {
   for (const mark of ['pie', 'donut', 'funnel'] as const) {
     const envelope = proportionalWithIconFormat(mark)
     const option = echartsOption(envelope, defaultRendererContext) as any
     const series = option.series[0]
 
-    expect(series.label).toMatchObject({ show: true, overflow: 'truncate', fontFamily: "'LeapView Chart Cues', system-ui" })
-    expect(series.label.formatter({ value: ['Status 0', 1] })).toBe('● Status 0: 1')
-    expect(series.label.formatter({ value: ['Status 7', 96] })).toBe('● Status 7: 96')
+    expect(series.label).toMatchObject({ show: true, overflow: 'truncate' })
+    expect(series.label.formatter({ value: ['Status 0', 1] })).toBe('Status 0: 1')
+    expect(series.label.formatter({ value: ['Status 7', 96] })).toBe('Status 7: 96')
     expect(series.labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
-    expect(series.label.formatter({ value: ['Status 0', null] })).toBe('⚠ Status 0: —')
+    expect(series.label.formatter({ value: ['Status 0', null] })).toBe('Status 0: —')
 
     if (mark === 'pie' || mark === 'donut') expect(series.minShowLabelAngle).toBe(3)
     expect(series.itemStyle.color({ value: ['Status 0', 1] })).toBe(defaultRendererContext.colors.danger)
@@ -84,7 +84,7 @@ test('proportional labels honor hidden and inside presentation settings without 
   inside.spec.presentation.labelPosition = 'inside'
   const insideSeries = (echartsOption(inside, defaultRendererContext) as any).series[0]
   expect(insideSeries.label).toMatchObject({ show: true, position: 'inside' })
-  expect(insideSeries.label.formatter({ value: ['Status 0', 1] })).toBe('● 1')
+  expect(insideSeries.label.formatter({ value: ['Status 0', 1] })).toBe('1')
   expect(insideSeries.labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
 })
 
