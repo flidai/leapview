@@ -104,7 +104,18 @@ unset DEMO_SSH_PRIVATE_KEY
 
 scanned_keys="$temporary_directory/scanned-host-keys"
 pinned_known_hosts="$temporary_directory/known-hosts"
-ssh-keyscan -T 10 "$demo_host" >"$scanned_keys" 2>"$temporary_directory/ssh-keyscan.log"
+scan_log="$temporary_directory/ssh-keyscan.log"
+: >"$scanned_keys"
+for _ in $(seq 1 12); do
+  if ssh-keyscan -T 10 "$demo_host" >"$scanned_keys" 2>"$scan_log" && [[ -s "$scanned_keys" ]]; then
+    break
+  fi
+  sleep 5
+done
+[[ -s "$scanned_keys" ]] || {
+  echo "demo server did not become reachable after opening temporary SSH access" >&2
+  exit 1
+}
 while IFS= read -r scanned_key; do
   [[ -n "$scanned_key" && "$scanned_key" != \#* ]] || continue
   scanned_key_file="$temporary_directory/scanned-host-key"
