@@ -198,12 +198,18 @@ func (service *Service) configuredEnvironment() string {
 }
 
 func (service *Service) initialAdminEmail() (string, error) {
-	email := strings.TrimSpace(service.config.BootstrapEmail)
+	return ResolveBootstrapEmail(service.config.Production, service.config.BootstrapEmail)
+}
+
+// ResolveBootstrapEmail normalizes the exact principal identity shared by
+// instance initialization and local native bootstrap adapters.
+func ResolveBootstrapEmail(production bool, configured string) (string, error) {
+	email := strings.TrimSpace(configured)
 	if email == "" {
-		if service.config.Production {
+		if production {
 			return "", fmt.Errorf("production instance initialization requires LEAPVIEW_BOOTSTRAP_ADMIN_EMAIL")
 		}
-		email = "admin@localhost"
+		email = DefaultDevelopmentBootstrapEmail
 	}
 	parsed, err := mail.ParseAddress(email)
 	if err != nil || parsed.Address == "" {

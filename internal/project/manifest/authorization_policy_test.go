@@ -74,3 +74,27 @@ func TestAccessPolicyFromAuthorizationPolicyRejectsWrongProjectExpansion(t *test
 		t.Fatal("accepted typed role expansion for a different project")
 	}
 }
+
+func TestTargetGrantPolicyAllowsOnlySpecifiedDashboard(t *testing.T) {
+	project := compileTestGraph(t)
+	identity := compileTestIdentity()
+	subject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "shared-demo"}
+	dashboard, _ := access.NewResourceRef("dashboard_main", projectgraph.KindDashboard)
+	policy, err := AccessPolicyFromAuthorizationPolicy(access.AuthorizationPolicy{Scope: access.AuthorizationPolicyScope{TargetID: "target-demo", ProjectID: "project_demo", Environment: "production"}, Grants: []access.AuthorizationGrant{{ID: "read-dashboard", Subject: subject, Resource: dashboard, Capability: access.CapabilityResourceRead}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := CompileAuthorizationSnapshot(identity, project, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grants := snapshot.Grants(); len(grants) != 1 || grants[0].Canonical.Capability() != access.CapabilityResourceRead || grants[0].Canonical.Subject() != subject {
+		t.Fatalf("compiled grants = %#v", grants)
+	}
+	bad := policy.Grants["read-dashboard"]
+	bad.Object.ID = "dashboard_missing"
+	policy.Grants["read-dashboard"] = bad
+	if _, err := CompileAuthorizationSnapshot(identity, project, policy); err == nil {
+		t.Fatal("unknown dashboard admitted")
+	}
+}

@@ -641,7 +641,7 @@ func (h *Handler) GetAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	w.Header().Set("ETag", agentResourceETag(details))
-	writeJSON(w, stdhttp.StatusOK, agentgen.GenSchemaAgentConfigResponse{SystemPrompt: details.SystemPrompt})
+	writeJSON(w, stdhttp.StatusOK, agentConfigResponse(details))
 }
 
 func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -650,16 +650,20 @@ func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
 		return
 	}
-	systemPrompt := signals.SystemPrompt
-	if systemPrompt == "" {
-		systemPrompt = signals.AdminAgentCommand.SystemPrompt
+	input := api.AdminAgentConfigPatchRequest{SystemPrompt: signals.SystemPrompt}
+	if input.SystemPrompt == nil {
+		input.SystemPrompt = signals.AdminAgentCommand.SystemPrompt
 	}
-	ctx, err := beginUICommandInvocation(r, agentgen.GenUIActionUpdateAgentConfig(), nil, "", systemPrompt, "")
+	auditInput := ""
+	if input.SystemPrompt != nil {
+		auditInput = *input.SystemPrompt
+	}
+	ctx, err := beginUICommandInvocation(r, agentgen.GenUIActionUpdateAgentConfig(), nil, "", auditInput, "")
 	if err != nil {
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
 		return
 	}
-	h.updateAgentConfig(w, r.WithContext(ctx), systemPrompt)
+	h.updateAgentConfig(w, r.WithContext(ctx), input)
 }
 
 func (h *Handler) UpdateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -671,7 +675,7 @@ func (h *Handler) UpdateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
 		return
 	}
-	h.updateAgentConfig(w, r, input.SystemPrompt)
+	h.updateAgentConfig(w, r, input)
 }
 
 func (h *Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {
@@ -700,7 +704,7 @@ func (h *Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	return true
 }
 
-func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request, systemPrompt string) {
+func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request, input api.AdminAgentConfigPatchRequest) {
 	current, err := h.AdminDetails(r.Context())
 	if err != nil {
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("unavailable", err))
@@ -715,7 +719,11 @@ func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, err)
 		return
 	}
-	prompt, err := agentconfig.NormalizeSystemPrompt(systemPrompt)
+	if input.SystemPrompt == nil {
+		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", fmt.Errorf("systemPrompt is required")))
+		return
+	}
+	prompt, err := agentconfig.NormalizeSystemPrompt(*input.SystemPrompt)
 	if err != nil {
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
 		return
@@ -734,8 +742,21 @@ func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 		return
 	}
 	h.recordCommandAudit(r, updateAgentConfigOperation, h.chatScope(r), "agent_config", agentconfig.SystemPromptSettingKey)
-	w.Header().Set("ETag", agentResourceETag(details))
-	writeJSON(w, stdhttp.StatusOK, agentgen.GenSchemaAgentConfigResponse{SystemPrompt: details.SystemPrompt})
+	revision := agentResourceETag(details)
+	w.Header().Set("ETag", revision)
+	if agentAcceptsEventStream(r.Header.Get("Accept")) {
+		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
+			"page": map[string]any{"agent": map[string]any{
+				"configured":   details.Configured,
+				"enabled":      details.Enabled,
+				"status":       details.Status,
+				"statusDetail": details.StatusDetail,
+				"revision":     revision,
+			}},
+		})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, agentConfigResponse(details))
 }
 
 func agentResourceETag(value any) string {
@@ -746,17 +767,36 @@ func agentResourceETag(value any) string {
 	return token
 }
 
+func agentConfigResponse(details api.AdminAgentResponse) agentgen.GenSchemaAgentConfigResponse {
+	response := agentgen.GenSchemaAgentConfigResponse{
+		Configured:   details.Configured,
+		Enabled:      details.Enabled,
+		Status:       details.Status,
+		SystemPrompt: details.SystemPrompt,
+	}
+	if details.Model != "" {
+		response.Model = &details.Model
+	}
+	if details.ReasoningEffort != "" {
+		response.ReasoningEffort = &details.ReasoningEffort
+	}
+	if details.StatusDetail != "" {
+		response.StatusDetail = &details.StatusDetail
+	}
+	return response
+}
+
 func (h *Handler) AdminDetails(ctx context.Context) (api.AdminAgentResponse, error) {
 	prompt, err := h.SystemPrompt(ctx)
 	if err != nil {
 		return api.AdminAgentResponse{}, err
 	}
-	out := api.AdminAgentResponse{
-		Enabled:      h.options.Service != nil && h.options.Service.Enabled(),
-		SystemPrompt: prompt,
-	}
+	out := api.AdminAgentResponse{SystemPrompt: prompt, Status: string(agent.AgentRuntimeDisabled)}
 	if h.options.Service != nil {
-		out.Model = h.options.Service.Model()
+		status := h.options.Service.RuntimeStatus()
+		out.Configured, out.Enabled = status.Configured, status.Enabled
+		out.Status, out.StatusDetail = string(status.State), status.Detail
+		out.Model, out.ReasoningEffort = status.Model, status.ReasoningEffort
 		out.Tools = adminAgentToolDTOs(h.options.Service.ToolDefinitions(agent.Scope{PrincipalID: "admin", DevAuthBypass: true}), h.options.APIGenToolContracts)
 	}
 	return out, nil
@@ -824,9 +864,9 @@ func (h *Handler) SystemPrompt(ctx context.Context) (string, error) {
 }
 
 type adminAgentCommandSignals struct {
-	SystemPrompt      string `json:"systemPrompt"`
+	SystemPrompt      *string `json:"systemPrompt"`
 	AdminAgentCommand struct {
-		SystemPrompt string `json:"systemPrompt"`
+		SystemPrompt *string `json:"systemPrompt"`
 	} `json:"adminAgentCommand"`
 }
 

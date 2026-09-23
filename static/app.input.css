@@ -693,6 +693,65 @@ body:has(lv-dashboard-builder) datastar-inspector {
   --ds-toggle-bottom: var(--base-size-80);
 }
 
+/* The initial page stream can fail before the route component upgrades. */
+.lv-page-stream-recovery {
+  position: fixed;
+  inset: 0;
+  z-index: var(--zIndex-modal);
+  background: var(--lv-bg-app);
+}
+
+.lv-page-stream-recovery-card {
+  box-sizing: border-box;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100% - 2 * var(--base-size-24)), 32rem);
+  max-height: calc(100svh - 2 * var(--base-size-24));
+  overflow: auto;
+  border: var(--lv-border-default);
+  border-radius: var(--lv-radius-large);
+  background: var(--lv-bg-panel);
+  box-shadow: var(--lv-shadow-floating-lg);
+  padding: var(--base-size-24);
+}
+
+.lv-page-stream-recovery-card h1,
+.lv-page-stream-recovery-card p {
+  margin: 0;
+}
+
+.lv-page-stream-recovery-card h1 {
+  margin-top: var(--base-size-12);
+  font: var(--lv-type-page-title);
+}
+
+.lv-page-stream-recovery-card p {
+  margin-top: var(--base-size-12);
+  color: var(--lv-fg-muted);
+  font: var(--lv-type-body-compact);
+}
+
+.lv-page-stream-recovery-card .lv-page-stream-recovery-label {
+  margin-top: 0;
+}
+
+.lv-page-stream-recovery-card button {
+  margin-top: var(--base-size-20);
+  border: var(--lv-border-default);
+  border-radius: var(--lv-radius-default);
+  background: var(--lv-bg-control);
+  color: var(--lv-fg-default);
+  padding: var(--base-size-8) var(--base-size-12);
+  font: var(--lv-type-body-compact);
+  cursor: pointer;
+}
+
+.lv-page-stream-recovery-card button:hover {
+  background: var(--lv-bg-control-hover);
+}
+
 /* Server-rendered create/copy forms share the product shell tokens without
    waiting for a custom element to upgrade. */
 .lv-draft-form {

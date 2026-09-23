@@ -4,21 +4,47 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 
+	"github.com/flidai/leapview/internal/manageddata"
 	manageddatacli "github.com/flidai/leapview/internal/manageddata/cli"
 	"github.com/flidai/leapview/internal/manageddata/localplan"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	"github.com/flidai/leapview/internal/project/developmentinput"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/spf13/cobra"
 )
 
 func dataCommand(ctx context.Context, _ *rootOptions) *cobra.Command {
 	return manageddatacli.Command(ctx, manageddatacli.Dependencies{
-		Client:          capabilityAPIClient{},
-		HTTPClient:      http.DefaultClient,
-		LoadPlanCatalog: loadManagedDataPlanCatalog,
+		Client:                  capabilityAPIClient{},
+		HTTPClient:              http.DefaultClient,
+		LoadPlanCatalog:         loadManagedDataPlanCatalog,
+		ResolveDevelopmentInput: resolveDevelopmentInput,
 	})
+}
+
+func resolveDevelopmentInput(projectRoot, name string) (manageddatacli.DevelopmentInput, error) {
+	selected, err := developmentinput.Load(projectRoot, name)
+	if err != nil {
+		return manageddatacli.DevelopmentInput{}, err
+	}
+	manifest := manageddata.Manifest{Files: make([]manageddata.File, len(selected.Files))}
+	for index, file := range selected.Files {
+		manifest.Files[index] = manageddata.File{Path: file.Path, Size: file.SizeBytes, SHA256: file.SHA256}
+	}
+	if err := manifest.Validate(manageddata.Limits{}); err != nil {
+		return manageddatacli.DevelopmentInput{}, fmt.Errorf("development input manifest: %w", err)
+	}
+	return manageddatacli.DevelopmentInput{
+		Name:       selected.Name,
+		SourceRoot: filepath.Join(selected.ProjectRoot, "dashboards"),
+		Connection: selected.Connection,
+		From:       selected.Root,
+		Manifest:   manifest,
+		Provenance: manageddatacli.DevelopmentInputProvenance{Kind: selected.Provenance.Kind, Generator: selected.Provenance.Generator, Rows: selected.Provenance.Rows, Bounded: selected.Provenance.Bounded},
+	}, nil
 }
 
 func loadManagedDataPlanCatalog(path string) (localplan.SourceCatalog, error) {

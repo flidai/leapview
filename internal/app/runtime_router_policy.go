@@ -297,7 +297,7 @@ func bootstrapControlPlaneOperation(operationID string) bool {
 
 func bootstrapCandidateSourceOperation(operationID string) bool {
 	switch operationID {
-	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource":
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "getDevelopmentProfileApplication", "applyDevelopmentProfile":
 		return true
 	default:
 		return false
@@ -306,10 +306,10 @@ func bootstrapCandidateSourceOperation(operationID string) bool {
 
 func bootstrapOperationAllowed(operationID string) bool {
 	switch operationID {
-	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval",
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "getDevelopmentProfileApplication", "applyDevelopmentProfile", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval",
 		"exchangeProjectClaimPublisher", "acknowledgeProjectClaimPublisher",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
-		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload", "createProjectRoleBinding", "listProjectRoleBindings":
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload", "createProjectRoleBinding", "listProjectRoleBindings", "createGrant", "listGrants":
 		return true
 	case "managedDataTusTransport":
 		return true

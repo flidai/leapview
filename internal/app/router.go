@@ -1,14 +1,19 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
+	"github.com/flidai/leapview/internal/deployment"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	developmentsessionmodule "github.com/flidai/leapview/internal/project/developmentsession/module"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -17,7 +22,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	candidates := candidateRouteDependencies{
 		access: routes.accessModule, agent: routes.agentModule, product: routes.product, assets: platform.assets,
 		dashboards: routes.dashboardModule, deployments: routes.deploymentModule,
-		runtimeHost: runtime.runtimeHostModule, candidateMetrics: runtime.candidateMetrics,
+		runtimeHost: runtime.runtimeHostModule, catalog: routes.projectCatalog, candidateMetrics: runtime.candidateMetrics,
 	}
 	csrf := func(next http.Handler) http.Handler {
 		return csrfMiddleware(routes.accessModule, next)
@@ -27,6 +32,42 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	}
 	registerAPIGen := func(r chi.Router) {
 		apiaggregate.RegisterAPIGenRoutes(r, platform.apiGenServers)
+	}
+	var developmentSession *developmentsessionmodule.Handler
+	if runtime.developmentSessions != nil && runtime.checkoutID != "" && runtime.worktreeID != "" && runtime.developmentProjectIDResolver != nil {
+		developmentSession = developmentsessionmodule.Build(context.Background(), developmentsessionmodule.Config{
+			Store: runtime.developmentSessions, CheckoutID: runtime.checkoutID, WorktreeID: runtime.worktreeID, TargetID: runtime.targetID, Environment: policy.defaultEnvironment,
+			ResolveProjectID: runtime.developmentProjectIDResolver,
+			CurrentPrincipal: func(r *http.Request) (string, bool) {
+				principal, ok := routes.accessModule.CurrentPrincipal(r)
+				return principal.ID, ok
+			}, Enabled: true,
+			ValidateCandidate: func(ctx context.Context, owner, candidate string, project projectgraph.ResourceID, target, environment string) (developmentsessionmodule.CandidateValidation, error) {
+				if routes.deploymentModule == nil {
+					return developmentsessionmodule.CandidateValidation{}, deployment.ErrCandidateUnavailable
+				}
+				value, err := routes.deploymentModule.ResolveOwnedCandidate(ctx, candidate, owner)
+				if err != nil {
+					if errors.Is(err, deployment.ErrCandidateNotFound) {
+						// A retired/deleted candidate is terminal for a durable
+						// session pointer. Stable reads will mark it expired and
+						// never redirect to its stale URL.
+						return developmentsessionmodule.CandidateValidation{Expired: true}, nil
+					}
+					return developmentsessionmodule.CandidateValidation{}, err
+				}
+				if value.Scope.ProjectID != project || value.TargetID != target || value.Scope.Environment != environment {
+					return developmentsessionmodule.CandidateValidation{}, deployment.ErrCandidateNotFound
+				}
+				return developmentsessionmodule.CandidateValidation{
+					Qualified: value.Status == deployment.CandidateReady,
+					Expired:   value.Status == deployment.CandidateExpired,
+					OwnerID:   value.OwnerID, ProjectID: value.Scope.ProjectID,
+					TargetID: value.TargetID, Environment: value.Scope.Environment,
+					Identity: developmentsessionmodule.Identity{CandidateID: value.ID, ArtifactDigest: value.ArtifactDigest, GraphDigest: value.GraphDigest, PreviewURL: value.PreviewURL},
+				}, nil
+			},
+		}).HTTP()
 	}
 	mountRouterMiddleware(mux, routerMiddlewareDependencies{
 		logger: platform.logger, telemetry: platform.telemetry, securityHeaders: policy.securityHeaders,
@@ -45,6 +86,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		access: routes.accessModule, apiProtocol: platform.apiProtocol, projectBrowser: routes.projectBrowser, agent: routes.agentModule,
 		admin: routes.adminModule, dashboard: routes.dashboardModule, runtimeHost: runtime.runtimeHostModule,
 		pageStreams: runtime.pageStreams, rateLimits: policy.rateLimits, candidates: candidates,
+		developmentSession: developmentSession,
 	}, csrf)
 	mountAuthenticationRoutes(mux, routes.accessModule, policy.rateLimits, csrf)
 	mountAPIRoutes(mux, apiRouteDependencies{
@@ -52,6 +94,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		access: routes.accessModule, managedData: routes.managedDataModule, runtimeHost: runtime.runtimeHostModule,
 		rateLimits: policy.rateLimits, scimBearerToken: policy.scimBearerToken, managedDataTus: policy.managedDataTus,
 		managedDataBootstrap: policy.managedDataBootstrap,
+		developmentSession:   developmentSession,
 	}, publicProtocol, registerAPIGen)
 	mountStaticAndErrorRoutes(mux, staticRouteDependencies{
 		dashboardAssets: routes.dashboardAssets, assets: platform.assets, apiProtocol: platform.apiProtocol,

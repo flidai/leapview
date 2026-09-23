@@ -3,7 +3,6 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
-import { datastarRuntimeURL } from '../shared/datastar-runtime'
 import { typographyTestTokens } from '../test-typography-tokens'
 
 let server: Server
@@ -12,19 +11,8 @@ let browser: Browser
 
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/product-settings-test')
-const bundle = join(root, 'product-settings-under-test.js')
 
 beforeAll(async () => {
-  await Bun.$`rm -rf ${root}`.quiet()
-  const built = await Bun.build({
-    entrypoints: ['web/components/admin/product-settings.ts'],
-    target: 'browser',
-    format: 'esm',
-    external: [datastarRuntimeURL],
-    outdir: root,
-    naming: { entry: 'product-settings-under-test.js' },
-  })
-  if (!built.success) throw new Error('failed to build product settings test bundle')
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
@@ -71,22 +59,39 @@ test('product settings renders redacted sections and emits typed identity comman
         general: { displayName: 'Acme Analytics', revision: 7, updatedAt: '2026-08-11T00:00:00Z', instanceId: 'lvinst_test', canonicalOrigin: 'https://example.test', environment: 'production', logo: { url: '/logo.png', sha256: 'abc', mediaType: 'image/png', sizeBytes: 3, width: 16, height: 8 } },
         authentication: { browserEnabled: true, apiTokenOnly: false, local: { available: true, enabled: true }, oidc: { available: true, enabled: true, provider: 'corporate' }, azure: { available: true, enabled: false }, scim: { available: true, enabled: true }, managedBy: 'deployment' },
         api: { bearerCredentials: { available: true, enabled: true }, servicePrincipals: { available: true, enabled: true }, oauth: { available: true, enabled: true }, mcp: { available: true, enabled: true }, externalMcpIssuer: false },
-        system: { instanceId: 'lvinst_test', canonicalOrigin: 'https://example.test', environment: 'production', build: { version: '1.2.3', revision: 'abcdef', buildTime: 'now', dirty: false, development: false }, storageBackend: 'local', agent: { available: true, configured: true, provider: 'openai-compatible', modelConfigured: true }, limits: { queryResultMaxRows: 10, queryResultMaxBytes: 1024, managedDataMaxFiles: 2, managedDataMaxFileBytes: 3, managedDataMaxRevisionBytes: 4 }, runtime: { health: 'healthy', controlPlane: 'available', environment: 'production' } },
+        system: { instanceId: 'lvinst_test', canonicalOrigin: 'https://example.test', environment: 'production', build: { version: '1.2.3', revision: 'abcdef', buildTime: 'now', dirty: false, development: false }, storageBackend: 'local', agent: { available: true, configured: true, provider: 'openai-compatible', modelConfigured: true }, limits: { queryResultMaxRows: 10000, queryResultMaxBytes: 1024, managedDataMaxFiles: 2000, managedDataMaxFileBytes: 3, managedDataMaxRevisionBytes: 4 }, runtime: { health: 'healthy', controlPlane: 'available', environment: 'production' } },
       } })
       const element = document.querySelector('lv-product-settings') as any
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await element.updateComplete
       let command: unknown = null
       element.addEventListener('lv-product-settings-command', (event: CustomEvent) => { command = event.detail })
       const input = element.shadowRoot.querySelector('input[type="text"]') as HTMLInputElement
       const logoLabel = element.shadowRoot.querySelector('input[type="file"]')?.getAttribute('aria-label')
+      const customPreview = {
+        logo: Boolean(element.shadowRoot.querySelector('.identity-preview img')),
+        name: element.shadowRoot.querySelector('.identity-name')?.textContent?.trim(),
+        attribution: Boolean(element.shadowRoot.querySelector('.attribution')),
+      }
       input.value = 'Acme BI'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await element.updateComplete
       ;(Array.from(element.shadowRoot.querySelectorAll('button')) as HTMLButtonElement[]).find((button) => button.textContent?.trim() === 'Save')?.click()
       await element.updateComplete
       const saveCommand = command
+      const inputValue = input.value
       ;(Array.from(element.shadowRoot.querySelectorAll('button')) as HTMLButtonElement[]).find((button) => button.textContent?.trim() === 'Reset to LeapView')?.click()
       const resetCommand = command
       const generalText = element.shadowRoot.textContent.replace(/\s+/g, ' ').trim()
+      mergePatch({ productSettings: { general: { displayName: '', revision: 8, logo: null } } })
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      await element.updateComplete
+      const defaultPreview = {
+        logo: Boolean(element.shadowRoot.querySelector('.identity-preview img')),
+        fallback: Boolean(element.shadowRoot.querySelector('.identity-fallback')),
+        name: element.shadowRoot.querySelector('.identity-name')?.textContent?.trim(),
+        attribution: Boolean(element.shadowRoot.querySelector('.attribution')),
+      }
       const fieldLabelFontSize = getComputedStyle(element.shadowRoot.querySelector('.settings-label')!).fontSize
       mergePatch({ productSettings: { active: 'authentication' } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
@@ -101,7 +106,9 @@ test('product settings renders redacted sections and emits typed identity comman
       const websiteHref = (element.shadowRoot as ShadowRoot).querySelector<HTMLAnchorElement>('a[href="https://leapview.dev"]')?.getAttribute('href')
       return {
         generalText,
-        inputValue: input.value,
+        customPreview,
+        defaultPreview,
+        inputValue,
         inputLabel: input.getAttribute('aria-label'),
         logoLabel,
         authText,
@@ -109,6 +116,7 @@ test('product settings renders redacted sections and emits typed identity comman
         authStatusTones,
         systemHeadings: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLHeadingElement>('h2')).map((heading) => heading.textContent?.trim()),
         systemPanelLabels: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLElement>('section')).map((section) => section.getAttribute('aria-label')),
+        systemLimitValues: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLElement>('section[aria-label="Limits settings"] .status-card')).map((card) => [card.querySelector('strong')?.textContent?.trim(), card.querySelector('.settings-value')?.textContent?.trim()]),
         websiteHref,
         saveCommand,
         resetCommand,
@@ -116,7 +124,9 @@ test('product settings renders redacted sections and emits typed identity comman
       }
     })
     expect(state.generalText).toContain('Instance identity')
-    expect(state.generalText).toContain('Powered by LeapView')
+    expect(state.generalText).not.toContain('Powered by LeapView')
+    expect(state.customPreview).toEqual({ logo: true, name: 'Acme Analytics', attribution: false })
+    expect(state.defaultPreview).toEqual({ logo: false, fallback: false, name: 'LeapView', attribution: false })
     expect(state.inputValue).toBe('Acme BI')
     expect(state.inputLabel).toBe('Instance name')
     expect(state.logoLabel).toBe('Change logo')
@@ -129,10 +139,34 @@ test('product settings renders redacted sections and emits typed identity comman
     expect(state.authStatusTones).toContain('neutral')
     expect(state.systemHeadings).toEqual(['Runtime health', 'Build', 'Limits', 'About LeapView'])
     expect(state.systemPanelLabels).toEqual(['Runtime health settings', 'Build settings', 'Limits settings', 'About LeapView'])
+    expect(state.systemLimitValues).toEqual([
+      ['Query result rows', '10,000'],
+      ['Query result bytes', '1.0 KB'],
+      ['Managed-data files', '2,000'],
+      ['Managed-data file bytes', '3'],
+      ['Managed-data revision bytes', '4'],
+    ])
     expect(state.websiteHref).toBe('https://leapview.dev')
     expect(state.saveCommand).toEqual({ action: 'save_display_name', displayName: 'Acme BI', revision: 7 })
     expect(state.resetCommand).toEqual({ action: 'reset_identity', revision: 7 })
     expect(state.fieldLabelFontSize).toBe('14px')
+
+    await page.setViewportSize({ width: 420, height: 760 })
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ productSettings: { active: 'general' } })
+      await (document.querySelector('lv-product-settings') as any).updateComplete
+    })
+    const narrowLayout = await page.evaluate(() => {
+      const root = (document.querySelector('lv-product-settings') as any).shadowRoot as ShadowRoot
+      const panel = root.querySelector<HTMLElement>('section[aria-label="Instance identity settings"]')!.getBoundingClientRect()
+      const input = root.querySelector<HTMLInputElement>('#product-instance-name')!.getBoundingClientRect()
+      const upload = root.querySelector<HTMLElement>('.file-action')!.getBoundingClientRect()
+      return { panelRight: panel.right, inputRight: input.right, inputHeight: input.height, uploadRight: upload.right }
+    })
+    expect(narrowLayout.inputHeight).toBeLessThan(100)
+    expect(narrowLayout.inputRight).toBeLessThanOrEqual(narrowLayout.panelRight)
+    expect(narrowLayout.uploadRight).toBeLessThanOrEqual(narrowLayout.panelRight)
   } finally {
     await page.close()
   }

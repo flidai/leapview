@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   policy-validation:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Security policy contracts
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -37,6 +38,7 @@ jobs:
         run: task security:policy
 
   dependency-validation:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Dependency vulnerability policy
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -62,6 +64,7 @@ jobs:
         run: task security:dependencies
 
   source-validation:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Secret and IaC policy
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -81,6 +84,7 @@ jobs:
         run: task security:source
 
   sast-validation:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: Selected SAST (${{ matrix.language }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -102,19 +106,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Initialize selected CodeQL analysis
-        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
       - name: Analyze selected source language
-        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           category: /language:${{ matrix.language }}
 
   security-gate:
     name: Security gate
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     needs: [policy-validation, dependency-validation, source-validation, sast-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDeployComposesCanonicalPlanBuildAndPublication(t *testing.T) {
+func TestDeployRequiresDurableOperationStore(t *testing.T) {
 	client := &deployLifecycleClient{environment: "prod"}
 	var sequence []string
 	planner := &deployPlanRecorder{result: projectcli.DeliveryPlanResult{
@@ -31,16 +31,11 @@ func TestDeployComposesCanonicalPlanBuildAndPublication(t *testing.T) {
 	err := operations.Deploy(context.Background(), projectcli.DeployOptions{
 		SourceRoot: "dashboards", Credentials: credentials, Environment: "prod",
 	}, &bytes.Buffer{})
-	require.NoError(t, err)
-	require.Equal(t, []string{"plan", "build", "publish"}, sequence)
-	require.Equal(t, "prod", client.assertedEnvironment)
-	require.Equal(t, projectDeploymentCandidateKey, planner.options.CandidateKey)
-	require.Equal(t, "plan-1", builder.options.PlanID)
-	require.Equal(t, "candidate-1", publisher.options.CandidateID)
-	require.Equal(t, credentials, publisher.options.Credentials)
+	require.ErrorContains(t, err, "durable deployment operation store is required")
+	require.Empty(t, sequence)
 }
 
-func TestDeployDoesNotBuildOrPublishWhenPlanFails(t *testing.T) {
+func TestDeployWithoutDurableStoreDoesNotPlanBuildOrPublish(t *testing.T) {
 	planErr := errors.New("plan failed")
 	planner := &deployPlanRecorder{err: planErr}
 	builder := &deployBuildRecorder{}
@@ -50,7 +45,7 @@ func TestDeployDoesNotBuildOrPublishWhenPlanFails(t *testing.T) {
 	err := operations.Deploy(context.Background(), projectcli.DeployOptions{
 		SourceRoot: "dashboards", Credentials: cliapi.Credentials{Target: "https://example.test"},
 	}, &bytes.Buffer{})
-	require.ErrorIs(t, err, planErr)
+	require.ErrorContains(t, err, "durable deployment operation store is required")
 	require.Empty(t, builder.order)
 	require.Empty(t, publisher.order)
 }

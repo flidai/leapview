@@ -37,6 +37,10 @@ type LoginRequest struct {
 	ProjectID    string
 	Actions      []access.Action
 	Headless     bool
+	// BeforeExchange lets a trusted local launcher complete the browser-side
+	// authorization with an already-authenticated local session. Remote login
+	// leaves this unset and retains the ordinary interactive device flow.
+	BeforeExchange func(context.Context, DeviceChallenge) error
 }
 
 type LoginResult struct {
@@ -48,6 +52,7 @@ type ResolvedCredential struct {
 	Profile     cliapi.TargetProfile
 	AccessToken string
 	ExpiresAt   time.Time
+	SessionID   string
 }
 
 type WorkloadIdentityRequest struct {
@@ -121,6 +126,11 @@ func (auth Authenticator) Login(ctx context.Context, request LoginRequest, notif
 			return LoginResult{}, fmt.Errorf("open device authorization in browser: %w", err)
 		}
 	}
+	if request.BeforeExchange != nil {
+		if err := request.BeforeExchange(ctx, challenge); err != nil {
+			return LoginResult{}, fmt.Errorf("complete device authorization: %w", err)
+		}
+	}
 	token, err := authorization.Token(ctx)
 	if err != nil {
 		return LoginResult{}, err
@@ -166,7 +176,7 @@ func (auth Authenticator) Resolve(ctx context.Context, name string) (ResolvedCre
 		return ResolvedCredential{}, err
 	}
 	if auth.now().Add(refreshClockSkew).Before(credential.AccessExpiresAt) {
-		return ResolvedCredential{Profile: profile, AccessToken: credential.AccessToken, ExpiresAt: credential.AccessExpiresAt}, nil
+		return ResolvedCredential{Profile: profile, AccessToken: credential.AccessToken, ExpiresAt: credential.AccessExpiresAt, SessionID: credential.SessionID}, nil
 	}
 	token, refreshErr := auth.OAuth.Refresh(ctx, OAuthRefreshRequest{
 		Origin: profile.Origin, RefreshToken: credential.RefreshToken,
@@ -194,7 +204,7 @@ func (auth Authenticator) Resolve(ctx context.Context, name string) (ResolvedCre
 	if err := auth.storeCredential(ctx, profile.CredentialAccount, credential); err != nil {
 		return ResolvedCredential{}, err
 	}
-	return ResolvedCredential{Profile: profile, AccessToken: credential.AccessToken, ExpiresAt: credential.AccessExpiresAt}, nil
+	return ResolvedCredential{Profile: profile, AccessToken: credential.AccessToken, ExpiresAt: credential.AccessExpiresAt, SessionID: credential.SessionID}, nil
 }
 
 // ResolveOrigin selects the exact profile whose native credential matches the

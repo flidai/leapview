@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
@@ -52,10 +53,13 @@ type ToolProvider func(scope Scope) []agentcore.ToolDefinition
 type SystemPromptProvider func(ctx context.Context) (string, error)
 
 type Service struct {
-	repo    Repository
-	config  Config
-	model   agentcore.Model
-	pending *pendingConversationLifecycle
+	repo         Repository
+	pending      *pendingConversationLifecycle
+	runtime      atomic.Pointer[agentRuntime]
+	health       atomic.Pointer[agentRuntimeHealth]
+	reloadMu     sync.Mutex
+	modelFactory func(Config) agentcore.Model
+	initialModel agentcore.Model
 
 	toolProviders        []ToolProvider
 	systemPromptProvider SystemPromptProvider
@@ -120,23 +124,51 @@ func (s *Service) runWorkflowAvailable() bool {
 }
 
 type runningPrompt struct {
-	runID  string
-	cancel context.CancelFunc
+	runID   string
+	cancel  context.CancelFunc
+	runtime *agentRuntime
 }
 
 type ServiceOption func(*Service)
 
 func WithModel(model agentcore.Model) ServiceOption {
 	return func(s *Service) {
-		s.model = model
+		s.initialModel = model
 	}
+}
+
+type AgentRuntimeState string
+
+const (
+	AgentRuntimeEnabled  AgentRuntimeState = "enabled"
+	AgentRuntimeDisabled AgentRuntimeState = "disabled"
+	AgentRuntimeDegraded AgentRuntimeState = "degraded"
+)
+
+type AgentRuntimeStatus struct {
+	State           AgentRuntimeState
+	Configured      bool
+	Enabled         bool
+	Model           string
+	ReasoningEffort string
+	Detail          string
+}
+
+type agentRuntime struct {
+	config  Config
+	model   agentcore.Model
+	enabled bool
+}
+
+type agentRuntimeHealth struct {
+	runtime       *agentRuntime
+	configuration bool
+	provider      bool
 }
 
 func NewService(repo Repository, config Config, options ...ServiceOption) *Service {
 	s := &Service{
-		repo:    repo,
-		config:  config,
-		running: map[string]runningPrompt{},
+		repo: repo, running: map[string]runningPrompt{},
 	}
 	if pending, ok := repo.(PendingConversationRepository); ok {
 		s.pending = newPendingConversationLifecycle(pending)
@@ -144,6 +176,9 @@ func NewService(repo Repository, config Config, options ...ServiceOption) *Servi
 	for _, option := range options {
 		option(s)
 	}
+	runtime := &agentRuntime{config: config, enabled: config.Enabled()}
+	runtime.model = s.observeModel(s.initialModel, runtime)
+	s.runtime.Store(runtime)
 	return s
 }
 
@@ -193,10 +228,19 @@ func (s *Service) CancelPendingConversationAction(ctx context.Context, scope Sco
 }
 
 func (s *Service) ConfigureDefaultModel(factory func(Config) agentcore.Model) {
-	if s == nil || s.model != nil || factory == nil || !s.config.Enabled() {
+	if s == nil || factory == nil {
 		return
 	}
-	s.model = factory(s.config)
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+	s.modelFactory = factory
+	current := s.runtime.Load()
+	if current == nil || current.model != nil || !current.config.Enabled() {
+		return
+	}
+	next := *current
+	next.model = s.observeModel(factory(current.config), &next)
+	s.runtime.Store(&next)
 }
 
 func (s *Service) SetToolProviders(providers ...ToolProvider) {
@@ -212,7 +256,137 @@ func (s *Service) SetSystemPromptProvider(provider SystemPromptProvider) {
 }
 
 func (s *Service) Enabled() bool {
-	return s != nil && s.config.Enabled()
+	current := s.runtimeSnapshot()
+	return current != nil && current.enabled && current.config.Enabled()
+}
+
+func (s *Service) Configured() bool {
+	current := s.runtimeSnapshot()
+	return current != nil && current.config.Enabled()
+}
+
+func (s *Service) ApplyRuntimeConfig(config Config, enabled bool) error {
+	if s == nil {
+		return fmt.Errorf("agent service is unavailable")
+	}
+	if err := config.Validate(enabled); err != nil {
+		return err
+	}
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+	var model agentcore.Model
+	if config.Enabled() {
+		if s.modelFactory == nil {
+			return fmt.Errorf("agent model factory is unavailable")
+		}
+		model = s.modelFactory(config)
+		if model == nil {
+			return fmt.Errorf("agent model factory returned no model")
+		}
+	}
+	next := &agentRuntime{config: config, enabled: enabled}
+	next.model = s.observeModel(model, next)
+	s.runtime.Store(next)
+	return nil
+}
+
+func (s *Service) ReportRuntimeConfigError() {
+	if s != nil {
+		runtime := s.runtimeSnapshot()
+		s.updateRuntimeHealth(runtime, func(health *agentRuntimeHealth) { health.configuration = true })
+	}
+}
+
+func (s *Service) RuntimeStatus() AgentRuntimeStatus {
+	current := s.runtimeSnapshot()
+	if current == nil {
+		return AgentRuntimeStatus{State: AgentRuntimeDisabled}
+	}
+	status := AgentRuntimeStatus{Configured: current.config.Enabled(), Enabled: current.enabled && current.config.Enabled(), Model: current.config.Model, ReasoningEffort: current.config.NormalizedReasoningEffort()}
+	if health := s.health.Load(); health != nil && health.runtime == current && (health.configuration || health.provider) {
+		status.State = AgentRuntimeDegraded
+		if health.configuration {
+			status.Detail = "Deployment configuration reload failed; using the last known-good configuration."
+		} else {
+			status.Detail = "The configured model provider is temporarily unavailable."
+		}
+	} else if status.Enabled {
+		status.State = AgentRuntimeEnabled
+	} else if status.Configured {
+		status.State = AgentRuntimeDisabled
+	} else {
+		status.State = AgentRuntimeDisabled
+	}
+	return status
+}
+
+func (s *Service) runtimeSnapshot() *agentRuntime {
+	if s == nil {
+		return nil
+	}
+	return s.runtime.Load()
+}
+
+func (s *Service) updateRuntimeHealth(runtime *agentRuntime, update func(*agentRuntimeHealth)) {
+	if s == nil || runtime == nil || update == nil {
+		return
+	}
+	for {
+		current := s.health.Load()
+		next := &agentRuntimeHealth{runtime: runtime}
+		if current != nil && current.runtime == runtime {
+			next.configuration = current.configuration
+			next.provider = current.provider
+		}
+		update(next)
+		if s.health.CompareAndSwap(current, next) {
+			return
+		}
+	}
+}
+
+type observedAgentModel struct {
+	service *Service
+	runtime *agentRuntime
+	model   agentcore.Model
+}
+
+func (s *Service) observeModel(model agentcore.Model, runtime *agentRuntime) agentcore.Model {
+	if model == nil {
+		return nil
+	}
+	return observedAgentModel{service: s, runtime: runtime, model: model}
+}
+
+func (m observedAgentModel) Complete(ctx context.Context, request agentcore.ModelRequest, stream agentcore.ModelStream) (agentcore.ModelResponse, error) {
+	var observedStream *observedAgentModelStream
+	if stream != nil {
+		observedStream = &observedAgentModelStream{stream: stream}
+		stream = observedStream
+	}
+	response, err := m.model.Complete(ctx, request, stream)
+	if m.service.runtime.Load() != m.runtime {
+		return response, err
+	}
+	if err == nil {
+		m.service.updateRuntimeHealth(m.runtime, func(health *agentRuntimeHealth) { health.provider = false })
+	} else if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, agentcore.ErrContextLength) && (observedStream == nil || !observedStream.failed.Load()) {
+		m.service.updateRuntimeHealth(m.runtime, func(health *agentRuntimeHealth) { health.provider = true })
+	}
+	return response, err
+}
+
+type observedAgentModelStream struct {
+	stream agentcore.ModelStream
+	failed atomic.Bool
+}
+
+func (s *observedAgentModelStream) Delta(ctx context.Context, text string) error {
+	err := s.stream.Delta(ctx, text)
+	if err != nil {
+		s.failed.Store(true)
+	}
+	return err
 }
 
 func (s *Service) ConversationRunning(conversationID string) bool {
@@ -226,10 +400,19 @@ func (s *Service) ConversationRunning(conversationID string) bool {
 }
 
 func (s *Service) Model() string {
-	if s == nil {
+	current := s.runtimeSnapshot()
+	if current == nil {
 		return ""
 	}
-	return s.config.Model
+	return current.config.Model
+}
+
+func (s *Service) ReasoningEffort() string {
+	current := s.runtimeSnapshot()
+	if current == nil {
+		return ""
+	}
+	return current.config.NormalizedReasoningEffort()
 }
 
 func (s *Service) CreateConversation(ctx context.Context, scope Scope, title string) (Conversation, error) {
@@ -492,7 +675,7 @@ func (s *Service) CancelPersistedRunWithWorkflow(ctx context.Context, scope Scop
 	if run.Status != RunStatusRunning && run.Status != RunStatusPreparing {
 		return false, ErrRunNotCancellable
 	}
-	finish := RunFinish{PrincipalID: scope.PrincipalID, ConversationID: conversationID, RunID: runID, Status: RunStatusCanceled, Error: context.Canceled.Error(), MetadataJSON: metadataJSON(map[string]any{"model": s.config.Model, "terminationCause": RunCauseUserCanceled}), Cause: RunCauseUserCanceled}
+	finish := RunFinish{PrincipalID: scope.PrincipalID, ConversationID: conversationID, RunID: runID, Status: RunStatusCanceled, Error: context.Canceled.Error(), MetadataJSON: metadataJSON(map[string]any{"model": run.Model, "terminationCause": RunCauseUserCanceled}), Cause: RunCauseUserCanceled}
 	if cancellation, ok := s.repo.(RunCancellationWorkflow); ok && s.runWorkflowAvailable() {
 		changed, err := cancellation.CancelRunWorkflow(context.WithoutCancel(ctx), finish, "agent:"+runID+":run", workflow)
 		if err == nil {
@@ -548,7 +731,11 @@ func (s *Service) finalizePersistedRunFailure(ctx context.Context, scope Scope, 
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	finish := RunFinish{PrincipalID: scope.PrincipalID, ConversationID: conversationID, RunID: runID, Status: RunStatusFailed, Error: errText, MetadataJSON: metadataJSON(map[string]any{"model": s.config.Model, "terminationCause": RunCauseResumeFailure}), Cause: RunCauseResumeFailure}
+	run, err := s.GetRun(cleanupCtx, scope, conversationID, runID)
+	if err != nil {
+		return false, err
+	}
+	finish := RunFinish{PrincipalID: scope.PrincipalID, ConversationID: conversationID, RunID: runID, Status: RunStatusFailed, Error: errText, MetadataJSON: metadataJSON(map[string]any{"model": run.Model, "terminationCause": RunCauseResumeFailure}), Cause: RunCauseResumeFailure}
 	finish.JobID, finish.JobFence = jobID, fence
 	if terminalizer, ok := s.repo.(RunTerminalWorkflow); ok && s.runWorkflowAvailable() && workflow.Event.Key != "" {
 		_, transitioned, err := terminalizer.FinishRunWorkflow(cleanupCtx, finish, workflow)

@@ -2,7 +2,7 @@
 SET LOCAL ROLE leapview_control_owner;
 
 -- Install the exact generated v1 validator before issuing the new
--- instance.project.claim credential. Migration 027 is immutable; this
+-- instance.project.claim credential. Migration 032 is immutable; this
 -- forward replacement adds that one action without weakening any pair shape.
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION access.valid_permission_pairs(profile text, value jsonb)

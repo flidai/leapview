@@ -291,6 +291,16 @@ func TestLoadWorkloadConfigRetainsApplicationDefaults(t *testing.T) {
 	require.Equal(t, workload.DefaultConfig(), cfg.WorkloadConfig())
 }
 
+func TestLoadEnvironmentDoesNotEnableAgentWithoutExplicitModel(t *testing.T) {
+	cfg, err := LoadEnvironment(map[string]string{"LEAPVIEW_AGENT_API_KEY": "deployment-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AgentModel != "" {
+		t.Fatalf("agent model = %q, want no implicit model", cfg.AgentModel)
+	}
+}
+
 func TestWorkloadConfigAppliesLeapViewDefaultsOnlyWhenUnset(t *testing.T) {
 	defaults := (Config{}).WorkloadConfig()
 	require.Equal(t, workload.DefaultConfig(), defaults)

@@ -15,6 +15,14 @@ export function formatDate(value: string): string {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString()
 }
 
+export function formatSessionDate(value: string): string {
+  if (!value) return 'Unknown'
+  const date = new Date(value)
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  })
+}
+
 export function formatRelativeActivity(value: string): string {
   if (!value) return 'unknown'
   const date = new Date(value)

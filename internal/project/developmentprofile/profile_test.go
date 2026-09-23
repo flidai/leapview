@@ -76,6 +76,9 @@ profiles:
 	if selected.ProfileName != DefaultProfileName || selected.File != file {
 		t.Fatalf("selection = %#v", selected)
 	}
+	if !strings.HasPrefix(selected.ProfileDigest, "sha256:") || len(selected.ProfileDigest) != len("sha256:")+64 {
+		t.Fatalf("profile digest = %q", selected.ProfileDigest)
+	}
 	if names := []string{selected.Connections[0].Name, selected.Connections[1].Name}; !reflect.DeepEqual(names, []string{"public_files", "warehouse"}) {
 		t.Fatalf("sorted names = %#v", names)
 	}
@@ -84,6 +87,59 @@ profiles:
 	}
 	if selected.Connections[1].ConnectorKind != "postgres" || selected.Connections[1].Credentials.EnvironmentVariable != "LEAPVIEW_DEV_CONNECTION_WAREHOUSE" {
 		t.Fatalf("warehouse connection = %#v", selected.Connections[1])
+	}
+}
+
+func TestSelectedProfileDigestIgnoresUnselectedProfileAndTracksSelectedIntent(t *testing.T) {
+	root := t.TempDir()
+	path := writeProfile(t, root, `version: 1
+profiles:
+  local:
+    connections:
+      warehouse:
+        endpoint: {host: analytics.internal}
+        credentials: {env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE}
+  other:
+    connections:
+      warehouse:
+        endpoint: {host: other.internal}
+        credentials: {env: LEAPVIEW_DEV_CONNECTION_OTHER}
+`)
+	options := LoadOptions{
+		CheckoutRoot: root, SourceRoot: filepath.Join(root, "dashboards"), ProfileFile: path,
+		Connections: map[string]LogicalConnection{
+			"warehouse": {ID: "connection_warehouse", ConnectorKind: "postgres"},
+		},
+	}
+	first, err := loadProfile(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), "other.internal", "changed.internal", 1))
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := loadProfile(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ProfileDigest != second.ProfileDigest {
+		t.Fatalf("unselected profile changed selected digest: %q != %q", first.ProfileDigest, second.ProfileDigest)
+	}
+	body = []byte(strings.Replace(string(body), "analytics.internal", "selected.internal", 1))
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	third, err := loadProfile(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.ProfileDigest == second.ProfileDigest {
+		t.Fatal("selected endpoint change did not change profile digest")
 	}
 }
 

@@ -52,14 +52,21 @@ type Config struct {
 	CredentialTargetID    string
 	CredentialProjectID   projectgraph.ResourceID
 	CredentialEnvironment string
-	RootDir               string
-	CatalogPath           string
-	DataPath              string
-	MaxConnections        int
-	MemoryMaxBytes        int64
-	TempMaxBytes          int64
-	MaxThreads            int
-	TempDir               string
+	// CredentialEnvironmentVariables is the explicit selection of process
+	// variables supplied by the active development profile. It is never
+	// inferred by scanning the process environment.
+	CredentialEnvironmentVariables []string
+	// CredentialEnvironmentVersionKey protects exact bundle-version evidence;
+	// it must be an instance-owned secret and is never persisted in a profile.
+	CredentialEnvironmentVersionKey []byte
+	RootDir                         string
+	CatalogPath                     string
+	DataPath                        string
+	MaxConnections                  int
+	MemoryMaxBytes                  int64
+	TempMaxBytes                    int64
+	MaxThreads                      int
+	TempDir                         string
 	// DisableProcessEnvironment prevents opening the process-wide writable
 	// DuckLake catalog. Production sealed serving sets this true; each runtime
 	// generation opens its own verified read-only catalog.
@@ -159,6 +166,13 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			return nil, errors.New("production analytics build requires configured native PostgreSQL query-audit authority")
 		}
 	}
+	if config.CredentialMode == CredentialModeDevelopmentEnvironment {
+		selected, err := normalizeDevelopmentConnectionVariables(config.CredentialEnvironmentVariables)
+		if err != nil {
+			return nil, err
+		}
+		config.CredentialEnvironmentVariables = selected
+	}
 	credentials, err := buildCredentialResolver(config)
 	if err != nil {
 		return nil, err
@@ -173,13 +187,19 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 				config.CredentialProjectID,
 				config.CredentialTargetID,
 				config.CredentialEnvironment,
+				config.CredentialEnvironmentVariables,
+				config.CredentialEnvironmentVersionKey,
 			)
 			if err != nil {
 				return nil, err
 			}
 			targetResolvers.Environment = development
 		} else {
-			targetResolvers.Environment = unboundProcessDevelopmentTargetResolver{targetID: config.CredentialTargetID, environment: config.CredentialEnvironment}
+			targetResolvers.Environment = unboundProcessDevelopmentTargetResolver{
+				targetID: config.CredentialTargetID, environment: config.CredentialEnvironment,
+				allowedVariables: config.CredentialEnvironmentVariables,
+				versionKey:       config.CredentialEnvironmentVersionKey,
+			}
 		}
 	}
 	var environment *analyticsducklake.Environment
@@ -326,6 +346,13 @@ func (m *Module) NewRuntimeBindingLeaser(
 	return connectionbinding.NewRuntimeBindingLeaser(
 		connectionbinding.RuntimeBindingLeaserConfig{
 			Bindings: m.connectionBindings, Pools: pools, Authorize: config.Authorize,
+			ProfileApplicationAdmission:        config.ProfileApplicationAdmission,
+			ProfileApplicationAdmissionChecker: config.ProfileApplicationAdmissionChecker,
+			CheckoutID:                         config.CheckoutID,
+			RuntimeID:                          config.RuntimeID,
+			ProfileName:                        config.ProfileName,
+			GraphDigest:                        config.GraphDigest,
+			ProfileDigest:                      config.ProfileDigest,
 		},
 	)
 }
@@ -408,6 +435,7 @@ func buildCredentialResolver(config Config) (analyticsduckdb.CredentialResolver,
 		if config.CredentialProjectID == "" {
 			return analyticsduckdb.NewUnboundDevelopmentEnvironmentCredentialResolver(
 				connectionbinding.TargetID(config.CredentialTargetID), config.CredentialEnvironment,
+				config.CredentialEnvironmentVariables,
 			)
 		}
 		selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
@@ -417,7 +445,7 @@ func buildCredentialResolver(config Config) (analyticsduckdb.CredentialResolver,
 		if err != nil {
 			return nil, err
 		}
-		return analyticsduckdb.NewDevelopmentEnvironmentCredentialResolver(selection)
+		return analyticsduckdb.NewDevelopmentEnvironmentCredentialResolver(selection, config.CredentialEnvironmentVariables)
 	default:
 		return nil, fmt.Errorf("%w: unsupported analytics credential mode", connectionbinding.ErrInvalidBinding)
 	}

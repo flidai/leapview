@@ -1,0 +1,13 @@
+sale_id,sale_date,region,category,amount
+sale-001,2026-01-05,North,Software,1200.00
+sale-002,2026-01-19,South,Services,850.00
+sale-003,2026-02-04,East,Software,1430.00
+sale-004,2026-02-21,West,Hardware,920.00
+sale-005,2026-03-08,North,Services,760.00
+sale-006,2026-03-24,South,Software,1680.00
+sale-007,2026-04-03,East,Hardware,1110.00
+sale-008,2026-04-18,West,Services,690.00
+sale-009,2026-05-07,North,Software,1520.00
+sale-010,2026-05-26,South,Hardware,980.00
+sale-011,2026-06-09,East,Services,740.00
+sale-012,2026-06-22,West,Software,1770.00

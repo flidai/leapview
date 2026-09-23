@@ -289,6 +289,9 @@ export const projectOverviewStyles = css`
 
   .semantic-model-content {
     min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
   }
 
   .semantic-model-diagram-view .semantic-model-content,

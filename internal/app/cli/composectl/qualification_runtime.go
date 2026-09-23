@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 type qualificationContainerVolume struct {
 	Source   string
 	Target   string
+	Subpath  string
 	ReadOnly bool
 }
 
@@ -115,18 +117,29 @@ func qualificationContainerOperationError(
 type dockerCLIQualificationRuntime struct {
 	process  qualificationProcess
 	executor qualificationCommandExecutor
+	endpoint PinnedDockerEndpoint
 }
 
 func newDockerCLIQualificationRuntime(
 	root string,
 	dockerBin string,
 	executor qualificationCommandExecutor,
+	endpoints ...PinnedDockerEndpoint,
 ) *dockerCLIQualificationRuntime {
+	var endpoint PinnedDockerEndpoint
+	if len(endpoints) > 0 {
+		endpoint = endpoints[0]
+	}
+	environment := os.Environ()
+	if endpoint != nil {
+		environment = endpoint.Environment(environment)
+	}
 	return &dockerCLIQualificationRuntime{
 		process: qualificationProcess{
-			dir: root, executable: dockerBin, environment: os.Environ(),
+			dir: root, executable: dockerBin, environment: environment,
 		},
 		executor: executor,
+		endpoint: endpoint,
 	}
 }
 
@@ -154,6 +167,20 @@ func (runtime *dockerCLIQualificationRuntime) Start(
 		target := strings.TrimSpace(volume.Target)
 		if source == "" || target == "" {
 			return nil, fmt.Errorf("qualification container volume source and target are required")
+		}
+		subpath := strings.TrimSpace(volume.Subpath)
+		if subpath != "" {
+			if strings.ContainsAny(source+target, ",\r\n\x00") || !path.IsAbs(target) ||
+				path.IsAbs(subpath) || path.Clean(subpath) != subpath || subpath == "." || subpath == ".." ||
+				strings.HasPrefix(subpath, "../") || strings.ContainsAny(subpath, ",\r\n\x00") {
+				return nil, fmt.Errorf("qualification container volume subpath is invalid")
+			}
+			value := "type=volume,src=" + source + ",dst=" + target + ",volume-subpath=" + subpath
+			if volume.ReadOnly {
+				value += ",readonly"
+			}
+			arguments = append(arguments, "--mount", value)
+			continue
 		}
 		value := source + ":" + target
 		if volume.ReadOnly {
@@ -217,6 +244,12 @@ func (runtime *dockerCLIQualificationRuntime) run(
 	stdin io.Reader,
 	arguments ...string,
 ) ([]byte, error) {
+	if runtime.endpoint != nil {
+		if err := runtime.endpoint.Verify(ctx); err != nil {
+			return nil, fmt.Errorf("verify pinned Docker endpoint: %w", err)
+		}
+		arguments = runtime.endpoint.DockerArguments(arguments...)
+	}
 	return runtime.process.Run(ctx, stdin, runtime.executor, arguments...)
 }
 

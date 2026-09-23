@@ -125,12 +125,12 @@ ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
   -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$pinned_known_hosts" \
   "root@$demo_host" 'bash -se' <<'REMOTE'
 set -euo pipefail
-revision=2e228ec6b42ab5c18bea04ce037695642aaf8019
-image=ghcr.io/flidai/leapview@sha256:29d832a2504ccb39b4b7a4d55defa2c9968116d228449ca6adc981d6adcd1bc2
+revision=b36e6c1b965d3d816f1fa6215d06af83c1d48da4
+image=ghcr.io/flidai/leapview@sha256:b016b15d9db04a9cf66f5b058aab60a76dffc3229ea3f27fc83d820abb925f78
 release=/opt/leapview-demo/releases/$revision
 service=leapview-demo-current.service
 if ! systemctl is-active --quiet "$service"; then
-  preserved_revision=d24ad786be8e838d923f6e57cd744eb8623c893b
+  preserved_revision=38804a01c488ffaeea54202b2541779fb83354b9
   preserved_environment=/opt/leapview-demo/releases/$preserved_revision/runtime.env
   unit=$(systemctl show "$service" --property=FragmentPath --value)
   [[ -f "$preserved_environment" && -f "$unit" ]]

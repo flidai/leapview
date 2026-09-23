@@ -25,8 +25,9 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-// Current main's generated surface plus the two target-policy operations.
-const expectedAPIGenAggregateOperationCount = 193
+// Combined generated surface including target-policy and development-profile
+// operations. This count is a contract snapshot, not a feature-coverage claim.
+const expectedAPIGenAggregateOperationCount = 197
 
 func TestAPIGenTypedAuthzMetadataReachesAccessBoundary(t *testing.T) {
 	contracts := accessAPIGenOperationContracts()
@@ -158,7 +159,7 @@ func TestAPIGenAccessCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 	accessContracts := accessgen.GetAPIGenOperationContracts()
-	if got, want := len(accessContracts), 73; got != want {
+	if got, want := len(accessContracts), 75; got != want {
 		t.Fatalf("Access generated operations = %d, want %d", got, want)
 	}
 	allowedTags := map[string]bool{"Access": true, "Audit": true, "Current User": true}
@@ -184,7 +185,7 @@ func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 
 func TestAPIGenAnalyticsCapabilityOwnsItsOperationSurface(t *testing.T) {
 	analyticsContracts := analyticsgen.GetAPIGenOperationContracts()
-	if got, want := len(analyticsContracts), 11; got != want {
+	if got, want := len(analyticsContracts), 13; got != want {
 		t.Fatalf("Analytics generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range analyticsContracts {

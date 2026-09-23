@@ -173,10 +173,120 @@ jobs:
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/*.log
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/browser-failure.png
 
+  authoring-cli:
+    name: Public authoring CLI (${{ matrix.os }}-${{ matrix.arch }})
+    needs: resolve
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            runner: ubuntu-24.04
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - os: darwin
+            arch: amd64
+            runner: macos-15-intel
+          - os: darwin
+            arch: arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download public authoring archive anonymously
+        id: download
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          package="leapview-cli-${RELEASE_TAG}-${TARGET_OS}-${TARGET_ARCH}"
+          base="https://github.com/flidai/leapview/releases/download/${RELEASE_TAG}"
+          root="$RUNNER_TEMP/leapview-authoring-public"
+          mkdir -p "$root"
+          cd "$root"
+          curl --fail --location --retry 4 --retry-all-errors --silent --show-error --output "$package.tar.gz" "$base/$package.tar.gz"
+          curl --fail --location --retry 4 --retry-all-errors --silent --show-error --output "$package.tar.gz.sha256" "$base/$package.tar.gz.sha256"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum --check "$package.tar.gz.sha256"
+          else
+            shasum -a 256 --check "$package.tar.gz.sha256"
+          fi
+          tar -xzf "$package.tar.gz"
+          package_root="$root/$package"
+          (
+            cd "$package_root"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum --check SHA256SUMS
+            else
+              shasum -a 256 --check SHA256SUMS
+            fi
+          )
+          echo "package_root=$package_root" >> "$GITHUB_OUTPUT"
+
+      - name: Verify public installed command and identity
+        env:
+          PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          "$PACKAGE_ROOT/leapview" version --json > "$RUNNER_TEMP/authoring-version.json"
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.path.join(os.environ["PACKAGE_ROOT"], "authoring-package.json"), encoding="utf-8") as source:
+              package = json.load(source)
+          with open(os.path.join(os.environ["PACKAGE_ROOT"], "release-identity.json"), encoding="utf-8") as source:
+              release = json.load(source)
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "authoring-version.json"), encoding="utf-8") as source:
+              actual = json.load(source)
+          for field in ("version", "revision", "buildTime", "dirty", "development"):
+              if actual[field] != release[field] or actual[field] != package["identity"][field]:
+                  raise SystemExit(f"public authoring CLI {field} mismatch")
+          if package["host"]["os"] != os.environ["TARGET_OS"] or package["host"]["architecture"] != os.environ["TARGET_ARCH"]:
+              raise SystemExit("public authoring CLI host identity mismatch")
+          if package["applicationImage"] != release["image"]:
+              raise SystemExit("public authoring CLI image identity mismatch")
+          PY
+          "$PACKAGE_ROOT/leapview" --help > "$RUNNER_TEMP/authoring-help.txt"
+          for command in dev plan build publish deploy; do
+            "$PACKAGE_ROOT/leapview" "$command" --help >/dev/null
+          done
+          if [ "$TARGET_OS" = linux ]; then
+            checkout="$RUNNER_TEMP/public-authoring-checkout"
+            mkdir -p "$checkout/dashboards"
+            git -C "$checkout" init --quiet
+            (
+              cd "$checkout"
+              "$PACKAGE_ROOT/leapview" dev status --format json > "$RUNNER_TEMP/authoring-status.json"
+            )
+          fi
+
+      - name: Upload public authoring evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: installed-authoring-${{ needs.resolve.outputs.release_tag }}-${{ matrix.os }}-${{ matrix.arch }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/authoring-version.json
+            ${{ runner.temp }}/authoring-help.txt
+            ${{ runner.temp }}/authoring-status.json
+
   incident:
     name: Create qualification incident
-    needs: [resolve, qualify]
-    if: always() && needs.qualify.result == 'failure'
+    needs: [resolve, qualify, authoring-cli]
+    if: always() && (needs.qualify.result == 'failure' || needs.authoring-cli.result == 'failure')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

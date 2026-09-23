@@ -41,6 +41,56 @@ type ProjectClaimBootstrapResult struct {
 	AuditInput ProjectClaimAuditInput
 }
 
+// BootstrapProjectClaimNative executes the same transactional Project-claim
+// and audit authority as the authenticated HTTP command. It is reserved for
+// already-authorized image-side administrative adapters, which must establish
+// their own native database and operator boundary before calling it.
+func BootstrapProjectClaimNative(
+	ctx context.Context,
+	persistence Persistence,
+	audit ProjectClaimAuditAppender,
+	instanceID, instanceEnvironment string,
+	input ProjectClaimBootstrapInput,
+) (ProjectClaimBootstrapResult, error) {
+	if persistence.Repository == nil || persistence.native == nil || persistence.Repository != persistence.native || !persistence.Repository.Configured() || !persistence.Repository.TransactionCapable() {
+		return ProjectClaimBootstrapResult{}, errors.New("native PostgreSQL Project-claim persistence is required")
+	}
+	if audit == nil {
+		return ProjectClaimBootstrapResult{}, errors.New("native Project-claim audit authority is required")
+	}
+	instanceID = strings.TrimSpace(instanceID)
+	instanceEnvironment = strings.TrimSpace(instanceEnvironment)
+	input.PrincipalID = strings.TrimSpace(input.PrincipalID)
+	input.ProjectUID = strings.TrimSpace(input.ProjectUID)
+	input.IssuerID = strings.TrimSpace(input.IssuerID)
+	input.Environment = strings.TrimSpace(input.Environment)
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	if instanceID == "" || input.PrincipalID == "" || input.IdempotencyKey == "" {
+		return ProjectClaimBootstrapResult{}, errors.New("native Project-claim instance, principal, and idempotency identities are required")
+	}
+	projectUID, err := projectgraph.NewResourceID(input.ProjectUID)
+	if err != nil || projectUID.String() != input.ProjectUID {
+		return ProjectClaimBootstrapResult{}, errors.New("native Project-claim requires a canonical ProjectUID")
+	}
+	issuerID, err := projectgraph.NewResourceID(input.IssuerID)
+	if err != nil || issuerID.String() != input.IssuerID {
+		return ProjectClaimBootstrapResult{}, errors.New("native Project-claim requires a canonical issuer identity")
+	}
+	if err := servingstate.ValidateEnvironment(servingstate.Environment(instanceEnvironment)); err != nil {
+		return ProjectClaimBootstrapResult{}, err
+	}
+	request := deploymentgen.ProjectClaimBootstrapRequest{ProjectUid: input.ProjectUID, IssuerId: input.IssuerID, Environment: input.Environment}
+	input.RequestDigest, err = projectClaimRequestDigest(request)
+	if err != nil {
+		return ProjectClaimBootstrapResult{}, err
+	}
+	module := &Module{
+		persistence: &persistence, projectClaimAudit: audit,
+		instanceID: instanceID, instanceEnvironment: servingstate.Environment(instanceEnvironment),
+	}
+	return module.executeProjectClaimBootstrapCommand(ctx, input)
+}
+
 type ProjectClaimBootstrapFunc func(context.Context, ProjectClaimBootstrapInput) (ProjectClaimBootstrapResult, error)
 
 func (m *Module) BootstrapProjectClaim(w http.ResponseWriter, r *http.Request, idempotencyKey string) {
@@ -162,6 +212,11 @@ func (m *Module) bootstrapProjectClaimTransaction(ctx context.Context, input Pro
 			if claimErr != nil {
 				return ProjectClaimBootstrapResult{}, claimErr
 			}
+			if result == "claimed" {
+				if err := m.ensureProjectClaimTarget(ctx, tx, claim); err != nil {
+					return ProjectClaimBootstrapResult{}, err
+				}
+			}
 			return ProjectClaimBootstrapResult{Claim: claim, Conflict: result == "conflict", AuditID: auditID, AuditInput: auditInput}, tx.Commit(ctx)
 		} else if !errors.Is(readErr, ErrProjectClaimAuditNotFound) {
 			return ProjectClaimBootstrapResult{}, readErr
@@ -201,6 +256,11 @@ func (m *Module) bootstrapProjectClaimTransaction(ctx context.Context, input Pro
 			return ProjectClaimBootstrapResult{}, err
 		}
 	}
+	if !conflict {
+		if err := m.ensureProjectClaimTarget(ctx, tx, claim); err != nil {
+			return ProjectClaimBootstrapResult{}, err
+		}
+	}
 	resultName, outcome := "claimed", "success"
 	if conflict {
 		resultName, outcome = "conflict", "failure"
@@ -219,6 +279,21 @@ func (m *Module) bootstrapProjectClaimTransaction(ctx context.Context, input Pro
 		return ProjectClaimBootstrapResult{}, err
 	}
 	return ProjectClaimBootstrapResult{Claim: claim, Conflict: conflict, AuditID: auditID, AuditInput: auditInput}, nil
+}
+
+// ensureProjectClaimTarget keeps the durable claim and its instance-owned
+// delivery target in one transaction. Readiness treats a one-sided tuple as a
+// partial bootstrap, so committing only the claim would make a fresh local
+// runtime permanently unable to become healthy before its first plan.
+// CreateTargetTx is an exact replay and also repairs claims written by the
+// short-lived claim-only bootstrap implementation.
+func (m *Module) ensureProjectClaimTarget(ctx context.Context, tx deploymentpostgres.Tx, claim deployment.ProjectClaim) error {
+	if _, err := m.persistence.Repository.CreateTargetTx(ctx, tx, deploymentpostgres.TargetInput{
+		TargetID: m.instanceID, ProjectID: claim.ProjectID.String(), Environment: string(claim.Environment), TargetRevision: 1,
+	}); err != nil {
+		return fmt.Errorf("bootstrap Project-claim delivery target: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) executeProjectClaimBootstrapCommand(ctx context.Context, input ProjectClaimBootstrapInput) (ProjectClaimBootstrapResult, error) {

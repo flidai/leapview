@@ -1,0 +1,29 @@
+name: Local Docker macOS tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - .github/workflows/localdocker-macos.yml
+      - internal/app/cli/localdocker/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  endpoint:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    name: Local Docker endpoint tests (macOS Apple silicon)
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test local Docker endpoint policy
+        run: go test -count=1 ./internal/app/cli/localdocker

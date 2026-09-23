@@ -359,6 +359,7 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
       const reportHeaderRect = reportHeader.getBoundingClientRect()
       const railFooterRect = railFooter.getBoundingClientRect()
       const backRect = back.getBoundingClientRect()
+      const expandedCollapseRect = collapse.getBoundingClientRect()
       const expandedBackLabelDisplay = getComputedStyle(backLabel).display
       const sidebarRect = sidebar.getBoundingClientRect()
       const mainRect = main.getBoundingClientRect()
@@ -379,6 +380,7 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
         (root.querySelector('.item-link') as HTMLElement).getBoundingClientRect().top,
       )
       const collapsedToggleIconMarkup = root.querySelector('.collapse svg')?.innerHTML
+      const collapsedCollapseRect = (root.querySelector('.collapse') as HTMLElement).getBoundingClientRect()
       const collapsedMainRect = main.getBoundingClientRect()
       const collapsedRailFooterRect = railFooter.getBoundingClientRect()
       const collapsedBackRect = back.getBoundingClientRect()
@@ -419,6 +421,12 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
         backInRailFooter: railFooter.contains(back),
         railFooterAligned: Math.round(railFooterRect.left) === Math.round(sidebarRect.left),
         backInset: Math.round(backRect.left - sidebarRect.left),
+        expandedCollapseInset: Math.round(expandedCollapseRect.left - sidebarRect.left),
+        collapsedCollapseInset: Math.round(collapsedCollapseRect.left - collapsedSidebarRect.left),
+        collapseStaysInPlace: Math.abs(
+          (expandedCollapseRect.left - sidebarRect.left)
+            - (collapsedCollapseRect.left - collapsedSidebarRect.left),
+        ) < 2,
         backAtTop: backRect.top < expandedPageTop,
         searchBelowBack: searchRect.top >= backRect.bottom,
         searchLabel: search.getAttribute('aria-label'),
@@ -489,6 +497,9 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
       backInRailFooter: false,
       railFooterAligned: true,
       backInset: 8,
+      expandedCollapseInset: 8,
+      collapsedCollapseInset: 8,
+      collapseStaysInPlace: true,
       backAtTop: true,
       searchBelowBack: true,
       searchLabel: 'Search pages',
@@ -1378,20 +1389,21 @@ test('dashboard refresh progress is owned by the latest stream generation', asyn
   try {
     await page.goto(baseURL, { waitUntil: 'networkidle' })
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
-    const states = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    const states = await evaluateAcrossContextTurnover(page, () => page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       const read = async () => {
         await element.updateComplete
         const progress = (element.shadowRoot as ShadowRoot).querySelector('[data-dashboard-refresh-progress]')
         return { generation: progress?.getAttribute('data-generation'), now: progress?.getAttribute('aria-valuenow'), complete: progress?.getAttribute('data-complete') }
       }
+      mergePatch({ status: { generation: 3, refreshId: 'refresh-3', loading: true, progressPercent: 50 } })
       const initial = await read()
       mergePatch({ status: { generation: 4, refreshId: 'refresh-4', loading: true, progressPercent: 25 } })
       const active = await read()
       mergePatch({ status: { generation: 4, refreshId: 'refresh-4', loading: false, progressPercent: 100 } })
       const complete = await read()
       return { initial, active, complete }
-    })
+    }))
     expect(states).toEqual({
       initial: { generation: '3', now: '50', complete: 'false' },
       active: { generation: '4', now: '25', complete: 'false' },
@@ -1399,7 +1411,6 @@ test('dashboard refresh progress is owned by the latest stream generation', asyn
     })
   } finally { await page.close() }
 })
-
 test('dashboard keeps the source visualization selected through canonicalization and clearing', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

@@ -312,7 +312,20 @@ func protectProjectAuthoringResourceWithTypedAction(
 	action access.Action,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
-	if accessModule == nil || runtimeHost == nil || action == "" || next == nil {
+	return protectProjectAuthoringResourceWithSelector(accessModule, runtimeHost, authorizer, action, func(r *http.Request) string {
+		return chi.URLParam(r, "dashboard")
+	}, next)
+}
+
+func protectProjectAuthoringResourceWithSelector(
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	authorizer repositoryDashboardAuthorizer,
+	action access.Action,
+	dashboardIDForRequest func(*http.Request) string,
+	next http.HandlerFunc,
+) http.HandlerFunc {
+	if accessModule == nil || runtimeHost == nil || dashboardIDForRequest == nil || action == "" || next == nil {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		}
@@ -338,7 +351,7 @@ func protectProjectAuthoringResourceWithTypedAction(
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
-		dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
+		dashboardID := strings.TrimSpace(dashboardIDForRequest(r))
 		if err := authoring.ValidateDashboardID(authoring.DashboardID(dashboardID)); err != nil {
 			http.NotFound(w, r)
 			return
@@ -354,7 +367,10 @@ func protectProjectAuthoringResourceWithTypedAction(
 		}
 		// The exact action is checked against principal/group assignments and,
 		// for bearer credentials, the token's typed permission ceiling.
-		typed, allowed, typedErr := authorizeTypedResourceAction(r.Context(), accessModule, runtimeHost, principal.ID, projectID, []access.ResourceRef{resource}, action)
+		// Private drafts can be absent from the published graph. Only this
+		// dashboard-authoring guard admits that absence; the repository check
+		// below must still prove the principal may edit or delete this draft.
+		typed, allowed, typedErr := authorizeTypedResourceActionWithDraft(r.Context(), accessModule, runtimeHost, principal.ID, projectID, []access.ResourceRef{resource}, action, action == access.ActionDashboardUpdate || action == access.ActionDashboardDelete)
 		if typedErr != nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return

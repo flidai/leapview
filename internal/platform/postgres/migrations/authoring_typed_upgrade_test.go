@@ -151,7 +151,7 @@ func TestTypedAuthoringPermissionsMigrationRetiresLegacyScopes(t *testing.T) {
 	t.Cleanup(func() { _ = migrationDB.Close() })
 
 	previous := fstest.MapFS{"001_authoring_fixture.sql": {Data: authoringTypedMigrationFixture()}}
-	for revision := 2; revision <= 31; revision++ {
+	for revision := 2; revision <= 36; revision++ {
 		name := fmt.Sprintf("%03d_noop.sql", revision)
 		previous[name] = &fstest.MapFile{Data: []byte("-- +goose Up\n-- +goose Down\n")}
 	}
@@ -159,8 +159,8 @@ func TestTypedAuthoringPermissionsMigrationRetiresLegacyScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(t.Context(), 31); err != nil {
-		t.Fatalf("apply authoring fixture revision 31: %v", err)
+	if _, err := provider.UpTo(t.Context(), 36); err != nil {
+		t.Fatalf("apply authoring fixture revision 36: %v", err)
 	}
 
 	principalID := "10000000-0000-4000-8000-000000000001"
@@ -192,16 +192,16 @@ func TestTypedAuthoringPermissionsMigrationRetiresLegacyScopes(t *testing.T) {
 	for name, file := range previous {
 		upgrade[name] = file
 	}
-	contents, err := fs.ReadFile(MigrationFS(), "032_typed_authoring_permissions.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "037_typed_authoring_permissions.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	upgrade["032_typed_authoring_permissions.sql"] = &fstest.MapFile{Data: contents}
+	upgrade["037_typed_authoring_permissions.sql"] = &fstest.MapFile{Data: contents}
 	provider, err = newProvider(migrationDB, upgrade)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(t.Context(), 32); err != nil {
+	if _, err := provider.UpTo(t.Context(), 37); err != nil {
 		t.Fatalf("apply typed authoring upgrade: %v", err)
 	}
 

@@ -616,6 +616,9 @@ start() {
     cookie_namespace="$(printf '%s' "$ROOT" | cksum | awk '{print $1}')"
     export LEAPVIEW_DEV_COOKIE_NAMESPACE="${LEAPVIEW_DEV_COOKIE_NAMESPACE:-$cookie_namespace}"
   fi
+  # `task dev` is the source-contributor workflow. Released local authoring
+  # runs the same development policy with this diagnostic surface disabled.
+  export LEAPVIEW_CONTRIBUTOR_DIAGNOSTICS=true
   export LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES="${LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES:-67108864}"
   if [[ -z "${LEAPVIEW_AGENT_API_KEY:-}" && -n "${DEEPSEEK_API_KEY:-}" ]]; then
     export LEAPVIEW_AGENT_API_KEY="$DEEPSEEK_API_KEY"

@@ -93,6 +93,10 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.AddGroupMember(w, r)
 	case "removeGroupMember":
 		m.handler.RemoveGroupMember(w, r)
+	case "listGrants":
+		m.handler.ListGrants(w, r)
+	case "createGrant":
+		m.handler.CreateGrant(w, r)
 	case "listProjectRoleBindings":
 		m.handler.ListProjectRoleBindings(w, r)
 	case "createProjectRoleBinding":

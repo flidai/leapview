@@ -9,7 +9,7 @@ function csrfToken(): string {
 // Generate a canonical lower-case UUIDv7 for durable command identity. The
 // browser's randomUUID() is UUIDv4, which is intentionally not accepted by
 // the publication/audit authorities for idempotency keys.
-function uuidv7(): string {
+export function uuidv7(): string {
   const cryptoAPI = globalThis.crypto
   if (!cryptoAPI?.getRandomValues) throw new Error('secure randomness unavailable')
   const bytes = new Uint8Array(16)

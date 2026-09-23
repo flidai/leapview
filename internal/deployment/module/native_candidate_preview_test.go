@@ -29,7 +29,7 @@ func TestResolveOwnedCandidateUsesNativeEvidenceAndCanonicalPreview(t *testing.T
 	if candidate.ID != rows.candidate.CandidateID || candidate.OwnerID != rows.attempt.OwnerID || candidate.TargetID != rows.plan.TargetID || candidate.Scope.ProjectID.String() != "finance" || candidate.Scope.Environment != "prod" {
 		t.Fatalf("candidate identity = %#v", candidate)
 	}
-	if candidate.Status != deployment.CandidateReady || candidate.Revision != rows.candidate.CandidateRevision || candidate.ArtifactDigest != richPlan.SourceDigest || candidate.ProvenanceDigest != richPlan.ProvenanceDigest {
+	if candidate.Status != deployment.CandidateReady || candidate.Revision != rows.candidate.CandidateRevision || candidate.ArtifactDigest != richPlan.SourceDigest || candidate.GraphDigest != rows.seal.CompiledGraphDigest || candidate.ProvenanceDigest != richPlan.ProvenanceDigest {
 		t.Fatalf("candidate evidence = %#v", candidate)
 	}
 	if candidate.PreviewURL != "https://prod.leapview.example/candidates/"+rows.candidate.CandidateID {

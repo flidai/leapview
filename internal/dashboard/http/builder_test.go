@@ -180,6 +180,24 @@ func TestDashboardArchiveResolvesTheCurrentDraftAndRedirectsToCatalog(t *testing
 	}
 }
 
+func TestDashboardDeleteUsesThePermanentDeleteCommandAndRedirectsToCatalog(t *testing.T) {
+	fake := &builderAuthoringFake{}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/dashboard-owned/delete", strings.NewReader("idempotencyKey="+browserTestRequestID))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request = withBuilderURLParams(request, "sales", "dashboard-owned")
+	recorder := httptest.NewRecorder()
+
+	handler.DashboardDelete(recorder, request)
+
+	if recorder.Code != nethttp.StatusSeeOther || recorder.Header().Get("Location") != "/" {
+		t.Fatalf("delete redirect = %d %q body=%s", recorder.Code, recorder.Header().Get("Location"), recorder.Body.String())
+	}
+	if fake.executed.ID != authoring.CommandID(browserTestRequestID) || fake.executed.Delete == nil || fake.executed.DraftID != "" || !fake.auditIntentFound || fake.auditIntent.Capability != access.CapabilityResourceManage {
+		t.Fatalf("delete command = %#v", fake.executed)
+	}
+}
+
 func TestDashboardDraftCreateOffersAndPreselectsGovernedModels(t *testing.T) {
 	handler := Handler{
 		Authoring:          &builderAuthoringFake{},
@@ -843,6 +861,32 @@ func TestDashboardBuilderCommandArchivesAndRedirectsToCatalog(t *testing.T) {
 	}
 	if fake.builderReq.DashboardID != "" {
 		t.Fatalf("archive attempted to re-project an archived builder: %#v", fake.builderReq)
+	}
+}
+
+func TestDashboardBuilderCommandDeletesAndRedirectsToCatalog(t *testing.T) {
+	fake := &builderAuthoringFake{}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{
+		"builderCommand": map[string]any{
+			"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1",
+			"revisionNumber": "7", "revisionContentHash": "sha256:" + strings.Repeat("a", 64), "action": "delete",
+		},
+	})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "delete-1")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK || fake.executed.Delete == nil || fake.executed.ID != authoring.CommandID(browserTestRequestID) {
+		t.Fatalf("delete response = %d command=%#v body=%s", recorder.Code, fake.executed, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	patches := ssetest.PatchSignals(t, body)
+	if len(patches) != 1 || patches[0]["builder"].(map[string]any)["redirectTo"] != "/" {
+		t.Fatalf("delete did not signal a catalog redirect: %#v body=%s", patches, body)
+	}
+	if fake.builderReq.DashboardID != "" {
+		t.Fatalf("delete attempted to re-project a deleted builder: %#v", fake.builderReq)
 	}
 }
 

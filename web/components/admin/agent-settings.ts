@@ -1,6 +1,8 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import type { AdminAgentSignal } from '../../generated/signals'
+import { renderSettingsRow, renderSettingsSection, settingsLayoutStyles } from '../shared/settings-layout'
+import { settingsFieldStyles } from '../shared/settings-field-styles'
 import './agent-prompt-editor'
 import './agent-tools'
 
@@ -15,7 +17,7 @@ export class AgentSettings extends LitElement {
   @property({ attribute: false }) prompt = ''
   @state() private tab: AgentSettingsTab = 'instructions'
 
-  static styles = css`
+  static styles = [settingsFieldStyles, settingsLayoutStyles, css`
     :host {
       display: block;
       min-width: 0;
@@ -29,13 +31,8 @@ export class AgentSettings extends LitElement {
       margin: 0;
     }
 
-    .surface {
-      display: grid;
-      min-width: 0;
-      gap: var(--base-size-20);
-    }
 
-    .overview {
+    .settings-section.overview {
       display: grid;
       min-width: 0;
       padding: var(--base-size-4) 0 var(--base-size-20);
@@ -71,17 +68,27 @@ export class AgentSettings extends LitElement {
     }
 
     .status-value.is-disabled {
-      background: var(--lv-bg-danger-muted, var(--lv-bg-panel-muted));
-      color: var(--lv-fg-danger);
+	  background: var(--lv-bg-panel-muted);
+	  color: var(--lv-fg-muted);
+    }
+
+    .status-value.is-degraded {
+      background: var(--lv-bg-warning-muted, var(--lv-bg-panel-muted));
+      color: var(--lv-fg-warning);
+    }
+
+    .status-value.is-configured {
+      background: var(--lv-bg-accent-muted, var(--lv-bg-panel-muted));
+      color: var(--lv-fg-accent);
     }
 
     .overview-grid {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: var(--base-size-8);
     }
 
-    .overview-stat {
+    .overview-grid .overview-stat {
       display: grid;
       min-width: 0;
       gap: var(--base-size-4);
@@ -98,7 +105,7 @@ export class AgentSettings extends LitElement {
       padding-right: 0;
     }
 
-    .overview-label {
+    .overview-stat .settings-label {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
       text-transform: uppercase;
@@ -130,9 +137,6 @@ export class AgentSettings extends LitElement {
       font-weight: var(--base-text-weight-semibold);
     }
 
-    .settings-panel {
-      min-width: 0;
-    }
 
     .tab-bar {
       display: flex;
@@ -178,10 +182,6 @@ export class AgentSettings extends LitElement {
       outline-offset: -2px;
     }
 
-    .settings-panel-body {
-      min-width: 0;
-      padding-top: var(--base-size-16);
-    }
 
     .empty {
       padding: var(--base-size-16) 0;
@@ -189,47 +189,49 @@ export class AgentSettings extends LitElement {
       font: var(--lv-type-body);
     }
 
-    @media (max-width: 760px) {
+    @container settings (max-width: 30rem) {
       .overview-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         row-gap: var(--base-size-16);
       }
 
-      .overview-stat {
+      .overview-grid .overview-stat {
         border-left: 0;
         padding: 0;
       }
     }
 
-    @media (max-width: 480px) {
+    @container settings (max-width: 20rem) {
       .overview-grid {
         grid-template-columns: minmax(0, 1fr);
       }
 
-      .settings-panel-body {
-        padding-top: var(--base-size-12);
       }
-    }
-  `
+  `]
 
   render() {
     const agent = this.agent
-    if (!agent) return html`<div class="surface"><p class="empty">Agent settings are unavailable.</p></div>`
+    if (!agent) return html`<div class="settings-stack"><p class="empty">Agent settings are unavailable.</p></div>`
 
     const prompt = this.prompt || agent.systemPrompt || ''
-    const enabledLabel = agent.enabled ? 'Enabled' : 'Disabled'
+    const status = normalizeAgentStatus(agent.status, agent.enabled)
+    const statusLabel = status[0].toUpperCase() + status.slice(1)
     return html`
-      <div class="surface">
-        <section class="overview" aria-label="Agent overview">
+      <div class="settings-stack">
+        ${renderSettingsSection({ label: 'Agent overview', appearance: 'plain', className: 'overview', content: html`
           <h2 class="visually-hidden">Agent overview</h2>
           <div class="overview-grid">
-            ${this.stat('Status', enabledLabel, agent.enabled ? 'enabled' : 'disabled')}
+            ${renderSettingsRow({
+              label: 'Status', layout: 'stacked', className: 'overview-stat',
+              control: html`<span class=${`status-value is-${status}`} title=${agent.statusDetail || statusLabel}>${statusLabel}</span>`,
+            })}
             ${this.stat('Model', agent.model || 'Not configured')}
+            ${this.stat('Reasoning', formatReasoningEffort(agent.reasoningEffort))}
             ${this.stat('Tools', String(agent.tools.length))}
             ${this.stat('Access', agent.canWrite ? 'Editable' : 'Read-only')}
-            ${this.stat('Instructions', prompt.trim() ? 'Configured' : 'Not configured')}
+            ${this.stat('Configuration', agent.configured ? 'Configured' : 'Not configured', agent.configured ? 'configured' : 'disabled')}
           </div>
-        </section>
+        ` })}
 
         ${!agent.canWrite ? html`
           <div class="notice" role="note">
@@ -238,7 +240,9 @@ export class AgentSettings extends LitElement {
           </div>
         ` : ''}
 
-        <section class="settings-panel" aria-label="Agent settings">
+        ${agent.statusDetail ? html`<div class="notice" role="status"><strong>${statusLabel}.</strong><span>${agent.statusDetail}</span></div>` : ''}
+
+        ${renderSettingsSection({ label: 'Agent settings', appearance: 'plain', className: 'settings-panel', content: html`
           <div class="tab-bar" role="tablist" aria-label="Agent settings sections">
             ${this.renderTab('instructions', 'Instructions')}
             ${this.renderTab('tools', 'Tools')}
@@ -248,18 +252,16 @@ export class AgentSettings extends LitElement {
               ? html`<div role="tabpanel" aria-label="Instructions"><lv-agent-prompt-editor .value=${prompt} value=${prompt} ?disabled=${!agent.canWrite}></lv-agent-prompt-editor></div>`
               : html`<div role="tabpanel" aria-label="Tools"><lv-agent-tools .tools=${agent.tools}></lv-agent-tools></div>`}
           </div>
-        </section>
+        ` })}
       </div>
     `
   }
 
-  private stat(label: string, value: string, status: 'enabled' | 'disabled' | '' = '') {
-    return html`
-      <div class="overview-stat">
-        <span class="overview-label">${label}</span>
-        <span class=${status ? `status-value is-${status}` : 'overview-value'} title=${value}>${value}</span>
-      </div>
-    `
+  private stat(label: string, value: string, status: 'enabled' | 'disabled' | 'configured' | '' = '') {
+    return renderSettingsRow({
+      label, layout: 'stacked', className: 'overview-stat',
+      control: html`<span class=${status ? `status-value is-${status}` : 'overview-value'} title=${value}>${value}</span>`,
+    })
   }
 
   private renderTab(tab: AgentSettingsTab, label: string) {
@@ -274,6 +276,19 @@ export class AgentSettings extends LitElement {
       >${label}</button>
     `
   }
+}
+
+function normalizeAgentStatus(value: string | undefined, enabled: boolean): 'enabled' | 'disabled' | 'degraded' {
+  const status = value?.trim().toLowerCase()
+  if (status === 'degraded') return 'degraded'
+  if (status === 'enabled') return 'enabled'
+  return enabled ? 'enabled' : 'disabled'
+}
+
+function formatReasoningEffort(value?: string): string {
+  const effort = value?.trim().toLowerCase()
+  if (!effort) return 'Not configured'
+  return effort === 'xhigh' ? 'Extra high' : effort[0].toUpperCase() + effort.slice(1)
 }
 
 if (!customElements.get('lv-agent-settings')) customElements.define('lv-agent-settings', AgentSettings)

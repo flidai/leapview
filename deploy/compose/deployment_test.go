@@ -73,6 +73,10 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 		"LEAPVIEW_PUBLIC_URL=https://dash.example.com",
 		"LEAPVIEW_ALLOWED_HOSTS=dash.example.com",
 		"LEAPVIEW_TRUST_PROXY_HEADERS=true",
+		"LEAPVIEW_AGENT_API_KEY=",
+		"LEAPVIEW_AGENT_BASE_URL=https://api.openai.com/v1",
+		"LEAPVIEW_AGENT_MODEL=gpt-6-luna",
+		"LEAPVIEW_AGENT_REASONING_EFFORT=high",
 		"LEAPVIEW_POSTGRES_CONTROL_URL=",
 		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=",
 		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE=leapview_control_migrator",
@@ -248,7 +252,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 		"args=(qualify installed-candidate",
 		"--multi-node-process",
 		"gh release create",
-		"needs: [image, qualify, minio-conformance, plan-gc-conformance]",
+		"needs: [image, authoring-cli, qualify, minio-conformance, plan-gc-conformance]",
 	} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing %q", required)

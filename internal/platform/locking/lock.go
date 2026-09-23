@@ -1,6 +1,7 @@
 package instancelock
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,9 @@ import (
 )
 
 const FileName = ".instance.lock"
+
+// ErrAlreadyInUse reports contention on the selected process-shared lock.
+var ErrAlreadyInUse = errors.New("another process is already using instance state")
 
 type Lock struct {
 	file *os.File
@@ -51,7 +55,7 @@ func AcquireNamed(home, name string) (*Lock, error) {
 	}
 	if !acquired {
 		_ = file.Close()
-		return nil, fmt.Errorf("another process is already using instance home %q", home)
+		return nil, fmt.Errorf("%w at %q", ErrAlreadyInUse, home)
 	}
 	return &Lock{file: file}, nil
 }

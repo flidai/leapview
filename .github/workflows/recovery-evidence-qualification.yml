@@ -2,6 +2,7 @@ name: Recovery evidence qualification
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.github/workflows/recovery-evidence-qualification.yml'
       - 'internal/manageddata/**'
@@ -19,6 +20,7 @@ concurrency:
 
 jobs:
   evidence-qualification:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     name: PostgreSQL and MinIO evidence qualification
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -28,6 +30,7 @@ jobs:
       - name: Set up the pinned CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          go-cache-restore-workload: full-validation
           browser: 'false'
       - name: Prepare generated contracts
         run: task generate

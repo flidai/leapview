@@ -74,6 +74,26 @@ func TestProfileStoreProjectAuthorityCanBindSameUIDToSeparateTargets(t *testing.
 	require.Equal(t, dev.ProjectID, prod.ProjectID)
 }
 
+func TestProfileStoreRebindsOnlyExactHTTPLoopbackOrigin(t *testing.T) {
+	store := NewProfileStore(filepath.Join(t.TempDir(), "cli.json"))
+	expected := TargetProfile{Origin: "http://127.0.0.1:8080", InstanceID: "lvinst_dev", Environment: "dev", CredentialAccount: "native-account", ProjectID: "lvproject_local"}
+	require.NoError(t, store.Put("local", expected))
+	require.NoError(t, store.RebindLoopbackOrigin("local", expected, "http://127.0.0.1:54321"))
+	rebound, err := store.Get("local")
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:54321", rebound.Origin)
+	require.Equal(t, expected.InstanceID, rebound.InstanceID)
+	require.Equal(t, expected.ProjectID, rebound.ProjectID)
+	require.Equal(t, expected.CredentialAccount, rebound.CredentialAccount)
+
+	for _, next := range []string{"https://127.0.0.1:54322", "http://analytics.example.com:54322", "http://user:secret@127.0.0.1:54322"} {
+		require.Error(t, store.RebindLoopbackOrigin("local", rebound, next))
+	}
+	stale := rebound
+	stale.Origin = expected.Origin
+	require.ErrorContains(t, store.RebindLoopbackOrigin("local", stale, "http://127.0.0.1:54322"), "changed before")
+}
+
 func TestProfileStoreProjectAuthorityConcurrentFirstUseConverges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cli.json")
 	const callers = 8
@@ -230,5 +250,30 @@ func TestProfileStoreFindsStableNameByCanonicalOrigin(t *testing.T) {
 	require.NoError(t, err)
 	if name != "production" || profile.InstanceID != "lvinst_prod" {
 		t.Fatalf("name=%q profile=%+v", name, profile)
+	}
+}
+
+func TestProfileStoreDeleteIfMatchRefusesConcurrentReplacement(t *testing.T) {
+	store := NewProfileStore(filepath.Join(t.TempDir(), "cli.json"))
+	profile := TargetProfile{Origin: "http://127.0.0.1:8080", InstanceID: "lvinst_local", Environment: "dev", CredentialAccount: "account", ProjectID: "project"}
+	if err := store.Put("local", profile); err != nil {
+		t.Fatal(err)
+	}
+	changed := profile
+	changed.Origin = "http://127.0.0.1:9090"
+	if err := store.RebindLoopbackOrigin("local", profile, changed.Origin); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteIfMatch("local", profile); err == nil || !strings.Contains(err.Error(), "changed before removal") {
+		t.Fatalf("DeleteIfMatch error = %v, want concurrent replacement refusal", err)
+	}
+	if _, err := store.Get("local"); err != nil {
+		t.Fatalf("changed profile was removed: %v", err)
+	}
+	if err := store.DeleteIfMatch("local", changed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get("local"); !errors.Is(err, ErrProfileNotFound) {
+		t.Fatalf("Get after matching delete = %v, want ErrProfileNotFound", err)
 	}
 }

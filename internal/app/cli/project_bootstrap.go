@@ -189,7 +189,7 @@ func bootstrapProjectOwnerPolicy(ctx context.Context, client *accessgen.GenClien
 			},
 		})
 	}
-	validateCreated := func(response accessgen.GenSchemaRoleBindingResponse, spec bootstrapBindingSpec, existing []access.RoleBinding) error {
+	validateCreated := func(response accessgen.GenSchemaRoleBindingResponse, spec bootstrapBindingSpec, existing []access.RoleBinding, grants []access.AuthorizationGrant) error {
 		if err := validateBootstrapBinding(response, spec, projectID, principalID); err != nil {
 			return err
 		}
@@ -198,7 +198,7 @@ func bootstrapProjectOwnerPolicy(ctx context.Context, client *accessgen.GenClien
 			return err
 		}
 		canonical := append(append([]access.RoleBinding(nil), existing...), created)
-		expected, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, canonical)
+		expected, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, canonical, grants...)
 		if err != nil {
 			return fmt.Errorf("canonicalize created bootstrap binding: %w", err)
 		}
@@ -229,7 +229,11 @@ func bootstrapProjectOwnerPolicy(ctx context.Context, client *accessgen.GenClien
 		}
 		return 0, "", fmt.Errorf("verify current bootstrap policy: %w", listErr)
 	}
-	bindings, validationErr := validateBootstrapPolicy(listed.Body, targetID, projectID, environment)
+	grants, err := bootstrapPolicyGrants(ctx, client, listed.Body, targetID, projectID, environment)
+	if err != nil {
+		return 0, "", fmt.Errorf("verify current bootstrap grants: %w", err)
+	}
+	bindings, validationErr := validateBootstrapPolicy(listed.Body, targetID, projectID, environment, grants...)
 	if validationErr != nil {
 		return 0, "", fmt.Errorf("current bootstrap policy is incompatible: %w", validationErr)
 	}
@@ -248,7 +252,7 @@ func bootstrapProjectOwnerPolicy(ctx context.Context, client *accessgen.GenClien
 		}
 		created, createErr := create(spec, listed.Body.PolicyRevision)
 		if createErr == nil {
-			if err := validateCreated(created.Body, spec, bindings); err != nil {
+			if err := validateCreated(created.Body, spec, bindings, grants); err != nil {
 				return 0, "", err
 			}
 		} else {
@@ -258,14 +262,18 @@ func bootstrapProjectOwnerPolicy(ctx context.Context, client *accessgen.GenClien
 			if currentErr != nil {
 				return 0, "", fmt.Errorf("create bootstrap %s binding: %w (current policy verification failed: %v)", spec.role, createErr, currentErr)
 			}
-			currentBindings, currentValidationErr := validateBootstrapPolicy(current.Body, targetID, projectID, environment)
+			currentGrants, grantErr := bootstrapPolicyGrants(ctx, client, current.Body, targetID, projectID, environment)
+			if grantErr != nil {
+				return 0, "", fmt.Errorf("verify bootstrap %s grants: %w", spec.role, grantErr)
+			}
+			currentBindings, currentValidationErr := validateBootstrapPolicy(current.Body, targetID, projectID, environment, currentGrants...)
 			if currentValidationErr != nil {
 				return 0, "", fmt.Errorf("create bootstrap %s binding: %w (current policy is incompatible: %v)", spec.role, createErr, currentValidationErr)
 			}
 			if !bootstrapPrincipalHasTypedRole(currentBindings, principalID, spec.role) {
 				return 0, "", fmt.Errorf("create bootstrap %s binding: %w (current policy is missing the binding)", spec.role, createErr)
 			}
-			listed, bindings = current, currentBindings
+			listed, bindings, grants = current, currentBindings, currentGrants
 			continue
 		}
 		current, currentErr := client.ListProjectRoleBindings(ctx, accessgen.GenListProjectRoleBindingsClientRequest{
@@ -274,14 +282,18 @@ func bootstrapProjectOwnerPolicy(ctx context.Context, client *accessgen.GenClien
 		if currentErr != nil {
 			return 0, "", fmt.Errorf("verify bootstrap %s binding: %w", spec.role, currentErr)
 		}
-		currentBindings, currentValidationErr := validateBootstrapPolicy(current.Body, targetID, projectID, environment)
+		currentGrants, grantErr := bootstrapPolicyGrants(ctx, client, current.Body, targetID, projectID, environment)
+		if grantErr != nil {
+			return 0, "", fmt.Errorf("verify bootstrap %s grants: %w", spec.role, grantErr)
+		}
+		currentBindings, currentValidationErr := validateBootstrapPolicy(current.Body, targetID, projectID, environment, currentGrants...)
 		if currentValidationErr != nil {
 			return 0, "", fmt.Errorf("verify bootstrap %s policy: %w", spec.role, currentValidationErr)
 		}
 		if !bootstrapPrincipalHasTypedRole(currentBindings, principalID, spec.role) {
 			return 0, "", fmt.Errorf("created bootstrap %s binding is missing from current policy", spec.role)
 		}
-		listed, bindings = current, currentBindings
+		listed, bindings, grants = current, currentBindings, currentGrants
 	}
 	return listed.Body.PolicyRevision, listed.Body.PolicyDigest, nil
 }
@@ -349,7 +361,7 @@ func bootstrapPrincipalHasTypedRole(bindings []access.RoleBinding, principalID s
 	return false
 }
 
-func validateBootstrapPolicy(policy accessgen.GenSchemaRoleBindingListResponse, targetID, projectID, environment string) ([]access.RoleBinding, error) {
+func validateBootstrapPolicy(policy accessgen.GenSchemaRoleBindingListResponse, targetID, projectID, environment string, grants ...access.AuthorizationGrant) ([]access.RoleBinding, error) {
 	if policy.TargetId != targetID || policy.ProjectId != projectID || policy.Environment != environment || policy.PolicyRevision <= 0 {
 		return nil, errors.New("authorization policy scope or revision is incompatible")
 	}
@@ -370,7 +382,7 @@ func validateBootstrapPolicy(policy accessgen.GenSchemaRoleBindingListResponse, 
 		}
 		bindings = append(bindings, binding)
 	}
-	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, bindings)
+	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, bindings, grants...)
 	if err != nil {
 		return nil, err
 	}
@@ -432,4 +444,53 @@ func validateProjectClaimPublisherResponse(response accessgen.ProjectClaimPublis
 		return errors.New("Project claim publisher exchange returned an invalid expiry")
 	}
 	return nil
+}
+
+// A role listing no longer describes the entire policy once resource grants
+// exist. Fetch the matching grant revision instead of rejecting a safe replay
+// or weakening the canonical digest check. Legacy role-only targets need no
+// grants endpoint. Concurrent changes and incomplete pages fail closed.
+func bootstrapPolicyGrants(ctx context.Context, client *accessgen.GenClient, policy accessgen.GenSchemaRoleBindingListResponse, targetID, projectID, environment string) ([]access.AuthorizationGrant, error) {
+	for _, item := range policy.Items {
+		if _, err := bootstrapTypedRoleBinding(item.Id, item.Name, item.SubjectType, item.SubjectId, item.Role, item.PermissionProfile, item.Permissions, projectgraph.ResourceID(projectID)); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := validateBootstrapPolicy(policy, targetID, projectID, environment); err == nil {
+		return nil, nil
+	}
+	limit := int32(200)
+	result, err := client.ListGrants(ctx, accessgen.GenListGrantsClientRequest{Project: projectID, Params: accessgen.GenListGrantsClientParams{Limit: &limit}})
+	if err != nil {
+		return nil, err
+	}
+	current := result.Body
+	if current.TargetId != targetID || current.ProjectId != projectID || current.Environment != environment || current.PolicyRevision != policy.PolicyRevision || current.PolicyDigest != policy.PolicyDigest {
+		return nil, errors.New("grant policy does not match role policy revision")
+	}
+	if current.Page.NextCursor != nil && *current.Page.NextCursor != "" {
+		return nil, errors.New("grant policy verification is paginated")
+	}
+	grants := make([]access.AuthorizationGrant, 0, len(current.Items))
+	for _, item := range current.Items {
+		if item.PolicyRevision != policy.PolicyRevision || item.PolicyDigest != policy.PolicyDigest {
+			return nil, errors.New("grant is not bound to policy head")
+		}
+		resource, err := access.NewResourceRef(projectgraph.ResourceID(item.ResourceId), projectgraph.Kind(item.ResourceKind))
+		if err != nil {
+			return nil, err
+		}
+		grant := access.AuthorizationGrant{ID: item.Id, Resource: resource, Subject: access.SubjectRef{Kind: access.SubjectKind(item.SubjectType), ID: item.SubjectId}, Capability: access.Capability(item.Capability)}
+		if item.Name != nil {
+			grant.Name = *item.Name
+		}
+		if err := access.ValidateAuthorizationGrant(grant); err != nil {
+			return nil, err
+		}
+		grants = append(grants, grant)
+	}
+	if _, err := validateBootstrapPolicy(policy, targetID, projectID, environment, grants...); err != nil {
+		return nil, err
+	}
+	return grants, nil
 }

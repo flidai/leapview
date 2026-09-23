@@ -62,7 +62,8 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"id-token: write",
 		"Infisical/secrets-action@",
 		"scripts/deploy_demo.sh",
-		"Publish the canonical Olist showcase",
+		"Publish the selected showcase",
+		"vars.DEMO_DATASET",
 		"vars.DEMO_PROJECT_ID",
 		"vars.DEMO_PUBLISHER_PRINCIPAL_ID",
 		"vars.DEMO_RELEASE_PRINCIPAL_ID",
@@ -122,10 +123,10 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		require.NotContains(t, strings.ToLower(script), forbidden)
 	}
 	configGeneration := strings.Index(script, "go run ./internal/app/tools/configgen")
-	olistBootstrap := strings.Index(script, "go run ./internal/app/tools/bootstrapolist")
+	datasetBootstrap := strings.Index(script, `go run "$bootstrap_tool"`)
 	require.NotEqual(t, -1, configGeneration, "demo deployment must generate ignored config sources")
-	require.NotEqual(t, -1, olistBootstrap, "demo deployment must bootstrap Olist")
-	require.Less(t, configGeneration, olistBootstrap, "config generation must precede Olist compilation")
+	require.NotEqual(t, -1, datasetBootstrap, "demo deployment must bootstrap the selected dataset")
+	require.Less(t, configGeneration, datasetBootstrap, "config generation must precede dataset compilation")
 	if _, err := os.Stat(filepath.Join(root, "deploy", "demo", "ssh-host-key.sha256")); !os.IsNotExist(err) {
 		t.Fatalf("stale demo SSH identity remains tracked: %v", err)
 	}
@@ -151,6 +152,48 @@ func TestDemoHumanCredentialsStayOutOfDeploymentAutomation(t *testing.T) {
 	}
 }
 
+func TestHostedDemoRequiresPrivateAgentProviderConfiguration(t *testing.T) {
+	root := filepath.Join("..", "..")
+	runbook := read(t, filepath.Join(root, "deploy", "demo", "README.md"))
+	workflow := read(t, filepath.Join(root, ".github", "workflows", "demo-deploy.yml"))
+	rollout := read(t, filepath.Join(root, "scripts", "rollout_demo_runtime.sh"))
+	runtime := read(t, filepath.Join(root, "scripts", "rollout_demo_runtime.py"))
+	for _, required := range []string{
+		"LEAPVIEW_AGENT_API_KEY",
+		"LEAPVIEW_AGENT_BASE_URL",
+		"LEAPVIEW_AGENT_MODEL",
+		"runtime.env",
+		"scripts/rollout_demo_runtime.sh",
+		"never committed",
+	} {
+		require.Contains(t, runbook, required)
+	}
+	require.Contains(t, workflow, "secret-path: /demo/deployment")
+	require.NotContains(t, workflow, "DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}")
+	for _, required := range []string{
+		"DEEPSEEK_API_KEY",
+		"leapview-demo-agent-api-key",
+		"unset agent_api_key DEEPSEEK_API_KEY",
+	} {
+		require.Contains(t, rollout, required)
+	}
+	cleanupArmed := strings.Index(rollout, "agent_key_uploaded=true")
+	uploadAttempt := strings.Index(rollout, `printf '%s' "$agent_api_key"`)
+	require.NotEqual(t, -1, cleanupArmed)
+	require.NotEqual(t, -1, uploadAttempt)
+	require.Less(t, cleanupArmed, uploadAttempt, "temporary-key cleanup must be armed before upload")
+	for _, required := range []string{
+		"LEAPVIEW_AGENT_API_KEY",
+		"LEAPVIEW_AGENT_BASE_URL",
+		"https://api.deepseek.com",
+		"LEAPVIEW_AGENT_MODEL",
+		"deepseek-v4-flash",
+	} {
+		require.Contains(t, runtime, required)
+	}
+	require.NotContains(t, runbook, "Keep the agent unconfigured on the shared demo instance.")
+}
+
 func TestDemoDeploymentRequiresSourceRevisionBeforeChangingInfrastructure(t *testing.T) {
 	root := filepath.Join("..", "..")
 	command := exec.Command("bash", filepath.Join(root, "scripts", "deploy_demo.sh"))
@@ -170,4 +213,14 @@ func read(t *testing.T, path string) string {
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return string(body)
+}
+
+func TestDemoCFOProjectCompilesWithoutOlistResources(t *testing.T) {
+	compiled, err := projectcompiler.Compile(filepath.Join("..", "..", "dashboards", "experiments", "cfo-demo"))
+	require.NoError(t, err)
+	canonical := string(compiled.Canonical())
+	require.Contains(t, canonical, "dashboard:cfo-command-center")
+	require.Contains(t, canonical, "semantic-model:finance")
+	require.NotContains(t, canonical, "dashboard:executive-sales")
+	require.NotContains(t, canonical, `"access"`)
 }

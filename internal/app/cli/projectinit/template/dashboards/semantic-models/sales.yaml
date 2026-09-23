@@ -1,0 +1,36 @@
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata:
+  id: semantic-model:sales_metrics
+  name: sales_metrics
+  displayName: Sales
+spec:
+  datasets:
+    - name: sales
+      model: sales
+      defaultTimeDimension: sale_date
+      metrics:
+        - name: revenue
+          type: simple
+          empty: zero
+          label: Revenue
+          format: currency
+          agg: sum
+          field: amount
+        - name: sale_count
+          type: simple
+          empty: zero
+          label: Sales
+          format: integer
+          agg: count_distinct
+          field: sale_id
+      dimensions:
+        - name: sale_date
+          datatype: Date
+          label: Sale date
+          time:
+            nativeGrain: day
+            grains: [day, week, month, quarter, year]
+            calendar: iso8601
+        - {name: region, datatype: String, label: Region}
+        - {name: category, datatype: String, label: Category}

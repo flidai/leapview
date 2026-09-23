@@ -47,6 +47,7 @@ func TestCredentialsRedactsProviderAndStructuredSecrets(t *testing.T) {
 		"azure sas":         {`https://blob.example/o?sv=2024&sig=azure-sas-signature`, "azure-sas-signature"},
 		"basic auth":        {`Authorization: Basic dXNlcjpzdXBlci1zZWNyZXQ=`, "dXNlcjpzdXBlci1zZWNyZXQ="},
 		"dsn":               {`Server=db;Uid=admin;Pwd=dsn-password`, "dsn-password"},
+		"connection string": {`connection_string=Server=db;Uid=admin;Password=connection-secret`, "connection-secret"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {

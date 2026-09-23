@@ -1,8 +1,9 @@
-export function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false, admin = false, removedHistoryIDs: readonly string[] = []): string {
+export function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false, admin = false, removedHistoryIDs: readonly string[] = [], customBrand?: { name: string, logoUrl: string }): string {
   const removedHistory = new Set(removedHistoryIDs)
   const chromeConfig = compact || history || nav || admin ? {
     sidebar: {
-      productName: 'LeapView',
+      productName: customBrand?.name ?? 'LeapView',
+      productLogoUrl: customBrand?.logoUrl,
       active: admin ? 'principals' : history ? 'chat' : 'sources',
       admin,
       area: admin ? undefined : history ? 'insights' : 'develop',
@@ -37,12 +38,6 @@ export function testDocument(includeShellScript: boolean, compact = false, histo
             { id: 'profile', label: 'Profile', href: '/admin/profile', icon: 'user' },
             { id: 'security', label: 'Security & sessions', href: '/admin/security', icon: 'activity' },
             { id: 'api-tokens', label: 'API tokens', href: '/admin/api-tokens', icon: 'data' },
-          ],
-        },
-        {
-          label: 'Chats',
-          items: [
-            { id: 'archived-chats', label: 'Archived chats', href: '/admin/archived-chats', icon: 'history' },
           ],
         },
         {

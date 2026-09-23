@@ -17,7 +17,7 @@ var (
 	basicPattern          = regexp.MustCompile(`(?i)\bbasic\s+[A-Za-z0-9+/=_-]+`)
 	pemPattern            = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`)
 	awsAccessKeyPattern   = regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`)
-	credentialName        = `(?:authorization|credential|password|passwd|pwd|secret|signature|token|api[_-]?key|access[_-]?key|account[_-]?key|private[_-]?key|client[_-]?secret|shared[_-]?access[_-]?signature|sas|sig)`
+	credentialName        = `(?:authorization|credential|password|passwd|pwd|secret|signature|token|api[_-]?key|access[_-]?key|account[_-]?key|private[_-]?key|client[_-]?secret|connection[_-]?string|shared[_-]?access[_-]?signature|sas|sig)`
 	assignmentPattern     = regexp.MustCompile(`(?i)([A-Za-z0-9_.-]*` + credentialName + `[A-Za-z0-9_.-]*\s*[:=]\s*)([^\s,;]+)`)
 	jsonPattern           = regexp.MustCompile(`(?i)("[^"]*` + credentialName + `[^"]*"\s*:\s*)"(?:\\.|[^"\\])*"`)
 	queryPattern          = regexp.MustCompile(`(?i)([?&][A-Za-z0-9_.-]*` + credentialName + `[A-Za-z0-9_.-]*=)([^&#\s]+)`)

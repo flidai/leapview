@@ -1,11 +1,9 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, query, state } from 'lit/decorators.js'
-import { ArrowLeft, CalendarDays, Camera, Check, ChevronDown, KeyRound, Monitor, Terminal, Trash2, X } from 'lucide'
+import { ArrowLeft, CalendarDays, Camera, Check, ChevronDown, KeyRound, Trash2, X } from 'lucide'
 import type {
-  PersonalAuthoringSessionSignal,
   PersonalCapabilityOptionSignal,
   PersonalPermissionPairSignal,
-  PersonalSessionSignal,
   PersonalSettingsSignal,
   PersonalTokenSignal,
 } from '../../generated/signals'
@@ -16,11 +14,14 @@ import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/one-time-secret'
 import '../shared/select-menu'
 import type { SelectMenu } from '../shared/select-menu'
+import { renderSettingsActions, renderSettingsRow, renderSettingsSection, settingsLayoutStyles } from '../shared/settings-layout'
+import { submitAuthForm } from '../shared/auth-form'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import { avatarResponseError } from './avatar-response'
-import { formatDate, formatRelativeActivity, humanizeCapability, humanizeSessionKind, sessionFact } from './personal-settings-format'
+import { formatDate, humanizeCapability, humanizeSessionKind, sessionFact } from './personal-settings-format'
 import { formatPermissionPair, permissionLabelsByPair, permissionPairKey, tokenPermissionPolicies, uniquePermissionPairs } from './personal-settings-permissions'
 import type { TokenPermissionPolicy } from './personal-settings-permissions'
+import { renderAuthoringSessionRow, renderBrowserSessionRow, type PendingSessionRevocation, type SelectedSession } from './personal-settings-session-rows'
 import { personalSettingsStyles } from './personal-settings.styles'
 import './personal-settings-token-permission-picker'
 import '../shared/drawer'
@@ -40,18 +41,6 @@ type ThemeOption = {
 }
 
 type TokenExpirationPreset = '7' | '30' | '60' | '90' | 'custom'
-
-type PendingSessionRevocation = {
-  id: string
-  label: string
-  kind: 'browser' | 'authoring'
-  current?: boolean
-}
-
-type SelectedSession = {
-  id: string
-  kind: 'browser' | 'authoring'
-}
 
 
 const systemThemeOption: ThemeOption = { value: 'system', label: 'System', group: 'Automatic', tone: 'system' }
@@ -111,7 +100,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private observedProfileID = ''
   private observedTheme = ''
 
-  static styles = [settingsFieldStyles, emptyStateStyles, personalSettingsStyles]
+  static styles = [settingsFieldStyles, settingsLayoutStyles, emptyStateStyles, personalSettingsStyles]
 
   override connectedCallback(): void {
     super.connectedCallback()
@@ -190,13 +179,11 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     const profileNameDirty = profileNameDraft.trim() !== settings.profile.displayName
     const profileNameValid = profileNameDraft.trim().length > 0
     return html`
-      <div class="settings" aria-label="Personal settings">
+      <div class="settings-stack" aria-label="Personal settings">
         ${this.renderNotice(settings)}
-        ${settings.active === 'profile' ? html`<section aria-label="Profile">
-          <div class="card profile-card">
-            <div class="row profile-row">
-              <div class="settings-field"><span class="settings-label">Profile picture</span><span class="settings-description">Shown across LeapView.</span></div>
-              <div class="avatar-control">
+        ${settings.active === 'profile' ? renderSettingsSection({ label: 'Profile', appearance: 'plain', content: html`
+          ${renderSettingsSection({ label: 'Profile details', appearance: 'card', className: 'card profile-card', content: html`
+            ${renderSettingsRow({ label: 'Profile picture', layout: 'action', className: 'row profile-row', description: 'Shown across LeapView.', control: html`<div class="avatar-control">
                 <button
                   class="avatar-trigger"
                   type="button"
@@ -229,39 +216,25 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                     ` : nothing}
                   </div>
                 ` : nothing}
-              </div>
-            </div>
-            <div class="row profile-row"><div class="settings-field"><span class="settings-label">Email</span><span class="settings-description">Managed by your identity provider.</span></div><span class="settings-value profile-email">${settings.profile.email || 'Not set'}</span></div>
-            <div class="row profile-row">
-              <div class="settings-field"><label class="settings-label" for="personal-display-name">Display name</label><span class="settings-description">How your name appears to collaborators.</span></div>
-              <form class="profile-name-form" @submit=${this.saveProfile}>
-                <div class="profile-name-control">
-                  <input id="personal-display-name" .value=${profileNameDraft} ?disabled=${!settings.profile.canEditDisplayName} @input=${this.onProfileNameInput}>
-                  ${profileNameDirty ? html`<button class="primary" data-profile-save type="submit" ?disabled=${!settings.profile.canEditDisplayName || !profileNameValid}>Save</button>` : nothing}
-                </div>
-              </form>
-            </div>
-            <div class="row profile-row">
-              <div class="settings-field"><label class="settings-label" for="personal-title">Title</label><span class="settings-description">Your job title or role.</span></div>
-              <input id="personal-title" class="profile-local-input profile-title-input" maxlength="120" placeholder="Software engineer" .value=${this.profileTitle} @input=${this.onProfileTitleInput}>
-            </div>
-            <div class="row profile-row">
-              <div class="settings-field"><label class="settings-label" for="personal-username">Username</label><span class="settings-description">One word, like a nickname or first name.</span></div>
-              <input id="personal-username" class="profile-local-input profile-username-input" maxlength="64" autocomplete="off" .value=${this.profileUsername} @input=${this.onProfileUsernameInput}>
-            </div>
-            <div class="row profile-row">
-              <div class="settings-field"><span class="settings-label" id="personal-theme-label">Theme</span><span class="settings-description">Choose how LeapView appears on your devices.</span></div>
-              ${this.renderThemePicker(this.selectedTheme || settings.profile.theme || 'system')}
-            </div>
-          </div>
-          <section class="account-section" aria-label="Account">
-            <div class="security-section-heading-copy"><h2>Account</h2><p class="settings-description">Use this ID when support or administration needs to identify your account.</p></div>
-            <div class="card account-card">
-              <div class="row account-row"><div class="settings-field"><span class="settings-label">Account ID</span><span class="settings-description">Your LeapView principal identifier.</span></div><code class="account-id">${settings.profile.id}</code></div>
-              <div class="row account-row"><div class="settings-field"><span class="settings-label">Sign out</span><span class="settings-description">End this browser session and return to sign-in.</span></div><button type="button" class="danger" data-sign-out @click=${this.signOutCurrentSession}>Sign out</button></div>
-            </div>
-          </section>
-        </section>` : nothing}
+              </div>` })}
+            ${renderSettingsRow({ label: 'Email', layout: 'action', className: 'row profile-row', description: 'Managed by your identity provider.', control: html`<span class="settings-value profile-email">${settings.profile.email || 'Not set'}</span>` })}
+            ${renderSettingsRow({ label: 'Display name', layout: 'action', className: 'row profile-row', controlId: 'personal-display-name', description: 'How your name appears to collaborators.', control: html`<form class="profile-name-form" @submit=${this.saveProfile}>
+                ${renderSettingsActions(html`
+                  <input class="settings-input" id="personal-display-name" .value=${profileNameDraft} ?disabled=${!settings.profile.canEditDisplayName} @input=${this.onProfileNameInput}>
+                  ${profileNameDirty ? html`<button class="settings-button primary" data-profile-save type="submit" ?disabled=${!settings.profile.canEditDisplayName || !profileNameValid}>Save</button>` : nothing}
+                `, { className: 'profile-name-control' })}
+              </form>` })}
+            ${renderSettingsRow({ label: 'Title', layout: 'action', className: 'row profile-row', controlId: 'personal-title', description: 'Your job title or role.', control: html`<input id="personal-title" class="settings-input profile-local-input profile-title-input" maxlength="120" placeholder="Software engineer" .value=${this.profileTitle} @input=${this.onProfileTitleInput}>` })}
+            ${renderSettingsRow({ label: 'Username', layout: 'action', className: 'row profile-row', controlId: 'personal-username', description: 'One word, like a nickname or first name.', control: html`<input id="personal-username" class="settings-input profile-local-input profile-username-input" maxlength="64" autocomplete="off" .value=${this.profileUsername} @input=${this.onProfileUsernameInput}>` })}
+            ${renderSettingsRow({ label: 'Theme', layout: 'action', className: 'row profile-row', labelId: 'personal-theme-label', description: 'Choose how LeapView appears on your devices.', control: html`${this.renderThemePicker(this.selectedTheme || settings.profile.theme || 'system')}` })}
+          ` })}
+          ${renderSettingsSection({ label: 'Account', heading: 'Account', description: 'Use this ID when support or administration needs to identify your account.', appearance: 'plain', className: 'account-section', content: html`
+            ${renderSettingsSection({ label: 'Account actions', appearance: 'card', className: 'card account-card', content: html`
+              ${renderSettingsRow({ label: 'Account ID', layout: 'action', className: 'row account-row', description: 'Your LeapView principal identifier.', control: html`<code class="account-id">${settings.profile.id}</code>` })}
+              ${renderSettingsRow({ label: 'Sign out', layout: 'action', className: 'row account-row', description: 'End this browser session and return to sign-in.', control: html`<button type="button" class="settings-button danger" data-sign-out @click=${this.signOutCurrentSession}>Sign out</button>` })}
+            ` })}
+          ` })}
+        ` }) : nothing}
         ${settings.active === 'security' ? this.renderSecurity(settings) : nothing}
         ${settings.active === 'api-tokens' ? this.renderTokens(settings.tokens) : nothing}
       </div>
@@ -331,10 +304,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
 
   private renderSecurity(settings: PersonalSettingsSignal) {
     const browserSessions = settings.security.sessions.filter((session) => !session.revokedAt)
-    const currentSessions = browserSessions.filter((session) => session.current)
-    const otherSessions = browserSessions.filter((session) => !session.current)
     const authoringSessions = settings.security.authoringSessions.filter((session) => !session.revokedAt)
-    const activeCount = browserSessions.length + authoringSessions.length
     const canChangePassword = settings.security.localPasswordEnabled && settings.profile.hasLocalPassword
     return html`
       <section class="security-page" aria-label="Security and sessions">
@@ -351,15 +321,17 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
         <section class="security-section" aria-label="Active sessions">
           <div class="security-section-heading">
             <div class="security-section-heading-copy"><h2>Active sessions</h2><p class="settings-description">Review devices and scoped clients that can access your account.</p></div>
-            <div class="security-session-actions"><span class="security-session-count">${activeCount} active ${activeCount === 1 ? 'session' : 'sessions'}</span><button type="button" class="danger" data-logout-all @click=${this.openLogoutAllDialog}>Log out all browser and desktop sessions</button></div>
+            ${browserSessions.length ? html`<button type="button" data-logout-all @click=${this.openLogoutAllDialog}>Log out all</button>` : nothing}
           </div>
-          <div class="security-session-list">
-            <div class="security-session-group" aria-label="Current session">
-              <div class="security-session-group-label">Current</div>
-              ${currentSessions.length ? currentSessions.map((session) => this.renderSession(session)) : html`<div class="security-session security-empty">Current session information is unavailable.</div>`}
-            </div>
-            ${otherSessions.length ? html`<div class="security-session-group" aria-label="Other devices"><div class="security-session-group-label">Other devices</div>${otherSessions.map((session) => this.renderSession(session))}</div>` : nothing}
-            ${authoringSessions.length ? html`<div class="security-session-group" aria-label="CLI and authoring"><div class="security-session-group-label">CLI &amp; authoring</div>${authoringSessions.map((session) => this.renderAuthoringSession(session))}</div>` : nothing}
+          <div class="security-session-table-wrap">
+            <table class="security-session-table">
+              <thead><tr><th>Device</th><th>Access</th><th>Created</th><th>Updated</th><th aria-label="Actions"></th></tr></thead>
+              <tbody>
+                ${browserSessions.map((session) => renderBrowserSessionRow(session, (selected) => { this.selectedSession = selected }, (pending) => this.requestSessionRevocation(pending)))}
+                ${authoringSessions.map((session) => renderAuthoringSessionRow(session, (selected) => { this.selectedSession = selected }, (pending) => this.requestSessionRevocation(pending)))}
+                ${browserSessions.length === 0 && authoringSessions.length === 0 ? html`<tr><td class="security-empty" colspan="5">No active sessions.</td></tr>` : nothing}
+              </tbody>
+            </table>
           </div>
         </section>
         ${this.passwordDialogOpen ? this.renderPasswordDialog() : nothing}
@@ -368,30 +340,6 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
         ${this.pendingSessionRevocation ? this.renderSessionRevokeConfirmation(this.pendingSessionRevocation) : nothing}
       </section>
     `
-  }
-
-  private renderSession(session: PersonalSessionSignal) {
-    const label = session.clientLabel || humanizeSessionKind(session.kind)
-    return html`<div class="security-session">
-      <span class="security-session-icon" aria-hidden="true">${lucideIcon(Monitor, { size: 16, strokeWidth: 1.75 })}</span>
-      <button class="security-session-main" type="button" aria-label=${`View details for ${label}`} @click=${() => { this.selectedSession = { id: session.id, kind: 'browser' } }}>
-        <div class="security-session-title"><strong>${label}</strong>${session.current ? html`<span class="security-badge">This device</span>` : nothing}</div>
-        <span class="security-session-meta">${session.current ? 'Active now' : `Last active ${formatRelativeActivity(session.lastSeenAt)}`}</span>
-      </button>
-      <button class="session-action" type="button" @click=${() => this.requestSessionRevocation({ id: session.id, label, kind: 'browser', current: session.current })}>${session.current ? 'Sign out' : 'Revoke'}</button>
-    </div>`
-  }
-
-  private renderAuthoringSession(session: PersonalAuthoringSessionSignal) {
-    const label = session.clientId || humanizeSessionKind(session.kind)
-    return html`<div class="security-session">
-      <span class="security-session-icon" aria-hidden="true">${lucideIcon(Terminal, { size: 16, strokeWidth: 1.75 })}</span>
-      <button class="security-session-main" type="button" aria-label=${`View details for ${label}`} @click=${() => { this.selectedSession = { id: session.id, kind: 'authoring' } }}>
-        <div class="security-session-title"><strong>${label}</strong></div>
-        <span class="security-session-meta">${session.projectId || 'All available projects'} · ${session.permissions.map((permission) => permission.action.replaceAll('.', ' ')).join(', ') || 'Scoped access'} · ${session.lastUsedAt ? `Last active ${formatRelativeActivity(session.lastUsedAt)}` : 'Never used'}</span>
-      </button>
-      <button class="session-action" type="button" @click=${() => this.requestSessionRevocation({ id: session.id, label, kind: 'authoring' })}>Revoke</button>
-    </div>`
   }
 
   private renderPasswordDialog() {
@@ -760,31 +708,15 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (!session) return
     this.pendingSessionRevocation = null
     this.selectedSession = null
-    if (session.current) this.submitAuthForm('/auth/logout')
+    if (session.current) submitAuthForm('/auth/logout')
     else if (session.kind === 'authoring') this.revokeAuthoringSession(session.id)
     else this.revokeSession(session.id)
   }
-  private signOutCurrentSession = (): void => { this.submitAuthForm('/auth/logout') }
+  private signOutCurrentSession = (): void => { submitAuthForm('/auth/logout') }
   private openLogoutAllDialog = (): void => { this.logoutAllDialogOpen = true }
   private closeLogoutAllDialog = (event?: Event): void => { event?.preventDefault(); this.logoutAllDialogOpen = false }
   private closeLogoutAllOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.closeLogoutAllDialog(event) }
-  private confirmLogoutAll = (): void => { this.logoutAllDialogOpen = false; this.submitAuthForm('/auth/logout-all') }
-  private submitAuthForm = (action: string): void => {
-    const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content.trim() ?? ''
-    const form = document.createElement('form')
-    form.method = 'POST'
-    form.action = action
-    form.style.display = 'none'
-    if (token) {
-      const input = document.createElement('input')
-      input.type = 'hidden'
-      input.name = 'gorilla.csrf.Token'
-      input.value = token
-      form.append(input)
-    }
-    document.body.append(form)
-    form.submit()
-  }
+  private confirmLogoutAll = (): void => { this.logoutAllDialogOpen = false; submitAuthForm('/auth/logout-all') }
   private revokeSession = (sessionId: string): void => { this.send('lv-personal-session-command', { action: 'revoke', sessionId }) }
   private revokeAuthoringSession = (sessionId: string): void => { this.send('lv-personal-authoring-session-command', { action: 'revoke', sessionId }) }
   private toggleAvatarMenu = (): void => {

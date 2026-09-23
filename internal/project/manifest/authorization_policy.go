@@ -30,7 +30,6 @@ func AccessPolicyFromAuthorizationPolicy(policy access.AuthorizationPolicy) (Acc
 				return AccessPolicy{}, fmt.Errorf("target authorization role binding %q: %w", binding.ID, err)
 			}
 		}
-
 		subject := Subject{Kind: string(binding.Subject.Kind)}
 		switch binding.Subject.Kind {
 		case access.SubjectKindPrincipal:
@@ -52,6 +51,22 @@ func AccessPolicyFromAuthorizationPolicy(policy access.AuthorizationPolicy) (Acc
 			Permissions:       access.ClonePermissionPairs(binding.Permissions),
 			PermissionRole:    binding.PermissionRole,
 		}
+	}
+	result.Grants = make(map[string]Grant, len(policy.Grants))
+	for _, grant := range policy.Grants {
+		if err := access.ValidateAuthorizationGrant(grant); err != nil {
+			return AccessPolicy{}, err
+		}
+		if _, ok := result.Grants[grant.ID]; ok {
+			return AccessPolicy{}, fmt.Errorf("duplicate grant %q", grant.ID)
+		}
+		subject := Subject{Kind: string(grant.Subject.Kind)}
+		if grant.Subject.Kind == access.SubjectKindPrincipal {
+			subject.PrincipalID = grant.Subject.ID
+		} else {
+			subject.Group = grant.Subject.ID
+		}
+		result.Grants[grant.ID] = Grant{ID: grant.ID, Name: grant.Name, Subject: subject, Object: SecurableRef{Kind: string(grant.Resource.Kind()), ID: string(grant.Resource.ID())}, Capability: string(grant.Capability)}
 	}
 	return result, nil
 }

@@ -243,6 +243,23 @@ tasks:
     cmds:
       - go test ./internal/app/cli/composectl -run '^TestQualificationNativePostgresTopologyContainerBackedContract$' -count=1 -v
 
+  test:qualification:authoring-package:
+    desc: Verify the released authoring archive qualification contract without Docker
+    cmds:
+      - go test ./deploy/local -run '^TestReleasedAuthoringQualification' -count=1
+
+  qa:authoring-package:
+    desc: Qualify an exact released authoring archive and retain bounded evidence
+    requires:
+      vars: [LEAPVIEW_AUTHORING_ARCHIVE]
+    cmds:
+      - >-
+        ./deploy/local/qualification/qualify.sh
+        --archive "{{.LEAPVIEW_AUTHORING_ARCHIVE}}"
+        --evidence-dir "{{.LEAPVIEW_AUTHORING_EVIDENCE_DIR | default .ROOT_DIR}}/.tmp/qualification/authoring-package"
+        {{if .LEAPVIEW_AUTHORING_REQUIRED}}--required{{end}}
+        {{if .LEAPVIEW_AUTHORING_RUN_LIFECYCLE}}--run-lifecycle --docker-host "{{.LEAPVIEW_AUTHORING_DOCKER_HOST}}"{{end}}
+
   test:qualification:postgres-ha:
     desc: Run the bounded disposable same-host PostgreSQL 18 Patroni HA qualification
     cmds:
@@ -368,6 +385,7 @@ tasks:
       - bun run test:ui-command-boundaries
       - bun run test:command-failure
       - bun run test:app-shell
+      - bun run test:settings
       - bun run typecheck:app
       - bun run typecheck:contracts
       - bun run typecheck:tests
@@ -1220,6 +1238,7 @@ tasks:
       - cmd/leapview/**/*.go
       - internal/app/cli/**/*.go
       - internal/project/developmentprofile/**/*.go
+      - internal/project/developmentinput/**/*.go
       - api/data-resources/**/*.tsp
       - internal/project/contracts/**/*.go
       - internal/project/contracts/gen/**/*.json
@@ -1231,6 +1250,7 @@ tasks:
       - dashboards/**/*.yaml
     generates:
       - schemas/json/analytics-development-profile.schema.json
+      - schemas/json/analytics-development-inputs.schema.json
       - schemas/json/connection.schema.json
       - schemas/json/source.schema.json
       - schemas/json/model.schema.json
@@ -1380,6 +1400,7 @@ tasks:
     requires:
       vars: [IMAGE]
     cmds:
+      - task: db:generate
       - task: api:generate
       - mkdir -p {{.ROOT_DIR}}/.tmp/qualification/tmp
       - >-
@@ -1430,6 +1451,72 @@ tasks:
         ./internal/refresh/postgres
         -run '^TestFAI1001PostgresRecoveryLedgerQualification$'
         -count=1 -timeout=15m -v
+
+  qualify:ubdr:migration-interruption:
+    desc: Qualify transition interruption, stopped-target restart, fencing, and PostgreSQL-ledger resume
+    deps:
+      - db:generate
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+      LEAPVIEW_TEST_FAI519_INTERRUPTION_EVIDENCE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr/migration-interruption"
+    cmds:
+      - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr/migration-interruption"
+      - >-
+        go test -race -tags='duckdb_arrow fai518qualification fai519qualification'
+        ./internal/recoveryset/postgres
+        -run '^TestFAI519TransitionAndStoppedTargetInterruptionQualification$'
+        -count=1 -timeout=30m -v
+
+  qualify:ubdr:provider-restore:
+    desc: Qualify coordinated provider restoration and its replacement-host handoff
+    deps:
+      - db:generate
+    vars:
+      PROVIDER_HOST:
+        sh: ip route get 1.1.1.1 | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+      LEAPVIEW_TEST_FAI981_PROVIDER_RESTORE_EVIDENCE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr/provider-restore"
+      LEAPVIEW_TEST_FAI981_HANDOFF_PRIVATE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr-private/provider-restore"
+      LEAPVIEW_TEST_FAI981_RESOURCE_MANIFEST: "{{.ROOT_DIR}}/.tmp/qualification/ubdr-resources/provider-restore.json"
+      LEAPVIEW_TEST_FAI981_HANDOFF_IMAGE: "ghcr.io/flidai/leapview@sha256:5b0cec900c5182f42654d07e58ca4ea9911ab1200f410670628601ab66085b85"
+      LEAPVIEW_TEST_FAI981_HANDOFF_REVISION: "69652fb20101de80497cbf47ecfb402f700d6552"
+      LEAPVIEW_TEST_FAI981_PROVIDER_HOST: "{{.PROVIDER_HOST}}"
+    cmds:
+      - task: qualify:ubdr:provider-restore:cleanup
+      - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr/provider-restore"
+      - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr-private/provider-restore"
+      - >-
+        go test -race -tags='fai981qualification'
+        ./internal/app/providerrestore
+        -run '^TestFAI981CoordinatedProviderRestoreQualification$'
+        -count=1 -timeout=15m -v
+      - >-
+        go test -race -tags='fai981qualification'
+        ./internal/app/providerrestore
+        -run '^TestFAI981DownstreamHandoffSurvivesProducerExit$'
+        -count=1 -timeout=10m -v
+
+  qualify:ubdr:provider-restore:cleanup:
+    desc: Remove provider resources retained for the FAI-981 downstream handoff
+    vars:
+      MANIFEST: "{{.ROOT_DIR}}/.tmp/qualification/ubdr-resources/provider-restore.json"
+    cmds:
+      - >-
+        test ! -f "{{.MANIFEST}}" ||
+        jq -r '.resources[] | select(.kind == "container") | .id' "{{.MANIFEST}}" |
+        while IFS= read -r id; do
+        if docker inspect "$id" >/dev/null 2>&1; then docker rm -f "$id"; fi;
+        done
+      - >-
+        test ! -f "{{.MANIFEST}}" ||
+        jq -r '.resources[] | select(.kind == "network") | .id' "{{.MANIFEST}}" |
+        while IFS= read -r id; do
+        if docker network inspect "$id" >/dev/null 2>&1; then docker network rm "$id"; fi;
+        done
+      - rm -f "{{.MANIFEST}}"
+      - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr-private/provider-restore"
 
   qualify:ubdr:release-transition-preflight:
     desc: Qualify authoritative PostgreSQL-era transition resolution without executing a transition

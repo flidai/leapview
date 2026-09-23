@@ -41,6 +41,69 @@ func TestRecoveryLedgerPostgresDurabilityFencingPublicationAndRetention(t *testi
 	}
 }
 
+func TestRecoveryLedgerCheckpointPointerIsFencedAcrossSuccessorClaim(t *testing.T) {
+	ledger := NewRecoveryLedger(recoveryLedgerRuntimePool(t))
+	base := time.Date(2026, 9, 21, 16, 0, 0, 0, time.UTC)
+	definition := recovery.Definition{
+		ScheduleID: "fai-981-checkpoint-fence", Scenario: "provider-restore", Operation: recovery.OperationRestore,
+		PolicyVersion: "ubdr-v1", PolicySHA256: repeatHex("a"), TargetScope: "target-provider-restore",
+		ArtifactIdentity: "ghcr.io/flidai/leapview@sha256:" + repeatHex("b"), Cron: "@daily", Timezone: "UTC",
+		StaleAfter: 24 * time.Hour, Enabled: true,
+	}
+	if err := ledger.ReconcileSchedule(t.Context(), definition, base.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := recovery.ScheduleRevisionID(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := recovery.EnqueueInput{ScheduleID: definition.ScheduleID, ScheduleRevision: revision, Scenario: definition.Scenario, Operation: definition.Operation, PolicyVersion: definition.PolicyVersion, PolicySHA256: definition.PolicySHA256, TargetScope: definition.TargetScope, ArtifactIdentity: definition.ArtifactIdentity, PlannedAt: base, StaleAfter: definition.StaleAfter}
+	enqueued, created, err := ledger.Enqueue(t.Context(), input, base)
+	if err != nil || !created {
+		t.Fatalf("enqueue: created=%v err=%v", created, err)
+	}
+	first, ok, err := ledger.ClaimNext(t.Context(), recovery.ClaimInput{WorkerID: "provider-worker-first", Actor: "qualification", Now: base, Lease: time.Minute})
+	if err != nil || !ok || first.ID != enqueued.ID {
+		t.Fatalf("first claim=%#v ok=%v err=%v", first, ok, err)
+	}
+	if err := ledger.Start(t.Context(), first.ID, first.Fence, base.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	firstReference := recovery.EvidenceReference{Kind: "provider-restore", URI: "file:///evidence/first.json", SHA256: repeatHex("c")}
+	if err := ledger.RecordCheckpoint(t.Context(), first.ID, first.Fence, base.Add(2*time.Second), firstReference); err != nil {
+		t.Fatal(err)
+	}
+	successor, ok, err := ledger.ClaimNext(t.Context(), recovery.ClaimInput{WorkerID: "provider-worker-successor", Actor: "qualification", Now: base.Add(2 * time.Minute), Lease: time.Minute})
+	if err != nil || !ok || successor.ID != first.ID || successor.Fence.Generation != first.Fence.Generation+1 {
+		t.Fatalf("successor claim=%#v ok=%v err=%v", successor, ok, err)
+	}
+	staleReference := recovery.EvidenceReference{Kind: "provider-restore", URI: "file:///evidence/stale.json", SHA256: repeatHex("d")}
+	if err := ledger.RecordCheckpoint(t.Context(), first.ID, first.Fence, base.Add(2*time.Minute+time.Second), staleReference); !errors.Is(err, recovery.ErrFenced) {
+		t.Fatalf("stale checkpoint error = %v", err)
+	}
+	readback, err := ledger.Occurrence(t.Context(), first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readback.Evidence) != 1 || readback.Evidence[0] != firstReference {
+		t.Fatalf("stale checkpoint replaced authoritative pointer: %#v", readback.Evidence)
+	}
+	if err := ledger.Start(t.Context(), successor.ID, successor.Fence, base.Add(2*time.Minute+2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	successorReference := recovery.EvidenceReference{Kind: "provider-restore", URI: "file:///evidence/successor.json", SHA256: repeatHex("e")}
+	if err := ledger.RecordCheckpoint(t.Context(), successor.ID, successor.Fence, base.Add(2*time.Minute+3*time.Second), successorReference); err != nil {
+		t.Fatal(err)
+	}
+	readback, err = ledger.Occurrence(t.Context(), successor.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readback.Evidence) != 1 || readback.Evidence[0] != successorReference {
+		t.Fatalf("successor checkpoint was not persisted: %#v", readback.Evidence)
+	}
+}
+
 func recoveryLedgerRuntimePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	database, _ := refreshTestDB(t)

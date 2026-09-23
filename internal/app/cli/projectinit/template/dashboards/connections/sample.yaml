@@ -1,0 +1,11 @@
+apiVersion: leapview.dev/v1
+kind: Connection
+metadata:
+  id: connection:sample
+  name: sample
+  displayName: Synthetic sample files
+spec:
+  type: managed
+  defaults:
+    csv:
+      header: true

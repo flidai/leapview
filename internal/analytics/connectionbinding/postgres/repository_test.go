@@ -17,6 +17,11 @@ import (
 )
 
 func connectionBindingDB(t *testing.T) *pgxpool.Pool {
+	admin, _ := connectionBindingDatabases(t)
+	return admin
+}
+
+func connectionBindingDatabases(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 	t.Helper()
 	h := postgrestest.Start(t)
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "binding-runtime", Login: true})
@@ -44,7 +49,15 @@ func connectionBindingDB(t *testing.T) *pgxpool.Pool {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	return p
+	runtimeDB, err := pgxpool.New(t.Context(), database.URL(runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtimeDB.Close)
+	if err := runtimeDB.Ping(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return p, runtimeDB
 }
 
 func testBinding(t *testing.T) connectionbinding.TargetBinding {

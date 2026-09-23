@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,15 +23,13 @@ import (
 )
 
 // Initialize performs bootstrap through the native PostgreSQL access
-// authority. Non-production targets do not expose this operation.
+// authority. Production and validated loopback local-development targets
+// expose this operation.
 func (o Operations) Initialize(ctx context.Context, request adminoffline.InitializeRequest, out io.Writer) error {
 	deps := o.Dependencies.withDefaults()
 	cfg, err := deps.LoadConfig()
 	if err != nil {
 		return err
-	}
-	if !cfg.Production {
-		return ErrNativeAdminUnavailable
 	}
 	// Match the offline service's admission checks before opening a native
 	// connection or taking the instance lock. A nil writer must not allow a
@@ -40,7 +40,7 @@ func (o Operations) Initialize(ctx context.Context, request adminoffline.Initial
 	if out == nil {
 		return errors.New("admin initialize output is required")
 	}
-	accessConfig, err := productionAccessConfig(cfg)
+	accessConfig, err := accessConfigForAdmin(cfg)
 	if err != nil {
 		return err
 	}
@@ -94,10 +94,7 @@ func (o Operations) AcknowledgeInitialCredentials(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !cfg.Production {
-		return ErrNativeAdminUnavailable
-	}
-	accessConfig, err := productionAccessConfig(cfg)
+	accessConfig, err := accessConfigForAdmin(cfg)
 	if err != nil {
 		return err
 	}
@@ -167,6 +164,102 @@ func accessFingerprintKey(cfg config.Config) ([]byte, error) {
 		return nil, errors.New("PostgreSQL access fingerprint key is required")
 	}
 	return key, nil
+}
+
+func accessConfigForAdmin(cfg config.Config) (platformpostgres.Config, error) {
+	if cfg.Production {
+		return productionAccessConfig(cfg)
+	}
+	if err := validateLocalAdminConfiguration(cfg); err != nil {
+		return platformpostgres.Config{}, fmt.Errorf("%w: %v", ErrNativeAdminUnavailable, err)
+	}
+	accessConfig := cfg.PostgresControlPlaneConfig().Runtime
+	if err := accessConfig.Validate(); err != nil {
+		return platformpostgres.Config{}, fmt.Errorf("invalid PostgreSQL control runtime configuration: %w", err)
+	}
+	return accessConfig, nil
+}
+
+func validateLocalAdminConfiguration(cfg config.Config) error {
+	if !cfg.LocalAuth {
+		return errors.New("local PostgreSQL admin initialization requires LEAPVIEW_LOCAL_AUTH=true")
+	}
+	if cfg.DevAuthBypass {
+		return errors.New("local PostgreSQL admin initialization requires LEAPVIEW_DEV_AUTH_BYPASS=false")
+	}
+
+	publicURL := strings.TrimSpace(cfg.PublicURL)
+	parsed, err := url.Parse(publicURL)
+	if err != nil || parsed == nil || parsed.Scheme == "" || parsed.Hostname() == "" || parsed.User != nil || parsed.Opaque != "" || (parsed.Path != "" && parsed.Path != "/") || parsed.RawPath != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("local PostgreSQL admin initialization requires a loopback LEAPVIEW_PUBLIC_URL origin")
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+		return errors.New("local PostgreSQL admin initialization requires a loopback LEAPVIEW_PUBLIC_URL origin")
+	}
+	publicHost := normalizeLocalHost(parsed.Hostname())
+	if !isLocalAdminLoopbackHost(publicHost) {
+		return errors.New("local PostgreSQL admin initialization requires a loopback LEAPVIEW_PUBLIC_URL origin")
+	}
+
+	hosts, err := cfg.AllowedHostList()
+	if err != nil {
+		return fmt.Errorf("invalid LEAPVIEW_ALLOWED_HOSTS for local PostgreSQL admin initialization: %w", err)
+	}
+	if len(hosts) == 0 {
+		return errors.New("local PostgreSQL admin initialization requires loopback LEAPVIEW_ALLOWED_HOSTS")
+	}
+	publicHostAllowed := false
+	for _, host := range hosts {
+		host = normalizeLocalHost(host)
+		if !isLocalAdminLoopbackHost(host) {
+			return errors.New("local PostgreSQL admin initialization requires loopback LEAPVIEW_ALLOWED_HOSTS")
+		}
+		if host == publicHost {
+			publicHostAllowed = true
+		}
+	}
+	if !publicHostAllowed {
+		return errors.New("local PostgreSQL admin initialization requires LEAPVIEW_ALLOWED_HOSTS to include the public URL host")
+	}
+	for _, connection := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "LEAPVIEW_POSTGRES_CONTROL_URL", raw: cfg.PostgresControlURL},
+		{name: "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL", raw: cfg.PostgresControlMigratorURL},
+		{name: "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL", raw: cfg.PostgresControlMaintenanceURL},
+		{name: "LEAPVIEW_POSTGRES_CONTROL_READONLY_URL", raw: cfg.PostgresControlReadonlyURL},
+		{name: "LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL", raw: cfg.PostgresControlUpgradeCoordinatorURL},
+		{name: "LEAPVIEW_POSTGRES_DUCKLAKE_URL", raw: cfg.PostgresDuckLakeURL},
+		{name: "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL", raw: cfg.PostgresDuckLakeMigratorURL},
+		{name: "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL", raw: cfg.PostgresDuckLakeMaintenanceURL},
+	} {
+		if strings.TrimSpace(connection.raw) == "" {
+			continue
+		}
+		parsed, err := url.Parse(strings.TrimSpace(connection.raw))
+		if err != nil || parsed == nil || !isLocalAdminLoopbackHost(parsed.Hostname()) {
+			return fmt.Errorf("local PostgreSQL admin initialization requires %s to target loopback", connection.name)
+		}
+	}
+
+	if err := cfg.ValidatePostgresDevelopment(); err != nil {
+		return fmt.Errorf("validate development PostgreSQL admin configuration: %w", err)
+	}
+	return nil
+}
+
+func normalizeLocalHost(host string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+}
+
+func isLocalAdminLoopbackHost(host string) bool {
+	host = normalizeLocalHost(host)
+	if host == "localhost" {
+		return true
+	}
+	parsed := net.ParseIP(host)
+	return parsed != nil && parsed.IsLoopback()
 }
 
 func productionAccessConfig(cfg config.Config) (platformpostgres.Config, error) {

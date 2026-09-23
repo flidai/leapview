@@ -1,6 +1,7 @@
 import type {
   DashboardFilterState,
   DashboardPageSignal,
+  DashboardStatus,
 } from '../../generated/signals'
 import type { VisualizationSpatialSelectionState } from '../../generated/visualization'
 import type { CanonicalInteractionSelection } from './interaction-selection'
@@ -8,6 +9,23 @@ import type { CanonicalInteractionSelection } from './interaction-selection'
 export type DashboardAgentStoredState = {
   open: boolean
   conversationId: string
+}
+
+export type DashboardRefreshProgress = {
+  active: boolean
+  complete: boolean
+  generation: number
+  percent: number
+}
+
+export function dashboardRefreshProgress(status: DashboardStatus): DashboardRefreshProgress {
+  const percent = status.progressPercent ?? (status.loading ? 0 : 100)
+  return {
+    active: status.loading,
+    complete: !status.loading && percent === 100,
+    generation: status.generation,
+    percent,
+  }
 }
 
 const emptyAgentState: DashboardAgentStoredState = { open: false, conversationId: '' }

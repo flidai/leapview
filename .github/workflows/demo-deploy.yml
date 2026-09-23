@@ -32,6 +32,7 @@ jobs:
        github.event.workflow_run.head_branch == 'main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action == 'publish')
     name: Resolve demo publication source
+    environment: leapview-demo
     runs-on: ubuntu-24.04
     outputs:
       publish: ${{ steps.resolve.outputs.publish }}
@@ -46,17 +47,19 @@ jobs:
         id: resolve
         env:
           EVENT_NAME: ${{ github.event_name }}
+          DEMO_RUNTIME_REVISION: ${{ vars.DEMO_RUNTIME_REVISION }}
         run: |
           set -euo pipefail
           extract_revision() {
             sed -nE "s/^REVISION = '([0-9a-f]{40})'$/\1/p"
           }
-          revision="$(extract_revision < scripts/rollout_demo_runtime.py)"
+          tracked_revision="$(extract_revision < scripts/rollout_demo_runtime.py)"
+          revision="${DEMO_RUNTIME_REVISION:-$tracked_revision}"
           [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
           publish=false
           if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
             publish=true
-          else
+          elif [[ -z "$DEMO_RUNTIME_REVISION" ]]; then
             previous_revision="$(git show HEAD^:scripts/rollout_demo_runtime.py | extract_revision)"
             [[ "$previous_revision" =~ ^[0-9a-f]{40}$ ]]
             if [[ "$revision" != "$previous_revision" ]]; then
@@ -66,11 +69,11 @@ jobs:
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
           if [[ "$publish" == false ]]; then
-            echo "Skipping content publication because the pinned demo runtime did not change." >> "$GITHUB_STEP_SUMMARY"
+            echo "Skipping automatic publication; operator-selected runtimes publish through workflow dispatch." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   deploy:
-    name: Deploy Olist showcase
+    name: Deploy selected showcase
     needs: publication-source
     if: needs.publication-source.outputs.publish == 'true'
     runs-on: ubuntu-24.04
@@ -78,6 +81,7 @@ jobs:
     environment: leapview-demo
     env:
       SOURCE_REVISION: ${{ needs.publication-source.outputs.revision }}
+      DEMO_DATASET: ${{ vars.DEMO_DATASET || 'olist' }}
 
     steps:
       - name: Check out the qualified revision
@@ -85,22 +89,39 @@ jobs:
         with:
           ref: ${{ env.SOURCE_REVISION }}
 
+      - name: Validate pinned dataset support
+        run: |
+          set -euo pipefail
+          case "$DEMO_DATASET" in
+            olist) ;; # Legacy pinned publishers support Olist without a manifest.
+            cfo)
+              if ! grep -Fxq -- cfo deploy/demo/datasets.txt 2>/dev/null; then
+                echo "Pinned revision does not support CFO publication; qualify and deploy a revision with CFO publisher support first." >&2
+                exit 64
+              fi
+              ;;
+            *)
+              echo "DEMO_DATASET must be olist or cfo" >&2
+              exit 64
+              ;;
+          esac
+
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
           browser: "false"
 
-      - name: Restore the pinned Olist dataset cache
+      - name: Restore the pinned demo dataset cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/leapview
-          key: olist-v2-967e41e04fc306fe604e2a693f488995a8b41e5047418f8a5c8e4abd6deca784
+          key: demo-datasets-v1-olist-967e41e0-finance-c3f17156
 
       - name: Prepare generated code
         run: task generate
 
       - name: Fetch demo deployment credentials
-        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
@@ -110,7 +131,7 @@ jobs:
           env-slug: prod
           secret-path: /demo/deployment
 
-      - name: Publish the canonical Olist showcase
+      - name: Publish the selected showcase
         env:
           DEMO_SOURCE_REVISION: ${{ env.SOURCE_REVISION }}
           DEMO_TARGET: https://demo.leapview.dev
@@ -127,9 +148,13 @@ jobs:
             echo
             echo '- [Sign in](https://demo.leapview.dev/login)'
             echo '- Product dashboards (sign-in required):'
-            echo '- [Visual Showcase](https://demo.leapview.dev/dashboards/visual-showcase/pages/overview)'
-            echo '- [Executive Sales](https://demo.leapview.dev/dashboards/executive-sales/pages/overview)'
-            echo '- [Fulfillment Operations](https://demo.leapview.dev/dashboards/fulfillment-operations/pages/overview)'
+            if [[ "$DEMO_DATASET" == cfo ]]; then
+              echo '- [CFO Command Center](https://demo.leapview.dev/dashboards/dashboard:cfo-command-center/pages/overview)'
+            else
+              echo '- [Visual Showcase](https://demo.leapview.dev/dashboards/dashboard:visual-showcase/pages/overview)'
+              echo '- [Executive Sales](https://demo.leapview.dev/dashboards/dashboard:executive-sales/pages/overview)'
+              echo '- [Fulfillment Operations](https://demo.leapview.dev/dashboards/dashboard:fulfillment-operations/pages/overview)'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   stage:
@@ -148,18 +173,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          run_json="$(gh api repos/flidai/leapview/actions/runs/35517262458)"
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35828875225)"
           test "$(jq -r .conclusion <<<"$run_json")" = success
-          test "$(jq -r .head_sha <<<"$run_json")" = 2e228ec6b42ab5c18bea04ce037695642aaf8019
+          test "$(jq -r .head_sha <<<"$run_json")" = b36e6c1b965d3d816f1fa6215d06af83c1d48da4
       - name: Admit exact image provenance
         uses: ./.github/actions/oci-admission
         with:
-          image: ghcr.io/flidai/leapview@sha256:29d832a2504ccb39b4b7a4d55defa2c9968116d228449ca6adc981d6adcd1bc2
+          image: ghcr.io/flidai/leapview@sha256:b016b15d9db04a9cf66f5b058aab60a76dffc3229ea3f27fc83d820abb925f78
           repository: ghcr.io/flidai/leapview
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: 2e228ec6b42ab5c18bea04ce037695642aaf8019
+          source-revision: b36e6c1b965d3d816f1fa6215d06af83c1d48da4
       - name: Fetch infrastructure credentials
-        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
@@ -169,7 +194,7 @@ jobs:
           env-slug: prod
           secret-path: /hetzner-qualification/infrastructure
       - name: Fetch demo deployment credentials
-        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
@@ -180,7 +205,7 @@ jobs:
           secret-path: /demo/deployment
       - name: Stage immutable image with pinned SSH identity
         env:
-          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE
         run: |
           set -euo pipefail
           DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
@@ -206,11 +231,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          run_json="$(gh api repos/flidai/leapview/actions/runs/35517262458)"
+          run_json="$(gh api repos/flidai/leapview/actions/runs/35828875225)"
           test "$(jq -r .conclusion <<<"$run_json")" = success
-          test "$(jq -r .head_sha <<<"$run_json")" = 2e228ec6b42ab5c18bea04ce037695642aaf8019
+          test "$(jq -r .head_sha <<<"$run_json")" = b36e6c1b965d3d816f1fa6215d06af83c1d48da4
       - name: Fetch infrastructure credentials
-        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
@@ -220,7 +245,7 @@ jobs:
           env-slug: prod
           secret-path: /hetzner-qualification/infrastructure
       - name: Fetch demo deployment credentials
-        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
@@ -232,7 +257,7 @@ jobs:
       - name: Run checked rollout with pinned SSH identity
         env:
           DEMO_ROLLOUT_ACTION: ${{ inputs.action }}
-          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE
         run: |
           set -euo pipefail
           DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"

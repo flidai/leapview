@@ -28,8 +28,24 @@ type Config struct {
 	UserName             string
 	ColorMode            string
 	AdminAccess          *AdminNavigationAccess
+	ProductNavigation    *ProductNavigationAccess
 	ActiveConversationID string
 	Conversations        []Conversation
+}
+
+// ProductNavigationAccess is the request-scoped visibility projection for
+// product surfaces. A nil value keeps static previews and callers without an
+// authorization projection fully navigable; authenticated application
+// composition supplies the exact authorized resource kinds instead.
+type ProductNavigationAccess struct {
+	CanExplore          bool
+	CanSources          bool
+	CanModels           bool
+	CanSemanticModels   bool
+	CanDashboardCatalog bool
+	CanPipelines        bool
+	CanConnections      bool
+	CanRuns             bool
 }
 
 // AdminNavigationAccess describes the settings surfaces the signed-in
@@ -113,12 +129,23 @@ func Provider(config Config) webpage.Provider {
 	return func(context webpage.Context) webpage.Layout {
 		isAdmin := context.Active == "admin"
 		area := areaForActive(context.Active)
-		navigation := areaNavigation(area)
+		access := productNavigationAccess(config.ProductNavigation)
+		fallbackToInsights := area == "develop" && !access.canDevelop()
+		if fallbackToInsights {
+			area = "insights"
+		}
+		navigation := areaNavigation(area, access)
 		if isAdmin {
 			navigation = adminNavigation(config.AdminAccess)
 			area = ""
 		}
 		sidebarActive := context.Active
+		if fallbackToInsights {
+			sidebarActive = ""
+			if context.Active == "dashboard-catalog" {
+				sidebarActive = "dashboards"
+			}
+		}
 		if isAdmin {
 			sidebarActive = firstNonEmpty(context.PageID, context.Active)
 		}
@@ -134,7 +161,7 @@ func Provider(config Config) webpage.Provider {
 		if isAdmin {
 			sidebar.PrimaryAction = &Action{Label: "Back to app", Href: "/", Icon: "back"}
 		} else {
-			sidebar.Areas = productAreas()
+			sidebar.Areas = productAreas(access)
 		}
 		if area == "insights" {
 			sidebar.PrimaryAction = &Action{Label: "New chat", Href: "/chats/new", Icon: "plus"}
@@ -163,11 +190,14 @@ func Provider(config Config) webpage.Provider {
 	}
 }
 
-func productAreas() []Area {
-	return []Area{
+func productAreas(access ProductNavigationAccess) []Area {
+	areas := []Area{
 		{ID: "insights", Label: "Insights", Href: "/", Icon: "insights"},
-		{ID: "develop", Label: "Develop", Href: "/sources", Icon: "code"},
 	}
+	if access.canDevelop() {
+		areas = append(areas, Area{ID: "develop", Label: "Develop", Href: access.developHref(), Icon: "code"})
+	}
+	return areas
 }
 
 func areaForActive(active string) string {
@@ -181,34 +211,84 @@ func areaForActive(active string) string {
 	}
 }
 
-func areaNavigation(area string) []Group {
-	if area == "develop" {
-		return developNavigation()
+func areaNavigation(area string, access ProductNavigationAccess) []Group {
+	if area == "develop" && access.canDevelop() {
+		return developNavigation(access)
 	}
-	return []Group{{Label: "Insights", Items: insightsNavigation()}}
+	return []Group{{Label: "Insights", Items: insightsNavigation(access)}}
 }
 
-func insightsNavigation() []Item {
-	return []Item{
+func insightsNavigation(access ProductNavigationAccess) []Item {
+	items := []Item{
 		{ID: "dashboards", Label: "Dashboards", Href: "/", Icon: "dashboard"},
-		{ID: "data-explorer", Label: "Data Explorer", Href: "/explore", Icon: "database"},
-		{ID: "chat", Label: "Chats", Href: "/chats", Icon: "chat"},
+	}
+	if access.CanExplore {
+		items = append(items, Item{ID: "data-explorer", Label: "Data Explorer", Href: "/explore", Icon: "database"})
+	}
+	items = append(items, Item{ID: "chat", Label: "Chats", Href: "/chats", Icon: "chat"})
+	return items
+}
+
+func developNavigation(access ProductNavigationAccess) []Group {
+	catalog := []Item{}
+	if access.CanSources {
+		catalog = append(catalog, Item{ID: "sources", Label: "Sources", Href: "/sources", Icon: "database"})
+	}
+	if access.CanModels {
+		catalog = append(catalog, Item{ID: "models", Label: "Models", Href: "/models", Icon: "boxes"})
+	}
+	if access.CanSemanticModels {
+		catalog = append(catalog, Item{ID: "semantic-models", Label: "Semantic models", Href: "/semantic-models", Icon: "waypoints"})
+	}
+	if access.CanDashboardCatalog {
+		catalog = append(catalog, Item{ID: "dashboard-catalog", Label: "Dashboards", Href: "/dashboards", Icon: "dashboard"})
+	}
+	if access.CanPipelines {
+		catalog = append(catalog, Item{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow"})
+	}
+	if access.CanConnections {
+		catalog = append(catalog, Item{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"})
+	}
+	groups := []Group{}
+	if len(catalog) > 0 {
+		groups = append(groups, Group{Label: "Catalog", Items: catalog})
+	}
+	if access.CanRuns {
+		groups = append(groups, Group{Label: "Operations", Items: []Item{{ID: "runs", Label: "Runs", Href: "/runs", Icon: "activity"}}})
+	}
+	return groups
+}
+
+func productNavigationAccess(value *ProductNavigationAccess) ProductNavigationAccess {
+	if value != nil {
+		return *value
+	}
+	return ProductNavigationAccess{
+		CanExplore: true, CanSources: true, CanModels: true, CanSemanticModels: true,
+		CanDashboardCatalog: true, CanPipelines: true, CanConnections: true, CanRuns: true,
 	}
 }
 
-func developNavigation() []Group {
-	return []Group{
-		{Label: "Catalog", Items: []Item{
-			{ID: "sources", Label: "Sources", Href: "/sources", Icon: "database"},
-			{ID: "models", Label: "Models", Href: "/models", Icon: "boxes"},
-			{ID: "semantic-models", Label: "Semantic models", Href: "/semantic-models", Icon: "waypoints"},
-			{ID: "dashboard-catalog", Label: "Dashboards", Href: "/dashboards", Icon: "dashboard"},
-			{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow"},
-			{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"},
-		}},
-		{Label: "Operations", Items: []Item{
-			{ID: "runs", Label: "Runs", Href: "/runs", Icon: "activity"},
-		}},
+func (access ProductNavigationAccess) canDevelop() bool {
+	return access.CanSources || access.CanModels || access.CanSemanticModels || access.CanPipelines || access.CanConnections || access.CanRuns
+}
+
+func (access ProductNavigationAccess) developHref() string {
+	switch {
+	case access.CanSources:
+		return "/sources"
+	case access.CanModels:
+		return "/models"
+	case access.CanSemanticModels:
+		return "/semantic-models"
+	case access.CanPipelines:
+		return "/pipelines"
+	case access.CanConnections:
+		return "/connections"
+	case access.CanRuns:
+		return "/runs"
+	default:
+		return "/"
 	}
 }
 
@@ -226,12 +306,6 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 				{ID: "profile", Label: "Profile", Href: "/admin/profile", Icon: "user"},
 				{ID: "security", Label: "Security & sessions", Href: "/admin/security", Icon: "activity"},
 				{ID: "api-tokens", Label: "API tokens", Href: "/admin/api-tokens", Icon: "data"},
-			},
-		},
-		{
-			Label: "Chats",
-			Items: []Item{
-				{ID: "archived-chats", Label: "Archived chats", Href: "/admin/archived-chats", Icon: "history"},
 			},
 		},
 		{

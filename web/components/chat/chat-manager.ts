@@ -111,7 +111,7 @@ export class ChatManager extends DatastarLit(LitElement) {
     .icon { padding: 7px; border: 0; flex-shrink: 0; }
     .danger { color: var(--lv-fg-danger); }
     .confirm-delete { background: var(--lv-fg-danger); color: var(--lv-fg-on-emphasis); border-color: transparent; }
-    .confirm-delete:hover { filter: brightness(.92); }
+    .confirm-delete:hover { background: var(--lv-fg-danger); filter: brightness(.92); }
     .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
     .rename-form { display: grid; gap: 16px; }
     .rename-form label { display: grid; gap: 6px; color: var(--lv-fg-muted); font-size: .9em; }
@@ -421,7 +421,7 @@ export class ChatManager extends DatastarLit(LitElement) {
               <div class="actions"><button type="button" ?disabled=${Boolean(this.pending)} @click=${this.cancel}>Cancel</button><button class="primary" type="submit" ?disabled=${Boolean(this.pending) || !this.renameValue.trim()}>${this.pending ? 'Saving…' : 'Rename'}</button></div>
             </form>
           ` : this.confirmation ? html`
-            <p>${action === 'delete_all' ? 'This permanently deletes all of your chats, including archived chats. This cannot be undone.' : action === 'delete_active' ? 'This permanently deletes every chat listed here. Archived chats will be kept. This cannot be undone.' : action === 'archive_all' ? 'All of your chats will move out of the sidebar. You can restore them here in Settings.' : html`Delete <strong>${this.confirmation.title || 'this chat'}</strong>? You can undo this from the notification before the chat is permanently deleted.`}</p>
+            <p>${action === 'delete_all' ? 'This permanently deletes all of your chats, including archived chats. This cannot be undone.' : action === 'delete_active' ? 'This permanently deletes every chat listed here. Archived chats will be kept. This cannot be undone.' : action === 'archive_all' ? 'All of your chats will move out of the sidebar. You can restore them from Archived chats.' : html`Delete <strong>${this.confirmation.title || 'this chat'}</strong>? You can undo this from the notification before the chat is permanently deleted.`}</p>
             <div class="actions"><button ?disabled=${Boolean(this.pending)} @click=${this.cancel}>Cancel</button><button class=${deleting ? 'confirm-delete' : ''} ?disabled=${Boolean(this.pending)} @click=${() => this.confirmation && (isUndoableAction(this.confirmation) ? this.beginUndo(this.confirmation) : this.perform(this.confirmation))}>${this.pending ? 'Saving…' : deleting ? 'Delete' : 'Archive all'}</button></div>
           ` : html`
             <p class="muted">Archived chats are hidden from your sidebar. Restore a chat to continue the conversation.</p>

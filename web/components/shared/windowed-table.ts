@@ -170,8 +170,7 @@ class WindowedTable extends LitElement {
   @state() private resizeGuide = -1
   private viewportHeight = 0
   private viewportWidth = 0
-  private lastResetVersion = -1
-  private lastTableKey = ''
+  private lastResetVersion = -1; private lastAvailableRows = -1; private lastTableKey = ''
   private shouldResetScroll = false
   private requestSeq = 0
   private scrollFrame = 0
@@ -305,6 +304,7 @@ class WindowedTable extends LitElement {
       min-width: 0;
       min-height: 0;
       overflow: auto;
+      background: var(--lv-windowed-table-surface, var(--lv-bg-panel));
       scrollbar-gutter: stable;
     }
 
@@ -453,6 +453,7 @@ class WindowedTable extends LitElement {
       position: relative;
       min-width: var(--lv-windowed-table-width, 760px);
       width: var(--lv-windowed-table-width, 760px);
+      background: var(--lv-windowed-table-surface, var(--lv-bg-panel));
     }
 
     .row {
@@ -499,14 +500,11 @@ class WindowedTable extends LitElement {
       font-variant-numeric: tabular-nums;
     }
 
-    .cell.right code,
-    .cell.right > span:not(.muted):not(.skeleton) {
+    .cell.right code, .cell.right > span:not(.muted):not(.skeleton) {
       text-align: right;
     }
 
-    .muted,
-    .empty,
-    .error {
+    .muted, .empty, .error {
       color: var(--lv-fg-muted);
       padding: var(--base-size-16);
       font: var(--lv-type-body);
@@ -576,7 +574,7 @@ class WindowedTable extends LitElement {
   }
 
   willUpdate(): void {
-    const table = normalizeTable(this.table)
+    const table = normalizeTable(this.table); const availabilityGrew = this.lastTableKey === table.tableKey && this.lastResetVersion === table.resetVersion && table.availableRows > this.lastAvailableRows
     if (this.lastResetVersion !== table.resetVersion || this.lastTableKey !== table.tableKey) {
       const tableChanged = this.lastTableKey !== table.tableKey
       this.lastResetVersion = table.resetVersion
@@ -592,6 +590,10 @@ class WindowedTable extends LitElement {
       this.clearJumpTimer()
     }
     this.mergeIncomingBlocks(table)
+    if (availabilityGrew && this.effectiveAvailableRows(table) < table.availableRows) {
+      this.blockCache = emptyBlocks(table.chunkSize, table.sort, table.resetVersion); this.expectedBlocks.clear(); this.scheduleEnsureBlocksForScroll()
+    }
+    this.lastAvailableRows = table.availableRows
     // A matching empty response completes the request even without scrollable content.
     if (table.availableRows <= 0) {
       this.expectedBlocks.clear()
@@ -611,6 +613,7 @@ class WindowedTable extends LitElement {
 
   render() {
     const table = normalizeTable(this.table)
+    const availableRows = this.effectiveAvailableRows(table)
     const columns = this.visibleColumns(table)
     const widths = this.displayColumnWidths(table, columns)
     const tableWidth = Math.max(760, this.viewportWidth, widths.reduce((sum, width) => sum + width, 0))
@@ -648,8 +651,8 @@ class WindowedTable extends LitElement {
         <div class="frame">
           ${loading ? html`<div class="loading" aria-hidden="true"></div>` : nothing}
           ${table.error ? html`<p class="error">${table.error}</p>` : nothing}
-          ${!table.error && table.availableRows === 0 && !loading ? html`<p class="empty">No rows to show.</p>` : nothing}
-          ${!table.error && (table.availableRows > 0 || loading) ? html`
+          ${!table.error && availableRows === 0 && !loading ? html`<p class="empty">No rows to show.</p>` : nothing}
+          ${!table.error && (availableRows > 0 || loading) ? html`
             <div class="scrollport" role="region" aria-label=${`Scrollable ${table.title || 'data'} table`} tabindex="0" ${ref(this.viewportRef)} @scroll=${this.handleScroll}>
               <div
                 class="plane"
@@ -671,7 +674,7 @@ class WindowedTable extends LitElement {
                     </div>
                   `)}
                 </div>
-                <div class="canvas" role="rowgroup" style=${`height:${Math.max(table.rowHeight, table.availableRows * table.rowHeight)}px`}>
+                <div class="canvas" role="rowgroup" style=${`height:${Math.max(table.rowHeight, availableRows * table.rowHeight)}px`}>
                   ${visibleRows.map((slot) => slot.row
                     ? html`
                       <div class="row" role="row" style=${`top:${slot.index * table.rowHeight}px`}>
@@ -692,7 +695,7 @@ class WindowedTable extends LitElement {
             </div>
           ` : nothing}
         </div>
-        ${!table.error && (table.availableRows > 0 || loading) ? html`<p class="scroll-hint" aria-hidden="true">Swipe horizontally to see more columns</p>` : nothing}
+        ${!table.error && (availableRows > 0 || loading) ? html`<p class="scroll-hint" aria-hidden="true">Swipe horizontally to see more columns</p>` : nothing}
         <div class="footer">
           ${this.compact
             ? html`<span><strong>${rowRange}</strong>${loading ? ' · loading' : ''}</span>`
@@ -729,26 +732,29 @@ class WindowedTable extends LitElement {
   }
 
   private loadedRows(table: Required<WindowedTablePayload>): Array<{ row: Record<string, unknown>; index: number }> {
-    return blockIDs
-      .map((id) => this.blockCache[id])
+    return blockIDs.map((id) => this.blockCache[id])
       .sort((a, b) => a.start - b.start)
       .flatMap((block) => block.rows.map((row, offset) => ({ row, index: block.start + offset })))
-      .filter((item) => item.index < table.availableRows)
+      .filter((item) => item.index < this.effectiveAvailableRows(table))
   }
 
   private visibleRows(table: Required<WindowedTablePayload>): VisibleRowSlot[] {
-    if (table.availableRows <= 0) return []
+    const availableRows = this.effectiveAvailableRows(table)
+    if (availableRows <= 0) return []
     const rowMap = new Map(this.loadedRows(table).map((item) => [item.index, item.row]))
-    const { first, last } = virtualRowRange(table.availableRows, this.viewportTop, this.viewportHeight || table.rowHeight, table.rowHeight, 2)
+    const { first, last } = virtualRowRange(availableRows, this.viewportTop, this.viewportHeight || table.rowHeight, table.rowHeight, 2)
     const rows: VisibleRowSlot[] = []
-    for (let index = first; index < last; index++) {
-      rows.push({ index, row: rowMap.get(index) })
-    }
+    for (let index = first; index < last; index++) rows.push({ index, row: rowMap.get(index) })
     return rows
   }
 
   private visibleLoading(table: Required<WindowedTablePayload>): boolean {
-    return this.visibleRows(table).some((row) => !row.row) || this.expectedBlocks.size > 0
+    const visibleRows = this.visibleRows(table)
+    if (visibleRows.some((row) => !row.row)) return true
+    const first = visibleRows.at(0)?.index
+    const last = visibleRows.at(-1)?.index
+    return first !== undefined && last !== undefined && [...this.expectedBlocks.values()]
+      .some((request) => request.start <= last && request.start + table.chunkSize > first)
   }
 
   private handleScroll = (event: Event): void => {
@@ -768,21 +774,20 @@ class WindowedTable extends LitElement {
 
   private ensureBlocksForScroll(): void {
     const table = normalizeTable(this.table)
-    if (table.availableRows <= 0) {
-      this.expectedBlocks.clear()
-      this.clearJumpTimer()
+    const availableRows = this.effectiveAvailableRows(table)
+    if (availableRows <= 0) {
+      this.expectedBlocks.clear(); this.clearJumpTimer()
       return
     }
     const currentStart = Math.floor(Math.floor(this.viewportTop / table.rowHeight) / table.chunkSize) * table.chunkSize
-    const desired = this.desiredStarts(table, currentStart)
+    const desired = this.desiredStarts(table, currentStart, availableRows)
     const desiredSet = new Set(desired)
-    const loadedStarts = new Set(blockIDs.map((id) => this.blockCache[id]?.start ?? -1))
+    const loadedStarts = new Set(blockIDs.flatMap((id) => this.blockCache[id]?.rows.length ? [this.blockCache[id].start] : []))
     const expectedStarts = new Set([...this.expectedBlocks.values()].map((request) => request.start))
     const missingStarts = desired.filter((start) => !loadedStarts.has(start) && !expectedStarts.has(start))
 
     if (missingStarts.length > 1 || !loadedStarts.has(currentStart) && !expectedStarts.has(currentStart)) {
-      this.scheduleJumpBlock(currentStart)
-      return
+      this.scheduleJumpBlock(currentStart); return
     }
 
     this.clearJumpTimer()
@@ -790,8 +795,7 @@ class WindowedTable extends LitElement {
     for (const start of missingStarts) {
       const block = this.reusableBlock(desiredSet, usedBlocks)
       if (!block) continue
-      usedBlocks.add(block)
-      this.emitBlock(table, block, start, table.sort, table.resetVersion)
+      usedBlocks.add(block); this.emitBlock(table, block, start, table.sort, table.resetVersion)
     }
   }
 
@@ -809,36 +813,37 @@ class WindowedTable extends LitElement {
 
   private clearJumpTimer(): void {
     if (!this.jumpTimer) return
-    clearTimeout(this.jumpTimer)
-    this.jumpTimer = 0
+    clearTimeout(this.jumpTimer); this.jumpTimer = 0
   }
 
-  private desiredStarts(table: Required<WindowedTablePayload>, currentStart: number): number[] {
-    const starts = currentStart <= 0
-      ? [0, table.chunkSize, table.chunkSize * 2]
-      : [Math.max(0, currentStart - table.chunkSize), currentStart, currentStart + table.chunkSize]
-    return starts.filter((start, index, all) => start < table.availableRows && all.indexOf(start) === index)
+  private desiredStarts(table: Required<WindowedTablePayload>, currentStart: number, availableRows: number): number[] {
+    const starts = currentStart <= 0 ? [0, table.chunkSize, table.chunkSize * 2] : [Math.max(0, currentStart - table.chunkSize), currentStart, currentStart + table.chunkSize]
+    return starts.filter((start, index, all) => start < availableRows && all.indexOf(start) === index)
   }
 
+  private effectiveAvailableRows(table: Required<WindowedTablePayload>): number {
+    const blocks = blockIDs.map((id) => this.blockCache[id])
+    return blocks.reduce((available, block) => {
+      if (block.requestSeq <= 0) return available
+      const terminal = block.rows.length ? block.rows.length < table.chunkSize
+        : !blocks.some((candidate) => candidate.start > block.start && candidate.rows.length > 0)
+      return terminal ? Math.min(available, block.start + block.rows.length) : available
+    }, table.availableRows)
+  }
   private reusableBlock(desiredStarts: Set<number>, usedBlocks: Set<WindowedTableBlockID>): WindowedTableBlockID | undefined {
-    return blockIDs.find((id) => !usedBlocks.has(id) && !desiredStarts.has(this.blockCache[id]?.start ?? -1))
-      ?? blockIDs.find((id) => !usedBlocks.has(id))
+    return blockIDs.find((id) => !usedBlocks.has(id) && !desiredStarts.has(this.blockCache[id]?.start ?? -1)) ?? blockIDs.find((id) => !usedBlocks.has(id))
   }
 
-  private emitBlock(
-    table: Required<WindowedTablePayload>,
-    block: WindowedTableBlockID | 'all',
-    start: number,
-    sort = table.sort,
-    resetVersion = table.resetVersion,
-  ): void {
+  private emitBlock(table: Required<WindowedTablePayload>, block: WindowedTableBlockID | 'all', start: number,
+    sort = table.sort, resetVersion = table.resetVersion): void {
     const count = table.chunkSize
     const requestSeq = ++this.requestSeq
     if (block === 'all') {
       this.expectedBlocks.clear()
       const starts = this.allBlockStarts(table, start)
       blockIDs.forEach((id, index) => {
-        this.expectedBlocks.set(id, { start: starts[index], requestSeq, resetVersion, sort })
+        const expectedStart = starts[index]
+        if (expectedStart < table.availableRows) this.expectedBlocks.set(id, { start: expectedStart, requestSeq, resetVersion, sort })
       })
     } else {
       this.expectedBlocks.set(block, { start, requestSeq, resetVersion, sort })
@@ -1017,10 +1022,11 @@ class WindowedTable extends LitElement {
   }
 
   private rowRangeText(table: Required<WindowedTablePayload>): string {
-    if (!table.totalRows || !table.availableRows) return 'No rows'
-    const firstIndex = Math.min(table.availableRows - 1, Math.max(0, Math.floor(this.viewportTop / table.rowHeight)))
+    const availableRows = this.effectiveAvailableRows(table)
+    if (!table.totalRows || !availableRows) return 'No rows'
+    const firstIndex = Math.min(availableRows - 1, Math.max(0, Math.floor(this.viewportTop / table.rowHeight)))
     const visibleRows = Math.max(1, Math.ceil((this.viewportHeight || table.rowHeight) / table.rowHeight))
-    const lastIndex = Math.min(table.availableRows, firstIndex + visibleRows)
+    const lastIndex = Math.min(availableRows, firstIndex + visibleRows)
     return `${(firstIndex + 1).toLocaleString()}-${lastIndex.toLocaleString()} of ${table.totalRows.toLocaleString()}`
   }
 }

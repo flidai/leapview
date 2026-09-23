@@ -140,6 +140,12 @@ model AgentConfigUpdateRequest {
 }
 
 model AgentConfigResponse {
+  configured: boolean;
+  enabled: boolean;
+  status: string;
+  statusDetail?: string;
+  `model`?: string;
+  reasoningEffort?: string;
   systemPrompt: string;
 }
 

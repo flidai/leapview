@@ -263,9 +263,9 @@ test('security settings use a unified session list, focused password dialog, and
       const passwordDialogOpened = passwordDialog.open
       passwordDialog.querySelector<HTMLFormElement>('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await personal.updateComplete
-      const otherGroup = root.querySelector<HTMLElement>('.security-session-group[aria-label="Other devices"]')!
-      const otherRow = otherGroup.querySelector<HTMLElement>('.security-session')!
-      otherRow.querySelector<HTMLButtonElement>('.security-session-main')!.click()
+      const otherDevice = Array.from(root.querySelectorAll<HTMLButtonElement>('.security-session-device')).find((button) => button.textContent?.includes('LeapView Desktop'))!
+      const otherRow = otherDevice.closest('tr')!
+      otherDevice.click()
       await personal.updateComplete
       const drawer = root.querySelector('lv-drawer') as any
       const drawerText = drawer.textContent?.replace(/\s+/g, ' ').trim()
@@ -283,13 +283,13 @@ test('security settings use a unified session list, focused password dialog, and
       return {
         headings: sections.map((section) => section.querySelector('h2')?.textContent?.trim()),
         mainClass: (admin.shadowRoot as ShadowRoot).querySelector('.main')?.className,
-        sessionListCount: sessionsSection.querySelectorAll('.security-session-list').length,
-        groupLabels: Array.from(sessionsSection.querySelectorAll('.security-session-group-label')).map((label) => label.textContent?.trim()),
-        activeCount: sessionsSection.querySelector('.security-session-count')?.textContent?.trim(),
+        sessionTableCount: sessionsSection.querySelectorAll('.security-session-table').length,
+        sessionHeaders: Array.from(sessionsSection.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
+        sessionRows: sessionsSection.querySelectorAll('tbody tr').length,
         currentBadge: root.querySelector('.security-badge')?.textContent?.trim(),
-        currentAction: root.querySelector('.security-session-group[aria-label="Current session"] .session-action')?.textContent?.trim(),
+        currentAction: root.querySelector('.security-session-table tr.is-current .session-action')?.textContent?.trim(),
         sessionActions: [root.querySelector('[data-logout-all]')?.textContent?.trim(), otherRow.querySelector('.session-action')?.textContent?.trim()],
-        authoringText: root.querySelector('.security-session-group[aria-label="CLI and authoring"]')?.textContent?.replace(/\s+/g, ' ').trim(),
+        authoringText: Array.from(root.querySelectorAll('.security-session-table tbody tr')).find((row) => row.textContent?.includes('LeapView CLI'))?.textContent?.replace(/\s+/g, ' ').trim(),
         passwordInputsBeforeOpen,
         passwordDialogOpened,
         passwordDialogClosed: !root.querySelector('[data-password-dialog]'),
@@ -304,12 +304,12 @@ test('security settings use a unified session list, focused password dialog, and
     })
     expect(state.headings).toEqual(['Password', 'Active sessions'])
     expect(state.mainClass).toContain('main-security')
-    expect(state.sessionListCount).toBe(1)
-    expect(state.groupLabels).toEqual(['Current', 'Other devices', 'CLI & authoring'])
-    expect(state.activeCount).toBe('3 active sessions')
-    expect(state.currentBadge).toBe('This device')
+    expect(state.sessionTableCount).toBe(1)
+    expect(state.sessionHeaders).toEqual(['Device', 'Access', 'Created', 'Updated', ''])
+    expect(state.sessionRows).toBe(3)
+    expect(state.currentBadge).toBe('Current')
     expect(state.currentAction).toBe('Sign out')
-    expect(state.sessionActions).toEqual(['Log out all browser and desktop sessions', 'Revoke'])
+    expect(state.sessionActions).toEqual(['Log out all', 'Revoke'])
     expect(state.authoringText).toContain('LeapView CLI')
     expect(state.authoringText).toContain('sales')
     expect(state.authoringText).toContain('dashboard read')
@@ -1930,20 +1930,13 @@ test('storage table detail emphasizes physical storage and active files', async 
   }
 })
 
-test('admin agent route renders prompt editor, tools catalog, and emits save command', async () => {
+test('admin agent route renders prompt views and tools catalog', async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-agent-settings') && customElements.get('lv-agent-prompt-editor') && customElements.get('lv-agent-tools'))
 
     const state = await page.evaluate(async () => {
-      const waitFor = async (predicate: () => boolean, timeoutMs = 5000): Promise<void> => {
-        const started = performance.now()
-        while (!predicate()) {
-          if (performance.now() - started > timeoutMs) throw new Error('timed out waiting for condition')
-          await new Promise((resolve) => setTimeout(resolve, 20))
-        }
-      }
       const element = document.createElement('lv-admin-page') as any
       const pageSignal = {
         kind: 'admin',
@@ -1963,8 +1956,11 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
         headerDetail: 'Platform agent prompt and read-only tool inventory.',
         metrics: [{ label: 'Tools', value: '1' }],
         agent: {
+          configured: true,
           enabled: true,
+          status: 'enabled',
           model: 'fake-model',
+          revision: '"revision-1"',
           systemPrompt: 'Initial prompt',
           canWrite: true,
           updatePath: '/admin/agent/config',
@@ -1996,11 +1992,9 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
         }],
       }
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ page: pageSignal, adminAgentCommand: { systemPrompt: 'Signal prompt' } })
+      mergePatch({ page: pageSignal, adminAgentCommand: { systemPrompt: 'Initial prompt' } })
       document.body.append(element)
       await element.updateComplete
-      let command: unknown = null
-      element.addEventListener('lv-agent-system-prompt-save', (event: CustomEvent) => { command = event.detail })
       const root = (element.shadowRoot as ShadowRoot)
       const settings = root.querySelector('lv-agent-settings') as any
       await settings.updateComplete
@@ -2008,10 +2002,8 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
       const editor = settingsRoot.querySelector('lv-agent-prompt-editor') as any
       await editor.updateComplete
       const editorRoot = (editor.shadowRoot as ShadowRoot)
-      await customElements.whenDefined('lv-code-editor')
-      await waitFor(() => Boolean(editorRoot.querySelector('lv-code-editor')))
       const controlRow = editorRoot.querySelector('.prompt-control-row')!
-      const actions = editorRoot.querySelector('.prompt-actions')!
+      const modeToggle = editorRoot.querySelector('.mode-toggle')!
       const body = editorRoot.querySelector('.prompt-body')!
       const markdownView = editorRoot.querySelector('lv-markdown-view') as any
       const preSwitchState = {
@@ -2019,60 +2011,18 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
         hasMarkdownView: Boolean(markdownView),
         markdownViewCompact: markdownView?.compact,
         markdownValue: markdownView?.value,
-        hasLoading: Boolean(editorRoot.querySelector('.editor-loading')),
-        hasTextarea: Boolean(editorRoot.querySelector('textarea')),
         hasSaveButton: Boolean(editorRoot.querySelector('.save-button')),
-        status: editorRoot.querySelector('.prompt-status')?.textContent?.trim() ?? '',
       }
-      const editButton = editorRoot.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Edit"]')!
-      editButton.click()
+      const rawButton = editorRoot.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Raw Markdown"]')!
+      rawButton.click()
       await editor.updateComplete
-      const immediateSwitchState = {
+      const rawState = {
         hasCodeEditor: Boolean(editorRoot.querySelector('lv-code-editor')),
-        hasLoading: Boolean(editorRoot.querySelector('.editor-loading')),
         hasTextarea: Boolean(editorRoot.querySelector('textarea')),
-      }
-      await editor.updateComplete
-      const codeEditor = editorRoot.querySelector('lv-code-editor') as any
-      await codeEditor.updateComplete
-      await waitFor(() => Boolean((codeEditor.shadowRoot as ShadowRoot).querySelector('.view-line')))
-      const editorFontSize = getComputedStyle((codeEditor.shadowRoot as ShadowRoot).querySelector('.view-line') as any).fontSize
-      const seededEditorValue = codeEditor.value
-      codeEditor.value = 'Updated prompt'
-      codeEditor.dispatchEvent(new CustomEvent('lv-code-editor-change', {
-        bubbles: true,
-        composed: true,
-        detail: { value: 'Updated prompt' },
-      }))
-      await codeEditor.updateComplete
-      await editor.updateComplete
-      const dirtyState = {
         hasSaveButton: Boolean(editorRoot.querySelector('.save-button')),
-        saveText: editorRoot.querySelector('.save-button')?.textContent?.trim(),
-        status: editorRoot.querySelector('.prompt-status')?.textContent?.trim(),
+        value: editorRoot.querySelector('.raw-markdown')?.textContent,
+        activeMode: editorRoot.querySelector('.mode-toggle button[aria-pressed="true"]')?.getAttribute('aria-label'),
       }
-      codeEditor.value = 'Signal prompt'
-      codeEditor.dispatchEvent(new CustomEvent('lv-code-editor-change', {
-        bubbles: true,
-        composed: true,
-        detail: { value: 'Signal prompt' },
-      }))
-      await codeEditor.updateComplete
-      await editor.updateComplete
-      const revertedState = {
-        hasSaveButton: Boolean(editorRoot.querySelector('.save-button')),
-        status: editorRoot.querySelector('.prompt-status')?.textContent?.trim() ?? '',
-      }
-      codeEditor.value = 'Updated prompt'
-      codeEditor.dispatchEvent(new CustomEvent('lv-code-editor-change', {
-        bubbles: true,
-        composed: true,
-        detail: { value: 'Updated prompt' },
-      }))
-      await codeEditor.updateComplete
-      await editor.updateComplete
-      editorRoot.querySelector<HTMLButtonElement>('.save-button')?.click()
-      await editor.updateComplete
       const toolsTab = Array.from(settingsRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((button) => button.textContent?.trim() === 'Tools')!
       toolsTab.click()
       await settings.updateComplete
@@ -2086,21 +2036,10 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
         hasToolsCatalog: Boolean(toolsCatalog),
         hasGenericToolsRecordTable: Boolean(root.querySelector('section[aria-label="Tools"] lv-record-table')),
         toolsCatalogText: (toolsCatalog.shadowRoot as ShadowRoot).textContent,
-        hasCodeEditor: Boolean(codeEditor),
         preSwitchState,
-        immediateSwitchState,
-        actionsInControlRow: actions.parentElement === controlRow,
-        actionsBeforeBody: Boolean(actions.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING),
-        actionsAfterBody: Boolean(actions.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_PRECEDING),
-        dirtyState,
-        revertedState,
-        editorFontSize,
-        seededEditorValue,
-        editorValue: codeEditor.value,
-        hasSaveAfterSave: Boolean(editorRoot.querySelector('.save-button')),
-        activeMode: editorRoot.querySelector('.mode-toggle button[aria-pressed="true"]')?.getAttribute('aria-label'),
-        status: editorRoot.querySelector('.prompt-status')?.textContent?.trim(),
-        command,
+        rawState,
+        toggleInControlRow: modeToggle.parentElement === controlRow,
+        controlsBeforeBody: Boolean(controlRow.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING),
       }
     })
 
@@ -2114,49 +2053,28 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
     expect(state.toolsCatalogText ?? '').toMatch(/query_visual/)
     expect(state.toolsCatalogText ?? '').toMatch(/Data & queries/)
     expect(state.toolsCatalogText ?? '').toMatch(/2 fields · 1 required/)
-    expect(state.hasCodeEditor).toBe(true)
     expect(state.preSwitchState).toEqual({
-      hasCodeEditor: true,
+      hasCodeEditor: false,
       hasMarkdownView: true,
       markdownViewCompact: true,
-      markdownValue: 'Signal prompt',
-      hasLoading: false,
-      hasTextarea: false,
+      markdownValue: 'Initial prompt',
       hasSaveButton: false,
-      status: '',
     })
-    expect(state.immediateSwitchState).toEqual({ hasCodeEditor: true, hasLoading: false, hasTextarea: false })
-    expect(state.actionsInControlRow).toBe(true)
-    expect(state.actionsBeforeBody).toBe(true)
-    expect(state.actionsAfterBody).toBe(false)
-    expect(state.editorFontSize).toBe('13px')
-    expect(state.seededEditorValue).toBe('Signal prompt')
-    expect(state.editorValue).toBe('Updated prompt')
-    expect(state.dirtyState).toEqual({ hasSaveButton: true, saveText: 'Save', status: 'Unsaved changes' })
-    expect(state.revertedState).toEqual({ hasSaveButton: false, status: '' })
-    expect(state.hasSaveAfterSave).toBe(false)
-    expect(state.activeMode).toBe('Edit')
-    expect(state.status).toBe('Saved')
-    expect(state.command).toEqual({ systemPrompt: 'Updated prompt' })
+    expect(state.rawState).toEqual({ hasCodeEditor: false, hasTextarea: false, hasSaveButton: false, value: 'Initial prompt', activeMode: 'Raw Markdown' })
+    expect(state.toggleInControlRow).toBe(true)
+    expect(state.controlsBeforeBody).toBe(true)
   } finally {
     await page.close()
   }
 })
 
-test('admin agent prompt editor disables saves for read-only users', async () => {
+test('admin agent prompt raw view stays read-only for deployment-managed instructions', async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-agent-settings') && customElements.get('lv-agent-prompt-editor'))
 
     const state = await page.evaluate(async () => {
-      const waitFor = async (predicate: () => boolean, timeoutMs = 5000): Promise<void> => {
-        const started = performance.now()
-        while (!predicate()) {
-          if (performance.now() - started > timeoutMs) throw new Error('timed out waiting for condition')
-          await new Promise((resolve) => setTimeout(resolve, 20))
-        }
-      }
       const element = document.createElement('lv-admin-page') as any
       const pageSignal = {
         kind: 'admin',
@@ -2175,8 +2093,11 @@ test('admin agent prompt editor disables saves for read-only users', async () =>
         headerTitle: 'Agent',
         headerDetail: 'Platform agent prompt and read-only tool inventory.',
         agent: {
+          configured: true,
           enabled: true,
+          status: 'enabled',
           model: 'fake-model',
+          revision: '"revision-1"',
           systemPrompt: 'Initial prompt',
           canWrite: false,
           updatePath: '/admin/agent/config',
@@ -2185,7 +2106,7 @@ test('admin agent prompt editor disables saves for read-only users', async () =>
         sections: [],
       }
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ page: pageSignal, adminAgentCommand: { systemPrompt: '' } })
+      mergePatch({ page: pageSignal, adminAgentCommand: { systemPrompt: 'Initial prompt' } })
       document.body.append(element)
       await element.updateComplete
       let command: unknown = null
@@ -2196,27 +2117,24 @@ test('admin agent prompt editor disables saves for read-only users', async () =>
       const editor = settingsRoot.querySelector('lv-agent-prompt-editor') as any
       await editor.updateComplete
       const editorRoot = (editor.shadowRoot as ShadowRoot)
-      const editButton = editorRoot.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Edit"]')!
-      editButton.click()
-      await customElements.whenDefined('lv-code-editor')
-      await waitFor(() => Boolean(editorRoot.querySelector('lv-code-editor')))
+      const rawButton = editorRoot.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Raw Markdown"]')!
+      rawButton.click()
       await editor.updateComplete
-      const codeEditor = editorRoot.querySelector('lv-code-editor') as any
-      await codeEditor.updateComplete
-      const saveButton = editorRoot.querySelector<HTMLButtonElement>('.save-button')
       return {
-        codeEditorDisabled: codeEditor.disabled,
-        hasSaveButton: Boolean(saveButton),
-        status: editorRoot.querySelector('.prompt-status')?.textContent?.trim(),
+        rawValue: editorRoot.querySelector('.raw-markdown')?.textContent,
+        hasCodeEditor: Boolean(editorRoot.querySelector('lv-code-editor')),
+        hasSaveButton: Boolean(editorRoot.querySelector('.save-button')),
+        modeLabels: Array.from(editorRoot.querySelectorAll<HTMLButtonElement>('.mode-toggle button')).map((button) => button.getAttribute('aria-label')),
         notice: settingsRoot.querySelector('.notice')?.textContent?.replace(/\s+/g, ' ').trim(),
         command,
       }
     })
 
-    expect(state.codeEditorDisabled).toBe(true)
+    expect(state.rawValue).toBe('Initial prompt')
+    expect(state.hasCodeEditor).toBe(false)
     expect(state.notice).toContain('Deployment managed.')
     expect(state.hasSaveButton).toBe(false)
-    expect(state.status).toBe('Read-only')
+    expect(state.modeLabels).toEqual(['Rendered Markdown', 'Raw Markdown'])
     expect(state.command).toBeNull()
   } finally {
     await page.close()
@@ -2412,40 +2330,29 @@ test('admin agent tools use the shared list and a detail drawer for schemas', as
   }
 })
 
-test('agent prompt editor seeds edit mode from value attribute', async () => {
+test('agent prompt editor seeds raw Markdown from value attribute', async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-agent-prompt-editor'))
 
     const state = await page.evaluate(async () => {
-      const waitFor = async (predicate: () => boolean, timeoutMs = 5000): Promise<void> => {
-        const started = performance.now()
-        while (!predicate()) {
-          if (performance.now() - started > timeoutMs) throw new Error('timed out waiting for condition')
-          await new Promise((resolve) => setTimeout(resolve, 20))
-        }
-      }
       const element = document.createElement('lv-agent-prompt-editor') as any
       element.setAttribute('value', 'Attribute prompt')
       document.body.append(element)
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)
-      const editButton = root.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Edit"]')!
-      editButton.click()
-      await customElements.whenDefined('lv-code-editor')
-      await waitFor(() => Boolean(root.querySelector('lv-code-editor')))
+      const rawButton = root.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Raw Markdown"]')!
+      rawButton.click()
       await element.updateComplete
-      const codeEditor = root.querySelector('lv-code-editor') as any
-      await codeEditor.updateComplete
       return {
         activeMode: root.querySelector('.mode-toggle button[aria-pressed="true"]')?.getAttribute('aria-label'),
-        codeEditorValue: codeEditor.value,
+        rawValue: root.querySelector('.raw-markdown')?.textContent,
       }
     })
 
-    expect(state.activeMode).toBe('Edit')
-    expect(state.codeEditorValue).toBe('Attribute prompt')
+    expect(state.activeMode).toBe('Raw Markdown')
+    expect(state.rawValue).toBe('Attribute prompt')
   } finally {
     await page.close()
   }

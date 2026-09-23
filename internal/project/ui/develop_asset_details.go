@@ -429,14 +429,15 @@ func modelFieldsGrid(asset projectview.DevelopAssetView, table map[string]any) r
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "field", Header: "Field", Kind: uisignals.Pointer("entity"), Width: uisignals.Pointer("25%")},
-			{ID: "type", Header: "Type", Kind: uisignals.Pointer("entity"), Width: uisignals.Pointer("18%")},
-			{ID: "description", Header: "Description", Width: uisignals.Pointer("42%")},
-			{ID: "status", Header: "Status", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("15%")},
+			{ID: "field", Header: "Field", Kind: uisignals.Pointer("entity"), Width: uisignals.Pointer("240px")},
+			{ID: "type", Header: "Type", Kind: uisignals.Pointer("entity"), Width: uisignals.Pointer("170px")},
+			{ID: "description", Header: "Description", Width: uisignals.Pointer("360px")},
+			{ID: "status", Header: "Status", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("130px")},
 		},
 		Rows:      rows,
 		Empty:     "No schema is available for this model.",
 		MinWidth:  uisignals.Pointer("760px"),
+		Width:     uisignals.Pointer("900px"),
 		RowAction: uisignals.Pointer("open-model-field"),
 	}
 }
@@ -571,15 +572,16 @@ func semanticMetricsTable(projectID string, parent projectview.DevelopAssetView,
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "name", Header: "Name", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("nameHref"), Width: uisignals.Pointer("18%")},
-			{ID: "dataset", Header: "Dataset", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("16%")},
-			{ID: "aggregation", Header: "Aggregation", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("16%")},
-			{ID: "input", Header: "Input", Kind: uisignals.Pointer("expression"), Width: uisignals.Pointer("38%")},
-			{ID: "format", Header: "Format", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("12%")},
+			{ID: "name", Header: "Name", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("nameHref"), Width: uisignals.Pointer("180px")},
+			{ID: "dataset", Header: "Dataset", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("150px")},
+			{ID: "aggregation", Header: "Aggregation", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("160px")},
+			{ID: "input", Header: "Input", Kind: uisignals.Pointer("expression"), Width: uisignals.Pointer("320px")},
+			{ID: "format", Header: "Format", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("120px")},
 		},
 		Rows:     rows,
 		Empty:    "No metrics are defined for this semantic model.",
 		MinWidth: uisignals.Pointer("900px"),
+		Width:    uisignals.Pointer("930px"),
 	}
 }
 

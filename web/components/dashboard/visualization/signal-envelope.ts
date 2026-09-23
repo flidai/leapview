@@ -23,12 +23,21 @@ type CachedEnvelope = {
 export class DashboardVisualizationSignalDecoder {
   private readonly dataStates = new Map<string, CachedDataState>()
   private readonly envelopes = new Map<string, CachedEnvelope>()
+  private servingStateID = ''
 
-  decodeAll(signals: Record<string, DashboardVisualizationSignal>): Record<string, VisualizationEnvelope> {
+  decodeAll(signals: Record<string, DashboardVisualizationSignal>, servingStateID: string): Record<string, VisualizationEnvelope> {
+    if (!servingStateID) {
+      this.clear()
+      return {}
+    }
+    if (this.servingStateID !== servingStateID) {
+      this.clear()
+      this.servingStateID = servingStateID
+    }
     const envelopes: Record<string, VisualizationEnvelope> = {}
     const active = new Set(Object.keys(signals))
     for (const [id, signal] of Object.entries(signals)) {
-      const envelope = this.decode(signal)
+      const envelope = this.decode(signal, servingStateID)
       if (envelope) envelopes[id] = envelope
     }
     for (const id of this.dataStates.keys()) {
@@ -40,7 +49,8 @@ export class DashboardVisualizationSignalDecoder {
     return envelopes
   }
 
-  decode(signal: DashboardVisualizationSignal): VisualizationEnvelope | undefined {
+  decode(signal: DashboardVisualizationSignal, servingStateID = signal.servingStateID): VisualizationEnvelope | undefined {
+    if (!servingStateID || signal.servingStateID !== servingStateID) return undefined
     if (!validTransportHeader(signal.dataState, signal)) return undefined
     let dataState = this.dataStates.get(signal.visualID)
     if (!dataState || dataState.payload !== signal.dataState.payload) {
@@ -66,6 +76,11 @@ export class DashboardVisualizationSignalDecoder {
     const value = { ...envelope, dataState: dataState.value } as VisualizationEnvelope
     this.envelopes.set(signal.visualID, { fingerprint, payload: signal.dataState.payload, value })
     return value
+  }
+
+  private clear(): void {
+    this.dataStates.clear()
+    this.envelopes.clear()
   }
 }
 

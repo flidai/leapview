@@ -6,6 +6,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	"github.com/flidai/leapview/internal/dashboard/authoring"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
@@ -42,10 +43,10 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 				next,
 			), true
 		case routeDashboardBuilder:
-			// Drafts exist in the authoring repository before they enter an active
-			// serving graph. Authenticate here; Builder performs the exact durable
-			// and typed dashboard decision before emitting any projection.
-			return routes.accessModule.Authenticate(next), true
+			// Drafts exist before the active serving graph. Authenticate and reject
+			// malformed selectors here; Builder makes the exact durable and typed
+			// dashboard decision before emitting the projection.
+			return routes.accessModule.Authenticate(validateDashboardBuilderPageStream(next)), true
 		case routeChat:
 			return routes.accessModule.Authenticate(next), true
 		case routeAdmin:
@@ -88,6 +89,17 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 	runtime.pageStreams = uitransport.NewPageStream(uitransport.PageStreamConfig{Authorize: authorize, Handlers: handlers})
 }
 
+func validateDashboardBuilderPageStream(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dashboardID := strings.TrimSpace(dashboardBuilderPageStreamDashboardID(r))
+		if err := authoring.ValidateDashboardID(authoring.DashboardID(dashboardID)); err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func dashboardPageStreamResource(r *http.Request, _ projectgraph.ResourceID) []access.ResourceRef {
 	dashboardValues, ok := r.URL.Query()["dashboard"]
 	if !ok || len(dashboardValues) != 1 {
@@ -102,6 +114,14 @@ func dashboardPageStreamResource(r *http.Request, _ projectgraph.ResourceID) []a
 		return nil
 	}
 	return []access.ResourceRef{resource}
+}
+
+func dashboardBuilderPageStreamDashboardID(r *http.Request) string {
+	values, ok := r.URL.Query()["dashboard"]
+	if !ok || len(values) != 1 {
+		return ""
+	}
+	return values[0]
 }
 
 func protectPageStreamResource(

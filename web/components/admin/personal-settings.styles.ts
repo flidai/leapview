@@ -2,22 +2,14 @@ import { css } from 'lit'
 
 export const personalSettingsStyles = css`
     :host { display: block; color: var(--lv-fg-default); font: var(--lv-type-body); }
-    .settings { display: grid; gap: var(--base-size-20); width: 100%; min-width: 0; }
-    section { display: grid; gap: var(--base-size-20); }
+    section:not(.settings-section) { display: grid; gap: var(--base-size-20); }
     h2, h3, p { margin: 0; }
     h2 { font: var(--lv-type-section-title); }
     h3 { font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
-    .card { display: grid; gap: 0; overflow: visible; border: var(--lv-border-muted); border-radius: var(--lv-radius-large); background: var(--lv-bg-panel); }
-    .row { display: grid; min-height: var(--base-size-48); box-sizing: border-box; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-16); padding: var(--base-size-8) var(--base-size-16); border-bottom: var(--lv-border-muted); }
-    .row:first-child { border-radius: var(--lv-radius-large) var(--lv-radius-large) 0 0; }
-    .row:last-child { border-bottom: 0; }
-    .profile-row { min-height: var(--base-size-64); padding: var(--base-size-12) var(--base-size-20); }
-    .account-section { gap: var(--base-size-12); }
-    .account-row { min-height: var(--base-size-64); padding: var(--base-size-12) var(--base-size-20); }
     .account-id { max-width: 22rem; overflow: hidden; color: var(--lv-fg-muted); font: var(--lv-type-caption); text-overflow: ellipsis; white-space: nowrap; }
     .profile-email { max-width: 22rem; justify-self: end; text-align: right; }
     .profile-name-form { min-width: 0; justify-self: end; }
-    .profile-name-control { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: var(--base-size-8); }
+    .profile-name-control { justify-content: flex-end; }
     .profile-name-control input { width: min(13rem, 40vw); min-height: var(--control-medium-size, var(--base-size-32)); text-align: center; font: var(--lv-type-body); }
     .profile-local-input { width: min(13rem, 40vw); min-height: var(--control-medium-size, var(--base-size-32)); justify-self: end; text-align: center; font: var(--lv-type-body); }
     .muted { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
@@ -33,28 +25,35 @@ export const personalSettingsStyles = css`
     .actions { display: flex; flex-wrap: wrap; gap: var(--base-size-8); align-items: center; }
     .security-page { gap: var(--base-size-32); }
     .security-section { display: grid; gap: var(--base-size-12); }
-    .security-section-heading { display: flex; min-width: 0; align-items: end; justify-content: space-between; gap: var(--base-size-16); }
-    .security-session-actions { display: flex; min-width: 0; align-items: end; justify-content: end; gap: var(--base-size-8); }
+    .security-section-heading { display: flex; min-width: 0; align-items: start; justify-content: space-between; gap: var(--base-size-16); }
     .security-section-heading-copy { display: grid; min-width: 0; gap: var(--base-size-4); }
     .security-section-heading h2 { font: var(--lv-type-section-title); }
-    .security-session-count { flex: 0 0 auto; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .security-password-row > button, .security-section-heading > button, .session-action { min-width: max-content; min-height: var(--control-medium-size, var(--base-size-32)); padding-inline: var(--base-size-12); border-color: var(--lv-line-muted); background: var(--lv-bg-control); font-weight: var(--base-text-weight-semibold); white-space: nowrap; }
+    .security-password-row > button:hover, .security-section-heading > button:hover, .session-action:hover { background: var(--lv-bg-control-hover); }
     .security-password-row { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-16); border-top: var(--lv-border-muted); border-bottom: var(--lv-border-muted); padding: var(--base-size-16) 0; }
     .security-password-copy { display: grid; min-width: 0; gap: var(--base-size-4); }
     .security-password-state { color: var(--lv-fg-default); font-weight: var(--base-text-weight-semibold); }
-    .security-session-list { display: grid; overflow: hidden; border: var(--lv-border-muted); border-radius: var(--lv-radius-large); background: var(--lv-bg-panel); }
-    .security-session-group { display: grid; }
-    .security-session-group + .security-session-group { border-top: var(--lv-border-muted); }
-    .security-session-group-label { padding: var(--base-size-8) var(--base-size-16); color: var(--lv-fg-muted); background: var(--lv-bg-panel-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-semibold); letter-spacing: .035em; text-transform: uppercase; }
-    .security-session { display: grid; min-width: 0; grid-template-columns: var(--base-size-32) minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-12); padding: var(--base-size-12) var(--base-size-16); border-top: var(--lv-border-muted); }
+    .security-session-table-wrap { min-width: 0; overflow-x: auto; border-top: var(--lv-border-muted); }
+    .security-session-table { width: 100%; min-width: 46rem; border-collapse: collapse; table-layout: fixed; }
+    .security-session-table th { padding: var(--base-size-8) var(--base-size-12); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-normal); text-align: left; }
+    .security-session-table th:first-child, .security-session-table td:first-child { width: 28%; padding-left: 0; }
+    .security-session-table th:nth-child(2), .security-session-table td:nth-child(2) { width: 22%; }
+    .security-session-table th:nth-child(3), .security-session-table td:nth-child(3) { width: 17%; }
+    .security-session-table th:nth-child(4), .security-session-table td:nth-child(4) { width: 18%; }
+    .security-session-table th:last-child, .security-session-table td:last-child { width: 15%; padding-right: 0; text-align: right; }
+    .security-session-table td { min-width: 0; padding: var(--lv-space-control) var(--base-size-12); border-top: var(--lv-border-muted); color: var(--lv-fg-default); vertical-align: middle; }
+    .security-session-table time, .security-session-access { color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
+    .security-session-device { display: grid; width: 100%; min-width: 0; min-height: var(--base-size-40); grid-template-columns: var(--base-size-32) minmax(0, 1fr); align-items: center; gap: var(--lv-space-control); border-color: transparent; background: transparent; padding: 0; text-align: left; }
+    .security-session-device:hover, .security-session-device:focus-visible { background: var(--lv-bg-control-hover); outline: 0; }
     .security-session-icon { display: grid; width: var(--base-size-32); height: var(--base-size-32); place-items: center; border-radius: var(--lv-radius-full); color: var(--lv-fg-muted); background: var(--lv-bg-control); }
     .security-session-icon svg { width: var(--base-size-16); height: var(--base-size-16); }
-    .security-session-main { display: grid; min-width: 0; gap: var(--base-size-4); border: 0; background: transparent; padding: var(--base-size-4); text-align: left; }
-    .security-session-main:hover, .security-session-main:focus-visible { background: var(--lv-bg-control-hover); outline: 0; }
+    .security-session-device-copy { display: grid; min-width: 0; gap: var(--base-size-2); }
     .security-session-title { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--base-size-8); }
-    .security-session-title strong { overflow-wrap: anywhere; }
-    .security-session-meta { color: var(--lv-fg-muted); font: var(--lv-type-caption); line-height: var(--base-text-lineHeight-snug); }
-    .security-badge { display: inline-flex; align-items: center; border-radius: var(--lv-radius-full); padding: var(--base-size-2) var(--base-size-8); color: var(--lv-fg-success); background: var(--lv-bg-success-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-semibold); }
-    .security-empty { grid-template-columns: minmax(0, 1fr); min-height: var(--base-size-48); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .security-session-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .security-session-kind { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .security-badge { display: inline-flex; flex: 0 0 auto; align-items: center; border-radius: var(--lv-radius-small); padding: var(--base-size-2) var(--base-size-8); color: var(--lv-fg-accent); background: var(--lv-bg-accent-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-semibold); }
+    .security-session-action-cell { white-space: nowrap; }
+    .security-empty { height: var(--base-size-64); color: var(--lv-fg-muted); font: var(--lv-type-body-compact); text-align: left !important; }
     .session-drawer-title, .session-drawer-body, .session-drawer-section { display: grid; min-width: 0; gap: var(--base-size-8); }
     .session-drawer-title h2, .session-drawer-title p, .session-drawer-section h3 { margin: 0; }
     .session-drawer-title h2 { font: var(--lv-type-section-title); overflow-wrap: anywhere; }
@@ -228,7 +227,6 @@ export const personalSettingsStyles = css`
     .notice { padding: var(--base-size-8) var(--base-size-12); border-radius: var(--lv-radius-small); background: var(--lv-bg-success-muted); color: var(--lv-fg-success); }
     .error { color: var(--lv-fg-danger); }
     @media (max-width: 40rem) {
-      .row { grid-template-columns: 1fr; gap: var(--base-size-12); padding: var(--base-size-16); }
       .profile-email { max-width: none; justify-self: stretch; text-align: left; }
       .profile-name-form { width: 100%; justify-self: stretch; }
       .profile-name-control { justify-content: stretch; }
@@ -243,12 +241,14 @@ export const personalSettingsStyles = css`
       .token-row { grid-template-columns: auto minmax(0, 1fr); }
       .token-row > .danger { grid-column: 2; justify-self: start; }
       .security-section-heading { align-items: stretch; flex-direction: column; }
-      .security-session-actions { align-items: stretch; flex-direction: column; }
-      .security-session-actions > button { align-self: start; }
+      .security-section-heading > button { align-self: start; }
       .security-password-row { grid-template-columns: minmax(0, 1fr); }
       .security-password-row > button { justify-self: start; }
-      .security-session { grid-template-columns: var(--base-size-32) minmax(0, 1fr); }
-      .security-session > .session-action { grid-column: 2; justify-self: start; }
+      .security-session-table { min-width: 30rem; }
+      .security-session-table th:nth-child(2), .security-session-table td:nth-child(2), .security-session-table th:nth-child(3), .security-session-table td:nth-child(3) { display: none; }
+      .security-session-table th:first-child, .security-session-table td:first-child { width: 48%; }
+      .security-session-table th:nth-child(4), .security-session-table td:nth-child(4) { width: 28%; }
+      .security-session-table th:last-child, .security-session-table td:last-child { width: 24%; }
       .session-drawer-fact { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
       .permissions-header { align-items: start; }
       .permission-backdrop { position: fixed; z-index: var(--z-index-dropdown); inset: 0; display: block; background: var(--lv-modal-backdrop); }

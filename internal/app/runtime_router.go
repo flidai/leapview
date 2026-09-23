@@ -17,6 +17,7 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	apiapigenruntime "github.com/flidai/leapview/internal/app/api/apigenruntime"
@@ -41,6 +42,7 @@ import (
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
+	developmentsessionmodule "github.com/flidai/leapview/internal/project/developmentsession/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
@@ -103,6 +105,8 @@ type capabilityRoutes struct {
 
 type runtimeServices struct {
 	analyticsModule                *analyticsmodule.Module
+	profileApplications            connectionbinding.ProfileApplicationStore
+	developmentSessions            developmentsessionmodule.Store
 	metrics                        QueryMetrics
 	workloads                      workloadControl
 	broker                         *pagestream.Broker
@@ -116,6 +120,10 @@ type runtimeServices struct {
 	runtimeHostModule              *runtimehostmodule.Module
 	projectID                      projectgraph.ResourceID
 	projectIDResolver              func(context.Context) (projectgraph.ResourceID, error)
+	developmentProjectIDResolver   func(context.Context) (projectgraph.ResourceID, error)
+	targetID                       string
+	checkoutID                     string
+	worktreeID                     string
 }
 
 type dashboardAppearanceReader interface {
@@ -242,6 +250,7 @@ type workflowInputs struct {
 	recoveryInterval               time.Duration
 	agent                          *agentmodule.Service
 	agentConfig                    agentmodule.ModelConfig
+	agentConfigFile                string
 	reloader                       runtimeReloader
 	deploymentConfig               deploymentmodule.Config
 	servingArtifacts               projectbundle.ArtifactObjectReader
@@ -320,21 +329,24 @@ type capabilityAssemblyInputs struct {
 	// AgentPersistence is the graph-owned native agent authority. The router
 	// passes it through opaquely to agentmodule.Build; production must provide
 	// the complete native authority.
-	AgentPersistence  *agentmodule.Persistence
-	AccessModule      *accessmodule.Module
-	Agent             *agentmodule.Service
-	ManagedDataModule *manageddatamodule.Module
-	AnalyticsModule   *analyticsmodule.Module
-	Authoring         *dashboardmodule.AuthoringApplication
-	DashboardAssets   dashboardmodule.Assets
-	Product           *adminmodule.ProductService
-	ProductStatus     adminmodule.ProductStatus
-	ProjectCatalog    *projectcatalog.Service
-	ProjectGraph      projecthttp.GraphReader
+	AgentPersistence    *agentmodule.Persistence
+	AccessModule        *accessmodule.Module
+	Agent               *agentmodule.Service
+	ManagedDataModule   *manageddatamodule.Module
+	AnalyticsModule     *analyticsmodule.Module
+	ProfileApplications connectionbinding.ProfileApplicationStore
+	DevelopmentSessions developmentsessionmodule.Store
+	Authoring           *dashboardmodule.AuthoringApplication
+	DashboardAssets     dashboardmodule.Assets
+	Product             *adminmodule.ProductService
+	ProductStatus       adminmodule.ProductStatus
+	ProjectCatalog      *projectcatalog.Service
+	ProjectGraph        projecthttp.GraphReader
 }
 
 type workflowAssemblyInputs struct {
 	AgentSettings                  agentmodule.Settings
+	AgentConfigFile                string
 	ManagedDataResolver            runtimehostmodule.ManagedDataResolver
 	AgentConfig                    agentmodule.ModelConfig
 	Auth                           *accessmodule.Auth
@@ -360,7 +372,12 @@ type runtimeAssemblyInputs struct {
 	// Production selects the fail-closed native module admission path. It is
 	// intentionally separate from SealedServing, which is also used by local
 	// evaluation fixtures to exercise sealed-runtime behavior.
-	Production bool
+	Production               bool
+	LocalCheckoutID          string
+	LocalRuntimeID           string
+	DevelopmentProfileName   string
+	DevelopmentGraphDigest   string
+	DevelopmentProfileDigest string
 	// DeliveryTargetReader is the durable target-owned active-generation
 	// pointer. Sealed production serving must consult it before the legacy
 	// serving-state scope table when deciding whether bootstrap is still open.
@@ -738,12 +755,25 @@ func buildApplicationSurfaces(
 	persistence.servingStateRepo = servingStateRepo
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
+	runtime.profileApplications = capabilities.ProfileApplications
+	runtime.developmentSessions = capabilities.DevelopmentSessions
+	// Development sessions exist before the first serving generation. Their
+	// project scope must use the durable claim/active-scope authoring resolver,
+	// not the dashboard lease resolver which is unavailable on a fresh target.
+	runtime.developmentProjectIDResolver = runtimeConfig.IdempotencyProjectIDResolver
+	runtime.targetID = runtimeConfig.InstanceID
+	runtime.checkoutID = runtimeConfig.LocalCheckoutID
+	// LocalCheckoutID is the canonical checkout/worktree identity supplied by
+	// the local runtime controller. LocalRuntimeID is an owner/runtime identity
+	// and must never be used as a worktree scope.
+	runtime.worktreeID = runtimeConfig.LocalCheckoutID
 	routes.dashboardAssets = capabilities.DashboardAssets
 	routes.dashboardAuthoring = capabilities.Authoring
 	routes.releaseModule = capabilities.ReleaseModule
 	persistence.accessRepo = data.AccessRepo
 	moduleWorkflow.agent = capabilities.Agent
 	moduleWorkflow.agentConfig = workflow.AgentConfig
+	moduleWorkflow.agentConfigFile = workflow.AgentConfigFile
 	platform.auth = workflow.Auth
 	routes.accessModule = capabilities.AccessModule
 	moduleWorkflow.reloader = workflow.Reloader
@@ -808,7 +838,7 @@ func buildApplicationSurfaces(
 		PrincipalDisplayReader: data.AccessRepo,
 		ResolveProjectID:       runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID,
 		Layout: func(r *http.Request) webpage.Provider {
-			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
+			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r, authorizedProductNavigationAccess(r.Context(), routes.accessModule, routes.projectCatalog, r))
 		},
 		CSRFToken: func(r *http.Request) string { return routes.accessModule.CSRFToken(r) },
 		CurrentUser: func(r *http.Request) (projecthttp.Principal, bool) {
@@ -964,6 +994,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 	}
 	var connectionAdministration analyticsmodule.ConnectionBindingAdministration
+	var developmentProfileAPI analyticsmodule.DevelopmentProfileApplicationAPIConfig
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
@@ -1024,6 +1055,17 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return err
 		}
 		connectionAdministration = administration
+		developmentProfileAPI, err = buildDevelopmentProfileAPI(
+			routes.accessModule,
+			runtime.analyticsModule,
+			runtime.profileApplications,
+			runtime.developmentProjectIDResolver,
+			storage.instanceID,
+			runtimeConfig,
+			administration)
+		if err != nil {
+			return err
+		}
 	}
 	if routes.projectBrowser != nil {
 		routes.projectBrowser.ConnectionAdministration = connectionAdministration
@@ -1155,6 +1197,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return principal.ID, ok
 			},
 		},
+		DevelopmentProfiles: developmentProfileAPI,
 	}
 	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {
@@ -1317,7 +1360,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				},
 				CSRFToken: routes.accessModule.CSRFToken,
 				Layout: func(r *http.Request) webpage.Provider {
-					return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
+					return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r, authorizedProductNavigationAccess(r.Context(), routes.accessModule, routes.projectCatalog, r))
 				},
 				Environment: func(r *http.Request) string {
 					return string(requestServingEnvironment(policy.defaultEnvironment, r))
@@ -1439,7 +1482,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		agentConfig := agentmodule.Config{
 			Persistence: persistence.agentPersistence, Production: runtimeConfig.Production, Model: moduleWorkflow.agentConfig,
-			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
+			ModelConfigFile: moduleWorkflow.agentConfigFile,
+			Service:         moduleWorkflow.agent, Jobs: platform.asyncJobs,
 			AllowDevAuthBypass: runtimeConfig.AllowDevAuthBypass,
 			ProductName:        brand.Name,
 			BuildVersion:       platform.buildIdentity.Version,
@@ -1611,7 +1655,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				CSRFToken:        routes.accessModule.CSRFToken,
 				CurrentRoleLabel: routes.accessModule.CurrentRoleLabel,
 				Layout: func(r *http.Request) webpage.Provider {
-					return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
+					return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r, authorizedProductNavigationAccess(r.Context(), routes.accessModule, routes.projectCatalog, r))
 				},
 				CurrentPrincipal: func(r *http.Request) (agentmodule.Principal, bool) {
 					if platform.auth == nil {

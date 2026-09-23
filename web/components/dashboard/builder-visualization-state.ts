@@ -22,13 +22,13 @@ export class BuilderVisualizationState {
       && signal.consumerIdentity === `${pageID}/${signal.visualID}`
       && signal.filterRevision === filterRevision)
     const baseSignals = Object.fromEntries(Object.entries(signals).filter(([id, signal]) => id === signal.visualID && matches(signal)))
-    const current = this.decoder.decodeAll(baseSignals)
+    const current = this.decoder.decodeAll(baseSignals, servingStateID)
     const windowSignals: Record<string, DashboardVisualizationSignal> = {}
     for (const [id, base] of Object.entries(current)) {
       const window = signals[`window:${servingStateID}:${pageID}:${filterRevision}:${id}`]
       if (window && window.visualID === id && matches(window) && window.specRevision === base.specRevision) windowSignals[id] = window
     }
-    const windows = this.windowDecoder.decodeAll(windowSignals)
+    const windows = this.windowDecoder.decodeAll(windowSignals, servingStateID)
     for (const [id, window] of Object.entries(windows)) {
       const base = current[id]!
       const retained = this.retained.get(id)

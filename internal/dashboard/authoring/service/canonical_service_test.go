@@ -52,6 +52,11 @@ type canonicalRepository struct {
 		fingerprint string
 		token       authoring.RevisionToken
 	}
+	deleteCommands map[authoring.CommandID]struct {
+		fingerprint string
+		token       authoring.RevisionToken
+		owner       string
+	}
 	operations           map[string]authoring.CreateOperationResult
 	compiled             authoring.CompiledRevision
 	createCalls          int
@@ -64,6 +69,10 @@ func newCanonicalRepository() *canonicalRepository {
 	return &canonicalRepository{revisions: map[authoring.RevisionID]authoring.Revision{}, commands: map[authoring.CommandID]struct {
 		fingerprint string
 		token       authoring.RevisionToken
+	}{}, deleteCommands: map[authoring.CommandID]struct {
+		fingerprint string
+		token       authoring.RevisionToken
+		owner       string
 	}{}, operations: map[string]authoring.CreateOperationResult{}}
 }
 
@@ -159,6 +168,28 @@ func (r *canonicalRepository) Archive(_ context.Context, input authoring.Archive
 		token       authoring.RevisionToken
 	}{input.Evidence.Fingerprint, input.ExpectedCurrentRevision}
 	return r.lifecycle, nil
+}
+func (r *canonicalRepository) LookupDeleteCommand(_ context.Context, _ graph.ResourceID, _ authoring.DashboardID, evidence authoring.CommandEvidence) (authoring.DeleteResult, bool, error) {
+	value, ok := r.deleteCommands[evidence.ID]
+	if !ok {
+		return authoring.DeleteResult{}, false, nil
+	}
+	if value.fingerprint != evidence.Fingerprint {
+		return authoring.DeleteResult{}, false, authoring.ErrCommandReuse
+	}
+	return authoring.DeleteResult{Revision: value.token, OwnerPrincipalID: value.owner, Replayed: true}, true, nil
+}
+func (r *canonicalRepository) Delete(_ context.Context, input authoring.DeleteInput) (authoring.DeleteResult, error) {
+	if current := currentLifecycleToken(r.lifecycle); current != input.ExpectedCurrentRevision {
+		return authoring.DeleteResult{}, authoring.ErrStaleRevision
+	}
+	r.deleteCommands[input.Evidence.ID] = struct {
+		fingerprint string
+		token       authoring.RevisionToken
+		owner       string
+	}{input.Evidence.Fingerprint, input.ExpectedCurrentRevision, r.lifecycle.OwnerPrincipalID}
+	r.lifecycle = authoring.DashboardLifecycle{}
+	return authoring.DeleteResult{Revision: input.ExpectedCurrentRevision, OwnerPrincipalID: r.deleteCommands[input.Evidence.ID].owner}, nil
 }
 func (r *canonicalRepository) GetPublishedCompilation(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
 	if r.compiled.DashboardID == "" {

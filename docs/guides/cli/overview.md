@@ -9,6 +9,7 @@ The `leapview` CLI runs local services, validates and deploys projects, synchron
 
 ## Deliver and automate
 
+- [Run the analytics development workflow](/docs/cli/analytics-development) with an exact authoring archive when available or the current source checkout.
 - [Develop, review, and publish](/docs/cli/validate-deploy) an exact target candidate.
 - [Plan, stage, and activate managed data](/docs/guides/data/revisions).
 - [Run automation and CI](/docs/cli/automation) with bounded credentials and preserved evidence.

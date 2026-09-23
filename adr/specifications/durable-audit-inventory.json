@@ -143,6 +143,17 @@
       "evidence": ["internal/analytics/connectionbinding/rotation_test.go"]
     },
     {
+      "id": "connection.development-profile-application",
+      "owner": "analytics",
+      "kind": "generated-command-audit",
+      "events": ["development profile application completion"],
+      "guarantee": "best-effort",
+      "failureBehavior": "The durable application checkpoint remains authoritative; a completion-audit failure is logged without credential or provider-version material.",
+      "implementation": ["internal/analytics/module/development_profile_api.go"],
+      "contractSources": ["api/typespec/connection_bindings.tsp"],
+      "evidence": ["internal/analytics/module/development_profile_api_test.go"]
+    },
+    {
       "id": "agent.commands",
       "owner": "agent",
       "kind": "generated-command-audit",

@@ -470,6 +470,7 @@ type Repository interface {
 	ClaimNext(context.Context, ClaimInput) (Occurrence, bool, error)
 	Start(context.Context, string, Fence, time.Time) error
 	RecordPhase(context.Context, string, Fence, string, string, time.Time) error
+	RecordCheckpoint(context.Context, string, Fence, time.Time, EvidenceReference) error
 	Heartbeat(context.Context, string, Fence, time.Time, time.Duration) error
 	Complete(context.Context, string, Fence, time.Time, Result) error
 	Fail(context.Context, string, Fence, time.Time, Result, error) error

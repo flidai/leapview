@@ -582,6 +582,9 @@ func TestEnterpriseAuthoringGuideDefinesOneTargetHostedLifecycle(t *testing.T) {
 			"leapview staging",
 			"--auto-approve",
 		} {
+			if analyticsDevelopmentGuideAllows(entry.Name(), forbidden) {
+				continue
+			}
 			if strings.Contains(string(content), forbidden) {
 				t.Errorf("docs/guides/cli/%s presents alternate authoring command %q", entry.Name(), forbidden)
 			}
@@ -928,11 +931,11 @@ func TestPlatformProductionCodeDoesNotOwnApplicationEnvironment(t *testing.T) {
 		if file.pkgDir != "internal/platform" && !strings.HasPrefix(file.pkgDir, "internal/platform/") {
 			continue
 		}
-		// postgrestest is an importable test harness rather than runtime code.
-		// Its environment gate is deliberately owned by the conformance lane so
-		// CI can fail closed while ordinary developer runs may skip without a
-		// container provider.
-		if file.pkgDir == "internal/platform/postgres/postgrestest" {
+		// postgrestest and its package runner are test-only infrastructure,
+		// not runtime code. The conformance lane owns their environment gate
+		// so CI can fail closed while ordinary developer runs may skip when
+		// no container provider is available.
+		if file.pkgDir == "internal/platform/postgres/postgrestest" || strings.HasPrefix(file.pkgDir, "internal/platform/postgres/postgrestest/") {
 			continue
 		}
 		parsed, err := parser.ParseFile(token.NewFileSet(), file.path, file.body, 0)
@@ -3522,7 +3525,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 	}{
 		"ci.yml":               {prepareCount: 5, frontendTimeout: "timeout-minutes: 30"},
 		"merge-validation.yml": {prepareCount: 4, frontendTimeout: "timeout-minutes: ${{ matrix.shard == 'site' && 120 || 20 }}"},
-		"nightly.yml":          {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
+		"nightly.yml":          {prepareCount: 4, frontendTimeout: "timeout-minutes: ${{ matrix.shard == 'site' && 120 || 20 }}"},
 	} {
 		data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
 		require.NoError(t, err)

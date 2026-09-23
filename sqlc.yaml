@@ -18,12 +18,27 @@ sql:
         omit_unused_structs: true
 
   - engine: "postgresql"
+    queries: "internal/project/developmentsession/postgres/queries"
+    schema: "internal/project/developmentsession/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/project/developmentsession/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+
+  - engine: "postgresql"
     queries: "internal/access/postgres/queries"
     schema:
       - "internal/access/postgres/schema.sql"
       - "internal/project/postgres/schema.sql"
       - "internal/project/postgres/resource_uid_schema.sql"
-      - "internal/platform/postgres/migrations/029_durable_authority_grants.sql"
+      - "internal/platform/postgres/migrations/034_durable_authority_grants.sql"
     gen:
       go:
         package: "db"

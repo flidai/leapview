@@ -122,6 +122,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	// draft revision or executing a command.
 	r.Get("/dashboards/{dashboard}/edit", protectAuthoringAction(access.CapabilityResourceEdit, access.ActionDashboardUpdate, h.DashboardBuilder))
 	r.Post("/dashboards/{dashboard}/archive", protectAuthoringAction(access.CapabilityResourceManage, access.ActionDashboardDelete, h.DashboardArchive))
+	r.Post("/dashboards/{dashboard}/delete", protectAuthoringAction(access.CapabilityResourceManage, access.ActionDashboardDelete, h.DashboardDelete))
 	r.Get("/dashboards/{dashboard}/preview", protectAuthoringAction(access.CapabilityResourceEdit, access.ActionDashboardUpdate, h.DashboardBuilderPreview))
 	r.Get("/dashboards/{dashboard}/export.yaml", protectAuthoringAction(access.CapabilityResourceRead, access.ActionDashboardRead, h.DashboardBuilderExportYAML))
 	r.Post("/dashboards/{dashboard}/draft/command", protectAuthoringCommand(h.DashboardBuilderCommand))

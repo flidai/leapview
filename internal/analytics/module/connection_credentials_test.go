@@ -18,16 +18,15 @@ func TestBuildDevelopmentTargetResolverAllowsOnlyDedicatedConnectionVariables(t 
 	now := time.Date(2026, 7, 29, 20, 0, 0, 0, time.UTC)
 	values := map[string]string{
 		"LEAPVIEW_DEV_CONNECTION_WAREHOUSE": `{"password":"source-secret"}`,
+		"LEAPVIEW_DEV_CONNECTION_CATALOG":   `{"password":"catalog-secret"}`,
 		"DATABASE_URL":                      "must-not-be-readable",
 	}
 	resolver, err := buildDevelopmentTargetResolver(
 		projectgraph.ResourceID("sales"),
 		"lvinst_local",
 		"dev",
-		[]string{
-			"LEAPVIEW_DEV_CONNECTION_WAREHOUSE=redacted",
-			"DATABASE_URL=redacted",
-		},
+		[]string{"LEAPVIEW_DEV_CONNECTION_WAREHOUSE"},
+		[]byte("0123456789abcdef0123456789abcdef"),
 		func(name string) (string, bool) {
 			value, ok := values[name]
 			return value, ok
@@ -51,20 +50,81 @@ func TestBuildDevelopmentTargetResolverAllowsOnlyDedicatedConnectionVariables(t 
 	if !errors.Is(err, connectionbinding.ErrCredentialDenied) {
 		t.Fatalf("unscoped environment variable error = %v", err)
 	}
+	_, err = resolver.Resolve(context.Background(), connectionbinding.CredentialReference{
+		ProjectID: projectgraph.ResourceID("sales"), Environment: "dev",
+		SecretPath: "/", SecretKey: "LEAPVIEW_DEV_CONNECTION_CATALOG",
+	})
+	if !errors.Is(err, connectionbinding.ErrCredentialDenied) {
+		t.Fatalf("unselected dedicated environment variable error = %v", err)
+	}
+}
+
+func TestBuildDevelopmentTargetResolverRequiresExplicitSelection(t *testing.T) {
+	lookups := 0
+	resolver, err := buildDevelopmentTargetResolver(
+		projectgraph.ResourceID("sales"), "lvinst_local", "dev", nil,
+		[]byte("0123456789abcdef0123456789abcdef"),
+		func(string) (string, bool) {
+			lookups++
+			return `{"password":"must-not-be-read"}`, true
+		}, time.Now,
+	)
+	require.NoError(t, err)
+	if resolver != nil {
+		t.Fatal("resolver was built without explicitly selected variables")
+	}
+	if lookups != 0 {
+		t.Fatalf("environment lookups = %d", lookups)
+	}
+}
+
+func TestBuildDevelopmentTargetResolverRejectsInvalidSelectionWithoutDisclosure(t *testing.T) {
+	for _, selected := range [][]string{
+		{"DATABASE_URL"},
+		{"LEAPVIEW_DEV_CONNECTION_WAREHOUSE=source-secret"},
+		{"LEAPVIEW_DEV_CONNECTION_warehouse"},
+		{"LEAPVIEW_DEV_CONNECTION_"},
+	} {
+		_, err := buildDevelopmentTargetResolver(
+			projectgraph.ResourceID("sales"), "lvinst_local", "dev", selected,
+			[]byte("0123456789abcdef0123456789abcdef"),
+			func(string) (string, bool) { return "", false }, time.Now,
+		)
+		if !errors.Is(err, connectionbinding.ErrInvalidBinding) {
+			t.Fatalf("selection %q error = %v, want invalid binding", selected, err)
+		}
+		if strings.Contains(err.Error(), "source-secret") {
+			t.Fatalf("selection error disclosed credential: %v", err)
+		}
+	}
+}
+
+func TestNormalizeDevelopmentConnectionVariablesSortsAndDeduplicates(t *testing.T) {
+	allowed, err := normalizeDevelopmentConnectionVariables([]string{
+		"LEAPVIEW_DEV_CONNECTION_ZEBRA",
+		"LEAPVIEW_DEV_CONNECTION_ALPHA",
+		"LEAPVIEW_DEV_CONNECTION_ZEBRA",
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"LEAPVIEW_DEV_CONNECTION_ALPHA",
+		"LEAPVIEW_DEV_CONNECTION_ZEBRA",
+	}, allowed)
 }
 
 func TestBuildCredentialResolverAllowsUnboundDevelopmentStartup(t *testing.T) {
 	resolver, err := buildCredentialResolver(Config{
-		CredentialMode:        CredentialModeDevelopmentEnvironment,
-		CredentialTargetID:    "target-local",
-		CredentialProjectID:   "",
-		CredentialEnvironment: "dev",
+		CredentialMode:                 CredentialModeDevelopmentEnvironment,
+		CredentialTargetID:             "target-local",
+		CredentialProjectID:            "",
+		CredentialEnvironment:          "dev",
+		CredentialEnvironmentVariables: []string{"LEAPVIEW_DEV_CONNECTION_WAREHOUSE"},
 	})
 	require.NoError(t, err)
-	t.Setenv("LEAPVIEW_TEST_UNBOUND_CREDENTIAL", `{"password":"source-secret"}`)
+	t.Setenv("LEAPVIEW_DEV_CONNECTION_WAREHOUSE", `{"password":"source-secret"}`)
 	auth, err := resolver.Resolve(context.Background(), "warehouse", semanticmodel.Connection{
 		Kind: "postgres", Credentials: semanticmodel.ConnectionCredentials{
-			Provider: "env", Secret: "LEAPVIEW_TEST_UNBOUND_CREDENTIAL",
+			Provider: "env", Secret: "LEAPVIEW_DEV_CONNECTION_WAREHOUSE",
 		},
 	})
 	require.NoError(t, err)
@@ -76,7 +136,11 @@ func TestBuildCredentialResolverAllowsUnboundDevelopmentStartup(t *testing.T) {
 func TestTargetCredentialResolverBindsUnboundDevelopmentScopeAtSelectionTime(t *testing.T) {
 	t.Setenv("LEAPVIEW_DEV_CONNECTION_WAREHOUSE", `{"password":"source-secret"}`)
 	module := &Module{targetClass: connectionbinding.TargetDevelopment, targetID: "target-local", targetEnvironment: "dev", targetResolvers: connectionbinding.ResolverSet{
-		Environment: unboundProcessDevelopmentTargetResolver{targetID: "target-local", environment: "dev"},
+		Environment: unboundProcessDevelopmentTargetResolver{
+			targetID: "target-local", environment: "dev",
+			allowedVariables: []string{"LEAPVIEW_DEV_CONNECTION_WAREHOUSE"},
+			versionKey:       []byte("0123456789abcdef0123456789abcdef"),
+		},
 	}}
 	selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
 		TargetID: "target-local", ProjectID: "project:active", Environment: "dev",
@@ -94,7 +158,11 @@ func TestTargetCredentialResolverBindsUnboundDevelopmentScopeAtSelectionTime(t *
 
 func TestUnboundProcessDevelopmentResolverUsesReferenceProject(t *testing.T) {
 	t.Setenv("LEAPVIEW_DEV_CONNECTION_WAREHOUSE", `{"password":"source-secret"}`)
-	resolver := unboundProcessDevelopmentTargetResolver{targetID: "target-local", environment: "dev"}
+	resolver := unboundProcessDevelopmentTargetResolver{
+		targetID: "target-local", environment: "dev",
+		allowedVariables: []string{"LEAPVIEW_DEV_CONNECTION_WAREHOUSE"},
+		versionKey:       []byte("0123456789abcdef0123456789abcdef"),
+	}
 	snapshot, err := resolver.Resolve(context.Background(), connectionbinding.CredentialReference{
 		ProjectID: "project:active", Environment: "dev", SecretPath: "/", SecretKey: "LEAPVIEW_DEV_CONNECTION_WAREHOUSE",
 	})

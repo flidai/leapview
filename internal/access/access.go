@@ -73,6 +73,7 @@ type AuthorizationPolicy struct {
 	Revision     int64
 	Digest       string
 	RoleBindings []RoleBinding
+	Grants       []AuthorizationGrant
 }
 
 // AuthorizationRoleBindingInput is one exact-role upsert command. The
@@ -175,7 +176,7 @@ func ValidateAuthorizationPolicyScope(scope AuthorizationPolicyScope) error {
 // AuthorizationPolicyDigest computes the stable identity of one qualified
 // target policy. Input ordering never affects the result; duplicate binding
 // IDs or subject/role keys are rejected rather than silently canonicalized.
-func AuthorizationPolicyDigest(scope AuthorizationPolicyScope, bindings []RoleBinding) (string, error) {
+func AuthorizationPolicyDigest(scope AuthorizationPolicyScope, bindings []RoleBinding, grants ...AuthorizationGrant) (string, error) {
 	if err := ValidateAuthorizationPolicyScope(scope); err != nil {
 		return "", err
 	}
@@ -201,11 +202,16 @@ func AuthorizationPolicyDigest(scope AuthorizationPolicyScope, bindings []RoleBi
 		}
 		seenSubjectRole[key] = struct{}{}
 	}
+	canonicalGrants, err := canonicalAuthorizationGrants(grants)
+	if err != nil {
+		return "", err
+	}
 	wire := struct {
+		Grants       []AuthorizationGrant     `json:"grants,omitempty"`
 		Profile      string                   `json:"profile"`
 		Scope        AuthorizationPolicyScope `json:"scope"`
 		RoleBindings []RoleBinding            `json:"roleBindings"`
-	}{Profile: AuthorizationPolicyProfile, Scope: scope, RoleBindings: canonical}
+	}{Profile: AuthorizationPolicyProfile, Scope: scope, RoleBindings: canonical, Grants: canonicalGrants}
 	encoded, err := json.Marshal(wire)
 	if err != nil {
 		return "", fmt.Errorf("encode authorization policy digest: %w", err)

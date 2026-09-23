@@ -623,6 +623,30 @@ model GrantAdminEnvelopeAuditPayload {
 alias GrantAdminEnvelopeCreated = CreatedJson<GrantAdminEnvelopeResponse>;
 alias GrantAdminEnvelopeRevoked = OkJson<GrantAdminEnvelopeResponse>;
 
+/** Mutable target policy intent; publication activates its graph-bound grants. */
+model TargetGrantCreateRequest extends GrantRequest {
+  id: string;
+  name?: string;
+  expectedRevision: int64;
+}
+
+model TargetGrantResponse extends GrantRequest {
+  id: string;
+  name?: string;
+  policyRevision: int64;
+  policyDigest: string;
+}
+
+model TargetGrantListResponse {
+  items: TargetGrantResponse[];
+  page: PageInfo;
+  targetId: string;
+  projectId: ResourceId;
+  environment: string;
+  policyRevision: int64;
+  policyDigest: string;
+}
+
 @apigen.failureDefinition(#{
   kind: "invalid",
   statusCode: 400,
@@ -1235,6 +1259,8 @@ op listEffectiveCapabilities(@path project: ResourceId, @query resourceKind?: Re
 @apigen.failsWith(ResourceShareGrantConflictFailure)
 @apigen.auditPayload(ResourceShareGrantAuditPayload)
 op issueResourceShareGrant(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ResourceShareGrantIssueRequest): ResourceShareGrantCreated | CommonErrors;
+alias ListGrantsOK = OkJson<TargetGrantListResponse>;
+alias CreateGrantCreated = CreatedJson<TargetGrantResponse>;
 
 @tag("Access")
 @summary("Revoke a durable resource-share grant")
@@ -1263,6 +1289,31 @@ op revokeResourceShareGrant(@path @apigen.target grant: string, @body body: Reso
 @apigen.failsWith(GrantAdminEnvelopeConflictFailure)
 @apigen.auditPayload(GrantAdminEnvelopeAuditPayload)
 op issueGrantAdminEnvelope(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GrantAdminEnvelopeIssueRequest): GrantAdminEnvelopeCreated | CommonErrors;
+@tag("Access")
+@route("/projects/{project}/grants")
+@apigen.commandDefaults(#{ guarantee: "transactional" })
+interface Grants {
+  @summary("List grants")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.read", resolver: "project" })
+  @extension("x-leapview-object-scope", "project")
+  listGrants(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListGrantsOK | CommonErrors;
+
+  @summary("Create a grant")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.manage", resolver: "project" })
+  @extension("x-leapview-object-scope", "project")
+  @apigen.ui("project.access.grant.create")
+  @apigen.command(#{
+    auditAction: "grant.created",
+    failures: #[
+      #{ kind: "invalid", statusCode: 400, code: "GRANT_INVALID", publicDetail: "The grant request is invalid." },
+    ],
+  })
+  @apigen.auditPayload(GrantAuditPayload)
+  createGrant(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: TargetGrantCreateRequest): CreateGrantCreated | CommonErrors;
+
+}
 
 @tag("Access")
 @summary("Revoke a project-bound grant-administration envelope")

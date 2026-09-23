@@ -22,6 +22,7 @@ type UpdateConfigurationRequest = connectionbinding.UpdateConfigurationRequest
 type AuthenticationMode = connectionbinding.AuthenticationMode
 type EndpointConfig = connectionbinding.EndpointConfig
 type CredentialReference = connectionbinding.CredentialReference
+type DevelopmentProfileDigestConnection = connectionbinding.DevelopmentProfileDigestConnection
 
 var (
 	ErrInvalidBinding          = connectionbinding.ErrInvalidBinding
@@ -37,8 +38,9 @@ var (
 )
 
 var (
-	ParseConnectionID      = connectionbinding.ParseConnectionID
-	ValidateEndpointConfig = connectionbinding.ValidateEndpointConfig
+	ParseConnectionID        = connectionbinding.ParseConnectionID
+	ValidateEndpointConfig   = connectionbinding.ValidateEndpointConfig
+	DevelopmentProfileDigest = connectionbinding.DevelopmentProfileDigest
 )
 
 const AuthenticationExternalBundle = connectionbinding.AuthenticationExternalBundle

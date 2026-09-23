@@ -77,7 +77,7 @@ func (service *nativeCandidateArtifactPhases) resolveTargetAuthorizationPolicy(
 	if err != nil {
 		return resolvedTargetAuthorizationPolicy{}, err
 	}
-	computed, err := access.AuthorizationPolicyDigest(scope, policy.RoleBindings)
+	computed, err := access.AuthorizationPolicyDigest(scope, policy.RoleBindings, policy.Grants...)
 	if err != nil {
 		return resolvedTargetAuthorizationPolicy{}, err
 	}

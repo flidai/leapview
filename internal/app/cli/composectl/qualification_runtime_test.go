@@ -23,6 +23,7 @@ func TestDockerCLIRuntimeStartsContainerWithDeterministicArguments(t *testing.T)
 		Volumes: []qualificationContainerVolume{
 			{Source: "/host/read-only", Target: "/qualification", ReadOnly: true},
 			{Source: "/host/evidence", Target: "/evidence"},
+			{Source: "shared-state", Target: "/var/lib/app/data", Subpath: "home/data", ReadOnly: true},
 		},
 		Tmpfs: []string{"/var/lib/postgresql:rw,exec,nosuid,nodev,size=512m"},
 		Environment: map[string]string{
@@ -41,6 +42,7 @@ func TestDockerCLIRuntimeStartsContainerWithDeterministicArguments(t *testing.T)
 		"--network", "host",
 		"--volume", "/host/read-only:/qualification:ro",
 		"--volume", "/host/evidence:/evidence",
+		"--mount", "type=volume,src=shared-state,dst=/var/lib/app/data,volume-subpath=home/data,readonly",
 		"--tmpfs", "/var/lib/postgresql:rw,exec,nosuid,nodev,size=512m",
 		"--env", "QUALIFICATION_PROJECT_ID=evaluation",
 		"--env", "QUALIFICATION_URL=https://localhost",
@@ -111,8 +113,9 @@ func TestDockerCLIContainerMapsLifecycleOperations(t *testing.T) {
 func TestDockerCLIRuntimeRejectsIncompleteContainerRequest(t *testing.T) {
 	runtime := newDockerCLIQualificationRuntime(t.TempDir(), "docker", &recordingQualificationExecutor{})
 	for name, request := range map[string]qualificationContainerRequest{
-		"missing name":  {Image: "browser:stable"},
-		"missing image": {Name: "browser"},
+		"missing name":          {Image: "browser:stable"},
+		"missing image":         {Name: "browser"},
+		"unsafe volume subpath": {Name: "browser", Image: "browser:stable", Volumes: []qualificationContainerVolume{{Source: "state", Target: "/data", Subpath: "../foreign"}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := runtime.Start(context.Background(), request); err == nil {

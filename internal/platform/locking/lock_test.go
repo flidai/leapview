@@ -1,6 +1,9 @@
 package instancelock
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestAcquireRejectsSecondProcessForSameHome(t *testing.T) {
 	home := t.TempDir()
@@ -9,8 +12,8 @@ func TestAcquireRejectsSecondProcessForSameHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer first.Release()
-	if _, err := Acquire(home); err == nil {
-		t.Fatal("second lock acquisition succeeded")
+	if _, err := Acquire(home); !errors.Is(err, ErrAlreadyInUse) {
+		t.Fatalf("second lock acquisition error = %v, want ErrAlreadyInUse", err)
 	}
 	if err := first.Release(); err != nil {
 		t.Fatal(err)

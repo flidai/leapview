@@ -104,6 +104,14 @@ func TestValidatePostgresDevelopmentAllowsLoopbackPlaintextWithoutPoolAdmission(
 	}
 }
 
+func TestValidatePostgresDevelopmentAllowsPreinitializedRuntimeWithoutMigratorCredential(t *testing.T) {
+	cfg := validDevelopmentPostgresConfig()
+	cfg.PostgresControlMigratorURL = ""
+	if err := cfg.ValidatePostgresDevelopment(); err != nil {
+		t.Fatalf("preinitialized development PostgreSQL config rejected: %v", err)
+	}
+}
+
 func TestValidatePostgresDevelopmentRejectsRemotePlaintext(t *testing.T) {
 	cfg := validDevelopmentPostgresConfig()
 	cfg.PostgresDuckLakeURL = "postgres://ducklake:secret@db.internal:5432/ducklake?sslmode=disable"

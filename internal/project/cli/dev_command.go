@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/flidai/leapview/internal/platform/cliapi"
+	"github.com/flidai/leapview/internal/project/developmentsession"
 	"github.com/flidai/leapview/internal/project/devloop"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/schema"
@@ -39,6 +40,19 @@ type DevRemoteFactory interface {
 		cliapi.Credentials,
 		int,
 	) (devloop.Remote, error)
+}
+
+// DevSessionBinding is supplied by a local remote factory when the target
+// supports the durable owner-scoped development-session API. Remote targets
+// that do not expose this optional port retain the existing candidate-only
+// workflow.
+type DevSessionBinding struct {
+	Store developmentsession.Store
+	Key   developmentsession.Key
+}
+
+type DevSessionProvider interface {
+	DevelopmentSession(context.Context, cliapi.Credentials) (*DevSessionBinding, error)
 }
 
 // DevCommand synchronizes coherent local project snapshots into one private
@@ -71,7 +85,7 @@ func DevCommand(
 				values.SourceRoot = args[0]
 			}
 			return RunDev(
-				ctx,
+				command.Context(),
 				client,
 				checkpoints,
 				remotes,
@@ -83,6 +97,7 @@ func DevCommand(
 			)
 		},
 	}
+	command.SetContext(ctx)
 	command.Flags().StringVar(&values.SourceRoot, "source-root", values.SourceRoot, "analytics source root")
 	command.Flags().StringVar(
 		&values.Credentials.Target,
@@ -162,19 +177,20 @@ func DevCommand(
 }
 
 type DevResult struct {
-	SchemaVersion    int    `json:"schemaVersion"`
-	CandidateID      string `json:"candidateId"`
-	Revision         int64  `json:"revision"`
-	TargetID         string `json:"targetId"`
-	Environment      string `json:"environment"`
-	PrincipalID      string `json:"principalId"`
-	ArtifactDigest   string `json:"artifactDigest"`
-	ProvenanceDigest string `json:"provenanceDigest"`
-	PreviewURL       string `json:"previewUrl"`
-	PlanID           string `json:"planId,omitempty"`
-	PlanDigest       string `json:"planDigest,omitempty"`
-	ExecutionDigest  string `json:"executionDigest,omitempty"`
-	EvidenceDigest   string `json:"evidenceDigest,omitempty"`
+	SchemaVersion     int    `json:"schemaVersion"`
+	CandidateID       string `json:"candidateId"`
+	Revision          int64  `json:"revision"`
+	TargetID          string `json:"targetId"`
+	Environment       string `json:"environment"`
+	PrincipalID       string `json:"principalId"`
+	ArtifactDigest    string `json:"artifactDigest"`
+	ProvenanceDigest  string `json:"provenanceDigest"`
+	PreviewURL        string `json:"previewUrl"`
+	SessionPreviewURL string `json:"sessionPreviewUrl,omitempty"`
+	PlanID            string `json:"planId,omitempty"`
+	PlanDigest        string `json:"planDigest,omitempty"`
+	ExecutionDigest   string `json:"executionDigest,omitempty"`
+	EvidenceDigest    string `json:"evidenceDigest,omitempty"`
 }
 
 // RunDev executes the Project-owned candidate synchronization lifecycle. It is
@@ -228,17 +244,48 @@ func RunDev(
 	if err != nil {
 		return err
 	}
-	service, err := devloop.New(
-		devloop.FilesystemBuilder{
-			SourceRoot: sourceRoot, ProjectID: projectID, SourceRevision: sourceRevision,
-			CandidateKey: options.CandidateKey,
-		},
-		remote,
-	)
+	var sessionBinding *DevSessionBinding
+	if provider, ok := remotes.(DevSessionProvider); ok {
+		sessionBinding, err = provider.DevelopmentSession(ctx, credentials)
+		if err != nil {
+			return err
+		}
+	}
+	var service *devloop.Service
+	if sessionBinding != nil {
+		if sessionBinding.Store == nil {
+			return fmt.Errorf("development session store is unavailable")
+		}
+		if sessionBinding.Key.ProjectID != projectID {
+			return fmt.Errorf("development session Project identity does not match the target-bound Project")
+		}
+		service, err = devloop.NewWithSession(
+			devloop.FilesystemBuilder{
+				SourceRoot: sourceRoot, ProjectID: projectID, SourceRevision: sourceRevision,
+				CandidateKey: options.CandidateKey,
+			}, remote, sessionBinding.Store, sessionBinding.Key,
+		)
+	} else {
+		service, err = devloop.New(
+			devloop.FilesystemBuilder{
+				SourceRoot: sourceRoot, ProjectID: projectID, SourceRevision: sourceRevision,
+				CandidateKey: options.CandidateKey,
+			},
+			remote,
+		)
+	}
 	if err != nil {
 		return err
 	}
+	previewOrigin := credentials.CanonicalOrigin
+	if strings.TrimSpace(previewOrigin) == "" {
+		previewOrigin = credentials.Target
+	}
 	lastPreviewURL := ""
+	stableSessionPreviewURL := ""
+	if sessionBinding != nil {
+		stableSessionPreviewURL = service.SessionPreviewURL(previewOrigin)
+	}
 	report := func(update devloop.Update) error {
 		if update.Err != nil {
 			for _, diagnostic := range configschema.Diagnostics(update.Err) {
@@ -250,10 +297,6 @@ func RunDev(
 			return nil
 		}
 		candidate := update.Result.Candidate
-		previewOrigin := credentials.CanonicalOrigin
-		if strings.TrimSpace(previewOrigin) == "" {
-			previewOrigin = credentials.Target
-		}
 		if err := validateCandidatePreviewURL(
 			previewOrigin,
 			candidate.ID,
@@ -307,19 +350,20 @@ func RunDev(
 		}
 		if options.Format == "json" {
 			if err := json.NewEncoder(out).Encode(DevResult{
-				SchemaVersion:    1,
-				CandidateID:      candidate.ID,
-				Revision:         candidate.Revision,
-				TargetID:         candidate.TargetID,
-				Environment:      candidate.Environment,
-				PrincipalID:      candidate.OwnerID,
-				ArtifactDigest:   candidate.ArtifactDigest,
-				ProvenanceDigest: candidate.ProvenanceDigest,
-				PreviewURL:       candidate.PreviewURL,
-				PlanID:           checkpoint.PlanID,
-				PlanDigest:       checkpoint.PlanDigest,
-				ExecutionDigest:  checkpoint.ExecutionDigest,
-				EvidenceDigest:   checkpoint.EvidenceDigest,
+				SchemaVersion:     1,
+				CandidateID:       candidate.ID,
+				Revision:          candidate.Revision,
+				TargetID:          candidate.TargetID,
+				Environment:       candidate.Environment,
+				PrincipalID:       candidate.OwnerID,
+				ArtifactDigest:    candidate.ArtifactDigest,
+				ProvenanceDigest:  candidate.ProvenanceDigest,
+				PreviewURL:        candidate.PreviewURL,
+				SessionPreviewURL: stableSessionPreviewURL,
+				PlanID:            checkpoint.PlanID,
+				PlanDigest:        checkpoint.PlanDigest,
+				ExecutionDigest:   checkpoint.ExecutionDigest,
+				EvidenceDigest:    checkpoint.EvidenceDigest,
 			}); err != nil {
 				return fmt.Errorf("write dev result: %w", err)
 			}
@@ -338,8 +382,31 @@ func RunDev(
 			if checkpoint.PlanID != "" {
 				fmt.Fprintf(out, "plan %s digest %s evidence %s\n", checkpoint.PlanID, checkpoint.PlanDigest, checkpoint.EvidenceDigest)
 			}
+			if sessionBinding != nil && stableSessionPreviewURL != "" && stableSessionPreviewURL != lastPreviewURL {
+				fmt.Fprintf(out, "session-preview %s\n", stableSessionPreviewURL)
+			}
 		}
-		if candidate.PreviewURL != "" &&
+		if sessionBinding != nil {
+			// The stable pointer is the only URL opened for local authoring. The
+			// exact candidate URL remains in every machine-readable result and is
+			// printed separately for review/debugging.
+			if stableSessionPreviewURL != "" && stableSessionPreviewURL != lastPreviewURL {
+				if !options.NoBrowser && openBrowser != nil {
+					if err := openBrowser(stableSessionPreviewURL); err != nil {
+						fmt.Fprintf(
+							errOut,
+							"could not open preview in the system browser: %v; open %s manually\n",
+							err,
+							stableSessionPreviewURL,
+						)
+					}
+				}
+				lastPreviewURL = stableSessionPreviewURL
+			}
+			if options.Format == "text" && candidate.PreviewURL != "" {
+				fmt.Fprintf(out, "candidate-preview %s\n", candidate.PreviewURL)
+			}
+		} else if candidate.PreviewURL != "" &&
 			candidate.PreviewURL != lastPreviewURL {
 			if options.Format == "text" {
 				fmt.Fprintf(out, "preview %s\n", candidate.PreviewURL)

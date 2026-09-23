@@ -1,0 +1,8 @@
+apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata:
+  id: pipeline:sample-refresh
+  name: sample-refresh
+spec:
+  selection:
+    semanticModel: sales_metrics

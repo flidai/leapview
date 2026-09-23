@@ -65,7 +65,7 @@ func TestRootHelpExposesCanonicalDeploymentLifecycle(t *testing.T) {
 	}
 	command := NewCommand(context.Background())
 	if found, _, err := command.Find([]string{"deploy"}); err != nil || found == command {
-		t.Fatalf("root command does not resolve deprecated deploy path: command=%v err=%v", found, err)
+		t.Fatalf("root command does not resolve deploy path: command=%v err=%v", found, err)
 	}
 	if found, _, err := command.Find([]string{"search"}); err != nil || found == command {
 		t.Fatalf("root command does not resolve project-wide search: command=%v err=%v", found, err)
@@ -178,8 +178,8 @@ func TestDeployCommandUsesTargetOwnedAtomicCandidatePreparation(t *testing.T) {
 	if command.Name() != "deploy" {
 		t.Fatalf("command name = %q, want deploy", command.Name())
 	}
-	if !strings.Contains(strings.ToLower(command.Short), "deprecated") || command.Deprecated == "" {
-		t.Fatalf("deploy command is not marked deprecated: short=%q deprecated=%q", command.Short, command.Deprecated)
+	if strings.Contains(strings.ToLower(command.Short), "deprecated") || command.Deprecated != "" {
+		t.Fatalf("deploy command must be a normal guided delivery command: short=%q legacy=%q", command.Short, command.Deprecated)
 	}
 	if command.Flags().Lookup("revision") != nil {
 		t.Fatal("deploy command still exposes client-owned managed revision pins")

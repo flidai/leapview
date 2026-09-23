@@ -129,6 +129,47 @@ test('asset lineage selection clears from the background and Escape', async () =
   }
 })
 
+test('asset lineage keeps the complete upstream and downstream path highlighted when an intermediate model is selected', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      element.graph = {
+        nodes: [
+          { id: 'connection', label: 'CFO demo managed files', kind: 'connection', rank: -2 },
+          { id: 'source', label: 'Microsoft Financial Sample', kind: 'source', rank: -1, selected: true },
+          { id: 'model', label: 'P&L Lines', kind: 'model', rank: 0 },
+          { id: 'semantic', label: 'CFO Finance Model', kind: 'semantic_model', rank: 1 },
+          { id: 'dashboard', label: 'CFO Command Center', kind: 'dashboard', rank: 2 },
+        ],
+        edges: [
+          { id: 'connection-source', source: 'connection', target: 'source', kind: 'lineage_connection_source' },
+          { id: 'source-model', source: 'source', target: 'model', kind: 'lineage_source_model' },
+          { id: 'model-semantic', source: 'model', target: 'semantic', kind: 'lineage_model_semantic_model' },
+          { id: 'semantic-dashboard', source: 'semantic', target: 'dashboard', kind: 'lineage_semantic_model_dashboard' },
+        ],
+      }
+    })
+    await graph.locator('.asset-lineage-node', { hasText: 'P&L Lines' }).click()
+
+    const states = await graph.locator('.asset-lineage-node').evaluateAll((nodes) => Object.fromEntries(nodes.map((node) => [
+      node.querySelector('.asset-lineage-node-title')?.textContent?.trim(),
+      Array.from(node.classList).find((name) => name.match(/^asset-lineage-node-(selected|upstream|downstream|unrelated)$/)),
+    ])))
+    expect(states).toEqual({
+      'CFO demo managed files': 'asset-lineage-node-upstream',
+      'Microsoft Financial Sample': 'asset-lineage-node-upstream',
+      'P&L Lines': 'asset-lineage-node-selected',
+      'CFO Finance Model': 'asset-lineage-node-downstream',
+      'CFO Command Center': 'asset-lineage-node-downstream',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('asset lineage uses a non-looping route for peers in the same rank', async () => {
   const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
   try {

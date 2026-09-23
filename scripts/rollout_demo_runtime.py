@@ -12,15 +12,18 @@ import time
 import urllib.parse
 import urllib.request
 
-REVISION = '2e228ec6b42ab5c18bea04ce037695642aaf8019'
-PREDECESSOR_REVISION = 'd24ad786be8e838d923f6e57cd744eb8623c893b'
-EXPECTED_IMAGE = 'ghcr.io/flidai/leapview@sha256:29d832a2504ccb39b4b7a4d55defa2c9968116d228449ca6adc981d6adcd1bc2'
+REVISION = 'b36e6c1b965d3d816f1fa6215d06af83c1d48da4'
+PREDECESSOR_REVISION = '38804a01c488ffaeea54202b2541779fb83354b9'
+EXPECTED_IMAGE = 'ghcr.io/flidai/leapview@sha256:b016b15d9db04a9cf66f5b058aab60a76dffc3229ea3f27fc83d820abb925f78'
 RELEASE = Path('/opt/leapview-demo/releases') / REVISION
 IMAGE = (RELEASE / 'immutable-image.txt').read_text().strip()
 SERVICE = 'leapview-demo-current.service'
 UNIT = Path('/etc/systemd/system') / SERVICE
 DATABASE_CONTAINER = 'leapview-postgres-3948794932-demo-current-postgres-1'
 HOME_PATH = Path('/tmp/leapview-demo-host-state')
+AGENT_API_KEY_FILE = Path('/run/leapview-demo-agent-api-key')
+AGENT_BASE_URL = 'https://api.deepseek.com'
+AGENT_MODEL = 'deepseek-v4-flash'
 
 
 def output(*args):
@@ -68,6 +71,9 @@ def sha256(path):
 def main():
     os.umask(0o077)
     assert sys.argv[1:] in (['--check'], ['--apply']), 'Expected --check or --apply'
+    agent_api_key = AGENT_API_KEY_FILE.read_text()
+    AGENT_API_KEY_FILE.unlink()
+    assert agent_api_key and '\n' not in agent_api_key and '\r' not in agent_api_key, 'Invalid agent provider key'
     assert IMAGE == EXPECTED_IMAGE, 'Staged image differs from the admitted image'
     assert output('systemctl', 'is-active', SERVICE) == 'active'
     pid = output('systemctl', 'show', SERVICE, '--property=MainPID', '--value')
@@ -148,6 +154,10 @@ def main():
         if migration.returncode and 'already initialized' not in (backup / 'baseline-error.log').read_text():
             raise RuntimeError('Canonical baseline operation failed; private diagnostics retained with backup')
         assert sql('SELECT max(version_id) FROM public.goose_db_version WHERE is_applied') == '22'
+        runtime_env['LEAPVIEW_AGENT_API_KEY'] = agent_api_key
+        runtime_env['LEAPVIEW_AGENT_BASE_URL'] = AGENT_BASE_URL
+        runtime_env['LEAPVIEW_AGENT_MODEL'] = AGENT_MODEL
+        agent_api_key = ''
         environment_file = RELEASE / 'runtime.env'
         environment_lines = []
         for name, value in sorted(runtime_env.items()):
@@ -166,6 +176,10 @@ def main():
         new_pid = output('systemctl', 'show', SERVICE, '--property=MainPID', '--value')
         live = json.loads(output(f'/proc/{new_pid}/exe', 'version', '--json'))
         assert live['revision'] == REVISION
+        live_environment = dict(item.decode().split('=', 1) for item in Path('/proc', new_pid, 'environ').read_bytes().split(b'\0') if b'=' in item)
+        assert live_environment.get('LEAPVIEW_AGENT_API_KEY'), 'Agent provider key was not installed'
+        assert live_environment.get('LEAPVIEW_AGENT_BASE_URL') == AGENT_BASE_URL, 'Agent provider URL differs'
+        assert live_environment.get('LEAPVIEW_AGENT_MODEL') == AGENT_MODEL, 'Agent provider model differs'
         with urllib.request.urlopen('https://demo.leapview.dev/readyz', timeout=15) as response:
             assert response.status == 200 and json.load(response)['status'] == 'ready'
         with urllib.request.urlopen('https://demo.leapview.dev/login', timeout=15) as response:

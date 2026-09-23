@@ -38,6 +38,7 @@ import './report-canvas'
 import './report-footer'
 import './visual-modal'
 import './visualization/host'
+import './dashboard-development-session-status'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
 import {
   applyOptimisticInteraction,
@@ -52,6 +53,8 @@ import {
   DashboardAgentStateController,
   DashboardNavigationController,
   DashboardOptimisticInteractionController,
+  dashboardRefreshProgress,
+  type DashboardRefreshProgress,
 } from './dashboard-page-controller'
 
 const dashboardFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
@@ -63,13 +66,6 @@ type DashboardRenderSnapshot = {
   filterOptionPages: Record<string, DashboardFilterOptionPage>
   visuals: Record<string, VisualizationEnvelope>
   status: DashboardStatus
-}
-
-type DashboardRefreshProgress = {
-  active: boolean
-  complete: boolean
-  generation: number
-  percent: number
 }
 
 class LeapViewDashboardPage extends DatastarLit(LitElement) {
@@ -733,8 +729,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private get visuals(): Record<string, VisualizationEnvelope> {
+    const runtime = this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard' })
     return this.visualizationDecoder.decodeAll(
       this.signal<Record<string, DashboardVisualizationSignal>>('visuals', {}),
+      runtime.servingStateId ?? '',
     )
   }
 
@@ -772,7 +770,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       status: this.status,
     }
     this.renderSnapshot = snapshot
-    const refreshProgress = this.refreshProgress(snapshot)
+    const refreshProgress = dashboardRefreshProgress(snapshot.status)
     const agentEnabled = this.presentation === 'app'
     const activeFilterCount = this.activeFilterCount(snapshot)
     return html`
@@ -836,6 +834,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
             tabindex=${this.reportLayout === 'mobile' ? '0' : nothing}
           >
             ${this.renderRefreshProgress(refreshProgress)}
+            <lv-dashboard-development-session-status
+              .servingStateID=${this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard' }).servingStateId ?? ''}
+            ></lv-dashboard-development-session-status>
             ${this.renderFilterValidation()}
             ${this.renderFilterDock()}
             <div class="canvas-wrap">
@@ -897,16 +898,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const validation = this.filterValidation
     if (validation.accepted || !validation.message) return nothing
     return html`<div class="filter-validation" role="alert">${validation.message}</div>`
-  }
-
-  private refreshProgress(snapshot: DashboardRenderSnapshot): DashboardRefreshProgress {
-    const percent = snapshot.status.progressPercent ?? (snapshot.status.loading ? 0 : 100)
-    return {
-      active: snapshot.status.loading,
-      complete: !snapshot.status.loading && percent === 100,
-      generation: snapshot.status.generation,
-      percent,
-    }
   }
 
   private pageSidebar(page: DashboardPageSignal) {

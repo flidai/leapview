@@ -447,6 +447,33 @@ func (r *RecoveryLedger) RecordPhase(ctx context.Context, id string, f recovery.
 	return changed(count, err)
 }
 
+// RecordCheckpoint binds one immutable evidence object to the active recovery
+// attempt. The occurrence row is the authority for the pointer: an evidence
+// file written by a worker that loses its lease cannot become a resumable
+// checkpoint because this update is fenced by the current owner, generation,
+// and unexpired lease.
+func (r *RecoveryLedger) RecordCheckpoint(ctx context.Context, id string, f recovery.Fence, now time.Time, reference recovery.EvidenceReference) error {
+	if err := validateMutation(id, f, now); err != nil {
+		return err
+	}
+	canonical, err := recovery.CanonicalEvidenceReferences([]recovery.EvidenceReference{reference})
+	if err != nil {
+		return err
+	}
+	encoded, err := recovery.EncodeEvidenceReferences(canonical)
+	if err != nil {
+		return err
+	}
+	count, err := refreshdb.New(r.db).RecordRecoveryQualificationCheckpoint(ctx, refreshdb.RecordRecoveryQualificationCheckpointParams{
+		OccurrenceID:    id,
+		LeaseOwner:      f.Owner,
+		FenceGeneration: f.Generation,
+		ActiveAt:        timestamp(now),
+		EvidenceRefs:    []byte(encoded),
+	})
+	return changed(count, err)
+}
+
 func phaseDurations(o recovery.Occurrence, now time.Time, required bool) (time.Duration, time.Duration, time.Duration, error) {
 	if o.StartedAt.IsZero() || now.Before(o.StartedAt) {
 		if required {

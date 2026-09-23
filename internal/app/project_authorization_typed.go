@@ -49,6 +49,19 @@ func typedPermissionDecisionForSnapshot(
 	snapshot accesssnapshot.AuthorizationSnapshot,
 	subjects []access.SubjectRef,
 ) (typed bool, allowed bool, err error) {
+	return typedPermissionDecisionForSnapshotWithDraft(ctx, principalID, projectID, resources, actionFor, snapshot, subjects, false)
+}
+
+func typedPermissionDecisionForSnapshotWithDraft(
+	ctx context.Context,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	resources []access.ResourceRef,
+	actionFor func(access.ResourceRef) (access.Action, bool),
+	snapshot accesssnapshot.AuthorizationSnapshot,
+	subjects []access.SubjectRef,
+	allowUnpublishedDashboard bool,
+) (typed bool, allowed bool, err error) {
 	if len(resources) == 0 || actionFor == nil {
 		return true, false, nil
 	}
@@ -77,7 +90,10 @@ func typedPermissionDecisionForSnapshot(
 	for _, resource := range resources {
 		if resource.Kind() != projectgraph.KindProjectNamespace {
 			graphResource, exists := snapshot.Project().Resource(resource.ID())
-			if !exists || graphResource.Kind != resource.Kind() {
+			if !exists && !(allowUnpublishedDashboard && resource.Kind() == projectgraph.KindDashboard) {
+				return true, false, nil
+			}
+			if exists && graphResource.Kind != resource.Kind() {
 				return true, false, nil
 			}
 		}
@@ -159,6 +175,19 @@ func authorizeTypedResourceAction(
 	resources []access.ResourceRef,
 	action access.Action,
 ) (bool, bool, error) {
+	return authorizeTypedResourceActionWithDraft(ctx, accessModule, runtimeHost, principalID, projectID, resources, action, false)
+}
+
+func authorizeTypedResourceActionWithDraft(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	resources []access.ResourceRef,
+	action access.Action,
+	allowUnpublishedDashboard bool,
+) (bool, bool, error) {
 	if accessModule == nil || runtimeHost == nil || strings.TrimSpace(principalID) == "" {
 		return false, false, fmt.Errorf("typed authorization modules are required")
 	}
@@ -198,9 +227,9 @@ func authorizeTypedResourceAction(
 	if err := snapshot.ValidateBound(); err != nil {
 		return false, false, err
 	}
-	return typedPermissionDecisionForSnapshot(ctx, principalID, projectID, resources, func(access.ResourceRef) (access.Action, bool) {
+	return typedPermissionDecisionForSnapshotWithDraft(ctx, principalID, projectID, resources, func(access.ResourceRef) (access.Action, bool) {
 		return action, true
-	}, snapshot, subjects)
+	}, snapshot, subjects, allowUnpublishedDashboard)
 }
 
 func authorizeTypedAuthoringResourceAction(
