@@ -156,7 +156,13 @@ func revokeSCIMPrincipalCredentials(ctx context.Context, db DBTX, principalID pg
 	if err := queries.RevokePrincipalLocalCredential(ctx, principalID); err != nil {
 		return err
 	}
-	return queries.RevokePrincipalAuthoringSessions(ctx, principalID)
+	if err := queries.RevokePrincipalAuthoringSessions(ctx, principalID); err != nil {
+		return err
+	}
+	if err := queries.RevokePrincipalOAuthSessions(ctx, principalID); err != nil {
+		return err
+	}
+	return queries.RevokePrincipalGroups(ctx, principalID)
 }
 
 func (r *Repository) ListSCIMUsers(ctx context.Context, f access.SCIMUserFilter) ([]access.SCIMUser, error) {
