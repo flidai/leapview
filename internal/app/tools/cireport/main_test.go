@@ -213,6 +213,45 @@ func TestMissingExpiredAndMalformedPlanArtifacts(t *testing.T) {
 	}
 }
 
+func TestDraftSkipWithoutPlanRemainsVisibleAndHealthy(t *testing.T) {
+	var jobs []githubJob
+	for _, name := range []string{
+		"Plan PR validation", "CI gate", "APIGen tests (PR)",
+		"Go package tests (PR)", "Go application tests (PR)",
+		"Frontend tests (PR, ${{ matrix.shard }})", "PostgreSQL topology isolation (PR)",
+		"Spatial tile benchmarks (PR)", "dbt physical contract (PR)",
+		"Documentation and public site (PR)", "Cross-language quality (PR)",
+	} {
+		jobs = append(jobs, githubJob{Name: name, Conclusion: "skipped"})
+	}
+	api := client{http: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case strings.Contains(r.URL.Path, "/jobs"):
+			body, err := json.Marshal(map[string]any{"jobs": jobs})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return jsonResponse(string(body))
+		case strings.Contains(r.URL.Path, "/artifacts"):
+			return jsonResponse(`{"artifacts":[]}`)
+		default:
+			t.Fatalf("unexpected API request: %s", r.URL)
+			return nil, nil
+		}
+	})}}
+	run, err := api.healthRun(context.Background(), "owner/repo", githubRun{ID: 1, Attempt: 1, Workflow: "ci.yml", Event: "pull_request", Conclusion: "success"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := platformci.AnalyzeHealth([]platformci.HealthRun{run})
+	if report.SkippedPR != 1 || report.Incomplete != 0 || len(report.Alerts) != 0 || report.Jobs["frontend-validation"].Skipped != 1 {
+		t.Fatalf("draft skip produced a false health alert: %+v", report)
+	}
+	if !strings.Contains(renderMarkdown(report, 7), "| Intentionally skipped PR runs | 1 |") {
+		t.Fatal("intentional skip missing from report")
+	}
+}
+
 func TestObservedRunTimestampEdges(t *testing.T) {
 	start := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
 	jobStart := start.Add(5 * time.Second)
