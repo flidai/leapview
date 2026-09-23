@@ -12,6 +12,7 @@ type ViewMode = 'outline' | 'raw'
 class ConfigViewer extends LitElement {
   @property({ type: String }) configuration = ''
   @property({ type: String }) language = 'yaml'
+  @property({ type: String }) defaultView: ViewMode = 'outline'
   @state() private documentValue: ConfigValue | null = null
   @state() private parseError = ''
   @state() private query = ''
@@ -237,6 +238,10 @@ class ConfigViewer extends LitElement {
       .tools { margin-left: auto; }
     }
   `
+
+  willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('defaultView')) this.viewMode = this.defaultView === 'raw' ? 'raw' : 'outline'
+  }
 
   updated(changed: Map<string, unknown>): void {
     if (!changed.has('configuration') || this.configuration === this.parsedConfiguration) return

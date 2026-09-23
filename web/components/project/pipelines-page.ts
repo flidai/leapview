@@ -1,15 +1,14 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
-import type { PipelineCommandSignal, PipelineCommandStatusSignal, PipelineListItemSignal, PipelinePageSignal, PipelineRunMonitorSignal, RecordTableSignal } from '../../generated/signals'
+import type { PipelineCommandSignal, PipelineCommandStatusSignal, PipelineListItemSignal, PipelinePageSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import type { EntityListItem } from '../shared/entity-list'
-import { capitalize, commandLoadingLabel, firstRunListValue, formatDateTime, formatExactDateTime, formatRunDetailDate, formatRunListDate, pipelineRunActionIcon, pipelineStatusLabel, runDetailValue, runMonitorPageHref, shortFailureReason } from './pipelines-page-format'
+import { commandLoadingLabel, formatDateTime, formatExactDateTime, pipelineStatusLabel, runDetailValue } from './pipelines-page-format'
 import '../shared/entity-list'
-
-const pipelineRunStatuses = ['queued', 'running', 'prepared', 'succeeded', 'failed', 'cancelled', 'superseded', 'skipped'] as const
+import './pipeline-runs-list'
 
 class LeapViewPipelinesPage extends DatastarLit(LitElement) {
   @state() private terminalFailure: BrowserCommandFailure | null = null
@@ -62,12 +61,6 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
       font-weight: var(--base-text-weight-semibold);
     }
 
-    .runs {
-      display: grid;
-      min-width: 0;
-      gap: var(--base-size-16);
-    }
-
     .command-feedback {
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
@@ -85,61 +78,8 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
     .command-feedback-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--base-size-8); margin-top: var(--base-size-8); }
     .command-feedback-actions button { border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); color: var(--lv-fg-default); padding: var(--base-size-4) var(--base-size-8); cursor: pointer; font: var(--lv-type-caption); }
 
-    .run-toolbar {
-      display: flex;
-      min-width: 0;
-      flex-wrap: wrap;
-      gap: var(--base-size-8);
-    }
-
-    .run-toolbar input,
-    .run-toolbar select {
-      box-sizing: border-box;
-      height: var(--control-medium-size);
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
-      color: var(--lv-fg-default);
-      padding: 0 var(--base-size-8);
-      font: var(--lv-type-body);
-    }
-
-    .run-toolbar input {
-      width: min(100%, 19rem);
-      min-width: 12rem;
-      padding-inline: var(--base-size-12);
-    }
-
-    .run-toolbar input:focus-visible,
-    .run-toolbar select:focus-visible {
-      outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
-    }
-
-    .run-toolbar button, .run-toolbar a, .run-pagination a {
-      display: inline-flex;
-      align-items: center;
-      min-height: var(--control-medium-size);
-      box-sizing: border-box;
-      padding: 0 var(--base-size-12);
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body);
-      text-decoration: none;
-      cursor: pointer;
-    }
-
-    .run-pagination { display: flex; align-items: center; justify-content: space-between; gap: var(--base-size-8); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-    .run-pagination-actions { display: flex; gap: var(--base-size-8); }
-    .run-table {
-      min-width: 0;
-    }
-
     @media (max-width: 720px) {
       .page { padding: var(--base-size-12); }
-      .run-toolbar input { width: 100%; }
     }
   `]
 
@@ -245,110 +185,13 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
   }
 
   private renderRuns(page: PipelinePageSignal) {
-    return html`
-      <div class="runs">
-        <form class="run-toolbar" method="get" action="/pipelines/runs" aria-label="Run history filters">
-          <input type="search" name="q" placeholder="Search pipeline or run ID" aria-label="Search pipeline runs" .value=${page.runMonitor?.query || ''}>
-          <select name="range" aria-label="Filter runs by time range" .value=${page.runMonitor?.range || '24h'} @change=${this.submitRunFilters}>
-            <option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="all">All time</option>
-          </select>
-          <select name="pipeline" aria-label="Filter runs by pipeline" .value=${page.runMonitor?.pipeline || ''} @change=${this.submitRunFilters}>
-            <option value="">All pipelines</option>
-            ${page.pipelines.map((pipeline) => html`<option value=${pipeline.pipelineId} ?selected=${pipeline.pipelineId === page.runMonitor?.pipeline}>${pipeline.title}</option>`)}
-          </select>
-          <select name="status" aria-label="Filter runs by status" .value=${page.runMonitor?.status || ''} @change=${this.submitRunFilters}>
-            <option value="">All statuses</option>
-            ${pipelineRunStatuses.map((status) => html`<option value=${status} ?selected=${status === page.runMonitor?.status}>${pipelineStatusLabel(status)}</option>`)}
-          </select>
-          <select name="trigger" aria-label="Filter runs by trigger" .value=${page.runMonitor?.trigger || ''} @change=${this.submitRunFilters}>
-            <option value="">All triggers</option>
-            ${['manual', 'schedule'].map((trigger) => html`<option value=${trigger} ?selected=${trigger === page.runMonitor?.trigger}>${capitalize(trigger)}</option>`)}
-          </select>
-          <button type="submit">Search</button>${this.hasRunFilters(page.runMonitor) ? html`<a href="/pipelines/runs">Clear filters</a>` : nothing}
-        </form>
-        <div class="run-table">
-          <lv-entity-list
-            compact
-            title-emphasis="normal"
-            row-action="detail"
-            min-width="1050px"
-            list-label="Pipeline run history"
-            empty-text="No runs match these filters."
-            .showToolbar=${false}
-            .items=${this.runItems(page.runsTable)}
-            .columns=${[
-              { id: 'status', label: 'Status', width: '120px', render: 'status' },
-              { id: 'name', label: 'Run ID', width: '180px' },
-              { id: 'started', label: 'Started', width: '155px' },
-              { id: 'pipeline', label: 'Pipeline', width: '180px' },
-              { id: 'duration', label: 'Duration', width: '90px' },
-              { id: 'trigger', label: 'Trigger', width: '100px' },
-              { id: 'actions', label: '', width: '90px', sortable: false, render: 'actions' },
-            ]}
-            @lv-entity-list-row-action=${this.handleRunAction}
-          ></lv-entity-list>
-        </div>
-        ${page.runMonitor ? this.renderRunPagination(page.runMonitor) : nothing}
-      </div>
-    `
-  }
-
-  private submitRunFilters = (event: Event): void => { (event.currentTarget as HTMLSelectElement).form?.requestSubmit() }
-
-  private hasRunFilters(monitor?: PipelineRunMonitorSignal): boolean {
-    return Boolean(monitor && (monitor.query || monitor.pipeline || monitor.status || monitor.trigger || (monitor.range && monitor.range !== '24h')))
-  }
-
-  private renderRunPagination(monitor: PipelineRunMonitorSignal) {
-    const start = monitor.total > (monitor.page - 1) * monitor.pageSize ? (monitor.page - 1) * monitor.pageSize + 1 : 0
-    const end = Math.min(monitor.total, monitor.page * monitor.pageSize)
-    return html`<nav class="run-pagination" aria-label="Run pages">
-      <span>Showing ${start}–${end} of ${monitor.total} runs</span>
-      <div class="run-pagination-actions">
-        ${monitor.page > 1 ? html`<a href=${runMonitorPageHref(monitor, monitor.page - 1)}>Previous</a>` : nothing}
-        ${end < monitor.total ? html`<a href=${runMonitorPageHref(monitor, monitor.page + 1)}>Next</a>` : nothing}
-      </div>
-    </nav>`
-  }
-
-  private runItems(table: RecordTableSignal): EntityListItem[] {
-    return table.rows
-      .map((row) => ({
-        id: String(row.run_id || row.id || ''),
-        title: firstRunListValue(row.run, row.run_id, row.id),
-        description: undefined,
-        columnHrefs: {
-          started: runDetailValue(row, 'run_href') === '—' ? '#' : runDetailValue(row, 'run_href'),
-          pipeline: runDetailValue(row, 'pipeline_href') === '—' ? '#' : runDetailValue(row, 'pipeline_href'),
-        },
-        columnDescriptions: runDetailValue(row, 'status_value') === 'failed' && runDetailValue(row, 'error') !== '—' ? { pipeline: shortFailureReason(runDetailValue(row, 'error')) } : undefined,
-        icon: 'none',
-        columns: {
-          status: pipelineStatusLabel(runDetailValue(row, 'status_value')),
-          started: formatRunListDate(row.started_at),
-          pipeline: runDetailValue(row, 'pipeline'),
-          duration: runDetailValue(row, 'duration'),
-          trigger: runDetailValue(row, 'trigger'),
-        },
-        columnTitles: {
-          started: formatRunDetailDate(row.started_at),
-        },
-        sortValues: {
-          status: runDetailValue(row, 'status_value'),
-          started: String(row.started_at || ''),
-        },
-        actions: Array.isArray(row.actions)
-          ? row.actions.filter((action) => (action as Record<string, unknown>).action !== 'detail').map((action) => {
-              const value = action as Record<string, unknown>
-              return {
-                label: String(value.label || ''),
-                action: String(value.action || ''),
-                icon: pipelineRunActionIcon(String(value.icon || '')),
-                disabled: value.action !== 'detail' && this.commandPendingFor(String(row.pipeline_id || ''), String(row.run_id || '')),
-              }
-            })
-          : [],
-      }))
+    return html`<lv-pipeline-runs-list
+      .monitor=${page.runMonitor ?? null}
+      .table=${page.runsTable}
+      .pipelines=${page.pipelines}
+      .pendingCommand=${this.commandStatus.loading && !this.terminalFailure ? this.command : null}
+      @lv-entity-list-row-action=${this.handleRunAction}
+    ></lv-pipeline-runs-list>`
   }
 
   private renderCommandFeedback() {
