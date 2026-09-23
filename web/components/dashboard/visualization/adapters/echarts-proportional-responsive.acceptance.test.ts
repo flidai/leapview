@@ -61,6 +61,10 @@ test('proportional responsive sizing keeps authored radii and the bottom legend 
     expect(patch.series[0].id).toBe('series:primary:donut')
     expect(patch.series[0].radius).toEqual(['54%', '76%'])
     expect(patch.series[0].label.alignTo).toBe(alignTo)
+    if (alignTo === 'labelLine') {
+      expect(patch.series[0].label).toMatchObject({ distanceToLabelLine: 12 })
+      expect(patch.series[0].labelLine).toMatchObject({ length: 29, length2: 21 })
+    }
   }
   expect(JSON.stringify(option)).toBe(before)
 })
@@ -113,7 +117,9 @@ test('expanded donut guide lines stay local to the ring', () => {
     for (const points of visibleGuides) {
       const end = points.at(-1)!
       const elbow = points.at(-2)!
-      expect(Math.hypot(end[0] - elbow[0], end[1] - elbow[1])).toBeLessThanOrEqual(12)
+      const finalSegment = Math.hypot(end[0] - elbow[0], end[1] - elbow[1])
+      expect(finalSegment).toBeGreaterThanOrEqual(41)
+      expect(finalSegment).toBeLessThanOrEqual(44)
     }
     chart.resize({ width: 320, height: 240 })
     chart.setOption(responsiveEChartsPatch(source, 320, 240))

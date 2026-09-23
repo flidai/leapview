@@ -16,7 +16,7 @@ export function echartsNavigationDefaults(envelope: VisualizationEnvelope): ECha
 export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
   if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
   const compact = width < 480 || height < 280
-  const proportionalSeries = responsiveProportionalSeries(option.series, compact)
+  const proportionalSeries = responsiveProportionalSeries(option.series, compact, width, height)
   if (option.grid === undefined) return proportionalSeries === undefined ? {} : { series: proportionalSeries }
   const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
   const bottomLegend = compact && hasBottomLegend(option.legend)
@@ -43,7 +43,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   return patch
 }
 
-function responsiveProportionalSeries(value: unknown, compact: boolean): unknown[] | undefined {
+function responsiveProportionalSeries(value: unknown, compact: boolean, width: number, height: number): unknown[] | undefined {
   if (!Array.isArray(value)) return undefined
   let hasOutsidePieLabels = false
   const series = value.map((entry) => {
@@ -65,7 +65,17 @@ function responsiveProportionalSeries(value: unknown, compact: boolean): unknown
         // stretches guide lines to the host boundary, so anchor labels to
         // their natural guide-line ends instead.
         alignTo: compact ? 'edge' : 'labelLine',
+        ...(compact ? {} : { distanceToLabelLine: 12 }),
       },
+      ...(compact ? {} : {
+        labelLine: {
+          ...((source.labelLine && typeof source.labelLine === 'object' && !Array.isArray(source.labelLine))
+            ? source.labelLine as Record<string, unknown>
+            : {}),
+          length: Math.min(64, Math.max(24, Math.round(Math.min(width, height) * 0.08))),
+          length2: Math.min(48, Math.max(20, Math.round(width * 0.035))),
+        },
+      }),
     }
   })
   return hasOutsidePieLabels ? series : undefined

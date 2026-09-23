@@ -68,7 +68,8 @@ test('ECharts responsive patch changes only outside pie label alignment', () => 
       expect(expanded.series[0]).toMatchObject({
         id: `series:primary:${mark}`,
         bottom: '12%',
-        label: { alignTo: 'labelLine' },
+        label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+        labelLine: { length: 58, length2: 42 },
       })
       expect(compact.series[0].radius).toEqual(option.series[0].radius)
       expect(expanded.series[0].radius).toEqual(option.series[0].radius)
@@ -178,7 +179,11 @@ test('ECharts handle switches proportional label alignment only across the compa
   expect(first.label.alignTo).toBe('edge')
 
   handle.resize(1200, 720)
-  expect(calls.at(-1)!.series[0]).toMatchObject({ id: 'series:primary:donut', label: { alignTo: 'labelLine' } })
+  expect(calls.at(-1)!.series[0]).toMatchObject({
+    id: 'series:primary:donut',
+    label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+    labelLine: { length: 58, length2: 42 },
+  })
   expect(calls.at(-1)!.series[0].radius).toEqual(['54%', '76%'])
 
   handle.resize(420, 240)
