@@ -25,7 +25,8 @@ or security work become the first writer. The fix scopes ownership by workload.
 ## Implemented ownership
 
 `setup-ci` disables setup-go's automatic cache and uses the already-pinned
-`actions/cache` action for Go's module and build-cache paths. It resolves those
+`actions/cache` action on the default branch and `actions/cache/restore` on
+candidate refs for Go's module and build-cache paths. It resolves those
 paths after Go installation, rather than caching a whole GOPATH or workspace.
 
 The key combines:
@@ -33,7 +34,9 @@ The key combines:
 - The semantic namespace `go-validation-v1`.
 - Runner OS, architecture and hosted image identity.
 - The actual installed Go version.
-- The stable workflow job ID (`github.job`).
+- The producer's stable workflow job ID (`github.job`). Candidate readers may
+  explicitly select a compatible nightly producer with `go-cache-restore-workload`;
+  this input never changes the publication identity.
 - Root and nested `go.mod`/`go.sum` files, plus `Taskfile.yml` and the setup action.
   These last two inputs include the pinned tool versions and SQLC's explicit
   Go 1.26.7 policy, alongside the main Go 1.26.8 toolchain.
@@ -50,22 +53,33 @@ frontend shards ──> go-validation-v1 / frontend-validation
 ```
 
 These are compatible workload scopes, not run IDs or random cache busters. PR,
-merge and nightly workflows already use matching job IDs for matching lanes
-(full validation exists only in merge/nightly), so no caller or dependency
-changes are necessary. The frontend matrix deliberately
-shares a scope: each shard prepares the same generated inputs before its tests.
-Other setup-ci callers own their own job scopes. Native packaging retains its
+merge and nightly workflows share stable IDs for their common validation lanes.
+The frontend matrix deliberately shares a scope: each shard prepares the same
+generated inputs before its tests.
+PR-only callers select compatible nightly producer scopes as documented below;
+other setup-ci callers own their own job scopes. Native packaging retains its
 existing action and cache behavior.
 
-No restore prefix bridges workloads or imports the legacy namespace. A miss runs
-the same downloads, generation, tests and checks. A successful job can publish
-its own scope without competing with native packaging. Simultaneous equivalent
-writers may still race; the losing save is optional cache work, not a test result.
+The restore prefix retains the namespace, workload, OS, architecture, image and
+installed Go version. It permits reuse across manifest and Taskfile changes:
+Go's content-addressed build cache checks source and build inputs, module
+versions have separate paths, and commands still request their pinned tool
+versions. The exact save key continues to include all manifest/tool inputs.
+Only explicit reader mappings share a producer workload; no broad prefix imports
+unrelated workloads or native setup-go archives. A miss runs
+the same downloads, generation, tests and checks.
+
+Only successful default-branch jobs publish at job completion. PR and merge-group
+runs restore without saving large archives that other candidates cannot access.
+This reduces eviction pressure on reusable default-branch archives. Equivalent
+nightly writers may still race; the losing save is optional cache work, not a test
+result. No cache output skips a validation command.
 
 ## Correctness and rollout
 
-No workflow files, validation targets, required names, planner outputs, gate
-conditions, permissions, runner configuration or merge dependencies change.
+Caller workflows select cache-read scopes without changing validation targets,
+required names, planner outputs, gate conditions, permissions, runner
+configuration or merge dependencies.
 There is no producer barrier or shared workspace. Cache outputs are not used to
 skip validation. Fresh-container flags, generated checks and native proofs stay
 in place.
@@ -76,7 +90,7 @@ jobs can seed the same scopes on main, after which eligible candidates can resto
 them. The new namespace deliberately starts cold; older entries need not be
 removed to establish ownership.
 
-More independent archives can increase storage and eviction pressure. Cache
+Existing candidate archives can still occupy storage until GitHub evicts them. Cache
 absence and save failures must remain performance-only outcomes. Source changes
 with unchanged dependency identities may require fresh compilation even on an
 exact hit; the immutable archive is not guaranteed to stay fully warm forever.
@@ -114,3 +128,30 @@ For rollout, record each scope's producer/ref, archive size, restore/save outcom
 setup/preparation and test-command timing. Measure both cold and warm merge
 candidates with unchanged required gates and exact-SHA native proof. Do not infer
 a new p95 from one run or attribute the separate Buf-removal change twice.
+
+## Cache publication follow-up — #667
+
+See [ci-health-667.md](ci-health-667.md) for the September 22 inventory and
+critical-path evidence behind default-branch-only publication and bounded
+fallbacks. The earlier validation and rollout record above describes the initial
+ownership change; it is not evidence that the follow-up meets the latency SLO.
+
+### PR-only reader coverage
+
+| Reader job | Scheduled producer |
+|---|---|
+| `quality-validation` | `go-packages-validation` |
+| `docs-validation` | `go-packages-validation` |
+| `spatial-tile-benchmarks` | `go-packages-validation` |
+| `postgres-isolation-validation` | `go-application-validation` |
+| `dbt-warehouse-boundary-validation` | `go-application-validation` |
+| `evidence-qualification` | `full-validation` |
+
+Package validation prepares generated inputs and compiles the package inventory;
+application validation owns external-service compilation; full validation includes
+race/integration builds for recovery readers. These are reusable Go inputs, not
+claims that every reader's tests ran in the producer. Go builds any missing inputs
+and each reader still executes its own validation. The regression contract checks
+every setup-ci caller in CI and recovery qualification against a nightly producer
+on the same runner. In particular, a manual full CI run cannot seed the selective
+quality job, so the explicit package-producer mapping is necessary.

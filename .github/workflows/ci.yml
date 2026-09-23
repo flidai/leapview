@@ -233,6 +233,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          go-cache-restore-workload: go-application-validation
           browser: "false"
 
       - name: Provision PostgreSQL test topology
@@ -266,6 +267,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          go-cache-restore-workload: go-packages-validation
           browser: "false"
 
       - name: Record cold, pan, raw, and forced-fallback benchmarks
@@ -313,6 +315,7 @@ jobs:
       - name: Set up the cached LeapView CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          go-cache-restore-workload: go-application-validation
           browser: "false"
 
       - name: Run real dbt Parquet through the headless LeapView lifecycle
@@ -339,6 +342,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          go-cache-restore-workload: go-packages-validation
           browser: "true"
       - name: Prepare generated and embedded assets
         run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare
@@ -364,6 +368,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          go-cache-restore-workload: go-packages-validation
           browser: "false"
       - name: Prepare generated and embedded assets
         run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare

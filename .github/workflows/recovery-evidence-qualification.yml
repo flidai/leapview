@@ -28,6 +28,7 @@ jobs:
       - name: Set up the pinned CI toolchain
         uses: ./.github/actions/setup-ci
         with:
+          go-cache-restore-workload: full-validation
           browser: 'false'
       - name: Prepare generated contracts
         run: task generate
