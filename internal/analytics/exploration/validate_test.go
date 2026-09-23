@@ -1,6 +1,7 @@
 package exploration
 
 import (
+	"strings"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -210,6 +211,43 @@ func TestValidateAgainstModelAllowsTimeAliasInDurableReferences(t *testing.T) {
 	spec.Sort = []ExplorationSort{{Field: "orderDay", Direction: ExplorationSortDirectionAsc}}
 	if err := ValidateAgainstModel(explorationValidationModel(), spec); err != nil {
 		t.Fatalf("rejected time alias sort reference: %v", err)
+	}
+}
+
+func TestValidateShapeRejectsConflictingTimeDecoration(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ExplorationSpec)
+		want   string
+	}{
+		{
+			name: "grain",
+			mutate: func(spec *ExplorationSpec) {
+				dimensionGrain := ExplorationTimeGrainDay
+				spec.Dimensions = []ExplorationDimensionRef{{Field: "orders.created_at", Grain: &dimensionGrain}}
+				spec.Time = &ExplorationTimeSelection{Field: "orders.created_at", Grain: ExplorationTimeGrainMonth}
+			},
+			want: "grain",
+		},
+		{
+			name: "alias",
+			mutate: func(spec *ExplorationSpec) {
+				dimensionAlias := "created_day"
+				timeAlias := "created_month"
+				spec.Dimensions = []ExplorationDimensionRef{{Field: "orders.created_at", Alias: &dimensionAlias}}
+				spec.Time = &ExplorationTimeSelection{Field: "orders.created_at", Grain: ExplorationTimeGrainMonth, Alias: &timeAlias}
+			},
+			want: "alias",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := validExplorationSpec()
+			test.mutate(spec)
+			if err := ValidateShape(spec); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("shape error = %v, want %q conflict", err, test.want)
+			}
+		})
 	}
 }
 
