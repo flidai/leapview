@@ -123,6 +123,7 @@ test('pipeline catalog and run monitor expose URL-backed views and filters', asy
       clearHref: '/pipelines/runs',
       pageLink: '/pipelines/runs?q=sales&range=7d&pipeline=pipeline%3Asales&status=failed&trigger=manual&page=1',
       runHref: null, startedHref: 'Sep 13, 12:00 UTC', pipelineHref: '/pipelines/pipeline:sales/details', failureReason: 'Source unavailable' })
+    expect(await page.locator('lv-pipelines-page lv-pipeline-runs-list').count()).toBe(1)
     expect(await page.locator('lv-pipelines-page lv-drawer').count()).toBe(0)
   } finally {
     await page.close()
@@ -169,6 +170,41 @@ test('pipeline rows stay compact and readable on a narrow mobile viewport', asyn
     expect(state.publicationLabel).toContain('Last published')
     expect(state.publication).not.toBe('')
     expect(await page.getByRole('button', { name: 'Run Sales refresh now' }).isVisible()).toBe(true)
+  } finally {
+    await page.close()
+  }
+}, 15_000)
+
+test('shared run history preserves global actions and mobile table containment', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(`${baseURL}/?root=runs`)
+    const state = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      element.signals.page.runsTable.rows[0].actions = [{ label: 'Cancel run', action: 'cancel', icon: 'cancel' }]
+      element.requestUpdate()
+      await element.updateComplete
+      const list = element.shadowRoot!.querySelector('lv-pipeline-runs-list') as any
+      await list.updateComplete
+      const table = list.querySelector('lv-entity-list') as any
+      await table.updateComplete
+      const wrap = list.querySelector('.entity-list-table-wrap') as HTMLElement
+      return {
+        actionLabel: list.querySelector('.entity-list-row-action')?.getAttribute('aria-label'),
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: document.documentElement.clientWidth,
+        tableWidth: wrap.scrollWidth,
+        tableClientWidth: wrap.clientWidth,
+      }
+    })
+    expect(state.actionLabel).toBe('Cancel run')
+    expect(state.documentWidth).toBeLessThanOrEqual(state.viewportWidth)
+    expect(state.tableWidth).toBeGreaterThan(state.tableClientWidth)
+    await page.locator('lv-pipelines-page').evaluate((element: any) => {
+      element.addEventListener('lv-pipeline-command', (event: CustomEvent) => { (window as any).__runCommand = event.detail }, { once: true })
+      element.shadowRoot!.querySelector('.entity-list-row-action').click()
+    })
+    expect(await page.evaluate(() => (window as any).__runCommand)).toEqual({ action: 'cancel', pipelineId: 'pipeline:sales', assetId: 'pipeline:sales', runId: 'run-failed' })
   } finally {
     await page.close()
   }

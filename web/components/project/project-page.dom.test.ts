@@ -1060,7 +1060,7 @@ test('pipeline Overview labels direct dependencies and reveals the complete grap
         await graph?.updateComplete
         const bounds = host.getBoundingClientRect()
         const contentHeight = (graph?.querySelector('.asset-lineage-root') as HTMLElement | null)?.getBoundingClientRect().height ?? 0
-        const page = root.querySelector<HTMLElement>('.page')!
+        const page = root.querySelector<HTMLElement>('.asset-page')!
         return {
           display: getComputedStyle(host).display, width: Math.round(bounds.width), height: Math.round(bounds.height),
           bottom: Math.round(bounds.bottom), contentHeight: Math.round(contentHeight), runBadges: graph?.querySelectorAll('.asset-lineage-node-run-status').length ?? 0,
@@ -1129,6 +1129,48 @@ test('pipeline Overview labels direct dependencies and reveals the complete grap
   }
 })
 
+test('pipeline detail uses one breadcrumb title with its action in the asset header', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(`${baseURL}/?root=pipeline-detail-height`)
+    const header = await page.locator('lv-pipeline-detail-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      element.signals.page.canRun = true
+      element.signals.page.asset.description = 'Refreshes the sales model.'
+      element.requestUpdate()
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const breadcrumb = root.querySelector('.breadcrumb-header .breadcrumb') as HTMLElement | null
+      const action = root.querySelector('.breadcrumb-header .run-action') as HTMLElement | null
+      const description = root.querySelector('.asset-description') as HTMLElement | null
+      const shell = root.querySelector('.asset-page') as HTMLElement | null
+      const tabs = root.querySelector('.asset-body > .tabs') as HTMLElement | null
+      const body = root.querySelector('.asset-body > .section-body') as HTMLElement | null
+      return {
+        titles: Array.from(root.querySelectorAll('h1')).map((title) => title.textContent?.trim()),
+        breadcrumb: breadcrumb?.textContent?.replace(/\s+/g, ' ').trim(),
+        action: action?.textContent?.trim(),
+        actionRight: action?.getBoundingClientRect().right,
+        breadcrumbRight: breadcrumb?.getBoundingClientRect().right,
+        description: description?.textContent?.trim(),
+        shellPadding: shell ? getComputedStyle(shell).paddingLeft : null,
+        tabs: tabs?.getAttribute('aria-label'),
+        body: body?.getAttribute('class'),
+      }
+    })
+    expect(header.titles).toEqual(['Sales refresh'])
+    expect(header.breadcrumb).toContain('Pipelines')
+    expect(header.action).toBe('Run now')
+    expect(header.actionRight).toBeGreaterThan(header.breadcrumbRight ?? 0)
+    expect(header.description).toBe('Refreshes the sales model.')
+    expect(header.shellPadding).toBe('0px')
+    expect(header.tabs).toBe('Asset sections')
+    expect(header.body).toContain('section-body')
+  } finally {
+    await page.close()
+  }
+})
+
 test('pipeline Runs uses filtered, paginated table links within the fixed pipeline context', async () => {
   const page = await browser.newPage()
   try {
@@ -1159,6 +1201,7 @@ test('pipeline Runs uses filtered, paginated table links within the fixed pipeli
       }
     })
     expect(runs.action).toBe('/pipelines/pipeline:sales/runs')
+    expect(await page.locator('lv-pipeline-detail-page lv-pipeline-runs-list').count()).toBe(1)
     expect(runs.query).toBe('failed')
     expect(runs.filters).toEqual([{ name: 'range', value: '7d' }, { name: 'status', value: 'failed' }, { name: 'trigger', value: 'schedule' }])
     expect(runs.hasPipelineSelector).toBe(false)
@@ -1184,22 +1227,30 @@ test('pipeline Definition presents authored YAML before technical identity', asy
     const definition = await page.locator('lv-pipeline-detail-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot as ShadowRoot
-      const yaml = root.querySelector('.definition-heading code')
-      const code = root.querySelector('pre.code')
+      const configuration = root.querySelector('.configuration-section')
+      const viewer = root.querySelector('lv-config-viewer') as any
+      await viewer?.updateComplete
+      const code = viewer?.shadowRoot?.querySelector('lv-code-block') as any
       const identity = root.querySelector('details.technical-identity') as HTMLDetailsElement | null
       return {
-        heading: yaml?.textContent?.trim(),
-        code: code?.textContent,
+        heading: configuration?.querySelector('h2')?.textContent?.trim(),
+        code: code?.code,
+        codeLanguage: code?.language,
+        copyEnabled: code?.copy,
+        sourceVisible: viewer?.shadowRoot?.querySelector('button[data-mode="raw"]')?.getAttribute('aria-pressed'),
         identitySummary: identity?.querySelector('summary')?.textContent?.trim(),
         identityClosed: !identity?.open,
-        order: Array.from(root.querySelector('.panel')?.children ?? []).map((item) => item.tagName.toLowerCase()),
+        order: Array.from(root.querySelector('.details-content')?.children ?? []).map((item) => item.tagName.toLowerCase()),
       }
     })
-    expect(definition.heading).toContain('sales')
+    expect(definition.heading).toBe('Configuration')
     expect(definition.code).toContain('kind: Pipeline')
+    expect(definition.codeLanguage).toBe('yaml')
+    expect(definition.copyEnabled).toBe(true)
+    expect(definition.sourceVisible).toBe('true')
     expect(definition.identitySummary).toBe('Technical details')
     expect(definition.identityClosed).toBe(true)
-    expect(definition.order.indexOf('pre')).toBeLessThan(definition.order.indexOf('details'))
+    expect(definition.order.indexOf('section')).toBeLessThan(definition.order.indexOf('details'))
   } finally {
     await page.close()
   }

@@ -1,16 +1,10 @@
 import { html } from 'lit'
 import { CheckCircle2, Circle, Clock3, XCircle } from 'lucide'
-import type { PipelineRunMonitorSignal } from '../../generated/signals'
 import type { EntityListRowAction } from '../shared/entity-list'
 import { lucideIcon } from '../shared/lucide-icons'
 
 export function commandLoadingLabel(action: string): string {
   return action === 'cancel' ? 'Cancelling pipeline run…' : 'Queuing pipeline run…'
-}
-
-export function runMonitorPageHref(monitor: PipelineRunMonitorSignal, page: number): string {
-  const params = new URLSearchParams({ q: monitor.query, range: monitor.range, pipeline: monitor.pipeline, status: monitor.status, trigger: monitor.trigger, page: String(page) })
-  return `/pipelines/runs?${params}`
 }
 
 export function capitalize(value: string): string {
