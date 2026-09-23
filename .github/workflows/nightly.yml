@@ -83,7 +83,7 @@ jobs:
         run: task ci:lane:go:application
 
   frontend-validation:
-    name: Frontend tests (merge queue, ${{ matrix.shard }})
+    name: Frontend tests (nightly, ${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
@@ -166,6 +166,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci

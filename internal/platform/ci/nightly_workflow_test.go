@@ -24,6 +24,7 @@ func TestNightlyWorkflowFullValidationAndStrictGate(t *testing.T) {
 				If   string            `yaml:"if"`
 				Run  string            `yaml:"run"`
 				Env  map[string]string `yaml:"env"`
+				With map[string]string `yaml:"with"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -40,6 +41,13 @@ func TestNightlyWorkflowFullValidationAndStrictGate(t *testing.T) {
 	}
 	if len(full.Needs) != 0 {
 		t.Fatal("full-validation must start independently on its own runner")
+	}
+	if workflow.Jobs["frontend-validation"].Name != "Frontend tests (nightly, ${{ matrix.shard }})" {
+		t.Fatal("nightly frontend check names must retain their reporting identity")
+	}
+	checkout := workflow.Jobs["security-validation"].Steps[0]
+	if checkout.Name != "Check out repository" || checkout.With["fetch-depth"] != "0" {
+		t.Fatal("nightly security must fetch the history baseline for branch dispatches")
 	}
 	prepared, validated := false, false
 	for _, step := range full.Steps {
