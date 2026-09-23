@@ -35,7 +35,7 @@ LEAPVIEW_AGENT_REASONING_EFFORT=high
 LEAPVIEW_AGENT_API_KEY=<secret>
 ```
 
-`gpt-6-luna` is the default model for the OpenAI endpoint. LeapView uses the
+`gpt-6-luna` is the recommended model for the OpenAI endpoint. LeapView uses the
 Responses API for GPT-6 Luna so `high` reasoning remains compatible with its
 function tools. Supported effort values are `none`, `low`, `medium`, `high`,
 `xhigh`, and `max`.

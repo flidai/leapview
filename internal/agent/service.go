@@ -122,8 +122,9 @@ func (s *Service) runWorkflowAvailable() bool {
 }
 
 type runningPrompt struct {
-	runID  string
-	cancel context.CancelFunc
+	runID   string
+	cancel  context.CancelFunc
+	runtime *agentRuntime
 }
 
 type ServiceOption func(*Service)
@@ -356,16 +357,34 @@ func (s *Service) observeModel(model agentcore.Model, runtime *agentRuntime) age
 }
 
 func (m observedAgentModel) Complete(ctx context.Context, request agentcore.ModelRequest, stream agentcore.ModelStream) (agentcore.ModelResponse, error) {
+	var observedStream *observedAgentModelStream
+	if stream != nil {
+		observedStream = &observedAgentModelStream{stream: stream}
+		stream = observedStream
+	}
 	response, err := m.model.Complete(ctx, request, stream)
 	if m.service.runtime.Load() != m.runtime {
 		return response, err
 	}
-	if err != nil {
-		m.service.updateRuntimeHealth(m.runtime, func(health *agentRuntimeHealth) { health.provider = true })
-	} else {
+	if err == nil {
 		m.service.updateRuntimeHealth(m.runtime, func(health *agentRuntimeHealth) { health.provider = false })
+	} else if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, agentcore.ErrContextLength) && (observedStream == nil || !observedStream.failed.Load()) {
+		m.service.updateRuntimeHealth(m.runtime, func(health *agentRuntimeHealth) { health.provider = true })
 	}
 	return response, err
+}
+
+type observedAgentModelStream struct {
+	stream agentcore.ModelStream
+	failed atomic.Bool
+}
+
+func (s *observedAgentModelStream) Delta(ctx context.Context, text string) error {
+	err := s.stream.Delta(ctx, text)
+	if err != nil {
+		s.failed.Store(true)
+	}
+	return err
 }
 
 func (s *Service) ConversationRunning(conversationID string) bool {
@@ -654,7 +673,7 @@ func (s *Service) CancelPersistedRunWithWorkflow(ctx context.Context, scope Scop
 	if run.Status != RunStatusRunning && run.Status != RunStatusPreparing {
 		return false, ErrRunNotCancellable
 	}
-	finish := RunFinish{PrincipalID: scope.PrincipalID, ConversationID: conversationID, RunID: runID, Status: RunStatusCanceled, Error: context.Canceled.Error(), MetadataJSON: metadataJSON(map[string]any{"model": s.Model(), "terminationCause": RunCauseUserCanceled}), Cause: RunCauseUserCanceled}
+	finish := RunFinish{PrincipalID: scope.PrincipalID, ConversationID: conversationID, RunID: runID, Status: RunStatusCanceled, Error: context.Canceled.Error(), MetadataJSON: metadataJSON(map[string]any{"model": run.Model, "terminationCause": RunCauseUserCanceled}), Cause: RunCauseUserCanceled}
 	if cancellation, ok := s.repo.(RunCancellationWorkflow); ok && s.runWorkflowAvailable() {
 		changed, err := cancellation.CancelRunWorkflow(context.WithoutCancel(ctx), finish, "agent:"+runID+":run", workflow)
 		if err == nil {

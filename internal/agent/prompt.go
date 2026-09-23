@@ -275,7 +275,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 					}
 				}
 				runContext, cancel := context.WithCancel(context.Background())
-				s.attachRun(input.ConversationID, runID, cancel)
+				s.attachRun(input.ConversationID, runID, cancel, runtime)
 				release = false
 				return &StartedPrompt{Scope: input.Scope, ConversationID: input.ConversationID, RunID: runID, Input: input.Input, EditMessageID: input.EditMessageID, CorrelationID: input.CorrelationID, RequestID: input.RequestID, transcriptRevision: transcriptRevision, service: s, runtime: runtime, systemPrompt: systemPrompt, initial: transcript, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
 			}
@@ -361,7 +361,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 		durablyQueued = true
 	}
 	runContext, cancel := context.WithCancel(context.Background())
-	s.attachRun(input.ConversationID, run.ID, cancel)
+	s.attachRun(input.ConversationID, run.ID, cancel, runtime)
 	release = false
 	return &StartedPrompt{
 		Scope:              input.Scope,
@@ -387,10 +387,6 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 // transcript before it returns, so no request body or in-memory closure is
 // required to continue execution.
 func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID, runID, correlationID string) (*StartedPrompt, error) {
-	runtime := s.runtimeSnapshot()
-	if runtime == nil || !runtime.enabled || !runtime.config.Enabled() || runtime.model == nil {
-		return nil, ErrDisabled
-	}
 	if s.repo == nil {
 		return nil, fmt.Errorf("agent store is required")
 	}
@@ -398,8 +394,16 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 	if conversationID == "" || runID == "" {
 		return nil, fmt.Errorf("conversation and run are required")
 	}
-	if err := s.acquireForResume(conversationID, runID); err != nil {
+	runtime, err := s.acquireForResume(conversationID, runID)
+	if err != nil {
 		return nil, err
+	}
+	if runtime == nil {
+		runtime = s.runtimeSnapshot()
+	}
+	if runtime == nil || !runtime.enabled || !runtime.config.Enabled() || runtime.model == nil {
+		s.release(conversationID)
+		return nil, ErrDisabled
 	}
 	release := true
 	defer func() {
@@ -443,25 +447,27 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 		return nil, err
 	}
 	runContext, cancel := context.WithCancel(ctx)
-	s.attachRun(conversationID, runID, cancel)
+	s.attachRun(conversationID, runID, cancel, runtime)
 	release = false
 	return &StartedPrompt{Scope: scope, ConversationID: conversationID, RunID: runID, Input: input, EditMessageID: editMessageID, CorrelationID: correlationID, transcriptRevision: conversation.TranscriptRevision, service: s, runtime: runtime, systemPrompt: systemPrompt, initial: initial, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
 }
 
-func (s *Service) acquireForResume(conversationID, runID string) error {
+func (s *Service) acquireForResume(conversationID, runID string) (*agentRuntime, error) {
+	var runtime *agentRuntime
 	s.mu.Lock()
 	if active, ok := s.running[conversationID]; ok {
 		if active.runID != runID {
 			s.mu.Unlock()
-			return ErrBusy
+			return nil, ErrBusy
 		}
+		runtime = active.runtime
 		if active.cancel != nil {
 			active.cancel()
 		}
 		delete(s.running, conversationID)
 	}
 	s.mu.Unlock()
-	return s.acquire(conversationID)
+	return runtime, s.acquire(conversationID)
 }
 
 func (s *Service) CompletePrompt(ctx context.Context, started *StartedPrompt, onEvent func(EventEnvelope)) (PromptResult, error) {
@@ -694,11 +700,11 @@ func (s *Service) acquire(conversationID string) error {
 	return nil
 }
 
-func (s *Service) attachRun(conversationID, runID string, cancel context.CancelFunc) {
+func (s *Service) attachRun(conversationID, runID string, cancel context.CancelFunc, runtime *agentRuntime) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.running[conversationID]; ok {
-		s.running[conversationID] = runningPrompt{runID: runID, cancel: cancel}
+		s.running[conversationID] = runningPrompt{runID: runID, cancel: cancel, runtime: runtime}
 	}
 }
 

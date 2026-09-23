@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func TestServiceRuntimeEnablementDoesNotRequireRestart(t *testing.T) {
@@ -79,6 +80,48 @@ func TestServiceRuntimeReloadKeepsActiveRequestsOnTheirCapturedModel(t *testing.
 	}
 }
 
+func TestServiceRuntimeReloadKeepsQueuedRequestsOnTheirCapturedModel(t *testing.T) {
+	ctx := context.Background()
+	baseStore := openAgentAppStore(t, ctx)
+	defer baseStore.Close()
+	store := &workflowAgentStore{testAgentStore: baseStore}
+	principal := createAgentAppPrincipal(t, ctx, baseStore, "queued-runtime@example.com")
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
+
+	service := NewService(store, Config{APIKey: "secret-a", Model: "model-a"}, WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+		return agentcore.ModelResponse{Content: "model-a", FinishReason: agentcore.FinishReasonStop}, nil
+	})))
+	service.ConfigureDefaultModel(func(config Config) agentcore.Model {
+		return agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+			return agentcore.ModelResponse{Content: config.Model, FinishReason: agentcore.FinishReasonStop}, nil
+		})
+	})
+	service.SetPromptWorkflow(func(PromptInput, string, PromptDispatch) jobs.WorkflowIntent { return jobs.WorkflowIntent{} })
+	conversation, err := service.CreateConversation(ctx, scope, "Queued runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := service.StartDurablePrompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "go"}, PromptDispatch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ApplyRuntimeConfig(Config{APIKey: "secret-b", Model: "model-b"}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed, err := service.ResumePrompt(ctx, scope, conversation.ID, started.RunID, "")
+	if err != nil {
+		t.Fatalf("ResumePrompt after disabling replacement runtime: %v", err)
+	}
+	result, err := resumed.Complete(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Content != "model-a" {
+		t.Fatalf("queued request used replacement runtime: %q", result.Content)
+	}
+}
+
 func TestServiceProviderFailureDegradesWithoutDisabling(t *testing.T) {
 	failing := true
 	service := NewService(nil, Config{})
@@ -121,5 +164,23 @@ func TestServiceProviderFailureDegradesWithoutDisabling(t *testing.T) {
 	}
 	if status := service.RuntimeStatus(); status.State != AgentRuntimeEnabled {
 		t.Fatalf("valid reload did not clear prior degradation: %+v", status)
+	}
+}
+
+func TestServiceRequestCancellationDoesNotDegradeProvider(t *testing.T) {
+	service := NewService(nil, Config{})
+	service.ConfigureDefaultModel(func(Config) agentcore.Model {
+		return agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+			return agentcore.ModelResponse{}, context.Canceled
+		})
+	})
+	if err := service.ApplyRuntimeConfig(Config{APIKey: "secret", Model: "model"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.runtimeSnapshot().model.Complete(context.Background(), agentcore.ModelRequest{}, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("model error = %v, want context cancellation", err)
+	}
+	if status := service.RuntimeStatus(); status.State != AgentRuntimeEnabled || !status.Enabled {
+		t.Fatalf("request cancellation changed provider health: %+v", status)
 	}
 }

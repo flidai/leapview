@@ -2215,7 +2215,6 @@
       "x-scope": "serve"
     },
     "LEAPVIEW_AGENT_MODEL": {
-      "default": "gpt-6-luna",
       "description": "Agent model identifier.",
       "type": "string",
       "x-lifecycle": "supported",
