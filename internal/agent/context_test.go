@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 )
 
 func TestTurnContextItemsIncludeResolvedResourceReferences(t *testing.T) {
@@ -51,10 +53,14 @@ func TestTurnContextNormalizationKeepsSameReferenceIDAcrossKinds(t *testing.T) {
 func TestTurnContextItemsIncludeBoundedDataExploration(t *testing.T) {
 	items := turnContextItems(&TurnContext{
 		Surface: "data", ModelID: " commerce ", DatasetID: " orders ",
-		Exploration: &DataExploration{
-			Dimensions: []string{"orders.status", "orders.status", ""}, Metrics: []string{"order_count"},
-			Filters: []DataExplorationFilter{{Field: " orders.status ", Operator: " EQUALS ", Values: []string{"delivered"}}},
-			Sort:    []DataExplorationSort{{Field: "order_count", Direction: "DESC"}}, Limit: 5000,
+		Exploration: &exploration.ExplorationSpec{
+			SchemaVersion: 1, ModelID: "commerce", Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}},
+			Metrics: []exploration.ExplorationMetricRef{{Field: "order_count"}}, Filters: []exploration.ExplorationFilter{{
+				Field: "orders.status", Expression: exploration.ExplorationFilterExpression{Value: &exploration.ComparisonExplorationFilterExpression{
+					Kind: "comparison", Operator: "equals",
+					Value: exploration.ExplorationFilterValue{Value: &exploration.StringExplorationFilterValue{Kind: "string", Value: "delivered"}},
+				}},
+			}}, Sort: []exploration.ExplorationSort{{Field: "order_count", Direction: exploration.ExplorationSortDirectionDesc}}, Limit: 1000,
 		},
 	})
 	if len(items) != 1 {
@@ -67,8 +73,41 @@ func TestTurnContextItemsIncludeBoundedDataExploration(t *testing.T) {
 	if resolved.Exploration == nil || resolved.Exploration.Limit != 1000 || len(resolved.Exploration.Dimensions) != 1 {
 		t.Fatalf("resolved exploration = %#v", resolved.Exploration)
 	}
-	if resolved.Exploration.Filters[0].Operator != "equals" || resolved.Exploration.Sort[0].Direction != "desc" {
+	if _, err := resolved.Exploration.Filters[0].Expression.Kind(); err != nil || resolved.Exploration.Sort[0].Direction != exploration.ExplorationSortDirectionDesc {
 		t.Fatalf("normalized exploration = %#v", resolved.Exploration)
+	}
+}
+
+func TestTurnContextRejectsUnknownExplorationProperties(t *testing.T) {
+	var context TurnContext
+	err := json.Unmarshal([]byte(`{"surface":"data","exploration":{"schemaVersion":1,"modelId":"commerce","dimensions":[],"metrics":[],"filters":[],"sort":[],"limit":100,"unknown":true}}`), &context)
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("unknown exploration property error = %v", err)
+	}
+}
+
+func TestTurnContextRejectsStrictJSONExplorationDuplicates(t *testing.T) {
+	for _, payload := range []string{
+		`{"surface":"data","exploration":{"schemaVersion":1,"modelId":"commerce","modelId":"other","dimensions":[],"metrics":[],"filters":[],"sort":[],"limit":100}}`,
+		`{"surface":"data","exploration":{"schemaVersion":1,"modelId":"commerce","modelID":"other","dimensions":[],"metrics":[],"filters":[],"sort":[],"limit":100}}`,
+	} {
+		var context TurnContext
+		if err := json.Unmarshal([]byte(payload), &context); err == nil {
+			t.Fatalf("accepted duplicate exploration property payload: %s", payload)
+		}
+	}
+}
+
+func TestTurnContextRejectsStrictJSONBounds(t *testing.T) {
+	deep := `{"surface":"data","filters":` + strings.Repeat("[", 33) + "0" + strings.Repeat("]", 33) + "}"
+	var context TurnContext
+	if err := json.Unmarshal([]byte(deep), &context); err == nil {
+		t.Fatal("accepted excessively deep context")
+	}
+
+	large := `{"surface":"data","dashboardTitle":"` + strings.Repeat("x", int(turnContextMaxBytes)) + `"}`
+	if err := json.Unmarshal([]byte(large), &context); err == nil {
+		t.Fatal("accepted oversized context")
 	}
 }
 
