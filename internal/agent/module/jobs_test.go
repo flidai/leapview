@@ -70,7 +70,7 @@ func (f moduleJobFixture) run(t *testing.T, id, status string) (agent.Conversati
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := f.repo.CreateRun(ctx, agent.RunInput{PrincipalID: f.owner.ID, ConversationID: conv.ID, RunID: id, Status: agent.RunStatusRunning})
+	run, err := f.repo.CreateRun(ctx, agent.RunInput{PrincipalID: f.owner.ID, ConversationID: conv.ID, RunID: id, Model: "model-a", Status: agent.RunStatusRunning})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +148,14 @@ func TestJobHandlerResumeFailuresTerminalizeOnce(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newModuleJobFixture(t)
+			f.mod.service.ConfigureDefaultModel(func(agent.Config) agentcore.Model {
+				return agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+					return agentcore.ModelResponse{Content: "replacement", FinishReason: agentcore.FinishReasonStop}, nil
+				})
+			})
+			if err := f.mod.service.ApplyRuntimeConfig(agent.Config{APIKey: "rotated-key", Model: "model-b"}, true); err != nil {
+				t.Fatalf("reload runtime config: %v", err)
+			}
 			conv, run := f.run(t, "run_resume_failure", agent.RunStatusRunning)
 			if _, err := f.repo.UpdateConversationTranscript(context.Background(), f.owner.ID, conv.ID, tc.transcript, conv.TranscriptRevision); err != nil {
 				t.Fatal(err)
@@ -169,6 +177,13 @@ func TestJobHandlerResumeFailuresTerminalizeOnce(t *testing.T) {
 			}
 			if gotRun.Error != "durable prompt resume failed" {
 				t.Fatalf("run error = %q, want bounded generic error", gotRun.Error)
+			}
+			var metadata map[string]any
+			if err := json.Unmarshal([]byte(gotRun.MetadataJSON), &metadata); err != nil {
+				t.Fatalf("decode run metadata: %v", err)
+			}
+			if metadata["model"] != run.Model {
+				t.Fatalf("failure metadata model = %q, want persisted run model %q", metadata["model"], run.Model)
 			}
 			events, err := f.jobs.ListEvents(context.Background(), "agent_run", run.ID, 0, 20)
 			if err != nil {

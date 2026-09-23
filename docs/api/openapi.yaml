@@ -61331,6 +61331,8 @@ components:
         systemPrompt: example
     AgentConfigUpdateRequest:
       type: object
+      required:
+        - systemPrompt
       properties:
         systemPrompt:
           type: string

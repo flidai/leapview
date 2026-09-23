@@ -136,7 +136,7 @@ model AgentRunCreateRequest {
 }
 
 model AgentConfigUpdateRequest {
-  systemPrompt?: string;
+  systemPrompt: string;
 }
 
 model AgentConfigResponse {

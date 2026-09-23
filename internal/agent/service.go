@@ -729,7 +729,11 @@ func (s *Service) finalizePersistedRunFailure(ctx context.Context, scope Scope, 
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	finish := RunFinish{PrincipalID: scope.PrincipalID, ConversationID: conversationID, RunID: runID, Status: RunStatusFailed, Error: errText, MetadataJSON: metadataJSON(map[string]any{"model": s.Model(), "terminationCause": RunCauseResumeFailure}), Cause: RunCauseResumeFailure}
+	run, err := s.GetRun(cleanupCtx, scope, conversationID, runID)
+	if err != nil {
+		return false, err
+	}
+	finish := RunFinish{PrincipalID: scope.PrincipalID, ConversationID: conversationID, RunID: runID, Status: RunStatusFailed, Error: errText, MetadataJSON: metadataJSON(map[string]any{"model": run.Model, "terminationCause": RunCauseResumeFailure}), Cause: RunCauseResumeFailure}
 	finish.JobID, finish.JobFence = jobID, fence
 	if terminalizer, ok := s.repo.(RunTerminalWorkflow); ok && s.runWorkflowAvailable() && workflow.Event.Key != "" {
 		_, transitioned, err := terminalizer.FinishRunWorkflow(cleanupCtx, finish, workflow)
