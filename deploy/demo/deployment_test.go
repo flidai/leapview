@@ -194,6 +194,72 @@ func TestHostedDemoRequiresPrivateAgentProviderConfiguration(t *testing.T) {
 	require.NotContains(t, runbook, "Keep the agent unconfigured on the shared demo instance.")
 }
 
+func TestHostedDemoComposeRolloutIsPinnedAndRollbackSafe(t *testing.T) {
+	root := filepath.Join("..", "..")
+	workflow := read(t, filepath.Join(root, ".github", "workflows", "demo-deploy.yml"))
+	shell := read(t, filepath.Join(root, "scripts", "deploy_compose_demo_runtime.sh"))
+	runtime := read(t, filepath.Join(root, "scripts", "deploy_compose_demo_runtime.py"))
+	runbook := read(t, filepath.Join(root, "deploy", "demo", "README.md"))
+
+	for _, required := range []string{
+		"options: [publish, compose-deploy, stage, prepare, deploy]",
+		"inputs.action == 'compose-deploy'",
+		"35838764757",
+		"18ff2bb555cf78a19e980ac91b4f5604c9272247",
+		"ghcr.io/flidai/leapview@sha256:a91d0bc1927a2f093136cb403914f567d5f6927cd8b24900763783adb16175bc",
+		"SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE",
+		"scripts/deploy_compose_demo_runtime.sh",
+	} {
+		require.Contains(t, workflow, required)
+	}
+	require.NotContains(t, workflow, "DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}")
+
+	for _, required := range []string{
+		"StrictHostKeyChecking=yes",
+		"DEMO_EXPECTED_SSH_FINGERPRINT",
+		"leapview-demo-agent-api-key",
+		"agent_key_uploaded=true",
+		"scripts/deploy_compose_demo_runtime.py",
+	} {
+		require.Contains(t, shell, required)
+	}
+	cleanupArmed := strings.Index(shell, "agent_key_uploaded=true")
+	uploadAttempt := strings.Index(shell, `printf '%s' "$agent_api_key"`)
+	require.NotEqual(t, -1, cleanupArmed)
+	require.NotEqual(t, -1, uploadAttempt)
+	require.Less(t, cleanupArmed, uploadAttempt, "temporary-key cleanup must be armed before upload")
+
+	for _, required := range []string{
+		"PREDECESSOR_REVISION = '38804a01c488ffaeea54202b2541779fb83354b9'",
+		"PREDECESSOR_IMAGE = 'ghcr.io/flidai/leapview@sha256:42968438532d74503b84e144b081feb2174d476f243bdf798d63715458a93a73'",
+		"ROOT = Path('/opt/leapview')",
+		"LEAPVIEW_AGENT_API_KEY",
+		"org.opencontainers.image.revision",
+		"rollout-success.json",
+		"app_contents = APP_ENV.read_text()",
+		"Compose rollout failed; reviewed predecessor configuration was restored",
+	} {
+		require.Contains(t, runtime, required)
+	}
+	require.NotContains(t, runtime, "backup / APP_ENV.name")
+	rollbackArmed := strings.Index(runtime, "changed = True")
+	firstMutation := strings.Index(runtime, "write_private_atomic(APP_ENV")
+	startAttempt := strings.Index(runtime, "\n        start()")
+	require.NotEqual(t, -1, rollbackArmed)
+	require.NotEqual(t, -1, firstMutation)
+	require.NotEqual(t, -1, startAttempt)
+	require.Less(t, rollbackArmed, firstMutation, "rollback must be armed before the first durable mutation")
+	require.Less(t, firstMutation, startAttempt, "configuration must be durable before the restart")
+
+	for _, required := range []string{
+		"exact reviewed predecessor",
+		"complete predecessor state",
+		"only the exact, revision-pinned `compose-deploy` action",
+	} {
+		require.Contains(t, runbook, required)
+	}
+}
+
 func TestDemoDeploymentRequiresSourceRevisionBeforeChangingInfrastructure(t *testing.T) {
 	root := filepath.Join("..", "..")
 	command := exec.Command("bash", filepath.Join(root, "scripts", "deploy_demo.sh"))

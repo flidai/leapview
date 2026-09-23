@@ -33,14 +33,27 @@ After `Main artifacts` builds and qualifies the `main` revision,
    approval, and activation APIs; and
 4. verifies publication activation and public readiness.
 
-This is deliberately a content-only workflow. The `leapview-demo` platform
-operators own runtime image rollout outside this repository workflow, using an
-immutable image that has passed the repository's [release qualification](../../.github/workflows/release.yml)
-and [installed-candidate qualification](../../.github/workflows/installed-candidate.yml).
+Normal automatic runs are deliberately content-only. The `compose-deploy`
+manual action is a bounded operator rollout for the current replacement VPS.
+It accepts only the exact reviewed predecessor and exact digest-pinned target,
+requires the target's successful `Main artifacts` qualification and OCI
+provenance, stages the matching deployment payload under `/opt/leapview`, and
+checks public readiness and the running build identity. Before its first
+durable change it snapshots the active generation, deployment configuration,
+and host marker while retaining the private application environment only in
+the rollout process. It never leaves a second provider-key copy on disk. Any failed write, restart,
+identity check, or readiness check restores that complete predecessor state.
+This pinned transition contains no database migration, Compose contract, or
+host-lifecycle change. A different predecessor or target must use the full
+[release qualification](../../.github/workflows/release.yml) and
+[installed-candidate qualification](../../.github/workflows/installed-candidate.yml)
+path instead of reusing this action.
 The publication records both the selected source revision and the authenticated
 running build revision in its job output; they must match, and the runtime
-must satisfy the compatibility contract above. No SSH host rollout or tracked SSH
-identity is part of the supported path.
+must satisfy the compatibility contract above. The bounded rollout temporarily
+admits only its GitHub runner through the provider firewall, pins the reviewed
+host fingerprint, and removes the runner rule afterward. No SSH private key is
+tracked in the repository.
 
 The `leapview-demo` GitHub environment authenticates to Infisical through
 GitHub OIDC. The Infisical `prod:/demo/deployment` path supplies the
@@ -69,7 +82,8 @@ credentials and publish matching source. While this override is set, unrelated
 main artifact builds do not republish the pinned source automatically. An unset
 override preserves the legacy tracked revision for the existing demo. The
 legacy `stage`, `prepare`, and `deploy` actions target the old installation;
-do not use them for the new Compose-managed host.
+do not use them for the new Compose-managed host. The replacement host uses
+only the exact, revision-pinned `compose-deploy` action described above.
 
 The `leapview-demo` environment variable `DEMO_PROJECT_ID` stores the target's
 durable `ProjectUID`. Content publication must use that issuer-owned identity;
@@ -117,17 +131,18 @@ absence of a project role must not be treated as a blanket denial of those pages
 
 ### Agent provider
 
-The legacy hosted-demo rollout receives `DEEPSEEK_API_KEY` from the protected
-Infisical `prod:/demo/deployment` path and passes it directly to
-`scripts/rollout_demo_runtime.sh`. The rollout step must not override that
-injected value with an unset GitHub environment secret.
-The checked rollout maps it to `LEAPVIEW_AGENT_API_KEY`, sets
-`LEAPVIEW_AGENT_BASE_URL` and `LEAPVIEW_AGENT_MODEL`, and writes those values
-only to the release's private mode-0600 `runtime.env`. The provider key is never committed.
-Every replacement runtime inherits these variables from the running
-predecessor, while an operator-triggered prepare or deploy refreshes the key
-from the deployment secret. Provider configuration enables the runtime while
-access policy continues to control which resources its tools can reach.
+The hosted-demo rollouts receive `DEEPSEEK_API_KEY` from the protected
+Infisical `prod:/demo/deployment` path and pass it directly to the selected
+runtime rollout script. The rollout step must not override that injected value
+with an unset GitHub environment secret. The legacy
+`scripts/rollout_demo_runtime.sh` path writes the mapped provider variables to
+its private mode-0600 `runtime.env`; the replacement-host
+`scripts/deploy_compose_demo_runtime.sh` path writes them to the private
+mode-0600 `leapview.env`. Both set `LEAPVIEW_AGENT_API_KEY`,
+`LEAPVIEW_AGENT_BASE_URL`, and `LEAPVIEW_AGENT_MODEL`. The provider key is never committed.
+An operator-triggered rollout refreshes the key from the deployment
+secret. Provider configuration enables the runtime while access policy
+continues to control which resources its tools can reach.
 
 Treat the shared credential as public. To rotate it, reset the local password,
 revoke every existing session for the principal, complete the forced password
