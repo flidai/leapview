@@ -274,7 +274,7 @@ test('ECharts keeps direct-IR waterfall metric before the start offset', () => {
   expect(option.series[1].itemStyle.color({ value: ['Returns', -4, 10] })).toBe(defaultRendererContext.colors.danger)
 })
 
-test('ECharts keeps proportional conditional colors while labels ignore icon cues', () => {
+test('ECharts keeps proportional conditional colors and renders governed icon cues in labels', () => {
   const envelope = proportionalFixture('donut') as any
   envelope.spec.presentation.legend = 'bottom'
   envelope.spec.conditionalFormatting = [{
@@ -300,16 +300,24 @@ test('ECharts keeps proportional conditional colors while labels ignore icon cue
     const option = echartsOption(envelope, context) as any
     const formatter = option.series[0].label.formatter
     expect(option.series[0]).toMatchObject({
-      label: { show: true, overflow: 'truncate', position: 'outside', alignTo: 'edge', edgeDistance: 8 },
+      label: {
+        show: true,
+        overflow: 'truncate',
+        position: 'outside',
+        alignTo: 'edge',
+        edgeDistance: 8,
+        fontFamily: "'LeapView Chart Cues', system-ui",
+      },
       minShowLabelAngle: 3,
       labelLine: { show: true, length: 10, length2: 8 },
       radius: ['54%', '76%'],
     })
     expect(option.series[0].labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
     expect(option.graphic?.find((graphic: any) => graphic.id === 'graphic:proportional:center')).toMatchObject({ top: 'middle' })
-    expect(formatter({ value: ['Missing', null] })).toBe('Missing: —')
-    expect(formatter({ value: ['High', 90] })).toBe('High: 90')
-    expect(formatter({ value: ['Low', -1] })).toBe('Low: -1')
+    expect(formatter({ value: ['Missing', null] })).toBe('⚠ Missing: —')
+    // Rules are first-match: 90 matches the authored >= 0 circle rule.
+    expect(formatter({ value: ['High', 90] })).toBe('● High: 90')
+    expect(formatter({ value: ['Low', -1] })).toBe('↓ Low: -1')
   }
 
   const titled = structuredClone(envelope)
@@ -321,7 +329,7 @@ test('ECharts keeps proportional conditional colors while labels ignore icon cue
   insideEnvelope.spec.presentation.labelPosition = 'inside'
   const insideOption = echartsOption(insideEnvelope, defaultRendererContext) as any
   expect(insideOption.series[0]).toMatchObject({
-    label: { show: true, overflow: 'truncate', position: 'inside' },
+    label: { show: true, overflow: 'truncate', position: 'inside', fontFamily: "'LeapView Chart Cues', system-ui" },
     labelLine: { show: false, length2: 8 },
   })
   expect(insideOption.series[0].labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
@@ -330,7 +338,8 @@ test('ECharts keeps proportional conditional colors while labels ignore icon cue
   const funnel = echartsOption(envelope, defaultRendererContext) as any
   expect(funnel.series[0]).toMatchObject({ label: { show: true } })
   expect(funnel.series[0].labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
-  expect(funnel.series[0].label.formatter({ value: ['Missing', null] })).toBe('Missing: —')
+  expect(funnel.series[0].label.fontFamily).toBe("'LeapView Chart Cues', system-ui")
+  expect(funnel.series[0].label.formatter({ value: ['Missing', null] })).toBe('⚠ Missing: —')
 })
 
 test('ECharts preserves typed category colors for proportional icon-only outcomes', () => {

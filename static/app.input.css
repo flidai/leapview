@@ -1,5 +1,15 @@
 @import '@fontsource-variable/inter/index.css';
 
+/* Conditional proportional labels use a fixed, chart-only cue face. Keep its
+   coverage explicit so ordinary application typography remains unchanged. */
+@font-face {
+  font-family: 'LeapView Chart Cues';
+  font-style: normal;
+  font-display: block;
+  src: url('./files/noto-sans-symbols-2-cues-400-normal.woff2') format('woff2');
+  unicode-range: U+2191,U+2193,U+25A0,U+25B2,U+25BC,U+25C6,U+25CF,U+26A0;
+}
+
 /* size/typography */
 @import '@primer/primitives/dist/css/base/size/size.css';
 @import '@primer/primitives/dist/css/base/size/z-index.css';
