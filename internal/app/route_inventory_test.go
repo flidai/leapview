@@ -87,11 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-<<<<<<< HEAD
 	const expectedRouteContractDigest = "5fd03c7c5535e919400ae2669006764296b1ff11fcd6c37622f099e7ac09fb0e"
-=======
-	const expectedRouteContractDigest = "4fcaa8d049da4e4aaa4f930c39684e471deb1c5cfa0bbd7efc669a7b61ab4a4d"
->>>>>>> 35d780967 (Implement versioned saved explorations)
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -183,7 +179,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.Contains(path, "/dashboards/") || strings.Contains(path, "/commands/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_READ"
-	case path == "/explore" || path == "/explore/command" || path == "/explore/saved/{exploration}" || path == "/explore/saved/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
+	case path == "/explore" || path == "/explore/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
 		authenticated.owner = "project"
 		authenticated.privilege = "RESOURCE_USE"
 	case path == "/pipelines/command":
@@ -209,8 +205,8 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 func apiOwner(tags []string) (string, bool) {
 	owners := map[string]string{
 		"Access": "access", "Current User": "access", "Service Principals": "access",
-		"Connections": "analytics", "Saved Explorations": "analytics",
-		"Agent": "agent", "BI": "dashboard", "Dashboards": "dashboard", "Publications": "dashboard",
+		"Connections": "analytics",
+		"Agent":       "agent", "BI": "dashboard", "Dashboards": "dashboard", "Publications": "dashboard",
 		"Deployments": "deployment", "Delivery": "deployment", "Managed Data": "manageddata", "Refresh": "refresh",
 		"Releases": "release", "Projects": "release",
 		"Instance": "platform", "System": "platform",
@@ -317,7 +313,6 @@ GET /dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /embed/dashboards/{publicId}
 GET /embed/dashboards/{publicId}/pages/{page}
 GET /explore
-GET /explore/saved/{exploration}
 GET /favicon.ico
 GET /healthz
 GET /login
@@ -370,12 +365,8 @@ GET /catalog/search
 GET /connections/search
 GET /dashboards/search
 POST /explore/command
-<<<<<<< HEAD
 POST /dashboards/{dashboard}/archive
 POST /dashboards/{dashboard}/delete
-=======
-POST /explore/saved/command
->>>>>>> 35d780967 (Implement versioned saved explorations)
 POST /dashboards/{dashboard}/commands/clear-selection
 POST /dashboards/{dashboard}/commands/filter
 POST /dashboards/{dashboard}/commands/filter-options

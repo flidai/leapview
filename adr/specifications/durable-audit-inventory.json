@@ -143,7 +143,6 @@
       "evidence": ["internal/analytics/connectionbinding/rotation_test.go"]
     },
     {
-<<<<<<< HEAD
       "id": "connection.development-profile-application",
       "owner": "analytics",
       "kind": "generated-command-audit",
@@ -153,17 +152,6 @@
       "implementation": ["internal/analytics/module/development_profile_api.go"],
       "contractSources": ["api/typespec/connection_bindings.tsp"],
       "evidence": ["internal/analytics/module/development_profile_api_test.go"]
-=======
-      "id": "saved-exploration.commands",
-      "owner": "analytics",
-      "kind": "generated-command-audit",
-      "events": ["saved exploration create, update, duplicate, and archive"],
-      "guarantee": "transactional",
-      "failureBehavior": "Saved-exploration lifecycle state, revision, and durable audit intent commit together; audit failure rolls the mutation back.",
-      "implementation": ["internal/analytics/exploration/saved/application/service.go", "internal/analytics/exploration/saved/sqlite/repository.go"],
-      "contractSources": ["api/typespec/saved_explorations.tsp"],
-      "evidence": ["internal/analytics/exploration/saved/application/service_test.go", "internal/analytics/exploration/saved/sqlite/repository_contract_test.go"]
->>>>>>> 35d780967 (Implement versioned saved explorations)
     },
     {
       "id": "agent.commands",

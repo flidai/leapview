@@ -86,7 +86,7 @@ var SharedContractPrefixes = map[string][]string{
 	"access":       {"internal/project/graph", "internal/project/runtime"},
 	"admin":        {"internal/project/graph"},
 	"agent":        {"internal/project/graph"},
-	"analytics":    {"internal/project/graph", "internal/project/contracts", "internal/project/runtime"},
+	"analytics":    {"internal/project/graph", "internal/project/contracts"},
 	"dashboard":    {"internal/project/graph", "internal/project/runtime", "internal/project/schema"},
 	"deployment":   {"internal/dashboard/publication", "internal/project/graph"},
 	"lineage":      {"internal/project/graph"},
@@ -319,11 +319,6 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/recoveryset", Capability: "recoveryset", Layer: LayerContract},
 	{Prefix: "internal/analytics/resultidentity", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/sourcedataidentity", Capability: "analytics", Layer: LayerContract},
-<<<<<<< HEAD
-=======
-	{Prefix: "internal/analytics/exploration", Capability: "analytics", Layer: LayerContract},
-	{Prefix: "internal/analytics/exploration/saved/sqlite", Capability: "analytics", Layer: LayerAdapter},
->>>>>>> 35d780967 (Implement versioned saved explorations)
 	{Prefix: "internal/analytics/runtime", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/modelsql", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/gates", Capability: "release", Layer: LayerUseCase},

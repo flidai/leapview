@@ -18,7 +18,6 @@ type QueryAuditAPIGenConfig struct {
 }
 
 type AnalyticsAPIGenConfig struct {
-<<<<<<< HEAD
 	QueryAudit          QueryAuditAPIGenConfig
 	Connections         ConnectionBindingAPIGenConfig
 	DevelopmentProfiles DevelopmentProfileApplicationAPIConfig
@@ -28,24 +27,12 @@ type analyticsAPIGenDispatcher struct {
 	queryEvents         queryaudithttp.Handler
 	connections         connectionBindingAPIHandler
 	developmentProfiles developmentProfileApplicationAPIHandler
-=======
-	QueryAudit        QueryAuditAPIGenConfig
-	Connections       ConnectionBindingAPIGenConfig
-	SavedExplorations SavedExplorationAPIGenConfig
-}
-
-type analyticsAPIGenDispatcher struct {
-	queryEvents       queryaudithttp.Handler
-	connections       connectionBindingAPIHandler
-	savedExplorations savedExplorationAPIHandler
->>>>>>> 35d780967 (Implement versioned saved explorations)
 }
 
 func newAnalyticsAPIGenDispatcher(config AnalyticsAPIGenConfig) *analyticsAPIGenDispatcher {
 	return &analyticsAPIGenDispatcher{queryEvents: queryaudithttp.Handler{
 		Reader:    queryaudithttp.ReaderProvider(config.QueryAudit.Reader),
 		ProjectID: queryaudithttp.ProjectIDNormalizer(config.QueryAudit.ProjectID),
-<<<<<<< HEAD
 	}, connections: connectionBindingAPIHandler{config: config.Connections}, developmentProfiles: developmentProfileApplicationAPIHandler{config: config.DevelopmentProfiles}}
 }
 
@@ -55,9 +42,6 @@ func (d *analyticsAPIGenDispatcher) GetDevelopmentProfileApplication(w http.Resp
 
 func (d *analyticsAPIGenDispatcher) ApplyDevelopmentProfile(w http.ResponseWriter, r *http.Request, project, target string, _ analyticsgen.GenApplyDevelopmentProfileHeaders) {
 	d.developmentProfiles.Apply(w, r, project, target)
-=======
-	}, connections: connectionBindingAPIHandler{config: config.Connections}, savedExplorations: savedExplorationAPIHandler{config: config.SavedExplorations}}
->>>>>>> 35d780967 (Implement versioned saved explorations)
 }
 
 func (d *analyticsAPIGenDispatcher) ListQueryEvents(
@@ -143,30 +127,6 @@ func (d *analyticsAPIGenDispatcher) RefreshTargetConnectionBinding(
 	_ analyticsgen.GenRefreshTargetConnectionBindingHeaders,
 ) {
 	d.connections.Refresh(w, r, project, target, connection)
-}
-
-func (d *analyticsAPIGenDispatcher) ListSavedExplorations(w http.ResponseWriter, r *http.Request, project string, params analyticsgen.GenListSavedExplorationsParams) {
-	d.savedExplorations.List(w, r, project, params)
-}
-
-func (d *analyticsAPIGenDispatcher) CreateSavedExploration(w http.ResponseWriter, r *http.Request, project string, headers analyticsgen.GenCreateSavedExplorationHeaders) {
-	d.savedExplorations.Create(w, r, project, headers)
-}
-
-func (d *analyticsAPIGenDispatcher) GetSavedExploration(w http.ResponseWriter, r *http.Request, project, exploration string) {
-	d.savedExplorations.Get(w, r, project, exploration)
-}
-
-func (d *analyticsAPIGenDispatcher) UpdateSavedExploration(w http.ResponseWriter, r *http.Request, project, exploration string, headers analyticsgen.GenUpdateSavedExplorationHeaders) {
-	d.savedExplorations.Update(w, r, project, exploration, headers)
-}
-
-func (d *analyticsAPIGenDispatcher) ArchiveSavedExploration(w http.ResponseWriter, r *http.Request, project, exploration string, headers analyticsgen.GenArchiveSavedExplorationHeaders) {
-	d.savedExplorations.Archive(w, r, project, exploration, headers)
-}
-
-func (d *analyticsAPIGenDispatcher) DuplicateSavedExploration(w http.ResponseWriter, r *http.Request, project, exploration string, headers analyticsgen.GenDuplicateSavedExplorationHeaders) {
-	d.savedExplorations.Duplicate(w, r, project, exploration, headers)
 }
 
 func (d *analyticsAPIGenDispatcher) TestTargetConnectionBinding(
