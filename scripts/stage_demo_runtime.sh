@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
+trap 'status=$?; echo "hosted demo staging failed at line $LINENO (status $status)" >&2' ERR
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 demo_host="${DEMO_HOST:?Set DEMO_HOST}"
@@ -136,7 +138,8 @@ ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
   -o ServerAliveInterval=15 -o ServerAliveCountMax=20 \
   -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$pinned_known_hosts" \
   "root@$demo_host" 'bash -se' <<'REMOTE'
-set -euo pipefail
+set -Eeuo pipefail
+trap 'status=$?; echo "remote hosted demo staging failed at line $LINENO (status $status)" >&2' ERR
 revision=2caaf4d0c3e0ce637a22c376f63240c27dfaf20d
 image=ghcr.io/flidai/leapview@sha256:35d1207a312279cc7bcf3c64a9284a8410d1f21c30920f2cbf1935113553eb24
 release=/opt/leapview-demo/releases/$revision
