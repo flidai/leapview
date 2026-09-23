@@ -193,7 +193,7 @@ test('ECharts keeps compact histogram endpoint labels inside the chart', () => {
 
 function cartesianPresentationFixture(mark: string): VisualizationEnvelope {
   return {
-    schemaVersion: 9,
+    schemaVersion: 14,
     visualID: mark,
     rendererID: 'echarts',
     specRevision: 'sha256:cartesian-presentation',

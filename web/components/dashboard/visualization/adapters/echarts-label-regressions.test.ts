@@ -82,7 +82,7 @@ test('ECharts preserves explicit tree label density and crowds only visible auto
 
 function pointFixture(rows: unknown[][]): VisualizationEnvelope {
   return {
-    schemaVersion: 9,
+    schemaVersion: 14,
     visualID: 'point-label-regression',
     rendererID: 'echarts',
     specRevision: 'sha256:test',
@@ -122,7 +122,7 @@ function treeFixture(density: 'automatic' | 'always' | 'dense', initialDepth: nu
     for (let index = 0; index < 10; index++) rows.push([`${branch}-${index}`, `root\u001f${branch}`, 1])
   }
   return {
-    schemaVersion: 9,
+    schemaVersion: 14,
     visualID: 'tree-label-regression',
     rendererID: 'echarts',
     specRevision: 'sha256:test',

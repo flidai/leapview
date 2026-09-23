@@ -9,7 +9,7 @@ import { proportionalFixture } from './echarts-test-fixtures'
 
 function cartesian(dataZoom = true): VisualizationEnvelope {
   return {
-    schemaVersion: 9, visualID: 'sales', rendererID: 'echarts', specRevision: 'sha256:echarts-resilience', dataRevision: 1,
+    schemaVersion: 14, visualID: 'sales', rendererID: 'echarts', specRevision: 'sha256:echarts-resilience', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'Sales', mark: 'line',
       datasets: [{ id: 'primary', fields: [

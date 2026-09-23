@@ -677,54 +677,6 @@ test('data preview and semantic query failures expose retry and reset actions', 
   }
 })
 
-test('saved explorations render in their own row and emit the canonical current spec', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
-    const state = await page.evaluate(async () => {
-      const spec = { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 100 }
-      const command = {
-        spec, semanticModelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], metrics: [], filters: [], sort: [],
-        limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {},
-      }
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({
-        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
-        dataExplorer: {
-          objects: [], command: { mode: 'explore', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: command },
-          explore: { command, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, warnings: [],
-        },
-        savedExplorations: { enabled: true, list: { items: [], includeArchived: false }, command: { action: 'create' }, save: { state: 'saved' } },
-      })
-      const element = document.createElement('lv-data-explorer') as any
-      const commands: any[] = []
-      element.addEventListener('lv-saved-exploration-command', (event: CustomEvent) => commands.push(event.detail))
-      document.body.append(element)
-      for (let index = 0; index < 20 && !element.shadowRoot?.querySelector('.saved-explorations'); index += 1) {
-        await element.updateComplete
-        await new Promise((resolve) => requestAnimationFrame(resolve))
-      }
-      const root = element.shadowRoot as ShadowRoot
-      const name = root.querySelector<HTMLInputElement>('input[aria-label="Saved exploration name"]')!
-      name.value = 'Orders by status'
-      name.dispatchEvent(new Event('input', { bubbles: true }))
-      root.querySelector<HTMLButtonElement>('.saved-exploration-actions button')!.click()
-      await element.updateComplete
-      return {
-        routeClasses: root.querySelector('.route')!.className,
-        gridRows: getComputedStyle(root.querySelector('.route')!).gridTemplateRows,
-        command: commands[0],
-      }
-    })
-    expect(state.routeClasses).toContain('saved-enabled')
-    expect(state.gridRows.split(' ').length).toBeGreaterThanOrEqual(3)
-    expect(state.command).toMatchObject({ action: 'create', title: 'Orders by status', visibility: 'private', spec: { modelId: 'sales', datasetId: 'orders' } })
-  } finally {
-    await page.close()
-  }
-})
-
 function testDocument() {
   return `
     <!doctype html>

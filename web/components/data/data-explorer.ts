@@ -1,10 +1,9 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronRight, Code2, Columns3, Database, Eye, Filter, Play, Plus, RotateCcw, Search, Server, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
+import { ChevronRight, Code2, Columns3, Database, Filter, Play, Plus, RotateCcw, Search, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
 import type {
   AgentReferenceSignal,
   DataExploreCommand,
-  DataExploreDatasetSignal,
   DataExploreFieldSignal,
   DataExploreFilterSignal,
   DataExploreSignal,
@@ -45,6 +44,20 @@ import '../chat/chat-drawer'
 import './preview-table'
 import './explore-table'
 import { emptyExplorationSpec, explorationSpecFromCommand } from './data-explorer-spec'
+import {
+  datasetGrainLabel,
+  fieldLabel,
+  filterObjects,
+  groupExploreFields,
+  groupObjectsBySemanticModel,
+  iconForLayer,
+  label,
+  layerLabel,
+  localPreviewDimensions,
+  objectColumnMatchesSearch,
+  queryTargetLabel,
+  type ResourceGroup,
+} from './data-explorer-view-model'
 
 const emptyPreview: DataPreviewSignal = {
   columns: [],
@@ -72,12 +85,6 @@ const emptyExplorer: DataExplorerSignal = {
   },
   command: { mode: 'browse', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
   warnings: [],
-}
-
-type ResourceGroup = {
-  id: string
-  title: string
-  objects: DataExplorerObjectSignal[]
 }
 
 type ExplorerColumn = { key: string, label?: string }
@@ -1919,129 +1926,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
     this.dispatchEvent(new CustomEvent('lv-data-explorer-command', { bubbles: true, composed: true, detail: next }))
   }
-}
-
-function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataExploreFieldSignal[]): string[] {
-  const datasetID = objectDatasetID(object)
-  const localFields = fields.filter((field) => field.kind !== 'metric' && field.datasetId === datasetID)
-  const localByColumn = new Map(localFields.map((field) => [fieldColumnID(field), field.id]))
-  const ordered = (object.columns ?? []).map((column) => localByColumn.get(column.key) ?? `${datasetID}.${column.key}`)
-  const seen = new Set(ordered)
-  for (const field of localFields) {
-    if (!seen.has(field.id)) ordered.push(field.id)
-  }
-  return ordered
-}
-
-function filterObjects(objects: DataExplorerObjectSignal[], query: string): DataExplorerObjectSignal[] {
-  const normalized = query.trim().toLowerCase()
-  if (!normalized) return objects
-  return objects.filter((object) => objectSearchValues(object)
-    .some((value) => value.toLowerCase().includes(normalized)))
-}
-
-function objectSearchValues(object: DataExplorerObjectSignal): string[] {
-  return [
-    object.title,
-    object.description,
-    object.layer,
-    object.resourceId,
-    object.semanticModelId,
-    object.datasetId,
-    ...(object.columns ?? []).flatMap((column) => [column.key, column.label, column.type, column.description]),
-  ].map((value) => String(value ?? ''))
-}
-
-function objectColumnMatchesSearch(object: DataExplorerObjectSignal, query: string): boolean {
-  const normalized = query.trim().toLowerCase()
-  if (!normalized) return false
-  return (object.columns ?? []).some((column) => [column.key, column.label, column.type, column.description]
-    .some((value) => String(value ?? '').toLowerCase().includes(normalized)))
-}
-
-function groupObjectsBySemanticModel(objects: DataExplorerObjectSignal[], semanticModels: DataExploreSignal['semanticModels'] = []): ResourceGroup[] {
-  const groups = new Map<string, ResourceGroup>()
-  const modelTitles = new Map(semanticModels.map((model) => [model.id, model.title]))
-  for (const object of objects) {
-    if (object.layer === 'source') continue
-    const id = object.semanticModelId || object.layer
-    if (!groups.has(id)) {
-      groups.set(id, { id, title: modelTitles.get(id) || object.semanticModelId || 'Data objects', objects: [] })
-    }
-    groups.get(id)!.objects.push(object)
-  }
-  return Array.from(groups.values()).filter((group) => group.objects.length > 0)
-}
-
-type ExploreFieldGroup = {
-  id: string
-  kind: 'dimension' | 'metric'
-  label: string
-  fields: DataExploreFieldSignal[]
-}
-
-function groupExploreFields(fields: DataExploreFieldSignal[]): ExploreFieldGroup[] {
-  const groups = new Map<string, ExploreFieldGroup>()
-  for (const field of fields) {
-    const crossDatasetMetric = field.kind === 'metric' && !field.datasetId
-    const id = crossDatasetMetric ? 'cross-dataset:metric' : `${field.datasetId}:${field.kind}`
-    if (!groups.has(id)) {
-      groups.set(id, {
-        id,
-        kind: field.kind,
-        label: crossDatasetMetric ? 'Multiple datasets · Metrics' : `${label(field.datasetId)} · ${field.kind === 'metric' ? 'Metrics' : 'Dimensions'}`,
-        fields: [],
-      })
-    }
-    groups.get(id)!.fields.push(field)
-  }
-  return Array.from(groups.values())
-}
-
-function fieldLabel(id: string, fields: DataExploreFieldSignal[]): string {
-  return fields.find((field) => field.id === id)?.label ?? label(id)
-}
-
-function datasetGrainLabel(dataset: DataExploreDatasetSignal): string {
-  const fields = dataset.grainFields ?? []
-  return fields.length ? `${dataset.grainEntity} (${fields.join(', ')})` : dataset.grainEntity
-}
-
-function iconForLayer(layer: string): any {
-  switch (layer) {
-    case 'source':
-      return Server
-    case 'semantic_view':
-      return Eye
-    case 'model':
-      return Table2
-    default:
-      return Database
-  }
-}
-
-function layerLabel(layer: string): string {
-  switch (layer) {
-    case 'source':
-      return 'Source'
-    case 'model':
-      return 'Model'
-    case 'semantic_view':
-      return 'Semantic view'
-    default:
-      return label(layer)
-  }
-}
-
-function queryTargetLabel(object: DataExplorerObjectSignal): string {
-  const target = object.source || object.datasetId || object.title
-  const model = object.semanticModelId ? `${object.semanticModelId} · ` : ''
-  return `${layerLabel(object.layer)} · ${model}${target}`
-}
-
-function label(value: unknown): string {
-  if (value == null || value === '') return '-'
-  return String(value)
 }
 
 if (!customElements.get('lv-data-explorer')) customElements.define('lv-data-explorer', DataExplorerPage)

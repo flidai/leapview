@@ -100,7 +100,7 @@ function facetedEnvelope(): VisualizationEnvelope {
     { id: 'value', sourceRef: 'order_count', role: 'metric', dataType: 'integer', nullable: false, label: 'Orders' },
   ]
   return {
-    schemaVersion: 9, visualID: 'state-status', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'state-status', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       ...baseSpec(fields), kind: 'cartesian', mark: 'column',
       x: { dataset: 'primary', field: 'state' }, y: [{ dataset: 'primary', field: 'value' }], series: { dataset: 'primary', field: 'status' },
@@ -120,7 +120,7 @@ function tableEnvelope(): VisualizationEnvelope {
     { id: 'order_id', sourceRef: 'orders.order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' },
   ]
   return {
-    schemaVersion: 9, visualID: 'orders', rendererID: 'tanstack', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'orders', rendererID: 'tanstack', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       ...baseSpec(fields), kind: 'table',
       columns: fields.map((field) => ({ field: { dataset: 'primary', field: field.id }, label: field.label, formatting: [] })),
@@ -135,7 +135,7 @@ function tableEnvelope(): VisualizationEnvelope {
 function kpiEnvelope(): VisualizationEnvelope {
   const fields = [{ id: 'value', role: 'metric', dataType: 'integer', nullable: false, label: 'Orders' }]
   return {
-    schemaVersion: 9, visualID: 'orders-kpi', rendererID: 'html', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'orders-kpi', rendererID: 'html', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       ...baseSpec(fields), kind: 'kpi', value: { dataset: 'primary', field: 'value' },
       presentation: { mode: 'compact', delta: 'absolute', favorableDirection: 'neutral', missingComparison: 'show_unavailable', ranges: [], tone: 'ink' },
@@ -156,7 +156,7 @@ function mapEnvelope(): VisualizationEnvelope {
     color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#ccc' }, stroke: { color: '#fff', width: 1, opacity: 1 }, opacity: 0.82,
   } as unknown as VisualizationGeographicLayer
   return {
-    schemaVersion: 9, visualID: 'map', rendererID: 'maplibre', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'map', rendererID: 'maplibre', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       ...baseSpec(fields), kind: 'geographic', layers: [layer],
       presentation: {
