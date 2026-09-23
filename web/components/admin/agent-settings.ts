@@ -74,7 +74,7 @@ export class AgentSettings extends LitElement {
 
     .overview-grid {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: var(--base-size-8);
     }
 
@@ -212,6 +212,7 @@ export class AgentSettings extends LitElement {
           <div class="overview-grid">
             ${this.stat('Status', enabledLabel, agent.enabled ? 'enabled' : 'disabled')}
             ${this.stat('Model', agent.model || 'Not configured')}
+            ${this.stat('Reasoning', formatReasoningEffort(agent.reasoningEffort))}
             ${this.stat('Tools', String(agent.tools.length))}
             ${this.stat('Access', agent.canWrite ? 'Editable' : 'Read-only')}
             ${this.stat('Instructions', prompt.trim() ? 'Configured' : 'Not configured')}
@@ -259,6 +260,12 @@ export class AgentSettings extends LitElement {
       >${label}</button>
     `
   }
+}
+
+function formatReasoningEffort(value?: string): string {
+  const effort = value?.trim().toLowerCase()
+  if (!effort) return 'Not configured'
+  return effort === 'xhigh' ? 'Extra high' : effort[0].toUpperCase() + effort.slice(1)
 }
 
 if (!customElements.get('lv-agent-settings')) customElements.define('lv-agent-settings', AgentSettings)

@@ -107,25 +107,29 @@ func TestOpenAIModelConvertsChatCompletionPayloads(t *testing.T) {
 	}
 }
 
-func TestOpenAIModelConfiguresGPT6LunaChatCompletions(t *testing.T) {
-	var got map[string]any
+func TestOpenAIModelConfiguresGPT6LunaResponses(t *testing.T) {
+	var requests []openAIResponsesRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Fatalf("path = %s, want /responses", r.URL.Path)
+		}
+		var got openAIResponsesRequest
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		writeJSON(t, w, openAIChatResponse{
-			ID: "chatcmpl_gpt6_luna",
-			Choices: []openAIChoice{{
-				Message:      openAIMessage{Role: "assistant", Content: "Done."},
-				FinishReason: "stop",
-			}},
-		})
+		requests = append(requests, got)
+		io.WriteString(w, `{"id":"resp_gpt6_luna","status":"completed","output":[{"type":"reasoning","id":"rs_1","encrypted_content":"encrypted-reasoning","summary":[]},{"type":"function_call","id":"fc_1","call_id":"call_1","name":"catalog_search","arguments":"{\"query\":\"sales\"}"}],"usage":{"input_tokens":12,"output_tokens":8,"total_tokens":20}}`)
 	}))
 	defer server.Close()
 
-	model := NewModel(agentapp.Config{APIKey: "test-key", BaseURL: server.URL, Model: "gpt-6-luna"}, server.Client())
-	_, err := model.Complete(context.Background(), agentcore.ModelRequest{
+	model := NewModel(agentapp.Config{APIKey: "test-key", BaseURL: server.URL, Model: "gpt-6-luna", ReasoningEffort: "high"}, server.Client())
+	response, err := model.Complete(context.Background(), agentcore.ModelRequest{
 		Purpose: agentcore.ModelRequestPurposeTurn,
+		Messages: []agentcore.Message{
+			{Role: agentcore.RoleUser, Content: "Find sales"},
+			{Role: agentcore.RoleAssistant, ToolCalls: []agentcore.ToolCall{{ID: "call_previous", Name: "catalog_search", Arguments: json.RawMessage(`{"query":"revenue"}`)}}},
+			{Role: agentcore.RoleTool, ToolCallID: "call_previous", Content: `{"matches":[]}`},
+		},
 		Tools: []agentcore.ToolSpec{{
 			Name:        "catalog_search",
 			InputSchema: []byte(`{"type":"object"}`),
@@ -135,14 +139,84 @@ func TestOpenAIModelConfiguresGPT6LunaChatCompletions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete returned error: %v", err)
 	}
-	if got["reasoning_effort"] != "none" {
-		t.Fatalf("reasoning_effort = %#v, want none", got["reasoning_effort"])
+	got := requests[0]
+	if got.Reasoning.Effort != "high" {
+		t.Fatalf("reasoning effort = %q, want high", got.Reasoning.Effort)
 	}
-	if got["max_completion_tokens"] != float64(321) {
-		t.Fatalf("max_completion_tokens = %#v, want 321", got["max_completion_tokens"])
+	if got.MaxOutputTokens != 321 {
+		t.Fatalf("max output tokens = %d, want 321", got.MaxOutputTokens)
 	}
-	if _, ok := got["max_tokens"]; ok {
-		t.Fatalf("GPT-6 Luna request included deprecated max_tokens: %#v", got["max_tokens"])
+	if got.Store {
+		t.Fatal("GPT-6 Luna response request enabled storage")
+	}
+	if len(got.Include) != 1 || got.Include[0] != "reasoning.encrypted_content" {
+		t.Fatalf("include = %#v", got.Include)
+	}
+	if len(got.Tools) != 1 || got.Tools[0].Name != "catalog_search" || got.Tools[0].Strict {
+		t.Fatalf("tools = %#v", got.Tools)
+	}
+	if len(got.Input) != 3 || got.Input[1].Type != "function_call" || got.Input[2].Type != "function_call_output" {
+		t.Fatalf("input = %#v", got.Input)
+	}
+	if response.FinishReason != agentcore.FinishReasonToolCalls || len(response.ToolCalls) != 1 || response.ToolCalls[0].ID != "call_1" {
+		t.Fatalf("response = %#v", response)
+	}
+	if len(response.ProviderState) == 0 {
+		t.Fatal("response did not preserve provider state")
+	}
+
+	_, err = model.Complete(context.Background(), agentcore.ModelRequest{
+		Messages: []agentcore.Message{
+			{Role: agentcore.RoleAssistant, ToolCalls: response.ToolCalls, ProviderState: response.ProviderState},
+			{Role: agentcore.RoleTool, ToolCallID: "call_1", Content: `{"matches":[]}`},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("second Complete returned error: %v", err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("request count = %d, want 2", len(requests))
+	}
+	replayed := requests[1].Input
+	if len(replayed) != 3 || replayed[0].Type != "reasoning" || replayed[0].EncryptedContent != "encrypted-reasoning" || replayed[1].Type != "function_call" || replayed[2].Type != "function_call_output" {
+		t.Fatalf("replayed input = %#v", replayed)
+	}
+}
+
+func TestOpenAIModelStreamsGPT6LunaResponseTextAndToolCalls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got openAIResponsesRequest
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if !got.Stream || got.Reasoning.Effort != "high" {
+			t.Fatalf("stream/reasoning = %t/%q", got.Stream, got.Reasoning.Effort)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Checking.\"}\n\n")
+		io.WriteString(w, "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"catalog_search\",\"arguments\":\"\"}}\n\n")
+		io.WriteString(w, "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{\\\"query\\\":\\\"sales\\\"}\"}\n\n")
+		io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_stream\",\"status\":\"completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":3,\"total_tokens\":7}}}\n\n")
+	}))
+	defer server.Close()
+
+	var streamed strings.Builder
+	model := NewModel(agentapp.Config{APIKey: "test-key", BaseURL: server.URL, Model: "gpt-6-luna", ReasoningEffort: "high"}, server.Client())
+	response, err := model.Complete(context.Background(), agentcore.ModelRequest{Purpose: agentcore.ModelRequestPurposeTurn}, modelStreamFunc(func(_ context.Context, text string) error {
+		streamed.WriteString(text)
+		return nil
+	}))
+	if err != nil {
+		t.Fatalf("Complete returned error: %v", err)
+	}
+	if streamed.String() != "Checking." || response.Content != "Checking." {
+		t.Fatalf("stream/content = %q/%q", streamed.String(), response.Content)
+	}
+	if response.FinishReason != agentcore.FinishReasonToolCalls || len(response.ToolCalls) != 1 || string(response.ToolCalls[0].Arguments) != `{"query":"sales"}` {
+		t.Fatalf("response = %#v", response)
+	}
+	if response.Usage.TotalTokens != 7 {
+		t.Fatalf("usage = %#v", response.Usage)
 	}
 }
 

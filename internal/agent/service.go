@@ -230,6 +230,13 @@ func (s *Service) Model() string {
 	return s.config.Model
 }
 
+func (s *Service) ReasoningEffort() string {
+	if s == nil {
+		return ""
+	}
+	return s.config.NormalizedReasoningEffort()
+}
+
 func (s *Service) CreateConversation(ctx context.Context, scope Scope, title string) (Conversation, error) {
 	if s.repo == nil {
 		return Conversation{}, fmt.Errorf("agent store is required")

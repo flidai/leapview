@@ -76,10 +76,11 @@ type AdminAgentToolResponse struct {
 }
 
 type AdminAgentResponse struct {
-	Enabled      bool                     `json:"enabled"`
-	Model        string                   `json:"model,omitempty"`
-	SystemPrompt string                   `json:"systemPrompt"`
-	Tools        []AdminAgentToolResponse `json:"tools"`
+	Enabled         bool                     `json:"enabled"`
+	Model           string                   `json:"model,omitempty"`
+	ReasoningEffort string                   `json:"reasoningEffort,omitempty"`
+	SystemPrompt    string                   `json:"systemPrompt"`
+	Tools           []AdminAgentToolResponse `json:"tools"`
 }
 
 type AdminAgentConfigPatchRequest struct {

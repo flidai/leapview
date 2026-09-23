@@ -61,14 +61,15 @@ type AdminPublication struct {
 }
 
 type AdminAgentData struct {
-	Enabled      bool
-	Model        string
-	SystemPrompt string
-	Revision     string
-	CanWrite     bool
-	CSRFToken    string
-	UpdatePath   string
-	Tools        []AdminAgentTool
+	Enabled         bool
+	Model           string
+	ReasoningEffort string
+	SystemPrompt    string
+	Revision        string
+	CanWrite        bool
+	CSRFToken       string
+	UpdatePath      string
+	Tools           []AdminAgentTool
 }
 
 type AdminAgentTool struct {
@@ -614,12 +615,13 @@ func adminAgentSignal(data AdminAgentData) uisignals.AdminAgentSignal {
 		})
 	}
 	return uisignals.AdminAgentSignal{
-		Enabled:      data.Enabled,
-		Model:        uisignals.Optional(data.Model),
-		SystemPrompt: data.SystemPrompt,
-		CanWrite:     data.CanWrite,
-		UpdatePath:   data.UpdatePath,
-		Tools:        tools,
+		Enabled:         data.Enabled,
+		Model:           uisignals.Optional(data.Model),
+		ReasoningEffort: uisignals.Optional(data.ReasoningEffort),
+		SystemPrompt:    data.SystemPrompt,
+		CanWrite:        data.CanWrite,
+		UpdatePath:      data.UpdatePath,
+		Tools:           tools,
 	}
 }
 

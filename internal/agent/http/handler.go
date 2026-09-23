@@ -757,6 +757,7 @@ func (h *Handler) AdminDetails(ctx context.Context) (api.AdminAgentResponse, err
 	}
 	if h.options.Service != nil {
 		out.Model = h.options.Service.Model()
+		out.ReasoningEffort = h.options.Service.ReasoningEffort()
 		out.Tools = adminAgentToolDTOs(h.options.Service.ToolDefinitions(agent.Scope{PrincipalID: "admin", DevAuthBypass: true}), h.options.APIGenToolContracts)
 	}
 	return out, nil

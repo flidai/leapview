@@ -4,6 +4,37 @@
   "additionalProperties": true,
   "allOf": [
     {
+      "description": "Agent reasoning effort uses a supported API value.",
+      "if": {
+        "properties": {
+          "LEAPVIEW_AGENT_REASONING_EFFORT": {
+            "minLength": 1
+          }
+        },
+        "required": [
+          "LEAPVIEW_AGENT_REASONING_EFFORT"
+        ]
+      },
+      "then": {
+        "properties": {
+          "LEAPVIEW_AGENT_REASONING_EFFORT": {
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          }
+        },
+        "required": [
+          "LEAPVIEW_AGENT_REASONING_EFFORT"
+        ]
+      },
+      "x-error-message": "LEAPVIEW_AGENT_REASONING_EFFORT must be none, low, medium, high, xhigh, or max"
+    },
+    {
       "description": "Production cannot bypass authentication.",
       "if": {
         "properties": {
@@ -2180,6 +2211,13 @@
     "LEAPVIEW_AGENT_MODEL": {
       "default": "gpt-6-luna",
       "description": "Agent model identifier.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_AGENT_REASONING_EFFORT": {
+      "default": "high",
+      "description": "Reasoning effort sent to supported agent models.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"

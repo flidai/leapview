@@ -357,6 +357,7 @@ model AdminAgentSignal {
   `canWrite`: boolean;
   `enabled`: boolean;
   `model`?: string;
+  `reasoningEffort`?: string;
   `systemPrompt`: string;
   `tools`: AdminAgentToolSignal[];
   `updatePath`: string;

@@ -194,12 +194,13 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 		return ui.AdminAgentData{}, err
 	}
 	data := ui.AdminAgentData{
-		Enabled:      details.Enabled,
-		Model:        details.Model,
-		SystemPrompt: details.SystemPrompt,
-		CSRFToken:    m.csrfToken(r),
-		UpdatePath:   "/admin/agent/config",
-		CanWrite:     !m.AuthConfigured,
+		Enabled:         details.Enabled,
+		Model:           details.Model,
+		ReasoningEffort: details.ReasoningEffort,
+		SystemPrompt:    details.SystemPrompt,
+		CSRFToken:       m.csrfToken(r),
+		UpdatePath:      "/admin/agent/config",
+		CanWrite:        !m.AuthConfigured,
 	}
 	data.Revision, err = apigencommand.RevisionToken(details)
 	if err != nil {

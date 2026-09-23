@@ -35,6 +35,9 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 	if !m.config.Enabled() {
 		return agentcore.ModelResponse{}, agentapp.ErrDisabled
 	}
+	if usesGPT6LunaResponses(m.config) {
+		return m.completeResponse(ctx, req, stream)
+	}
 	streaming := req.Purpose == agentcore.ModelRequestPurposeTurn && stream != nil
 	body := openAIChatRequest{
 		Model:     m.config.Model,
@@ -42,11 +45,6 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 		Tools:     openAITools(req.Tools),
 		MaxTokens: req.Limits.ReserveOutputTokens,
 		Stream:    streaming,
-	}
-	if usesGPT6LunaChatCompletions(m.config) {
-		body.MaxCompletionTokens = body.MaxTokens
-		body.MaxTokens = 0
-		body.ReasoningEffort = "none"
 	}
 	if streaming {
 		body.StreamOptions = &openAIStreamOptions{IncludeUsage: true}
@@ -365,25 +363,15 @@ func disableThinkingForRequest(config agentapp.Config) bool {
 	return strings.HasPrefix(model, "deepseek-v4")
 }
 
-func usesGPT6LunaChatCompletions(config agentapp.Config) bool {
-	model := strings.ToLower(strings.TrimSpace(config.Model))
-	if slash := strings.LastIndexByte(model, '/'); slash >= 0 {
-		model = model[slash+1:]
-	}
-	return model == "gpt-6-luna" || strings.HasPrefix(model, "gpt-6-luna-")
-}
-
 type openAIChatRequest struct {
-	Model               string               `json:"model"`
-	Messages            []openAIMessage      `json:"messages"`
-	Tools               []openAITool         `json:"tools,omitempty"`
-	ToolChoice          string               `json:"tool_choice,omitempty"`
-	MaxTokens           int                  `json:"max_tokens,omitempty"`
-	MaxCompletionTokens int                  `json:"max_completion_tokens,omitempty"`
-	ReasoningEffort     string               `json:"reasoning_effort,omitempty"`
-	Thinking            *openAIThinking      `json:"thinking,omitempty"`
-	Stream              bool                 `json:"stream,omitempty"`
-	StreamOptions       *openAIStreamOptions `json:"stream_options,omitempty"`
+	Model         string               `json:"model"`
+	Messages      []openAIMessage      `json:"messages"`
+	Tools         []openAITool         `json:"tools,omitempty"`
+	ToolChoice    string               `json:"tool_choice,omitempty"`
+	MaxTokens     int                  `json:"max_tokens,omitempty"`
+	Thinking      *openAIThinking      `json:"thinking,omitempty"`
+	Stream        bool                 `json:"stream,omitempty"`
+	StreamOptions *openAIStreamOptions `json:"stream_options,omitempty"`
 }
 
 type openAIThinking struct {

@@ -76,6 +76,7 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 		"LEAPVIEW_AGENT_API_KEY=",
 		"LEAPVIEW_AGENT_BASE_URL=https://api.openai.com/v1",
 		"LEAPVIEW_AGENT_MODEL=gpt-6-luna",
+		"LEAPVIEW_AGENT_REASONING_EFFORT=high",
 		"LEAPVIEW_POSTGRES_CONTROL_URL=",
 		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=",
 		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE=leapview_control_migrator",

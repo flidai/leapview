@@ -64,6 +64,7 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
       element.agent = {
         enabled: true,
         model: 'fake-model',
+        reasoningEffort: 'high',
         systemPrompt: 'Signal prompt',
         canWrite: true,
         updatePath: '/admin/agent/config',
@@ -187,6 +188,7 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
 
     expect(state.overviewText).toContain('Enabled')
     expect(state.overviewText).toContain('fake-model')
+    expect(state.overviewText).toContain('Reasoning High')
     expect(state.overviewText).toContain('Tools 2')
     expect(state.overviewText).toContain('Editable')
     expect(state.initialTabs).toEqual([{ text: 'Instructions', selected: 'true' }, { text: 'Tools', selected: 'false' }])

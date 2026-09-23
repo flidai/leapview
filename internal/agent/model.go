@@ -3,9 +3,10 @@ package agent
 import "strings"
 
 type Config struct {
-	APIKey  string
-	BaseURL string
-	Model   string
+	APIKey          string
+	BaseURL         string
+	Model           string
+	ReasoningEffort string
 }
 
 func (c Config) Enabled() bool {
@@ -17,4 +18,11 @@ func (c Config) NormalizedBaseURL() string {
 		return "https://api.openai.com/v1"
 	}
 	return strings.TrimRight(c.BaseURL, "/")
+}
+
+func (c Config) NormalizedReasoningEffort() string {
+	if effort := strings.ToLower(strings.TrimSpace(c.ReasoningEffort)); effort != "" {
+		return effort
+	}
+	return "high"
 }

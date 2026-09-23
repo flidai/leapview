@@ -122,9 +122,10 @@ type Principal struct {
 }
 
 type ModelConfig struct {
-	APIKey  string
-	BaseURL string
-	Model   string
+	APIKey          string
+	BaseURL         string
+	Model           string
+	ReasoningEffort string
 }
 
 type Scope struct {
@@ -196,7 +197,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if service == nil && config.Persistence != nil {
 		repository := config.Persistence.Repository
 		service = agent.NewService(repository, agent.Config{
-			APIKey: config.Model.APIKey, BaseURL: config.Model.BaseURL, Model: config.Model.Model,
+			APIKey: config.Model.APIKey, BaseURL: config.Model.BaseURL, Model: config.Model.Model, ReasoningEffort: config.Model.ReasoningEffort,
 		})
 	}
 	if service != nil {
