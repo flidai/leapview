@@ -125,8 +125,8 @@ ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
   -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$pinned_known_hosts" \
   "root@$demo_host" 'bash -se' <<'REMOTE'
 set -euo pipefail
-revision=3e42be4a7100369de31d9e3dad0e03960bb30e96
-image=ghcr.io/flidai/leapview@sha256:ae34fd2cf3c5691fc2618964a3d113ef0d16d4d015702aa3219e7eb1b2ca092d
+revision=b36e6c1b965d3d816f1fa6215d06af83c1d48da4
+image=ghcr.io/flidai/leapview@sha256:b016b15d9db04a9cf66f5b058aab60a76dffc3229ea3f27fc83d820abb925f78
 release=/opt/leapview-demo/releases/$revision
 service=leapview-demo-current.service
 if ! systemctl is-active --quiet "$service"; then
