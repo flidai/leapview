@@ -92,9 +92,12 @@ class AgentPromptEditor extends LitElement {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: var(--base-size-8);
-      justify-content: flex-end;
-      padding: var(--base-size-8);
+      justify-content: space-between;
+      gap: var(--base-size-16);
+      min-height: 2.75rem;
+      border-bottom: var(--lv-border-muted);
+      padding: 0 var(--base-size-16);
+      background: var(--lv-bg-panel-muted);
     }
 
     .prompt-actions {
@@ -113,11 +116,9 @@ class AgentPromptEditor extends LitElement {
 
     .mode-toggle {
       display: inline-flex;
-      overflow: hidden;
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel-muted);
-      padding: 2px;
+      align-self: stretch;
+      align-items: stretch;
+      gap: var(--base-size-16);
     }
 
     .mode-toggle button,
@@ -131,23 +132,40 @@ class AgentPromptEditor extends LitElement {
     }
 
     .mode-toggle button {
+      position: relative;
       display: inline-grid;
-      min-width: 2rem;
-      height: 2rem;
+      min-width: 0;
       grid-auto-flow: column;
       align-items: center;
       justify-content: center;
       gap: var(--base-size-4);
       place-items: center;
       background: transparent;
-      padding: 0 var(--base-size-8);
+      padding: 0 var(--base-size-2);
       color: var(--lv-fg-muted);
     }
 
-    .mode-toggle button.is-active {
-      background: var(--lv-bg-panel);
+    .mode-toggle button::after {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 2px;
+      border-radius: var(--lv-radius-full) var(--lv-radius-full) 0 0;
+      background: transparent;
+      content: '';
+    }
+
+    .mode-toggle button:hover {
       color: var(--lv-fg-default);
-      box-shadow: var(--shadow-inset);
+    }
+
+    .mode-toggle button.is-active {
+      color: var(--lv-fg-default);
+    }
+
+    .mode-toggle button.is-active::after {
+      background: var(--lv-fg-accent);
     }
 
     .mode-toggle button:focus-visible,
@@ -224,20 +242,20 @@ class AgentPromptEditor extends LitElement {
       }
 
       .prompt-control-row {
-        padding-inline: var(--base-size-8);
+        align-items: stretch;
+        padding-inline: var(--base-size-12);
       }
 
       .prompt-actions {
-        width: 100%;
+        flex: 1 1 auto;
       }
 
       .prompt-status {
         margin-right: auto;
       }
 
-      .mode-toggle,
-      .mode-toggle button {
-        flex: 1 1 0;
+      .mode-toggle {
+        flex: 1 1 auto;
       }
     }
   `
@@ -277,6 +295,10 @@ class AgentPromptEditor extends LitElement {
           ${this.disabled ? html`<span class="managed-badge">Deployment managed</span>` : nothing}
         </div>
         <div class="prompt-control-row">
+          <div class="mode-toggle" role="group" aria-label="System prompt view mode">
+            ${this.renderModeButton('preview')}
+            ${this.renderModeButton('edit')}
+          </div>
           <div class="prompt-actions">
             <div class="prompt-primary-actions">
               ${status ? html`<span class=${this.dirty ? 'prompt-status is-dirty' : 'prompt-status'}>${status}</span>` : nothing}
@@ -289,10 +311,6 @@ class AgentPromptEditor extends LitElement {
                   <span>Save</span>
                 </button>
               ` : nothing}
-            </div>
-            <div class="mode-toggle" role="group" aria-label="System prompt view mode">
-              ${this.renderModeButton('preview')}
-              ${this.renderModeButton('edit')}
             </div>
           </div>
         </div>
@@ -377,7 +395,6 @@ class AgentPromptEditor extends LitElement {
   }
 
   private get statusLabel(): string {
-    if (this.disabled) return 'Read-only'
     if (this.dirty) return 'Unsaved changes'
     if (this.status === 'saved' && this.mode === 'edit') return 'Saved'
     return ''

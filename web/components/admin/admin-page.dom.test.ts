@@ -2244,7 +2244,7 @@ test('admin agent prompt editor disables saves for read-only users', async () =>
     expect(state.codeEditorDisabled).toBe(true)
     expect(state.notice).toContain('Deployment managed.')
     expect(state.hasSaveButton).toBe(false)
-    expect(state.status).toBe('Read-only')
+    expect(state.status).toBeUndefined()
     expect(state.command).toBeNull()
   } finally {
     await page.close()
