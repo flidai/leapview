@@ -21,11 +21,19 @@ func TestRequestWithoutSignalFilter(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestConcurrentEventPostKeepsIndependentWindowRequests(t *testing.T) {
 	got := ConcurrentEventPost("/windows", "runtime", "window")
 	want := `@post('/windows', {filterSignals: {include: /^(?:runtime|window)(?:[.]|$)/}, headers: window.LeapViewCommand.headers(), requestCancellation: 'disabled'})`
 	if got != want {
 		t.Fatalf("ConcurrentEventPost() = %q, want %q", got, want)
+=======
+func TestGetPathExpressionKeepsDynamicReadPathSeparateFromCommandHeaders(t *testing.T) {
+	got := GetPathExpression("'/explore/saved/' + encodeURIComponent(evt.detail.explorationId)", "page", "savedExplorations")
+	want := `@get('/explore/saved/' + encodeURIComponent(evt.detail.explorationId), {filterSignals: {include: /^(?:page|savedExplorations)(?:[.]|$)/}, headers: window.LeapViewCommand.headers()})`
+	if got != want {
+		t.Fatalf("GetPathExpression() = %q, want %q", got, want)
+>>>>>>> 35d780967 (Implement versioned saved explorations)
 	}
 }
 

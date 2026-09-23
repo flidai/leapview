@@ -1089,6 +1089,11 @@ func TestPathParamTypeName(t *testing.T) {
 		expected string
 	}{
 		{
+			name:     "referenced schema uses generated alias",
+			param:    ir.Parameter{Schema: ir.SchemaRef{Ref: "ResourceKind"}},
+			expected: "GenSchemaResourceKind",
+		},
+		{
 			name:     "default string",
 			param:    ir.Parameter{Schema: ir.SchemaRef{Type: "string"}},
 			expected: "string",
@@ -1142,35 +1147,4 @@ func TestPathParamTypeName(t *testing.T) {
 			require.Equal(t, tc.expected, pathParamTypeName(tc.param))
 		})
 	}
-}
-
-func apigenModuleRoot(t *testing.T) string {
-	t.Helper()
-
-	wd, err := os.Getwd()
-	require.NoError(t, err)
-	root, err := filepath.Abs(filepath.Join(wd, "..", ".."))
-	require.NoError(t, err)
-	return root
-}
-
-func assertGeneratedServerCompiles(t *testing.T, generated []byte, testSource string) {
-	t.Helper()
-
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(`module generatedtest
-
-go 1.25.8
-
-require github.com/Yacobolo/toolbelt/apigen v0.0.0
-
-replace github.com/Yacobolo/toolbelt/apigen => `+apigenModuleRoot(t)+`
-`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "server.apigen.gen.go"), generated, 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "server_test.go"), []byte(testSource), 0o644))
-
-	cmd := exec.Command("go", "test", "-mod=mod", "./...")
-	cmd.Dir = dir
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(output))
 }

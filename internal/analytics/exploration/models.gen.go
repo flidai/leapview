@@ -22,19 +22,13 @@ type BooleanExplorationFilterValue struct {
 
 type CartesianExplorationVisualization struct {
 	ExplorationVisualizationConfigBase
-	Kind        string                              `json:"kind" yaml:"kind"`
-	Mark        VisualizationCartesianMark          `json:"mark" yaml:"mark"`
-	X           *ExplorationVisualizationFieldRef   `json:"x,omitempty" yaml:"x,omitempty"`
-	Y           *[]ExplorationVisualizationFieldRef `json:"y,omitempty" yaml:"y,omitempty"`
-	Series      *ExplorationVisualizationFieldRef   `json:"series,omitempty" yaml:"series,omitempty"`
-	Smooth      *bool                               `json:"smooth,omitempty" yaml:"smooth,omitempty"`
-	ShowSymbols *bool                               `json:"showSymbols,omitempty" yaml:"showSymbols,omitempty"`
-}
-
-type CompactVisualizationFormat struct {
-	VisualizationFormatBase
-	Kind                  string `json:"kind" yaml:"kind"`
-	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
+	Kind        string                                `json:"kind" yaml:"kind"`
+	Mark        ExplorationVisualizationCartesianMark `json:"mark" yaml:"mark"`
+	X           *ExplorationVisualizationFieldRef     `json:"x,omitempty" yaml:"x,omitempty"`
+	Y           *[]ExplorationVisualizationFieldRef   `json:"y,omitempty" yaml:"y,omitempty"`
+	Series      *ExplorationVisualizationFieldRef     `json:"series,omitempty" yaml:"series,omitempty"`
+	Smooth      *bool                                 `json:"smooth,omitempty" yaml:"smooth,omitempty"`
+	ShowSymbols *bool                                 `json:"showSymbols,omitempty" yaml:"showSymbols,omitempty"`
 }
 
 type ComparisonExplorationFilterExpression struct {
@@ -42,14 +36,6 @@ type ComparisonExplorationFilterExpression struct {
 	Kind     string                 `json:"kind" yaml:"kind"`
 	Operator string                 `json:"operator" yaml:"operator"`
 	Value    ExplorationFilterValue `json:"value" yaml:"value"`
-}
-
-type CurrencyVisualizationFormat struct {
-	VisualizationFormatBase
-	Kind                  string `json:"kind" yaml:"kind"`
-	Currency              string `json:"currency" yaml:"currency"`
-	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty" yaml:"minimumFractionDigits,omitempty"`
-	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
 }
 
 type DateExplorationFilterValue struct {
@@ -70,16 +56,30 @@ type DecimalExplorationFilterValue struct {
 	Value string `json:"value" yaml:"value"`
 }
 
-type DurationVisualizationFormat struct {
-	VisualizationFormatBase
-	Kind string `json:"kind" yaml:"kind"`
-	Unit string `json:"unit" yaml:"unit"`
+type ExplorationCompactVisualizationFormat struct {
+	ExplorationVisualizationFormatBase
+	Kind                  string `json:"kind" yaml:"kind"`
+	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
+}
+
+type ExplorationCurrencyVisualizationFormat struct {
+	ExplorationVisualizationFormatBase
+	Kind                  string `json:"kind" yaml:"kind"`
+	Currency              string `json:"currency" yaml:"currency"`
+	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty" yaml:"minimumFractionDigits,omitempty"`
+	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
 }
 
 type ExplorationDimensionRef struct {
 	Field string                `json:"field" yaml:"field"`
 	Alias *string               `json:"alias,omitempty" yaml:"alias,omitempty"`
 	Grain *ExplorationTimeGrain `json:"grain,omitempty" yaml:"grain,omitempty"`
+}
+
+type ExplorationDurationVisualizationFormat struct {
+	ExplorationVisualizationFormatBase
+	Kind string `json:"kind" yaml:"kind"`
+	Unit string `json:"unit" yaml:"unit"`
 }
 
 type ExplorationFilter struct {
@@ -711,15 +711,15 @@ const (
 )
 
 type ExplorationKPIPresentation struct {
-	Mode               *VisualizationKPIMode               `json:"mode,omitempty" yaml:"mode,omitempty"`
-	Delta              *VisualizationKPIDeltaMode          `json:"delta,omitempty" yaml:"delta,omitempty"`
-	FavorableDirection *VisualizationKPIDirection          `json:"favorableDirection,omitempty" yaml:"favorableDirection,omitempty"`
-	MissingComparison  *VisualizationKPIMissingComparison  `json:"missingComparison,omitempty" yaml:"missingComparison,omitempty"`
-	Ranges             *[]VisualizationKPIQualitativeRange `json:"ranges,omitempty" yaml:"ranges,omitempty"`
-	DisplayUnits       *VisualizationDisplayUnits          `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
-	Note               *string                             `json:"note,omitempty" yaml:"note,omitempty"`
-	Tone               *VisualizationTone                  `json:"tone,omitempty" yaml:"tone,omitempty"`
-	Thresholds         *[]VisualizationThreshold           `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
+	Mode               *ExplorationVisualizationKPIMode               `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Delta              *ExplorationVisualizationKPIDeltaMode          `json:"delta,omitempty" yaml:"delta,omitempty"`
+	FavorableDirection *ExplorationVisualizationKPIDirection          `json:"favorableDirection,omitempty" yaml:"favorableDirection,omitempty"`
+	MissingComparison  *ExplorationVisualizationKPIMissingComparison  `json:"missingComparison,omitempty" yaml:"missingComparison,omitempty"`
+	Ranges             *[]ExplorationVisualizationKPIQualitativeRange `json:"ranges,omitempty" yaml:"ranges,omitempty"`
+	DisplayUnits       *ExplorationVisualizationDisplayUnits          `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	Note               *string                                        `json:"note,omitempty" yaml:"note,omitempty"`
+	Tone               *ExplorationVisualizationTone                  `json:"tone,omitempty" yaml:"tone,omitempty"`
+	Thresholds         *[]ExplorationVisualizationThreshold           `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
 }
 
 type ExplorationKPITrend struct {
@@ -730,6 +730,20 @@ type ExplorationKPITrend struct {
 type ExplorationMetricRef struct {
 	Field string  `json:"field" yaml:"field"`
 	Alias *string `json:"alias,omitempty" yaml:"alias,omitempty"`
+}
+
+type ExplorationNumberVisualizationFormat struct {
+	ExplorationVisualizationFormatBase
+	Kind                  string `json:"kind" yaml:"kind"`
+	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty" yaml:"minimumFractionDigits,omitempty"`
+	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
+}
+
+type ExplorationPercentVisualizationFormat struct {
+	ExplorationVisualizationFormatBase
+	Kind                  string `json:"kind" yaml:"kind"`
+	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty" yaml:"minimumFractionDigits,omitempty"`
+	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
 }
 
 type ExplorationPivotConfig struct {
@@ -809,10 +823,10 @@ type ExplorationSpec struct {
 }
 
 type ExplorationTableColumn struct {
-	Field  string               `json:"field" yaml:"field"`
-	Label  *string              `json:"label,omitempty" yaml:"label,omitempty"`
-	Width  *int32               `json:"width,omitempty" yaml:"width,omitempty"`
-	Format *VisualizationFormat `json:"format,omitempty" yaml:"format,omitempty"`
+	Field  string                          `json:"field" yaml:"field"`
+	Label  *string                         `json:"label,omitempty" yaml:"label,omitempty"`
+	Width  *int32                          `json:"width,omitempty" yaml:"width,omitempty"`
+	Format *ExplorationVisualizationFormat `json:"format,omitempty" yaml:"format,omitempty"`
 }
 
 type ExplorationTableDensity string
@@ -989,6 +1003,13 @@ func (value *ExplorationTemporalValue) Base() (*ExplorationTemporalValueBase, er
 
 type ExplorationTemporalValueBase struct {
 	Kind string `json:"kind" yaml:"kind"`
+}
+
+type ExplorationTemporalVisualizationFormat struct {
+	ExplorationVisualizationFormatBase
+	Kind      string  `json:"kind" yaml:"kind"`
+	DateStyle *string `json:"dateStyle,omitempty" yaml:"dateStyle,omitempty"`
+	TimeStyle *string `json:"timeStyle,omitempty" yaml:"timeStyle,omitempty"`
 }
 
 type ExplorationTimeBound struct {
@@ -1185,6 +1206,21 @@ type ExplorationTimeSelection struct {
 	Alias *string               `json:"alias,omitempty" yaml:"alias,omitempty"`
 	Range *ExplorationTimeRange `json:"range,omitempty" yaml:"range,omitempty"`
 }
+
+type ExplorationVisualizationCartesianMark string
+
+const (
+	ExplorationVisualizationCartesianMarkLine        ExplorationVisualizationCartesianMark = "line"
+	ExplorationVisualizationCartesianMarkArea        ExplorationVisualizationCartesianMark = "area"
+	ExplorationVisualizationCartesianMarkBar         ExplorationVisualizationCartesianMark = "bar"
+	ExplorationVisualizationCartesianMarkColumn      ExplorationVisualizationCartesianMark = "column"
+	ExplorationVisualizationCartesianMarkHistogram   ExplorationVisualizationCartesianMark = "histogram"
+	ExplorationVisualizationCartesianMarkCombo       ExplorationVisualizationCartesianMark = "combo"
+	ExplorationVisualizationCartesianMarkWaterfall   ExplorationVisualizationCartesianMark = "waterfall"
+	ExplorationVisualizationCartesianMarkCandlestick ExplorationVisualizationCartesianMark = "candlestick"
+	ExplorationVisualizationCartesianMarkBoxplot     ExplorationVisualizationCartesianMark = "boxplot"
+	ExplorationVisualizationCartesianMarkHeatmap     ExplorationVisualizationCartesianMark = "heatmap"
+)
 
 type ExplorationVisualizationConfigVariant interface {
 	isExplorationVisualizationConfigVariant()
@@ -1652,19 +1688,417 @@ func (value *ExplorationVisualizationConfig) Base() (*ExplorationVisualizationCo
 }
 
 type ExplorationVisualizationConfigBase struct {
-	Kind         string                       `json:"kind" yaml:"kind"`
-	Title        *string                      `json:"title,omitempty" yaml:"title,omitempty"`
-	Subtitle     *string                      `json:"subtitle,omitempty" yaml:"subtitle,omitempty"`
-	Legend       *VisualizationLegendPosition `json:"legend,omitempty" yaml:"legend,omitempty"`
-	DisplayUnits *VisualizationDisplayUnits   `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
-	Orientation  *VisualizationOrientation    `json:"orientation,omitempty" yaml:"orientation,omitempty"`
-	Stacking     *VisualizationStackingMode   `json:"stacking,omitempty" yaml:"stacking,omitempty"`
+	Kind         string                                  `json:"kind" yaml:"kind"`
+	Title        *string                                 `json:"title,omitempty" yaml:"title,omitempty"`
+	Subtitle     *string                                 `json:"subtitle,omitempty" yaml:"subtitle,omitempty"`
+	Legend       *ExplorationVisualizationLegendPosition `json:"legend,omitempty" yaml:"legend,omitempty"`
+	DisplayUnits *ExplorationVisualizationDisplayUnits   `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	Orientation  *ExplorationVisualizationOrientation    `json:"orientation,omitempty" yaml:"orientation,omitempty"`
+	Stacking     *ExplorationVisualizationStackingMode   `json:"stacking,omitempty" yaml:"stacking,omitempty"`
 }
 
+type ExplorationVisualizationDisplayUnits string
+
+const (
+	ExplorationVisualizationDisplayUnitsAuto      ExplorationVisualizationDisplayUnits = "auto"
+	ExplorationVisualizationDisplayUnitsNone      ExplorationVisualizationDisplayUnits = "none"
+	ExplorationVisualizationDisplayUnitsThousands ExplorationVisualizationDisplayUnits = "thousands"
+	ExplorationVisualizationDisplayUnitsMillions  ExplorationVisualizationDisplayUnits = "millions"
+	ExplorationVisualizationDisplayUnitsBillions  ExplorationVisualizationDisplayUnits = "billions"
+	ExplorationVisualizationDisplayUnitsTrillions ExplorationVisualizationDisplayUnits = "trillions"
+)
+
 type ExplorationVisualizationFieldRef struct {
-	Field  string               `json:"field" yaml:"field"`
-	Format *VisualizationFormat `json:"format,omitempty" yaml:"format,omitempty"`
+	Field  string                          `json:"field" yaml:"field"`
+	Format *ExplorationVisualizationFormat `json:"format,omitempty" yaml:"format,omitempty"`
 }
+
+type ExplorationVisualizationFormatVariant interface {
+	isExplorationVisualizationFormatVariant()
+}
+
+type ExplorationVisualizationFormat struct {
+	Value ExplorationVisualizationFormatVariant
+}
+
+func (*ExplorationCompactVisualizationFormat) isExplorationVisualizationFormatVariant()  {}
+func (*ExplorationCurrencyVisualizationFormat) isExplorationVisualizationFormatVariant() {}
+func (*ExplorationDurationVisualizationFormat) isExplorationVisualizationFormatVariant() {}
+func (*ExplorationNumberVisualizationFormat) isExplorationVisualizationFormatVariant()   {}
+func (*ExplorationPercentVisualizationFormat) isExplorationVisualizationFormatVariant()  {}
+func (*ExplorationTemporalVisualizationFormat) isExplorationVisualizationFormatVariant() {}
+
+func (value ExplorationVisualizationFormat) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *ExplorationCompactVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return json.Marshal(variant)
+	case *ExplorationCurrencyVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return json.Marshal(variant)
+	case *ExplorationDurationVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return json.Marshal(variant)
+	case *ExplorationNumberVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return json.Marshal(variant)
+	case *ExplorationPercentVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return json.Marshal(variant)
+	case *ExplorationTemporalVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("ExplorationVisualizationFormat variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported ExplorationVisualizationFormat variant %T", variant)
+	}
+}
+
+func (value *ExplorationVisualizationFormat) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal ExplorationVisualizationFormat into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode ExplorationVisualizationFormat object: %w", err)
+	}
+	var tag struct {
+		Value string `json:"kind"`
+	}
+	if err := json.Unmarshal(data, &tag); err != nil {
+		return fmt.Errorf("decode ExplorationVisualizationFormat discriminator: %w", err)
+	}
+	if tag.Value == "" {
+		return fmt.Errorf("ExplorationVisualizationFormat discriminator kind is required")
+	}
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	switch tag.Value {
+	case "compact":
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: required property kind is missing", tag.Value)
+		}
+		var variant ExplorationCompactVisualizationFormat
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "currency":
+		if _, ok := fields["currency"]; !ok {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: required property currency is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: required property kind is missing", tag.Value)
+		}
+		var variant ExplorationCurrencyVisualizationFormat
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "duration":
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["unit"]; !ok {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: required property unit is missing", tag.Value)
+		}
+		var variant ExplorationDurationVisualizationFormat
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "number":
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: required property kind is missing", tag.Value)
+		}
+		var variant ExplorationNumberVisualizationFormat
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "percent":
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: required property kind is missing", tag.Value)
+		}
+		var variant ExplorationPercentVisualizationFormat
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "temporal":
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: required property kind is missing", tag.Value)
+		}
+		var variant ExplorationTemporalVisualizationFormat
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode ExplorationVisualizationFormat variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	default:
+		return fmt.Errorf("unknown ExplorationVisualizationFormat discriminator %q", tag.Value)
+	}
+	return nil
+}
+
+type ExplorationVisualizationFormatVisitor interface {
+	VisitExplorationCompactVisualizationFormat(*ExplorationCompactVisualizationFormat) error
+	VisitExplorationCurrencyVisualizationFormat(*ExplorationCurrencyVisualizationFormat) error
+	VisitExplorationDurationVisualizationFormat(*ExplorationDurationVisualizationFormat) error
+	VisitExplorationNumberVisualizationFormat(*ExplorationNumberVisualizationFormat) error
+	VisitExplorationPercentVisualizationFormat(*ExplorationPercentVisualizationFormat) error
+	VisitExplorationTemporalVisualizationFormat(*ExplorationTemporalVisualizationFormat) error
+}
+
+func (value *ExplorationVisualizationFormat) Visit(visitor ExplorationVisualizationFormatVisitor) error {
+	if value == nil {
+		return fmt.Errorf("cannot visit nil ExplorationVisualizationFormat")
+	}
+	if visitor == nil {
+		return fmt.Errorf("ExplorationVisualizationFormat visitor is required")
+	}
+	switch variant := value.Value.(type) {
+	case *ExplorationCompactVisualizationFormat:
+		if variant == nil {
+			return fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return visitor.VisitExplorationCompactVisualizationFormat(variant)
+	case *ExplorationCurrencyVisualizationFormat:
+		if variant == nil {
+			return fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return visitor.VisitExplorationCurrencyVisualizationFormat(variant)
+	case *ExplorationDurationVisualizationFormat:
+		if variant == nil {
+			return fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return visitor.VisitExplorationDurationVisualizationFormat(variant)
+	case *ExplorationNumberVisualizationFormat:
+		if variant == nil {
+			return fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return visitor.VisitExplorationNumberVisualizationFormat(variant)
+	case *ExplorationPercentVisualizationFormat:
+		if variant == nil {
+			return fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return visitor.VisitExplorationPercentVisualizationFormat(variant)
+	case *ExplorationTemporalVisualizationFormat:
+		if variant == nil {
+			return fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return visitor.VisitExplorationTemporalVisualizationFormat(variant)
+	case nil:
+		return fmt.Errorf("ExplorationVisualizationFormat variant is required")
+	default:
+		return fmt.Errorf("unsupported ExplorationVisualizationFormat variant %T", variant)
+	}
+}
+
+func (value *ExplorationVisualizationFormat) Kind() (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("cannot inspect nil ExplorationVisualizationFormat")
+	}
+	switch variant := value.Value.(type) {
+	case *ExplorationCompactVisualizationFormat:
+		if variant == nil {
+			return "", fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return "compact", nil
+	case *ExplorationCurrencyVisualizationFormat:
+		if variant == nil {
+			return "", fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return "currency", nil
+	case *ExplorationDurationVisualizationFormat:
+		if variant == nil {
+			return "", fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return "duration", nil
+	case *ExplorationNumberVisualizationFormat:
+		if variant == nil {
+			return "", fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return "number", nil
+	case *ExplorationPercentVisualizationFormat:
+		if variant == nil {
+			return "", fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return "percent", nil
+	case *ExplorationTemporalVisualizationFormat:
+		if variant == nil {
+			return "", fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return "temporal", nil
+	case nil:
+		return "", fmt.Errorf("ExplorationVisualizationFormat variant is required")
+	default:
+		return "", fmt.Errorf("unsupported ExplorationVisualizationFormat variant %T", variant)
+	}
+}
+
+func (value *ExplorationVisualizationFormat) Base() (*ExplorationVisualizationFormatBase, error) {
+	if value == nil {
+		return nil, fmt.Errorf("cannot inspect nil ExplorationVisualizationFormat")
+	}
+	switch variant := value.Value.(type) {
+	case *ExplorationCompactVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return &variant.ExplorationVisualizationFormatBase, nil
+	case *ExplorationCurrencyVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return &variant.ExplorationVisualizationFormatBase, nil
+	case *ExplorationDurationVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return &variant.ExplorationVisualizationFormatBase, nil
+	case *ExplorationNumberVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return &variant.ExplorationVisualizationFormatBase, nil
+	case *ExplorationPercentVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return &variant.ExplorationVisualizationFormatBase, nil
+	case *ExplorationTemporalVisualizationFormat:
+		if variant == nil {
+			return nil, fmt.Errorf("ExplorationVisualizationFormat variant is nil")
+		}
+		return &variant.ExplorationVisualizationFormatBase, nil
+	case nil:
+		return nil, fmt.Errorf("ExplorationVisualizationFormat variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported ExplorationVisualizationFormat variant %T", variant)
+	}
+}
+
+type ExplorationVisualizationFormatBase struct {
+	Kind string `json:"kind" yaml:"kind"`
+}
+
+type ExplorationVisualizationHierarchyMark string
+
+const (
+	ExplorationVisualizationHierarchyMarkTreemap  ExplorationVisualizationHierarchyMark = "treemap"
+	ExplorationVisualizationHierarchyMarkSunburst ExplorationVisualizationHierarchyMark = "sunburst"
+	ExplorationVisualizationHierarchyMarkTree     ExplorationVisualizationHierarchyMark = "tree"
+	ExplorationVisualizationHierarchyMarkSankey   ExplorationVisualizationHierarchyMark = "sankey"
+	ExplorationVisualizationHierarchyMarkGraph    ExplorationVisualizationHierarchyMark = "graph"
+)
+
+type ExplorationVisualizationKPIDeltaMode string
+
+const (
+	ExplorationVisualizationKPIDeltaModeAbsolute ExplorationVisualizationKPIDeltaMode = "absolute"
+	ExplorationVisualizationKPIDeltaModeRelative ExplorationVisualizationKPIDeltaMode = "relative"
+)
+
+type ExplorationVisualizationKPIDirection string
+
+const (
+	ExplorationVisualizationKPIDirectionIncrease ExplorationVisualizationKPIDirection = "increase"
+	ExplorationVisualizationKPIDirectionDecrease ExplorationVisualizationKPIDirection = "decrease"
+	ExplorationVisualizationKPIDirectionNeutral  ExplorationVisualizationKPIDirection = "neutral"
+)
+
+type ExplorationVisualizationKPIMissingComparison string
+
+const (
+	ExplorationVisualizationKPIMissingComparisonShowUnavailable ExplorationVisualizationKPIMissingComparison = "show_unavailable"
+	ExplorationVisualizationKPIMissingComparisonHide            ExplorationVisualizationKPIMissingComparison = "hide"
+)
+
+type ExplorationVisualizationKPIMode string
+
+const (
+	ExplorationVisualizationKPIModeCompact  ExplorationVisualizationKPIMode = "compact"
+	ExplorationVisualizationKPIModeBullet   ExplorationVisualizationKPIMode = "bullet"
+	ExplorationVisualizationKPIModeProgress ExplorationVisualizationKPIMode = "progress"
+)
+
+type ExplorationVisualizationKPIQualitativeRange struct {
+	Minimum *float64                     `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum *float64                     `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Label   string                       `json:"label" yaml:"label"`
+	Tone    ExplorationVisualizationTone `json:"tone" yaml:"tone"`
+}
+
+type ExplorationVisualizationLegendPosition string
+
+const (
+	ExplorationVisualizationLegendPositionHidden ExplorationVisualizationLegendPosition = "hidden"
+	ExplorationVisualizationLegendPositionTop    ExplorationVisualizationLegendPosition = "top"
+	ExplorationVisualizationLegendPositionRight  ExplorationVisualizationLegendPosition = "right"
+	ExplorationVisualizationLegendPositionBottom ExplorationVisualizationLegendPosition = "bottom"
+	ExplorationVisualizationLegendPositionLeft   ExplorationVisualizationLegendPosition = "left"
+)
+
+type ExplorationVisualizationOrientation string
+
+const (
+	ExplorationVisualizationOrientationHorizontal ExplorationVisualizationOrientation = "horizontal"
+	ExplorationVisualizationOrientationVertical   ExplorationVisualizationOrientation = "vertical"
+)
+
+type ExplorationVisualizationPolarMark string
+
+const (
+	ExplorationVisualizationPolarMarkRadar ExplorationVisualizationPolarMark = "radar"
+	ExplorationVisualizationPolarMarkGauge ExplorationVisualizationPolarMark = "gauge"
+)
+
+type ExplorationVisualizationProportionalMark string
+
+const (
+	ExplorationVisualizationProportionalMarkPie    ExplorationVisualizationProportionalMark = "pie"
+	ExplorationVisualizationProportionalMarkDonut  ExplorationVisualizationProportionalMark = "donut"
+	ExplorationVisualizationProportionalMarkFunnel ExplorationVisualizationProportionalMark = "funnel"
+)
+
+type ExplorationVisualizationStackingMode string
+
+const (
+	ExplorationVisualizationStackingModeNone    ExplorationVisualizationStackingMode = "none"
+	ExplorationVisualizationStackingModeNormal  ExplorationVisualizationStackingMode = "normal"
+	ExplorationVisualizationStackingModePercent ExplorationVisualizationStackingMode = "percent"
+)
+
+type ExplorationVisualizationThreshold struct {
+	Value float64                      `json:"value" yaml:"value"`
+	Tone  ExplorationVisualizationTone `json:"tone" yaml:"tone"`
+}
+
+type ExplorationVisualizationTone string
+
+const (
+	ExplorationVisualizationToneNeutral ExplorationVisualizationTone = "neutral"
+	ExplorationVisualizationToneInk     ExplorationVisualizationTone = "ink"
+	ExplorationVisualizationToneSuccess ExplorationVisualizationTone = "success"
+	ExplorationVisualizationToneWarning ExplorationVisualizationTone = "warning"
+	ExplorationVisualizationToneDanger  ExplorationVisualizationTone = "danger"
+)
 
 type GeographicExplorationVisualization struct {
 	ExplorationVisualizationConfigBase
@@ -1678,11 +2112,11 @@ type GeographicExplorationVisualization struct {
 
 type HierarchyExplorationVisualization struct {
 	ExplorationVisualizationConfigBase
-	Kind   string                            `json:"kind" yaml:"kind"`
-	Mark   VisualizationHierarchyMark        `json:"mark" yaml:"mark"`
-	Node   ExplorationVisualizationFieldRef  `json:"node" yaml:"node"`
-	Parent *ExplorationVisualizationFieldRef `json:"parent,omitempty" yaml:"parent,omitempty"`
-	Value  *ExplorationVisualizationFieldRef `json:"value,omitempty" yaml:"value,omitempty"`
+	Kind   string                                `json:"kind" yaml:"kind"`
+	Mark   ExplorationVisualizationHierarchyMark `json:"mark" yaml:"mark"`
+	Node   ExplorationVisualizationFieldRef      `json:"node" yaml:"node"`
+	Parent *ExplorationVisualizationFieldRef     `json:"parent,omitempty" yaml:"parent,omitempty"`
+	Value  *ExplorationVisualizationFieldRef     `json:"value,omitempty" yaml:"value,omitempty"`
 }
 
 type IntegerExplorationFilterValue struct {
@@ -1715,20 +2149,6 @@ type NullCheckExplorationFilterExpression struct {
 	Operator string `json:"operator" yaml:"operator"`
 }
 
-type NumberVisualizationFormat struct {
-	VisualizationFormatBase
-	Kind                  string `json:"kind" yaml:"kind"`
-	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty" yaml:"minimumFractionDigits,omitempty"`
-	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
-}
-
-type PercentVisualizationFormat struct {
-	VisualizationFormatBase
-	Kind                  string `json:"kind" yaml:"kind"`
-	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty" yaml:"minimumFractionDigits,omitempty"`
-	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
-}
-
 type PivotExplorationVisualization struct {
 	ExplorationVisualizationConfigBase
 	Kind    string                             `json:"kind" yaml:"kind"`
@@ -1751,7 +2171,7 @@ type PointExplorationVisualization struct {
 type PolarExplorationVisualization struct {
 	ExplorationVisualizationConfigBase
 	Kind     string                            `json:"kind" yaml:"kind"`
-	Mark     VisualizationPolarMark            `json:"mark" yaml:"mark"`
+	Mark     ExplorationVisualizationPolarMark `json:"mark" yaml:"mark"`
 	Category *ExplorationVisualizationFieldRef `json:"category,omitempty" yaml:"category,omitempty"`
 	Value    ExplorationVisualizationFieldRef  `json:"value" yaml:"value"`
 	Series   *ExplorationVisualizationFieldRef `json:"series,omitempty" yaml:"series,omitempty"`
@@ -1759,11 +2179,11 @@ type PolarExplorationVisualization struct {
 
 type ProportionalExplorationVisualization struct {
 	ExplorationVisualizationConfigBase
-	Kind     string                            `json:"kind" yaml:"kind"`
-	Mark     VisualizationProportionalMark     `json:"mark" yaml:"mark"`
-	Category ExplorationVisualizationFieldRef  `json:"category" yaml:"category"`
-	Value    ExplorationVisualizationFieldRef  `json:"value" yaml:"value"`
-	Series   *ExplorationVisualizationFieldRef `json:"series,omitempty" yaml:"series,omitempty"`
+	Kind     string                                   `json:"kind" yaml:"kind"`
+	Mark     ExplorationVisualizationProportionalMark `json:"mark" yaml:"mark"`
+	Category ExplorationVisualizationFieldRef         `json:"category" yaml:"category"`
+	Value    ExplorationVisualizationFieldRef         `json:"value" yaml:"value"`
+	Series   *ExplorationVisualizationFieldRef        `json:"series,omitempty" yaml:"series,omitempty"`
 }
 
 type RangeExplorationFilterExpression struct {
@@ -1814,13 +2234,6 @@ type TableExplorationVisualization struct {
 	Columns []ExplorationVisualizationFieldRef `json:"columns" yaml:"columns"`
 }
 
-type TemporalVisualizationFormat struct {
-	VisualizationFormatBase
-	Kind      string  `json:"kind" yaml:"kind"`
-	DateStyle *string `json:"dateStyle,omitempty" yaml:"dateStyle,omitempty"`
-	TimeStyle *string `json:"timeStyle,omitempty" yaml:"timeStyle,omitempty"`
-}
-
 type TimestampExplorationFilterValue struct {
 	ExplorationFilterValueBase
 	Kind  string `json:"kind" yaml:"kind"`
@@ -1837,416 +2250,3 @@ type UnfilteredExplorationFilterExpression struct {
 	ExplorationFilterExpressionBase
 	Kind string `json:"kind" yaml:"kind"`
 }
-
-type VisualizationCartesianMark string
-
-const (
-	VisualizationCartesianMarkLine        VisualizationCartesianMark = "line"
-	VisualizationCartesianMarkArea        VisualizationCartesianMark = "area"
-	VisualizationCartesianMarkBar         VisualizationCartesianMark = "bar"
-	VisualizationCartesianMarkColumn      VisualizationCartesianMark = "column"
-	VisualizationCartesianMarkHistogram   VisualizationCartesianMark = "histogram"
-	VisualizationCartesianMarkCombo       VisualizationCartesianMark = "combo"
-	VisualizationCartesianMarkWaterfall   VisualizationCartesianMark = "waterfall"
-	VisualizationCartesianMarkCandlestick VisualizationCartesianMark = "candlestick"
-	VisualizationCartesianMarkBoxplot     VisualizationCartesianMark = "boxplot"
-	VisualizationCartesianMarkHeatmap     VisualizationCartesianMark = "heatmap"
-)
-
-type VisualizationDisplayUnits string
-
-const (
-	VisualizationDisplayUnitsAuto      VisualizationDisplayUnits = "auto"
-	VisualizationDisplayUnitsNone      VisualizationDisplayUnits = "none"
-	VisualizationDisplayUnitsThousands VisualizationDisplayUnits = "thousands"
-	VisualizationDisplayUnitsMillions  VisualizationDisplayUnits = "millions"
-	VisualizationDisplayUnitsBillions  VisualizationDisplayUnits = "billions"
-	VisualizationDisplayUnitsTrillions VisualizationDisplayUnits = "trillions"
-)
-
-type VisualizationFormatVariant interface {
-	isVisualizationFormatVariant()
-}
-
-type VisualizationFormat struct {
-	Value VisualizationFormatVariant
-}
-
-func (*CompactVisualizationFormat) isVisualizationFormatVariant()  {}
-func (*CurrencyVisualizationFormat) isVisualizationFormatVariant() {}
-func (*DurationVisualizationFormat) isVisualizationFormatVariant() {}
-func (*NumberVisualizationFormat) isVisualizationFormatVariant()   {}
-func (*PercentVisualizationFormat) isVisualizationFormatVariant()  {}
-func (*TemporalVisualizationFormat) isVisualizationFormatVariant() {}
-
-func (value VisualizationFormat) MarshalJSON() ([]byte, error) {
-	switch variant := value.Value.(type) {
-	case *CompactVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return json.Marshal(variant)
-	case *CurrencyVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return json.Marshal(variant)
-	case *DurationVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return json.Marshal(variant)
-	case *NumberVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return json.Marshal(variant)
-	case *PercentVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return json.Marshal(variant)
-	case *TemporalVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return json.Marshal(variant)
-	case nil:
-		return nil, fmt.Errorf("VisualizationFormat variant is required")
-	default:
-		return nil, fmt.Errorf("unsupported VisualizationFormat variant %T", variant)
-	}
-}
-
-func (value *VisualizationFormat) UnmarshalJSON(data []byte) error {
-	if value == nil {
-		return fmt.Errorf("cannot unmarshal VisualizationFormat into nil receiver")
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return fmt.Errorf("decode VisualizationFormat object: %w", err)
-	}
-	var tag struct {
-		Value string `json:"kind"`
-	}
-	if err := json.Unmarshal(data, &tag); err != nil {
-		return fmt.Errorf("decode VisualizationFormat discriminator: %w", err)
-	}
-	if tag.Value == "" {
-		return fmt.Errorf("VisualizationFormat discriminator kind is required")
-	}
-	decode := func(dest any) error {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		return decoder.Decode(dest)
-	}
-	switch tag.Value {
-	case "compact":
-		if _, ok := fields["kind"]; !ok {
-			return fmt.Errorf("decode VisualizationFormat variant %q: required property kind is missing", tag.Value)
-		}
-		var variant CompactVisualizationFormat
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode VisualizationFormat variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "currency":
-		if _, ok := fields["currency"]; !ok {
-			return fmt.Errorf("decode VisualizationFormat variant %q: required property currency is missing", tag.Value)
-		}
-		if _, ok := fields["kind"]; !ok {
-			return fmt.Errorf("decode VisualizationFormat variant %q: required property kind is missing", tag.Value)
-		}
-		var variant CurrencyVisualizationFormat
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode VisualizationFormat variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "duration":
-		if _, ok := fields["kind"]; !ok {
-			return fmt.Errorf("decode VisualizationFormat variant %q: required property kind is missing", tag.Value)
-		}
-		if _, ok := fields["unit"]; !ok {
-			return fmt.Errorf("decode VisualizationFormat variant %q: required property unit is missing", tag.Value)
-		}
-		var variant DurationVisualizationFormat
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode VisualizationFormat variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "number":
-		if _, ok := fields["kind"]; !ok {
-			return fmt.Errorf("decode VisualizationFormat variant %q: required property kind is missing", tag.Value)
-		}
-		var variant NumberVisualizationFormat
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode VisualizationFormat variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "percent":
-		if _, ok := fields["kind"]; !ok {
-			return fmt.Errorf("decode VisualizationFormat variant %q: required property kind is missing", tag.Value)
-		}
-		var variant PercentVisualizationFormat
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode VisualizationFormat variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "temporal":
-		if _, ok := fields["kind"]; !ok {
-			return fmt.Errorf("decode VisualizationFormat variant %q: required property kind is missing", tag.Value)
-		}
-		var variant TemporalVisualizationFormat
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode VisualizationFormat variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	default:
-		return fmt.Errorf("unknown VisualizationFormat discriminator %q", tag.Value)
-	}
-	return nil
-}
-
-type VisualizationFormatVisitor interface {
-	VisitCompactVisualizationFormat(*CompactVisualizationFormat) error
-	VisitCurrencyVisualizationFormat(*CurrencyVisualizationFormat) error
-	VisitDurationVisualizationFormat(*DurationVisualizationFormat) error
-	VisitNumberVisualizationFormat(*NumberVisualizationFormat) error
-	VisitPercentVisualizationFormat(*PercentVisualizationFormat) error
-	VisitTemporalVisualizationFormat(*TemporalVisualizationFormat) error
-}
-
-func (value *VisualizationFormat) Visit(visitor VisualizationFormatVisitor) error {
-	if value == nil {
-		return fmt.Errorf("cannot visit nil VisualizationFormat")
-	}
-	if visitor == nil {
-		return fmt.Errorf("VisualizationFormat visitor is required")
-	}
-	switch variant := value.Value.(type) {
-	case *CompactVisualizationFormat:
-		if variant == nil {
-			return fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return visitor.VisitCompactVisualizationFormat(variant)
-	case *CurrencyVisualizationFormat:
-		if variant == nil {
-			return fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return visitor.VisitCurrencyVisualizationFormat(variant)
-	case *DurationVisualizationFormat:
-		if variant == nil {
-			return fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return visitor.VisitDurationVisualizationFormat(variant)
-	case *NumberVisualizationFormat:
-		if variant == nil {
-			return fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return visitor.VisitNumberVisualizationFormat(variant)
-	case *PercentVisualizationFormat:
-		if variant == nil {
-			return fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return visitor.VisitPercentVisualizationFormat(variant)
-	case *TemporalVisualizationFormat:
-		if variant == nil {
-			return fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return visitor.VisitTemporalVisualizationFormat(variant)
-	case nil:
-		return fmt.Errorf("VisualizationFormat variant is required")
-	default:
-		return fmt.Errorf("unsupported VisualizationFormat variant %T", variant)
-	}
-}
-
-func (value *VisualizationFormat) Kind() (string, error) {
-	if value == nil {
-		return "", fmt.Errorf("cannot inspect nil VisualizationFormat")
-	}
-	switch variant := value.Value.(type) {
-	case *CompactVisualizationFormat:
-		if variant == nil {
-			return "", fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return "compact", nil
-	case *CurrencyVisualizationFormat:
-		if variant == nil {
-			return "", fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return "currency", nil
-	case *DurationVisualizationFormat:
-		if variant == nil {
-			return "", fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return "duration", nil
-	case *NumberVisualizationFormat:
-		if variant == nil {
-			return "", fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return "number", nil
-	case *PercentVisualizationFormat:
-		if variant == nil {
-			return "", fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return "percent", nil
-	case *TemporalVisualizationFormat:
-		if variant == nil {
-			return "", fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return "temporal", nil
-	case nil:
-		return "", fmt.Errorf("VisualizationFormat variant is required")
-	default:
-		return "", fmt.Errorf("unsupported VisualizationFormat variant %T", variant)
-	}
-}
-
-func (value *VisualizationFormat) Base() (*VisualizationFormatBase, error) {
-	if value == nil {
-		return nil, fmt.Errorf("cannot inspect nil VisualizationFormat")
-	}
-	switch variant := value.Value.(type) {
-	case *CompactVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return &variant.VisualizationFormatBase, nil
-	case *CurrencyVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return &variant.VisualizationFormatBase, nil
-	case *DurationVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return &variant.VisualizationFormatBase, nil
-	case *NumberVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return &variant.VisualizationFormatBase, nil
-	case *PercentVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return &variant.VisualizationFormatBase, nil
-	case *TemporalVisualizationFormat:
-		if variant == nil {
-			return nil, fmt.Errorf("VisualizationFormat variant is nil")
-		}
-		return &variant.VisualizationFormatBase, nil
-	case nil:
-		return nil, fmt.Errorf("VisualizationFormat variant is required")
-	default:
-		return nil, fmt.Errorf("unsupported VisualizationFormat variant %T", variant)
-	}
-}
-
-type VisualizationFormatBase struct {
-	Kind string `json:"kind" yaml:"kind"`
-}
-
-type VisualizationHierarchyMark string
-
-const (
-	VisualizationHierarchyMarkTreemap  VisualizationHierarchyMark = "treemap"
-	VisualizationHierarchyMarkSunburst VisualizationHierarchyMark = "sunburst"
-	VisualizationHierarchyMarkTree     VisualizationHierarchyMark = "tree"
-	VisualizationHierarchyMarkSankey   VisualizationHierarchyMark = "sankey"
-	VisualizationHierarchyMarkGraph    VisualizationHierarchyMark = "graph"
-)
-
-type VisualizationKPIDeltaMode string
-
-const (
-	VisualizationKPIDeltaModeAbsolute VisualizationKPIDeltaMode = "absolute"
-	VisualizationKPIDeltaModeRelative VisualizationKPIDeltaMode = "relative"
-)
-
-type VisualizationKPIDirection string
-
-const (
-	VisualizationKPIDirectionIncrease VisualizationKPIDirection = "increase"
-	VisualizationKPIDirectionDecrease VisualizationKPIDirection = "decrease"
-	VisualizationKPIDirectionNeutral  VisualizationKPIDirection = "neutral"
-)
-
-type VisualizationKPIMissingComparison string
-
-const (
-	VisualizationKPIMissingComparisonShowUnavailable VisualizationKPIMissingComparison = "show_unavailable"
-	VisualizationKPIMissingComparisonHide            VisualizationKPIMissingComparison = "hide"
-)
-
-type VisualizationKPIMode string
-
-const (
-	VisualizationKPIModeCompact  VisualizationKPIMode = "compact"
-	VisualizationKPIModeBullet   VisualizationKPIMode = "bullet"
-	VisualizationKPIModeProgress VisualizationKPIMode = "progress"
-)
-
-type VisualizationKPIQualitativeRange struct {
-	Minimum *float64          `json:"minimum,omitempty" yaml:"minimum,omitempty"`
-	Maximum *float64          `json:"maximum,omitempty" yaml:"maximum,omitempty"`
-	Label   string            `json:"label" yaml:"label"`
-	Tone    VisualizationTone `json:"tone" yaml:"tone"`
-}
-
-type VisualizationLegendPosition string
-
-const (
-	VisualizationLegendPositionHidden VisualizationLegendPosition = "hidden"
-	VisualizationLegendPositionTop    VisualizationLegendPosition = "top"
-	VisualizationLegendPositionRight  VisualizationLegendPosition = "right"
-	VisualizationLegendPositionBottom VisualizationLegendPosition = "bottom"
-	VisualizationLegendPositionLeft   VisualizationLegendPosition = "left"
-)
-
-type VisualizationOrientation string
-
-const (
-	VisualizationOrientationHorizontal VisualizationOrientation = "horizontal"
-	VisualizationOrientationVertical   VisualizationOrientation = "vertical"
-)
-
-type VisualizationPolarMark string
-
-const (
-	VisualizationPolarMarkRadar VisualizationPolarMark = "radar"
-	VisualizationPolarMarkGauge VisualizationPolarMark = "gauge"
-)
-
-type VisualizationProportionalMark string
-
-const (
-	VisualizationProportionalMarkPie    VisualizationProportionalMark = "pie"
-	VisualizationProportionalMarkDonut  VisualizationProportionalMark = "donut"
-	VisualizationProportionalMarkFunnel VisualizationProportionalMark = "funnel"
-)
-
-type VisualizationStackingMode string
-
-const (
-	VisualizationStackingModeNone    VisualizationStackingMode = "none"
-	VisualizationStackingModeNormal  VisualizationStackingMode = "normal"
-	VisualizationStackingModePercent VisualizationStackingMode = "percent"
-)
-
-type VisualizationThreshold struct {
-	Value float64           `json:"value" yaml:"value"`
-	Tone  VisualizationTone `json:"tone" yaml:"tone"`
-}
-
-type VisualizationTone string
-
-const (
-	VisualizationToneNeutral VisualizationTone = "neutral"
-	VisualizationToneInk     VisualizationTone = "ink"
-	VisualizationToneSuccess VisualizationTone = "success"
-	VisualizationToneWarning VisualizationTone = "warning"
-	VisualizationToneDanger  VisualizationTone = "danger"
-)

@@ -12,8 +12,14 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+<<<<<<< HEAD
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+=======
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/platform"
+>>>>>>> 35d780967 (Implement versioned saved explorations)
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -331,14 +337,19 @@ func (f testRuntimeFactory) Prepare(_ context.Context, input runtimehost.Runtime
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	return testPreparedRuntime{
 		authorization: authorization, snapshotID: input.State.DuckLakeSnapshotID,
 		semanticModel: model, compiledModel: planner.CompiledModel(),
 	}, nil
+=======
+	return testPreparedRuntime{authorization: authorization, identity: identity, snapshotID: input.State.DuckLakeSnapshotID}, nil
+>>>>>>> 35d780967 (Implement versioned saved explorations)
 }
 
 type testPreparedRuntime struct {
 	authorization accesssnapshot.AuthorizationSnapshot
+	identity      projectgraph.ServingIdentity
 	snapshotID    int64
 	semanticModel *semanticmodel.Model
 	compiledModel *semanticquery.CompiledModel
@@ -348,7 +359,19 @@ func (r testPreparedRuntime) Close() error { return nil }
 func (r testPreparedRuntime) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
 	return r.authorization
 }
-func (r testPreparedRuntime) DuckLakeSnapshotID() int64 { return r.snapshotID }
+func (r testPreparedRuntime) DuckLakeSnapshotID() int64              { return r.snapshotID }
+func (r testPreparedRuntime) Identity() projectgraph.ServingIdentity { return r.identity }
+
+// SemanticModelProjection keeps the assembled app fixture on the same
+// runtime-owned model seam used by saved-exploration mutations. The
+// projection is detached per call, so a test cannot accidentally mutate the
+// immutable fixture generation through an API request.
+func (r testPreparedRuntime) SemanticModelProjection(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	if modelID != "test" {
+		return nil, false
+	}
+	return testSemanticModel(), true
+}
 
 // ProjectManifest and CompiledSemanticModel make the app fixture expose the
 // same activation-owned semantic metadata that the public catalog consumes in

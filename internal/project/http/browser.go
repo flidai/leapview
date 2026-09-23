@@ -191,6 +191,8 @@ type BrowserHandler struct {
 	TargetID                 string
 	ConnectionAdministration connectionadmin.Administration
 	ConnectionCommands       projectui.ConnectionCommandBindings
+	SavedExplorations        SavedExplorationService
+	SavedExplorationCommands SavedExplorationCommandBindings
 	PipelineRunCommand       uicommand.Binding
 	PipelineCancelCommand    uicommand.Binding
 	RunPipeline              func(context.Context, string, string, string) error
@@ -207,16 +209,18 @@ type BrowserHandler struct {
 	// AuthorizeCreateDashboard evaluates the project-root edit capability used
 	// to expose the browser's new-draft affordance. The catalog remains usable
 	// for read-only principals when this decision is denied.
-	AuthorizeCreateDashboard func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
-	AuthorizeDashboard       func(*stdhttp.Request, string, access.Capability) (bool, error)
-	AuthorizeConnection      func(*stdhttp.Request, string, access.Capability) (bool, error)
-	BeginConnectionCommand   func(context.Context, CreatorCommandInvocation) (context.Context, error)
-	BeginPipelineCommand     func(context.Context, CreatorCommandInvocation) (context.Context, error)
-	MutationMiddleware       func(stdhttp.Handler) stdhttp.Handler
-	Layout                   func(*stdhttp.Request) webpage.Provider
-	CSRFToken                func(*stdhttp.Request) string
-	CurrentUser              func(*stdhttp.Request) (Principal, bool)
-	Authenticate             func(stdhttp.Handler) stdhttp.Handler
+	AuthorizeCreateDashboard       func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
+	AuthorizeDashboard             func(*stdhttp.Request, string, access.Capability) (bool, error)
+	AuthorizeConnection            func(*stdhttp.Request, string, access.Capability) (bool, error)
+	BeginConnectionCommand         func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	BeginPipelineCommand           func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	BeginSavedExplorationCommand   func(context.Context, SavedExplorationCommandInvocation) (context.Context, error)
+	ExecuteSavedExplorationCommand func(context.Context, SavedExplorationCommandInvocation, func(context.Context) error) error
+	MutationMiddleware             func(stdhttp.Handler) stdhttp.Handler
+	Layout                         func(*stdhttp.Request) webpage.Provider
+	CSRFToken                      func(*stdhttp.Request) string
+	CurrentUser                    func(*stdhttp.Request) (Principal, bool)
+	Authenticate                   func(stdhttp.Handler) stdhttp.Handler
 }
 
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
@@ -249,6 +253,8 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/search", wrap(h.ProductSearch))
 	r.Get("/explore", wrap(h.Explore))
 	r.Post("/explore/command", wrap(h.DataExplorerCommand))
+	r.Get("/explore/saved/{exploration}", wrap(h.SavedExplorationReopen))
+	r.Post("/explore/saved/command", wrapMutation(h.SavedExplorationCommand))
 	r.Get("/sources", wrap(h.Sources))
 	r.Get("/sources/{asset}/{section}", wrap(h.SourceAsset))
 	r.Get("/models", wrap(h.Models))
@@ -426,6 +432,7 @@ func (h *BrowserHandler) CatalogSearch(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
 
+<<<<<<< HEAD
 func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindSemanticModel}) {
 		return
@@ -500,6 +507,8 @@ func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *s
 	})
 }
 
+=======
+>>>>>>> 35d780967 (Implement versioned saved explorations)
 func (h *BrowserHandler) Sources(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	h.projectAssets(w, r, "sources", string(projectview.AssetTypeSource))
 }
@@ -742,6 +751,7 @@ func (h *BrowserHandler) ConnectionsSearch(w stdhttp.ResponseWriter, r *stdhttp.
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
 
+<<<<<<< HEAD
 func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindProjectNamespace, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
 		return
@@ -852,6 +862,8 @@ func (h *BrowserHandler) livePipelinePage(r *stdhttp.Request) (pagestream.Signal
 	return pagestream.SignalPatch{"page": bootstrap["page"]}, nil
 }
 
+=======
+>>>>>>> 35d780967 (Implement versioned saved explorations)
 func (h *BrowserHandler) projectBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Request) (map[string]any, bool) {
 	projectID, assets, edges, ok := h.assets(w, r)
 	if !ok {
