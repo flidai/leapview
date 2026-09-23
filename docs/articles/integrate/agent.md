@@ -30,9 +30,14 @@ The built-in chat surface uses an OpenAI-compatible provider configuration:
 
 ```sh
 LEAPVIEW_AGENT_BASE_URL=https://api.openai.com/v1
-LEAPVIEW_AGENT_MODEL=<model-id>
+LEAPVIEW_AGENT_MODEL=gpt-6-luna
 LEAPVIEW_AGENT_API_KEY=<secret>
 ```
+
+`gpt-6-luna` is the default model for the OpenAI endpoint. LeapView uses Chat
+Completions for its OpenAI-compatible provider and sends GPT-6 Luna requests
+with `reasoning_effort: "none"`, which preserves function-tool calling on that
+endpoint.
 
 Store the API key in the deployment secret manager. The global administrator-controlled system prompt is configured in the agent administration page. Provider prompts and responses may contain business context; review the provider's data handling, retention, regional, and contractual requirements before enabling it.
 

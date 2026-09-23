@@ -107,6 +107,45 @@ func TestOpenAIModelConvertsChatCompletionPayloads(t *testing.T) {
 	}
 }
 
+func TestOpenAIModelConfiguresGPT6LunaChatCompletions(t *testing.T) {
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		writeJSON(t, w, openAIChatResponse{
+			ID: "chatcmpl_gpt6_luna",
+			Choices: []openAIChoice{{
+				Message:      openAIMessage{Role: "assistant", Content: "Done."},
+				FinishReason: "stop",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	model := NewModel(agentapp.Config{APIKey: "test-key", BaseURL: server.URL, Model: "gpt-6-luna"}, server.Client())
+	_, err := model.Complete(context.Background(), agentcore.ModelRequest{
+		Purpose: agentcore.ModelRequestPurposeTurn,
+		Tools: []agentcore.ToolSpec{{
+			Name:        "catalog_search",
+			InputSchema: []byte(`{"type":"object"}`),
+		}},
+		Limits: agentcore.Limits{ReserveOutputTokens: 321},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Complete returned error: %v", err)
+	}
+	if got["reasoning_effort"] != "none" {
+		t.Fatalf("reasoning_effort = %#v, want none", got["reasoning_effort"])
+	}
+	if got["max_completion_tokens"] != float64(321) {
+		t.Fatalf("max_completion_tokens = %#v, want 321", got["max_completion_tokens"])
+	}
+	if _, ok := got["max_tokens"]; ok {
+		t.Fatalf("GPT-6 Luna request included deprecated max_tokens: %#v", got["max_tokens"])
+	}
+}
+
 func TestOpenAIModelStreamsFirstTokenBeforeCompletion(t *testing.T) {
 	firstEventWritten := make(chan struct{})
 	releaseServer := make(chan struct{})
