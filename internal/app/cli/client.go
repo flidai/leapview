@@ -100,6 +100,9 @@ func (client capabilityAPIClient) Resolve(ctx context.Context, credentials cliap
 	if err != nil {
 		return cliapi.Credentials{}, fmt.Errorf("resolve authoring login for %q: %w; run leapview login %s", target, err, target)
 	}
+	if retry, ok := client.http().Transport.(*authoringRetryTransport); ok {
+		retry.bindCredential(resolved.Profile.Origin, resolved.AccessToken, target, resolved.Profile)
+	}
 	return client.resolveResult(
 		ctx,
 		cliapi.Credentials{

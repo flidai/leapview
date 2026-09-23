@@ -9,10 +9,20 @@ import (
 	"sync"
 
 	accesscli "github.com/flidai/leapview/internal/access/cli"
+	"github.com/flidai/leapview/internal/platform/cliapi"
 )
 
 type originCredentialResolver interface {
 	ResolveOrigin(context.Context, string, string) (accesscli.ResolvedCredential, error)
+}
+
+type namedCredentialResolver interface {
+	ResolveName(context.Context, string) (accesscli.ResolvedCredential, error)
+}
+
+type boundAuthoringCredential struct {
+	name    string
+	profile cliapi.TargetProfile
 }
 
 type authoringRetryTransport struct {
@@ -20,6 +30,19 @@ type authoringRetryTransport struct {
 	credentials originCredentialResolver
 	mu          sync.Mutex
 	rotated     map[string]string
+	bound       map[string]boundAuthoringCredential
+}
+
+func (transport *authoringRetryTransport) bindCredential(origin, token, name string, profile cliapi.TargetProfile) {
+	if transport == nil || origin == "" || origin != profile.Origin || token == "" || name == "" {
+		return
+	}
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	if transport.bound == nil {
+		transport.bound = make(map[string]boundAuthoringCredential)
+	}
+	transport.bound[origin+"\x00"+token] = boundAuthoringCredential{name: name, profile: profile}
 }
 
 func (transport *authoringRetryTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -89,7 +112,21 @@ func (transport *authoringRetryTransport) refreshToken(ctx context.Context, orig
 	if refreshed := transport.rotated[origin+"\x00"+token]; refreshed != "" {
 		return refreshed, nil
 	}
-	resolved, err := transport.credentials.ResolveOrigin(ctx, origin, token)
+	key := origin + "\x00" + token
+	var resolved accesscli.ResolvedCredential
+	var err error
+	if binding, found := transport.bound[key]; found {
+		if named, ok := transport.credentials.(namedCredentialResolver); ok {
+			resolved, err = named.ResolveName(ctx, binding.name)
+			if err == nil && resolved.Profile != binding.profile {
+				return "", fmt.Errorf("target profile changed while refreshing authoring credential")
+			}
+		} else {
+			resolved, err = transport.credentials.ResolveOrigin(ctx, origin, token)
+		}
+	} else {
+		resolved, err = transport.credentials.ResolveOrigin(ctx, origin, token)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -106,6 +143,9 @@ func (transport *authoringRetryTransport) refreshToken(ctx context.Context, orig
 		}
 	}
 	transport.rotated[prefix+token] = resolved.AccessToken
+	if binding, found := transport.bound[key]; found {
+		transport.bound[prefix+resolved.AccessToken] = binding
+	}
 	return resolved.AccessToken, nil
 }
 
@@ -119,6 +159,14 @@ func (resolver applicationOriginCredentials) ResolveOrigin(ctx context.Context, 
 		return accesscli.ResolvedCredential{}, err
 	}
 	return authentication.ResolveOrigin(ctx, origin, accessToken)
+}
+
+func (resolver applicationOriginCredentials) ResolveName(ctx context.Context, name string) (accesscli.ResolvedCredential, error) {
+	authentication, err := defaultAuthoringAuthenticator(resolver.client)
+	if err != nil {
+		return accesscli.ResolvedCredential{}, err
+	}
+	return authentication.Resolve(ctx, name)
 }
 
 func authoringRefreshingHTTPClient(client *http.Client) *http.Client {

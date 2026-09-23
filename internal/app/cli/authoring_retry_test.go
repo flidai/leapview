@@ -63,6 +63,69 @@ func TestAuthoringRetryTransportReusesRotatedTokenForLaterRequests(t *testing.T)
 	require.Equal(t, 1, resolver.calls)
 }
 
+type rotatedProfileResolver struct {
+	profile      cliapi.TargetProfile
+	currentToken string
+	byOrigin     int
+	byName       int
+}
+
+func (resolver *rotatedProfileResolver) ResolveOrigin(context.Context, string, string) (accesscli.ResolvedCredential, error) {
+	resolver.byOrigin++
+	return accesscli.ResolvedCredential{}, cliapi.ErrProfileNotFound
+}
+
+func (resolver *rotatedProfileResolver) ResolveName(_ context.Context, name string) (accesscli.ResolvedCredential, error) {
+	resolver.byName++
+	if name != "local" {
+		return accesscli.ResolvedCredential{}, cliapi.ErrProfileNotFound
+	}
+	return accesscli.ResolvedCredential{Profile: resolver.profile, AccessToken: resolver.currentToken}, nil
+}
+
+func TestAuthoringRetryTransportSurvivesCredentialRotationInAnotherProcess(t *testing.T) {
+	const origin = "http://127.0.0.1:7090"
+	const stale = "lv_cli_access_original"
+	const current = "lv_cli_access_rotated_elsewhere"
+	profile := cliapi.TargetProfile{Origin: origin, InstanceID: "instance-1", ProjectID: "project-1", CredentialAccount: "account-1"}
+	resolver := &rotatedProfileResolver{profile: profile, currentToken: current}
+	transport := &authoringRetryTransport{
+		base: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			status := http.StatusUnauthorized
+			if request.Header.Get("Authorization") == "Bearer "+current {
+				status = http.StatusOK
+			}
+			return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("response")), Request: request}, nil
+		}), credentials: resolver,
+	}
+	transport.bindCredential(origin, stale, "local", profile)
+	for range 2 {
+		request, err := http.NewRequest(http.MethodGet, origin+"/api/v1/projects/project-1", nil)
+		require.NoError(t, err)
+		request.Header.Set("Authorization", "Bearer "+stale)
+		response, err := transport.RoundTrip(request)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, response.StatusCode)
+		require.NoError(t, response.Body.Close())
+	}
+	require.Equal(t, 0, resolver.byOrigin)
+	require.Equal(t, 1, resolver.byName)
+
+	resolver.profile.ProjectID = "different-project"
+	changed := &authoringRetryTransport{
+		base: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusUnauthorized, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("unauthorized")), Request: request}, nil
+		}), credentials: resolver,
+	}
+	changed.bindCredential(origin, stale, "local", profile)
+	request, err := http.NewRequest(http.MethodGet, origin+"/api/v1/projects/project-1", nil)
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer "+stale)
+	response, err := changed.RoundTrip(request)
+	require.ErrorContains(t, err, "target profile changed")
+	require.Nil(t, response)
+}
+
 func TestAuthoringRetryTransportConcurrentExpiredRequestsRotateOnce(t *testing.T) {
 	var refreshes atomic.Int32
 	transport := &authoringRetryTransport{
