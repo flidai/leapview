@@ -204,7 +204,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 	for _, field := range projection.Fields {
 		fieldByID[field.ID] = field
 	}
-	filterDatasets := restoredFilterDatasetParticipation(command, projection, model, fieldByID)
+	filterDatasets := restoredFilterDatasetParticipation(command, projection, compiled, fieldByID)
 	seenFields := make(map[string]string, len(command.Dimensions)+len(command.Metrics))
 	for _, fieldID := range command.Dimensions {
 		if err := validateRestoredExploreField(fieldID, "dimension", fieldByID); err != nil {
@@ -281,7 +281,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 // effective query base. A normal query has one participating base. When a
 // selected metric spans multiple roots, the semantic executor clears the
 // dataset target and the complete recursive root union is the safe scope.
-func restoredFilterDatasetParticipation(command projectsignals.DataExploreCommand, projection DataExplorerProjection, model *semanticmodel.Model, fields map[string]projectsignals.DataExploreFieldSignal) map[string]bool {
+func restoredFilterDatasetParticipation(command projectsignals.DataExploreCommand, projection DataExplorerProjection, compiled *semanticquery.CompiledModel, fields map[string]projectsignals.DataExploreFieldSignal) map[string]bool {
 	participating := map[string]bool{}
 	effectiveDataset := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.DatasetID))
 	if !explorerCommandHasMultiRootMetric(command.Metrics, fields) {
@@ -291,7 +291,7 @@ func restoredFilterDatasetParticipation(command projectsignals.DataExploreComman
 		return participating
 	}
 	for _, metric := range command.Metrics {
-		for _, root := range explorerMetricRootDatasets(model, metric) {
+		for _, root := range explorerMetricRootDatasets(compiled, metric) {
 			participating[root] = true
 		}
 	}

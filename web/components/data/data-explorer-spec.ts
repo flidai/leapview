@@ -46,7 +46,7 @@ export function explorationSpecFromCommand(command: DataExploreCommand): Explora
   const filters = command.filters.map((filter) => makeExplorationFilter(filter.field, filter.operator, filter.values))
     .filter((filter): filter is ExplorationFilter => filter !== undefined)
     .map((filter, index) => ({ ...filter, datasetId: command.filters[index]?.datasetId }))
-  return {
+  const spec: ExplorationSpec = {
     ...base,
     schemaVersion: 1,
     modelId: command.semanticModelId?.trim() || base.modelId,
@@ -58,6 +58,11 @@ export function explorationSpecFromCommand(command: DataExploreCommand): Explora
     time: command.time ? { ...base.time, field: command.time.field, grain: command.time.grain as ExplorationTimeGrain, alias: command.time.alias } : undefined,
     limit: command.limit || 100,
   }
+  // Datastar represents `undefined` signal members as empty strings. Omit
+  // absent optional members entirely so durable specs remain valid JSON.
+  if (!spec.datasetId) delete spec.datasetId
+  if (!command.time) delete spec.time
+  return spec
 }
 
 export function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataExploreFieldSignal[]): string[] {

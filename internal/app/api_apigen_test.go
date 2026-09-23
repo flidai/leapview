@@ -27,7 +27,7 @@ import (
 
 // Current main's generated surface plus target-policy and development-profile
 // operations.
-const expectedAPIGenAggregateOperationCount = 193
+const expectedAPIGenAggregateOperationCount = 199
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -270,12 +270,14 @@ func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 
 func TestAPIGenAnalyticsCapabilityOwnsItsOperationSurface(t *testing.T) {
 	analyticsContracts := analyticsgen.GetAPIGenOperationContracts()
-	if got, want := len(analyticsContracts), 13; got != want {
+	if got, want := len(analyticsContracts), 19; got != want {
 		t.Fatalf("Analytics generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range analyticsContracts {
 		wantTag := "Connections"
-		if operationID == "listQueryEvents" {
+		if strings.Contains(operationID, "SavedExploration") || operationID == "listSavedExplorations" {
+			wantTag = "Saved Explorations"
+		} else if operationID == "listQueryEvents" {
 			wantTag = "Audit"
 		}
 		if len(contract.Tags) != 1 || contract.Tags[0] != wantTag {
@@ -632,6 +634,7 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"BI":                  "LeapViewAPI.Dashboard",
 		"Dashboard Authoring": "LeapViewAPI.Dashboard",
 		"Connections":         "LeapViewAPI.Analytics",
+		"Saved Explorations":  "LeapViewAPI.Analytics",
 		"Publications":        "LeapViewAPI.Dashboard",
 		"Deployments":         "LeapViewAPI.Deployment",
 		"Delivery":            "LeapViewAPI.Deployment",
@@ -672,6 +675,7 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"LeapViewAPI.Refresh":     {},
 		"LeapViewAPI.Release":     {},
 		"LeapViewDashboard":       {},
+		"LeapViewExploration":     {},
 		"LeapViewVisualization":   {},
 	}
 	for name, schema := range document.Schemas {
@@ -802,8 +806,8 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 129 {
-		t.Fatalf("UI signal IR contracts = %d, want 129", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 136 {
+		t.Fatalf("UI signal IR contracts = %d, want 136", len(irDoc.Contracts))
 	}
 	foundEnvelopeMetadata := false
 	foundImportedVisualizationRoot := false

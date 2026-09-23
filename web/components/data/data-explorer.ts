@@ -13,7 +13,9 @@ import type {
   DataExplorerPageSignal,
   DataExplorerSignal,
   DataPreviewSignal,
+  SavedExplorationStateSignal,
 } from '../../generated/signals'
+import type { ExplorationSpec } from '../../generated/exploration'
 import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { agentIcon } from '../chat/agent-icon'
@@ -29,11 +31,20 @@ import {
   objectDatasetID,
   toggleVisibleColumns,
 } from './data-explorer-controller'
-import { dataExplorerURL } from './data-explorer-url'
+import { dataExplorerURL, updateDataExplorerURL } from './data-explorer-url'
+import {
+  emptySavedExplorations,
+  renderSavedExplorations,
+  SavedExplorationTracker,
+  savedExplorationSelectionIncludesArchived,
+  savedExplorationStyles,
+  type SavedExplorationCurrent,
+  type SavedExplorationVisibility,
+} from './data-explorer-saved'
 import '../chat/chat-drawer'
 import './preview-table'
 import './explore-table'
-import { emptyExplorationSpec } from './data-explorer-spec'
+import { emptyExplorationSpec, explorationSpecFromCommand } from './data-explorer-spec'
 
 const emptyPreview: DataPreviewSignal = {
   columns: [],
@@ -84,6 +95,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private browserCollapsed = false
   @state() private browserWidth = 320
   @state() private exploreVisibleColumns: string[] = []
+  @state() private savedTitle = ''
+  @state() private savedDuplicateTitle = ''
+  @state() private savedVisibility: SavedExplorationVisibility = 'private'
+  @state() private currentSavedVisibility: SavedExplorationVisibility = 'private'
   private lastSearch = ''
   private expandedGroupIDs = new Set<string>()
   private exploreTimer = 0
@@ -95,6 +110,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private readonly panelController = new DataExplorerPanelController()
   private readonly queryController = new DataExplorerQueryController()
   private readonly selectionController = new DataExplorerSelectionController()
+  private readonly savedExplorationTracker = new SavedExplorationTracker({
+    onBaselineChanged: (current) => {
+      this.savedDuplicateTitle = ''
+      this.currentSavedVisibility = current?.visibility ?? 'private'
+    },
+    onDirty: () => this.dispatchEvent(new CustomEvent('lv-saved-exploration-dirty', { bubbles: true, composed: true })),
+  })
 
   static styles = css`
     :host {
@@ -138,11 +160,16 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       overflow: hidden;
     }
 
+    .route.saved-enabled {
+      grid-template-rows: auto auto minmax(0, 1fr);
+    }
+
     .route.agent-open {
       grid-template-columns: minmax(0, 1fr) minmax(20rem, 28rem);
     }
 
     .route.agent-open > .header,
+    .route.agent-open > .saved-explorations,
     .route.agent-open > .explorer {
       grid-column: 1;
     }
@@ -841,6 +868,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       width: auto;
     }
 
+    ${savedExplorationStyles}
+
     .content {
       display: grid;
       min-width: 0;
@@ -1040,7 +1069,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
     if (this.optimisticExplore && (this.dataExplorer.explore?.command?.requestSeq ?? 0) >= this.optimisticExplore.requestSeq) {
       this.optimisticExplore = null
-      if (!this.embedded) replaceDataExplorerURL(this.dataExplorer.command)
+      if (!this.embedded) this.replaceDataExplorerURL(this.dataExplorer.command)
     }
     const agent = this.signal<{ activeConversationId?: string } | null>('agent', null)
     const activeConversationId = agent?.activeConversationId?.trim() ?? ''
@@ -1053,6 +1082,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.agentRestoreDispatched = true
       emitDomainEvent(this, domainEvents.chatRestore, { conversationId: this.restoredAgentConversationId })
     }
+    this.savedExplorationTracker.observe(this.savedExplorations, this.activeExplorationSpec())
+  }
+
+  private activeExplorationSpec(): ExplorationSpec {
+    const command = this.optimisticExplore ?? this.dataExplorer.explore?.command
+    return command ? explorationSpecFromCommand(command) : emptyExplorationSpec
   }
 
   get page(): DataExplorerPageSignal | null {
@@ -1061,6 +1096,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
   get dataExplorer(): DataExplorerSignal {
     return this.signal<DataExplorerSignal>('dataExplorer', emptyExplorer)
+  }
+
+  get savedExplorations(): SavedExplorationStateSignal {
+    return this.signal<SavedExplorationStateSignal>('savedExplorations', emptySavedExplorations)
   }
 
   render() {
@@ -1073,8 +1112,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const agentEnabled = this.signal<unknown | null>('agent', null) !== null
     const columns = this.headerColumns(explorer, semanticActive)
     const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
+    const savedExplorations = this.savedExplorations
+    const savedVisible = savedExplorations.enabled && !this.embedded
     return html`
-      <section class=${`route${semanticActive ? ' semantic' : ''}${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
+      <section class=${`route${semanticActive ? ' semantic' : ''}${savedVisible ? ' saved-enabled' : ''}${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
         <header class="header">
           <h1>${page?.title ?? 'Data Explorer'}</h1>
           <div class="header-actions">
@@ -1105,6 +1146,21 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             ${agentEnabled ? html`<button type="button" class="icon-button ask-button" aria-label="Ask about this data" aria-expanded=${String(this.agentDrawerOpen)} title="Ask about this data" @click=${() => this.setAgentDrawerOpen(!this.agentDrawerOpen)}>${agentIcon()}<span>Ask</span></button>` : nothing}
           </div>
         </header>
+        ${savedVisible ? renderSavedExplorations(savedExplorations, {
+          savedTitle: () => this.savedTitle,
+          savedDuplicateTitle: () => this.savedDuplicateTitle,
+          savedVisibility: () => this.savedVisibility,
+          currentSavedVisibility: (current: SavedExplorationCurrent) => this.currentSavedVisibility || current.visibility,
+          activeSpec: () => this.activeExplorationSpec(),
+          onSavedTitleInput: (value) => this.savedTitle = value,
+          onDuplicateTitleInput: (value) => this.savedDuplicateTitle = value,
+          onSavedVisibilityInput: (value) => this.savedVisibility = value,
+          onCurrentSavedVisibilityInput: (value) => this.currentSavedVisibility = value,
+          onCommand: (command) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-command', { bubbles: true, composed: true, detail: command })),
+          onReopen: (current) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
+            bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },
+          })),
+        }) : nothing}
         <div
           class=${`explorer${this.browserCollapsed ? ' browser-collapsed' : ''}`}
         >
@@ -1450,7 +1506,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const current = this.optimisticExplore ?? this.dataExplorer.explore.command ?? emptyExplorer.explore.command
     const command = this.queryController.explore(current, next, immediate)
     this.optimisticExplore = command
-    if (!this.embedded) replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
+    if (!this.embedded) this.replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
     const dispatch = () => this.emitCommand({ mode: 'explore', explore: command })
     if (immediate) dispatch()
     else this.exploreTimer = window.setTimeout(dispatch, 320)
@@ -1536,6 +1592,11 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       return
     }
     this.emitCommand({ visibleColumns: configured })
+  }
+
+  private replaceDataExplorerURL(command: DataExplorerCommand): void {
+    const saved = this.savedExplorations
+    updateDataExplorerURL(command, 'replace', saved.list?.selectedId, savedExplorationSelectionIncludesArchived(saved))
   }
 
   private persistAgentState(): void {
@@ -1854,7 +1915,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       objectKey: current.objectKey ?? this.dataExplorer?.selectedKey ?? '',
     }, partial)
     if (!this.embedded && (partial.objectKey !== undefined || partial.mode !== undefined || partial.explore !== undefined)) {
-      replaceDataExplorerURL(next)
+      this.replaceDataExplorerURL(next)
     }
     this.dispatchEvent(new CustomEvent('lv-data-explorer-command', { bubbles: true, composed: true, detail: next }))
   }
@@ -1944,14 +2005,6 @@ function fieldLabel(id: string, fields: DataExploreFieldSignal[]): string {
 function datasetGrainLabel(dataset: DataExploreDatasetSignal): string {
   const fields = dataset.grainFields ?? []
   return fields.length ? `${dataset.grainEntity} (${fields.join(', ')})` : dataset.grainEntity
-}
-
-function replaceDataExplorerURL(command: DataExplorerCommand) {
-  if (typeof window === 'undefined') return
-  const next = dataExplorerURL(command)
-  if (window.location.pathname + window.location.search !== next) {
-    window.history.replaceState({}, '', next)
-  }
 }
 
 function iconForLayer(layer: string): any {

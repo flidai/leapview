@@ -443,9 +443,11 @@ type browserDataQueryStub struct {
 	query  dataquery.Query
 	result dataquery.Result
 	err    error
+	calls  int
 }
 
 func (s *browserDataQueryStub) ExecuteDataQuery(_ context.Context, query dataquery.Query) (dataquery.Result, error) {
+	s.calls++
 	s.query = query
 	return s.result, s.err
 }

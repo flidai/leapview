@@ -370,6 +370,13 @@ func (r testPreparedRuntime) CompiledSemanticModel(modelID string) (*semanticque
 	return r.compiledModel, true
 }
 
+func (r testPreparedRuntime) SemanticModelProjection(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	if modelID != "test" || r.semanticModel == nil {
+		return nil, false
+	}
+	return r.semanticModel.ExecutionSnapshot(), true
+}
+
 type testRuntimeAuthorizationInstaller struct{}
 
 func (testRuntimeAuthorizationInstaller) InstallAuthorizationSnapshot(context.Context, accesssnapshot.AuthorizationSnapshot) error {

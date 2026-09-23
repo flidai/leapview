@@ -70,6 +70,10 @@ targets:
       dir: ../internal/app/cli/gen
       package: gen
     contract_imports:
+      LeapViewExploration:
+        go_package: github.com/flidai/leapview/internal/analytics/exploration
+        go_alias: exploration
+        typescript_module: ../exploration
       LeapViewDashboard:
         go_package: github.com/flidai/leapview/internal/dashboard/document
         go_alias: dashboarddocument

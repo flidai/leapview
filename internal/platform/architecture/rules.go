@@ -48,6 +48,18 @@ var PublicContractPrefixes = map[string][]string{
 	"workload":      {"internal/workload"},
 }
 
+// ExactPublicContractPackages publishes leaf contracts without implicitly
+// publishing sibling use-case or adapter packages beneath the same tree.
+// Saved exploration intentionally uses this form so its authored schema and
+// lifecycle DTOs are reusable while lowering, application, and persistence
+// remain analytics-owned implementation details.
+var ExactPublicContractPackages = map[string]map[string]struct{}{
+	"analytics": {
+		"internal/analytics/exploration":       {},
+		"internal/analytics/exploration/saved": {},
+	},
+}
+
 // DeferredPackageEdges are the explicit ownership exceptions retained for
 // later roadmap slices. They are package-scoped so a deferred compiler,
 // refresh-state, or persistence concern cannot silently authorize the same
@@ -86,7 +98,7 @@ var SharedContractPrefixes = map[string][]string{
 	"access":       {"internal/project/graph", "internal/project/runtime"},
 	"admin":        {"internal/project/graph"},
 	"agent":        {"internal/project/graph"},
-	"analytics":    {"internal/project/graph", "internal/project/contracts"},
+	"analytics":    {"internal/project/graph", "internal/project/contracts", "internal/project/runtime", "internal/dashboard/visualization/ir"},
 	"dashboard":    {"internal/project/graph", "internal/project/runtime", "internal/project/schema"},
 	"deployment":   {"internal/dashboard/publication", "internal/project/graph"},
 	"lineage":      {"internal/project/graph"},
@@ -245,6 +257,11 @@ var CapabilityDependencies = map[string]map[string]bool{
 }
 
 func IsPublicContractImport(capability, packagePath string) bool {
+	if packages := ExactPublicContractPackages[capability]; packages != nil {
+		if _, ok := packages[packagePath]; ok {
+			return true
+		}
+	}
 	for _, prefix := range PublicContractPrefixes[capability] {
 		if packagePath == prefix {
 			return true
@@ -359,6 +376,11 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/project/schema", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/platform/http/cursorsigning", Capability: "platform", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/dataquery", Capability: "analytics", Layer: LayerContract},
+	{Prefix: "internal/analytics/exploration/saved/postgres", Capability: "analytics", Layer: LayerAdapter},
+	{Prefix: "internal/analytics/exploration/saved/application", Capability: "analytics", Layer: LayerUseCase},
+	{Prefix: "internal/analytics/exploration/saved", Capability: "analytics", Layer: LayerContract},
+	{Prefix: "internal/analytics/exploration/lowering", Capability: "analytics", Layer: LayerUseCase},
+	{Prefix: "internal/analytics/exploration", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/project/docvalidation", Capability: "project", Layer: LayerUseCase},
 	{Prefix: "internal/platform/locking", Capability: "platform", Layer: LayerAdapter},
 	{Prefix: "internal/platform/observability", Capability: "platform", Layer: LayerAdapter},

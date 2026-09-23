@@ -59,7 +59,6 @@
           "type": "string"
         },
         "schemaVersion": {
-          "const": 1,
           "type": "integer"
         },
         "serverVersion": {
@@ -90,7 +89,6 @@
           "$ref": "#/$defs/DesktopDiscoveryFailureKind"
         },
         "schemaVersion": {
-          "const": 1,
           "type": "integer"
         }
       },

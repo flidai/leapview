@@ -1,5 +1,5 @@
 import { expect, type Browser } from '@playwright/test'
-import { uuidv7 } from '../web/components/shared/command'
+import { uuidv7 } from '../web/components/shared/command-identity'
 
 export async function verifyDashboardCopyBuilder(browser: Browser, baseURL: string): Promise<void> {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })

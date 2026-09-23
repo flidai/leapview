@@ -79,6 +79,8 @@ type capabilityRoutes struct {
 
 type runtimeServices struct {
 	analyticsModule                *analyticsmodule.Module
+	savedExplorationService        analyticsmodule.SavedExplorationService
+	savedExplorationRepository     analyticsmodule.SavedExplorationRepository
 	profileApplications            connectionbinding.ProfileApplicationStore
 	developmentSessions            developmentsessionmodule.Store
 	metrics                        QueryMetrics
@@ -302,19 +304,21 @@ type capabilityAssemblyInputs struct {
 	// AgentPersistence is the graph-owned native agent authority. The router
 	// passes it through opaquely to agentmodule.Build; production must provide
 	// the complete native authority.
-	AgentPersistence    *agentmodule.Persistence
-	AccessModule        *accessmodule.Module
-	Agent               *agentmodule.Service
-	ManagedDataModule   *manageddatamodule.Module
-	AnalyticsModule     *analyticsmodule.Module
-	ProfileApplications connectionbinding.ProfileApplicationStore
-	DevelopmentSessions developmentsessionmodule.Store
-	Authoring           *dashboardmodule.AuthoringApplication
-	DashboardAssets     dashboardmodule.Assets
-	Product             *adminmodule.ProductService
-	ProductStatus       adminmodule.ProductStatus
-	ProjectCatalog      *projectcatalog.Service
-	ProjectGraph        projecthttp.GraphReader
+	AgentPersistence           *agentmodule.Persistence
+	AccessModule               *accessmodule.Module
+	Agent                      *agentmodule.Service
+	ManagedDataModule          *manageddatamodule.Module
+	AnalyticsModule            *analyticsmodule.Module
+	SavedExplorationService    analyticsmodule.SavedExplorationService
+	SavedExplorationRepository analyticsmodule.SavedExplorationRepository
+	ProfileApplications        connectionbinding.ProfileApplicationStore
+	DevelopmentSessions        developmentsessionmodule.Store
+	Authoring                  *dashboardmodule.AuthoringApplication
+	DashboardAssets            dashboardmodule.Assets
+	Product                    *adminmodule.ProductService
+	ProductStatus              adminmodule.ProductStatus
+	ProjectCatalog             *projectcatalog.Service
+	ProjectGraph               projecthttp.GraphReader
 }
 
 type workflowAssemblyInputs struct {
@@ -717,6 +721,8 @@ func buildApplicationSurfaces(
 	persistence.servingStateRepo = servingStateRepo
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
+	runtime.savedExplorationService = capabilities.SavedExplorationService
+	runtime.savedExplorationRepository = capabilities.SavedExplorationRepository
 	runtime.profileApplications = capabilities.ProfileApplications
 	runtime.developmentSessions = capabilities.DevelopmentSessions
 	// Development sessions exist before the first serving generation. Their
@@ -1100,6 +1106,19 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}
 		}
 	}
+	savedAuditRecorder, _ := persistence.accessRepo.(access.CanonicalAuditRecorder)
+	savedWiring, err := configureSavedExploration(savedExplorationWiringInputs{
+		accessModule: routes.accessModule, auth: platform.auth, assets: platform.assets,
+		resolveProjectID: runtime.resolveProjectID, instanceID: storage.instanceID, publicURL: storage.publicURL,
+		runtime: runtime.runtimeHostModule, admitter: runtime.workloads, analyticsModule: runtime.analyticsModule,
+		savedExplorationService: runtime.savedExplorationService, repository: runtime.savedExplorationRepository,
+		auditRecorder: savedAuditRecorder, projectBrowser: routes.projectBrowser, ctx: ctx,
+	})
+	if err != nil {
+		return err
+	}
+	routes.accessModule = savedWiring.accessModule
+	runtime.savedExplorationService = savedWiring.savedExplorationService
 	analyticsAPI := analyticsmodule.AnalyticsAPIGenConfig{
 		QueryAudit: analyticsmodule.QueryAuditAPIGenConfig{
 			Reader: runtime.queryAuditProvider,
@@ -1116,6 +1135,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 		},
 		DevelopmentProfiles: developmentProfileAPI,
+		SavedExplorations:   savedExplorationAPIGenConfig(runtime.savedExplorationService, routes.accessModule, platform.auth),
 	}
 	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {
@@ -1821,7 +1841,16 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}); err != nil {
 		return fmt.Errorf("validate generated command dependencies: %w", err)
 	}
-	platform.apiProtocol.SetReplayAuthorize(apiGenAuthorizer.AuthorizeReplay)
+	savedReplayConfig := analyticsAPI.SavedExplorations
+	platform.apiProtocol.SetReplayAuthorize(func(r *http.Request) bool {
+		if analyticsmodule.IsSavedExplorationMutationRequest(r) {
+			if !apiGenAuthorizer.AuthorizeReplay(r) {
+				return false
+			}
+			return analyticsmodule.AuthorizeSavedExplorationMutationReplay(savedReplayConfig, r)
+		}
+		return apiGenAuthorizer.AuthorizeReplay(r)
+	})
 	appResponder := apiprotocol.TransportErrorResponder{Logger: platform.logger}
 	appAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return apigenapi.DispatchAPIGenOperation(operationID, apiDispatcher, appResponder, w, r)

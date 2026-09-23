@@ -34,6 +34,8 @@ type CompiledDimensionBinding struct {
 // temporal contract needed to validate a request.
 type CompiledSemanticDimension struct {
 	Name        string
+	Label       string
+	Description string
 	Type        string
 	Datatype    semanticmodel.LogicalDataType
 	NativeGrain string
@@ -438,7 +440,8 @@ func compileSemanticDimensions(model *semanticmodel.Model) map[string]CompiledSe
 	compiled := make(map[string]CompiledSemanticDimension, len(model.Dimensions))
 	for name, dimension := range model.Dimensions {
 		compiled[name] = CompiledSemanticDimension{
-			Name: name, Type: dimension.Type, Datatype: dimension.Datatype,
+			Name: name, Label: dimension.Label, Description: dimension.Description,
+			Type: dimension.Type, Datatype: dimension.Datatype,
 			NativeGrain: dimension.NativeGrain, Grains: append([]string(nil), dimension.Grains...),
 			Timezone: dimension.Timezone, Calendar: dimension.Calendar, WeekStart: dimension.WeekStart,
 		}
