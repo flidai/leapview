@@ -137,10 +137,9 @@ func WithModel(model agentcore.Model) ServiceOption {
 type AgentRuntimeState string
 
 const (
-	AgentRuntimeConfigured AgentRuntimeState = "configured"
-	AgentRuntimeEnabled    AgentRuntimeState = "enabled"
-	AgentRuntimeDisabled   AgentRuntimeState = "disabled"
-	AgentRuntimeDegraded   AgentRuntimeState = "degraded"
+	AgentRuntimeEnabled  AgentRuntimeState = "enabled"
+	AgentRuntimeDisabled AgentRuntimeState = "disabled"
+	AgentRuntimeDegraded AgentRuntimeState = "degraded"
 )
 
 type AgentRuntimeStatus struct {
