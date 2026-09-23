@@ -3,7 +3,6 @@ package outbound
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/flidai/leapview/internal/platform/security/secret"
 )
 
 // Proxy is a loopback-only application egress gateway for embedded native
@@ -138,7 +139,7 @@ func (p *Proxy) authorized(request *http.Request) bool {
 		return false
 	}
 	want := p.username + ":" + p.password
-	return subtle.ConstantTimeCompare(decoded, []byte(want)) == 1
+	return secret.Equal(string(decoded), want)
 }
 
 func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
