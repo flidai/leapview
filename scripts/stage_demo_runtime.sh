@@ -58,8 +58,9 @@ set_firewall_rules() {
   local payload="$1"
   local response action_ids action_id
   response="$(hcloud_request POST "/firewalls/$firewall_id/actions/set_rules" "$payload")"
-  action_ids="$(jq -er '[.action.id?, .actions[]?.id?] | map(select(type == "number")) | unique | .[]' <<<"$response")"
+  action_ids="$(jq -r '[.action.id?, .actions[]?.id?] | map(select(type == "number")) | unique | .[]' <<<"$response")"
   while IFS= read -r action_id; do
+    [[ -n "$action_id" ]] || continue
     wait_hcloud_action "$action_id"
   done <<<"$action_ids"
 }
@@ -104,7 +105,18 @@ unset DEMO_SSH_PRIVATE_KEY
 
 scanned_keys="$temporary_directory/scanned-host-keys"
 pinned_known_hosts="$temporary_directory/known-hosts"
-ssh-keyscan -T 10 "$demo_host" >"$scanned_keys" 2>"$temporary_directory/ssh-keyscan.log"
+scan_log="$temporary_directory/ssh-keyscan.log"
+: >"$scanned_keys"
+for _ in $(seq 1 12); do
+  if ssh-keyscan -T 10 "$demo_host" >"$scanned_keys" 2>"$scan_log" && [[ -s "$scanned_keys" ]]; then
+    break
+  fi
+  sleep 5
+done
+[[ -s "$scanned_keys" ]] || {
+  echo "demo server did not become reachable after opening temporary SSH access" >&2
+  exit 1
+}
 while IFS= read -r scanned_key; do
   [[ -n "$scanned_key" && "$scanned_key" != \#* ]] || continue
   scanned_key_file="$temporary_directory/scanned-host-key"
@@ -125,12 +137,12 @@ ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
   -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$pinned_known_hosts" \
   "root@$demo_host" 'bash -se' <<'REMOTE'
 set -euo pipefail
-revision=b36e6c1b965d3d816f1fa6215d06af83c1d48da4
-image=ghcr.io/flidai/leapview@sha256:b016b15d9db04a9cf66f5b058aab60a76dffc3229ea3f27fc83d820abb925f78
+revision=2caaf4d0c3e0ce637a22c376f63240c27dfaf20d
+image=ghcr.io/flidai/leapview@sha256:35d1207a312279cc7bcf3c64a9284a8410d1f21c30920f2cbf1935113553eb24
 release=/opt/leapview-demo/releases/$revision
 service=leapview-demo-current.service
 if ! systemctl is-active --quiet "$service"; then
-  preserved_revision=38804a01c488ffaeea54202b2541779fb83354b9
+  preserved_revision=b36e6c1b965d3d816f1fa6215d06af83c1d48da4
   preserved_environment=/opt/leapview-demo/releases/$preserved_revision/runtime.env
   unit=$(systemctl show "$service" --property=FragmentPath --value)
   [[ -f "$preserved_environment" && -f "$unit" ]]
