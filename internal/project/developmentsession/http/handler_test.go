@@ -170,6 +170,44 @@ func TestSessionEventsReplayAndCloseAfterDurableRevisionAdvance(t *testing.T) {
 	}
 }
 
+func TestActiveProjectEventsUseAuthenticatedLocalScope(t *testing.T) {
+	store := developmentsession.NewMemoryStore()
+	key := developmentsession.Key{OwnerID: "owner_1", CheckoutID: "checkout_1", WorktreeID: "worktree_1", ProjectID: projectgraph.ResourceID("project_1"), TargetID: "target_1", Environment: "dev"}
+	if _, err := store.Save(t.Context(), developmentsession.Record{ID: key.ID(), Key: key, Diagnostics: []developmentsession.Diagnostic{{Code: "YAML", Message: "Invalid YAML", Path: "dashboards/sales.yaml", Line: 4}}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	owner := key.OwnerID
+	handler := New(Config{
+		Store: store, Enabled: true, CheckoutID: key.CheckoutID, WorktreeID: key.WorktreeID, TargetID: key.TargetID, Environment: key.Environment,
+		CurrentPrincipal: func(*http.Request) (string, bool) { return owner, true },
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return key.ProjectID, nil },
+	})
+	router := chi.NewRouter()
+	router.Get("/development-session/events", handler.ActiveProjectEvents)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	response, err := server.Client().Get(server.URL + "/development-session/events?project=other&target=other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("active project events = %d %q", response.StatusCode, response.Header.Get("Content-Type"))
+	}
+	if event := readSSEData(t, bufio.NewReader(response.Body)); !strings.Contains(event, `"path":"dashboards/sales.yaml"`) || !strings.Contains(event, `"line":4`) {
+		t.Fatalf("active project diagnostic = %s", event)
+	}
+	owner = "other_owner"
+	unowned, err := server.Client().Get(server.URL + "/development-session/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unowned.Body.Close()
+	if unowned.StatusCode != http.StatusNotFound {
+		t.Fatalf("other owner could read local diagnostics: status=%d", unowned.StatusCode)
+	}
+}
+
 func TestSessionEventPublicationIsScopedToExactSession(t *testing.T) {
 	handler := New(Config{})
 	streamA := make(chan developmentsession.Record, 1)

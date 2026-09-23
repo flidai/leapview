@@ -358,6 +358,25 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 	h.events(w, r)
 }
 
+// ActiveProjectEvents exposes the same owner-scoped revision stream to the
+// ordinary local application without accepting a browser-selected project or
+// target. App composition mounts this only for an enabled development runtime.
+func (h *Handler) ActiveProjectEvents(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.config.ResolveProjectID == nil || strings.TrimSpace(h.config.TargetID) == "" {
+		transport.WriteProblem(w, r, http.StatusServiceUnavailable, "DEVELOPMENT_SESSION_UNAVAILABLE", "Development sessions are unavailable", nil)
+		return
+	}
+	projectID, err := h.config.ResolveProjectID(r.Context())
+	if err != nil || strings.TrimSpace(projectID.String()) == "" {
+		transport.WriteProblem(w, r, http.StatusServiceUnavailable, "DEVELOPMENT_SESSION_UNAVAILABLE", "The active development project is unavailable", nil)
+		return
+	}
+	params := chi.NewRouteContext()
+	params.URLParams.Add("project", projectID.String())
+	params.URLParams.Add("target", h.config.TargetID)
+	h.events(w, r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, params)))
+}
+
 func writeSessionEvent(w http.ResponseWriter, record developmentsession.Record) {
 	payload, err := json.Marshal(record)
 	if err != nil {

@@ -237,10 +237,13 @@ late responses must be rejected using the pinned view identity. This preserves
 the existing immutable generation and lease contracts; it does not promise
 transactional snapshots across independently changing external systems.
 
-Invalid edits produce actionable file-and-line diagnostics in the terminal
-and preview. The preview marks the previous working candidate out of date;
-the ordinary app keeps the last active generation available. Obsolete work
-must not replace a newer valid result.
+Invalid edits produce actionable file-and-line diagnostics in the terminal,
+private preview, and ordinary local dashboard. The ordinary dashboard marks
+its last working generation out of date while keeping it available; a later
+valid activation refreshes an already-open ordinary dashboard. The private
+preview retains its exact candidate status. Obsolete work must not replace a
+newer valid result. These browser events are available only for the
+checkout-scoped local development session, not ordinary hosted dashboards.
 Normal output describes resource changes, progress, reuse, and the next useful
 action. Detailed evidence remains accessible through inspection, verbose
 output, and structured JSON suitable for CI and agents.
