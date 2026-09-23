@@ -43,7 +43,7 @@ test('ECharts responsive patch is deterministic and preserves stable option iden
   expect(responsiveEChartsPatch(option, 0, 240)).toEqual({})
 })
 
-test('ECharts responsive patch changes only outside pie label alignment', () => {
+test('ECharts responsive patch keeps proportional geometry stable while adapting outside labels', () => {
   for (const mark of ['pie', 'donut', 'funnel'] as const) {
     const envelope = proportionalFixture(mark) as any
     envelope.spec.presentation.legend = 'bottom'
@@ -153,7 +153,7 @@ test('ECharts handle reapplies compact layout after updates and restores desktop
   expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
 })
 
-test('ECharts handle switches proportional label alignment only across the compact breakpoint', () => {
+test('ECharts handle switches proportional label layout only across responsive breakpoints', () => {
   const calls: Record<string, any>[] = []
   const chart = {
     on() {}, off() {}, resize() {}, dispose() {},
@@ -168,15 +168,20 @@ test('ECharts handle switches proportional label alignment only across the compa
   }]
   const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
   handle.mount(envelope, defaultRendererContext)
-  handle.resize(320, 240)
+  handle.resize(320, 300)
   const first = calls.at(-1)!.series[0]
   const count = calls.length
-  handle.resize(420, 240)
+  handle.resize(360, 300)
   expect(calls.length).toBe(count)
   expect(first.radius).toEqual(['54%', '76%'])
   expect(first.left).toBeUndefined()
   expect(first.right).toBeUndefined()
   expect(first.label.alignTo).toBe('edge')
+
+  handle.resize(435, 420)
+  expect(calls.at(-1)!.series[0]).toMatchObject({
+    id: 'series:primary:donut', label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+  })
 
   handle.resize(1200, 720)
   expect(calls.at(-1)!.series[0]).toMatchObject({
@@ -186,8 +191,16 @@ test('ECharts handle switches proportional label alignment only across the compa
   })
   expect(calls.at(-1)!.series[0].radius).toEqual(['54%', '76%'])
 
-  handle.resize(420, 240)
+  handle.resize(320, 300)
   expect(calls.at(-1)!.series[0]).toMatchObject({ id: 'series:primary:donut', label: { alignTo: 'edge' } })
+
+  const inside = structuredClone(envelope)
+  inside.spec.presentation.labelPosition = 'inside'
+  handle.update(inside, Change.Spec, defaultRendererContext)
+  handle.resize(535, 420)
+  expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 11, padding: 0 })
+  handle.resize(700, 500)
+  expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 12, padding: 3 })
 })
 
 function legendHandle() {

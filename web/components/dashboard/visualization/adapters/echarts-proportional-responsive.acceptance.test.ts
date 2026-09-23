@@ -56,14 +56,17 @@ test('proportional responsive sizing keeps authored radii and the bottom legend 
     expect.objectContaining({ type: 'text', bottom: 28, style: expect.objectContaining({ text: 'Order status' }) }),
   ]))
 
-  for (const [width, height, alignTo] of [[373, 282, 'edge'], [600, 360, 'labelLine'], [330, 220, 'edge']] as const) {
+  for (const [width, height, alignTo, lineLength, endLength] of [
+    [373, 282, 'edge'], [435, 420, 'labelLine', 34, 20],
+    [600, 360, 'labelLine', 29, 21], [330, 220, 'edge'],
+  ] as const) {
     const patch = responsiveEChartsPatch(option, width, height)
     expect(patch.series[0].id).toBe('series:primary:donut')
     expect(patch.series[0].radius).toEqual(['54%', '76%'])
     expect(patch.series[0].label.alignTo).toBe(alignTo)
     if (alignTo === 'labelLine') {
       expect(patch.series[0].label).toMatchObject({ distanceToLabelLine: 12 })
-      expect(patch.series[0].labelLine).toMatchObject({ length: 29, length2: 21 })
+      expect(patch.series[0].labelLine).toMatchObject({ length: lineLength, length2: endLength })
     }
   }
   expect(JSON.stringify(option)).toBe(before)
@@ -146,7 +149,48 @@ test('proportional labels honor hidden and inside presentation settings without 
   expect(insideSeries.label).toMatchObject({ show: true, position: 'inside' })
   expect(insideSeries.label.formatter({ value: ['Status 0', 1] })).toBe('1')
   expect(insideSeries.labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
-  expect(responsiveEChartsPatch(echartsOption(inside, defaultRendererContext) as any, 1200, 720)).toEqual({})
+  expect(responsiveEChartsPatch(echartsOption(inside, defaultRendererContext) as any, 1200, 720).series[0].label).toMatchObject({
+    position: 'inside', fontSize: 12, padding: 3,
+  })
+  expect(responsiveEChartsPatch(echartsOption(inside, defaultRendererContext) as any, 535, 420).series[0].label).toMatchObject({
+    position: 'inside', fontSize: 11, padding: 0,
+  })
+})
+
+test('card-sized inside pie labels do not collide', () => {
+  const envelope = proportionalWithIconFormat('pie')
+  if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected proportional fixture')
+  envelope.spec.presentation.labelPosition = 'inside'
+  envelope.spec.presentation.rose = false
+  envelope.dataState.datasets[0].rows = [
+    ['health_beauty', 1.44], ['watches_gifts', 1.3], ['bed_bath_table', 1.26],
+    ['sports_leisure', 1.15], ['computers_accessories', 1.07], ['furniture_decor', 0.903],
+  ]
+  const source = echartsOption(envelope, defaultRendererContext) as any
+  for (const [width, height] of [[396, 420], [535, 420]] as const) {
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+    try {
+      chart.setOption({ ...source, ...responsiveEChartsPatch(source, width, height), animation: false })
+      chart.renderToSVGString()
+      const labels = ['1.44', '1.3', '1.26', '1.15', '1.07', '0.903']
+      const bounds = chart.getZr().storage.getDisplayList()
+        .filter((item: any) => item.type === 'tspan' && labels.includes(String(item.style?.text)))
+        .map((item: any) => {
+          const rect = item.getBoundingRect().clone()
+          const transform = item.getComputedTransform?.() ?? item.transform
+          if (transform) rect.applyTransform(transform)
+          return rect
+        })
+      expect(bounds).toHaveLength(labels.length)
+      for (let index = 0; index < bounds.length; index++) {
+        for (let candidate = index + 1; candidate < bounds.length; candidate++) {
+          expect(bounds[index]!.intersect(bounds[candidate]!)).toBe(false)
+        }
+      }
+    } finally {
+      chart.dispose()
+    }
+  }
 })
 
 test('empty and loading donuts show only the shared status graphic', () => {

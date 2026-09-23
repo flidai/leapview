@@ -1,5 +1,11 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 
+const COMPACT_WIDTH = 480
+const COMPACT_HEIGHT = 280
+const BOUNDED_OUTSIDE_LABEL_WIDTH = 400
+const CROWDED_INSIDE_LABEL_WIDTH = 640
+const CROWDED_INSIDE_LABEL_HEIGHT = 420
+
 export type EChartsNavigationDefaults = Readonly<{ dataZoom: boolean; roam: boolean }>
 export type EChartsViewState = Readonly<{
   dataZoom?: readonly Readonly<Record<string, unknown>>[]
@@ -13,10 +19,19 @@ export function echartsNavigationDefaults(envelope: VisualizationEnvelope): ECha
   }
 }
 
+export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, width: number, height: number): string {
+  const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
+  if (envelope.spec.kind !== 'proportional' || envelope.spec.mark === 'funnel') return compact ? 'compact' : 'roomy'
+  if (envelope.spec.presentation.labelPosition === 'inside') {
+    return `${compact ? 'compact' : 'roomy'}:inside-${width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT ? 'crowded' : 'full'}`
+  }
+  return `${compact ? 'compact' : 'roomy'}:outside-${width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT ? 'bounded' : 'local'}`
+}
+
 export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
   if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
-  const compact = width < 480 || height < 280
-  const proportionalSeries = responsiveProportionalSeries(option.series, compact, width, height)
+  const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
+  const proportionalSeries = responsiveProportionalSeries(option.series, width, height)
   if (option.grid === undefined) return proportionalSeries === undefined ? {} : { series: proportionalSeries }
   const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
   const bottomLegend = compact && hasBottomLegend(option.legend)
@@ -43,9 +58,10 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   return patch
 }
 
-function responsiveProportionalSeries(value: unknown, compact: boolean, width: number, height: number): unknown[] | undefined {
+function responsiveProportionalSeries(value: unknown, width: number, height: number): unknown[] | undefined {
   if (!Array.isArray(value)) return undefined
-  let hasOutsidePieLabels = false
+  const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
+  let hasResponsivePieLabels = false
   const series = value.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
     const source = entry as Record<string, unknown>
@@ -54,20 +70,38 @@ function responsiveProportionalSeries(value: unknown, compact: boolean, width: n
       source.type !== 'pie'
       || !label || typeof label !== 'object' || Array.isArray(label)
       || (label as Record<string, unknown>).show === false
-      || (label as Record<string, unknown>).position !== 'outside'
     ) return entry
-    hasOutsidePieLabels = true
+    const labelOption = label as Record<string, unknown>
+    if (labelOption.position === 'inside') {
+      const crowded = width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT
+      hasResponsivePieLabels = true
+      if (!crowded) return entry
+      return {
+        ...source,
+        label: {
+          ...labelOption,
+          // Horizontal labels near the centre of neighbouring sectors can
+          // visually collide even when ECharts' overlap boxes only touch.
+          // Use a smaller label size in card-sized pie views while preserving
+          // authored density and full-size focus views.
+          fontSize: Math.min(finiteNumber(labelOption.fontSize) ?? 12, 11),
+          padding: 0,
+        },
+      }
+    }
+    if (labelOption.position !== 'outside') return entry
+    hasResponsivePieLabels = true
     return {
       ...source,
       label: {
-        ...(label as Record<string, unknown>),
+        ...labelOption,
         // Edge alignment keeps text inside narrow cards. In roomy views it
         // stretches guide lines to the host boundary, so anchor labels to
         // their natural guide-line ends instead.
-        alignTo: compact ? 'edge' : 'labelLine',
-        ...(compact ? {} : { distanceToLabelLine: 12 }),
+        alignTo: boundedOutsideLabels ? 'edge' : 'labelLine',
+        ...(boundedOutsideLabels ? {} : { distanceToLabelLine: 12 }),
       },
-      ...(compact ? {} : {
+      ...(boundedOutsideLabels ? {} : {
         labelLine: {
           ...((source.labelLine && typeof source.labelLine === 'object' && !Array.isArray(source.labelLine))
             ? source.labelLine as Record<string, unknown>
@@ -78,7 +112,11 @@ function responsiveProportionalSeries(value: unknown, compact: boolean, width: n
       }),
     }
   })
-  return hasOutsidePieLabels ? series : undefined
+  return hasResponsivePieLabels ? series : undefined
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function compactInset(value: unknown, fallback: number): unknown {

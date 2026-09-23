@@ -14,6 +14,7 @@ import {
   captureEChartsViewState,
   echartsNavigationDefaults,
   overlayDataZoomNavigation,
+  responsiveEChartsLayoutKey,
   responsiveEChartsPatch,
   type EChartsViewState,
 } from './echarts/view-state'
@@ -114,7 +115,7 @@ export class EChartsHandle implements RendererHandle {
   private disposed = false
   private readiness: Promise<void> = Promise.resolve()
   private readinessAbort?: AbortController
-  private compactLayout?: boolean
+  private responsiveLayout?: string
   private compactWidth = 0
   private lastWidth = 0
   private lastHeight = 0
@@ -185,7 +186,8 @@ export class EChartsHandle implements RendererHandle {
     const envelope = this.envelope
     if (!envelope || !this.context || this.lastWidth <= 0 || this.lastHeight <= 0) return
     const compact = this.lastWidth < 480 || this.lastHeight < 280
-    const sameLayout = compact === this.compactLayout
+    const layout = responsiveEChartsLayoutKey(envelope, this.lastWidth, this.lastHeight)
+    const sameLayout = layout === this.responsiveLayout
     if (!force && sameLayout && (!compact || this.compactWidth === this.lastWidth)) return
     const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
     // Exact compact widths only affect scroll legends. Avoid reapplying an
@@ -195,7 +197,7 @@ export class EChartsHandle implements RendererHandle {
       return
     }
     this.compactWidth = this.lastWidth
-    this.compactLayout = compact
+    this.responsiveLayout = layout
     if (patch.dataZoom !== undefined) patch.dataZoom = overlayDataZoomNavigation(patch.dataZoom, this.captureViewState().dataZoom)
     if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: !force })
   }
