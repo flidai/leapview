@@ -169,6 +169,34 @@ func TestSchemaRefJSONPreservesPatternAndPropertyNames(t *testing.T) {
 	require.Equal(t, map[string]any{"type": "string"}, got["additionalProperties"])
 }
 
+func TestValueSchemaPreservesNumericConstantsAndArrayBounds(t *testing.T) {
+	constant := 1.0
+	minimum := 1
+	maximum := 100
+	got := valueSchema(ir.Document{}, ir.SchemaRef{
+		Type: "array", MinItems: &minimum, MaxItems: &maximum,
+		Items: &ir.SchemaRef{Type: "integer", Const: &constant},
+	})
+	require.Equal(t, &minimum, got.MinItems)
+	require.Equal(t, &maximum, got.MaxItems)
+	require.NotNil(t, got.Items)
+	require.Equal(t, &constant, got.Items.Const)
+	require.Equal(t, map[string]any{
+		"type": "array", "minItems": 1, "maxItems": 100,
+		"items": map[string]any{"type": "integer", "const": float64(1)},
+	}, valueSchemaJSON(got))
+}
+
+func TestSchemaRefJSONPreservesConstraintsBesideReferences(t *testing.T) {
+	maximum := 2
+	doc := ir.Document{Schemas: map[string]ir.Schema{
+		"Versions": {Type: "array", Items: &ir.SchemaRef{Type: "integer"}},
+	}}
+	got := schemaRefJSON(doc, ir.SchemaRef{Ref: "Versions", MaxItems: &maximum}, map[string]bool{})
+	require.Equal(t, "array", got["type"])
+	require.Equal(t, 2, got["maxItems"])
+}
+
 func TestSchemaJSONOmitsEmptyType(t *testing.T) {
 	require.NotContains(t, schemaJSON(ir.Document{}, ir.Schema{}, map[string]bool{}), "type")
 }

@@ -26,6 +26,9 @@ func validateSchemaValue(value any, schema map[string]any, path string) error {
 	if enum, ok := schema["enum"].([]any); ok && !schemaEnumContains(enum, value) {
 		return fmt.Errorf("%s is not an allowed enum value", path)
 	}
+	if constant, ok := schema["const"]; ok && !schemaEnumContains([]any{constant}, value) {
+		return fmt.Errorf("%s must equal the schema constant", path)
+	}
 	typeName, _ := schema["type"].(string)
 	switch typeName {
 	case "", "null":
@@ -69,6 +72,12 @@ func validateSchemaValue(value any, schema map[string]any, path string) error {
 		items, ok := value.([]any)
 		if !ok {
 			return fmt.Errorf("%s must be an array", path)
+		}
+		if minimum, ok := schemaInteger(schema["minItems"]); ok && len(items) < minimum {
+			return fmt.Errorf("%s must contain at least %d items", path, minimum)
+		}
+		if maximum, ok := schemaInteger(schema["maxItems"]); ok && len(items) > maximum {
+			return fmt.Errorf("%s must contain at most %d items", path, maximum)
 		}
 		if itemSchema, ok := schema["items"].(map[string]any); ok {
 			for index, item := range items {

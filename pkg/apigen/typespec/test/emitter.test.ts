@@ -1730,6 +1730,35 @@ describe("APIGen TypeSpec emitter", () => {
     });
   });
 
+  it("emits numeric literal constants and array item bounds", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Constrained Contract API" })
+      namespace ConstrainedContractAPI;
+
+      model ExplorationSpec {
+        schemaVersion: 1;
+        @maxItems(100)
+        dimensions: string[];
+      }
+
+      @route("/exploration")
+      @get
+      op getExploration(): ExplorationSpec;
+    `);
+
+    expect(doc.schemas.ExplorationSpec.properties.schemaVersion.schema).toEqual({
+      type: "integer",
+      const: 1,
+    });
+    expect(doc.schemas.ExplorationSpec.properties.dimensions.schema).toEqual({
+      type: "array",
+      items: { type: "string" },
+      max_items: 100,
+    });
+  });
+
   it("fails without writing IR for response status ranges", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
     const irPath = join(outDir, "json-ir.json");
