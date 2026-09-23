@@ -60,6 +60,24 @@ func nativeDeliveryHandlerModule(port NativeDeliveryMutationPort) *Module {
 
 func nativeDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 
+func TestNativePublicationValidationAcceptsExactCommittedReplay(t *testing.T) {
+	now := time.Now().UTC()
+	publication := NativeDeliveryPublication{
+		ID: uuid.New(), EventID: uuid.New(), AuditID: uuid.New(), PlanID: uuid.New(), CandidateID: uuid.New(), GenerationID: uuid.New(),
+		ProjectID: "finance", TargetID: "target", Environment: "dev", Status: "committed",
+		PlanDigest: nativeDigest('a'), RequestDigest: nativeDigest('b'), ExpectedTargetRevision: 1,
+		ResultTargetRevision: 2, CreatedAt: now.Add(-time.Minute), CompletedAt: now,
+	}
+	publication.OperationID = publication.ID
+	if err := publication.validate("finance", "target", "dev"); err != nil {
+		t.Fatalf("committed publication replay rejected: %v", err)
+	}
+	publication.ResultTargetRevision = 0
+	if err := publication.validate("finance", "target", "dev"); err == nil {
+		t.Fatal("committed publication without target revision was accepted")
+	}
+}
+
 func TestNativeDeliveryPlanHandlerUsesInjectedUUIDPort(t *testing.T) {
 	projectID, err := projectgraph.NewResourceID("finance")
 	if err != nil {

@@ -288,7 +288,7 @@ func bootstrapManagedDataOperation(operationID string) bool {
 
 func bootstrapControlPlaneOperation(operationID string) bool {
 	switch operationID {
-	case "getDeliveryCandidateStatus", "getDeliveryPlanPreview":
+	case "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "getDeliveryPublicationEvidence", "getDeliveryOperatorSnapshot":
 		return true
 	default:
 		return false
@@ -306,7 +306,7 @@ func bootstrapCandidateSourceOperation(operationID string) bool {
 
 func bootstrapOperationAllowed(operationID string) bool {
 	switch operationID {
-	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "getDevelopmentProfileApplication", "applyDevelopmentProfile", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval",
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "getDevelopmentProfileApplication", "applyDevelopmentProfile", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "getDeliveryPublicationEvidence", "getDeliveryOperatorSnapshot", "requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload", "createProjectRoleBinding", "listProjectRoleBindings", "createGrant", "listGrants":
 		return true

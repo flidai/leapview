@@ -107,7 +107,7 @@ experience. The ordinary journey is:
 leapview init my-analytics
 cd my-analytics
 
-# Start or resume local services, watch YAML, and open a private preview.
+# Start or resume a complete local instance, watch YAML, and open the app.
 leapview dev
 
 # After configuring an existing production target, review and deliver source.
@@ -141,8 +141,14 @@ seals, leases, and retention. This profile does not change production
 provisioning or weaken its admission and recovery requirements.
 
 Local endpoints bind to loopback. The launcher establishes a local browser
-and CLI session without requiring the author to perform production operator
-onboarding. Local session setup must not become a remote authentication bypass.
+and CLI session with local administrative authority without requiring the
+author to perform production operator onboarding. This authority is scoped to
+the checkout-owned local target: it must not select a remote target, import
+production credentials, or become a remote authentication bypass. The app
+opens only after the first valid source snapshot has an active local serving
+generation. Its ordinary navigation, catalog, dashboards, and locally
+available administration surfaces must work; features needing external
+integrations show explicit setup states rather than a generic 503.
 The normal released product UI is used, with the Datastar inspector and
 contributor diagnostics disabled by default independently of the environment
 name. `task dev` remains the workflow for changing LeapView software.
@@ -204,11 +210,17 @@ persistent state are explicit rather than a side effect of starting a session.
 The host CLI watches authored files, captures coherent immutable snapshots,
 and sends them through the normal candidate APIs. A live YAML mount is not an
 alternative server configuration or activation mechanism. The compiler still
-validates the complete resource graph. A file watcher never activates shared
-serving state.
+validates the complete resource graph. For the isolated checkout-owned local
+target only, each valid sealed candidate is published through the normal
+durable, atomic activation path and becomes the app's active serving generation
+before the CLI reports it as current. Invalid edits leave the last active
+generation in place. The watcher never auto-activates a remote target;
+production delivery remains explicit and keeps its approval policy.
 
-One stable development-session URL follows the latest valid private candidate
-in the same browser tab. Each dashboard render or refresh resolves the session
+The ordinary local app URL is the default browser entry point. A separate
+stable development-session URL continues to follow the latest valid private
+candidate for exact preview and diagnostics in the same browser tab. Each
+candidate dashboard render or refresh resolves the session
 pointer once, then pins every associated query to that exact candidate and
 required snapshot leases. Widgets, filter options, pagination, cached responses,
 and streamed results must not independently re-resolve the pointer within that
@@ -226,8 +238,9 @@ the existing immutable generation and lease contracts; it does not promise
 transactional snapshots across independently changing external systems.
 
 Invalid edits produce actionable file-and-line diagnostics in the terminal
-and preview. The previous working candidate remains visible with an explicit
-out-of-date indication. Obsolete work must not replace a newer valid result.
+and preview. The preview marks the previous working candidate out of date;
+the ordinary app keeps the last active generation available. Obsolete work
+must not replace a newer valid result.
 Normal output describes resource changes, progress, reuse, and the next useful
 action. Detailed evidence remains accessible through inspection, verbose
 output, and structured JSON suitable for CI and agents.
@@ -280,6 +293,11 @@ explicit credential reference. Connector type comes from that Connection;
 validation reuses LeapView's typed connector and binding contracts. Profiles
 must not introduce independent connector definitions, Project authority,
 runtime storage topology, scheduler configuration, or a second secret system.
+The runtime pins the compiled logical connection catalog (names, graph IDs,
+connector kinds, and access modes) together with the selected profile. Ordinary
+dashboard, model, and other source edits may change the complete graph without
+changing that connection contract; changing the catalog or selected binding
+intent requires a reviewed local runtime reset or replacement.
 
 The selected profile fully covers required external target bindings; retained
 omitted records are not execution fallback. Applying a multi-connection profile

@@ -90,7 +90,7 @@ func TestProfileApplyingDevRemoteAppliesExactCheckpointBeforeSynchronization(t *
 			}}},
 		}},
 	}
-	snapshot := projectdevloop.Snapshot{ProjectID: "project:test", Digest: sourceDigest, GraphDigest: graphDigest}
+	snapshot := projectdevloop.Snapshot{ProjectID: "project:test", Digest: sourceDigest, GraphDigest: graphDigest, ConnectionCatalogDigest: graphDigest}
 	candidate, err := remote.Synchronize(t.Context(), projectdevloop.SyncRequest{Snapshot: snapshot})
 	require.NoError(t, err)
 	require.Equal(t, sourceDigest, candidate.ArtifactDigest)
@@ -105,9 +105,45 @@ func TestProfileApplyingDevRemoteAppliesExactCheckpointBeforeSynchronization(t *
 	require.NoError(t, err)
 	require.Equal(t, firstKey, transport.applyKeys[1], "retrying the same request must keep its idempotency key")
 	snapshot.Digest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	snapshot.GraphDigest = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 	_, err = remote.Synchronize(t.Context(), projectdevloop.SyncRequest{Snapshot: snapshot})
 	require.NoError(t, err)
 	require.NotEqual(t, firstKey, transport.applyKeys[2], "a distinct valid edit must use a distinct key")
+	snapshot.ConnectionCatalogDigest = snapshot.GraphDigest
+	_, err = remote.Synchronize(t.Context(), projectdevloop.SyncRequest{Snapshot: snapshot})
+	require.ErrorContains(t, err, "connection catalog differs")
+}
+
+func TestLocalDevRemotePublishesOnlyAfterSuccessfulSynchronization(t *testing.T) {
+	const sourceDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const graphDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const profileDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	var state localruntime.State
+	require.NoError(t, json.Unmarshal([]byte(`{"authority":{"instanceId":"local-target","environment":"dev"}}`), &state))
+	transport := &developmentProfileTransportStub{current: analyticsgen.DevelopmentProfileApplicationResponse{
+		ApplicationId: "profile_existing", Status: analyticsgen.DevelopmentProfileApplicationStatusApplied,
+		GraphDigest: graphDigest, ProfileDigest: profileDigest,
+	}}
+	delegate := &recordingProfileDelegate{}
+	want := errors.New("local activation failed")
+	called := false
+	remote := &profileApplyingDevRemote{
+		remote: delegate, client: analyticsgen.NewGenClient(transport),
+		local: localDevelopmentSession{state: state, profile: localDevelopmentProfile{
+			GraphDigest: graphDigest, Profile: developmentprofile.Selected{ProfileDigest: profileDigest},
+		}},
+		publish: func(_ context.Context, _ localDevelopmentSession, candidate projectdevloop.Candidate) error {
+			called = true
+			require.Equal(t, sourceDigest, delegate.request.Snapshot.Digest)
+			require.Equal(t, sourceDigest, candidate.ArtifactDigest)
+			return want
+		},
+	}
+	_, err := remote.Synchronize(t.Context(), projectdevloop.SyncRequest{Snapshot: projectdevloop.Snapshot{
+		ProjectID: "project:test", Digest: sourceDigest, GraphDigest: graphDigest, ConnectionCatalogDigest: graphDigest,
+	}})
+	require.True(t, called)
+	require.ErrorIs(t, err, want)
 }
 
 type recordingProfileDelegate struct{ request projectdevloop.SyncRequest }

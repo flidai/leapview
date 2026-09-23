@@ -21,6 +21,8 @@ const stableProfileGraphAttempts = 3
 type localDevelopmentProfile struct {
 	CheckoutRoot string
 	SourceRoot   string
+	// GraphDigest is the legacy profile wire field for the logical connection
+	// catalog digest; the complete authored graph is free to change while dev runs.
 	GraphDigest  string
 	Profile      developmentprofile.Selected
 	Credentials  map[string]string
@@ -95,6 +97,10 @@ func prepareLocalDevelopmentProfile(command *cobra.Command, args []string) (loca
 	if err != nil {
 		return localDevelopmentProfile{}, err
 	}
+	connectionCatalogDigest, err := developmentprofile.CatalogDigest(catalog)
+	if err != nil {
+		return localDevelopmentProfile{}, err
+	}
 	profileFile, err := command.Flags().GetString("profile-file")
 	if err != nil {
 		return localDevelopmentProfile{}, err
@@ -128,7 +134,7 @@ func prepareLocalDevelopmentProfile(command *cobra.Command, args []string) (loca
 	return localDevelopmentProfile{
 		CheckoutRoot: checkout,
 		SourceRoot:   filepath.Clean(sourceRoot),
-		GraphDigest:  bundle.Graph().Digest(),
+		GraphDigest:  connectionCatalogDigest,
 		Profile:      selected,
 		Credentials:  credentials,
 	}, nil

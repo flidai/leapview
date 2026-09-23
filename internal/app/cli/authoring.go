@@ -43,17 +43,19 @@ type projectDevRemoteFactory struct {
 }
 
 type localDevelopmentSession struct {
-	profile localDevelopmentProfile
-	state   localruntime.State
-	output  io.Writer
+	profile     localDevelopmentProfile
+	state       localruntime.State
+	output      io.Writer
+	openBrowser func(context.Context) error
 }
 
 type localDevelopmentSessionContextKey struct{}
 
 type profileApplyingDevRemote struct {
-	remote projectdevloop.Remote
-	client *analyticsgen.GenClient
-	local  localDevelopmentSession
+	remote  projectdevloop.Remote
+	client  *analyticsgen.GenClient
+	local   localDevelopmentSession
+	publish func(context.Context, localDevelopmentSession, projectdevloop.Candidate) error
 }
 
 func (remote *profileApplyingDevRemote) Synchronize(ctx context.Context, request projectdevloop.SyncRequest) (projectdevloop.Candidate, error) {
@@ -61,8 +63,8 @@ func (remote *profileApplyingDevRemote) Synchronize(ctx context.Context, request
 		return projectdevloop.Candidate{}, errors.New("development profile application transport is unavailable")
 	}
 	profile := remote.local.profile
-	if request.Snapshot.GraphDigest == "" || request.Snapshot.GraphDigest != profile.GraphDigest {
-		return projectdevloop.Candidate{}, errors.New("compiled graph differs from the local runtime profile identity; run `leapview dev reset`, review the profile, and start again")
+	if request.Snapshot.ConnectionCatalogDigest == "" || request.Snapshot.ConnectionCatalogDigest != profile.GraphDigest {
+		return projectdevloop.Candidate{}, errors.New("compiled connection catalog differs from the local runtime profile identity; review the profile, then run `leapview dev reset` and start again")
 	}
 	projectID := request.Snapshot.ProjectID.String()
 	targetID := remote.local.state.Authority.InstanceID
@@ -101,7 +103,16 @@ func (remote *profileApplyingDevRemote) Synchronize(ctx context.Context, request
 	if response.Body.Status != analyticsgen.DevelopmentProfileApplicationStatusApplied || response.Body.GraphDigest != profile.GraphDigest || response.Body.ProfileDigest != profile.Profile.ProfileDigest {
 		return projectdevloop.Candidate{}, errors.New("local runtime did not acknowledge the exact applied development profile")
 	}
-	return remote.remote.Synchronize(ctx, request)
+	candidate, err := remote.remote.Synchronize(ctx, request)
+	if err != nil {
+		return projectdevloop.Candidate{}, err
+	}
+	if remote.publish != nil {
+		if err := remote.publish(ctx, remote.local, candidate); err != nil {
+			return projectdevloop.Candidate{}, fmt.Errorf("activate local development candidate: %w", err)
+		}
+	}
+	return candidate, nil
 }
 
 func developmentProfileApplicationID(local localDevelopmentSession) string {
@@ -263,9 +274,10 @@ func runLocalDevRuntime(
 	if len(profile.Profile.Connections) > 0 && !allowUpstreamRead {
 		return errors.New("development profile connection testing can contact upstream systems; review the summary and pass --allow-upstream-read to consent")
 	}
-	controller, err := newLocalRuntimeControllerForProfile(endpoint, command, profile.Credentials, localruntime.DevelopmentProfileIdentity{
+	var browserRequest localruntime.SessionRequest
+	controller, err := newLocalRuntimeControllerForProfileWithDeferredBrowser(endpoint, command, profile.Credentials, localruntime.DevelopmentProfileIdentity{
 		Name: profile.Profile.ProfileName, GraphDigest: profile.GraphDigest, ProfileDigest: profile.Profile.ProfileDigest,
-	})
+	}, &browserRequest)
 	if err != nil {
 		return err
 	}
@@ -279,7 +291,17 @@ func runLocalDevRuntime(
 		if err := command.Flags().Set("target", state.Session.TargetName); err != nil {
 			return err
 		}
-		actionContext = context.WithValue(actionContext, localDevelopmentSessionContextKey{}, localDevelopmentSession{profile: profile, state: state, output: command.OutOrStdout()})
+		local := localDevelopmentSession{profile: profile, state: state, output: command.OutOrStdout()}
+		if browserRequest.OpenBrowser {
+			local.openBrowser = func(ctx context.Context) error {
+				_, cookie, err := establishLocalBrowserSession(ctx, browserRequest, http.DefaultClient)
+				if err != nil {
+					return err
+				}
+				return openLocalBrowserSession(ctx, browserRequest.Origin, cookie, openSystemBrowser)
+			}
+		}
+		actionContext = context.WithValue(actionContext, localDevelopmentSessionContextKey{}, local)
 		command.SetContext(actionContext)
 		return remoteRun(command, args)
 	})
@@ -326,7 +348,13 @@ func (factory projectDevRemoteFactory) Remote(
 		}
 		nativeTransport.developmentInputDigest = inputDigest
 	}
-	return &profileApplyingDevRemote{remote: remote, client: analyticsgen.NewGenClient(generic), local: local}, nil
+	return &profileApplyingDevRemote{
+		remote: remote, client: analyticsgen.NewGenClient(generic), local: local,
+		publish: func(ctx context.Context, local localDevelopmentSession, candidate projectdevloop.Candidate) error {
+			_, err := publishAndActivateLocalCandidate(ctx, deploymentgen.NewGenClient(generic), local, candidate)
+			return err
+		},
+	}, nil
 }
 
 func bootstrapLocalOwnerPolicy(ctx context.Context, transport apigenclient.Transport, local localDevelopmentSession) error {
@@ -383,7 +411,7 @@ func (factory projectDevRemoteFactory) DevelopmentSession(ctx context.Context, c
 	if err != nil {
 		return nil, err
 	}
-	return &projectcli.DevSessionBinding{Store: store, Key: key}, nil
+	return &projectcli.DevSessionBinding{Store: store, Key: key, AppURL: origin, OpenAppBrowser: local.openBrowser}, nil
 }
 
 func newProjectDevSynchronizationTransport(native *candidateSynchronizationTransport) projectdevloop.SynchronizationTransport {
