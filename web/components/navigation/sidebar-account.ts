@@ -16,7 +16,7 @@ export const sidebarAccountStyles = css`
   .user-loading { grid-column: 1 / -1; }
   .account-popover { position: fixed; inset: auto; box-sizing: border-box; margin: 0; padding: var(--base-size-6); overflow: auto; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay, var(--lv-bg-panel)); color: var(--lv-fg-default); box-shadow: var(--lv-shadow-floating-lg); }
   .account-popover:popover-open { display: grid; gap: var(--base-size-2); }
-  .account-summary { min-width: 0; padding: var(--base-size-6) var(--base-size-8) var(--base-size-10); border-bottom: var(--lv-border-muted); }
+  .account-summary { min-width: 0; padding: var(--base-size-6) var(--base-size-8) var(--base-size-8); border-bottom: var(--lv-border-muted); }
   .account-name, .account-role { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .account-name { font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-semibold); }
   .account-role { margin-top: var(--base-size-2); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
