@@ -278,7 +278,7 @@ func startSuccessorS3Provider(t *testing.T) successorS3Provider {
 	secret := uuid.NewString()
 	container, err := testminio.Run(ctx,
 		tcminio.WithUsername(user), tcminio.WithPassword(secret),
-		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g"}),
+		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g,uid=65532,gid=65532,mode=0700"}),
 		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithStartupTimeout(time.Minute)))
 	testcontainers.CleanupContainer(t, container)
 	if err != nil {

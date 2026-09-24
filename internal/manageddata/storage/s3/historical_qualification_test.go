@@ -48,7 +48,7 @@ func historicalProvider(t *testing.T) (context.Context, *awss3.Client, func(stri
 	user, secret := "q"+strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()
 	// Liveness alone can pass before S3 initialization completes.
 	container, err := testminio.Run(ctx, tcminio.WithUsername(user), tcminio.WithPassword(secret),
-		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g"}),
+		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g,uid=65532,gid=65532,mode=0700"}),
 		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithStartupTimeout(time.Minute)))
 	testcontainers.CleanupContainer(t, container)
 	if err != nil {

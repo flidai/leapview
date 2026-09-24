@@ -45,15 +45,19 @@ func TestSourceFixtureReleaseAndTLS(t *testing.T) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key})
 	container, err := Run(ctx,
-		testcontainers.WithFiles(
-			testcontainers.ContainerFile{Reader: strings.NewReader(string(certPEM)), ContainerFilePath: "/root/.minio/certs/public.crt", FileMode: 0644},
-			testcontainers.ContainerFile{Reader: strings.NewReader(string(keyPEM)), ContainerFilePath: "/root/.minio/certs/private.key", FileMode: 0600},
-		),
+		WithTLSCertificate(certPEM, keyPEM),
 		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithTLS(true).WithAllowInsecure(true)),
 	)
 	testcontainers.CleanupContainer(t, container)
 	if err != nil {
 		t.Fatal(err)
+	}
+	inspected, err := container.Inspect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspected.Config.User != "65532:65532" {
+		t.Fatalf("fixture must run as non-root, got %q", inspected.Config.User)
 	}
 	code, output, err := container.Exec(ctx, []string{"/minio", "--version"})
 	if err != nil {
@@ -74,7 +78,7 @@ func TestSourceFixtureReleaseAndTLS(t *testing.T) {
 	if !roots.AppendCertsFromPEM(certPEM) {
 		t.Fatal("test certificate is invalid")
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "localhost", MinVersion: tls.VersionTLS12}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+endpoint+"/minio/health/ready", nil)

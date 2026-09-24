@@ -994,10 +994,7 @@ func startQualificationObjects(t *testing.T, networkName string, manifest provid
 	containerName := "leapview-fai981-minio-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	objectPort := freeLoopbackPort(t)
 	container, err := testminio.Run(ctx, tcminio.WithUsername(user), tcminio.WithPassword(secret),
-		testcontainers.WithFiles(
-			testcontainers.ContainerFile{Reader: strings.NewReader(material.serverCert), ContainerFilePath: "/root/.minio/certs/public.crt", FileMode: 0o644},
-			testcontainers.ContainerFile{Reader: strings.NewReader(material.serverKey), ContainerFilePath: "/root/.minio/certs/private.key", FileMode: 0o600},
-		),
+		testminio.WithTLSCertificate([]byte(material.serverCert), []byte(material.serverKey)),
 		testcontainers.WithReuseByName(containerName),
 		tcnetwork.WithNetworkName([]string{"fai981-objects"}, networkName),
 		tcnetwork.WithBridgeNetwork(),
@@ -1007,7 +1004,7 @@ func startQualificationObjects(t *testing.T, networkName string, manifest provid
 				dockernetwork.MustParsePort("9000/tcp"): {{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: objectPort}},
 			}
 		}),
-		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g"}),
+		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g,uid=65532,gid=65532,mode=0700"}),
 		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithTLS(true).WithAllowInsecure(true).WithStartupTimeout(time.Minute)))
 	if err != nil {
 		t.Fatalf("start required versioned object provider: %v", err)

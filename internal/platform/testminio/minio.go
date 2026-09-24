@@ -17,7 +17,7 @@ import (
 
 // Image identifies the locally built fixture, not an image to pull from a registry.
 // Bump the suffix whenever Dockerfile build inputs change.
-const Image = "leapview-test/minio:07c3a429bfed433e49018cb0f78a52145d4bedeb-v1"
+const Image = "leapview-test/minio:07c3a429bfed433e49018cb0f78a52145d4bedeb-v2"
 
 //go:embed Dockerfile
 var dockerfile []byte

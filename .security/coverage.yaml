@@ -96,6 +96,12 @@ surfaces:
     scanners: [trivy]
     images:
       - docker.io/library/postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+  - path: internal/platform/testminio/Dockerfile
+    kind: dockerfile
+    updater: {ecosystem: docker, directory: /internal/platform/testminio}
+    scanners: [trivy]
+    images:
+      - golang:1.24.6-bookworm@sha256:ab1d1823abb55a9504d2e3e003b75b36dbeb1cbcc4c92593d85a84ee46becc6c
   - path: internal/app/testing/maliciousinstance/electron/Dockerfile.linux
     kind: dockerfile
     updater: {ecosystem: docker, directory: /internal/app/testing/maliciousinstance/electron}

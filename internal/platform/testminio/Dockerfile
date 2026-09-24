@@ -10,11 +10,15 @@ ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOMAXPROCS=4
 RUN go build -p 4 -mod=readonly -trimpath -ldflags '-s -w -X github.com/minio/minio/cmd.Version=2025-09-07T16:13:09Z -X github.com/minio/minio/cmd.CopyrightYear=2025 -X github.com/minio/minio/cmd.ShortCommitID=07c3a429bfed -X github.com/minio/minio/cmd.ReleaseTag=RELEASE.2025-09-07T16-13-09Z -X github.com/minio/minio/cmd.CommitID=07c3a429bfed433e49018cb0f78a52145d4bedeb' -o /minio . \
     && go clean -cache -modcache
 
+RUN mkdir -p /runtime/data /runtime/root/.minio/certs /runtime/tmp && chmod 1777 /runtime/tmp
+
 FROM scratch
 ENV HOME=/root
+COPY --from=build --chown=65532:65532 /runtime/ /
 COPY --from=build /minio /minio
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /src/LICENSE /LICENSE
+USER 65532:65532
 EXPOSE 9000
 ENTRYPOINT ["/minio"]
 CMD ["server", "/data"]
