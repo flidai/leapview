@@ -41,6 +41,7 @@ export class AgentProviderSettings extends LitElement {
     if (!a) return
     if (!this.initialized) {
       this.draft = { enabled: a.enabled, model: a.model || '', baseUrl: a.baseUrl || '', apiMode: a.apiMode || 'chat-completions', reasoningEffort: a.reasoningEffort || '', apiKey: '', removeKey: false }
+      this.normalizeReasoning()
       this.draftRevision = a.configurationRevision ?? 0
       this.initialized = true
     }
@@ -57,7 +58,11 @@ export class AgentProviderSettings extends LitElement {
     if (failure) { this.busy = false; this.message = failure.message; this.token = '' }
   }
   private change(key: keyof AdminAgentProviderInput, value: string | boolean) {
-    this.draft = { ...this.draft, [key]: value }; this.token = ''; this.message = ''; this.restoreRevision = 0
+    this.draft = { ...this.draft, [key]: value }; this.normalizeReasoning(); this.token = ''; this.message = ''; this.restoreRevision = 0
+  }
+  private get deepSeekV4() { return this.draft.apiMode === 'chat-completions' && this.draft.model.trim().toLowerCase().startsWith('deepseek-v4') }
+  private normalizeReasoning() {
+    if (this.draft.apiMode === 'chat-completions') this.draft = { ...this.draft, reasoningEffort: this.deepSeekV4 ? 'none' : '' }
   }
   private send(action: 'test' | 'save') {
     if (!this.agent?.canWrite || this.busy) return
@@ -77,7 +82,7 @@ export class AgentProviderSettings extends LitElement {
         <label>Provider preset<select @change=${(e: Event) => {
           const value = (e.target as HTMLSelectElement).value
           if (value === 'openai') this.draft = { ...this.draft, baseUrl: 'https://api.openai.com/v1', apiMode: 'responses', model: '', reasoningEffort: '', apiKey: '' }
-          if (value === 'deepseek') this.draft = { ...this.draft, baseUrl: 'https://api.deepseek.com', apiMode: 'chat-completions', model: '', reasoningEffort: 'none', apiKey: '' }
+          if (value === 'deepseek') this.draft = { ...this.draft, baseUrl: 'https://api.deepseek.com', apiMode: 'chat-completions', model: '', reasoningEffort: '', apiKey: '' }
           this.token = ''; this.message = ''; this.restoreRevision = 0
         }}><option value="custom">Custom / current configuration</option><option value="openai">OpenAI</option><option value="deepseek">DeepSeek (non-thinking)</option></select></label>
         <label>Model identifier<input .value=${this.draft.model} @input=${(e: Event) => this.change('model', (e.target as HTMLInputElement).value)}></label>
@@ -86,7 +91,8 @@ export class AgentProviderSettings extends LitElement {
         <label>API mode<select .value=${this.draft.apiMode} @change=${(e: Event) => this.change('apiMode', (e.target as HTMLSelectElement).value)}><option value="responses">Responses</option><option value="chat-completions">Chat Completions</option></select></label>
         </details>
         <label>Reasoning<select .value=${this.draft.reasoningEffort} @change=${(e: Event) => this.change('reasoningEffort', (e.target as HTMLSelectElement).value)}>
-          <option value="">Provider default</option><option value="none">Disabled</option>
+          ${!this.deepSeekV4 ? html`<option value="">Provider default</option>` : ''}
+          ${this.draft.apiMode === 'responses' || this.deepSeekV4 ? html`<option value="none">Disabled</option>` : ''}
           ${this.draft.apiMode === 'responses' ? ['low', 'medium', 'high', 'xhigh', 'max'].map(effort => html`<option value=${effort}>${effort}</option>`) : ''}
         </select></label>
         <label>${a.credentialConfigured ? 'Replace API key (leave blank to keep)' : 'API key'}<input type="password" autocomplete="new-password" .value=${this.draft.apiKey || ''} @input=${(e: Event) => this.change('apiKey', (e.target as HTMLInputElement).value)}></label>

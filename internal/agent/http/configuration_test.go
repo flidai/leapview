@@ -50,8 +50,9 @@ func TestAdminProviderConfigurationAuthorizationAndSecretRedaction(t *testing.T)
 	isAdmin := false
 	handler := NewHandler(Options{Service: service, CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "admin"}, true }, PlatformAdmin: func(context.Context, string) (bool, error) { return isAdmin, nil }, RecordCommandAudit: func(context.Context, CommandAuditInput) error { return nil }})
 	provider := map[string]any{"enabled": true, "model": "model", "baseUrl": "https://provider.example/v1", "apiMode": "responses", "reasoningEffort": "", "apiKey": "private-provider-key"}
+	expectedRevision, restoreRevision := int64(0), int64(0)
 	request := func(action, token string) *httptest.ResponseRecorder {
-		body, _ := json.Marshal(map[string]any{"action": action, "provider": provider, "testToken": token, "expectedRevision": 0})
+		body, _ := json.Marshal(map[string]any{"action": action, "provider": provider, "testToken": token, "expectedRevision": expectedRevision, "restoreRevision": restoreRevision})
 		req := httptest.NewRequest(http.MethodPatch, "/api/v1/agent/config", strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
 		details, err := handler.AdminDetails(t.Context())
@@ -109,6 +110,19 @@ func TestAdminProviderConfigurationAuthorizationAndSecretRedaction(t *testing.T)
 	}
 	if stale := request("save", result.TestToken); stale.Code != http.StatusPreconditionFailed {
 		t.Fatalf("stale configuration status=%d", stale.Code)
+	}
+	expectedRevision, restoreRevision = 1, 1
+	provider = nil
+	restoredTest := request("test", "")
+	if restoredTest.Code != http.StatusOK {
+		t.Fatalf("restore-only test: %d %s", restoredTest.Code, restoredTest.Body.String())
+	}
+	if err := json.Unmarshal(restoredTest.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	restoredSave := request("save", result.TestToken)
+	if restoredSave.Code != http.StatusOK || store.current.Revision != 2 {
+		t.Fatalf("restore-only save: %d %s", restoredSave.Code, restoredSave.Body.String())
 	}
 	if !service.Enabled() || store.current.ActorID != "admin" {
 		t.Fatal("admin save did not persist/activate")

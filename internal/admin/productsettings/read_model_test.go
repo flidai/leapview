@@ -97,3 +97,26 @@ func (s testStorage) Ping(context.Context) error { return nil }
 func (s testStorage) Mutate(context.Context, product.MutationRequest) (product.Identity, error) {
 	return s.identity, nil
 }
+
+func TestReadModelRefreshesAgentStatus(t *testing.T) {
+	service, err := testProductService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := product.AgentStatus{Available: true}
+	model := ReadModel{Service: service, AgentStatus: func(context.Context) (product.AgentStatus, error) { return current, nil }}
+	for _, configured := range []bool{false, true, false} {
+		current.Configured, current.ModelConfigured = configured, configured
+		data, err := model.Data(t.Context(), "system", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := Signal(data).System.Agent; got.Configured != configured || got.ModelConfigured != configured {
+			t.Fatalf("stale agent status: %#v", got)
+		}
+	}
+	model.AgentStatus = func(context.Context) (product.AgentStatus, error) { return product.AgentStatus{}, context.Canceled }
+	if _, err := model.Data(t.Context(), "system", true); err == nil {
+		t.Fatal("status read failure must not show stale configuration")
+	}
+}

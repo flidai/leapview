@@ -227,7 +227,7 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 		)
 	}
 	if active == "agent" {
-		adminAttrs = append(adminAttrs, g.Attr("data-on:lv-agent-config-command", "$adminAgentCommand = evt.detail; "+uiactions.CommandPostSwitchWithRevision("evt.detail.action", map[string]uicommand.Binding{"test": data.AgentConfigCommand, "save": data.AgentConfigCommand}, "/admin/agent/config", "$page.agent.revision", "adminAgentCommand")))
+		adminAttrs = append(adminAttrs, g.Attr("data-on:lv-agent-config-command", "$adminAgentCommand = evt.detail; "+uiactions.CommandPatchWithRevision(data.AgentConfigCommand, "/admin/agent/config", "$page.agent.revision", "adminAgentCommand")))
 	}
 	if active == "principals" || active == "groups" || active == "principal-detail" || active == "group-detail" {
 		accessCommands := map[string]uicommand.Binding{

@@ -303,3 +303,29 @@ test('configuration draft retains its original revision when another admin saves
     expect(command.provider.model).toBe('model-a')
   } finally { await page.close() }
 })
+
+test('reasoning choices follow protocol and model when switching providers', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-agent-settings'))
+    await page.locator('lv-agent-settings').evaluate((element: any) => {
+      element.agent = { canWrite: true, configurationAvailable: true, enabled: true, model: 'model-a', apiMode: 'responses', reasoningEffort: 'high', configurationRevision: 0, tools: [] }
+      element.addEventListener('lv-agent-config-command', (event: CustomEvent) => { (window as any).reasoningCommand = event.detail })
+    })
+    const settings = page.locator('lv-agent-provider-settings')
+    await settings.locator('summary').click()
+    await settings.getByLabel('API mode').selectOption('chat-completions')
+    const reasoning = settings.getByLabel('Reasoning')
+    expect(await reasoning.locator('option').evaluateAll(options => options.map((o: any) => o.value))).toEqual([''])
+    expect(await reasoning.inputValue()).toBe('')
+    await settings.getByLabel('Provider preset').selectOption('deepseek')
+    await settings.getByLabel('Model identifier').fill('deepseek-v4-pro')
+    expect(await reasoning.inputValue()).toBe('none')
+    expect(await reasoning.locator('option').evaluateAll(options => options.map((o: any) => o.value))).toEqual(['none'])
+    await settings.getByLabel('Model identifier').fill('deepseek-chat')
+    expect(await reasoning.inputValue()).toBe('')
+    await settings.getByRole('button', { name: 'Test connection' }).click()
+    expect((await page.evaluate(() => (window as any).reasoningCommand)).provider.reasoningEffort).toBe('')
+  } finally { await page.close() }
+})

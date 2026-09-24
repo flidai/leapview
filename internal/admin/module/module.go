@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
@@ -128,6 +129,20 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		currentProjectID:             config.CurrentProjectID,
 		publications:                 config.Publications, publicationCommands: config.PublicationCommands, productCommands: config.ProductUICommands,
 	}
+	var agentStatus func(context.Context) (product.AgentStatus, error)
+	if config.AgentDetails != nil {
+		agentStatus = func(ctx context.Context) (product.AgentStatus, error) {
+			details, err := config.AgentDetails(ctx)
+			if err != nil {
+				return product.AgentStatus{}, err
+			}
+			status := product.AgentStatus{Available: true, Configured: details.Configured, ModelConfigured: strings.TrimSpace(details.Model) != ""}
+			if status.Configured {
+				status.Provider = "openai-compatible"
+			}
+			return status, nil
+		}
+	}
 	readModel := adminhttp.ReadModel{
 		PlatformAdmin: config.PlatformAdmin,
 		Access:        config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,
@@ -181,7 +196,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.Product != nil {
 		config.Product.ConfigureCommandExecutor(config.ProductCommands)
 		settingsHandler, err := productsettings.NewHandler(productsettings.HTTPConfig{
-			ReadModel: productsettings.ReadModel{Service: config.Product, Status: config.ProductStatus, ControlPlane: config.Storage.ControlPlane},
+			ReadModel: productsettings.ReadModel{Service: config.Product, Status: config.ProductStatus, AgentStatus: agentStatus, ControlPlane: config.Storage.ControlPlane},
 			CurrentPrincipal: func(r *http.Request) (product.Principal, bool) {
 				if config.CurrentPrincipal == nil {
 					return product.Principal{}, false
@@ -199,7 +214,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.Product != nil {
 		var err error
 		m.product, err = product.NewHandler(product.HTTPConfig{
-			Service: config.Product, Status: config.ProductStatus,
+			Service: config.Product, Status: config.ProductStatus, AgentStatus: agentStatus,
 			CommandFailure: config.ProductCommandFailure,
 			CurrentPrincipal: func(r *http.Request) (product.Principal, bool) {
 				if config.CurrentPrincipal == nil {

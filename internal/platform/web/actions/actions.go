@@ -38,6 +38,11 @@ func CommandPatch(binding uicommand.Binding, path, revision string, signalPaths 
 	return requestWithHeaders("patch", path, signalPaths, "window.LeapViewCommand.headers("+jsString(binding.OperationID())+", "+jsString(revision)+")")
 }
 
+// CommandPatchWithRevision supplies a browser signal expression as If-Match.
+func CommandPatchWithRevision(binding uicommand.Binding, path, ifMatchExpression string, signalPaths ...string) string {
+	return requestWithHeaders("patch", path, signalPaths, "window.LeapViewCommand.headers("+jsString(binding.OperationID())+", "+strings.TrimSpace(ifMatchExpression)+")")
+}
+
 // CommandPostSwitch chooses one typed command from a closed server-shared set.
 // selectorExpression is a Datastar expression such as "evt.detail.action".
 func CommandPostSwitch(selectorExpression string, bindings map[string]uicommand.Binding, path string, signalPaths ...string) string {

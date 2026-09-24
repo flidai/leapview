@@ -119,3 +119,27 @@ func withDigest(request *http.Request, digest string) *http.Request {
 	routeContext.URLParams.Add("digest", digest)
 	return request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
 }
+
+func TestSystemReadsCurrentAgentStatus(t *testing.T) {
+	handler := testHandler(t, Status{})
+	current := AgentStatus{Available: true}
+	handler.config.AgentStatus = func(context.Context) (AgentStatus, error) { return current, nil }
+	for _, configured := range []bool{false, true, false} {
+		current.Configured, current.ModelConfigured = configured, configured
+		rec := httptest.NewRecorder()
+		handler.GetSystem(rec, httptest.NewRequest(http.MethodGet, "/api/v1/instance/system", nil))
+		var result SystemStatus
+		if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != http.StatusOK || result.Agent != current {
+			t.Fatalf("stale agent status: %s", rec.Body.String())
+		}
+	}
+	handler.config.AgentStatus = func(context.Context) (AgentStatus, error) { return AgentStatus{}, context.Canceled }
+	rec := httptest.NewRecorder()
+	handler.GetSystem(rec, httptest.NewRequest(http.MethodGet, "/api/v1/instance/system", nil))
+	if rec.Code == http.StatusOK {
+		t.Fatal("status read failure must not show stale configuration")
+	}
+}
