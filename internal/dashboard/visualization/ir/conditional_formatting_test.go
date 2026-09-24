@@ -154,18 +154,31 @@ func TestValidateSpecRejectsConditionalIconsOutsideRenderingFamilies(t *testing.
 	}
 	color := VisualizationColorIntentData1
 	icon := VisualizationIconIntentCircle
-	format := VisualizationConditionalFormat{
-		ID: "status-colors", Target: VisualizationConditionalTargetSeriesColor, Field: ref("value"),
-		Rule: VisualizationConditionalRule{Value: &FieldVisualizationConditionalRule{
+	plain := VisualizationConditionalStyle{Color: &color}
+	withIcon := VisualizationConditionalStyle{Color: &color, Icon: &icon}
+	fieldRule := func(value, nullStyle, defaultStyle VisualizationConditionalStyle) VisualizationConditionalRule {
+		return VisualizationConditionalRule{Value: &FieldVisualizationConditionalRule{
 			VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "field"}, Kind: "field", Source: ref("status"),
-			Values: map[string]VisualizationConditionalStyle{
-				"delivered": {Color: &color, Icon: &icon},
-			},
-			NullStyle:    VisualizationConditionalStyle{Color: &color},
-			DefaultStyle: VisualizationConditionalStyle{Color: &color},
-		}},
+			Values: map[string]VisualizationConditionalStyle{"delivered": value}, NullStyle: nullStyle, DefaultStyle: defaultStyle,
+		}}
 	}
-	base := func(kind string) VisualizationSpecBase {
+	rulesRule := func(value, nullStyle, defaultStyle VisualizationConditionalStyle) VisualizationConditionalRule {
+		return VisualizationConditionalRule{Value: &RulesVisualizationConditionalRule{
+			VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "rules"}, Kind: "rules",
+			Rules:     []VisualizationConditionalThreshold{{Operator: VisualizationComparisonOperatorGreaterThan, Value: 10, Style: value}},
+			NullStyle: nullStyle, DefaultStyle: defaultStyle,
+		}}
+	}
+	gradientRule := func(low, high, nullStyle VisualizationConditionalStyle) VisualizationConditionalRule {
+		return VisualizationConditionalRule{Value: &GradientVisualizationConditionalRule{
+			VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "gradient"}, Kind: "gradient",
+			Minimum: 0, Maximum: 100, Low: low, High: high, NullStyle: nullStyle,
+		}}
+	}
+	base := func(kind string, rule VisualizationConditionalRule) VisualizationSpecBase {
+		format := VisualizationConditionalFormat{
+			ID: "status-colors", Target: VisualizationConditionalTargetSeriesColor, Field: ref("value"), Rule: rule,
+		}
 		formats := []VisualizationConditionalFormat{format}
 		return VisualizationSpecBase{
 			Kind: kind, Title: "Orders by status",
@@ -180,37 +193,45 @@ func TestValidateSpecRejectsConditionalIconsOutsideRenderingFamilies(t *testing.
 	}
 	presentation := testVisualizationPresentation(VisualizationLegendPositionBottom)
 	tests := []struct {
-		name string
-		spec VisualizationSpec
+		name, path string
+		rule       VisualizationConditionalRule
 	}{
-		{
-			name: "cartesian",
-			spec: VisualizationSpec{Value: &CartesianVisualizationSpec{
-				VisualizationSpecBase: base("cartesian"), Kind: "cartesian", Mark: VisualizationCartesianMarkColumn,
-				X: ref("status"), Y: []VisualizationFieldRef{ref("value")},
-				Presentation: CartesianVisualizationPresentation{VisualizationPresentation: presentation},
-			}},
-		},
-		{
-			name: "proportional",
-			spec: VisualizationSpec{Value: &ProportionalVisualizationSpec{
-				VisualizationSpecBase: base("proportional"), Kind: "proportional", Mark: VisualizationProportionalMarkDonut,
-				Category: ref("status"), Value: ref("value"),
-				Presentation: ProportionalVisualizationPresentation{VisualizationPresentation: presentation},
-			}},
-		},
+		{"field value", `value "delivered" style`, fieldRule(withIcon, plain, plain)},
+		{"field null", "null style", fieldRule(plain, withIcon, plain)},
+		{"field default", "default style", fieldRule(plain, plain, withIcon)},
+		{"rules threshold", "rule 0 style", rulesRule(withIcon, plain, plain)},
+		{"rules null", "null style", rulesRule(plain, withIcon, plain)},
+		{"rules default", "default style", rulesRule(plain, plain, withIcon)},
+		{"gradient low", "low style", gradientRule(withIcon, plain, plain)},
+		{"gradient high", "high style", gradientRule(plain, withIcon, plain)},
+		{"gradient null", "null style", gradientRule(plain, plain, withIcon)},
 	}
 
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			err := ValidateSpec(test.spec)
-			want := "icon cues are not rendered by " + test.name + " visualizations; remove style.icon"
-			if err == nil || !strings.Contains(err.Error(), `conditional formatting "status-colors" value "delivered" style`) || !strings.Contains(err.Error(), want) {
-				t.Fatalf("ValidateSpec() error = %v, want path-bearing unsupported-icon diagnostic", err)
-			}
-		})
+	for _, family := range []string{"cartesian", "proportional"} {
+		for _, test := range tests {
+			t.Run(family+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+				var spec VisualizationSpec
+				if family == "cartesian" {
+					spec = VisualizationSpec{Value: &CartesianVisualizationSpec{
+						VisualizationSpecBase: base(family, test.rule), Kind: family, Mark: VisualizationCartesianMarkColumn,
+						X: ref("status"), Y: []VisualizationFieldRef{ref("value")},
+						Presentation: CartesianVisualizationPresentation{VisualizationPresentation: presentation},
+					}}
+				} else {
+					spec = VisualizationSpec{Value: &ProportionalVisualizationSpec{
+						VisualizationSpecBase: base(family, test.rule), Kind: family, Mark: VisualizationProportionalMarkDonut,
+						Category: ref("status"), Value: ref("value"),
+						Presentation: ProportionalVisualizationPresentation{VisualizationPresentation: presentation},
+					}}
+				}
+				err := ValidateSpec(spec)
+				want := "icon cues are not rendered by " + family + " visualizations; remove style.icon"
+				if err == nil || !strings.Contains(err.Error(), `conditional formatting "status-colors" `+test.path) || !strings.Contains(err.Error(), want) {
+					t.Fatalf("ValidateSpec() error = %v, want path-bearing unsupported-icon diagnostic", err)
+				}
+			})
+		}
 	}
 }
 
