@@ -36,7 +36,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  server.closeAllConnections()
+  await new Promise<void>((resolve, reject) => server.close((error: NodeJS.ErrnoException | undefined) => {
+    if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') reject(error)
+    else resolve()
+  }))
 }, 30_000)
 
 test('ordinary local dashboard shows invalid edit diagnostics and reloads after a valid activation', async () => {
