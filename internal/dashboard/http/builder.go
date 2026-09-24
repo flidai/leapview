@@ -548,9 +548,8 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	if command.SetPlacements != nil || command.UpdatePageLayout != nil {
 		// Moving, resizing, or changing the page canvas cannot change a visual's
-		// query or renderer envelope. Recompile only to bind the new authored
-		// revision to the active semantic generation, then leave the existing
-		// preview and filter signals untouched in the browser. Republishing (and
+		// query or renderer envelope. Leave the existing preview and filter signals
+		// untouched in the browser. Republishing (and
 		// especially clear-first replacing) builderVisuals here makes every
 		// renderer reload for a layout-only edit.
 		//
@@ -561,7 +560,20 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		builder.Preview.Loading = false
 		builder.Preview.Error = uisignals.Pointer("")
 		envelope := dashboardBuilderEnvelope(builder)
-		if compiled, compileErr := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
+		retainedServingStateID := ""
+		if signals.Runtime.ServingStateID != nil {
+			// The retained visual signals are scoped to the browser's current
+			// serving-state identity. A layout-only edit advances the authored
+			// revision but does not change those visual results, so keep their
+			// identity until a command actually publishes replacement envelopes.
+			retainedServingStateID = strings.TrimSpace(*signals.Runtime.ServingStateID)
+		}
+		if retainedServingStateID != "" {
+			// The current browser preview already identifies the active semantic
+			// generation. Recompiling the unchanged visual graph here only blocks
+			// drag and resize saves without producing a different preview.
+			envelope.Runtime.ServingStateID = uisignals.Optional(retainedServingStateID)
+		} else if compiled, compileErr := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
 			ProjectID: project, ActorID: actorID,
 			DashboardID: authoring.DashboardID(strings.TrimSpace(builder.DashboardID)),
 			DraftID:     authoring.DraftID(strings.TrimSpace(builder.DraftID)),
@@ -572,15 +584,6 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 			envelope.Runtime.ServingStateID = optionalRuntimeString(builderServingStateIDForGeneration(builder, compiled.SemanticEvidence.Identity.GenerationID))
 		} else {
 			envelope.Runtime.ServingStateID = optionalRuntimeString(builderServingStateID(builder))
-		}
-		if signals.Runtime.ServingStateID != nil {
-			// The retained visual signals are scoped to the browser's current
-			// serving-state identity. A layout-only edit advances the authored
-			// revision but does not change those visual results, so keep their
-			// identity until a command actually publishes replacement envelopes.
-			if servingStateID := strings.TrimSpace(*signals.Runtime.ServingStateID); servingStateID != "" {
-				envelope.Runtime.ServingStateID = uisignals.Optional(servingStateID)
-			}
 		}
 		envelope.Runtime = h.builderCommandRuntime(r, signals.Runtime, envelope.Runtime, project.String(), dashboardID, input.PageID, builder)
 		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{

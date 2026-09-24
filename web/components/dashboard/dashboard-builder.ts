@@ -2659,10 +2659,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private syncGridStack(builder: DashboardBuilderSignal | null, page: DashboardBuilderPageSignal | undefined): void {
     const canvas = this.shadowRoot?.querySelector('.canvas.grid-stack') as HTMLElement | null
     const mobile = this.isMobileViewport()
-    const componentIDs = page ? this.pagePlacedComponents(page).map((component) => component.id) : []
-    const layoutKey = builder && page
-      ? `${this.revisionKey(builder)}:${page.id}:${componentIDs.join(',')}`
-      : ''
+    const layoutKey = builder && page ? `${page.id}:${this.pagePlacedComponents(page).map((component) => component.id).join(',')}:${page.grid.columns}:${page.grid.rowHeight}:${page.grid.gap}` : ''
     if (!canvas || !page || mobile) {
       this.destroyGridStack()
       this.gridIsMobile = mobile
@@ -2673,6 +2670,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       applyCanonicalGridAttributes(this.shadowRoot, this.pagePlacedComponents(page))
       this.gridElement = canvas
       this.gridLayoutKey = layoutKey
+      canvas.dataset.builderRevisionKey = this.revisionKey(builder!)
       this.gridIsMobile = mobile
       this.gridStack = GridStack.init({
         column: Math.max(1, page.grid.columns || 12),
@@ -2699,6 +2697,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         this.gridStack.on('resize', () => this.syncCanvasViewport(page))
         this.gridStack.on('change', (event: Event, nodes: GridStackNode[]) => this.onGridChange(event, nodes))
       }
+    } else if (this.gridStack && !this.gridInteracting && this.revisionKey(builder!) !== canvas.dataset.builderRevisionKey) {
+      syncGridStackNodesToCanonical(this.gridStack, this.shadowRoot, this.pagePlacedComponents(page))
+      canvas.dataset.builderRevisionKey = this.revisionKey(builder!)
     }
     this.setGridEditingEnabled(Boolean(builder?.capabilities.canEdit && !this.commandPending))
   }

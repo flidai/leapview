@@ -663,8 +663,8 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 	if len(placements) != 2 || placements[0].ComponentID != "orders-component" || placements[0].Placement.ColumnSpan != 6 || placements[1].ComponentID != "summary-component" || placements[1].Placement.Column != 7 {
 		t.Fatalf("translated placements = %#v", placements)
 	}
-	if fake.previewCalls != 0 || fake.compileCalls != 1 {
-		t.Fatalf("layout projection calls preview=%d compile=%d, want 0/1", fake.previewCalls, fake.compileCalls)
+	if fake.previewCalls != 0 || fake.compileCalls != 0 {
+		t.Fatalf("layout projection calls preview=%d compile=%d, want 0/0", fake.previewCalls, fake.compileCalls)
 	}
 	patches := ssetest.PatchSignals(t, rec.Body.String())
 	if len(patches) != 1 {

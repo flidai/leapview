@@ -1665,7 +1665,7 @@ test('dashboard builder does not persist breakpoint-derived mobile stacking', as
   }
 })
 
-test('dashboard builder disables GridStack editing in read-only state and reinitializes on revision cutover', async () => {
+test('dashboard builder disables GridStack editing without rebuilding it on revision cutover', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -1682,11 +1682,11 @@ test('dashboard builder disables GridStack editing in read-only state and reinit
       const secondGrid = canvas.gridstack
       return {
         disabled: visual.classList.contains('ui-draggable-disabled') && visual.classList.contains('ui-resizable-disabled'),
-        reinitialized: Boolean(secondGrid) && firstGrid !== secondGrid,
+        retained: Boolean(secondGrid) && firstGrid === secondGrid,
         firstDestroyed: !firstGrid.el,
       }
     })
-    expect(state).toEqual({ disabled: true, reinitialized: true, firstDestroyed: true })
+    expect(state).toEqual({ disabled: true, retained: true, firstDestroyed: false })
   } finally {
     await page.close()
   }
@@ -2551,7 +2551,7 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
     expect(state.hostVisualID).toBe('sales-chart')
     expect(state.envelopeStableAfterLayout).toBe(true)
     expect(state.gridWidthAttributeAfterLayout).toBe('5')
-    expect(state.gridLayoutKeyAfterLayout).toContain('rev-8:8:sha256:layout')
+    expect(state.gridLayoutKeyAfterLayout).toBe('overview:sales-chart:12:48:16')
     expect(state.gridWidthAfterLayout).toBe(5)
     expect(state.hostAuthoring).toBe(true)
     expect(state.hostPointerEvents).toBe('auto')
