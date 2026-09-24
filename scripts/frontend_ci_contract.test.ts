@@ -48,7 +48,7 @@ test('hosted demo generates build-only packages before publishing', () => {
     publish: '${{ steps.resolve.outputs.publish }}',
     revision: '${{ steps.resolve.outputs.revision }}',
   })
-  expect(resolver.run).toContain('git show HEAD^:scripts/rollout_demo_runtime.py')
+  expect(resolver.run).toBe('python3 scripts/demo_runtime_record.py resolve')
 
   const deploy = config.jobs.deploy
   expect(deploy.needs).toBe('publication-source')
@@ -107,4 +107,27 @@ test('pinned publication rejects unsupported datasets before credentials or publ
     expect(run('olist').status).toBe(0)
     expect(run('unknown').status).toBe(64)
   } finally { rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('runtime deployment admits exact evidence before secrets and advances pin only after validation', () => {
+  const workflow = parse(readFileSync('.github/workflows/demo-deploy.yml', 'utf8'))
+  expect(workflow.on.workflow_dispatch.inputs.action.options).toEqual(['publish', 'deploy'])
+  expect(workflow.on.workflow_run).toBeUndefined()
+  expect(workflow.concurrency['cancel-in-progress']).toBe(false)
+  const runtime = workflow.jobs.runtime
+  expect(runtime.permissions.deployments).toBe('write')
+  const steps = runtime.steps
+  const qualified = steps.findIndex((s: any) => s.id === 'qualified')
+  const admission = steps.findIndex((s: any) => s.uses === './.github/actions/oci-admission')
+  const secrets = steps.findIndex((s: any) => s.name === 'Fetch demo deployment credentials')
+  const rollout = steps.findIndex((s: any) => s.id === 'rollout')
+  const pin = steps.findIndex((s: any) => s.name === 'Advance verified runtime pin')
+  expect(qualified).toBeGreaterThan(-1)
+  expect(admission).toBeGreaterThan(qualified)
+  expect(secrets).toBeGreaterThan(admission)
+  expect(rollout).toBeGreaterThan(secrets)
+  expect(pin).toBeGreaterThan(rollout)
+  expect(steps[pin].if).toBe('success()')
+  expect(JSON.stringify(steps)).not.toContain('/hetzner-qualification/infrastructure')
+  expect(JSON.stringify(steps)).not.toContain('secret-path":"/demo/access')
 })

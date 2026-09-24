@@ -489,6 +489,16 @@ func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capab
 	return nil
 }
 
+// Local dashboard rendering and the browser event route must see the same
+// session authority during composition. Installing it after dashboard Build
+// leaves the ordinary page without the event subscription marker.
+func validateLocalDevelopmentSessionComposition(capabilities capabilityAssemblyInputs, runtimeConfig runtimeAssemblyInputs) error {
+	if runtimeConfig.LocalCheckoutID != "" && capabilities.DevelopmentSessions == nil {
+		return errors.New("local development composition requires a development session store before dashboard assembly")
+	}
+	return nil
+}
+
 // validateDashboardAssemblyInputs is the runtime-router admission gate for
 // native dashboard composition. The native path is deliberately all-or-
 // nothing: it requires the complete opaque persistence bundle, the exact
@@ -553,6 +563,9 @@ func buildApplicationSurfaces(
 		return nil, nil, nil, nil, err
 	}
 	if err := validateProductionRuntimeInputs(data, capabilities, runtimeConfig); err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if err := validateLocalDevelopmentSessionComposition(capabilities, runtimeConfig); err != nil {
 		return nil, nil, nil, nil, err
 	}
 	if data.RequireNativeDashboard && data.RefreshPersistence == nil {
@@ -1238,6 +1251,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			RequirePublication:       persistence.requireNativeDashboard,
 			Authoring:                routes.dashboardAuthoring,
 			HTTP: dashboardmodule.HTTPConfig{
+				LocalDevelopmentSession:    runtime.developmentSessions != nil && runtime.checkoutID != "" && runtime.worktreeID != "" && runtime.developmentProjectIDResolver != nil,
 				Metrics:                    runtime.metrics,
 				ProjectID:                  runtime.projectID,
 				ResolveProjectID:           runtime.resolveProjectID,

@@ -352,7 +352,7 @@ func isDeliveryAPIGenOperation(contract APIGenOperationContract) bool {
 // allowlist below.
 func isBootstrapDeliveryAPIGenOperation(operationID string) bool {
 	switch operationID {
-	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview",
+	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "getDeliveryPublicationEvidence", "getDeliveryOperatorSnapshot",
 		"requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval":
 		return true
 	default:
@@ -367,7 +367,7 @@ func isBootstrapDeliveryAPIGenOperation(operationID string) bool {
 // publication.
 func isAuthoringDeliveryBootstrapOperation(operationID string) bool {
 	switch operationID {
-	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "requestDeliveryPublicationApproval":
+	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "getDeliveryPublicationEvidence", "getDeliveryOperatorSnapshot", "requestDeliveryPublicationApproval":
 		return true
 	default:
 		return false

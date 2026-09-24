@@ -59,10 +59,11 @@ class LeapViewDashboardDevelopmentSessionStatus extends LitElement {
 
   render() {
     if (!this.visible) return nothing
+    const ordinaryDashboard = typeof window !== 'undefined' && window.location.pathname.startsWith('/dashboards/')
     return html`
-      <strong>Preview out of date</strong>
+      <strong>${ordinaryDashboard ? 'Local changes not applied' : 'Preview out of date'}</strong>
       ${this.diagnostics.length > 0
-        ? html`<span>Repair the attempted edit; the previous working candidate remains visible.</span>
+        ? html`<span>${ordinaryDashboard ? 'Repair the attempted edit; the last working dashboard remains available.' : 'Repair the attempted edit; the previous working candidate remains visible.'}</span>
           <ul>
             ${this.diagnostics.map((diagnostic) => html`
               <li>
@@ -71,13 +72,15 @@ class LeapViewDashboardDevelopmentSessionStatus extends LitElement {
               </li>
             `)}
           </ul>`
-        : html`<span>An edit is being synchronized; this view remains pinned to the last valid candidate.</span>`}
+        : html`<span>${ordinaryDashboard ? 'An edit is being synchronized; the last working dashboard remains available.' : 'An edit is being synchronized; this view remains pinned to the last valid candidate.'}</span>`}
     `
   }
 
   private connect(): void {
     const pathname = typeof window === 'undefined' ? '' : window.location.pathname
-    const eventsPath = developmentSessionEventsPath(pathname)
+    const root = this.getRootNode()
+    const localEventsPath = root instanceof ShadowRoot ? root.host.getAttribute('development-session-events-path') ?? '' : ''
+    const eventsPath = developmentSessionEventsPath(pathname, localEventsPath)
     if (!eventsPath || typeof EventSource === 'undefined') return
     this.events = new EventSource(eventsPath, { withCredentials: true })
     this.events.addEventListener('development-session', this.handleEvent)

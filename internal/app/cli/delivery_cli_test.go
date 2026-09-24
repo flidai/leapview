@@ -108,6 +108,48 @@ func TestDeliveryPlanInvocationsUseFreshOperationKeys(t *testing.T) {
 	}
 }
 
+func TestRollbackUsesCurrentTargetRevisionForIdempotency(t *testing.T) {
+	transport := &rollbackRevisionTransport{revision: 2}
+	operations := projectDeliveryRollbackOperations{client: fixedTransportClient{transport: transport}}
+	options := projectcli.DeliveryRollbackOptions{ProjectID: "project-1", GenerationID: "generation-1"}
+	if _, err := operations.Rollback(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	transport.revision = 4
+	if _, err := operations.Rollback(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	if len(transport.keys) != 2 || transport.keys[0] == transport.keys[1] {
+		t.Fatalf("rollback keys = %#v, want a distinct operation after target revision changes", transport.keys)
+	}
+}
+
+type rollbackRevisionTransport struct {
+	revision int64
+	keys     []string
+}
+
+func (transport *rollbackRevisionTransport) DoAPIGen(_ context.Context, request apigenclient.Request, out any) (apigenclient.Response, error) {
+	var body any
+	switch request.OperationID {
+	case deploymentgen.GenOperationGetDeliveryOperatorSnapshot:
+		body = deploymentgen.DeliveryOperatorSnapshotResponse{ProjectId: "project-1", TargetId: "target-1", TargetRevision: transport.revision}
+	case deploymentgen.GenOperationRollbackDeliveryGeneration:
+		transport.keys = append(transport.keys, request.Headers.Get("Idempotency-Key"))
+		body = deploymentgen.DeliveryPublicationEvidenceResponse{Id: "publication-1", ProjectId: "project-1", TargetId: "target-1", GenerationId: "generation-1", Status: deploymentgen.DeliveryPublicationStatusPending}
+	default:
+		return apigenclient.Response{}, fmt.Errorf("unexpected operation %q", request.OperationID)
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return apigenclient.Response{}, err
+	}
+	if err := json.Unmarshal(encoded, out); err != nil {
+		return apigenclient.Response{}, err
+	}
+	return apigenclient.Response{StatusCode: http.StatusOK, Headers: http.Header{}, ContentType: "application/json"}, nil
+}
+
 func stringPointer(value string) *string { return &value }
 
 func TestDeliveryPlanRetainsSourceWhenCandidateIdentityIsIncomplete(t *testing.T) {

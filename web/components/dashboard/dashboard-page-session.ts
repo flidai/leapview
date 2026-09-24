@@ -21,11 +21,12 @@ export type DevelopmentSessionTransition = {
   revision: number
 }
 
-export function developmentSessionEventsPath(pathname: string): string | null {
+export function developmentSessionEventsPath(pathname: string, localEventsPath = ''): string | null {
   const marker = '/development-session/candidate/preview'
   const markerIndex = pathname.indexOf(marker)
-  if (markerIndex < 0) return null
-  return `${pathname.slice(0, markerIndex)}${marker}/events`
+  if (markerIndex >= 0) return `${pathname.slice(0, markerIndex)}${marker}/events`
+  if (pathname.startsWith('/dashboards/') && localEventsPath === '/development-session/events') return localEventsPath
+  return null
 }
 
 function identityKey(identity: DevelopmentSessionRecord['lastValid']): string {
