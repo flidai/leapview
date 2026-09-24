@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	successorS3Image     = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+	successorS3Image     = "cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1"
 	successorS3Region    = "us-east-1"
 	successorS3ProfileID = "22222222-2222-4222-8222-222222222222"
 	successorS3Account   = "minio-successor-qualification"
@@ -278,7 +278,8 @@ func startSuccessorS3Provider(t *testing.T) successorS3Provider {
 	secret := uuid.NewString()
 	container, err := tcminio.Run(ctx, successorS3Image,
 		tcminio.WithUsername(user), tcminio.WithPassword(secret),
-		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g"}),
+		testcontainers.WithCmd("server", "/tmp/minio-data"),
+		testcontainers.WithTmpfs(map[string]string{"/tmp/minio-data": "rw,size=1g"}),
 		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithStartupTimeout(time.Minute)))
 	testcontainers.CleanupContainer(t, container)
 	if err != nil {

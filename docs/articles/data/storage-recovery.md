@@ -68,8 +68,8 @@ This validates historical managed-object retrieval. It does not prove successful
 
 ### Provider assumptions
 
-The selected provider is disposable MinIO, pinned to
-`minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`.
+The selected provider is disposable MinIO packaged by Chainguard, pinned to
+`cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1`.
 The experiment requires bucket versioning, immutable non-null version IDs,
 explicit-version GET, retained historical versions behind a delete marker, and
 authenticated access. It qualifies that image, not all S3-compatible services

@@ -29,7 +29,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const historicalProviderImage = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+const historicalProviderImage = "cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1"
 
 // This is a provider experiment, not an alternate recovery-admission validator.
 // This validates historical managed-object retrieval. It does not prove successful physical disaster recovery.
@@ -49,7 +49,8 @@ func historicalProvider(t *testing.T) (context.Context, *awss3.Client, func(stri
 	user, secret := "q"+strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()
 	// Liveness alone can pass before S3 initialization completes.
 	container, err := tcminio.Run(ctx, historicalProviderImage, tcminio.WithUsername(user), tcminio.WithPassword(secret),
-		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g"}),
+		testcontainers.WithCmd("server", "/tmp/minio-data"),
+		testcontainers.WithTmpfs(map[string]string{"/tmp/minio-data": "rw,size=1g"}),
 		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithStartupTimeout(time.Minute)))
 	testcontainers.CleanupContainer(t, container)
 	if err != nil {

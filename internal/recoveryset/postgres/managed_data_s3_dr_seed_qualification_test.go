@@ -43,7 +43,7 @@ import (
 const (
 	managedS3DRArtifactDirEnv      = "LEAPVIEW_TEST_UBDR_MANAGED_DATA_S3_DR_EVIDENCE_DIR"
 	managedS3DRScenarioID          = "fai-520-managed-data-s3-dr-seed-v1"
-	managedS3DRImage               = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+	managedS3DRImage               = "cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1"
 	managedS3DRRegion              = "us-east-1"
 	managedS3DRPrefix              = "recovered-data"
 	managedS3DRSentinelPrefix      = "unrelated-sentinel"
@@ -255,7 +255,8 @@ func startManagedS3DRProvider(t *testing.T) managedS3DRProvider {
 	secret := uuid.NewString()
 	container, err := tcminio.Run(ctx, managedS3DRImage,
 		tcminio.WithUsername(user), tcminio.WithPassword(secret),
-		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g"}),
+		testcontainers.WithCmd("server", "/tmp/minio-data"),
+		testcontainers.WithTmpfs(map[string]string{"/tmp/minio-data": "rw,size=1g"}),
 		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithStartupTimeout(time.Minute)),
 	)
 	if err != nil {

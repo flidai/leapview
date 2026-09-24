@@ -632,7 +632,7 @@ func minioSecretEndpoint(raw string) (string, bool, error) {
 }
 
 const (
-	conformanceMinIOImage  = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+	conformanceMinIOImage  = "cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1"
 	conformanceMinIOUser   = "leapview"
 	conformanceMinIOSecret = "leapview-conformance-secret"
 )
@@ -644,6 +644,8 @@ func startConformanceMinIO(t *testing.T, ctx context.Context) string {
 	}
 	container, err := tcminio.Run(ctx, conformanceMinIOImage,
 		tcminio.WithUsername(conformanceMinIOUser), tcminio.WithPassword(conformanceMinIOSecret),
+		testcontainers.WithCmd("server", "/tmp/minio-data"),
+		testcontainers.WithTmpfs(map[string]string{"/tmp/minio-data": "rw,size=1g"}),
 		testcontainers.WithLogger(log.TestLogger(t)))
 	testcontainers.CleanupContainer(t, container)
 	if err != nil {
