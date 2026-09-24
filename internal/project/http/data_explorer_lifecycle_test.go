@@ -21,6 +21,16 @@ import (
 
 var testDataExplorerQueryLowerer exploration.QueryLowerer = explorationlowering.Service{}
 
+func newDataExplorerLeaseFixture(clientID string, setClientHeader bool) (*BrowserHandler, *http.Request, string, string) {
+	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil }}
+	request := httptest.NewRequest("POST", "/explore/command", nil)
+	if setClientHeader {
+		request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	}
+	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	return h, request, key, clientID
+}
+
 func TestDataExplorerLifecycleStopsOnlyCurrentRun(t *testing.T) {
 	var lifecycle dataExplorerLifecycle
 	parent := context.Background()
@@ -100,12 +110,8 @@ func TestDataExplorerClientIdentityFailsClosed(t *testing.T) {
 }
 
 func TestDataExplorerResponseLeaseSerializesCurrentCheckAndEmission(t *testing.T) {
-	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
-		return "project:test", nil
-	}}
-	req := httptest.NewRequest("POST", "/explore/command", nil)
-	command := projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional("lease-client"), RequestSeq: 1}
-	key := h.dataExplorerClientKey(req, "project:test", command)
+	h, req, key, clientID := newDataExplorerLeaseFixture("lease-client", false)
+	command := projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID), RequestSeq: 1}
 	if key == "" || !h.dataExplorerLifecycle.acceptSemantic(key, 1) {
 		t.Fatal("failed to establish lifecycle state")
 	}
@@ -250,13 +256,7 @@ func TestDataExplorerNewerConfigureCancelsRunAndRejectsLateResponse(t *testing.T
 }
 
 func TestDataExplorerResponseLeaseRejectsLateStoppedRun(t *testing.T) {
-	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
-		return "project:test", nil
-	}}
-	request := httptest.NewRequest("POST", "/explore/command", nil)
-	clientID := "stop-late-response-client"
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	h, request, key, clientID := newDataExplorerLeaseFixture("stop-late-response-client", true)
 
 	_, finish, runID := h.dataExplorerLifecycle.beginRun(key, "run-1", 1, context.Background())
 	t.Cleanup(finish)
@@ -292,13 +292,7 @@ func TestDataExplorerResponseLeaseRejectsLateStoppedRun(t *testing.T) {
 }
 
 func TestDataExplorerResponseLeaseNewerRunSupersedesStop(t *testing.T) {
-	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
-		return "project:test", nil
-	}}
-	request := httptest.NewRequest("POST", "/explore/command", nil)
-	clientID := "stop-newer-run-client"
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	h, request, key, clientID := newDataExplorerLeaseFixture("stop-newer-run-client", true)
 
 	_, finishOld, oldRunID := h.dataExplorerLifecycle.beginRun(key, "run-1", 1, context.Background())
 	t.Cleanup(finishOld)
@@ -332,13 +326,7 @@ func TestDataExplorerResponseLeaseNewerRunSupersedesStop(t *testing.T) {
 }
 
 func TestDataExplorerResponseLeaseBindsUnnamedStopToRequestSequence(t *testing.T) {
-	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
-		return "project:test", nil
-	}}
-	request := httptest.NewRequest("POST", "/explore/command", nil)
-	clientID := "unnamed-stop-sequence-lease-client"
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	h, request, key, clientID := newDataExplorerLeaseFixture("unnamed-stop-sequence-lease-client", true)
 
 	_, finishA, _ := h.dataExplorerLifecycle.beginRun(key, "run-a", 7, context.Background())
 	t.Cleanup(finishA)
@@ -370,13 +358,7 @@ func TestDataExplorerResponseLeaseBindsUnnamedStopToRequestSequence(t *testing.T
 }
 
 func TestDataExplorerResponseLeaseAllowsLegacyNamedStopWithoutSequence(t *testing.T) {
-	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
-		return "project:test", nil
-	}}
-	request := httptest.NewRequest("POST", "/explore/command", nil)
-	clientID := "legacy-named-stop-lease-client"
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	h, request, key, clientID := newDataExplorerLeaseFixture("legacy-named-stop-lease-client", true)
 	_, finish, runID := h.dataExplorerLifecycle.beginRun(key, "legacy-run", 0, context.Background())
 	t.Cleanup(finish)
 	if !h.dataExplorerLifecycle.stop(key, runID, 0) {
@@ -401,13 +383,7 @@ func TestDataExplorerResponseLeaseAllowsLegacyNamedStopWithoutSequence(t *testin
 }
 
 func TestDataExplorerResponseLeaseRejectsStopSupersededByConfigure(t *testing.T) {
-	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
-		return "project:test", nil
-	}}
-	request := httptest.NewRequest("POST", "/explore/command", nil)
-	clientID := "stop-configure-lease-client"
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	h, request, key, clientID := newDataExplorerLeaseFixture("stop-configure-lease-client", true)
 	_, finish, runID := h.dataExplorerLifecycle.beginRun(key, "run-7", 7, context.Background())
 	t.Cleanup(finish)
 	stop := projectsignals.DataExplorerCommand{
@@ -435,13 +411,7 @@ func TestDataExplorerResponseLeaseRejectsStopSupersededByConfigure(t *testing.T)
 }
 
 func TestDataExplorerResponseLeaseAllowsOnlyCurrentStopWithoutActiveRun(t *testing.T) {
-	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
-		return "project:test", nil
-	}}
-	request := httptest.NewRequest("POST", "/explore/command", nil)
-	clientID := "no-active-stop-lease-client"
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	h, request, key, clientID := newDataExplorerLeaseFixture("no-active-stop-lease-client", true)
 	if !h.dataExplorerLifecycle.acceptSemantic(key, 8) {
 		t.Fatal("current semantic sequence 8 was rejected")
 	}
@@ -515,13 +485,7 @@ func TestDataExplorerNoActiveStopAdvancesSequenceBeforeResponseLease(t *testing.
 }
 
 func TestDataExplorerResponseLeaseAllowsCurrentNoActiveStopAfterOlderTombstone(t *testing.T) {
-	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
-		return "project:test", nil
-	}}
-	request := httptest.NewRequest("POST", "/explore/command", nil)
-	clientID := "older-stop-tombstone-no-active-client"
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	h, request, key, clientID := newDataExplorerLeaseFixture("older-stop-tombstone-no-active-client", true)
 	_, finish, runID := h.dataExplorerLifecycle.beginRun(key, "old-run", 7, context.Background())
 	if !h.dataExplorerLifecycle.stop(key, runID, 7) {
 		t.Fatal("Stop A at sequence 7 was rejected")
@@ -552,13 +516,7 @@ func TestDataExplorerResponseLeaseAllowsCurrentNoActiveStopAfterOlderTombstone(t
 }
 
 func TestDataExplorerResponseLeaseAllowsConfigureWithoutRunIDAfterStop(t *testing.T) {
-	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
-		return "project:test", nil
-	}}
-	request := httptest.NewRequest("POST", "/explore/command", nil)
-	clientID := "stop-configure-client"
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	h, request, key, clientID := newDataExplorerLeaseFixture("stop-configure-client", true)
 
 	_, finish, runID := h.dataExplorerLifecycle.beginRun(key, "run-1", 1, context.Background())
 	t.Cleanup(finish)
@@ -767,10 +725,7 @@ func TestDataExplorerResponseLeaseRejectsSuggestionAfterNewerConfigure(t *testin
 }
 
 func TestDataExplorerResponseLeaseAllowsCurrentSuggestionDuringSemanticRun(t *testing.T) {
-	h, _ := newDataExplorerURLTestHandler(t)
-	clientID := "current-suggestion-active-run-client"
-	request := httptest.NewRequest("POST", "/explore/command", nil)
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	h, request, key, clientID := newDataExplorerLeaseFixture("current-suggestion-active-run-client", true)
 	command := projectsignals.DataExplorerCommand{
 		Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID),
 		Mode: projectsignals.Optional("explore"), RequestSeq: 42,
@@ -779,7 +734,6 @@ func TestDataExplorerResponseLeaseAllowsCurrentSuggestionDuringSemanticRun(t *te
 			FilterSuggestions: &projectsignals.DataExploreFilterSuggestionsCommand{Field: "orders.status", SuggestionRequestSeq: 1},
 		},
 	}
-	key := h.dataExplorerClientKey(request, "project:test", command)
 	semantic, finishSemantic, _ := h.dataExplorerLifecycle.beginRun(key, "semantic-run", 42, context.Background())
 	t.Cleanup(finishSemantic)
 	if accepted, _ := h.dataExplorerLifecycle.acceptSuggestions(key, 1); !accepted {
