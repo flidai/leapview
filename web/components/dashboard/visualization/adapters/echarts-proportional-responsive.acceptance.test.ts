@@ -25,6 +25,37 @@ function proportionalWithIconFormat(mark: 'pie' | 'donut' | 'funnel' = 'donut') 
   return envelope
 }
 
+function transformedLabelBox(item: any): [number, number][] {
+  const rect = item.getBoundingRect()
+  const transform = item.getComputedTransform?.() ?? item.transform
+  const points: [number, number][] = [
+    [rect.x, rect.y],
+    [rect.x + rect.width, rect.y],
+    [rect.x + rect.width, rect.y + rect.height],
+    [rect.x, rect.y + rect.height],
+  ]
+  if (!transform) return points
+  return points.map(([x, y]) => [
+    transform[0] * x + transform[2] * y + transform[4],
+    transform[1] * x + transform[3] * y + transform[5],
+  ])
+}
+
+function labelBoxesOverlap(left: [number, number][], right: [number, number][]): boolean {
+  for (const box of [left, right]) {
+    for (let index = 0; index < box.length; index++) {
+      const point = box[index]!
+      const next = box[(index + 1) % box.length]!
+      const axis: [number, number] = [point[1] - next[1], next[0] - point[0]]
+      const leftProjection = left.map(([x, y]) => x * axis[0] + y * axis[1])
+      const rightProjection = right.map(([x, y]) => x * axis[0] + y * axis[1])
+      if (Math.max(...leftProjection) <= Math.min(...rightProjection)
+        || Math.max(...rightProjection) <= Math.min(...leftProjection)) return false
+    }
+  }
+  return true
+}
+
 test('proportional labels use formatted category and value text with normal density policy', () => {
   for (const mark of ['pie', 'donut', 'funnel'] as const) {
     const envelope = proportionalWithIconFormat(mark)
@@ -153,7 +184,7 @@ test('proportional labels honor hidden and inside presentation settings without 
     position: 'inside', fontSize: 12, padding: 3,
   })
   expect(responsiveEChartsPatch(echartsOption(inside, defaultRendererContext) as any, 535, 420).series[0].label).toMatchObject({
-    position: 'inside', fontSize: 11, padding: 0,
+    position: 'inside', fontSize: 11, padding: 0, rotate: 'radial',
   })
 })
 
@@ -162,9 +193,10 @@ test('card-sized inside pie labels do not collide', () => {
   if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected proportional fixture')
   envelope.spec.presentation.labelPosition = 'inside'
   envelope.spec.presentation.rose = false
+  envelope.spec.datasets[0].fields[1]!.format = { kind: 'currency', currency: 'BRL' }
   envelope.dataState.datasets[0].rows = [
-    ['health_beauty', 1.44], ['watches_gifts', 1.3], ['bed_bath_table', 1.26],
-    ['sports_leisure', 1.15], ['computers_accessories', 1.07], ['furniture_decor', 0.903],
+    ['health_beauty', 1_440_000], ['watches_gifts', 1_300_000], ['bed_bath_table', 1_260_000],
+    ['sports_leisure', 1_150_000], ['computers_accessories', 1_070_000], ['furniture_decor', 903_000],
   ]
   const source = echartsOption(envelope, defaultRendererContext) as any
   for (const [width, height] of [[396, 420], [535, 420]] as const) {
@@ -172,19 +204,14 @@ test('card-sized inside pie labels do not collide', () => {
     try {
       chart.setOption({ ...source, ...responsiveEChartsPatch(source, width, height), animation: false })
       chart.renderToSVGString()
-      const labels = ['1.44', '1.3', '1.26', '1.15', '1.07', '0.903']
+      const labels = ['R$1.44M', 'R$1.3M', 'R$1.26M', 'R$1.15M', 'R$1.07M', 'R$0.903M']
       const bounds = chart.getZr().storage.getDisplayList()
         .filter((item: any) => item.type === 'tspan' && labels.includes(String(item.style?.text)))
-        .map((item: any) => {
-          const rect = item.getBoundingRect().clone()
-          const transform = item.getComputedTransform?.() ?? item.transform
-          if (transform) rect.applyTransform(transform)
-          return rect
-        })
-      expect(bounds).toHaveLength(labels.length - 1)
+        .map(transformedLabelBox)
+      expect(bounds).toHaveLength(labels.length)
       for (let index = 0; index < bounds.length; index++) {
         for (let candidate = index + 1; candidate < bounds.length; candidate++) {
-          expect(bounds[index]!.intersect(bounds[candidate]!)).toBe(false)
+          expect(labelBoxesOverlap(bounds[index]!, bounds[candidate]!)).toBe(false)
         }
       }
     } finally {
@@ -193,13 +220,11 @@ test('card-sized inside pie labels do not collide', () => {
   }
 })
 
-test('card-sized inside pies suppress only non-priority sectors that cannot hold their value label', () => {
+test('card-sized inside pies tilt every formatted value instead of hiding crowded sectors', () => {
   const envelope = proportionalWithIconFormat('pie')
   if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected proportional fixture')
   envelope.spec.presentation.labelPosition = 'inside'
   envelope.spec.presentation.rose = false
-  envelope.spec.presentation.labelPolicy.priority = ['selected']
-  envelope.spec.datasets[0].fields[0]!.role = 'identity'
   envelope.spec.datasets[0].fields[1]!.format = { kind: 'currency', currency: 'BRL' }
   const rows = [
     ['health_beauty', 1_440_000], ['watches_gifts', 1_300_000], ['bed_bath_table', 1_260_000],
@@ -209,25 +234,10 @@ test('card-sized inside pies suppress only non-priority sectors that cannot hold
 
   const source = echartsOption(envelope, defaultRendererContext) as any
   const compact = responsiveEChartsPatch(source, 239, 225).series[0]
+  expect(compact.label.rotate).toBe('radial')
   expect(compact.label.formatter({ value: rows[4], dataIndex: 4 })).toBe('R$1.07M')
-  expect(compact.label.formatter({ value: rows[5], dataIndex: 5 })).toBe('')
-  expect(responsiveEChartsPatch(source, 700, 500).series[0].label.formatter({ value: rows[5], dataIndex: 5 })).toBe('R$0.903M')
-
-  envelope.selection = [{
-    datum: { dataset: 'primary', dataRevision: envelope.dataRevision, identity: { label: 'furniture_decor' } },
-    label: 'furniture_decor',
-  }]
-  const selected = echartsOption(envelope, defaultRendererContext) as any
-  expect(responsiveEChartsPatch(selected, 239, 225).series[0].label.formatter({ value: rows[5], dataIndex: 5 })).toBe('R$0.903M')
-
-  envelope.selection = []
-  envelope.spec.presentation.labelPolicy.density = 'dense'
-  const dense = echartsOption(envelope, defaultRendererContext) as any
-  expect(responsiveEChartsPatch(dense, 239, 225).series[0].label.formatter({ value: rows[5], dataIndex: 5 })).toBe('R$0.903M')
-
-  envelope.spec.presentation.labelPolicy.density = 'always'
-  const always = echartsOption(envelope, defaultRendererContext) as any
-  expect(responsiveEChartsPatch(always, 239, 225).series[0].label.formatter({ value: rows[5], dataIndex: 5 })).toBe('R$0.903M')
+  expect(compact.label.formatter({ value: rows[5], dataIndex: 5 })).toBe('R$0.903M')
+  expect((responsiveEChartsPatch(source, 700, 500).series[0].label as any).rotate).toBeUndefined()
 })
 
 test('empty and loading donuts show only the shared status graphic', () => {
