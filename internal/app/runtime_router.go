@@ -226,6 +226,7 @@ type workflowInputs struct {
 	recoveryInterval               time.Duration
 	agent                          *agentmodule.Service
 	agentConfig                    agentmodule.ModelConfig
+	agentConfigFile                string
 	reloader                       runtimeReloader
 	deploymentConfig               deploymentmodule.Config
 	servingArtifacts               projectbundle.ArtifactObjectReader
@@ -323,6 +324,7 @@ type capabilityAssemblyInputs struct {
 
 type workflowAssemblyInputs struct {
 	AgentSettings                  agentmodule.Settings
+	AgentConfigFile                string
 	ManagedDataResolver            runtimehostmodule.ManagedDataResolver
 	AgentConfig                    agentmodule.ModelConfig
 	Auth                           *accessmodule.Auth
@@ -741,6 +743,7 @@ func buildApplicationSurfaces(
 	persistence.accessRepo = data.AccessRepo
 	moduleWorkflow.agent = capabilities.Agent
 	moduleWorkflow.agentConfig = workflow.AgentConfig
+	moduleWorkflow.agentConfigFile = workflow.AgentConfigFile
 	platform.auth = workflow.Auth
 	routes.accessModule = capabilities.AccessModule
 	moduleWorkflow.reloader = workflow.Reloader
@@ -1406,7 +1409,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		agentConfig := agentmodule.Config{
 			Persistence: persistence.agentPersistence, Production: runtimeConfig.Production, Model: moduleWorkflow.agentConfig,
-			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
+			ModelConfigFile: moduleWorkflow.agentConfigFile,
+			Service:         moduleWorkflow.agent, Jobs: platform.asyncJobs,
 			AllowDevAuthBypass: runtimeConfig.AllowDevAuthBypass,
 			ProductName:        brand.Name,
 			BuildVersion:       platform.buildIdentity.Version,

@@ -34,14 +34,12 @@ func (s *Service) ConversationNeedsGeneratedTitle(ctx context.Context, scope Sco
 
 // GenerateConversationTitle is best-effort metadata: failures never block the chat turn.
 func (s *Service) GenerateConversationTitle(ctx context.Context, scope Scope, conversationID string) (Conversation, error) {
-	if !s.Enabled() {
+	runtime := s.runtimeSnapshot()
+	if runtime == nil || !runtime.enabled || !runtime.config.Enabled() || runtime.model == nil {
 		return Conversation{}, ErrDisabled
 	}
 	if s.repo == nil {
 		return Conversation{}, fmt.Errorf("agent store is required")
-	}
-	if s.model == nil {
-		return Conversation{}, fmt.Errorf("agent model is required")
 	}
 	conversation, err := s.repo.GetConversation(ctx, scope.PrincipalID, conversationID)
 	if err != nil {
@@ -58,7 +56,7 @@ func (s *Service) GenerateConversationTitle(ctx context.Context, scope Scope, co
 		return conversation, nil
 	}
 
-	resp, err := s.model.Complete(ctx, agentcore.ModelRequest{
+	resp, err := runtime.model.Complete(ctx, agentcore.ModelRequest{
 		Purpose: modelRequestPurposeTitle,
 		Messages: []agentcore.Message{
 			{Role: agentcore.RoleSystem, Content: titleSystemPrompt()},

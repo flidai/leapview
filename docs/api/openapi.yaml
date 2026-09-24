@@ -362,6 +362,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/AgentConfigResponse'
               example:
+                configured: true
+                enabled: true
+                model: example
+                reasoningEffort: example
+                status: example
+                statusDetail: example
                 systemPrompt: example
         '400':
           description: The server could not understand the request due to invalid
@@ -619,6 +625,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/AgentConfigResponse'
               example:
+                configured: true
+                enabled: true
+                model: example
+                reasoningEffort: example
+                status: example
+                statusDetail: example
                 systemPrompt: example
         '400':
           description: The server could not understand the request due to invalid
@@ -63676,12 +63688,39 @@ components:
     AgentConfigResponse:
       type: object
       required:
+        - configured
+        - enabled
+        - status
         - systemPrompt
       properties:
+        configured:
+          type: boolean
+          example: true
+        enabled:
+          type: boolean
+          example: true
+        status:
+          type: string
+          example: example
+        statusDetail:
+          type: string
+          example: example
+        model:
+          type: string
+          example: example
+        reasoningEffort:
+          type: string
+          example: example
         systemPrompt:
           type: string
           example: example
       example:
+        configured: true
+        enabled: true
+        model: example
+        reasoningEffort: example
+        status: example
+        statusDetail: example
         systemPrompt: example
     AgentConfigUpdateRequest:
       type: object
