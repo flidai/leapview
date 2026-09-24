@@ -575,16 +575,38 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		})
 		return
 	}
-	envelope := h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder)
+	previewVisualID := ""
+	if command.SetVisualType != nil {
+		previewVisualID = builderVisualDefinitionID(builder, input.PageID, input.VisualID)
+	}
+	envelope := h.dashboardBuilderEnvelopeWithTargetPreviewForProject(r.Context(), project, actorID, builder, previewVisualID)
 	envelope.Runtime = h.builderCommandRuntime(r, signals.Runtime, envelope.Runtime, project.String(), dashboardID, input.PageID, builder)
+	if previewVisualID != "" && signals.Runtime.ServingStateID != nil {
+		if servingStateID := strings.TrimSpace(*signals.Runtime.ServingStateID); servingStateID != "" {
+			// A visual-only edit does not replace the active semantic generation or
+			// the other visual envelopes. Keep the browser preview context stable so
+			// the decoder retains every unaffected renderer while the changed visual
+			// receives its new spec and data.
+			envelope.Runtime.ServingStateID = uisignals.Optional(servingStateID)
+			for visualID, signal := range envelope.BuilderVisuals {
+				signal.ServingStateID = servingStateID
+				envelope.BuilderVisuals[visualID] = signal
+			}
+		}
+	}
 	// Datastar applies JSON merge-patch semantics. A complete visualization
 	// envelope is a discriminated union, so merging a Table envelope into a Pie
 	// envelope would retain stale mark/category/value keys and make the result
-	// invalid until reload. Clear the preview map first, then publish the
-	// authoritative replacement as a second patch in the same response. This
-	// also removes previews for visuals deleted by the command.
+	// invalid until reload. Clear the changed preview first, then publish its
+	// authoritative replacement as a second patch in the same response. Commands
+	// without a bounded visual target still replace the complete preview map,
+	// which also removes previews for deleted visuals.
 	updates := pagestream.NewSignalStream(w, r)
-	if err := updates.Patch(pagestream.SignalPatch{"builderVisuals": nil}); err != nil {
+	var previewReset any
+	if previewVisualID != "" {
+		previewReset = map[string]any{previewVisualID: nil}
+	}
+	if err := updates.Patch(pagestream.SignalPatch{"builderVisuals": previewReset}); err != nil {
 		return
 	}
 	_ = updates.Patch(pagestream.SignalPatch{
@@ -1140,6 +1162,10 @@ func (h Handler) dashboardBuilderEnvelopeWithPreview(ctx context.Context, actorI
 }
 
 func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Context, projectID projectgraph.ResourceID, actorID string, builder uisignals.DashboardBuilderSignal) uisignals.DashboardBuilderEnvelope {
+	return h.dashboardBuilderEnvelopeWithTargetPreviewForProject(ctx, projectID, actorID, builder, "")
+}
+
+func (h Handler) dashboardBuilderEnvelopeWithTargetPreviewForProject(ctx context.Context, projectID projectgraph.ResourceID, actorID string, builder uisignals.DashboardBuilderSignal, visualID string) uisignals.DashboardBuilderEnvelope {
 	envelope := dashboardBuilderEnvelope(builder)
 	if servingStateID := builderServingStateID(builder); servingStateID != "" {
 		envelope.Runtime.ServingStateID = uisignals.Optional(servingStateID)
@@ -1151,7 +1177,7 @@ func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Conte
 		ExpectedRevision: authoring.RevisionToken{
 			RevisionID: authoring.RevisionID(strings.TrimSpace(builder.Revision.ID)), Number: uint64(maxInt64(builder.Revision.Number)), ContentHash: strings.TrimSpace(builder.Revision.ContentHash),
 		},
-		PageID: firstBuilderPage(builder), BestEffortVisuals: true,
+		PageID: firstBuilderPage(builder), VisualID: strings.TrimSpace(visualID), BestEffortVisuals: true,
 	})
 	contractDefinition := result.Definition
 	contractEvidence := result.SemanticEvidence
@@ -1224,6 +1250,25 @@ func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Conte
 	// incomplete draft revision.
 	envelope.Builder.Preview.Error = uisignals.Pointer("")
 	return envelope
+}
+
+func builderVisualDefinitionID(builder uisignals.DashboardBuilderSignal, pageID, componentID string) string {
+	pageID, componentID = strings.TrimSpace(pageID), strings.TrimSpace(componentID)
+	for _, page := range builder.Pages {
+		if pageID != "" && page.ID != pageID {
+			continue
+		}
+		for _, visual := range page.Visuals {
+			if visual.ID != componentID && visual.VisualID != componentID {
+				continue
+			}
+			if visualID := strings.TrimSpace(visual.VisualID); visualID != "" {
+				return visualID
+			}
+			return strings.TrimSpace(visual.ID)
+		}
+	}
+	return ""
 }
 
 func dashboardBuilderWithVisualPreviewError(builder uisignals.DashboardBuilderSignal, message string) uisignals.DashboardBuilderSignal {

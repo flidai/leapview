@@ -83,6 +83,20 @@ func TestCanonicalVisualTypeSwitchConfiguresScatterFromResolvedBindings(t *testi
 	}
 }
 
+func TestCanonicalVisualTypeSwitchKeepsEmptyPivotAxesSchemaValid(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{
+		PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypePivot,
+		ResolvedBindings: &VisualTypeFieldBindings{Metrics: []string{"revenue"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	query := revision.Document.Spec.Visuals["base"].Query.Value.(*document.PivotDashboardQuery)
+	if query.Rows == nil || query.Columns == nil {
+		t.Fatalf("pivot axes must encode as arrays, got rows=%#v columns=%#v", query.Rows, query.Columns)
+	}
+}
+
 func TestCanonicalVisualDefaultsAndCartesianSwitchPreserveCompilerContract(t *testing.T) {
 	bar := defaultCanonicalVisual(string(document.DashboardVisualTypeBar), "Bar")
 	barPresentation, ok := bar.Presentation.Value.(*document.CartesianDashboardPresentation)
@@ -157,6 +171,17 @@ func TestCanonicalVisualDefaultsAndCartesianSwitchPreserveCompilerContract(t *te
 	}
 	if _, err := compiler.LowerCanonicalDashboardPresentation(switched.Presentation, switched.Type); err != nil {
 		t.Fatalf("lower switched area presentation: %v", err)
+	}
+}
+
+func TestCanonicalVisualDefaultsUseValidPresentationForEveryVisualType(t *testing.T) {
+	for _, entry := range CanonicalVisualCatalog() {
+		t.Run(string(entry.Type), func(t *testing.T) {
+			visual := defaultCanonicalVisual(string(entry.Type), entry.Label)
+			if _, err := compiler.LowerCanonicalDashboardPresentation(visual.Presentation, visual.Type); err != nil {
+				t.Fatalf("lower default %s presentation: %v", entry.Type, err)
+			}
+		})
 	}
 }
 
@@ -335,8 +360,9 @@ func TestCanonicalAddVisualSupportsEveryVisualTypeWithNonOverlappingPlacement(t 
 		document.DashboardVisualTypeHistogram: {"histogram", "cartesian"},
 		document.DashboardVisualTypeBoxplot:   {"distribution", "cartesian"},
 		document.DashboardVisualTypeTable:     {"records", "table"},
-		document.DashboardVisualTypeMatrix:    {"aggregate", "table"},
+		document.DashboardVisualTypeMatrix:    {"pivot", "table"},
 		document.DashboardVisualTypePivot:     {"pivot", "table"},
+		document.DashboardVisualTypeMap:       {"aggregate", "geographic"},
 		document.DashboardVisualTypePie:       {"aggregate", "proportional"},
 		document.DashboardVisualTypeDonut:     {"aggregate", "proportional"},
 		document.DashboardVisualTypeFunnel:    {"aggregate", "proportional"},
@@ -347,7 +373,6 @@ func TestCanonicalAddVisualSupportsEveryVisualTypeWithNonOverlappingPlacement(t 
 		document.DashboardVisualTypeSunburst:  {"aggregate", "hierarchy"},
 		document.DashboardVisualTypeGauge:     {"aggregate", "polar"},
 		document.DashboardVisualTypeRadar:     {"aggregate", "polar"},
-		document.DashboardVisualTypeMap:       {"records", "geographic"},
 		document.DashboardVisualTypeKpi:       {"aggregate", "kpi"},
 		document.DashboardVisualTypeScatter:   {"aggregate", "point"},
 	}

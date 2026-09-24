@@ -60,6 +60,10 @@ type visualizationWindowRuntime interface {
 	QueryVisualizationWindowForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters, visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error)
 }
 
+type visualizationRuntime interface {
+	QueryVisualizationForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters, string) (visualizationir.VisualizationEnvelope, error)
+}
+
 // Lease is the exact project-generation capability used by preview. It is
 // deliberately narrower than a host lease so preview cannot resolve another
 // project or acquire another generation behind the caller's back.
@@ -110,7 +114,10 @@ type PreviewRequest struct {
 	ExpectedRevision authoring.RevisionToken
 	PageID           string
 	Filters          dashboard.Filters
-	Window           *visualizationir.VisualizationWindowRequest
+	// VisualID limits execution to one compiled visual. Builder mutations use
+	// this path so changing one card does not requery and remount the page.
+	VisualID string
+	Window   *visualizationir.VisualizationWindowRequest
 	// BestEffortVisuals is reserved for the interactive builder. It isolates
 	// visual lowering failures while keeping strict structural, semantic,
 	// filter, and layout validation. Headless preview and publish remain strict.
@@ -204,6 +211,27 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 		ctx = dataquery.WithMetadata(ctx, metadata)
 	}
 	var patch dashboard.Patch
+	visualID := strings.TrimSpace(request.VisualID)
+	if visualID != "" {
+		visualRuntime, ok := prepared.runtime.(visualizationRuntime)
+		if !ok || visualRuntime == nil {
+			return Preview{}, fmt.Errorf("active runtime does not provide dashboard visual capability")
+		}
+		filters := request.Filters
+		if filters.CompiledState == nil {
+			filters = prepared.Definition.DefaultFilters()
+		}
+		envelope, queryErr := visualRuntime.QueryVisualizationForDefinition(ctx, prepared.Definition, pageID, filters, visualID)
+		patch = dashboard.Patch{Filters: filters, Visuals: map[string]visualizationir.VisualizationEnvelope{visualID: envelope}}
+		result := Preview{
+			Revision: prepared.Revision, Definition: prepared.Definition,
+			PagePatch: patch, SemanticEvidence: prepared.SemanticEvidence, VisualErrors: prepared.VisualErrors,
+		}
+		if queryErr != nil {
+			return result, fmt.Errorf("query dashboard draft visual: %w", queryErr)
+		}
+		return result, nil
+	}
 	if request.Window != nil {
 		windowRuntime, ok := prepared.runtime.(visualizationWindowRuntime)
 		if !ok || windowRuntime == nil {

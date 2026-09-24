@@ -1108,6 +1108,39 @@ test('dashboard builder keeps the independent Data pane usable across dock break
   }
 })
 
+test('dashboard builder keeps the visual inspector usable in a narrow split browser', async () => {
+  const page = await browser.newPage({ viewport: { width: 700, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const inspector = root.querySelector('.visual-builder') as HTMLElement
+      const inspectorBounds = inspector.getBoundingClientRect()
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      ;(root.querySelector('button[data-visual-picker-type="line"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return {
+        inspectorWidth: inspectorBounds.width,
+        inspectorOverflow: inspector.scrollWidth > inspector.clientWidth + 1,
+        controlsFit: Array.from(root.querySelectorAll('.visual-builder input, .visual-builder select, .visual-builder button'))
+          .filter((control) => (control as HTMLElement).offsetParent !== null)
+          .every((control) => control.getBoundingClientRect().right <= inspectorBounds.right + 1),
+        command,
+      }
+    })
+    expect(state.inspectorWidth).toBeGreaterThanOrEqual(240)
+    expect(state.inspectorOverflow).toBe(false)
+    expect(state.controlsFit).toBe(true)
+    expect(state.command).toMatchObject({ action: 'set_visual_type', pageId: 'overview', visualId: 'sales-chart', type: 'line' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder keeps bottom-tab navigation and add-page actions wired', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

@@ -90,7 +90,7 @@ func CanonicalVisualRoles(visualType document.DashboardVisualType) []string {
 	case document.DashboardVisualTypeHistogram, document.DashboardVisualTypeBoxplot,
 		document.DashboardVisualTypeGauge, document.DashboardVisualTypeKpi:
 		return []string{"metric"}
-	case document.DashboardVisualTypeTable, document.DashboardVisualTypeMap:
+	case document.DashboardVisualTypeTable:
 		return []string{"detail"}
 	default:
 		return []string{"dimension", "metric"}
@@ -116,22 +116,26 @@ func CanonicalVisualRoleLimits(visualType document.DashboardVisualType) []Visual
 		return []VisualRoleLimit{dimension(1, 1), metric(1, 1)}
 	case document.DashboardVisualTypeHeatmap, document.DashboardVisualTypeGraph, document.DashboardVisualTypeSankey:
 		return []VisualRoleLimit{dimension(2, 2), metric(1, 1)}
-	case document.DashboardVisualTypeGauge, document.DashboardVisualTypeRadar:
-		return []VisualRoleLimit{dimension(0, 1), metric(1, 1)}
+	case document.DashboardVisualTypeGauge:
+		return []VisualRoleLimit{metric(1, 1)}
+	case document.DashboardVisualTypeRadar:
+		return []VisualRoleLimit{dimension(1, 1), metric(1, 1)}
 	case document.DashboardVisualTypeKpi, document.DashboardVisualTypeHistogram, document.DashboardVisualTypeBoxplot:
 		return []VisualRoleLimit{metric(1, 1)}
 	case document.DashboardVisualTypeScatter:
 		return []VisualRoleLimit{dimension(1, 1), metric(2, 2)}
 	case document.DashboardVisualTypeMap:
-		return []VisualRoleLimit{detail(2, 2)}
+		return []VisualRoleLimit{dimension(2, 2), metric(0, 1)}
+	case document.DashboardVisualTypeTable:
+		return []VisualRoleLimit{detail(1, 0)}
 	case document.DashboardVisualTypeCandlestick:
 		return []VisualRoleLimit{dimension(1, 1), metric(4, 4)}
 	case document.DashboardVisualTypeTreemap, document.DashboardVisualTypeTree, document.DashboardVisualTypeSunburst:
 		return []VisualRoleLimit{dimension(1, 0), metric(1, 1)}
 	case document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar, document.DashboardVisualTypeColumn:
-		return []VisualRoleLimit{dimension(0, 1), metric(1, 0)}
+		return []VisualRoleLimit{dimension(1, 1), metric(1, 0)}
 	case document.DashboardVisualTypeCombo:
-		return []VisualRoleLimit{dimension(0, 1), metric(1, 0)}
+		return []VisualRoleLimit{dimension(1, 1), metric(1, 0)}
 	case document.DashboardVisualTypeMatrix:
 		return []VisualRoleLimit{dimension(2, 0), metric(1, 0)}
 	case document.DashboardVisualTypePivot:

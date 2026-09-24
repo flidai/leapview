@@ -62,6 +62,71 @@ func TestResolveVisualTypeFieldBindingsMapsSemanticQueryBackToOneDataset(t *test
 	}
 }
 
+func TestResolveVisualTypeFieldBindingsForTargetCompletesRequiredRolesFromSourceDataset(t *testing.T) {
+	model := &semanticmodel.Model{
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"scenario":   {Bindings: map[string]semanticmodel.DimensionBinding{"cash_forecast": {Field: "cash_scenarios.scenario"}}},
+			"week_start": {Bindings: map[string]semanticmodel.DimensionBinding{"cash_forecast": {Field: "cash_weeks.week_start"}}},
+			"region":     {Bindings: map[string]semanticmodel.DimensionBinding{"sales": {Field: "sales.region"}}},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"current_cash":      {Dataset: "cash_forecast", Input: &semanticmodel.MetricInput{Field: "cash_forecast.current_cash"}},
+			"collections":       {Dataset: "cash_forecast", Input: &semanticmodel.MetricInput{Field: "cash_forecast.collections"}},
+			"net_cash_flow":     {Dataset: "cash_forecast", Input: &semanticmodel.MetricInput{Field: "cash_forecast.net_cash_flow"}},
+			"supplier_payments": {Dataset: "cash_forecast", Input: &semanticmodel.MetricInput{Field: "cash_forecast.supplier_payments"}},
+			"sales_total":       {Dataset: "sales", Input: &semanticmodel.MetricInput{Field: "sales.total"}},
+		},
+		Tables: map[string]semanticmodel.Table{
+			"cash_forecast": {Dimensions: map[string]semanticmodel.MetricDimension{
+				"current_cash": {Datatype: semanticmodel.DataTypeDecimal},
+				"scenario":     {Datatype: semanticmodel.DataTypeString},
+				"week_start":   {Datatype: semanticmodel.DataTypeDate},
+			}},
+			"sales": {Dimensions: map[string]semanticmodel.MetricDimension{"region": {Datatype: semanticmodel.DataTypeString}}},
+		},
+	}
+	currentCash := "current_cash"
+	visual := document.DashboardVisual{Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+		Type: "aggregate", Metrics: []document.DashboardMetricSelection{{String: &currentCash}},
+	}}}
+
+	for _, entry := range authoring.CanonicalVisualCatalog() {
+		t.Run(string(entry.Type), func(t *testing.T) {
+			got := resolveVisualTypeFieldBindingsForTarget(model, visual, entry.Type)
+			if got.Dataset != "cash_forecast" {
+				t.Fatalf("dataset = %q, want cash_forecast", got.Dataset)
+			}
+			if len(got.Metrics) == 0 || got.Metrics[0] != "current_cash" {
+				t.Fatalf("metrics = %#v, want current_cash retained first", got.Metrics)
+			}
+			for _, limit := range authoring.CanonicalVisualRoleLimits(entry.Type) {
+				var count int
+				switch limit.Role {
+				case string(authoring.FieldRoleDimension):
+					count = len(got.Dimensions)
+				case string(authoring.FieldRoleMetric):
+					count = len(got.Metrics)
+				case string(authoring.FieldRoleDetail):
+					count = len(got.Details)
+				}
+				if int32(count) < limit.Minimum {
+					t.Fatalf("%s fields = %d, want at least %d: %#v", limit.Role, count, limit.Minimum, got)
+				}
+			}
+			for _, dimension := range got.Dimensions {
+				if dimension == "region" {
+					t.Fatalf("cross-dataset dimension leaked into bindings: %#v", got)
+				}
+			}
+			for _, metric := range got.Metrics {
+				if metric == "sales_total" {
+					t.Fatalf("cross-dataset metric leaked into bindings: %#v", got)
+				}
+			}
+		})
+	}
+}
+
 func TestRecordDetailFieldIDForValidationQualifiesAgainstRecordsDataset(t *testing.T) {
 	field := "customer_id"
 	doc := document.DashboardDocument{Spec: document.DashboardSpec{Visuals: map[string]document.DashboardVisual{

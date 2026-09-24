@@ -70,8 +70,8 @@ func canonicalVisualSwitchQuery(target document.DashboardQuery, visualType docum
 		}
 		query.Fields = visualSwitchRecordSelections(details)
 	case *document.PivotDashboardQuery:
-		query.Rows = nil
-		query.Columns = nil
+		query.Rows = []document.DashboardDimensionSelection{}
+		query.Columns = []document.DashboardDimensionSelection{}
 		if len(dimensions) > 0 {
 			query.Rows = visualSwitchDimensionSelections(dimensions[:1])
 		}
@@ -96,11 +96,16 @@ func canonicalVisualSwitchQuery(target document.DashboardQuery, visualType docum
 
 func boundedVisualSwitchFields(fields []string, visualType document.DashboardVisualType, role FieldRole) []string {
 	maximum := int32(0)
+	found := false
 	for _, limit := range CanonicalVisualRoleLimits(visualType) {
 		if limit.Role == string(role) {
 			maximum = limit.Maximum
+			found = true
 			break
 		}
+	}
+	if !found {
+		return nil
 	}
 	result := make([]string, 0, len(fields))
 	seen := make(map[string]struct{}, len(fields))

@@ -14,6 +14,7 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
@@ -93,6 +94,21 @@ func TestPreviewRejectsStaleBeforeLeaseAndCompilesThroughOneLease(t *testing.T) 
 	}
 	if result.Revision != f.revision.Token() || result.Definition.ID != "sales" || result.SemanticEvidence.Identity.GenerationID != "serving-1" || result.SemanticEvidence.RuntimeModel != "sales" {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestPreviewCanQueryOnlyOneVisual(t *testing.T) {
+	f := newPreviewFixture(t)
+	f.request.VisualID = "orders"
+	result, err := f.service.Preview(t.Context(), f.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.runtime.queryCalls != 0 || f.runtime.visualQueryCalls != 1 || f.runtime.visualID != "orders" {
+		t.Fatalf("runtime calls page=%d visual=%d id=%q", f.runtime.queryCalls, f.runtime.visualQueryCalls, f.runtime.visualID)
+	}
+	if len(result.PagePatch.Visuals) != 1 || result.PagePatch.Visuals["orders"].VisualID != "orders" {
+		t.Fatalf("targeted preview visuals = %#v", result.PagePatch.Visuals)
 	}
 }
 
@@ -265,6 +281,8 @@ type previewRuntime struct {
 	modelID                     graph.ResourceID
 	model                       *semanticmodel.Model
 	projectionCalls, queryCalls int
+	visualQueryCalls            int
+	visualID                    string
 }
 
 func (r *previewRuntime) Close() error              { return nil }
@@ -281,6 +299,12 @@ func (r *previewRuntime) QueryDashboardPageForDefinition(ctx context.Context, _ 
 	r.queryCalls++
 	r.queryMetadata = dataquery.MetadataFromContext(ctx)
 	return dashboard.EmptyPatch(dashboard.Filters{}, nil), nil
+}
+func (r *previewRuntime) QueryVisualizationForDefinition(ctx context.Context, _ definition.Definition, _ string, _ dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error) {
+	r.visualQueryCalls++
+	r.visualID = visualID
+	r.queryMetadata = dataquery.MetadataFromContext(ctx)
+	return visualizationir.VisualizationEnvelope{VisualID: visualID}, nil
 }
 
 func TestPreviewBindsDataCapabilitiesToAuthorizedActor(t *testing.T) {

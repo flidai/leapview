@@ -96,7 +96,7 @@ func (a *Application) prepareVisualTypeSwitch(ctx context.Context, project proje
 	if err != nil {
 		return err
 	}
-	bindings := resolveVisualTypeFieldBindings(model, visual)
+	bindings := resolveVisualTypeFieldBindingsForTarget(model, visual, patch.Type)
 	patch.ResolvedBindings = &bindings
 	return nil
 }
@@ -222,6 +222,101 @@ func resolveVisualTypeFieldBindings(model *semanticmodel.Model, visual document.
 			}
 		}
 		bindings.Details = append(bindings.Details, recordsByDataset[bindings.Dataset]...)
+	}
+	return bindings
+}
+
+// resolveVisualTypeFieldBindingsForTarget keeps the user's current governed
+// fields first, then fills only the target visual's missing required roles
+// from the same semantic dataset. A visual-type click should produce a usable
+// draft when the active dataset has compatible fields; it must never reach
+// across datasets merely to satisfy a renderer's cardinality.
+func resolveVisualTypeFieldBindingsForTarget(model *semanticmodel.Model, visual document.DashboardVisual, target document.DashboardVisualType) authoring.VisualTypeFieldBindings {
+	bindings := resolveVisualTypeFieldBindings(model, visual)
+	if model == nil {
+		return bindings
+	}
+	dataset := strings.TrimSpace(bindings.Dataset)
+	if dataset == "" {
+		for _, metricID := range bindings.Metrics {
+			if metric, ok := model.Metrics[metricID]; ok && strings.TrimSpace(metric.Dataset) != "" {
+				dataset = strings.TrimSpace(metric.Dataset)
+				break
+			}
+		}
+	}
+	if dataset == "" {
+		for _, dimensionID := range bindings.Dimensions {
+			dimension, ok := model.Dimensions[dimensionID]
+			if !ok {
+				continue
+			}
+			datasets := make([]string, 0, len(dimension.Bindings))
+			for candidate := range dimension.Bindings {
+				if strings.TrimSpace(candidate) != "" {
+					datasets = append(datasets, candidate)
+				}
+			}
+			sort.Strings(datasets)
+			if len(datasets) > 0 {
+				dataset = datasets[0]
+				break
+			}
+		}
+	}
+	if dataset == "" {
+		return bindings
+	}
+	bindings.Dataset = dataset
+
+	minimums := map[authoring.FieldRole]int32{}
+	for _, limit := range authoring.CanonicalVisualRoleLimits(target) {
+		minimums[authoring.FieldRole(limit.Role)] = limit.Minimum
+	}
+
+	dimensionIDs := make([]string, 0, len(model.Dimensions))
+	for id, dimension := range model.Dimensions {
+		// The binding map key is the governed query dataset. Its physical field
+		// may live on a related table (for example cash_scenarios.scenario),
+		// which is precisely what the semantic relationship path resolves.
+		if _, ok := dimension.Bindings[dataset]; ok {
+			dimensionIDs = append(dimensionIDs, id)
+		}
+	}
+	sort.Strings(dimensionIDs)
+	for _, id := range dimensionIDs {
+		if int32(len(bindings.Dimensions)) >= minimums[authoring.FieldRoleDimension] {
+			break
+		}
+		bindings.Dimensions = appendUniqueVisualSwitchField(bindings.Dimensions, id)
+	}
+
+	metricIDs := make([]string, 0, len(model.Metrics))
+	for id, metric := range model.Metrics {
+		if strings.TrimSpace(metric.Dataset) == dataset && !metric.Hidden {
+			metricIDs = append(metricIDs, id)
+		}
+	}
+	sort.Strings(metricIDs)
+	for _, id := range metricIDs {
+		if int32(len(bindings.Metrics)) >= minimums[authoring.FieldRoleMetric] {
+			break
+		}
+		bindings.Metrics = appendUniqueVisualSwitchField(bindings.Metrics, id)
+	}
+
+	detailIDs := []string{}
+	if table, ok := model.Tables[dataset]; ok {
+		for id := range table.Dimensions {
+			detailIDs = append(detailIDs, id)
+		}
+	}
+	sort.Strings(detailIDs)
+	for _, id := range detailIDs {
+		if int32(len(bindings.Details)) >= minimums[authoring.FieldRoleDetail] {
+			break
+		}
+		bindings.Details = appendUniqueVisualSwitchField(bindings.Details, id)
 	}
 	return bindings
 }

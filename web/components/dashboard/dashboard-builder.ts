@@ -2989,7 +2989,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       `--dock-data-width:${size('data', '11.5rem')}`,
       `--dock-agent-width:${size('agent', '19rem')}`,
       `--dock-filters-flex:${size('filters', 'minmax(0, 1fr)')}`,
-      `--dock-visuals-flex:${size('visuals', 'minmax(0, 1fr)')}`,
+      // The medium-width layout places the authoring panes below the canvas.
+      // Keep the visual inspector wide enough for its field wells and action
+      // controls instead of dividing the dock into equally narrow columns.
+      `--dock-visuals-flex:${size('visuals', 'minmax(15rem, 1.35fr)')}`,
       `--dock-data-flex:${size('data', 'minmax(0, 1fr)')}`,
       `--dock-agent-flex:${size('agent', 'minmax(0, 1fr)')}`,
       `--dock-filters-row:${rowSize('filters')}`,
@@ -3763,7 +3766,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectVisualFromPointer(visual.id) }} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
         <div class="grid-stack-item-content">
           ${preview
-            ? keyed(preview.dataState.kind === 'windowed' ? `${this.builder?.revision.id}:${this.builderFilterState.revision}` : visual.id, html`<span class="visual-preview"><lv-visualization-host ?authoring=${previewHasHeader} .envelope=${preview}>${previewHasHeader ? html`<span slot="authoring-drag-handle" class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span>` : nothing}</lv-visualization-host>${previewHasHeader ? nothing : this.renderComponentDragGrip(visual.title, () => this.selectVisualFromPointer(visual.id))}</span>`)
+            ? keyed(preview.dataState.kind === 'windowed' ? `${visual.id}:${preview.specRevision}:${this.builderFilterState.revision}` : visual.id, html`<span class="visual-preview"><lv-visualization-host ?authoring=${previewHasHeader} .envelope=${preview}>${previewHasHeader ? html`<span slot="authoring-drag-handle" class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span>` : nothing}</lv-visualization-host>${previewHasHeader ? nothing : this.renderComponentDragGrip(visual.title, () => this.selectVisualFromPointer(visual.id))}</span>`)
             : html`<span class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span><span class="visual-preview-empty" role="status"><strong>${previewLoading ? `Loading ${this.visualLabel(visualType).toLowerCase()}…` : `${this.visualLabel(visualType)} preview unavailable`}</strong>${previewLoading ? nothing : requirementMessages.length > 0 ? requirementMessages.map((message) => html`<span>${message}</span>`) : html`<span>${previewIssue || fallbackMessage}</span>`}</span><span class="visual-type">${visualType} · ${visual.slots.length} field slots</span>`}
         </div>
       </div>

@@ -513,3 +513,38 @@ test('coalesced table windows retain the newer sort and rendered rows', async ()
     expect(result).toEqual({ reset: 2, sort: 'asc', rows: ['A', 'B', 'C'] })
   } finally { await page.close() }
 })
+
+test('an unrelated draft revision keeps an existing windowed visual mounted', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const preserved = await page.locator('lv-dashboard-builder').evaluate(async (element: any, source) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const schema = source.spec.datasets[0]
+      const spec = {
+        kind: 'table', title: 'Orders', datasets: [schema],
+        accessibility: source.spec.accessibility, dataBudget: source.spec.dataBudget, interactions: [],
+        columns: [{ field: { dataset: 'primary', field: 'category' }, label: 'Status', width: 160, formatting: [] }],
+        presentation: { rowHeight: 32, showHeader: true, striped: false },
+      }
+      const data = {
+        kind: 'windowed', specRevision: source.specRevision, dataRevision: source.dataRevision, generation: 1,
+        schema, cardinality: { kind: 'exact', count: 1 }, availableRows: 1, rowCap: 100, chunkSize: 1,
+        resetVersion: 1, sort: [], blocks: { a: { id: 'a', start: 0, rows: [['Open', 1]], requestSeq: 1, resetVersion: 1, sort: [] } },
+      }
+      const table = { ...source, rendererID: 'tanstack', spec,
+        dataState: { ...source.dataState, kind: 'windowed', payload: JSON.stringify(data) } }
+      const builder = element.builder
+      mergePatch({ builder: { preview: { active: true }, pages: [{ ...builder.pages[0], visuals: [{
+        ...builder.pages[0].visuals[0], type: 'table', slots: [{ id: 'detail', label: 'Status', kind: 'detail', fieldId: 'orders.status', required: true }],
+      }] }, builder.pages[1]] }, builderVisuals: { 'sales-chart': table } })
+      await element.updateComplete
+      const host = element.shadowRoot.querySelector('lv-visualization-host')
+      mergePatch({ builder: { revision: { id: 'rev-unrelated', number: 8 } } })
+      await element.updateComplete
+      return host === element.shadowRoot.querySelector('lv-visualization-host')
+    }, governedBarPreviewEnvelope('sha256:window-preserve'))
+    expect(preserved).toBe(true)
+  } finally { await page.close() }
+})
