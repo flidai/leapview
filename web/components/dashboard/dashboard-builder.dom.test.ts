@@ -1692,6 +1692,57 @@ test('dashboard builder disables GridStack editing without rebuilding it on revi
   }
 })
 
+test('dashboard builder reconciles placement patches that arrive after revision metadata', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = (element.shadowRoot as ShadowRoot)
+      const canvas = root.querySelector('.canvas') as any
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const initialPages = structuredClone(element.builder.pages)
+      const table = initialPages[0].visuals[0]
+      table.title = 'Product performance scorecard'
+      table.type = 'table'
+      initialPages[0].visuals.push({ ...structuredClone(table), id: 'current-cash', visualId: 'current-cash', title: 'Current cash', type: 'tree', placement: { col: 7, row: 1, colSpan: 6, rowSpan: 6 } })
+      mergePatch({ builder: { pages: initialPages } })
+      await element.updateComplete
+      const firstGrid = canvas.gridstack
+
+      // Datastar can deliver one authoritative revision as multiple nested
+      // signal patches. Revision metadata may therefore render before the
+      // placement values from the same response.
+      mergePatch({ builder: { revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' } } })
+      await element.updateComplete
+      const pages = structuredClone(element.builder.pages)
+      pages[0].visuals[0].placement = { col: 7, row: 7, colSpan: 6, rowSpan: 5 }
+      mergePatch({ builder: { pages } })
+      await element.updateComplete
+
+      const visual = root.querySelector('.visual[gs-id="sales-chart"]') as HTMLElement & { gridstackNode?: { x?: number, y?: number, w?: number, h?: number } }
+      const tree = root.querySelector<HTMLElement>('.visual[gs-id="current-cash"]')!
+      const visualRect = visual.getBoundingClientRect()
+      const treeRect = tree.getBoundingClientRect()
+      return {
+        retained: firstGrid === canvas.gridstack,
+        node: { x: visual.gridstackNode?.x, y: visual.gridstackNode?.y, w: visual.gridstackNode?.w, h: visual.gridstackNode?.h },
+        style: { left: visual.style.left, top: visual.style.top },
+        overlapsTree: visualRect.left < treeRect.right && visualRect.right > treeRect.left && visualRect.top < treeRect.bottom && visualRect.bottom > treeRect.top,
+      }
+    })
+    expect(state).toEqual({
+      retained: true,
+      node: { x: 6, y: 6, w: 6, h: 5 },
+      style: { left: 'calc(6 * var(--gs-column-width))', top: 'calc(6 * var(--gs-cell-height))' },
+      overlapsTree: false,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder shows build and format controls in one inspector panel', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

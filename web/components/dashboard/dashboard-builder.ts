@@ -2660,6 +2660,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const canvas = this.shadowRoot?.querySelector('.canvas.grid-stack') as HTMLElement | null
     const mobile = this.isMobileViewport()
     const layoutKey = builder && page ? `${page.id}:${this.pagePlacedComponents(page).map((component) => component.id).join(',')}:${page.grid.columns}:${page.grid.rowHeight}:${page.grid.gap}` : ''
+    const placementKey = page ? JSON.stringify(this.pagePlacedComponents(page).map(({ id, placement }) => [id, placement.col, placement.row, placement.colSpan, placement.rowSpan])) : ''
     if (!canvas || !page || mobile) {
       this.destroyGridStack()
       this.gridIsMobile = mobile
@@ -2670,12 +2671,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       applyCanonicalGridAttributes(this.shadowRoot, this.pagePlacedComponents(page))
       this.gridElement = canvas
       this.gridLayoutKey = layoutKey
-      canvas.dataset.builderRevisionKey = this.revisionKey(builder!)
+      Object.assign(canvas.dataset, { builderRevisionKey: this.revisionKey(builder!), builderPlacementKey: placementKey })
       this.gridIsMobile = mobile
       this.gridStack = GridStack.init({
         column: Math.max(1, page.grid.columns || 12),
-        // GridStack's cell height is the row pitch. Runtime canvas geometry
-        // defines that pitch as the authored row plus its following gap.
+        // GridStack's cell height is the authored row plus its following gap.
         cellHeight: Math.max(1, (page.grid.rowHeight || 48) + (page.grid.gap || 0)),
         margin: Math.max(0, Math.round((page.grid.gap || 16) / 2)),
         animate: false,
@@ -2697,9 +2697,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         this.gridStack.on('resize', () => this.syncCanvasViewport(page))
         this.gridStack.on('change', (event: Event, nodes: GridStackNode[]) => this.onGridChange(event, nodes))
       }
-    } else if (this.gridStack && !this.gridInteracting && this.revisionKey(builder!) !== canvas.dataset.builderRevisionKey) {
+    } else if (this.gridStack && !this.gridInteracting && (this.revisionKey(builder!) !== canvas.dataset.builderRevisionKey || placementKey !== canvas.dataset.builderPlacementKey)) {
       syncGridStackNodesToCanonical(this.gridStack, this.shadowRoot, this.pagePlacedComponents(page))
-      canvas.dataset.builderRevisionKey = this.revisionKey(builder!)
+      Object.assign(canvas.dataset, { builderRevisionKey: this.revisionKey(builder!), builderPlacementKey: placementKey })
     }
     this.setGridEditingEnabled(Boolean(builder?.capabilities.canEdit && !this.commandPending))
   }
