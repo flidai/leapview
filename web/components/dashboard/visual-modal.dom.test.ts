@@ -345,3 +345,20 @@ test('show-data balances small result tables and preserves scrolling for wide re
     await page.close()
   }
 })
+
+test('a previous action timer cannot clear a newer repeated notice', async () => {
+  const page = await setupPage()
+  try {
+    await page.locator('lv-visual-modal').evaluate((modal: any) => modal.flash('Copied visual data.'))
+    await page.waitForTimeout(200)
+    await page.locator('lv-visual-modal').evaluate((modal: any) => modal.flash('Downloaded CSV.'))
+    await page.waitForTimeout(200)
+    await page.locator('lv-visual-modal').evaluate((modal: any) => modal.flash('Copied visual data.'))
+    await page.waitForTimeout(1_500)
+
+    expect(await page.locator('lv-visual-modal').evaluate((modal: any) => modal.notice)).toBe('Copied visual data.')
+    expect(await page.locator('lv-visual-modal [role="status"]').textContent()).toBe('Copied visual data.')
+  } finally {
+    await page.close()
+  }
+})

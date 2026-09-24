@@ -41,6 +41,7 @@ export class VisualModal extends LitElement {
   private focusSource: HTMLElement | null = null
   private restoreFocusTo: HTMLElement | null = null
   private actionEventTarget: Node | null = null
+  private noticeTimer: number | undefined
 
   static styles = css`
     :host {
@@ -257,6 +258,8 @@ export class VisualModal extends LitElement {
     this.actionEventTarget?.removeEventListener('lv-visual-action', this.handleVisualAction as EventListener, { capture: true })
     this.actionEventTarget = null
     window.removeEventListener('keydown', this.handleKeydown)
+    window.clearTimeout(this.noticeTimer)
+    this.noticeTimer = undefined
     this.restoreFocusedVisual(false)
     super.disconnectedCallback()
   }
@@ -518,9 +521,11 @@ export class VisualModal extends LitElement {
   }
 
   private flash(message: string): void {
+    window.clearTimeout(this.noticeTimer)
     this.notice = message
-    window.setTimeout(() => {
-      if (this.notice === message) this.notice = ''
+    this.noticeTimer = window.setTimeout(() => {
+      this.notice = ''
+      this.noticeTimer = undefined
     }, 1800)
   }
 }
