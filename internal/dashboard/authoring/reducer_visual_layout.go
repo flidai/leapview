@@ -18,6 +18,8 @@ func canonicalVisualPlacementSize(visualType document.DashboardVisualType) (colu
 	switch visualType {
 	case document.DashboardVisualTypeKpi, document.DashboardVisualTypeGauge:
 		return 4, 3
+	case document.DashboardVisualTypeTree:
+		return 6, 6
 	case document.DashboardVisualTypeTable, document.DashboardVisualTypeMatrix, document.DashboardVisualTypePivot:
 		return 6, 5
 	default:

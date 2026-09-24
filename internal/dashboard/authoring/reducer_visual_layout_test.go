@@ -12,6 +12,8 @@ func TestCanonicalVisualPlacementSizeCoversCatalog(t *testing.T) {
 		switch visual.Type {
 		case document.DashboardVisualTypeKpi, document.DashboardVisualTypeGauge:
 			wantColumns, wantRows = 4, 3
+		case document.DashboardVisualTypeTree:
+			wantColumns, wantRows = 6, 6
 		case document.DashboardVisualTypeTable, document.DashboardVisualTypeMatrix, document.DashboardVisualTypePivot:
 			wantColumns, wantRows = 6, 5
 		}
@@ -57,6 +59,21 @@ func TestCanonicalVisualTypeSwitchAppliesTargetFootprint(t *testing.T) {
 	if got := component.Placement; got != (document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 5}) {
 		t.Fatalf("table placement = %#v", got)
 	}
+
+	verticalSource := document.DashboardPlacement{Column: 2, Row: 5, ColumnSpan: 6, RowSpan: 4}
+	if err := setCanonicalPlacements(&revision.Document, SetPlacementsPayload{
+		PageID: "overview", Placements: []PlacementUpdate{{ComponentID: "base-component", Placement: verticalSource}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{
+		PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeTree,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := component.Placement; got != (document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 6}) {
+		t.Fatalf("tree placement = %#v", got)
+	}
 }
 
 func TestCanonicalVisualTypeSwitchPacksPageWithoutVisualGaps(t *testing.T) {
@@ -77,13 +94,13 @@ func TestCanonicalVisualTypeSwitchPacksPageWithoutVisualGaps(t *testing.T) {
 	}
 
 	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{
-		PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeArea,
+		PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeTree,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	want := map[string]document.DashboardPlacement{
-		"base-component": {Column: 1, Row: 5, ColumnSpan: 6, RowSpan: 4},
+		"base-component": {Column: 1, Row: 5, ColumnSpan: 6, RowSpan: 6},
 		"left":           {Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4},
 		"collider":       {Column: 7, Row: 1, ColumnSpan: 6, RowSpan: 4},
 		"below":          {Column: 7, Row: 5, ColumnSpan: 6, RowSpan: 4},
