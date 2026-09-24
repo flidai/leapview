@@ -1266,6 +1266,16 @@ test('ECharts wraps a hierarchy forest so every tree root is rendered', () => {
   expect(option.series[0].data[0].__lv_synthetic).toBe(true)
 })
 
+test('ECharts gives a flat one-node tree a visible synthetic root', () => {
+  const envelope = hierarchyFixture('tree') as any
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['Base', null, '11415995.22']]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].data).toEqual([{
+    name: 'All', __lv_dataset: 'primary', __lv_row_index: -1, __lv_synthetic: true,
+    children: [{ name: 'Base', value: '11415995.22', __lv_dataset: 'primary', __lv_row_index: 0 }],
+  }])
+})
+
 test('ECharts scopes repeated hierarchy labels to their compiled parent path', () => {
   const envelope = hierarchyFixture('tree') as any
   ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [
