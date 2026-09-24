@@ -244,3 +244,54 @@ test('show-data dialog fits short viewports and keeps its close control reachabl
     await page.close()
   }
 })
+
+test('show-data rows stay compact while the table body scrolls', async () => {
+  const page = await setupPage()
+  try {
+    await page.setViewportSize({ width: 1280, height: 640 })
+    await page.addStyleTag({ content: ':root { --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --lv-type-body: 400 14px/1.5 system-ui; --lv-type-caption: 400 12px/1.25 system-ui; }' })
+    await page.evaluate(() => {
+      const source = document.getElementById('first')!
+      source.dispatchEvent(new CustomEvent('lv-visual-action', {
+        bubbles: true,
+        composed: true,
+        detail: {
+          action: 'show-data',
+          visualType: 'table',
+          visualId: 'first',
+          title: 'first',
+          columns: [{ key: 'label', label: 'Label' }],
+          rows: Array.from({ length: 40 }, (_, index) => ({ label: `Row ${index + 1}` })),
+          selection: [],
+        },
+      }))
+    })
+    await page.locator('lv-visual-modal').evaluate(async (modal: any) => {
+      await modal.updateComplete
+      await modal.shadowRoot.querySelector('lv-record-table').updateComplete
+    })
+
+    const state = await page.locator('lv-visual-modal').evaluate((modal: any) => {
+      const scroll = modal.shadowRoot.querySelector('.data-scroll') as HTMLElement
+      const row = modal.shadowRoot.querySelector('lv-record-table tbody tr') as HTMLElement
+      return {
+        rowHeight: row.getBoundingClientRect().height,
+        scrollHeight: scroll.scrollHeight,
+        clientHeight: scroll.clientHeight,
+        dialogBottom: modal.shadowRoot.querySelector('[role="dialog"]').getBoundingClientRect().bottom,
+      }
+    })
+    expect(state.rowHeight).toBeLessThanOrEqual(32)
+    expect(state.scrollHeight).toBeGreaterThan(state.clientHeight)
+    expect(state.dialogBottom).toBeLessThanOrEqual(640 - 28)
+
+    const scrollTop = await page.locator('lv-visual-modal').evaluate((modal: any) => {
+      const scroll = modal.shadowRoot.querySelector('.data-scroll') as HTMLElement
+      scroll.scrollTop = scroll.scrollHeight
+      return scroll.scrollTop
+    })
+    expect(scrollTop).toBeGreaterThan(0)
+  } finally {
+    await page.close()
+  }
+})
