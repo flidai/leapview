@@ -250,7 +250,8 @@ export const visualizationHostStyles = css`
     right: 0;
     z-index: var(--zIndex-dropdown);
     display: grid;
-    width: min(220px, calc(100vw - var(--base-size-24)));
+    width: max-content;
+    max-width: calc(100vw - var(--base-size-24));
     border: var(--lv-border-default);
     border-radius: var(--lv-radius-default);
     background: var(--lv-bg-overlay);

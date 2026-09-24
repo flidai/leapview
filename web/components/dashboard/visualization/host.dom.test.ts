@@ -252,6 +252,10 @@ test('visual option menus are exclusive and dismiss on Escape or outside pointer
       firstOptions.querySelector<HTMLElement>('summary')!.click()
       await settle()
       const firstOpened = firstOptions.open && first.hasAttribute('visual-options-open')
+      const firstMenu = firstOptions.querySelector<HTMLElement>('.menu')!
+      const firstMenuRect = firstMenu.getBoundingClientRect()
+      const labelRight = Math.max(...Array.from(firstMenu.querySelectorAll<HTMLElement>('button span')).map((label) => label.getBoundingClientRect().right))
+      const compact = firstMenuRect.right - labelRight <= 24
 
       secondOptions.querySelector<HTMLElement>('summary')!.click()
       await settle()
@@ -271,9 +275,9 @@ test('visual option menus are exclusive and dismiss on Escape or outside pointer
 
       first.remove()
       second.remove()
-      return { firstOpened, exclusive, escapeDismissed, outsideDismissed }
+      return { firstOpened, compact, exclusive, escapeDismissed, outsideDismissed }
     })
-    expect(state).toEqual({ firstOpened: true, exclusive: true, escapeDismissed: true, outsideDismissed: true })
+    expect(state).toEqual({ firstOpened: true, compact: true, exclusive: true, escapeDismissed: true, outsideDismissed: true })
   } finally {
     await page.close()
   }
