@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/project/developmentsession"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -167,6 +169,106 @@ func TestSessionEventsReplayAndCloseAfterDurableRevisionAdvance(t *testing.T) {
 	advanced := readSSEData(t, reader)
 	if !strings.Contains(advanced, `"revision":2`) || !strings.Contains(advanced, `"path":"dashboards/orders.yaml"`) || strings.Contains(advanced, "password=secret") {
 		t.Fatalf("advanced event = %s", advanced)
+	}
+}
+
+func TestActiveProjectEventsUseAuthenticatedLocalScope(t *testing.T) {
+	store := developmentsession.NewMemoryStore()
+	key := developmentsession.Key{OwnerID: "owner_1", CheckoutID: "checkout_1", WorktreeID: "worktree_1", ProjectID: projectgraph.ResourceID("project_1"), TargetID: "target_1", Environment: "dev"}
+	if _, err := store.Save(t.Context(), developmentsession.Record{ID: key.ID(), Key: key, Diagnostics: []developmentsession.Diagnostic{{Code: "YAML", Message: "Invalid YAML", Path: "dashboards/sales.yaml", Line: 4}}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	owner := key.OwnerID
+	handler := New(Config{
+		Store: store, Enabled: true, CheckoutID: key.CheckoutID, WorktreeID: key.WorktreeID, TargetID: key.TargetID, Environment: key.Environment,
+		CurrentPrincipal: func(*http.Request) (string, bool) { return owner, true },
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return key.ProjectID, nil },
+	})
+	router := chi.NewRouter()
+	router.Get("/development-session/events", handler.ActiveProjectEvents)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	response, err := server.Client().Get(server.URL + "/development-session/events?project=other&target=other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("active project events = %d %q", response.StatusCode, response.Header.Get("Content-Type"))
+	}
+	if event := readSSEData(t, bufio.NewReader(response.Body)); !strings.Contains(event, `"path":"dashboards/sales.yaml"`) || !strings.Contains(event, `"line":4`) {
+		t.Fatalf("active project diagnostic = %s", event)
+	}
+	owner = "other_owner"
+	unowned, err := server.Client().Get(server.URL + "/development-session/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unowned.Body.Close()
+	if unowned.StatusCode != http.StatusNotFound {
+		t.Fatalf("other owner could read local diagnostics: status=%d", unowned.StatusCode)
+	}
+}
+
+func TestActiveProjectEventsWaitsForInProcessServingCutover(t *testing.T) {
+	store := developmentsession.NewMemoryStore()
+	key := developmentsession.Key{OwnerID: "owner_1", CheckoutID: "checkout_1", WorktreeID: "worktree_1", ProjectID: projectgraph.ResourceID("project_1"), TargetID: "target_1", Environment: "dev"}
+	identity := developmentsession.Identity{CandidateID: "candidate_1", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), GraphDigest: "sha256:" + strings.Repeat("b", 64), PreviewURL: "http://127.0.0.1/candidates/candidate_1"}
+	if _, err := store.Save(t.Context(), developmentsession.Record{ID: key.ID(), Key: key, LastValid: identity}, 0); err != nil {
+		t.Fatal(err)
+	}
+	var ready atomic.Bool
+	handler := New(Config{
+		Store: store, Enabled: true, CheckoutID: key.CheckoutID, WorktreeID: key.WorktreeID, TargetID: key.TargetID, Environment: key.Environment,
+		CurrentPrincipal: func(*http.Request) (string, bool) { return key.OwnerID, true },
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return key.ProjectID, nil },
+		ValidateCandidate: func(context.Context, string, string, projectgraph.ResourceID, string, string) (CandidateValidation, error) {
+			return CandidateValidation{Identity: identity, OwnerID: key.OwnerID, ProjectID: key.ProjectID, TargetID: key.TargetID, Environment: key.Environment, Qualified: true}, nil
+		},
+		ActiveViewReady: func(context.Context) (bool, error) { return ready.Load(), nil },
+	})
+	router := chi.NewRouter()
+	router.Get("/development-session/events", handler.ActiveProjectEvents)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/development-session/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	responses := make(chan *http.Response, 1)
+	errors := make(chan error, 1)
+	go func() {
+		response, requestErr := server.Client().Do(request)
+		if requestErr != nil {
+			errors <- requestErr
+			return
+		}
+		responses <- response
+	}()
+	select {
+	case response := <-responses:
+		response.Body.Close()
+		t.Fatal("ordinary dashboard stream announced a candidate before the serving runtime cut over")
+	case err := <-errors:
+		t.Fatal(err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	ready.Store(true)
+	select {
+	case response := <-responses:
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("active view stream status = %d", response.StatusCode)
+		}
+		if event := readSSEData(t, bufio.NewReader(response.Body)); !strings.Contains(event, `"candidateId":"candidate_1"`) {
+			t.Fatalf("active view event = %s", event)
+		}
+	case err := <-errors:
+		t.Fatal(err)
+	case <-ctx.Done():
+		t.Fatal("ordinary dashboard stream did not resume after the serving cutover")
 	}
 }
 

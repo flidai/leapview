@@ -38,6 +38,22 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		developmentSession = developmentsessionmodule.Build(context.Background(), developmentsessionmodule.Config{
 			Store: runtime.developmentSessions, CheckoutID: runtime.checkoutID, WorktreeID: runtime.worktreeID, TargetID: runtime.targetID, Environment: policy.defaultEnvironment,
 			ResolveProjectID: runtime.developmentProjectIDResolver,
+			ActiveViewReady: func(ctx context.Context) (bool, error) {
+				if runtime.runtimeHostModule == nil {
+					return false, errors.New("local serving runtime is unavailable")
+				}
+				active, _, err := runtime.runtimeHostModule.ActiveArtifact(ctx)
+				if err != nil {
+					return false, err
+				}
+				lease, err := runtime.runtimeHostModule.Acquire(ctx)
+				if err != nil {
+					return false, err
+				}
+				defer lease.Release()
+				identity := lease.Identity()
+				return active.ID != "" && identity.GenerationID == string(active.ID) && identity.ProjectID == active.ProjectID && identity.Environment == string(active.Environment), nil
+			},
 			CurrentPrincipal: func(r *http.Request) (string, bool) {
 				principal, ok := routes.accessModule.CurrentPrincipal(r)
 				return principal.ID, ok
