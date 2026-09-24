@@ -6,6 +6,8 @@ const COMPACT_HEIGHT = 280
 const BOUNDED_OUTSIDE_LABEL_WIDTH = 400
 const CROWDED_INSIDE_LABEL_WIDTH = 640
 const CROWDED_INSIDE_LABEL_HEIGHT = 420
+const CROWDED_INSIDE_MINIMUM_ANGLE = 50
+const CROWDED_INSIDE_DENSE_MINIMUM_ANGLE = 35
 
 export type EChartsNavigationDefaults = Readonly<{ dataZoom: boolean; roam: boolean }>
 export type EChartsViewState = Readonly<{
@@ -32,7 +34,7 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
 export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
   if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
   const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
-  const proportionalSeries = responsiveProportionalSeries(option.series, width, height)
+  const proportionalSeries = responsiveProportionalSeries(option.series, option.dataset, width, height)
   const responsivePie = hasPieSeries(option.series)
   const patch: Record<string, any> = {}
   const bottomLegend = compact && hasBottomLegend(option.legend)
@@ -70,7 +72,7 @@ function hasPieSeries(value: unknown): boolean {
     && (entry as Record<string, unknown>).type === 'pie')
 }
 
-function responsiveProportionalSeries(value: unknown, width: number, height: number): unknown[] | undefined {
+function responsiveProportionalSeries(value: unknown, dataset: unknown, width: number, height: number): unknown[] | undefined {
   if (!Array.isArray(value)) return undefined
   const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
   let hasResponsivePieLabels = false
@@ -98,6 +100,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
           // authored density and full-size focus views.
           fontSize: Math.min(finiteNumber(labelOption.fontSize) ?? 12, 11),
           padding: 0,
+          formatter: compactInsideLabelFormatter(source, labelOption, dataset),
         },
       }
     }
@@ -125,6 +128,60 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     }
   })
   return hasResponsivePieLabels ? series : undefined
+}
+
+function compactInsideLabelFormatter(
+  series: Record<string, unknown>,
+  label: Record<string, unknown>,
+  dataset: unknown,
+): unknown {
+  const formatter = label.formatter
+  const minimumAngle = finiteNumber(series.minShowLabelAngle)
+  if (typeof formatter !== 'function' || minimumAngle === 0) return formatter
+  const crowdedMinimumAngle = minimumAngle !== undefined && minimumAngle <= 1
+    ? CROWDED_INSIDE_DENSE_MINIMUM_ANGLE
+    : CROWDED_INSIDE_MINIMUM_ANGLE
+  const source = datasetSource(dataset)
+  const valueIndex = encodedValueIndex(series.encode, source.columns)
+  if (valueIndex < 0) return formatter
+  const total = source.rows.reduce((sum, row) => sum + positiveNumber(row[valueIndex]), 0)
+  if (!(total > 0)) return formatter
+  const labelLayout = series.labelLayout
+  return function compactInsideFormatter(this: unknown, params: { value?: unknown; dataIndex?: number }): unknown {
+    const formatted = formatter.call(this, params)
+    if (priorityLabel(labelLayout, params.dataIndex)) return formatted
+    const row = Array.isArray(params.value) ? params.value : source.rows[params.dataIndex ?? -1]
+    if (!row) return formatted
+    const angle = positiveNumber(row[valueIndex]) / total * 360
+    return angle < crowdedMinimumAngle ? '' : formatted
+  }
+}
+
+function datasetSource(value: unknown): { columns: unknown[]; rows: unknown[][] } {
+  const candidate = Array.isArray(value) ? value[0] : value
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return { columns: [], rows: [] }
+  const source = (candidate as { source?: unknown }).source
+  if (!Array.isArray(source) || !Array.isArray(source[0])) return { columns: [], rows: [] }
+  return { columns: source[0], rows: source.slice(1).filter(Array.isArray) as unknown[][] }
+}
+
+function encodedValueIndex(value: unknown, columns: readonly unknown[]): number {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return -1
+  const encoded = (value as { value?: unknown }).value
+  const field = Array.isArray(encoded) ? encoded[0] : encoded
+  if (typeof field === 'number' && Number.isInteger(field)) return field
+  return columns.findIndex((column) => column === field)
+}
+
+function priorityLabel(value: unknown, dataIndex: number | undefined): boolean {
+  const layout = typeof value === 'function' ? value({ dataIndex }) : value
+  return Boolean(layout && typeof layout === 'object' && !Array.isArray(layout)
+    && (layout as { hideOverlap?: unknown }).hideOverlap === false)
+}
+
+function positiveNumber(value: unknown): number {
+  const number = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(number) && number > 0 ? number : 0
 }
 
 function finiteNumber(value: unknown): number | undefined {

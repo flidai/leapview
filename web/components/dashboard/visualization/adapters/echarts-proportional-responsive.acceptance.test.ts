@@ -181,7 +181,7 @@ test('card-sized inside pie labels do not collide', () => {
           if (transform) rect.applyTransform(transform)
           return rect
         })
-      expect(bounds).toHaveLength(labels.length)
+      expect(bounds).toHaveLength(labels.length - 1)
       for (let index = 0; index < bounds.length; index++) {
         for (let candidate = index + 1; candidate < bounds.length; candidate++) {
           expect(bounds[index]!.intersect(bounds[candidate]!)).toBe(false)
@@ -191,6 +191,43 @@ test('card-sized inside pie labels do not collide', () => {
       chart.dispose()
     }
   }
+})
+
+test('card-sized inside pies suppress only non-priority sectors that cannot hold their value label', () => {
+  const envelope = proportionalWithIconFormat('pie')
+  if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected proportional fixture')
+  envelope.spec.presentation.labelPosition = 'inside'
+  envelope.spec.presentation.rose = false
+  envelope.spec.presentation.labelPolicy.priority = ['selected']
+  envelope.spec.datasets[0].fields[0]!.role = 'identity'
+  envelope.spec.datasets[0].fields[1]!.format = { kind: 'currency', currency: 'BRL' }
+  const rows = [
+    ['health_beauty', 1_440_000], ['watches_gifts', 1_300_000], ['bed_bath_table', 1_260_000],
+    ['sports_leisure', 1_150_000], ['computers_accessories', 1_070_000], ['furniture_decor', 903_000],
+  ]
+  envelope.dataState.datasets[0].rows = rows
+
+  const source = echartsOption(envelope, defaultRendererContext) as any
+  const compact = responsiveEChartsPatch(source, 239, 225).series[0]
+  expect(compact.label.formatter({ value: rows[4], dataIndex: 4 })).toBe('R$1.07M')
+  expect(compact.label.formatter({ value: rows[5], dataIndex: 5 })).toBe('')
+  expect(responsiveEChartsPatch(source, 700, 500).series[0].label.formatter({ value: rows[5], dataIndex: 5 })).toBe('R$0.903M')
+
+  envelope.selection = [{
+    datum: { dataset: 'primary', dataRevision: envelope.dataRevision, identity: { label: 'furniture_decor' } },
+    label: 'furniture_decor',
+  }]
+  const selected = echartsOption(envelope, defaultRendererContext) as any
+  expect(responsiveEChartsPatch(selected, 239, 225).series[0].label.formatter({ value: rows[5], dataIndex: 5 })).toBe('R$0.903M')
+
+  envelope.selection = []
+  envelope.spec.presentation.labelPolicy.density = 'dense'
+  const dense = echartsOption(envelope, defaultRendererContext) as any
+  expect(responsiveEChartsPatch(dense, 239, 225).series[0].label.formatter({ value: rows[5], dataIndex: 5 })).toBe('R$0.903M')
+
+  envelope.spec.presentation.labelPolicy.density = 'always'
+  const always = echartsOption(envelope, defaultRendererContext) as any
+  expect(responsiveEChartsPatch(always, 239, 225).series[0].label.formatter({ value: rows[5], dataIndex: 5 })).toBe('R$0.903M')
 })
 
 test('empty and loading donuts show only the shared status graphic', () => {
