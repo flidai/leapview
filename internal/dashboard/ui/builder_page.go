@@ -158,11 +158,17 @@ func DashboardBuilderBootstrapSignals(envelope uisignals.DashboardBuilderEnvelop
 			},
 			Composer: uisignals.ComposerSignal{Disabled: true, Placeholder: "Agent is not configured"},
 		},
-		"agentContext":               agentContext,
-		"agentReferenceSearch":       uisignals.AgentReferenceSearchSignal{Results: []uisignals.AgentReferenceSignal{}},
-		"agentVisuals":               map[string]visualizationir.VisualizationEnvelope{},
-		"interactionSelections":      []uisignals.DashboardInteractionSelection{},
-		"builder":                    envelope.Builder,
+		"agentContext":          agentContext,
+		"agentReferenceSearch":  uisignals.AgentReferenceSearchSignal{Results: []uisignals.AgentReferenceSignal{}},
+		"agentVisuals":          map[string]visualizationir.VisualizationEnvelope{},
+		"interactionSelections": []uisignals.DashboardInteractionSelection{},
+		"builder":               envelope.Builder,
+		"builderWindowContext": map[string]any{
+			"draftId":             envelope.Builder.DraftID,
+			"revisionId":          envelope.Builder.Revision.ID,
+			"revisionNumber":      envelope.Builder.Revision.Number,
+			"revisionContentHash": envelope.Builder.Revision.ContentHash,
+		},
 		"builderVisuals":             envelope.BuilderVisuals,
 		"runtime":                    envelope.Runtime,
 		"status":                     envelope.Status,
@@ -247,9 +253,13 @@ func builderFilterOptionsAction(actions DashboardBuilderActionBindings) g.Node {
 }
 
 func builderVisualWindowAction(actions DashboardBuilderActionBindings) g.Node {
-	value := "$visualWindowCommand = evt.detail;"
+	// A builder projection includes the full semantic field catalog and can be
+	// hundreds of kilobytes. Window reads only need the exact draft revision;
+	// derive that bounded identity at dispatch time so scrolling never uploads
+	// the complete authoring model.
+	value := "$visualWindowCommand = evt.detail; $builderWindowContext = {draftId: $builder.draftId, revisionId: $builder.revision.id, revisionNumber: $builder.revision.number, revisionContentHash: $builder.revision.contentHash};"
 	if strings.TrimSpace(actions.VisualWindowPath) != "" {
-		value += " " + uiactions.ConcurrentEventPost(actions.VisualWindowPath, "builder", "runtime", "builderFilterState", "visualWindowCommand")
+		value += " " + uiactions.ConcurrentEventPost(actions.VisualWindowPath, "builderWindowContext", "runtime", "builderFilterState", "visualWindowCommand")
 	}
 	return g.Attr("data-on:lv-visualization-window-request", value)
 }

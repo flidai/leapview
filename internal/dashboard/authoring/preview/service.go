@@ -156,6 +156,12 @@ type Preview struct {
 	VisualErrors     map[string]string              `json:"visualErrors,omitempty"`
 }
 
+// WindowFilterResolver binds an exact compiled draft to its ephemeral filter
+// session before the window query runs. Keeping resolution inside the preview
+// lease lets authoring window reads compile once instead of compiling once for
+// session validation and again for query execution.
+type WindowFilterResolver func(Compilation) (dashboard.Filters, error)
+
 // Compilation is the exact-revision, compile-only draft result. It carries
 // the same serving-state evidence as Preview but intentionally has no page
 // patch because no dashboard consumer query has run.
@@ -202,6 +208,41 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 		return Preview{}, err
 	}
 	defer prepared.release()
+	return previewPrepared(ctx, request, prepared)
+}
+
+// PreviewWindow compiles and queries one draft window through a single runtime
+// lease. The resolver may establish or load revision-scoped filter state from
+// the immutable compilation before any data query is executed.
+func (s *Service) PreviewWindow(ctx context.Context, request PreviewRequest, resolve WindowFilterResolver) (Preview, error) {
+	pageID := strings.TrimSpace(request.PageID)
+	if pageID == "" {
+		return Preview{}, fmt.Errorf("preview page id is required")
+	}
+	if request.Window == nil {
+		return Preview{}, fmt.Errorf("preview window request is required")
+	}
+	if resolve == nil {
+		return Preview{}, fmt.Errorf("preview window filter resolver is required")
+	}
+	prepared, err := s.prepareCompilation(ctx, CompileRequest{
+		ProjectID: request.ProjectID, ActorID: request.ActorID,
+		DashboardID: request.DashboardID, DraftID: request.DraftID,
+		ExpectedRevision: request.ExpectedRevision,
+	}, false, request.BestEffortVisuals)
+	if err != nil {
+		return Preview{}, err
+	}
+	defer prepared.release()
+	request.Filters, err = resolve(prepared.Compilation)
+	if err != nil {
+		return Preview{}, err
+	}
+	return previewPrepared(ctx, request, prepared)
+}
+
+func previewPrepared(ctx context.Context, request PreviewRequest, prepared preparedCompilation) (Preview, error) {
+	pageID := strings.TrimSpace(request.PageID)
 	// Preview executes directly on the leased runtime, bypassing the published
 	// metrics audit wrapper. Retain the authorized actor for scoped data/tile
 	// capabilities, which subsequent HTTP requests redeem as that principal.
@@ -248,7 +289,7 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 		}
 		return result, nil
 	}
-	patch, err = prepared.runtime.QueryDashboardPageForDefinition(ctx, prepared.Definition, pageID, request.Filters)
+	patch, err := prepared.runtime.QueryDashboardPageForDefinition(ctx, prepared.Definition, pageID, request.Filters)
 	patch = normalizeWindowResetVersions(patch)
 	result := Preview{
 		Revision: prepared.Revision, Definition: prepared.Definition,

@@ -282,6 +282,7 @@ type previewRuntime struct {
 	model                       *semanticmodel.Model
 	projectionCalls, queryCalls int
 	visualQueryCalls            int
+	windowQueryCalls            int
 	visualID                    string
 }
 

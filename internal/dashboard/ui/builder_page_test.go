@@ -43,6 +43,8 @@ func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 		`/static/dashboard-builder.js`, `route=dashboard_builder`, `dashboard=revenue`, `draft=draft-7`,
 		`data-on:lv-builder-command`, `@post('/dashboards/revenue/commands'`, `headers: window.LeapViewCommand.headers('executeDashboardAuthoringCommand')`,
 		`data-on:lv-visualization-window-request`, `'/dashboards/revenue/draft/visual-window'`,
+		`$builderWindowContext = {draftId: $builder.draftId`,
+		`/^(?:builderWindowContext|runtime|builderFilterState|visualWindowCommand)(?:[.]|$)/`,
 		`requestCancellation: 'disabled'`,
 		`back-href="/dashboards"`, `preview-href="/dashboards/revenue/preview"`,
 		`page-base-href="/dashboards/revenue/edit"`,
@@ -84,6 +86,10 @@ func TestDashboardBuilderBootstrapSignalsStayUnderDedicatedKeys(t *testing.T) {
 	signals := DashboardBuilderBootstrapSignals(envelope)
 	if _, ok := signals["builder"].(uisignals.DashboardBuilderSignal); !ok {
 		t.Fatalf("builder signal = %T, want DashboardBuilderSignal", signals["builder"])
+	}
+	windowContext, ok := signals["builderWindowContext"].(map[string]any)
+	if !ok || windowContext["draftId"] != "draft-7" {
+		t.Fatalf("builder window context = %#v, want bounded draft identity", signals["builderWindowContext"])
 	}
 	if _, ok := signals["runtime"].(uisignals.RouteRuntimeSignal); !ok {
 		t.Fatalf("runtime signal = %T, want RouteRuntimeSignal", signals["runtime"])

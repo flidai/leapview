@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,24 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
+type optimizedBuilderWindowFake struct {
+	*builderAuthoringFake
+	windowCalls int
+}
+
+func (f *optimizedBuilderWindowFake) PreviewWindow(ctx context.Context, request preview.PreviewRequest, resolve preview.WindowFilterResolver) (preview.Preview, error) {
+	f.windowCalls++
+	filters, err := resolve(f.compilation)
+	if err != nil {
+		return preview.Preview{}, err
+	}
+	request.Filters = filters
+	f.previewCtx = ctx
+	f.previewReq = request
+	f.previewCalls++
+	return f.preview, f.previewErr
+}
+
 func TestDashboardBuilderVisualWindowUsesExactSessionAndReturnsSignalEnvelope(t *testing.T) {
 	definition := builderWindowDefinition(t)
 	visual, err := visualizationruntime.EmptyEnvelopeFromDefinition(definition.Visualizations["orders"], 2, 1, 0)
@@ -31,17 +50,14 @@ func TestDashboardBuilderVisualWindowUsesExactSessionAndReturnsSignalEnvelope(t 
 		preview:     preview.Preview{Definition: definition, SemanticEvidence: preview.SemanticServingStateEvidence{Identity: servingIdentityForTest(generation)}, PagePatch: dashboard.Patch{Filters: dashboard.Filters{CompiledState: &dashboardfilter.State{Revision: 1}}, Visuals: map[string]visualizationir.VisualizationEnvelope{"orders": visual}}},
 	}
 	store := dashboardsession.NewMemoryStore()
-	h := Handler{Authoring: fake, ProjectID: "sales", SessionStore: store, CurrentPrincipalID: func(*http.Request) string { return "actor-1" }}
+	optimized := &optimizedBuilderWindowFake{builderAuthoringFake: fake}
+	h := Handler{Authoring: optimized, ProjectID: "sales", SessionStore: store, CurrentPrincipalID: func(*http.Request) string { return "actor-1" }}
 	servingStateID := "builder:draft-7:revision-3:" + hash + ":generation:" + generation
 	request := builderRequest(http.MethodPost, "/dashboards/revenue/draft/visual-window?draft=draft-7", map[string]any{
-		"builder": map[string]any{
-			"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-7",
-			"revision": map[string]any{"id": "revision-3", "number": 3, "contentHash": hash},
-			"pages":    []map[string]any{{"id": "overview"}},
-		},
-		"runtime":             map[string]any{"clientId": "client_1", "streamInstanceId": "stream_1", "servingStateId": servingStateID},
-		"builderFilterState":  map[string]any{"revision": 1},
-		"visualWindowCommand": map[string]any{"visualID": "orders", "requestSeq": 2, "resetVersion": 42, "start": 0, "limit": 50, "blockID": "a"},
+		"builderWindowContext": map[string]any{"draftId": "draft-7", "revisionId": "revision-3", "revisionNumber": 3, "revisionContentHash": hash},
+		"runtime":              map[string]any{"clientId": "client_1", "streamInstanceId": "stream_1", "servingStateId": servingStateID, "pageId": "overview"},
+		"builderFilterState":   map[string]any{"revision": 1},
+		"visualWindowCommand":  map[string]any{"visualID": "orders", "requestSeq": 2, "resetVersion": 42, "start": 0, "limit": 50, "blockID": "a"},
 	})
 	request = withBuilderURLParams(request, "sales", "revenue")
 	recorder := httptest.NewRecorder()
@@ -66,8 +82,8 @@ func TestDashboardBuilderVisualWindowUsesExactSessionAndReturnsSignalEnvelope(t 
 	if got := response["builderVisuals"][windowKey]["servingStateID"]; got != servingStateID {
 		t.Fatalf("response must retain exact draft identity: got %#v, want %q", got, servingStateID)
 	}
-	if fake.previewCalls != 1 || fake.previewReq.Window == nil || fake.previewReq.Filters.CompiledState == nil || fake.previewReq.Filters.CompiledState.Revision != 1 {
-		t.Fatalf("preview request = %#v calls=%d", fake.previewReq, fake.previewCalls)
+	if optimized.windowCalls != 1 || fake.compileCalls != 0 || fake.previewCalls != 1 || fake.previewReq.Window == nil || fake.previewReq.Filters.CompiledState == nil || fake.previewReq.Filters.CompiledState.Revision != 1 {
+		t.Fatalf("preview request = %#v window=%d compile=%d preview=%d", fake.previewReq, optimized.windowCalls, fake.compileCalls, fake.previewCalls)
 	}
 	if fake.previewReq.Window.ResetVersion != 42 {
 		t.Fatalf("preview reset version = %d, want table reset version 42", fake.previewReq.Window.ResetVersion)
@@ -84,10 +100,10 @@ func TestDashboardBuilderVisualWindowRejectsStaleFilterRevisionAndWrongPage(t *t
 	fake := &builderAuthoringFake{compilation: preview.Compilation{Definition: definition, SemanticEvidence: preview.SemanticServingStateEvidence{Identity: servingIdentityForTest("generation-1")}}}
 	h := Handler{Authoring: fake, ProjectID: "sales", SessionStore: dashboardsession.NewMemoryStore(), CurrentPrincipalID: func(*http.Request) string { return "actor-1" }}
 	base := map[string]any{
-		"builder":             map[string]any{"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-7", "revision": map[string]any{"id": "revision-3", "number": 3, "contentHash": hash}, "pages": []map[string]any{{"id": "overview"}}},
-		"runtime":             map[string]any{"clientId": "client_1", "streamInstanceId": "stream_1", "servingStateId": "builder:draft-7:revision-3:" + hash + ":generation:generation-1"},
-		"builderFilterState":  map[string]any{"revision": 0},
-		"visualWindowCommand": map[string]any{"visualID": "orders", "requestSeq": 2, "resetVersion": 0, "start": 0, "limit": 50, "blockID": "a"},
+		"builderWindowContext": map[string]any{"draftId": "draft-7", "revisionId": "revision-3", "revisionNumber": 3, "revisionContentHash": hash},
+		"runtime":              map[string]any{"clientId": "client_1", "streamInstanceId": "stream_1", "servingStateId": "builder:draft-7:revision-3:" + hash + ":generation:generation-1", "pageId": "overview"},
+		"builderFilterState":   map[string]any{"revision": 0},
+		"visualWindowCommand":  map[string]any{"visualID": "orders", "requestSeq": 2, "resetVersion": 0, "start": 0, "limit": 50, "blockID": "a"},
 	}
 	stale := builderRequest(http.MethodPost, "/dashboards/revenue/draft/visual-window?draft=draft-7", base)
 	stale = withBuilderURLParams(stale, "sales", "revenue")
@@ -101,7 +117,7 @@ func TestDashboardBuilderVisualWindowRejectsStaleFilterRevisionAndWrongPage(t *t
 		wrongPage[key] = value
 	}
 	wrongPage["visualWindowCommand"] = map[string]any{"visualID": "orders", "requestSeq": 2, "resetVersion": 42, "start": 0, "limit": 50, "blockID": "a"}
-	wrongPage["builder"] = map[string]any{"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-7", "revision": map[string]any{"id": "revision-3", "number": 3, "contentHash": hash}, "pages": []map[string]any{{"id": "other"}}}
+	wrongPage["runtime"] = map[string]any{"clientId": "client_1", "streamInstanceId": "stream_1", "servingStateId": "builder:draft-7:revision-3:" + hash + ":generation:generation-1", "pageId": "other"}
 	wrong := builderRequest(http.MethodPost, "/dashboards/revenue/draft/visual-window?draft=draft-7", wrongPage)
 	wrong = withBuilderURLParams(wrong, "sales", "revenue")
 	recorder = httptest.NewRecorder()
