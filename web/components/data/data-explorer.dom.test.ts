@@ -418,6 +418,89 @@ test('data explorer prompts for a selection when objects are available', async (
   }
 })
 
+test('query controls hydrate canonical select values on their first render', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer-query-controls'))
+
+    const state = await page.evaluate(async () => {
+      const element = document.createElement('lv-data-explorer-query-controls') as any
+      const spec = {
+        schemaVersion: 1,
+        modelId: 'sales',
+        datasetId: 'orders',
+        dimensions: [{ field: 'orders.status' }],
+        metrics: [{ field: 'orders.net_total' }],
+        filters: [],
+        time: {
+          field: 'orders.purchase_date',
+          grain: 'day',
+          range: {
+            kind: 'absolute',
+            lower: { value: { kind: 'date', value: '2026-01-01' }, inclusive: true },
+            upper: { value: { kind: 'date', value: '2026-01-31' }, inclusive: true },
+          },
+        },
+        sort: [{ field: 'orders.purchase_date', direction: 'desc' }],
+        limit: 100,
+      }
+      element.command = {
+        spec,
+        semanticModelId: 'sales',
+        datasetId: 'orders',
+        dimensions: ['orders.status'],
+        metrics: ['orders.net_total'],
+        filters: [],
+        sort: [{ field: 'orders.purchase_date', direction: 'desc' }],
+        limit: 100,
+        requestSeq: 0,
+        resetVersion: 0,
+        columnWidths: {},
+      }
+      element.fields = [
+        { id: 'orders.created_at', label: 'Created at', kind: 'dimension', datasetId: 'orders', type: 'timestamp', compatible: true, selected: false },
+        { id: 'orders.purchase_date', label: 'Purchase date', kind: 'dimension', datasetId: 'orders', type: 'date', compatible: true, selected: false },
+        { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
+        { id: 'orders.net_total', label: 'Net total', kind: 'metric', datasetId: 'orders', type: 'decimal', compatible: true, selected: true },
+      ]
+      element.filterField = 'orders.net_total'
+      element.filterOperator = 'greater_than'
+      element.filterValue = '10'
+      document.body.append(element)
+      await element.updateComplete
+
+      const root = element.shadowRoot as ShadowRoot
+      const value = (selector: string) => root.querySelector<HTMLSelectElement>(selector)?.value
+      return {
+        timeField: value('[aria-label="Time field"]'),
+        timeGrain: value('[aria-label="Time grain"]'),
+        timeRange: value('[aria-label="Time range"]'),
+        rowLimit: value('[aria-label="Row limit"]'),
+        sortField: value('[aria-label="Sort field 1"]'),
+        sortDirection: value('[aria-label="Sort direction 1"]'),
+        filterOperator: value('.filter-editor select'),
+        rangeFrom: root.querySelector<HTMLInputElement>('[aria-label="Time range from"]')?.value,
+        rangeTo: root.querySelector<HTMLInputElement>('[aria-label="Time range to"]')?.value,
+      }
+    })
+
+    expect(state).toEqual({
+      timeField: 'orders.purchase_date',
+      timeGrain: 'day',
+      timeRange: 'absolute',
+      rowLimit: '100',
+      sortField: 'orders.purchase_date',
+      sortDirection: 'desc',
+      filterOperator: 'greater_than',
+      rangeFrom: '2026-01-01',
+      rangeTo: '2026-01-31',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('data explorer builds a governed semantic exploration and filter command', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
