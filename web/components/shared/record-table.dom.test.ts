@@ -115,6 +115,53 @@ test('record table renders cells and sorts through TanStack headers', async () =
   }
 })
 
+test('content layout sizes columns to their data without changing the default fill layout', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 620 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-record-table'))
+    const element = page.locator('lv-record-table')
+    await element.evaluate((table: any) => {
+      table.style.width = '800px'
+      table.table = {
+        columns: [{ id: 'date', header: 'Date' }, { id: 'revenue', header: 'Revenue', align: 'right' }],
+        rows: [{ date: '2026-09-25', revenue: '1234.56' }],
+      }
+    })
+    await element.evaluate((table: any) => table.updateComplete)
+
+    const defaultLayout = await element.evaluate((table) => {
+      const rendered = table.querySelector('table') as HTMLTableElement
+      const wrapper = table.querySelector('.record-table-wrap') as HTMLElement
+      return {
+        layout: getComputedStyle(rendered).tableLayout,
+        tableWidth: Math.round(rendered.getBoundingClientRect().width),
+        wrapperWidth: Math.round(wrapper.getBoundingClientRect().width),
+      }
+    })
+    expect(defaultLayout.layout).toBe('fixed')
+    expect(defaultLayout.tableWidth).toBe(defaultLayout.wrapperWidth)
+
+    await element.evaluate((table: any) => {
+      table.table = { ...table.table, layout: 'content' }
+    })
+    await element.evaluate((table: any) => table.updateComplete)
+    const contentLayout = await element.evaluate((table) => {
+      const rendered = table.querySelector('table') as HTMLTableElement
+      const wrapper = table.querySelector('.record-table-wrap') as HTMLElement
+      return {
+        layout: getComputedStyle(rendered).tableLayout,
+        tableWidth: Math.round(rendered.getBoundingClientRect().width),
+        wrapperWidth: Math.round(wrapper.getBoundingClientRect().width),
+      }
+    })
+    expect(contentLayout.layout).toBe('auto')
+    expect(contentLayout.tableWidth).toBeLessThan(contentLayout.wrapperWidth / 2)
+  } finally {
+    await page.close()
+  }
+})
+
 test('mobile record tables expose a horizontal-scroll affordance without changing desktop chrome', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 620 } })
   try {

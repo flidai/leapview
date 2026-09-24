@@ -313,8 +313,8 @@ export class VisualModal extends LitElement {
               })),
               rows,
               empty: 'No visual data',
-              minWidth: `${Math.max(columns.length * 160, 520)}px`,
               density: 'tight',
+              layout: 'content',
             }}
           ></lv-record-table>
         </div>

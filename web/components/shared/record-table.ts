@@ -81,6 +81,7 @@ type RecordColumnSelector = {
 
 type RecordRow = Record<string, unknown>
 type RecordTableDensity = 'normal' | 'tight'
+type RecordTableLayout = 'fixed' | 'content'
 type RecordTablePayload = {
   columns?: RecordColumn[]
   rows?: RecordRow[]
@@ -89,6 +90,7 @@ type RecordTablePayload = {
   width?: string
   columnSelector?: RecordColumnSelector
   density?: RecordTableDensity
+  layout?: RecordTableLayout
   rowAction?: string
 }
 type NormalizedRecordTable = Omit<Required<RecordTablePayload>, 'columnSelector'> & {
@@ -107,6 +109,7 @@ const emptyRecordTable: NormalizedRecordTable = {
   width: '',
   columnSelector: { enabled: false, storageKey: '', label: 'Columns', defaultColumns: [] },
   density: 'normal',
+  layout: 'fixed',
   rowAction: '',
 }
 
@@ -189,6 +192,7 @@ function normalizeTable(table: RecordTablePayload): NormalizedRecordTable {
       defaultColumns: table.columnSelector?.defaultColumns ?? [],
     },
     density: table.density ?? emptyRecordTable.density,
+    layout: table.layout ?? emptyRecordTable.layout,
     rowAction: table.rowAction ?? emptyRecordTable.rowAction,
   }
 }
@@ -250,7 +254,11 @@ class RecordTable extends LitElement {
         aria-label="Scrollable table"
         tabindex="0"
       >
-        <table class=${`record-table ${columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : ''}`} style=${[table.width ? `width: ${table.width}` : '', table.minWidth ? `min-width: ${table.minWidth}` : ''].filter(Boolean).join('; ')}>
+        <table class=${[
+          'record-table',
+          `layout-${table.layout}`,
+          columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : '',
+        ].filter(Boolean).join(' ')} style=${[table.width ? `width: ${table.width}` : '', table.minWidth ? `min-width: ${table.minWidth}` : ''].filter(Boolean).join('; ')}>
           <thead>
             <tr>
               ${columns.map((column) => {
@@ -917,6 +925,12 @@ const recordTableStyles = `
     width: 100%;
     border-collapse: collapse;
     table-layout: fixed;
+  }
+
+  lv-record-table .record-table.layout-content {
+    width: max-content;
+    max-width: none;
+    table-layout: auto;
   }
 
   @media (max-width: 640px) {
