@@ -66,7 +66,9 @@ RETURNING id, principal_id, title, status, metadata_json::text, transcript_json:
 
 -- name: UpdateAgentConversationMetadata :one
 UPDATE agent.conversations
-SET metadata_json = sqlc.arg(metadata_json)::jsonb, updated_at = clock_timestamp()
+-- Pinning is navigation management, not conversation activity. Preserve the
+-- activity timestamp so an unpinned chat returns to its previous position.
+SET metadata_json = sqlc.arg(metadata_json)::jsonb
 WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
   AND status = 'active'
   AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
