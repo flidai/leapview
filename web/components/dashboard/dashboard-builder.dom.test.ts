@@ -1475,8 +1475,7 @@ test('dashboard builder fits the authored desktop canvas without idle rows below
     await page.close()
   }
 })
-
-test('dashboard builder preserves pointer drag placement on the fitted canvas', async () => {
+test('dashboard builder maps pointer drag placement through the compact grid', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -1512,6 +1511,7 @@ test('dashboard builder preserves pointer drag placement on the fitted canvas', 
       }
     })
     expect(state.command).toBeDefined()
+    expect(state.command.compact).toBe(true)
     expect(state.command.placements[0].placement.row).toBeGreaterThan(1)
     expect(state.fittedHeight).toBeGreaterThanOrEqual(initial.fittedHeight)
     expect(draggingHeight).toBeGreaterThan(state.fittedHeight)

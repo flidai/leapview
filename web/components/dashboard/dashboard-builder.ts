@@ -2692,7 +2692,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           this.gridInteracting = true
           this.syncCanvasViewport(page)
         })
-        this.gridStack.on('dragstop resizestop', (event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element, event.type === 'resizestop'))
+        this.gridStack.on('dragstop resizestop', (_event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element, true))
         this.gridStack.on('drag', () => this.syncCanvasViewport(page))
         this.gridStack.on('resize', () => this.syncCanvasViewport(page))
         this.gridStack.on('change', (event: Event, nodes: GridStackNode[]) => this.onGridChange(event, nodes))
