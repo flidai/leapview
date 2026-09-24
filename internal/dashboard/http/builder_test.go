@@ -634,8 +634,9 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 			ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1",
 			Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-2", Number: 2, ContentHash: revisionHash},
 			Pages:    []uisignals.DashboardBuilderPageSignal{{ID: selectedPage}}, SelectedPageID: &selectedPage,
+			Preview: uisignals.DashboardBuilderPreviewStateSignal{Active: false, Loading: false, Error: uisignals.Pointer("unrelated incomplete visual")},
 		},
-		compilation: preview.Compilation{SemanticEvidence: preview.SemanticServingStateEvidence{Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation-4"}}},
+		compileErr: errors.New("unrelated incomplete visual"),
 	}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
 	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
@@ -672,8 +673,16 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 	if _, ok := patches[0]["builderVisuals"]; ok {
 		t.Fatalf("layout-only patch replaced builder visuals: %#v", patches[0])
 	}
+	builder, ok := patches[0]["builder"].(map[string]any)
+	if !ok {
+		t.Fatalf("layout builder patch = %#v", patches[0]["builder"])
+	}
+	previewState, ok := builder["preview"].(map[string]any)
+	if !ok || previewState["active"] != true || previewState["loading"] != false || previewState["error"] != "" {
+		t.Fatalf("layout preview state = %#v, want retained previews active", builder["preview"])
+	}
 	runtime, ok := patches[0]["runtime"].(map[string]any)
-	if !ok || runtime["servingStateId"] != "builder:draft-1:revision-2:"+revisionHash+":generation:generation-4" {
+	if !ok || runtime["servingStateId"] != "builder:draft-1:revision-2:"+revisionHash {
 		t.Fatalf("layout runtime = %#v", patches[0]["runtime"])
 	}
 }

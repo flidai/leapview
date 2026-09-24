@@ -553,6 +553,13 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		// preview and filter signals untouched in the browser. Republishing (and
 		// especially clear-first replacing) builderVisuals here makes every
 		// renderer reload for a layout-only edit.
+		//
+		// Builder() deliberately returns preview as inactive because preview data
+		// is projected by this transport. Keep the retained browser envelopes
+		// renderable instead of replacing their readiness with that raw default.
+		builder.Preview.Active = true
+		builder.Preview.Loading = false
+		builder.Preview.Error = uisignals.Pointer("")
 		envelope := dashboardBuilderEnvelope(builder)
 		if compiled, compileErr := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
 			ProjectID: project, ActorID: actorID,
