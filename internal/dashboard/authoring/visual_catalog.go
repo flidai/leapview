@@ -396,7 +396,11 @@ func CanonicalVisualFormatOptions(visual document.DashboardVisual) ([]VisualForm
 		if current, ok := lookupFormatPath(raw, spec.path); ok {
 			value = scalarFormatValue(current)
 		}
-		result = append(result, VisualFormatOption{Key: spec.key, Label: spec.label, Section: spec.section, Control: spec.control, Value: value, Placeholder: spec.placeholder, Choices: append([]VisualFormatChoice(nil), spec.choices...)})
+		optionChoices := append([]VisualFormatChoice(nil), spec.choices...)
+		if spec.control == "select" && spec.optional && spec.defaultValue == "" {
+			optionChoices = append(choices(""), optionChoices...)
+		}
+		result = append(result, VisualFormatOption{Key: spec.key, Label: spec.label, Section: spec.section, Control: spec.control, Value: value, Placeholder: spec.placeholder, Choices: optionChoices})
 	}
 	return result, nil
 }

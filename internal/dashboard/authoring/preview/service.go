@@ -18,6 +18,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
@@ -262,32 +263,23 @@ func previewPrepared(ctx context.Context, request PreviewRequest, prepared prepa
 		if filters.CompiledState == nil {
 			filters = prepared.Definition.DefaultFilters()
 		}
+		if prepared.VisualErrors[visualID] != "" {
+			return targetedVisualPreview(prepared, filters, visualID, visualizationir.VisualizationEnvelope{}, nil, "query dashboard draft visual")
+		}
 		envelope, queryErr := visualRuntime.QueryVisualizationForDefinition(ctx, prepared.Definition, pageID, filters, visualID)
-		patch = dashboard.Patch{Filters: filters, Visuals: map[string]visualizationir.VisualizationEnvelope{visualID: envelope}}
-		result := Preview{
-			Revision: prepared.Revision, Definition: prepared.Definition,
-			PagePatch: patch, SemanticEvidence: prepared.SemanticEvidence, VisualErrors: prepared.VisualErrors,
-		}
-		if queryErr != nil {
-			return result, fmt.Errorf("query dashboard draft visual: %w", queryErr)
-		}
-		return result, nil
+		return targetedVisualPreview(prepared, filters, visualID, envelope, queryErr, "query dashboard draft visual")
 	}
 	if request.Window != nil {
 		windowRuntime, ok := prepared.runtime.(visualizationWindowRuntime)
 		if !ok || windowRuntime == nil {
 			return Preview{}, fmt.Errorf("active runtime does not provide dashboard visual window capability")
 		}
+		visualID := strings.TrimSpace(request.Window.VisualID)
+		if prepared.VisualErrors[visualID] != "" {
+			return targetedVisualPreview(prepared, request.Filters, visualID, visualizationir.VisualizationEnvelope{}, nil, "query dashboard draft visual window")
+		}
 		envelope, queryErr := windowRuntime.QueryVisualizationWindowForDefinition(ctx, prepared.Definition, pageID, request.Filters, *request.Window)
-		patch = dashboard.Patch{Filters: request.Filters, Visuals: map[string]visualizationir.VisualizationEnvelope{request.Window.VisualID: envelope}}
-		result := Preview{
-			Revision: prepared.Revision, Definition: prepared.Definition,
-			PagePatch: patch, SemanticEvidence: prepared.SemanticEvidence, VisualErrors: prepared.VisualErrors,
-		}
-		if queryErr != nil {
-			return result, fmt.Errorf("query dashboard draft visual window: %w", queryErr)
-		}
-		return result, nil
+		return targetedVisualPreview(prepared, request.Filters, visualID, envelope, queryErr, "query dashboard draft visual window")
 	}
 	patch, err := prepared.runtime.QueryDashboardPageForDefinition(ctx, prepared.Definition, pageID, request.Filters)
 	patch = normalizeWindowResetVersions(patch)
@@ -299,6 +291,48 @@ func previewPrepared(ctx context.Context, request PreviewRequest, prepared prepa
 		return result, fmt.Errorf("query dashboard draft page: %w", err)
 	}
 	return result, nil
+}
+
+func targetedVisualPreview(prepared preparedCompilation, filters dashboard.Filters, visualID string, envelope visualizationir.VisualizationEnvelope, queryErr error, operation string) (Preview, error) {
+	result := Preview{
+		Revision: prepared.Revision, Definition: prepared.Definition,
+		PagePatch:        dashboard.Patch{Filters: filters, Visuals: map[string]visualizationir.VisualizationEnvelope{}},
+		SemanticEvidence: prepared.SemanticEvidence, VisualErrors: prepared.VisualErrors,
+	}
+	if strings.TrimSpace(prepared.VisualErrors[visualID]) != "" {
+		return result, nil
+	}
+	if queryErr == nil {
+		queryErr = visualizationir.ValidateEnvelope(envelope)
+	}
+	if queryErr != nil {
+		definition, ok := prepared.Definition.Visualizations[visualID]
+		if !ok {
+			return result, fmt.Errorf("%s: %w", operation, queryErr)
+		}
+		errorEnvelope, envelopeErr := visualizationruntime.ErrorEnvelopeFromDefinition(definition, queryErr, 0, 0)
+		if envelopeErr != nil {
+			return result, fmt.Errorf("%s: %w", operation, errors.Join(queryErr, envelopeErr))
+		}
+		result.PagePatch.Visuals[visualID] = errorEnvelope
+		if result.VisualErrors == nil {
+			result.VisualErrors = map[string]string{}
+		} else {
+			result.VisualErrors = cloneVisualErrors(result.VisualErrors)
+		}
+		result.VisualErrors[visualID] = queryErr.Error()
+		return result, nil
+	}
+	result.PagePatch.Visuals[visualID] = envelope
+	return result, nil
+}
+
+func cloneVisualErrors(values map[string]string) map[string]string {
+	cloned := make(map[string]string, len(values))
+	for visualID, message := range values {
+		cloned[visualID] = message
+	}
+	return cloned
 }
 
 func (s *Service) prepareCompilation(ctx context.Context, request CompileRequest, filterContractOnly, bestEffortVisuals bool) (preparedCompilation, error) {

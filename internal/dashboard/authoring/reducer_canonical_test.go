@@ -1,6 +1,7 @@
 package authoring
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strconv"
@@ -166,7 +167,7 @@ func TestCanonicalVisualDefaultsAndCartesianSwitchPreserveCompilerContract(t *te
 	if !ok {
 		t.Fatalf("area presentation = %T, want Cartesian", switched.Presentation.Value)
 	}
-	if area.LegendTitle != line.LegendTitle || area.LegendItems != line.LegendItems || area.Tooltip != line.Tooltip || area.SeriesIntent != line.SeriesIntent || area.Axes != line.Axes || area.ReferenceLines != line.ReferenceLines || area.ReferenceBands != line.ReferenceBands || area.EventAnnotations != line.EventAnnotations {
+	if !reflect.DeepEqual(area, line) {
 		t.Fatalf("same-family switch dropped presentation fields: source=%#v switched=%#v", line, area)
 	}
 	if _, err := compiler.LowerCanonicalDashboardPresentation(switched.Presentation, switched.Type); err != nil {
@@ -227,7 +228,7 @@ func TestCanonicalVisualTypeSwitchDoesNotCarryAxisVisibilityToUnsupportedFamily(
 	}
 }
 
-func TestCanonicalVisualTypeSwitchKeepsInapplicableOrientationActionable(t *testing.T) {
+func TestCanonicalVisualTypeSwitchDropsInapplicableOrientation(t *testing.T) {
 	for _, orientation := range []document.DashboardOrientation{document.DashboardOrientationHorizontal, document.DashboardOrientationVertical} {
 		t.Run(string(orientation), func(t *testing.T) {
 			_, revision := canonicalReducerFixture(t)
@@ -239,11 +240,11 @@ func TestCanonicalVisualTypeSwitchKeepsInapplicableOrientationActionable(t *test
 			}
 			switched := revision.Document.Spec.Visuals["base"]
 			presentation := switched.Presentation.Value.(*document.CartesianDashboardPresentation)
-			if presentation.Orientation == nil || *presentation.Orientation != orientation {
-				t.Fatalf("bar switch orientation = %#v, want authored orientation %q retained for validation", presentation.Orientation, orientation)
+			if presentation.Orientation != nil {
+				t.Fatalf("bar switch retained unsupported orientation %#v", presentation.Orientation)
 			}
-			if _, err := compiler.LowerCanonicalDashboardPresentation(switched.Presentation, switched.Type); err == nil || !strings.Contains(err.Error(), "presentation.orientation is not supported for bar visuals") {
-				t.Fatalf("bar switch compiler error = %v, want inapplicable orientation diagnostic", err)
+			if _, err := compiler.LowerCanonicalDashboardPresentation(switched.Presentation, switched.Type); err != nil {
+				t.Fatalf("bar switch compiler error = %v", err)
 			}
 		})
 	}
@@ -284,6 +285,27 @@ func TestCanonicalVisualQueryAliasRewriteKeepsExistingSortValid(t *testing.T) {
 }
 
 func stringPtr(value string) *string { return &value }
+
+func TestClearingVisualQuerySortSerializesAnEmptyArray(t *testing.T) {
+	for _, kind := range []document.DashboardVisualType{document.DashboardVisualTypeLine, document.DashboardVisualTypeTable, document.DashboardVisualTypePivot} {
+		t.Run(string(kind), func(t *testing.T) {
+			_, revision := canonicalReducerFixture(t)
+			revision.Document.Spec.Visuals["base"] = defaultCanonicalVisual(string(kind), "Base")
+			if err := setCanonicalVisualQueryOptions(&revision.Document, SetVisualQueryOptionsPayload{
+				PageID: "overview", VisualID: "base-component", Sort: &[]document.DashboardSort{},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(revision.Document.Spec.Visuals["base"].Query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(encoded), `"sort":[]`) {
+				t.Fatalf("cleared sort must remain a schema-valid array: %s", encoded)
+			}
+		})
+	}
+}
 
 func TestCanonicalDonutWithLegacyRecordsQueryRepairsToEditableAggregateQuery(t *testing.T) {
 	_, revision := canonicalReducerFixture(t)

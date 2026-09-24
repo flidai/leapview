@@ -721,7 +721,9 @@ func projectVisualCatalog() []uisignals.DashboardBuilderVisualTypeSignal {
 		for _, limit := range authoring.CanonicalVisualRoleLimits(entry.Type) {
 			limits = append(limits, uisignals.DashboardBuilderVisualRoleLimitSignal{Role: uisignals.DashboardBuilderFieldRoleSignal(limit.Role), Minimum: limit.Minimum, Maximum: limit.Maximum})
 		}
-		result = append(result, uisignals.DashboardBuilderVisualTypeSignal{Type: entry.Type, Label: entry.Label, Group: entry.Group, ReferenceHref: entry.ReferenceHref, Roles: roles, RoleLimits: limits})
+		// Documentation is served by the public site, not the dashboard app.
+		referenceHref := "https://leapview.dev" + entry.ReferenceHref
+		result = append(result, uisignals.DashboardBuilderVisualTypeSignal{Type: entry.Type, Label: entry.Label, Group: entry.Group, ReferenceHref: referenceHref, Roles: roles, RoleLimits: limits})
 	}
 	return result
 }

@@ -1283,11 +1283,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .canvas {
       position: absolute;
-      inset: 0 auto auto 0;
+      inset: var(--builder-grid-offset, 0px) auto auto var(--builder-grid-offset, 0px);
       box-sizing: border-box;
-      width: var(--builder-canvas-width, ${builderCanvasDesktopWidth}px);
-      min-width: var(--builder-canvas-width, ${builderCanvasDesktopWidth}px);
-      min-height: var(--builder-canvas-min-height, ${builderCanvasMinimumHeight}px);
+      width: var(--builder-grid-width, ${builderCanvasDesktopWidth}px);
+      min-height: ${builderCanvasMinimumHeight}px;
       border: 0;
       border-radius: 0;
       background-color: var(--lv-report-page-bg, var(--lv-bg-panel));
@@ -1491,6 +1490,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .filter-component > .grid-stack-item-content,
     .header-component > .grid-stack-item-content,
     .builder-placeholder > .grid-stack-item-content {
+      isolation: isolate;
       grid-template-rows: auto minmax(0, 1fr) auto;
       box-sizing: border-box;
       border: var(--lv-border-default);
@@ -1787,8 +1787,18 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .inspector-panel {
       display: grid;
+      grid-template-columns: minmax(0, 1fr);
       gap: var(--base-size-8);
       padding: var(--base-size-12);
+    }
+
+    .inspector-panel > *,
+    .inspector-panel .property-group,
+    .inspector-panel .field-wells,
+    .inspector-panel .field-well,
+    .inspector-panel .field-well-target {
+      min-width: 0;
+      grid-template-columns: minmax(0, 1fr);
     }
 
     .field-wells {
@@ -2680,7 +2690,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         column: Math.max(1, page.grid.columns || 12),
         // GridStack's cell height is the authored row plus its following gap.
         cellHeight: Math.max(1, (page.grid.rowHeight || 48) + (page.grid.gap || 0)),
-        margin: Math.max(0, Math.round((page.grid.gap || 16) / 2)),
+        margin: Math.max(0, Math.round((page.grid.gap ?? 16) / 2)),
         animate: false,
         float: true,
         disableDrag: !builder?.capabilities.canEdit || this.commandPending,
@@ -2747,9 +2757,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       fit?.style.removeProperty('--builder-canvas-fitted-width')
       fit?.style.removeProperty('--builder-canvas-fitted-height')
       canvas?.style.removeProperty('--builder-canvas-scale')
-      canvas?.style.removeProperty('--builder-canvas-width')
-      canvas?.style.removeProperty('--builder-canvas-min-height')
       canvas?.style.removeProperty('min-height')
+      canvas?.style.removeProperty('height')
       if (this.canvasScale !== 1) this.canvasScale = 1
       return
     }
@@ -2771,17 +2780,20 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const gap = Math.max(0, page.grid.gap || 0)
     const padding = Math.max(0, page.grid.padding || 0)
     const contentHeight = workingRows > 0
-      ? padding * 2 + workingRows * rowHeight + Math.max(0, workingRows - 1) * gap
+      ? padding * 2 + workingRows * (rowHeight + gap)
       : padding * 2
     const logicalHeight = Math.max(minimumHeight, contentHeight)
+    const inset = Math.min(padding, Math.max(0, (Math.min(logicalWidth, logicalHeight) - 1) / 2))
+    const gridWidth = Math.max(1, logicalWidth - inset * 2)
+    const innerHeight = Math.max(1, logicalHeight - inset * 2)
     fit.style.setProperty('--builder-canvas-fitted-width', `${logicalWidth * scale}px`)
     fit.style.setProperty('--builder-canvas-fitted-height', `${logicalHeight * scale}px`)
     canvas.style.setProperty('--builder-canvas-scale', String(scale))
-    canvas.style.setProperty('--builder-canvas-width', `${logicalWidth}px`)
-    canvas.style.setProperty('--builder-canvas-min-height', `${minimumHeight}px`)
+    canvas.style.setProperty('--builder-grid-offset', `${inset * scale}px`)
+    canvas.style.setProperty('--builder-grid-width', `${gridWidth}px`)
     canvas.style.setProperty('--builder-grid-columns', String(Math.max(1, page.grid.columns || 12)))
     canvas.style.setProperty('--builder-grid-row-pitch', `${rowHeight + gap}px`)
-    canvas.style.minHeight = `${logicalHeight}px`
+    canvas.style.minHeight = canvas.style.height = `${innerHeight}px`
     if (Math.abs(this.canvasScale - scale) > 0.0001) this.canvasScale = scale
   }
 
@@ -3735,17 +3747,20 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       && !this.effectiveVisualID(builder, page)
       && !this.selectedFilterComponentID
     const previews = this.builderVisuals
+    // GridStack reorders tiles outside Lit's repeat markers. Replace their
+    // parent on membership changes so Lit never reconciles displaced ranges.
+    const canvasKey = JSON.stringify([page.id, this.pagePlacedComponents(page).map(component => component.id)])
     return html`
       <section class="canvas-pane" aria-label="Dashboard canvas">
         <div class="canvas-scroll">
           <p id="dashboard-builder-grid-help" class="sr-only">Select a canvas component and drag any edge or corner handle to resize it. Use Alt plus an arrow key to move it one grid cell. Use Alt plus Shift plus an arrow key to resize it.</p>
           <div class="canvas-fit">
-            <div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} data-grid-guides=${this.draggedFieldID || pageFormatting ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
+            ${keyed(canvasKey, html`<div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} data-grid-guides=${this.draggedFieldID || pageFormatting ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
               ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}
               ${page.visuals.length === 0 && (page.filterComponents?.length ?? 0) === 0 && (page.headers?.length ?? 0) === 0 && (page.placeholders?.length ?? 0) === 0
                 ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Choose a visual or place a report-filter slicer to begin.</span></div></div>`
                 : html`${repeat(page.visuals, (visual) => visual.id, (visual) => this.renderVisual(visual, page, previews))}${repeat(page.filterComponents ?? [], (component) => component.id, (component) => this.renderFilterComponent(component, page))}${repeat(page.headers ?? [], (header) => header.id, (header) => this.renderHeader(header))}${repeat(page.placeholders ?? [], (placeholder) => placeholder.id, (placeholder) => this.renderPlaceholder(placeholder))}`}
-            </div>
+            </div>`)}
           </div>
           <div class="sr-only" aria-live="polite">${this.gridInteractionMessage}</div>
         </div>

@@ -230,7 +230,8 @@ func resolveVisualTypeFieldBindings(model *semanticmodel.Model, visual document.
 // fields first, then fills only the target visual's missing required roles
 // from the same semantic dataset. A visual-type click should produce a usable
 // draft when the active dataset has compatible fields; it must never reach
-// across datasets merely to satisfy a renderer's cardinality.
+// across datasets merely to satisfy a renderer's cardinality. Record columns
+// require exact source-query equivalents rather than arbitrary defaults.
 func resolveVisualTypeFieldBindingsForTarget(model *semanticmodel.Model, visual document.DashboardVisual, target document.DashboardVisualType) authoring.VisualTypeFieldBindings {
 	bindings := resolveVisualTypeFieldBindings(model, visual)
 	if model == nil {
@@ -305,19 +306,9 @@ func resolveVisualTypeFieldBindingsForTarget(model *semanticmodel.Model, visual 
 		bindings.Metrics = appendUniqueVisualSwitchField(bindings.Metrics, id)
 	}
 
-	detailIDs := []string{}
-	if table, ok := model.Tables[dataset]; ok {
-		for id := range table.Dimensions {
-			detailIDs = append(detailIDs, id)
-		}
-	}
-	sort.Strings(detailIDs)
-	for _, id := range detailIDs {
-		if int32(len(bindings.Details)) >= minimums[authoring.FieldRoleDetail] {
-			break
-		}
-		bindings.Details = appendUniqueVisualSwitchField(bindings.Details, id)
-	}
+	// Raw columns must come from exact source-query equivalents. Choosing an
+	// arbitrary column would replace the visual's meaning while retaining its
+	// title (for example, revenue variance becoming a table of budget COGS).
 	return bindings
 }
 
@@ -490,8 +481,15 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	// the exact unqualified field ID required by the reducer.
 	validationField := *field
 	validationField.FieldID = recordDetailFieldIDForValidation(revision.Document, componentVisual, validationField.FieldID, validationField.Role)
-	field.ResolvedTable, err = a.validateFieldAgainstRuntime(ctx, project, revision, validationField)
-	return err
+	model, err := a.semanticModelForRevision(ctx, revision)
+	if err != nil {
+		return err
+	}
+	if err := validateGovernedField(model, validationField.FieldID, validationField.Role); err != nil {
+		return err
+	}
+	field.ResolvedTable = resolvedTableForField(model, validationField)
+	return validateAssignedFieldFilterCompatibility(lifecycle, revision, command, model)
 }
 
 func recordDetailFieldIDForValidation(doc document.DashboardDocument, visualID, fieldID string, role authoring.FieldRole) string {

@@ -1461,16 +1461,16 @@ test('dashboard builder fits the authored desktop canvas without idle rows below
         grownCanvasHeight: grownCanvasBox.height,
       }
     })
-    expect(state.logicalWidth).toBe(1200)
-    expect(state.logicalHeight).toBeGreaterThanOrEqual(800)
+    expect(state.logicalWidth).toBe(1200 - 32)
+    expect(state.logicalHeight).toBeGreaterThanOrEqual(800 - 32)
     expect(state.scale).toBeGreaterThan(0)
     expect(state.scale).toBeLessThanOrEqual(1)
     expect(state.fittedWidth).toBeLessThanOrEqual(state.scrollWidth + 1)
-    expect(state.fittedHeight).toBeCloseTo(state.logicalHeight * state.scale, 0)
+    expect(state.fittedHeight).toBeCloseTo((state.logicalHeight + 32) * state.scale, 0)
     expect(state.cellHeight).toBe(64)
     expect(state.grownLogicalHeight).toBeGreaterThan(state.logicalHeight)
-    expect(state.grownLogicalHeight).toBeCloseTo(state.contentBottom + 16, 0)
-    expect(state.grownFittedHeight).toBeCloseTo(state.grownCanvasHeight, 0)
+    expect(state.grownLogicalHeight).toBeCloseTo(state.contentBottom, 0)
+    expect(state.grownFittedHeight).toBeCloseTo(state.grownCanvasHeight + 32 * state.scale, 0)
   } finally {
     await page.close()
   }
@@ -1704,7 +1704,6 @@ test('dashboard builder reconciles placement patches that arrive after revision 
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)
-      const canvas = root.querySelector('.canvas') as any
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       const initialPages = structuredClone(element.builder.pages)
       const table = initialPages[0].visuals[0]
@@ -1713,6 +1712,7 @@ test('dashboard builder reconciles placement patches that arrive after revision 
       initialPages[0].visuals.push({ ...structuredClone(table), id: 'current-cash', visualId: 'current-cash', title: 'Current cash', type: 'tree', placement: { col: 7, row: 1, colSpan: 6, rowSpan: 6 } })
       mergePatch({ builder: { pages: initialPages } })
       await element.updateComplete
+      const canvas = root.querySelector('.canvas') as any
       const firstGrid = canvas.gridstack
       const visual = root.querySelector('.visual[gs-id="sales-chart"]') as HTMLElement & { gridstackNode?: { x?: number, y?: number, w?: number, h?: number } }
       firstGrid.update(visual, { x: 6, y: 6 })
@@ -2675,7 +2675,7 @@ test('dashboard builder keeps headerless runtime visuals free of duplicate autho
   }
 })
 
-test('dashboard builder uses a full-bleed central canvas and keeps no-preview guidance actionable', async () => {
+test('dashboard builder keeps the authored page inset and no-preview guidance actionable', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -2704,7 +2704,7 @@ test('dashboard builder uses a full-bleed central canvas and keeps no-preview gu
     expect(state.canvasBorder).toMatch(/^0px none /)
     expect(state.canvasRadius).toBe('0px')
     expect(state.canvasShadow).toBe('none')
-    expect(state.canvasWidth).toBe('1200px')
+    expect(state.canvasWidth).toBe('1168px')
     expect(state.canvasBackground).toBe('rgb(251, 252, 254)')
     expect(state.canvasGuides).toBe('none')
     expect(state.workspaceBackground).toBe('rgb(238, 241, 244)')

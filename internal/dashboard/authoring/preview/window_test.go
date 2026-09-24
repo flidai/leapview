@@ -8,17 +8,34 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 )
 
-func (r *previewRuntime) QueryVisualizationWindowForDefinition(_ context.Context, _ dashboarddefinition.Definition, _ string, _ dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
+func (r *previewRuntime) QueryVisualizationWindowForDefinition(_ context.Context, compiled dashboarddefinition.Definition, _ string, _ dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
 	r.windowQueryCalls++
-	return visualizationir.VisualizationEnvelope{
-		VisualID: request.VisualID,
-		DataState: visualizationir.VisualizationDataState{Value: &visualizationir.WindowedVisualizationDataState{
-			ResetVersion: 9,
-			Blocks:       map[string]visualizationir.VisualizationWindowBlock{"a": {ID: "a", ResetVersion: 9}},
-		}},
-	}, nil
+	definition, ok := compiled.Visualizations[request.VisualID]
+	if !ok {
+		return visualizationir.VisualizationEnvelope{}, nil
+	}
+	envelope, err := visualizationruntime.EmptyEnvelopeFromDefinition(definition, 0, 1, request.ResetVersion)
+	if err != nil {
+		return visualizationir.VisualizationEnvelope{}, err
+	}
+	base, err := visualizationir.SpecificationBase(envelope.Spec)
+	if err != nil {
+		return visualizationir.VisualizationEnvelope{}, err
+	}
+	if len(base.Datasets) == 0 {
+		return visualizationir.VisualizationEnvelope{}, nil
+	}
+	window := visualizationir.WindowedVisualizationDataState{
+		VisualizationDataStateBase: visualizationir.VisualizationDataStateBase{Kind: "windowed", SpecRevision: envelope.SpecRevision, DataRevision: envelope.DataRevision, Generation: 1},
+		Kind:                       "windowed", Schema: base.Datasets[0], Cardinality: visualizationir.VisualizationCardinality{Kind: visualizationir.VisualizationCardinalityKindUnknown},
+		RowCap: base.DataBudget.MaxRows, ChunkSize: 1, ResetVersion: 9,
+		Blocks: map[string]visualizationir.VisualizationWindowBlock{"a": {ID: "a", ResetVersion: 9}},
+	}
+	envelope.DataState = visualizationir.VisualizationDataState{Value: &window}
+	return envelope, nil
 }
 
 func TestPreviewWindowResolvesFiltersAndQueriesThroughOneCompilation(t *testing.T) {

@@ -11,6 +11,7 @@ type CanonicalGridComponent = {
 }
 
 type CanonicalGridNode = {
+  id: string
   tile: GridItemHTMLElement
   x: number
   y: number
@@ -29,17 +30,23 @@ export function applyCanonicalGridAttributes(root: ShadowRoot | null, components
 }
 
 export function syncGridStackNodesToCanonical(grid: GridStack, root: ShadowRoot | null, components: CanonicalGridComponent[]): void {
-  grid.batchUpdate()
-  for (const { tile, x, y, width, height } of canonicalGridNodes(root, components)) {
-    grid.update(tile, { x, y, w: width, h: height })
-  }
-  grid.batchUpdate(false)
+  // Apply the complete layout atomically. Per-widget update() resolves
+  // collisions against widgets that still have their previous positions,
+  // which can shift later canonical placements during an SSE reconciliation.
+  grid.load(canonicalGridNodes(root, components).map(({ id, x, y, width, height }) => ({
+    id,
+    x,
+    y,
+    w: width,
+    h: height,
+  })), false)
 }
 
 function canonicalGridNodes(root: ShadowRoot | null, components: CanonicalGridComponent[]): CanonicalGridNode[] {
   return components.flatMap((component) => {
     const tile = root?.querySelector<GridItemHTMLElement>(`[gs-id="${CSS.escape(component.id)}"]`)
     return tile ? [{
+      id: component.id,
       tile,
       x: Math.max(0, component.placement.col - 1),
       y: Math.max(0, component.placement.row - 1),

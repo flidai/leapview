@@ -407,3 +407,86 @@ func TestCanonicalVisualFormatDefaultsMatchCompiledPresentation(t *testing.T) {
 	}
 	assertValues(mapVisual, map[string]string{"camera.padding": "32", "camera.maximumZoom": "14"})
 }
+
+func TestCanonicalVisualFormatOptionalEmptySelectsExposeDefaultAndRoundTrip(t *testing.T) {
+	applicable := 0
+	for _, entry := range CanonicalVisualCatalog() {
+		visual := defaultCanonicalVisual(string(entry.Type), "Orders")
+		presentationType, err := visual.Presentation.Type()
+		if err != nil {
+			t.Fatal(err)
+		}
+		options, err := CanonicalVisualFormatOptions(visual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, spec := range applicableVisualFormatSpecs(visual, presentationType) {
+			if spec.control != "select" || !spec.optional || spec.defaultValue != "" {
+				continue
+			}
+			applicable++
+			var option *VisualFormatOption
+			for index := range options {
+				if options[index].Key == spec.key {
+					option = &options[index]
+					break
+				}
+			}
+			if option == nil || option.Value != "" {
+				t.Fatalf("%s/%s projected option = %#v, want unset select", entry.Type, spec.key, option)
+			}
+			foundDefault := false
+			for _, choice := range option.Choices {
+				if choice.Value == "" && choice.Label == "Default" {
+					foundDefault = true
+				}
+			}
+			if !foundDefault {
+				t.Errorf("%s/%s choices = %#v, missing empty Default choice", entry.Type, spec.key, option.Choices)
+			}
+			if len(spec.choices) == 0 {
+				t.Fatalf("%s/%s has no settable choice", entry.Type, spec.key)
+			}
+			setValue := spec.choices[0].Value
+			if err := applyCanonicalVisualFormatOption(&visual, spec.key, setValue); err != nil {
+				t.Fatalf("set %s/%s=%q: %v", entry.Type, spec.key, setValue, err)
+			}
+			options, err = CanonicalVisualFormatOptions(visual)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if projected := visualFormatOptionValue(options, spec.key); projected != setValue {
+				t.Errorf("%s/%s after set = %q, want %q", entry.Type, spec.key, projected, setValue)
+			}
+			if err := applyCanonicalVisualFormatOption(&visual, spec.key, ""); err != nil {
+				t.Fatalf("clear %s/%s: %v", entry.Type, spec.key, err)
+			}
+			options, err = CanonicalVisualFormatOptions(visual)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if projected := visualFormatOptionValue(options, spec.key); projected != "" {
+				t.Errorf("%s/%s after clear = %q, want unset", entry.Type, spec.key, projected)
+			}
+			raw, err := presentationObject(visual.Presentation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := lookupFormatPath(raw, spec.path); exists {
+				t.Errorf("%s/%s remained authored after clear: %#v", entry.Type, spec.key, raw)
+			}
+		}
+	}
+	if applicable == 0 {
+		t.Fatal("no optional empty-default select options were exercised")
+	}
+}
+
+func visualFormatOptionValue(options []VisualFormatOption, key string) string {
+	for _, option := range options {
+		if option.Key == key {
+			return option.Value
+		}
+	}
+	return "<missing>"
+}

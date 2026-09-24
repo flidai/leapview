@@ -407,11 +407,12 @@ func setCanonicalVisualQueryOptions(value *document.DashboardDocument, patch Set
 			currentAlias := canonicalVisualQueryFieldAlias(&visual.Query, patch.Role, patch.FieldID)
 			if previousAlias != "" && currentAlias != "" && previousAlias != currentAlias {
 				rewriteCanonicalVisualQuerySort(&visual.Query, previousAlias, currentAlias)
+				rewriteCanonicalComboSeriesAlias(&visual, previousAlias, currentAlias)
 			}
 		}
 	}
 	if patch.Sort != nil {
-		sortValues := append([]document.DashboardSort(nil), (*patch.Sort)...)
+		sortValues := append([]document.DashboardSort{}, (*patch.Sort)...)
 		if err := setCanonicalVisualQuerySort(&visual.Query, sortValues); err != nil {
 			return err
 		}
@@ -428,6 +429,7 @@ func setCanonicalVisualQueryOptions(value *document.DashboardDocument, patch Set
 	if err := validateCanonicalVisualQuerySort(&visual.Query); err != nil {
 		return err
 	}
+	syncCanonicalComboSeries(&visual)
 	value.Spec.Visuals[visualID] = visual
 	return nil
 }
@@ -2016,15 +2018,8 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 	preserveCanonicalVisualQueryOptions(&newDefault.Query, &visual.Query)
 	configureTargetPresentationBindings(&newDefault)
 	if oldPresentationType == visualPresentationType(newDefault.Presentation) {
-		if oldCartesian, oldOK := visual.Presentation.Value.(*document.CartesianDashboardPresentation); oldOK {
-			if nextCartesian, nextOK := newDefault.Presentation.Value.(*document.CartesianDashboardPresentation); nextOK {
-				mergeCartesianPresentation(nextCartesian, oldCartesian)
-				newDefault.Presentation.Value = nextCartesian
-			} else {
-				newDefault.Presentation = visual.Presentation
-			}
-		} else {
-			newDefault.Presentation = visual.Presentation
+		if err := mergeCompatiblePresentation(&newDefault, visual.Presentation); err != nil {
+			return err
 		}
 	} else {
 		// Preserve renderer-neutral formatting controls when the presentation
@@ -2046,6 +2041,7 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 	newDefault.DataBudget = visual.DataBudget
 	newDefault.Calculations = visual.Calculations
 	newDefault.Interactions = visual.Interactions
+	syncCanonicalComboSeries(&newDefault)
 	value.Spec.Visuals[visualID] = newDefault
 	return resizeCanonicalVisualPlacement(value, patch.PageID, patch.VisualID)
 }
@@ -2684,6 +2680,7 @@ func removeCanonicalField(value *document.DashboardDocument, patch RemoveFieldPa
 	if !removed {
 		return fmt.Errorf("%w: field %q in role %q", ErrNotFound, patch.FieldID, patch.Role)
 	}
+	syncCanonicalComboSeries(&visual)
 	value.Spec.Visuals[visualID] = visual
 	return nil
 }
@@ -2711,6 +2708,7 @@ func moveCanonicalField(value *document.DashboardDocument, patch MoveFieldPayloa
 	if err := insertFieldIntoQuery(&visual.Query, targetRole, selection, sourceIndex, patch.Index, strings.TrimSpace(patch.Direction)); err != nil {
 		return err
 	}
+	syncCanonicalComboSeries(&visual)
 	value.Spec.Visuals[visualID] = visual
 	return nil
 }
@@ -3073,6 +3071,7 @@ func assignCanonicalField(value *document.DashboardDocument, patch AssignFieldPa
 	default:
 		return fmt.Errorf("%w: visual query does not accept assigned fields", ErrInvalidPayload)
 	}
+	syncCanonicalComboSeries(&visual)
 	value.Spec.Visuals[visualID] = visual
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
@@ -71,5 +72,96 @@ func TestDashboardBuilderVisualTypeCommandRefreshesOnlyChangedVisual(t *testing.
 	revenue, ok := replacements["revenue"].(map[string]any)
 	if !ok || revenue["servingStateID"] != "builder:stable-preview" {
 		t.Fatalf("replacement context = %#v", replacements["revenue"])
+	}
+}
+
+func TestDashboardBuilderInvalidVisualTypePreviewKeepsSavedRevisionAndClearsOnlyTarget(t *testing.T) {
+	page := "overview"
+	oldHash := "sha256:" + strings.Repeat("a", 64)
+	newHash := "sha256:" + strings.Repeat("b", 64)
+	visualError := `visual "orders" query: table requires at least 1 detail column(s), got 0`
+	definition := dashboarddefinition.Definition{ID: "revenue", SemanticModel: "sales_model"}
+	fake := &builderAuthoringFake{
+		builder: uisignals.DashboardBuilderSignal{
+			ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1",
+			Revision:       uisignals.DashboardBuilderRevisionSignal{ID: "revision-2", Number: 2, ContentHash: newHash},
+			SelectedPageID: &page,
+			Pages: []uisignals.DashboardBuilderPageSignal{{ID: page, Visuals: []uisignals.DashboardBuilderVisualSignal{
+				{ID: "orders-component", VisualID: "orders", Type: "table", Title: "Orders", PreviewError: &visualError},
+				{ID: "revenue-component", VisualID: "revenue-chart", Type: "bar", Title: "Revenue"},
+			}}},
+		},
+		preview: preview.Preview{
+			Definition:   definition,
+			PagePatch:    dashboard.Patch{Filters: dashboard.Filters{}, Visuals: map[string]visualizationir.VisualizationEnvelope{}},
+			VisualErrors: map[string]string{"orders": visualError},
+		},
+		compilation: preview.Compilation{Definition: definition},
+	}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	request := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{
+		"builderCommand": map[string]any{
+			"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1",
+			"revisionContentHash": oldHash, "pageId": page, "visualId": "orders-component", "type": "table", "action": "set_visual_type",
+		},
+		"runtime": map[string]any{"servingStateId": "builder:stable-preview"},
+	})
+	request.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	request.Header.Set("X-Request-ID", "invalid-target-visual-preview")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(request, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	patches := ssetest.PatchSignals(t, recorder.Body.String())
+	if len(patches) != 2 {
+		t.Fatalf("patches = %#v, want targeted clear then saved builder patch", patches)
+	}
+	reset, ok := patches[0]["builderVisuals"].(map[string]any)
+	if !ok || len(reset) != 1 || reset["orders"] != nil {
+		t.Fatalf("targeted reset = %#v, want only orders cleared", patches[0]["builderVisuals"])
+	}
+	if got, ok := patches[1]["builderVisuals"].(map[string]any); !ok || len(got) != 0 {
+		t.Fatalf("invalid target produced a visualization envelope: %#v", patches[1]["builderVisuals"])
+	}
+	builderPatch, ok := patches[1]["builder"].(map[string]any)
+	if !ok {
+		t.Fatalf("builder patch = %#v", patches[1]["builder"])
+	}
+	revision, ok := builderPatch["revision"].(map[string]any)
+	if !ok || revision["id"] != "revision-2" || revision["number"] != float64(2) || revision["contentHash"] != newHash {
+		t.Fatalf("saved revision patch = %#v, want revision-2", builderPatch["revision"])
+	}
+	previewState, ok := builderPatch["preview"].(map[string]any)
+	if !ok || previewState["error"] != "1 visual unavailable" {
+		t.Fatalf("preview failure state = %#v", builderPatch["preview"])
+	}
+	pages, ok := builderPatch["pages"].([]any)
+	if !ok || len(pages) != 1 {
+		t.Fatalf("builder pages = %#v", builderPatch["pages"])
+	}
+	pagePatch, ok := pages[0].(map[string]any)
+	if !ok {
+		t.Fatalf("page patch = %#v", pages[0])
+	}
+	visuals, ok := pagePatch["visuals"].([]any)
+	if !ok || len(visuals) != 2 {
+		t.Fatalf("builder visuals = %#v", pagePatch["visuals"])
+	}
+	var target map[string]any
+	for _, value := range visuals {
+		visual, _ := value.(map[string]any)
+		if visual["visualId"] == "orders" {
+			target = visual
+		}
+	}
+	if target == nil || target["previewError"] != visualError || target["type"] != "table" {
+		t.Fatalf("invalid target builder visual = %#v", target)
+	}
+	if fake.previewReq.VisualID != "orders" || !fake.previewReq.BestEffortVisuals {
+		t.Fatalf("preview request = %#v", fake.previewReq)
+	}
+	if fake.executed.SetVisualType == nil || string(fake.executed.SetVisualType.Type) != "table" {
+		t.Fatalf("executed visual type = %#v", fake.executed.SetVisualType)
 	}
 }
