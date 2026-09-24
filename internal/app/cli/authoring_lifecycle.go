@@ -40,6 +40,13 @@ func newLocalRuntimeControllerWithCredentials(endpoint localdocker.Endpoint, com
 }
 
 func newLocalRuntimeControllerForProfile(endpoint localdocker.Endpoint, command *cobra.Command, credentials map[string]string, profile localruntime.DevelopmentProfileIdentity) (*localruntime.Controller, error) {
+	return newLocalRuntimeControllerForProfileWithDeferredBrowser(endpoint, command, credentials, profile, nil)
+}
+
+// A local authoring run opens the app after its first serving generation is
+// active. Capture the exact loopback session request while Start establishes
+// CLI credentials, but do not open a browser on an empty target.
+func newLocalRuntimeControllerForProfileWithDeferredBrowser(endpoint localdocker.Endpoint, command *cobra.Command, credentials map[string]string, profile localruntime.DevelopmentProfileIdentity, deferred *localruntime.SessionRequest) (*localruntime.Controller, error) {
 	return localruntime.New(localruntime.Options{
 		Endpoint: endpoint, ResolveProjectAuthority: resolveLocalProjectAuthority,
 		EstablishSessions: func(ctx context.Context, request localruntime.SessionRequest) (localruntime.SessionResult, error) {
@@ -48,6 +55,10 @@ func newLocalRuntimeControllerForProfile(endpoint localdocker.Endpoint, command 
 				return localruntime.SessionResult{}, err
 			}
 			request.OpenBrowser = openBrowser
+			if deferred != nil {
+				*deferred = request
+				request.OpenBrowser = false
+			}
 			return establishLocalAuthoringSessions(ctx, request, command.OutOrStdout())
 		},
 		ResetSessions: resetLocalAuthoringSessions,
@@ -122,7 +133,7 @@ func localDevStatusCommand(ctx context.Context, resolve localDockerResolver, fac
 			if err != nil {
 				return err
 			}
-			if status.Exists && status.TargetName != "" && readProfileStatus != nil {
+			if status.Exists && status.TargetName != "" && status.Services["leapview"] == "running" && readProfileStatus != nil {
 				status.DevelopmentProfile, err = readProfileStatus(ctx, status)
 				if err != nil {
 					return fmt.Errorf("read retained development profile status: %w", err)

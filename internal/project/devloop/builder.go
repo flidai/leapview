@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	developmentprofile "github.com/flidai/leapview/internal/project/developmentprofile"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -75,13 +76,22 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	catalog, err := developmentprofile.CatalogFromManifest(bundle.Manifest())
+	if err != nil {
+		return Snapshot{}, err
+	}
+	connectionCatalogDigest, err := developmentprofile.CatalogDigest(catalog)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	// The source bundle validates source-root resources and intentionally has
 	// no Project identity. The target-bound identity remains on the snapshot so
 	// remote synchronization is scoped to the authenticated target Project.
 	projectID := builder.ProjectID
 	return normalizeSnapshot(Snapshot{
 		ProjectID: projectID,
-		Digest:    candidateSetDigest(artifacts), GraphDigest: bundle.Graph().Digest(), Artifacts: artifacts,
+		Digest:    candidateSetDigest(artifacts), GraphDigest: bundle.Graph().Digest(),
+		ConnectionCatalogDigest: connectionCatalogDigest, Artifacts: artifacts,
 		SourceRevision: builder.SourceRevision,
 		CandidateKey:   builder.CandidateKey,
 	})

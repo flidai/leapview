@@ -219,6 +219,7 @@ type HTTPConfig struct {
 	AgentCommands              dashboardui.AgentCommandBindings
 	Presentation               dashboardui.Presentation
 	Assets                     staticasset.Resolver
+	LocalDevelopmentSession    bool
 }
 
 type SemanticConfig struct {
@@ -402,6 +403,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 				expirer.ExpireVisualizationTileStream(streamID)
 			}
 		},
+	}
+	if config.HTTP.LocalDevelopmentSession {
+		handler.RouteScope.DevelopmentSessionEventsPath = "/development-session/events"
 	}
 	if usageRecorder != nil {
 		handler.RecordDashboardView = usageRecorder.RecordView

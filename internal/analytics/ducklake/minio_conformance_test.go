@@ -26,6 +26,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	"github.com/flidai/leapview/internal/deployment/gcstore"
+	"github.com/flidai/leapview/internal/platform/testminio"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/log"
 	tcminio "github.com/testcontainers/testcontainers-go/modules/minio"
@@ -108,7 +109,7 @@ func TestSharedPoolConformanceMinIOLane(t *testing.T) {
 		_ = base.Close()
 		t.Fatalf("DuckLake extension=%q, want d318a545", ducklakeExtension)
 	}
-	t.Logf("MinIO conformance runtime: duckdb=%q ducklake=%q minio_image=%q", duckdbRuntime, ducklakeExtension, conformanceMinIOImage)
+	t.Logf("MinIO conformance runtime: duckdb=%q ducklake=%q minio_image=%q", duckdbRuntime, ducklakeExtension, testminio.Image)
 	if _, err := base.Commit(ctx, "minio-base", nil, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS model;
 CREATE TABLE model.orders(id BIGINT, value VARCHAR);
@@ -632,7 +633,6 @@ func minioSecretEndpoint(raw string) (string, bool, error) {
 }
 
 const (
-	conformanceMinIOImage  = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 	conformanceMinIOUser   = "leapview"
 	conformanceMinIOSecret = "leapview-conformance-secret"
 )
@@ -642,7 +642,7 @@ func startConformanceMinIO(t *testing.T, ctx context.Context) string {
 	if os.Getenv("CI") == "" {
 		testcontainers.SkipIfProviderIsNotHealthy(t)
 	}
-	container, err := tcminio.Run(ctx, conformanceMinIOImage,
+	container, err := testminio.Run(ctx,
 		tcminio.WithUsername(conformanceMinIOUser), tcminio.WithPassword(conformanceMinIOSecret),
 		testcontainers.WithLogger(log.TestLogger(t)))
 	testcontainers.CleanupContainer(t, container)

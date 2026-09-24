@@ -633,6 +633,13 @@ func validateEnvLineValue(label, value string) error {
 func initializationEnvironment(existing []byte, options InitOptions, csrfKey, metricsToken string) (string, error) {
 	contents := string(existing)
 	values := environmentValues(contents)
+	if current := strings.TrimSpace(values["LEAPVIEW_AGENT_CREDENTIAL_KEY"]); current == "" || strings.Contains(current, "<generated") {
+		key, err := randomHex(32)
+		if err != nil {
+			return "", err
+		}
+		values["LEAPVIEW_AGENT_CREDENTIAL_KEY"] = key
+	}
 	controllerOwned := map[string]string{
 		"LEAPVIEW_PRODUCTION":          "1",
 		"LEAPVIEW_ENVIRONMENT":         options.Environment,

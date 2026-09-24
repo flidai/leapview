@@ -1129,6 +1129,7 @@ spec:
       title: Revenue by category donut
       presentation:
         type: proportional
+        labelPosition: inside
     - id: orders_donut_center
       type: donut
       query:
