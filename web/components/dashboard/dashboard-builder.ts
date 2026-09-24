@@ -8,6 +8,7 @@ import { dashboardBuilderToolbarStyles } from './dashboard-builder-toolbar-style
 import { dashboardBuilderFilterStyles } from './dashboard-builder-filter-styles'
 import { hasCompiledBuilderPreview } from './builder-preview-readiness'
 import { canRequireFilter, filterControlChoices, filterControlLabel } from './builder-filter-settings'
+import { applyCanonicalGridAttributes, syncGridStackNodesToCanonical } from './builder-grid-sync'
 import type {
   DashboardBuilderDiagnosticSignal,
   DashboardBuilderFieldSignal,
@@ -2668,6 +2669,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     if (canvas !== this.gridElement || layoutKey !== this.gridLayoutKey || mobile !== this.gridIsMobile) {
       this.destroyGridStack()
+      applyCanonicalGridAttributes(this.shadowRoot, this.pagePlacedComponents(page))
       this.gridElement = canvas
       this.gridLayoutKey = layoutKey
       this.gridIsMobile = mobile
@@ -2685,6 +2687,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         resizable: { handles: 'all', autoHide: false },
       }, canvas as GridItemHTMLElement)
       if (this.gridStack) {
+        syncGridStackNodesToCanonical(this.gridStack, this.shadowRoot, this.pagePlacedComponents(page))
         this.gridStack.on('dragstart resizestart', () => {
           this.gridInteracting = true
           this.syncCanvasViewport(page)
@@ -3252,14 +3255,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = builder ? this.selectedPage(builder) : undefined
     this.destroyGridStack()
     if (!page) return
-    for (const component of this.pagePlacedComponents(page)) {
-      const tile = this.shadowRoot?.querySelector<HTMLElement>(`[gs-id="${CSS.escape(component.id)}"]`)
-      if (!tile) continue
-      tile.setAttribute('gs-x', String(Math.max(0, component.placement.col - 1)))
-      tile.setAttribute('gs-y', String(Math.max(0, component.placement.row - 1)))
-      tile.setAttribute('gs-w', String(Math.max(1, component.placement.colSpan)))
-      tile.setAttribute('gs-h', String(Math.max(1, component.placement.rowSpan)))
-    }
+    applyCanonicalGridAttributes(this.shadowRoot, this.pagePlacedComponents(page))
   }
 
   private readonly reloadAfterFailure = (): void => {

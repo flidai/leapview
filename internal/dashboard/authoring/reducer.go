@@ -2044,7 +2044,7 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 	newDefault.Calculations = visual.Calculations
 	newDefault.Interactions = visual.Interactions
 	value.Spec.Visuals[visualID] = newDefault
-	return resizeCanonicalVisualPlacement(value, patch.PageID, patch.VisualID, patch.Type)
+	return resizeCanonicalVisualPlacement(value, patch.PageID, patch.VisualID)
 }
 
 func preserveCanonicalVisualQueryOptions(target, source *document.DashboardQuery) {

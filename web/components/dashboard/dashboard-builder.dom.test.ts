@@ -2496,9 +2496,11 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
           ? { ...visual, placement: { ...visual.placement, colSpan: Math.max(1, visual.placement.colSpan - 1) } }
           : visual) }
         : page)
-      mergePatch({ builder: { pages } })
+      mergePatch({ builder: { revision: { id: 'rev-8', number: 8, contentHash: 'sha256:layout' }, pages } })
+      await new Promise((resolve) => setTimeout(resolve, 20))
       await element.updateComplete
       const hostAfterLayout = root.querySelector('.visual-preview lv-visualization-host') as any
+      const visualAfterLayout = root.querySelector('.visual') as any
       const previewWrapper = root.querySelector('.visual-preview') as HTMLElement | null
       const hostBox = host?.getBoundingClientRect()
       const wrapperBox = previewWrapper?.getBoundingClientRect()
@@ -2508,6 +2510,9 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
         visualRole: root.querySelector('.visual')?.getAttribute('role'),
         hostVisualID: host?.envelope?.visualID,
         envelopeStableAfterLayout: hostAfterLayout?.envelope === initialEnvelope,
+        gridWidthAfterLayout: visualAfterLayout?.gridstackNode?.w,
+        gridWidthAttributeAfterLayout: visualAfterLayout?.getAttribute('gs-w'),
+        gridLayoutKeyAfterLayout: element.gridLayoutKey,
         hostAuthoring: host?.authoring,
         hostPointerEvents: host ? getComputedStyle(host).pointerEvents : '',
         wrapperInert: previewWrapper?.hasAttribute('inert'),
@@ -2543,6 +2548,9 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
     expect(state.visualRole).toBe('group')
     expect(state.hostVisualID).toBe('sales-chart')
     expect(state.envelopeStableAfterLayout).toBe(true)
+    expect(state.gridWidthAttributeAfterLayout).toBe('5')
+    expect(state.gridLayoutKeyAfterLayout).toContain('rev-8:8:sha256:layout')
+    expect(state.gridWidthAfterLayout).toBe(5)
     expect(state.hostAuthoring).toBe(true)
     expect(state.hostPointerEvents).toBe('auto')
     expect(state.wrapperInert).toBe(false)
