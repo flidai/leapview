@@ -18,19 +18,19 @@ export class AgentProviderSettings extends LitElement {
 
   static styles = [settingsFieldStyles, css`
     :host { display: block; }
-    fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 1rem; }
-    label { display: grid; gap: var(--base-size-8, .5rem); font: var(--lv-type-body, inherit); }
+    fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: var(--base-size-16); }
+    label { display: grid; gap: var(--base-size-8); font: var(--lv-type-body); }
     label.checkbox { display: flex; align-items: center; justify-content: space-between; }
-    input[type="checkbox"] { width: 1rem; height: 1rem; margin: 0; }
-    details { display: grid; gap: .75rem; }
-    details label { margin-top: .75rem; }
+    input[type="checkbox"] { width: var(--base-size-16); height: var(--base-size-16); margin: 0; }
+    details { display: grid; gap: var(--base-size-12); }
+    details label { margin-top: var(--base-size-12); }
     summary { cursor: pointer; color: var(--lv-fg-muted); }
-    h3 { font: var(--lv-type-body, inherit); font-weight: 600; }
-    input, select { padding: .5rem; color: var(--lv-fg-default); background: var(--lv-bg-panel); border: 1px solid var(--lv-border-default); border-radius: .3rem; }
-     .actions { display: flex; flex-wrap: wrap; gap: .75rem; }
-    button { padding: .5rem .75rem; cursor: pointer; color: var(--lv-fg-default); background: var(--lv-bg-panel); border: 1px solid var(--lv-border-default); border-radius: var(--lv-radius-small, .375rem); }
+    h3 { font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
+    input, select { padding: var(--base-size-8); color: var(--lv-fg-default); background: var(--lv-bg-panel); border: var(--lv-border-default); border-radius: var(--lv-radius-small); }
+    .actions { display: flex; flex-wrap: wrap; gap: var(--base-size-12); }
+    button { padding: var(--base-size-8) var(--base-size-12); cursor: pointer; color: var(--lv-fg-default); background: var(--lv-bg-panel); border: var(--lv-border-default); border-radius: var(--lv-radius-small); }
     button:disabled { opacity: .5; cursor: default; }
-    button.primary { color: var(--lv-fg-on-emphasis, white); background: var(--lv-bg-accent-emphasis, #0969da); }
+    button.primary { color: var(--lv-fg-on-accent); background: var(--lv-bg-accent); border-color: var(--lv-bg-accent); }
     p { color: var(--lv-fg-muted); }
   `]
 
