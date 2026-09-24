@@ -645,7 +645,7 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 			{"componentId": "orders-component", "column": 1, "row": 1, "columnSpan": 6, "rowSpan": 4},
 			{"visualId": "summary-component", "col": 7, "row": 1, "colSpan": 6, "rowSpan": 4},
 		},
-	}})
+	}, "runtime": map[string]any{"servingStateId": "retained-preview-state"}})
 	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
 	req.Header.Set("X-Request-ID", "placement-1")
 	rec := httptest.NewRecorder()
@@ -682,7 +682,7 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 		t.Fatalf("layout preview state = %#v, want retained previews active", builder["preview"])
 	}
 	runtime, ok := patches[0]["runtime"].(map[string]any)
-	if !ok || runtime["servingStateId"] != "builder:draft-1:revision-2:"+revisionHash {
+	if !ok || runtime["servingStateId"] != "retained-preview-state" {
 		t.Fatalf("layout runtime = %#v", patches[0]["runtime"])
 	}
 }

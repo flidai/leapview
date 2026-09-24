@@ -573,6 +573,15 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		} else {
 			envelope.Runtime.ServingStateID = optionalRuntimeString(builderServingStateID(builder))
 		}
+		if signals.Runtime.ServingStateID != nil {
+			// The retained visual signals are scoped to the browser's current
+			// serving-state identity. A layout-only edit advances the authored
+			// revision but does not change those visual results, so keep their
+			// identity until a command actually publishes replacement envelopes.
+			if servingStateID := strings.TrimSpace(*signals.Runtime.ServingStateID); servingStateID != "" {
+				envelope.Runtime.ServingStateID = uisignals.Optional(servingStateID)
+			}
+		}
 		envelope.Runtime = h.builderCommandRuntime(r, signals.Runtime, envelope.Runtime, project.String(), dashboardID, input.PageID, builder)
 		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
 			"builder":      envelope.Builder,
