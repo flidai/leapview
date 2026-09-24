@@ -1851,17 +1851,6 @@ func nextCanonicalComponentPlacement(value document.DashboardDocument, pageIndex
 	}
 }
 
-func canonicalVisualPlacementSize(visualType document.DashboardVisualType) (columnSpan, rowSpan int32) {
-	switch visualType {
-	case document.DashboardVisualTypeKpi, document.DashboardVisualTypeGauge:
-		return 4, 3
-	case document.DashboardVisualTypeTable, document.DashboardVisualTypeMatrix, document.DashboardVisualTypePivot:
-		return 6, 5
-	default:
-		return 6, 4
-	}
-}
-
 func placementsOverlap(left, right document.DashboardPlacement) bool {
 	leftColumnEnd := left.Column + maxPositive(left.ColumnSpan, 1)
 	leftRowEnd := left.Row + maxPositive(left.RowSpan, 1)
@@ -2055,7 +2044,7 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 	newDefault.Calculations = visual.Calculations
 	newDefault.Interactions = visual.Interactions
 	value.Spec.Visuals[visualID] = newDefault
-	return nil
+	return resizeCanonicalVisualPlacement(value, patch.PageID, patch.VisualID, patch.Type)
 }
 
 func preserveCanonicalVisualQueryOptions(target, source *document.DashboardQuery) {
