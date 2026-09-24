@@ -52,6 +52,32 @@ func TestDataExplorerLifecycleStopsOnlyCurrentRun(t *testing.T) {
 	}
 }
 
+func TestDataExplorerLifecycleMonotonicUnnamedRecoveryStop(t *testing.T) {
+	t.Run("newer stop cancels the active older run", func(t *testing.T) {
+		var lifecycle dataExplorerLifecycle
+		run, finish, _ := lifecycle.beginRun("client", "old-run", 3, context.Background())
+		t.Cleanup(finish)
+		if !lifecycle.stop("client", "", 4) {
+			t.Fatal("newer unnamed recovery Stop was rejected")
+		}
+		if !errors.Is(run.Err(), context.Canceled) {
+			t.Fatalf("run error = %v, want context.Canceled", run.Err())
+		}
+	})
+
+	t.Run("older stop cannot cancel a newer run", func(t *testing.T) {
+		var lifecycle dataExplorerLifecycle
+		run, finish, _ := lifecycle.beginRun("client", "new-run", 5, context.Background())
+		t.Cleanup(finish)
+		if lifecycle.stop("client", "", 4) {
+			t.Fatal("older unnamed Stop cancelled the newer run")
+		}
+		if run.Err() != nil {
+			t.Fatalf("older unnamed Stop cancelled current run: %v", run.Err())
+		}
+	})
+}
+
 func TestDataExplorerActionPrefersNestedAuthoredAction(t *testing.T) {
 	outer := "run"
 	nested := "configure"
@@ -125,18 +151,101 @@ func TestDataExplorerLifecycleUsesRunIdentityForSameSequence(t *testing.T) {
 	}
 }
 
-func TestDataExplorerLifecycleStopsNamedRunAfterConfigure(t *testing.T) {
+func TestDataExplorerLifecycleStopCanWinUnacceptedConfigureRace(t *testing.T) {
 	var lifecycle dataExplorerLifecycle
 	run, finish, runID := lifecycle.beginRun("client", "run-1", 3, context.Background())
 	t.Cleanup(finish)
-	if !lifecycle.acceptSemantic("client", 4) {
-		t.Fatal("newer configure request was rejected")
-	}
+	// The browser has advanced its draft sequence, but the configure request
+	// has not reached acceptSemantic yet. A named Stop may still cancel the run.
 	if !lifecycle.stop("client", runID, 4) {
-		t.Fatal("stop did not cancel the named run after configure")
+		t.Fatal("stop did not cancel the named run during the configure race")
 	}
 	if !errors.Is(run.Err(), context.Canceled) {
 		t.Fatalf("run error = %v, want context.Canceled", run.Err())
+	}
+}
+
+type cancellationIgnoringSemanticExecutor struct {
+	started  chan struct{}
+	canceled chan struct{}
+	release  chan struct{}
+}
+
+func (e *cancellationIgnoringSemanticExecutor) ExecuteDataQuery(ctx context.Context, _ dataquery.Query) (dataquery.Result, error) {
+	close(e.started)
+	<-ctx.Done()
+	close(e.canceled)
+	<-e.release
+	return dataquery.Result{Rows: []dataquery.Row{{"orders.status": "late"}}}, nil
+}
+
+func TestDataExplorerNewerConfigureCancelsRunAndRejectsLateResponse(t *testing.T) {
+	h, _ := newDataExplorerURLTestHandler(t)
+	executor := &cancellationIgnoringSemanticExecutor{
+		started: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}),
+	}
+	h.QueryExecutor = executor
+	clientID := "configure-cancels-run-client"
+	datasetID := "orders"
+	spec := exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID,
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}},
+		Metrics:    []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{},
+		Sort: []exploration.ExplorationSort{}, Limit: 100,
+	}
+	request := httptest.NewRequest("POST", "/explore/command", nil)
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	runCommand := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("run"), ClientID: projectsignals.Optional(clientID),
+		Mode: projectsignals.Optional("explore"), RequestSeq: 1, RunID: projectsignals.Optional("run-1"),
+		Explore: &projectsignals.DataExploreCommand{Action: projectsignals.Optional("run"), RequestSeq: 1, Spec: spec},
+	}
+	configureCommand := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID),
+		Mode: projectsignals.Optional("explore"), RequestSeq: 2,
+		Explore: &projectsignals.DataExploreCommand{Action: projectsignals.Optional("configure"), RequestSeq: 2, Spec: spec},
+	}
+	firstDone := make(chan struct{})
+	var oldRun projectsignals.DataExplorerSignal
+	var oldRunOK bool
+	go func() {
+		_, oldRun, oldRunOK = h.dataExplorerSignalsForCommand(httptest.NewRecorder(), request, runCommand)
+		close(firstDone)
+	}()
+	select {
+	case <-executor.started:
+	case <-time.After(time.Second):
+		t.Fatal("semantic run executor did not start")
+	}
+
+	var releaseOnce sync.Once
+	releaseRun := func() { releaseOnce.Do(func() { close(executor.release) }) }
+	defer releaseRun()
+	if _, configured, ok := h.dataExplorerSignalsForCommand(httptest.NewRecorder(), request, configureCommand); !ok {
+		t.Fatal("newer configure request failed to project state")
+	} else if configured.Explore.Status.State != "stale" {
+		t.Fatalf("configure status = %#v, want stale", configured.Explore.Status)
+	}
+	select {
+	case <-executor.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("newer configure did not cancel the semantic run context")
+	}
+	releaseRun()
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("cancellation-ignoring semantic run did not finish after release")
+	}
+	if !oldRunOK {
+		t.Fatal("old semantic run failed to project its late response")
+	}
+	if oldRun.Explore.Status.State != "cancelled" {
+		t.Fatalf("late run status = %#v, want cancelled", oldRun.Explore.Status)
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, oldRun.Command); current {
+		unlock()
+		t.Fatal("late old run acquired the response lease after newer configure")
 	}
 }
 
@@ -219,6 +328,226 @@ func TestDataExplorerResponseLeaseNewerRunSupersedesStop(t *testing.T) {
 		t.Fatal("newer run lost the emission lease after stop")
 	} else {
 		unlock()
+	}
+}
+
+func TestDataExplorerResponseLeaseBindsUnnamedStopToRequestSequence(t *testing.T) {
+	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+		return "project:test", nil
+	}}
+	request := httptest.NewRequest("POST", "/explore/command", nil)
+	clientID := "unnamed-stop-sequence-lease-client"
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+
+	_, finishA, _ := h.dataExplorerLifecycle.beginRun(key, "run-a", 7, context.Background())
+	t.Cleanup(finishA)
+	stopA := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("stop"), ClientID: projectsignals.Optional(clientID), RequestSeq: 7,
+	}
+	if !h.dataExplorerLifecycle.stop(key, "", 7) {
+		t.Fatal("unnamed Stop A at sequence 7 was rejected")
+	}
+
+	_, finishB, _ := h.dataExplorerLifecycle.beginRun(key, "run-b", 8, context.Background())
+	t.Cleanup(finishB)
+	stopB := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("stop"), ClientID: projectsignals.Optional(clientID), RequestSeq: 8,
+	}
+	if !h.dataExplorerLifecycle.stop(key, "", 8) {
+		t.Fatal("unnamed Stop B at sequence 8 was rejected")
+	}
+
+	if unlock, current := h.dataExplorerResponseLease(request, stopA); current {
+		unlock()
+		t.Fatal("delayed Stop A response acquired Stop B's tombstone lease")
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, stopB); !current {
+		t.Fatal("current Stop B response lost its tombstone lease")
+	} else {
+		unlock()
+	}
+}
+
+func TestDataExplorerResponseLeaseAllowsLegacyNamedStopWithoutSequence(t *testing.T) {
+	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+		return "project:test", nil
+	}}
+	request := httptest.NewRequest("POST", "/explore/command", nil)
+	clientID := "legacy-named-stop-lease-client"
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	_, finish, runID := h.dataExplorerLifecycle.beginRun(key, "legacy-run", 0, context.Background())
+	t.Cleanup(finish)
+	if !h.dataExplorerLifecycle.stop(key, runID, 0) {
+		t.Fatal("legacy named Stop without a sequence was rejected")
+	}
+
+	namedStop := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("stop"), ClientID: projectsignals.Optional(clientID), RunID: projectsignals.Optional(runID),
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, namedStop); !current {
+		t.Fatal("matching legacy named Stop response lost its lease")
+	} else {
+		unlock()
+	}
+	unnamedStop := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("stop"), ClientID: projectsignals.Optional(clientID),
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, unnamedStop); current {
+		unlock()
+		t.Fatal("sequence-less unnamed Stop response resolved to a tombstone")
+	}
+}
+
+func TestDataExplorerResponseLeaseRejectsStopSupersededByConfigure(t *testing.T) {
+	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+		return "project:test", nil
+	}}
+	request := httptest.NewRequest("POST", "/explore/command", nil)
+	clientID := "stop-configure-lease-client"
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	_, finish, runID := h.dataExplorerLifecycle.beginRun(key, "run-7", 7, context.Background())
+	t.Cleanup(finish)
+	stop := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("stop"), ClientID: projectsignals.Optional(clientID),
+		RequestSeq: 7, RunID: projectsignals.Optional(runID),
+	}
+	if !h.dataExplorerLifecycle.stop(key, runID, 7) {
+		t.Fatal("named Stop at sequence 7 was rejected")
+	}
+	if !h.dataExplorerLifecycle.acceptSemantic(key, 8) {
+		t.Fatal("Configure at sequence 8 was rejected")
+	}
+	configure := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID), RequestSeq: 8,
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, configure); !current {
+		t.Fatal("current Configure response lost its emission lease")
+	} else {
+		unlock()
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, stop); current {
+		unlock()
+		t.Fatal("delayed named Stop at sequence 7 passed after Configure 8")
+	}
+}
+
+func TestDataExplorerResponseLeaseAllowsOnlyCurrentStopWithoutActiveRun(t *testing.T) {
+	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+		return "project:test", nil
+	}}
+	request := httptest.NewRequest("POST", "/explore/command", nil)
+	clientID := "no-active-stop-lease-client"
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	if !h.dataExplorerLifecycle.acceptSemantic(key, 8) {
+		t.Fatal("current semantic sequence 8 was rejected")
+	}
+	if h.dataExplorerLifecycle.stop(key, "", 8) {
+		t.Fatal("Stop without an active run was accepted as a cancellation")
+	}
+	currentStop := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("stop"), ClientID: projectsignals.Optional(clientID), RequestSeq: 8,
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, currentStop); !current {
+		t.Fatal("current no-active Stop response could not emit its no-running status")
+	} else {
+		unlock()
+	}
+	staleStop := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("stop"), ClientID: projectsignals.Optional(clientID), RequestSeq: 7,
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, staleStop); current {
+		unlock()
+		t.Fatal("stale no-active Stop response acquired an emission lease")
+	}
+	sequenceLess := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("stop"), ClientID: projectsignals.Optional(clientID),
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, sequenceLess); current {
+		unlock()
+		t.Fatal("sequence-less unnamed no-active Stop was not fail-closed")
+	}
+}
+
+func TestDataExplorerNoActiveStopAdvancesSequenceBeforeResponseLease(t *testing.T) {
+	h, _ := newDataExplorerURLTestHandler(t)
+	clientID := "no-active-stop-advances-sequence-client"
+	request := httptest.NewRequest("POST", "/explore/command", nil)
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	if !h.dataExplorerLifecycle.acceptSemantic(key, 7) {
+		t.Fatal("semantic sequence 7 was rejected")
+	}
+	datasetID := "orders"
+	command := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("stop"), ClientID: projectsignals.Optional(clientID),
+		Mode: projectsignals.Optional("explore"), RequestSeq: 8,
+		Explore: &projectsignals.DataExploreCommand{
+			Action: projectsignals.Optional("stop"), RequestSeq: 8,
+			Spec: exploration.ExplorationSpec{
+				SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID,
+				Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{},
+				Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+			},
+		},
+	}
+	_, explorer, ok := h.dataExplorerSignalsForCommand(httptest.NewRecorder(), request, command)
+	if !ok {
+		t.Fatal("no-active Stop failed to project its current status")
+	}
+	if explorer.Explore.Status.State != "cancelled" || projectsignals.ValueOrZero(explorer.Explore.Status.Message) != "no exploration is running" {
+		t.Fatalf("no-active Stop status = %#v, want current no-running acknowledgement", explorer.Explore.Status)
+	}
+	h.dataExplorerLifecycle.mu.Lock()
+	latest := h.dataExplorerLifecycle.latest[key]
+	h.dataExplorerLifecycle.mu.Unlock()
+	if latest != 8 {
+		t.Fatalf("latest semantic sequence = %d, want Stop sequence 8", latest)
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, explorer.Command); !current {
+		t.Fatal("current no-active Stop lost its response lease after advancing the semantic sequence")
+	} else {
+		unlock()
+	}
+}
+
+func TestDataExplorerResponseLeaseAllowsCurrentNoActiveStopAfterOlderTombstone(t *testing.T) {
+	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+		return "project:test", nil
+	}}
+	request := httptest.NewRequest("POST", "/explore/command", nil)
+	clientID := "older-stop-tombstone-no-active-client"
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	_, finish, runID := h.dataExplorerLifecycle.beginRun(key, "old-run", 7, context.Background())
+	if !h.dataExplorerLifecycle.stop(key, runID, 7) {
+		t.Fatal("Stop A at sequence 7 was rejected")
+	}
+	finish()
+	if !h.dataExplorerLifecycle.acceptSemantic(key, 8) {
+		t.Fatal("current semantic sequence 8 was rejected")
+	}
+	if h.dataExplorerLifecycle.stop(key, "", 8) {
+		t.Fatal("Stop B was accepted as a cancellation without an active run")
+	}
+	stopB := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("stop"), ClientID: projectsignals.Optional(clientID), RequestSeq: 8,
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, stopB); !current {
+		t.Fatal("current no-active Stop B could not lease its no-running response after an older tombstone")
+	} else {
+		unlock()
+	}
+	stopA := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("stop"), ClientID: projectsignals.Optional(clientID),
+		RequestSeq: 7, RunID: projectsignals.Optional(runID),
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, stopA); current {
+		unlock()
+		t.Fatal("older tombstoned Stop A passed after semantic sequence 8")
 	}
 }
 
@@ -364,6 +693,116 @@ func TestDataExplorerSuppressesOlderSuggestionExecutorResponse(t *testing.T) {
 	if unlock, current := h.dataExplorerResponseLease(request, first.Command); current {
 		unlock()
 		t.Fatal("older suggestion response acquired the emission lease")
+	}
+}
+
+func TestDataExplorerResponseLeaseRejectsSuggestionAfterNewerConfigure(t *testing.T) {
+	h, _ := newDataExplorerURLTestHandler(t)
+	executor := &cancellationIgnoringSuggestionExecutor{firstStarted: make(chan struct{}), releaseFirst: make(chan struct{})}
+	h.QueryExecutor = executor
+	clientID := "suggestion-configure-race-client"
+	datasetID := "orders"
+	search := ""
+	spec := exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID,
+		Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+	}
+	suggestionCommand := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID),
+		Mode: projectsignals.Optional("explore"), RequestSeq: 41,
+		Explore: &projectsignals.DataExploreCommand{
+			Action: projectsignals.Optional("configure"), RequestSeq: 41, Spec: spec,
+			FilterSuggestions: &projectsignals.DataExploreFilterSuggestionsCommand{
+				Field: "orders.status", Search: &search, SuggestionRequestSeq: 1,
+			},
+		},
+	}
+	configureCommand := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID),
+		Mode: projectsignals.Optional("explore"), RequestSeq: 42,
+		Explore: &projectsignals.DataExploreCommand{Action: projectsignals.Optional("configure"), RequestSeq: 42, Spec: spec},
+	}
+	request := httptest.NewRequest("POST", "/explore/command", nil)
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	firstDone := make(chan struct{})
+	var first projectsignals.DataExplorerSignal
+	var firstOK bool
+	go func() {
+		_, first, firstOK = h.dataExplorerSignalsForCommand(httptest.NewRecorder(), request, suggestionCommand)
+		close(firstDone)
+	}()
+	select {
+	case <-executor.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("suggestion executor did not start")
+	}
+
+	var releaseOnce sync.Once
+	releaseSuggestion := func() { releaseOnce.Do(func() { close(executor.releaseFirst) }) }
+	defer releaseSuggestion()
+	if _, _, ok := h.dataExplorerSignalsForCommand(httptest.NewRecorder(), request, configureCommand); !ok {
+		t.Fatal("newer configure request failed to project state")
+	}
+	releaseSuggestion()
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("cancellation-ignoring suggestion did not finish")
+	}
+	if !firstOK {
+		t.Fatal("suggestion request failed to project state")
+	}
+	if first.Command.RequestSeq != 41 || first.Command.Explore == nil || first.Command.Explore.FilterSuggestions == nil || first.Command.Explore.FilterSuggestions.SuggestionRequestSeq != 1 {
+		t.Fatalf("late suggestion command = %#v, want semantic sequence 41 and current token 1", first.Command)
+	}
+	key := h.dataExplorerClientKey(request, "project:test", suggestionCommand)
+	if !h.dataExplorerLifecycle.currentSuggestions(key, 1, "") {
+		t.Fatal("suggestion token stopped being current after configure")
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, first.Command); current {
+		unlock()
+		t.Fatal("older-semantic-sequence suggestion acquired the emission lease")
+	}
+}
+
+func TestDataExplorerResponseLeaseAllowsCurrentSuggestionDuringSemanticRun(t *testing.T) {
+	h, _ := newDataExplorerURLTestHandler(t)
+	clientID := "current-suggestion-active-run-client"
+	request := httptest.NewRequest("POST", "/explore/command", nil)
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	command := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID),
+		Mode: projectsignals.Optional("explore"), RequestSeq: 42,
+		Explore: &projectsignals.DataExploreCommand{
+			Action: projectsignals.Optional("configure"), RequestSeq: 42,
+			FilterSuggestions: &projectsignals.DataExploreFilterSuggestionsCommand{Field: "orders.status", SuggestionRequestSeq: 1},
+		},
+	}
+	key := h.dataExplorerClientKey(request, "project:test", command)
+	semantic, finishSemantic, _ := h.dataExplorerLifecycle.beginRun(key, "semantic-run", 42, context.Background())
+	t.Cleanup(finishSemantic)
+	if accepted, _ := h.dataExplorerLifecycle.acceptSuggestions(key, 1); !accepted {
+		t.Fatal("current suggestion token was rejected")
+	}
+	suggestion, finishSuggestion, _ := h.dataExplorerLifecycle.beginSuggestions(key, "suggestion-run", 1, context.Background())
+	t.Cleanup(finishSuggestion)
+	if semantic.Err() != nil {
+		t.Fatalf("starting the suggestion lane cancelled semantic run: %v", semantic.Err())
+	}
+	if suggestion.Err() != nil {
+		t.Fatalf("current suggestion lane was cancelled: %v", suggestion.Err())
+	}
+	unlock, current := h.dataExplorerResponseLease(request, command)
+	if !current {
+		t.Fatal("current-sequence suggestion lost its emission lease during semantic run")
+	}
+	unlock()
+	if semantic.Err() != nil {
+		t.Fatalf("leasing the suggestion response cancelled semantic run: %v", semantic.Err())
+	}
+	if suggestion.Err() != nil {
+		t.Fatalf("leasing the suggestion response cancelled its lane: %v", suggestion.Err())
 	}
 }
 
@@ -546,6 +985,9 @@ func TestDataExplorerLifecycleIdentityMapsAreBounded(t *testing.T) {
 			t.Fatalf("suggestion request %q was rejected", key)
 		}
 		_, finishRun, _ := lifecycle.beginRun(key, "run-"+key, 1, context.Background())
+		if !lifecycle.stop(key, "run-"+key, 1) {
+			t.Fatalf("stop request %q was rejected", key)
+		}
 		finishRun()
 		_, finishSuggestion, _ := lifecycle.beginSuggestions(key, "suggestion-"+key, 1, context.Background())
 		finishSuggestion()
@@ -556,6 +998,7 @@ func TestDataExplorerLifecycleIdentityMapsAreBounded(t *testing.T) {
 		"latestRun":         len(lifecycle.latestRun),
 		"suggestionsRun":    len(lifecycle.suggestionsRun),
 		"stoppedRun":        len(lifecycle.stoppedRun),
+		"stoppedRequestSeq": len(lifecycle.stoppedRequestSeq),
 		"identityAccess":    len(lifecycle.identityAccess),
 	} {
 		if size > dataExplorerLifecycleMaxIdentities {

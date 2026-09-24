@@ -109,6 +109,8 @@ test('Data Explorer retains the last good result through draft and run lifecycle
         return {
           table: grid?.shadowRoot?.textContent ?? '',
           failure: element.shadowRoot?.querySelector('.result-failure')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+          actions: Array.from(element.shadowRoot?.querySelectorAll('.query-actions .text-button') ?? []).map((button: any) => button.textContent?.replace(/\s+/g, ' ').trim() ?? ''),
+          execution: element.shadowRoot?.querySelector('.execution-state')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
         }
       }
       const update = (next: any, nextResult: any, nextStatus: any, selectedObject = orders) => mergePatch({
@@ -137,39 +139,130 @@ test('Data Explorer retains the last good result through draft and run lifecycle
       const draft = await settle()
       update({ ...configured, action: 'run' }, result(3), status(3, 'loading', 'Running exploration…'))
       const loading = await settle()
+      ;(element as any).exploreExecutionState = 'running'
+      const suggestionDuringRunCommand = {
+        ...configured,
+        action: 'configure',
+        filterSuggestions: { field: 'orders.status', limit: 50, search: '', suggestionRequestSeq: 1 },
+      }
+      update(suggestionDuringRunCommand, result(3), status(configured.requestSeq, 'stale', 'configuration changed; run the exploration to refresh results'))
+      const suggestionDuringRun = await settle()
       update({ ...configured, action: 'stop' }, result(3), status(3, 'cancelled', 'exploration stopped'))
       const stopped = await settle()
       update({ ...configured, action: 'run' }, result(4, 'Query service is unavailable.'), { ...status(4, 'error'), error: 'Query service is unavailable.' })
       const errored = await settle()
       update({ ...configured, action: 'run', requestSeq: 5, resetVersion: 5 }, result(5), status(5, 'success'))
       await settle()
+      const commands: any[] = []
+      element.addEventListener('lv-data-explorer-command', (event: CustomEvent) => commands.push(event.detail))
+      const clientState = (element as any).clientState
+      const activeRunID = clientState.nextRunID()
+      const runningCommand = { ...configured, action: 'run', requestSeq: 6, resetVersion: 6 }
+      ;(element as any).latestExploreRequestSeq = 6
       ;(element as any).exploreExecutionState = 'running'
-      ;(element as any).optimisticExplore = { ...configured, action: 'run', requestSeq: 6, resetVersion: 6 }
+      ;(element as any).exploreTransportAction = 'run'
+      ;(element as any).optimisticExplore = runningCommand
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
-      const transport = await settle()
-      // Stop marks the draft stopped optimistically, so exercise the
-      // terminal transport failure while that lifecycle action is in flight.
-      ;(element as any).exploreExecutionState = 'stopped'
-      ;(element as any).exploreTransportAction = 'stop'
-      ;(element as any).optimisticExplore = { ...configured, action: 'stop', requestSeq: 8, resetVersion: 8 }
+      const uncertain = await settle()
+      ;(element as any).stopExplore(runningCommand)
+      const firstStop = commands.at(-1)
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
       const failedStop = await settle()
+      ;(element as any).stopExplore(runningCommand)
+      const retriedStop = commands.at(-1)
+      ;(element as any).runExplore(runningCommand)
+      const latestRun = commands.at(-1)
+      const latestRunCommand = (element as any).optimisticExplore
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
+      const failedRunLatest = await settle()
+      ;(element as any).stopExplore(latestRunCommand)
+      const recoveryStopAfterFailedRetry = commands.at(-1)
+      ;(element as any).emitExploreSpec({ ...latestRunCommand.spec, limit: 50 }, latestRunCommand)
+      const editBeforeConfigure = await settle()
+      await new Promise((resolve) => setTimeout(resolve, 360))
+      const editDuringConfigure = await settle()
+      const configureDraft = (element as any).optimisticExplore
+      const firstConfigure = commands.at(-1)
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
+      const failedConfigure = await settle()
+      ;(element as any).stopExplore(configureDraft)
+      const recoveryStopForLatestDraft = commands.at(-1)
+      const lateResult = { ...result(7), rows: [{ status: 'late old result' }] }
+      update(latestRunCommand, lateResult, status(7, 'cancelled', 'exploration stopped'))
+      const lateWhileUncertain = await settle()
+      const executionAfterOldStatus = (element as any).exploreExecutionState
+      const failureAfterOldStatus = Boolean((element as any).exploreTransportFailure)
+      const suggestionCommand = {
+        ...configureDraft, action: 'configure',
+        filterSuggestions: { field: 'orders.status', limit: 50, search: '', suggestionRequestSeq: 1 },
+      }
+      update(suggestionCommand, result(5), status(configureDraft.requestSeq, 'success'))
+      const suggestionWhileUncertain = await settle()
+      const runIDAfterSuggestion = clientState.runID()
+      const executionAfterSuggestion = (element as any).exploreExecutionState
+      const failureAfterSuggestion = Boolean((element as any).exploreTransportFailure)
+      const emptyResult = { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: configureDraft.requestSeq, truncated: false, warnings: [], error: '' }
+      update({ ...configureDraft, action: 'configure', filterSuggestions: null }, emptyResult, status(configureDraft.requestSeq, 'stale'))
+      const acknowledged = await settle()
+      const runIDAfterAck = clientState.runID()
+      const executionAfterAck = (element as any).exploreExecutionState
+      const failureAfterAck = Boolean((element as any).exploreTransportFailure)
+      update(latestRunCommand, lateResult, status(7, 'cancelled', 'exploration stopped'))
+      const lateOld = await settle()
       const customerCommand = { ...configured, action: 'configure', requestSeq: 9, resetVersion: 9, spec: { ...configured.spec, datasetId: 'customers', dimensions: [{ field: 'customers.state' }] } }
       update(customerCommand, { ...result(9), columns: [], rows: [], rowsReturned: 0 }, status(9, 'stale'), customers)
       const changed = await settle()
-      return { initial, draft, loading, stopped, errored, transport, failedStop, changed, runVisible: Boolean(element.shadowRoot?.querySelector('.query-actions .text-button')?.textContent?.includes('Run')) }
+      return { initial, draft, loading, suggestionDuringRun, stopped, errored, uncertain, failedStop, firstStop, retriedStop, latestRun, failedRunLatest, recoveryStopAfterFailedRetry, editBeforeConfigure, editDuringConfigure, failedConfigure, recoveryStopForLatestDraft, configureDraft, firstConfigure, lateWhileUncertain, executionAfterOldStatus, failureAfterOldStatus, suggestionWhileUncertain, runIDAfterSuggestion, executionAfterSuggestion, failureAfterSuggestion, acknowledged, runIDAfterAck, executionAfterAck, failureAfterAck, lateOld, changed, activeRunID }
     })
 
     expect(state.initial.table).toContain('delivered')
     expect(state.draft.table).toContain('delivered')
     expect(state.loading.table).toContain('delivered')
+    expect(state.suggestionDuringRun.actions).toEqual(['Stop'])
+    expect(state.suggestionDuringRun.execution).toContain('Running exploration')
+    expect(state.suggestionDuringRun.execution).not.toContain('configuration changed')
     expect(state.stopped.table).toContain('delivered')
     expect(state.errored.table).toContain('delivered')
     expect(state.errored.failure).toContain('Query service is unavailable.')
-    expect(state.transport.table).toContain('delivered')
-    expect(state.transport.failure).toContain('service is temporarily unavailable')
-    expect(state.failedStop.failure).toContain('service is temporarily unavailable')
-    expect(state.runVisible).toBe(true)
+    expect(state.uncertain.table).toContain('delivered')
+    expect(state.uncertain.actions).toEqual(['Stop', 'Run latest'])
+    expect(state.uncertain.execution).toContain('service is temporarily unavailable')
+    expect(state.uncertain.execution).toContain('outcome is unknown')
+    expect(state.uncertain.execution).not.toContain('run failed')
+    expect(state.failedStop.actions).toEqual(['Stop', 'Run latest'])
+    expect(state.firstStop.runId).toBeUndefined()
+    expect(state.retriedStop.runId).toBeUndefined()
+    expect(state.latestRun.runId).not.toBe(state.activeRunID)
+    expect(state.failedRunLatest.actions).toEqual(['Stop', 'Run latest'])
+    expect(state.recoveryStopAfterFailedRetry.action).toBe('stop')
+    expect(state.recoveryStopAfterFailedRetry.runId).toBeUndefined()
+    expect(state.editBeforeConfigure.actions).toEqual(['Stop', 'Run latest'])
+    expect(state.editBeforeConfigure.table).toContain('delivered')
+    expect(state.editDuringConfigure.actions).toEqual(['Stop', 'Run latest'])
+    expect(state.editDuringConfigure.table).toContain('delivered')
+    expect(state.firstConfigure.explore.action).toBe('configure')
+    expect(state.failedConfigure.actions).toEqual(['Stop', 'Run latest'])
+    expect(state.failedConfigure.execution).toContain('outcome is unknown')
+    expect(state.recoveryStopForLatestDraft.runId).toBeUndefined()
+    expect(state.recoveryStopForLatestDraft.explore.requestSeq).toBe(state.configureDraft.requestSeq)
+    expect(state.lateWhileUncertain.actions).toEqual(['Stop', 'Run latest'])
+    expect(state.executionAfterOldStatus).toBe('uncertain')
+    expect(state.failureAfterOldStatus).toBe(true)
+    expect(state.suggestionWhileUncertain.actions).toEqual(['Stop', 'Run latest'])
+    expect(state.suggestionWhileUncertain.execution).toContain('outcome is unknown')
+    expect(state.executionAfterSuggestion).toBe('uncertain')
+    expect(state.failureAfterSuggestion).toBe(true)
+    expect(state.runIDAfterSuggestion).toBe(state.latestRun.runId)
+    expect(state.acknowledged.actions).toEqual(['Run'])
+    expect(state.acknowledged.table).toContain('delivered')
+    expect(state.acknowledged.execution).toContain('stale')
+    expect(state.acknowledged.execution).not.toContain('outcome is unknown')
+    expect(state.executionAfterAck).toBe('idle')
+    expect(state.failureAfterAck).toBe(false)
+    expect(state.runIDAfterAck).toBe('')
+    expect(state.lateOld.actions).toEqual(['Run'])
+    expect(state.lateOld.table).toContain('delivered')
+    expect(state.lateOld.table).not.toContain('late old result')
     expect(state.changed.table).not.toContain('delivered')
   } finally {
     await page.close()

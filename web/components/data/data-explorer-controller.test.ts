@@ -8,7 +8,9 @@ import {
   readDataExplorerAgentState,
   toggleVisibleColumns,
 } from './data-explorer-controller'
+import { DataExplorerClientState } from './data-explorer-client'
 import { emptyExplorationSpec } from './data-explorer-spec'
+import type { DataExploreCommand, DataExplorerCommand } from '../../generated/signals'
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>()
@@ -62,6 +64,30 @@ test('canonical query edits and explicit run lifecycle remain separate', () => {
   expect(run).toMatchObject({ action: 'run', requestSeq: 9, resetVersion: 11 })
   const stop = prepareExplorationStop(run)
   expect(stop).toMatchObject({ action: 'stop', requestSeq: 9, resetVersion: 11 })
+})
+
+test('unknown-outcome recovery omits the run ID and latest retries get a fresh ID', () => {
+  const query = new DataExplorerQueryController()
+  const client = new DataExplorerClientState()
+  const oldRunID = client.nextRunID()
+  const initialExplore: DataExploreCommand = {
+    spec: emptyExplorationSpec, requestSeq: 6, resetVersion: 6, columnWidths: {},
+    dimensions: [], metrics: [], filters: [], sort: [], limit: 100,
+  }
+  const run = prepareExplorationRun(initialExplore)
+  const current: DataExplorerCommand = {
+    action: 'run', mode: 'explore', runId: oldRunID, explore: run,
+    count: 100, limit: 100, offset: 0, requestSeq: run.requestSeq, resetVersion: run.resetVersion,
+    sort: {}, start: 0,
+  }
+  const stop = query.command(current, {
+    action: 'stop', runId: undefined, explore: prepareExplorationStop(run),
+  })
+
+  expect(stop.runId).toBeUndefined()
+  expect(stop.explore).toMatchObject({ action: 'stop', requestSeq: 7 })
+  const latestRunID = client.nextRunID()
+  expect(latestRunID).not.toBe(oldRunID)
 })
 
 test('visible column toggles preserve one visible fallback and reset all to defaults', () => {

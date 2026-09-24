@@ -122,7 +122,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private savedDuplicateTitle = ''
   @state() private savedVisibility: SavedExplorationVisibility = 'private'
   @state() private currentSavedVisibility: SavedExplorationVisibility = 'private'
-  @state() private exploreExecutionState: 'idle' | 'pending' | 'running' | 'stopped' = 'idle'
+  @state() private exploreExecutionState: 'idle' | 'pending' | 'running' | 'stopped' | 'uncertain' = 'idle'
   @state() private exploreTransportFailure: BrowserCommandFailure | null = null
   private exploreTransportAction: 'run' | 'stop' | null = null
   private lastSearch = ''
@@ -1100,13 +1100,19 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
   private readonly handleDatastarFetch = (event: Event) => {
     const action = this.exploreTransportAction
-    const active = this.exploreExecutionState === 'running' || this.exploreExecutionState === 'pending'
-    if ((!active && !action) || !ownsBrowserCommandFetch(this, event)) return
-    const failure = browserCommandFailure(event, action === 'stop' ? 'Exploration stop' : 'Exploration run')
+    const lifecycleActive = ['running', 'pending', 'stopped', 'uncertain'].includes(this.exploreExecutionState) || action !== null
+    if (!lifecycleActive || !ownsBrowserCommandFetch(this, event)) return
+    // Datastar identifies the handler element, not which of its overlapping
+    // commands failed. Keep the outcome deliberately unknown until a current
+    // semantic status arrives.
+    const failure = browserCommandFailure(event, 'Exploration command')
     if (!failure) return
-    this.exploreExecutionState = 'idle'
+    this.exploreExecutionState = 'uncertain'
     this.exploreTransportAction = null
-    this.exploreTransportFailure = failure
+    this.exploreTransportFailure = {
+      ...failure,
+      message: `${failure.message} The exploration outcome is unknown. Choose Stop or Run latest to recover.`,
+    }
     this.requestUpdate()
   }
 
@@ -1132,11 +1138,17 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   updated(): void {
     const observedExploreRequestSeq = this.dataExplorer.explore?.command?.requestSeq ?? 0
     if (observedExploreRequestSeq > this.latestExploreRequestSeq) this.latestExploreRequestSeq = observedExploreRequestSeq
+    const exploreCommand = this.dataExplorer.explore?.command
     const status = this.dataExplorer.explore?.status
-    if (status && status.requestSeq >= this.latestExploreRequestSeq && !status.loading) {
+    const suggestionOnlyConfigure = exploreCommand?.action === 'configure' && Boolean(exploreCommand.filterSuggestions)
+    const currentSemanticRequestSeq = Math.max(this.latestExploreRequestSeq, this.optimisticExplore?.requestSeq ?? 0)
+    const terminalSemanticStatus = status?.state === 'success' || status?.state === 'error' || status?.state === 'stale' || status?.state === 'cancelled'
+    if (!suggestionOnlyConfigure && terminalSemanticStatus && status && (status.requestSeq ?? 0) >= currentSemanticRequestSeq) {
       this.exploreTransportAction = null
+      this.exploreTransportFailure = null
+      this.clientState.clearRunID()
       if (status.state === 'cancelled') this.exploreExecutionState = 'stopped'
-      else if (status.state === 'success' || status.state === 'error' || status.state === 'stale') this.exploreExecutionState = 'idle'
+      else this.exploreExecutionState = 'idle'
     }
     const selectedKey = this.dataExplorer.selectedKey ?? ''
     if (this.selectionController.observe(selectedKey)) {
@@ -1343,18 +1355,24 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
   private renderExecutionState(command: DataExploreCommand, result: DataExploreSignal['result'], status?: DataExploreSignal['status'], transportError?: string) {
     const expected = Math.max(command.requestSeq ?? 0, this.latestExploreRequestSeq)
-    const actual = Math.max(result.requestSeq ?? 0, status?.requestSeq ?? 0)
-    if (status?.state === 'cancelled' || this.exploreExecutionState === 'stopped') {
+    const currentSemanticRequestSeq = Math.max(this.latestExploreRequestSeq, this.optimisticExplore?.requestSeq ?? 0)
+    const currentStatus = status && (status.requestSeq ?? 0) >= currentSemanticRequestSeq ? status : undefined
+    const currentResultError = (result.requestSeq ?? 0) >= currentSemanticRequestSeq ? result.error : undefined
+    const actual = Math.max(result.requestSeq ?? 0, currentStatus?.requestSeq ?? 0)
+    if (this.exploreExecutionState === 'uncertain') {
+      return html`<span class="execution-state" data-state="uncertain" role="status">${transportError || 'The exploration outcome is unknown. Choose Stop or Run latest to recover.'}</span>`
+    }
+    if (currentStatus?.state === 'cancelled' || this.exploreExecutionState === 'stopped') {
       return html`<span class="execution-state" role="status">Run stopped; draft is preserved</span>`
     }
-    if (transportError || result.error || status?.error || status?.state === 'error') {
-      return html`<span class="execution-state" data-state="error" role="status">${status?.error || transportError || result.error || 'Query failed'}</span>`
+    if (transportError || currentResultError || currentStatus?.error || currentStatus?.state === 'error') {
+      return html`<span class="execution-state" data-state="error" role="status">${currentStatus?.error || transportError || currentResultError || 'Query failed'}</span>`
     }
-    if (status?.loading || this.exploreExecutionState === 'pending' || this.exploreExecutionState === 'running') {
-      const progress = status?.progressPercent === undefined ? '' : ` ${Math.round(status.progressPercent)}%`
-      return html`<span class="execution-state" role="status">${status?.message || (this.exploreExecutionState === 'pending' ? 'Waiting to run…' : 'Running exploration…')}${progress}</span>`
+    if (currentStatus?.loading || this.exploreExecutionState === 'pending' || this.exploreExecutionState === 'running') {
+      const progress = currentStatus?.progressPercent === undefined ? '' : ` ${Math.round(currentStatus.progressPercent)}%`
+      return html`<span class="execution-state" role="status">${currentStatus?.message || (this.exploreExecutionState === 'pending' ? 'Waiting to run…' : 'Running exploration…')}${progress}</span>`
     }
-    if (status?.stale || status?.state === 'stale' || expected > actual) {
+    if (currentStatus?.stale || currentStatus?.state === 'stale' || expected > actual) {
       return html`<span class="execution-state" data-state="stale" role="status">Results are stale — run to refresh</span>`
     }
     return html`<span class="execution-state" role="status">Ready</span>`
@@ -1505,8 +1523,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     command.action = 'configure'
     delete command.filterSuggestions
     this.optimisticExplore = command
-    this.exploreExecutionState = 'idle'
-    this.exploreTransportFailure = null
+    if (this.exploreExecutionState !== 'uncertain') this.exploreTransportFailure = null
     if (!this.embedded) this.replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
     const dispatch = () => this.emitCommand({ action: 'configure', mode: 'explore', explore: command })
     if (immediate) dispatch()
@@ -1519,8 +1536,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const command = this.queryController.exploreSpec(current, next)
     delete command.filterSuggestions
     this.optimisticExplore = command
-    this.exploreExecutionState = 'idle'
-    this.exploreTransportFailure = null
+    if (this.exploreExecutionState !== 'uncertain') this.exploreTransportFailure = null
     if (!this.embedded) this.replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
     const dispatch = () => this.emitCommand({ action: 'configure', mode: 'explore', explore: command })
     if (immediate) dispatch()
@@ -1545,25 +1561,33 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private runExplore(command: DataExploreCommand): void {
     window.clearTimeout(this.exploreTimer)
     if (explorationRunValidation(explorationSpecFor(command), this.dataExplorer.explore.fields).length) return
+    const recoveringUnknownOutcome = this.exploreExecutionState === 'uncertain'
+    // A retry is a distinct run. If an earlier Stop is delayed in transport,
+    // its old run ID (and lower request sequence) must not target this run.
     const runID = this.clientState.nextRunID()
     const runCommand = prepareExplorationRun(command)
     this.latestExploreRequestSeq = runCommand.requestSeq
     this.exploreTransportAction = 'run'
     this.exploreExecutionState = 'running'
-    this.exploreTransportFailure = null
+    if (!recoveringUnknownOutcome) this.exploreTransportFailure = null
     this.optimisticExplore = runCommand
     this.emitCommand({ action: 'run', mode: 'explore', runId: runID, explore: runCommand })
   }
 
   private stopExplore(command: DataExploreCommand): void {
     window.clearTimeout(this.exploreTimer)
-    const stopCommand = prepareExplorationStop(command)
-    const runID = this.clientState.runID()
-    this.clientState.clearRunID()
+    const uncertain = this.exploreExecutionState === 'uncertain'
+    const latestRequestSeq = Math.max(
+      command.requestSeq ?? 0,
+      this.latestExploreRequestSeq,
+      this.optimisticExplore?.requestSeq ?? 0,
+    )
+    const stopCommand = { ...prepareExplorationStop(command), requestSeq: latestRequestSeq }
     this.exploreTransportAction = 'stop'
-    this.exploreExecutionState = 'stopped'
     this.optimisticExplore = stopCommand
-    this.emitCommand({ action: 'stop', mode: 'explore', runId: runID, explore: stopCommand })
+    // In an unknown-outcome state either the old or retry run may have reached
+    // the server. A monotonic unnamed Stop safely addresses whichever remains.
+    this.emitCommand({ action: 'stop', mode: 'explore', runId: uncertain ? undefined : this.clientState.runID(), explore: stopCommand })
   }
 
   private agentSuggestions(explorer: DataExplorerSignal): AgentReferenceSignal[] {
@@ -1810,7 +1834,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const result = this.clientState.semanticResult(command, rawResult, explore.status, this.page?.context)
     const hasQuery = queryFields.size > 0 || Boolean(spec.time)
     const runValidation = explorationRunValidation(spec, explore.fields)
-    const exploreRunning = explore.status?.loading === true || this.exploreExecutionState === 'pending' || this.exploreExecutionState === 'running'
+    const suggestionOnlyStatus = explore.command?.action === 'configure' && Boolean(explore.command.filterSuggestions)
+    const currentSemanticRequestSeq = Math.max(this.latestExploreRequestSeq, this.optimisticExplore?.requestSeq ?? 0)
+    const currentStatus = !suggestionOnlyStatus && explore.status && (explore.status.requestSeq ?? 0) >= currentSemanticRequestSeq
+      ? explore.status
+      : undefined
+    const exploreRunning = currentStatus?.loading === true || this.exploreExecutionState === 'pending' || this.exploreExecutionState === 'running'
     return html`
       <div class="content" aria-label="Data exploration">
         <section class="semantic-result" aria-label="Governed result table">
@@ -1821,10 +1850,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                   ${spec.dimensions.map((field) => this.renderQueryChip(field.field, 'dimension', explore.fields, command))}
                   ${spec.metrics.map((field) => this.renderQueryChip(field.field, 'metric', explore.fields, command))}
                   ${!queryFields.size ? html`<span class="empty">Select fields to build a governed query.</span>` : nothing}
-                  ${this.renderExecutionState(command, rawResult, explore.status, this.exploreTransportFailure?.message)}
+                  ${this.renderExecutionState(command, rawResult, currentStatus, this.exploreExecutionState === 'uncertain' ? this.exploreTransportFailure?.message : undefined)}
                 </div>
                 <div class="query-actions">
-                  ${exploreRunning
+                  ${this.exploreExecutionState === 'uncertain'
+                    ? html`<button type="button" class="text-button" title="Stop the possibly running exploration" @click=${() => this.stopExplore(command)}>${lucideIcon(X, { size: 14 })} Stop</button>
+                      <button type="button" class="text-button" title="Run the latest query draft" @click=${() => this.runExplore(command)}>${lucideIcon(Play, { size: 14 })} Run latest</button>`
+                    : exploreRunning
                     ? html`<button type="button" class="text-button" title="Stop the running exploration" @click=${() => this.stopExplore(command)}>${lucideIcon(X, { size: 14 })} Stop</button>`
                     : html`<button type="button" class="text-button" title=${runValidation.length ? runValidation.join(' ') : 'Run exploration'} ?disabled=${Boolean(runValidation.length)} @click=${() => this.runExplore(command)}>${lucideIcon(Play, { size: 14 })} Run</button>`}
                   <button type="button" class="icon-button" title="Return to all table columns" aria-label="Return to all table columns" @click=${() => this.selectObject(object)}>${lucideIcon(RotateCcw, { size: 16 })}</button>
@@ -1847,8 +1879,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               <span><strong>${selectedSemanticModel?.title ?? label(command.semanticModelId)}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
               ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
               ${hasQuery && !rawResult.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
-              ${rawResult.error ? this.renderExploreFailure(rawResult.error, command) : nothing}
-              ${this.exploreTransportFailure ? this.renderExploreFailure(this.exploreTransportFailure.message, command) : nothing}
+              ${rawResult.error && this.exploreExecutionState !== 'uncertain' ? this.renderExploreFailure(rawResult.error, command) : nothing}
               ${(result.warnings ?? []).map((warning) => html`<span>${warning}</span>`)}
             </div>
             ${hasQuery

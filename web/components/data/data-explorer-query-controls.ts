@@ -20,7 +20,7 @@ import {
   upsertExplorationSort,
 } from './data-explorer-spec'
 
-type ExecutionState = 'idle' | 'pending' | 'running' | 'stopped'
+type ExecutionState = 'idle' | 'pending' | 'running' | 'stopped' | 'uncertain'
 type TimeRange = NonNullable<NonNullable<ExplorationSpec['time']>['range']>
 type FilterControlAction = 'apply' | 'cancel' | 'operator' | 'value'
 

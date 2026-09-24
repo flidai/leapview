@@ -27,6 +27,7 @@ type dataExplorerLifecycle struct {
 	latestRun         map[string]string
 	suggestionsRun    map[string]string
 	stoppedRun        map[string]string
+	stoppedRequestSeq map[string]int64
 	identityAccess    map[string]time.Time
 	nextRunID         uint64
 }
@@ -174,6 +175,12 @@ func (l *dataExplorerLifecycle) acceptSemantic(key string, requestSeq int64) boo
 	}
 	if requestSeq > l.latest[key] {
 		l.latest[key] = requestSeq
+		// A newer semantic command means the active result belongs to an older
+		// draft. Cancel that run immediately, even if the command is only a
+		// configure request; value suggestions use their separate lane below.
+		if active := l.active[key]; active != nil {
+			active.cancel()
+		}
 	}
 	l.pruneLocked()
 	return true
@@ -255,8 +262,13 @@ func (l *dataExplorerLifecycle) beginLane(key, runID string, requestSeq int64, p
 	if *activeMap == nil {
 		*activeMap = make(map[string]*dataExplorerExecution)
 	}
-	if !suggestions && l.stoppedRun != nil {
-		delete(l.stoppedRun, key)
+	if !suggestions {
+		if l.stoppedRun != nil {
+			delete(l.stoppedRun, key)
+		}
+		if l.stoppedRequestSeq != nil {
+			delete(l.stoppedRequestSeq, key)
+		}
 	}
 	if *latestMap == nil {
 		*latestMap = make(map[string]int64)
@@ -300,17 +312,23 @@ func (l *dataExplorerLifecycle) stop(key, runID string, requestSeq int64) bool {
 			l.mu.Unlock()
 			return false
 		}
-	} else if requestSeq > 0 && active.requestSeq > 0 && active.requestSeq != requestSeq {
-		l.mu.Unlock()
-		return false
+	} else {
+		// An unnamed recovery Stop deliberately targets whichever run may have
+		// reached the server, but only when its sequence is at least as new as
+		// the active run. The latest-sequence check below also rejects delayed
+		// Stops after a newer run has begun.
+		if requestSeq <= 0 || (active.requestSeq > 0 && requestSeq < active.requestSeq) {
+			l.mu.Unlock()
+			return false
+		}
 	}
-	// A stop command belongs to the request/run it names. An older command
-	// must not be able to cancel a newer execution that has already advanced
-	// the monotonic sequence for this client.
+	// Named Stops are bound to their run ID; unnamed recovery Stops are bound
+	// by sequence. Older commands must not cancel a newer execution that has
+	// already advanced the monotonic sequence for this client.
 	if requestSeq > 0 && requestSeq < l.latest[key] {
-		// A matching run ID is authoritative even when a newer configure draft
-		// has advanced the browser sequence. It is precisely what lets Stop
-		// cancel the active Run after a draft edit without killing another run.
+		// A matching run ID is authoritative when the browser has advanced its
+		// sequence for a draft edit but the configure request has not yet been
+		// accepted. This lets Stop win that race without targeting another run.
 		if runID == "" {
 			l.mu.Unlock()
 			return false
@@ -325,7 +343,11 @@ func (l *dataExplorerLifecycle) stop(key, runID string, requestSeq int64) bool {
 	if l.stoppedRun == nil {
 		l.stoppedRun = make(map[string]string)
 	}
+	if l.stoppedRequestSeq == nil {
+		l.stoppedRequestSeq = make(map[string]int64)
+	}
 	l.stoppedRun[key] = active.runID
+	l.stoppedRequestSeq[key] = requestSeq
 	l.pruneLocked()
 	l.mu.Unlock()
 	active.cancel()
@@ -354,20 +376,55 @@ func (l *dataExplorerLifecycle) currentSuggestionsLocked(key string, requestSeq 
 	return true
 }
 
-func (l *dataExplorerLifecycle) stoppedLocked(key, runID string) bool {
+func (l *dataExplorerLifecycle) stoppedLocked(key, runID string, requestSeq int64) bool {
+	stoppedRunID := strings.TrimSpace(l.stoppedRun[key])
 	runID = strings.TrimSpace(runID)
+	// An absent sequence is only safe for the legacy named-Stop form when the
+	// accepted tombstone also has no sequence. Unnamed recovery Stops require
+	// a sequence so a delayed response cannot resolve to a later tombstone.
+	if requestSeq <= 0 && runID == "" {
+		return false
+	}
 	if runID == "" {
 		// A legacy Stop may omit runId. The tombstone recorded by stop still
 		// identifies the run that was cancelled and lets emission remain safe.
-		runID = l.stoppedRun[key]
+		runID = stoppedRunID
 	}
-	if runID == "" || l.stoppedRun[key] != runID {
+	if runID == "" || stoppedRunID != runID || l.stoppedRequestSeq[key] != requestSeq {
 		return false
 	}
 	// A newer semantic run may start before the stop response is emitted. Its
 	// latest run identity supersedes the tombstone, so the old stop must not
 	// pass the emission lease and replace that newer state.
 	return l.latestRun[key] == "" || l.latestRun[key] == runID
+}
+
+func (l *dataExplorerLifecycle) stopResponseCurrentLocked(key, runID string, requestSeq int64) bool {
+	// A Stop response must never supersede any newer semantic request, even if
+	// its run-ID tombstone still matches.
+	if requestSeq < l.latest[key] {
+		return false
+	}
+	if l.stoppedLocked(key, runID, requestSeq) {
+		return true
+	}
+	// A rejected Stop may still return the current "no exploration is running"
+	// status. It is safe only when no run or accepted Stop tombstone can be
+	// confused with that response.
+	if l.active[key] != nil {
+		return false
+	}
+	runID = strings.TrimSpace(runID)
+	if requestSeq <= 0 {
+		// Legacy sequence-less responses are only attributable when named and
+		// still at the initial semantic sequence.
+		if requestSeq != 0 || runID == "" || l.latest[key] != 0 {
+			return false
+		}
+	} else if requestSeq != l.latest[key] {
+		return false
+	}
+	return runID == "" || l.latestRun[key] == "" || l.latestRun[key] == runID
 }
 
 func (l *dataExplorerLifecycle) touchLocked(key string) {
@@ -408,6 +465,7 @@ func (l *dataExplorerLifecycle) pruneLocked() {
 		delete(l.latestRun, oldestKey)
 		delete(l.suggestionsRun, oldestKey)
 		delete(l.stoppedRun, oldestKey)
+		delete(l.stoppedRequestSeq, oldestKey)
 	}
 }
 
@@ -430,9 +488,9 @@ func (h *BrowserHandler) dataExplorerResponseLease(r *stdhttp.Request, command p
 	current := true
 	if command.Explore != nil && command.Explore.FilterSuggestions != nil && dataExplorerAction(command) == "configure" {
 		suggestionSeq := dataExplorerSuggestionRequestSeq(command)
-		current = suggestionSeq > 0 && suggestionSeq <= dataExplorerMaxSuggestionRequestSeq && l.currentSuggestionsLocked(key, suggestionSeq, "")
-	} else if dataExplorerAction(command) == "stop" && l.stoppedLocked(key, dataExplorerRunID(command)) {
-		current = true
+		current = seq >= l.latest[key] && suggestionSeq > 0 && suggestionSeq <= dataExplorerMaxSuggestionRequestSeq && l.currentSuggestionsLocked(key, suggestionSeq, "")
+	} else if dataExplorerAction(command) == "stop" {
+		current = l.stopResponseCurrentLocked(key, dataExplorerRunID(command), seq)
 	} else {
 		current = l.currentRunLocked(key, seq, dataExplorerRunID(command))
 	}
