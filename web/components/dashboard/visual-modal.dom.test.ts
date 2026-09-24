@@ -245,7 +245,7 @@ test('show-data dialog fits short viewports and keeps its close control reachabl
   }
 })
 
-test('show-data uses compact content-sized columns and preserves scrolling for large results', async () => {
+test('show-data balances small result tables and preserves scrolling for wide results', async () => {
   const page = await setupPage()
   try {
     await page.setViewportSize({ width: 1280, height: 640 })
@@ -278,6 +278,8 @@ test('show-data uses compact content-sized columns and preserves scrolling for l
       const scroll = modal.shadowRoot.querySelector('.data-scroll') as HTMLElement
       const row = modal.shadowRoot.querySelector('lv-record-table tbody tr') as HTMLElement
       const table = modal.shadowRoot.querySelector('lv-record-table table') as HTMLTableElement
+      const headers = Array.from(table.querySelectorAll('th')) as HTMLElement[]
+      const dialog = modal.shadowRoot.querySelector('[role="dialog"]') as HTMLElement
       return {
         rowHeight: row.getBoundingClientRect().height,
         scrollHeight: scroll.scrollHeight,
@@ -285,13 +287,19 @@ test('show-data uses compact content-sized columns and preserves scrolling for l
         tableWidth: table.getBoundingClientRect().width,
         availableWidth: scroll.getBoundingClientRect().width,
         tableLayout: getComputedStyle(table).tableLayout,
-        dialogBottom: modal.shadowRoot.querySelector('[role="dialog"]').getBoundingClientRect().bottom,
+        columnWidths: headers.map((header) => Math.round(header.getBoundingClientRect().width)),
+        revenueAlignment: getComputedStyle(headers[1]).textAlign,
+        dialogWidth: dialog.getBoundingClientRect().width,
+        dialogBottom: dialog.getBoundingClientRect().bottom,
       }
     })
     expect(state.rowHeight).toBeLessThanOrEqual(32)
     expect(state.scrollHeight).toBeGreaterThan(state.clientHeight)
-    expect(state.tableLayout).toBe('auto')
-    expect(state.tableWidth).toBeLessThan(state.availableWidth / 2)
+    expect(state.tableLayout).toBe('fixed')
+    expect(Math.round(state.tableWidth)).toBe(Math.round(state.availableWidth))
+    expect(state.columnWidths[0]).toBe(state.columnWidths[1])
+    expect(state.revenueAlignment).toBe('right')
+    expect(state.dialogWidth).toBe(608)
     expect(state.dialogBottom).toBeLessThanOrEqual(640 - 28)
 
     const scrollTop = await page.locator('lv-visual-modal').evaluate((modal: any) => {
@@ -324,8 +332,14 @@ test('show-data uses compact content-sized columns and preserves scrolling for l
     })
     const wide = await page.locator('lv-visual-modal').evaluate((modal: any) => {
       const wrapper = modal.shadowRoot.querySelector('lv-record-table .record-table-wrap') as HTMLElement
-      return { scrollWidth: wrapper.scrollWidth, clientWidth: wrapper.clientWidth }
+      const dialog = modal.shadowRoot.querySelector('[role="dialog"]') as HTMLElement
+      return {
+        dialogWidth: dialog.getBoundingClientRect().width,
+        scrollWidth: wrapper.scrollWidth,
+        clientWidth: wrapper.clientWidth,
+      }
     })
+    expect(wide.dialogWidth).toBe(1120)
     expect(wide.scrollWidth).toBeGreaterThan(wide.clientWidth)
   } finally {
     await page.close()

@@ -71,6 +71,18 @@ export class VisualModal extends LitElement {
       overflow: hidden;
     }
 
+    .data-dialog.is-single {
+      width: min(30rem, 100%);
+    }
+
+    .data-dialog.is-compact {
+      width: min(38rem, 100%);
+    }
+
+    .data-dialog.is-medium {
+      width: min(54rem, 100%);
+    }
+
     .focus-dialog {
       position: relative;
       width: min(1420px, 100%);
@@ -260,7 +272,7 @@ export class VisualModal extends LitElement {
     if (mode === 'focus') return this.renderFocusDialog(detail)
     return html`
       <div class="backdrop" @click=${this.closeFromBackdrop}>
-        <section class="dialog" role="dialog" aria-modal="true" aria-label=${detail.title}>
+        <section class=${`dialog data-dialog ${this.dataDialogSize(detail.columns.length)}`} role="dialog" aria-modal="true" aria-label=${detail.title}>
           <header>
             <div class="title">
               <p class="eyebrow">Show data · ${detail.visualType}</p>
@@ -313,13 +325,20 @@ export class VisualModal extends LitElement {
               })),
               rows,
               empty: 'No visual data',
+              minWidth: columns.length > 4 ? `${columns.length * 160}px` : '0',
               density: 'tight',
-              layout: 'content',
             }}
           ></lv-record-table>
         </div>
       </div>
     `
+  }
+
+  private dataDialogSize(columnCount: number): string {
+    if (columnCount <= 1) return 'is-single'
+    if (columnCount <= 2) return 'is-compact'
+    if (columnCount <= 4) return 'is-medium'
+    return 'is-wide'
   }
 
   private handleVisualAction = (event: CustomEvent<VisualActionDetail>): void => {
