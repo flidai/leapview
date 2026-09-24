@@ -581,5 +581,10 @@ func (s *Service) Execute(ctx context.Context, request saved.ExecuteRequest) (sa
 	if err != nil {
 		return saved.ExecuteResult{}, err
 	}
-	return saved.ExecuteResult{Lifecycle: opened.Lifecycle, Revision: opened.Revision, Query: query, Result: result, Evidence: saved.ExecutionEvidence{ActorID: request.ActorID, Revision: opened.Revision.Token(), ServingIdentity: lease.Identity()}}, nil
+	truncated := len(result.Rows) > int(spec.Limit)
+	if truncated {
+		result.Rows = result.Rows[:spec.Limit]
+	}
+	result.RowsReturned = len(result.Rows)
+	return saved.ExecuteResult{Lifecycle: opened.Lifecycle, Revision: opened.Revision, Query: query, Result: result, Truncated: truncated, Evidence: saved.ExecutionEvidence{ActorID: request.ActorID, Revision: opened.Revision.Token(), ServingIdentity: lease.Identity()}}, nil
 }

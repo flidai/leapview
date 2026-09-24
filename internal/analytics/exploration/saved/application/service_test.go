@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -89,14 +90,19 @@ func (a *testAuthorizer) Authorize(_ context.Context, lease projectruntime.Lease
 }
 
 type testExecutor struct {
-	lease projectruntime.Lease
-	actor string
-	query dataquery.Query
+	lease  projectruntime.Lease
+	actor  string
+	query  dataquery.Query
+	result dataquery.Result
 }
 
 func (e *testExecutor) Execute(_ context.Context, lease projectruntime.Lease, actor string, query dataquery.Query) (dataquery.Result, error) {
 	e.lease, e.actor, e.query = lease, actor, query
-	return dataquery.Result{Status: dataquery.StatusSuccess}, nil
+	result := e.result
+	if result.Status == "" {
+		result.Status = dataquery.StatusSuccess
+	}
+	return result, nil
 }
 
 type testRepository struct {
@@ -420,6 +426,57 @@ func TestReopenIsDetachedAndExecuteUsesSameLeaseAndActor(t *testing.T) {
 	}
 	if provider.acquisitions != 3 || provider.lease.released != 3 {
 		t.Fatalf("acquire/release = %d/%d, want 3/3", provider.acquisitions, provider.lease.released)
+	}
+}
+
+func TestExecuteTrimsSentinelRowAndReportsTruncation(t *testing.T) {
+	spec := testSpec()
+	spec.Limit = 2
+	repo := seededRepositoryWithSpec(t, spec)
+	executor := &testExecutor{result: dataquery.Result{
+		Rows:           []dataquery.Row{{"status": "created"}, {"status": "shipped"}, {"status": "delivered"}},
+		RowsReturned:   3,
+		TotalRows:      3,
+		TotalRowsKnown: true,
+		Status:         dataquery.StatusSuccess,
+	}}
+	service := mustService(t, repo, &testProvider{}, &testAuthorizer{}, executor)
+
+	result, err := service.Execute(t.Context(), saved.ExecuteRequest{ProjectID: repo.lifecycle.ProjectID, ID: repo.lifecycle.ID, ActorID: "owner"})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if executor.query.Limit != 3 {
+		t.Fatalf("executor limit = %d, want authored limit plus sentinel (3)", executor.query.Limit)
+	}
+	if !result.Truncated || len(result.Result.Rows) != 2 || result.Result.RowsReturned != 2 {
+		t.Fatalf("bounded result = %#v, truncated=%v", result.Result, result.Truncated)
+	}
+	if result.Result.TotalRows != 3 || !result.Result.TotalRowsKnown {
+		t.Fatalf("total-row metadata changed = %#v", result.Result)
+	}
+}
+
+func TestExecuteDoesNotReportTruncationAtOrBelowLimit(t *testing.T) {
+	for _, rows := range [][]dataquery.Row{
+		{{"status": "created"}},
+		{{"status": "created"}, {"status": "shipped"}},
+	} {
+		t.Run(fmt.Sprintf("rows_%d", len(rows)), func(t *testing.T) {
+			spec := testSpec()
+			spec.Limit = 2
+			repo := seededRepositoryWithSpec(t, spec)
+			executor := &testExecutor{result: dataquery.Result{Rows: rows, RowsReturned: len(rows), Status: dataquery.StatusSuccess}}
+			service := mustService(t, repo, &testProvider{}, &testAuthorizer{}, executor)
+
+			result, err := service.Execute(t.Context(), saved.ExecuteRequest{ProjectID: repo.lifecycle.ProjectID, ID: repo.lifecycle.ID, ActorID: "owner"})
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if result.Truncated || len(result.Result.Rows) != len(rows) || result.Result.RowsReturned != len(rows) {
+				t.Fatalf("bounded result = %#v, truncated=%v", result.Result, result.Truncated)
+			}
+		})
 	}
 }
 

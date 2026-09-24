@@ -724,12 +724,14 @@ type ExecutionEvidence struct {
 
 // ExecuteResult contains a governed result and its immutable execution
 // evidence. Query is included for adapters that need to inspect the lowered
-// request, while Result remains the executor-owned response.
+// request. Result is bounded to the authored exploration limit; Truncated
+// reports whether the executor's sentinel row proved that more data exists.
 type ExecuteResult struct {
 	Lifecycle Lifecycle         `json:"lifecycle"`
 	Revision  Revision          `json:"revision"`
 	Query     dataquery.Query   `json:"query"`
 	Result    dataquery.Result  `json:"result"`
+	Truncated bool              `json:"truncated"`
 	Evidence  ExecutionEvidence `json:"evidence"`
 }
 
