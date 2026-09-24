@@ -4,11 +4,13 @@ import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridsta
 import { Archive, ArrowDown, ArrowLeftRight, ArrowUp, ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Copy, Database, GripHorizontal, ListFilter, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Search, Settings2, Sun, Trash2, Undo2, X } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import { keyed } from 'lit/directives/keyed.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { dashboardBuilderToolbarStyles } from './dashboard-builder-toolbar-styles'
 import { dashboardBuilderFilterStyles } from './dashboard-builder-filter-styles'
 import { hasCompiledBuilderPreview } from './builder-preview-readiness'
 import { canRequireFilter, filterControlChoices, filterControlLabel } from './builder-filter-settings'
 import { applyCanonicalGridAttributes, syncGridStackNodesToCanonical } from './builder-grid-sync'
+import { createBuilderGridDragHelper, styleBuilderGridPlaceholder } from './builder-grid-drag-preview'
 import type {
   DashboardBuilderDiagnosticSignal,
   DashboardBuilderFieldSignal,
@@ -2598,10 +2600,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   `
 
   override performUpdate(): void {
-    // Signal reads materialize the entire dashboard projection. Helpers share
-    // one snapshot for this update, including updated(), instead of copying
-    // every page and field again for each control. Never retain it between
-    // updates: Datastar can patch nested fields without replacing the root.
+    // Share one materialized dashboard snapshot across helpers for this update.
+    // Never retain it: Datastar can patch nested fields without replacing the root.
     this.updatingBuilder = true
     this.builderUpdateSnapshot = undefined
     this.builderVisualUpdateSnapshot = undefined
@@ -2682,7 +2682,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         float: true,
         disableDrag: !builder?.capabilities.canEdit || this.commandPending,
         disableResize: !builder?.capabilities.canEdit || this.commandPending,
-        draggable: { handle: '.component-drag-handle' },
+        draggable: { handle: '.component-drag-handle', helper: createBuilderGridDragHelper, appendTo: 'parent' },
         resizable: { handles: 'all', autoHide: false },
       }, canvas as GridItemHTMLElement)
       if (this.gridStack) {
@@ -2690,6 +2690,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         this.gridStack.on('dragstart resizestart', (event: Event) => {
           this.gridCompactPending = event.type === 'resizestart'
           this.gridInteracting = true
+          if (event.type === 'dragstart') queueMicrotask(() => styleBuilderGridPlaceholder(this.shadowRoot))
           this.syncCanvasViewport(page)
         })
         this.gridStack.on('dragstop resizestop', (_event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element, true))
@@ -3739,7 +3740,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
               ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}
               ${page.visuals.length === 0 && (page.filterComponents?.length ?? 0) === 0 && (page.headers?.length ?? 0) === 0 && (page.placeholders?.length ?? 0) === 0
                 ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Choose a visual or place a report-filter slicer to begin.</span></div></div>`
-                : html`${repeat(page.visuals, (visual) => visual.id, (visual) => this.renderVisual(visual, page, previews))}${repeat(page.filterComponents ?? [], (component) => component.id, (component) => this.renderFilterComponent(component, page))}${repeat(page.headers ?? [], (header) => header.id, (header) => this.renderHeader(header, page))}${repeat(page.placeholders ?? [], (placeholder) => placeholder.id, (placeholder) => this.renderPlaceholder(placeholder, page))}`}
+                : html`${repeat(page.visuals, (visual) => visual.id, (visual) => this.renderVisual(visual, page, previews))}${repeat(page.filterComponents ?? [], (component) => component.id, (component) => this.renderFilterComponent(component, page))}${repeat(page.headers ?? [], (header) => header.id, (header) => this.renderHeader(header))}${repeat(page.placeholders ?? [], (placeholder) => placeholder.id, (placeholder) => this.renderPlaceholder(placeholder))}`}
             </div>
           </div>
           <div class="sr-only" aria-live="polite">${this.gridInteractionMessage}</div>
@@ -3753,11 +3754,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const visualType = this.visualTypeForRender(visual)
     const previewCandidate = previews[this.visualSignalID(visual)]
     const mobileOrder = this.mobileVisualOrder(visual, page)
-    const columns = Math.max(1, page.grid.columns || 12)
-    const left = `${Math.max(0, visual.placement.col - 1) * (100 / columns)}%`
-    const top = `${Math.max(0, visual.placement.row - 1) * (page.grid.rowHeight || 40)}px`
-    const width = `${Math.max(1, visual.placement.colSpan) * (100 / columns)}%`
-    const height = `${Math.max(1, visual.placement.rowSpan) * (page.grid.rowHeight || 40)}px`
     const draggedField = this.draggedFieldFromBuilder(this.builder)
     const fieldDrop = draggedField ? (this.fieldCompatibleWithVisual(draggedField, visual) ? 'compatible' : 'incompatible') : ''
     const requirementMessages = this.visualRequirementMessages(visual)
@@ -3768,7 +3764,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const previewLoading = Boolean(this.builder?.preview.loading)
     const fallbackMessage = this.builder?.preview.error ? 'Preview unavailable. Try again after the draft is valid.' : 'Add fields to preview.'
     return html`
-      <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectVisualFromPointer(visual.id) }} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
+      <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${styleMap({ '--mobile-order': mobileOrder })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectVisualFromPointer(visual.id) }} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
         <div class="grid-stack-item-content">
           ${preview
             ? keyed(preview.dataState.kind === 'windowed' ? `${visual.id}:${preview.specRevision}:${this.builderFilterState.revision}` : visual.id, html`<span class="visual-preview"><lv-visualization-host ?authoring=${previewHasHeader} .envelope=${preview}>${previewHasHeader ? html`<span slot="authoring-drag-handle" class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span>` : nothing}</lv-visualization-host>${previewHasHeader ? nothing : this.renderComponentDragGrip(visual.title, () => this.selectVisualFromPointer(visual.id))}</span>`)
@@ -3781,11 +3777,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private renderFilterComponent(component: DashboardBuilderFilterComponentSignal, page: DashboardBuilderPageSignal) {
     const selected = component.id === this.selectedFilterComponentID
     const mobileOrder = this.mobileComponentOrder(component.id, component.placement, page)
-    const columns = Math.max(1, page.grid.columns || 12)
-    const left = `${Math.max(0, component.placement.col - 1) * (100 / columns)}%`
-    const top = `${Math.max(0, component.placement.row - 1) * (page.grid.rowHeight || 40)}px`
-    const width = `${Math.max(1, component.placement.colSpan) * (100 / columns)}%`
-    const height = `${Math.max(1, component.placement.rowSpan) * (page.grid.rowHeight || 40)}px`
     const bindings = Object.values(this.builderFilterContract.bindings)
     const binding = bindings.find((candidate) => candidate.filter === component.filterId && candidate.scope === 'report')
       ?? bindings.find((candidate) => candidate.filter === component.filterId && candidate.scope === 'page' && candidate.pageID === page.id)
@@ -3796,7 +3787,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       : undefined
     const validationMessage = this.builderFilterErrorMessage()
     return html`
-      <div class="filter-component grid-stack-item" data-selected=${selected} gs-id=${component.id} gs-x=${Math.max(0, component.placement.col - 1)} gs-y=${Math.max(0, component.placement.row - 1)} gs-w=${Math.max(1, component.placement.colSpan)} gs-h=${Math.max(1, component.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${component.label}, selected dashboard slicer` : `${component.label}, dashboard slicer`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectFilterComponent(component) }} @keydown=${(event: KeyboardEvent) => this.selectFilterComponentOnKey(event, component)}>
+      <div class="filter-component grid-stack-item" data-selected=${selected} gs-id=${component.id} gs-x=${Math.max(0, component.placement.col - 1)} gs-y=${Math.max(0, component.placement.row - 1)} gs-w=${Math.max(1, component.placement.colSpan)} gs-h=${Math.max(1, component.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${component.label}, selected dashboard slicer` : `${component.label}, dashboard slicer`} aria-describedby="dashboard-builder-grid-help" style=${styleMap({ '--mobile-order': mobileOrder })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectFilterComponent(component) }} @keydown=${(event: KeyboardEvent) => this.selectFilterComponentOnKey(event, component)}>
         <div class="grid-stack-item-content">
           ${binding ? this.renderComponentDragGrip(component.label, () => this.selectFilterComponent(component)) : html`<span class="filter-drag-header component-drag-handle" title="Drag to move ${component.label}" @pointerdown=${() => this.selectFilterComponent(component)}>${component.label}</span>`}
           ${binding && definition && expression ? html`<lv-slicer
@@ -3823,15 +3814,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`<div class="filter-control-preview" aria-label=${`${this.filterControlLabel(component.controlType)} preview`}><div class="filter-preview-input"><span>${preview}</span><span aria-hidden="true">${lucideIcon(component.controlType === 'text' ? Search : ChevronDown, { size: 13, strokeWidth: 2 })}</span></div></div>`
   }
 
-  private renderHeader(header: DashboardBuilderHeaderSignal, page: DashboardBuilderPageSignal) {
+  private renderHeader(header: DashboardBuilderHeaderSignal) {
     const selected = header.id === this.selectedHeaderID
-    const columns = Math.max(1, page.grid.columns || 12)
-    const left = `${Math.max(0, header.placement.col - 1) * (100 / columns)}%`
-    const top = `${Math.max(0, header.placement.row - 1) * (page.grid.rowHeight || 40)}px`
-    const width = `${Math.max(1, header.placement.colSpan) * (100 / columns)}%`
-    const height = `${Math.max(1, header.placement.rowSpan) * (page.grid.rowHeight || 40)}px`
     return html`
-      <div class="header-component grid-stack-item" data-selected=${selected} gs-id=${header.id} gs-x=${Math.max(0, header.placement.col - 1)} gs-y=${Math.max(0, header.placement.row - 1)} gs-w=${Math.max(1, header.placement.colSpan)} gs-h=${Math.max(1, header.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${header.title}, selected dashboard header` : `${header.title}, dashboard header`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectHeader(header) }} @keydown=${(event: KeyboardEvent) => this.selectHeaderOnKey(event, header)}>
+      <div class="header-component grid-stack-item" data-selected=${selected} gs-id=${header.id} gs-x=${Math.max(0, header.placement.col - 1)} gs-y=${Math.max(0, header.placement.row - 1)} gs-w=${Math.max(1, header.placement.colSpan)} gs-h=${Math.max(1, header.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${header.title}, selected dashboard header` : `${header.title}, dashboard header`} aria-describedby="dashboard-builder-grid-help" @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectHeader(header) }} @keydown=${(event: KeyboardEvent) => this.selectHeaderOnKey(event, header)}>
         <div class="grid-stack-item-content">
           <span class="component-drag-grip component-drag-handle" role="button" aria-label=${`Drag to move ${header.title}`} title=${`Drag to move ${header.title}`} @pointerdown=${() => this.selectHeader(header)}>${lucideIcon(GripHorizontal, { size: 16, strokeWidth: 2 })}</span>
           <div class="header-copy"><strong>${header.title}</strong>${header.description ? html`<span>${header.description}</span>` : nothing}</div>
@@ -3840,14 +3826,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     `
   }
 
-  private renderPlaceholder(placeholder: DashboardBuilderPlaceholderSignal, page: DashboardBuilderPageSignal) {
-    const columns = Math.max(1, page.grid.columns || 12)
-    const left = `${Math.max(0, placeholder.placement.col - 1) * (100 / columns)}%`
-    const top = `${Math.max(0, placeholder.placement.row - 1) * (page.grid.rowHeight || 40)}px`
-    const width = `${Math.max(1, placeholder.placement.colSpan) * (100 / columns)}%`
-    const height = `${Math.max(1, placeholder.placement.rowSpan) * (page.grid.rowHeight || 40)}px`
+  private renderPlaceholder(placeholder: DashboardBuilderPlaceholderSignal) {
     return html`
-      <div class="builder-placeholder grid-stack-item" data-locked=${placeholder.locked} gs-id=${placeholder.id} gs-x=${Math.max(0, placeholder.placement.col - 1)} gs-y=${Math.max(0, placeholder.placement.row - 1)} gs-w=${Math.max(1, placeholder.placement.colSpan)} gs-h=${Math.max(1, placeholder.placement.rowSpan)} role="note" aria-label=${`${placeholder.title}, locked ${placeholder.kind} placeholder`} style=${`left:${left};top:${top};width:${width};height:${height}`}>
+      <div class="builder-placeholder grid-stack-item" data-locked=${placeholder.locked} gs-id=${placeholder.id} gs-x=${Math.max(0, placeholder.placement.col - 1)} gs-y=${Math.max(0, placeholder.placement.row - 1)} gs-w=${Math.max(1, placeholder.placement.colSpan)} gs-h=${Math.max(1, placeholder.placement.rowSpan)} role="note" aria-label=${`${placeholder.title}, locked ${placeholder.kind} placeholder`}>
         <div class="grid-stack-item-content"><strong>${placeholder.title}</strong><span>${placeholder.message}</span><span>Locked until the ${placeholder.kind} definition is restored.</span></div>
       </div>
     `

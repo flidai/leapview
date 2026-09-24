@@ -1499,7 +1499,12 @@ test('dashboard builder maps pointer drag placement through the compact grid', a
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
     await page.mouse.down()
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 + 8 * 64 * initial.scale, { steps: 12 })
-    const draggingHeight = await element.locator('.canvas-fit').evaluate(node => node.getBoundingClientRect().height)
+    const dragging = await element.evaluate((builder: any) => {
+      const root = builder.shadowRoot as ShadowRoot
+      const helper = root.querySelector('.builder-grid-drag-helper')
+      const placeholder = root.querySelector<HTMLElement>('.grid-stack-placeholder .placeholder-content')
+      return { height: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height, lightweightHelper: Boolean(helper && !helper.querySelector('.grid-stack-item-content')), mappedPlaceholder: placeholder ? getComputedStyle(placeholder).borderStyle === 'dashed' : false }
+    })
     await page.mouse.up()
     await page.waitForTimeout(30)
     const state = await element.evaluate((builder: any) => {
@@ -1512,9 +1517,10 @@ test('dashboard builder maps pointer drag placement through the compact grid', a
     })
     expect(state.command).toBeDefined()
     expect(state.command.compact).toBe(true)
+    expect(dragging).toMatchObject({ lightweightHelper: true, mappedPlaceholder: true })
     expect(state.command.placements[0].placement.row).toBeGreaterThan(1)
     expect(state.fittedHeight).toBeGreaterThanOrEqual(initial.fittedHeight)
-    expect(draggingHeight).toBeGreaterThan(state.fittedHeight)
+    expect(dragging.height).toBeGreaterThan(state.fittedHeight)
   } finally {
     await page.close()
   }
@@ -1691,7 +1697,6 @@ test('dashboard builder disables GridStack editing without rebuilding it on revi
     await page.close()
   }
 })
-
 test('dashboard builder reconciles placement patches that arrive after revision metadata', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1710,21 +1715,18 @@ test('dashboard builder reconciles placement patches that arrive after revision 
       mergePatch({ builder: { pages: initialPages } })
       await element.updateComplete
       const firstGrid = canvas.gridstack
-
-      // Datastar can deliver one authoritative revision as multiple nested
-      // signal patches. Revision metadata may therefore render before the
-      // placement values from the same response.
+      const visual = root.querySelector('.visual[gs-id="sales-chart"]') as HTMLElement & { gridstackNode?: { x?: number, y?: number, w?: number, h?: number } }
+      firstGrid.update(visual, { x: 6, y: 6 })
+      firstGrid.update = () => firstGrid
+      // Revision metadata can render before placement values from the same Datastar response.
       mergePatch({ builder: { revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' } } })
       await element.updateComplete
       const pages = structuredClone(element.builder.pages)
       pages[0].visuals[0].placement = { col: 7, row: 7, colSpan: 6, rowSpan: 5 }
       mergePatch({ builder: { pages } })
       await element.updateComplete
-
-      const visual = root.querySelector('.visual[gs-id="sales-chart"]') as HTMLElement & { gridstackNode?: { x?: number, y?: number, w?: number, h?: number } }
       const tree = root.querySelector<HTMLElement>('.visual[gs-id="current-cash"]')!
-      const visualRect = visual.getBoundingClientRect()
-      const treeRect = tree.getBoundingClientRect()
+      const visualRect = visual.getBoundingClientRect(), treeRect = tree.getBoundingClientRect()
       return {
         retained: firstGrid === canvas.gridstack,
         node: { x: visual.gridstackNode?.x, y: visual.gridstackNode?.y, w: visual.gridstackNode?.w, h: visual.gridstackNode?.h },
@@ -1736,13 +1738,11 @@ test('dashboard builder reconciles placement patches that arrive after revision 
       retained: true,
       node: { x: 6, y: 6, w: 6, h: 5 },
       style: { left: 'calc(6 * var(--gs-column-width))', top: 'calc(6 * var(--gs-cell-height))' },
-      overlapsTree: false,
-    })
+      overlapsTree: false })
   } finally {
     await page.close()
   }
 })
-
 test('dashboard builder shows build and format controls in one inspector panel', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
