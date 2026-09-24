@@ -679,7 +679,7 @@ func TestMinIOIntegrationOwnsItsContainerLifecycle(t *testing.T) {
 		`github.com/testcontainers/testcontainers-go/modules/minio`,
 		`testcontainers.CleanupContainer(t, minioContainer)`,
 		`testcontainers.WithLogger(log.TestLogger(t))`,
-		`quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`,
+		`testminio.Run(ctx,`,
 	} {
 		if !strings.Contains(testText, want) {
 			t.Errorf("MinIO integration test must own container lifecycle: missing %q", want)

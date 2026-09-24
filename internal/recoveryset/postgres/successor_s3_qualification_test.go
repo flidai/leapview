@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/flidai/leapview/internal/platform/testminio"
 	recoverypg "github.com/flidai/leapview/internal/recoveryset/postgres"
 	"github.com/flidai/leapview/internal/recoveryset/s3reader"
 	"github.com/google/uuid"
@@ -27,7 +28,6 @@ import (
 )
 
 const (
-	successorS3Image     = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 	successorS3Region    = "us-east-1"
 	successorS3ProfileID = "22222222-2222-4222-8222-222222222222"
 	successorS3Account   = "minio-successor-qualification"
@@ -272,11 +272,11 @@ type successorS3Provider struct {
 
 func startSuccessorS3Provider(t *testing.T) successorS3Provider {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	t.Cleanup(cancel)
 	user := "q" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	secret := uuid.NewString()
-	container, err := tcminio.Run(ctx, successorS3Image,
+	container, err := testminio.Run(ctx,
 		tcminio.WithUsername(user), tcminio.WithPassword(secret),
 		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g"}),
 		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithStartupTimeout(time.Minute)))

@@ -41,6 +41,7 @@ import (
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	postgresmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/flidai/leapview/internal/platform/testminio"
 	"github.com/flidai/leapview/internal/recoveryset"
 	recoverypg "github.com/flidai/leapview/internal/recoveryset/postgres"
 	refreshpg "github.com/flidai/leapview/internal/refresh/postgres"
@@ -59,7 +60,6 @@ import (
 )
 
 const (
-	qualificationMinIOImage    = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 	qualificationConsumerImage = "debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171"
 )
 
@@ -988,12 +988,12 @@ type qualificationObjects struct {
 
 func startQualificationObjects(t *testing.T, networkName string, manifest providerrestore.RetainedResourceManifestStore, runID, providerHost string, material qualificationTLSMaterial) *qualificationObjects {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	user, secret := "fai981"+strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()
 	containerName := "leapview-fai981-minio-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	objectPort := freeLoopbackPort(t)
-	container, err := tcminio.Run(ctx, qualificationMinIOImage, tcminio.WithUsername(user), tcminio.WithPassword(secret),
+	container, err := testminio.Run(ctx, tcminio.WithUsername(user), tcminio.WithPassword(secret),
 		testcontainers.WithFiles(
 			testcontainers.ContainerFile{Reader: strings.NewReader(material.serverCert), ContainerFilePath: "/root/.minio/certs/public.crt", FileMode: 0o644},
 			testcontainers.ContainerFile{Reader: strings.NewReader(material.serverKey), ContainerFilePath: "/root/.minio/certs/private.key", FileMode: 0o600},
