@@ -1488,10 +1488,11 @@ test('dashboard builder maps pointer drag placement through the compact grid', a
       builder.addEventListener('lv-builder-command', (event: CustomEvent) => {
         if (event.detail?.action === 'set_placements') (window as any).__builderPlacementCommands.push(event.detail)
       })
-      return {
-        fittedHeight: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height,
-        scale: (root.querySelector('.canvas') as HTMLElement).getBoundingClientRect().width / (root.querySelector('.canvas') as HTMLElement).offsetWidth,
-      }
+      const readSignal = builder.signal.bind(builder)
+      ;(window as any).__builderSignalReads = 0
+      builder.signal = (path: string, fallback: unknown) => { if (path === 'builder') (window as any).__builderSignalReads++; return readSignal(path, fallback) }
+      return { fittedHeight: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height,
+        scale: (root.querySelector('.canvas') as HTMLElement).getBoundingClientRect().width / (root.querySelector('.canvas') as HTMLElement).offsetWidth }
     })
     const handle = element.locator('.visual-drag-header')
     const box = await handle.boundingBox()
@@ -1503,21 +1504,19 @@ test('dashboard builder maps pointer drag placement through the compact grid', a
       const root = builder.shadowRoot as ShadowRoot
       const helper = root.querySelector('.builder-grid-drag-helper')
       const placeholder = root.querySelector<HTMLElement>('.grid-stack-placeholder .placeholder-content')
-      return { height: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height, lightweightHelper: Boolean(helper && !helper.querySelector('.grid-stack-item-content')), mappedPlaceholder: placeholder ? getComputedStyle(placeholder).borderStyle === 'dashed' : false }
+      return { height: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height, signalReads: (window as any).__builderSignalReads, lightweightHelper: Boolean(helper && !helper.querySelector('.grid-stack-item-content')), mappedPlaceholder: placeholder ? getComputedStyle(placeholder).borderStyle === 'dashed' : false }
     })
     await page.mouse.up()
     await page.waitForTimeout(30)
     const state = await element.evaluate((builder: any) => {
       const root = (builder.shadowRoot as ShadowRoot)
       const commands = (window as any).__builderPlacementCommands as any[]
-      return {
-        command: commands.at(-1),
-        fittedHeight: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height,
-      }
+      return { command: commands.at(-1), fittedHeight: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height }
     })
     expect(state.command).toBeDefined()
     expect(state.command.compact).toBe(true)
     expect(dragging).toMatchObject({ lightweightHelper: true, mappedPlaceholder: true })
+    expect(dragging.signalReads).toBeLessThan(4)
     expect(state.command.placements[0].placement.row).toBeGreaterThan(1)
     expect(state.fittedHeight).toBeGreaterThanOrEqual(initial.fittedHeight)
     expect(dragging.height).toBeGreaterThan(state.fittedHeight)

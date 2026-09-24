@@ -201,6 +201,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private viewportMediaQuery: MediaQueryList | null = null
   private canvasResizeObserver: ResizeObserver | null = null
   private canvasViewportElement: HTMLElement | null = null
+  private canvasPage: DashboardBuilderPageSignal | undefined
 
   // Add-page uses server-generated identifiers. Keep the page set that was
   // visible when the intent was sent so the authoritative response can select
@@ -241,6 +242,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.viewportMediaQuery = null
     this.destroyCanvasViewportObserver()
     this.destroyGridStack()
+    this.canvasPage = undefined
     super.disconnectedCallback()
   }
 
@@ -2644,6 +2646,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.selectPendingAddedSlicer(builder)
     this.reconcileBuilderFilterController()
     const page = builder ? this.selectedPage(builder) : undefined
+    this.canvasPage = page
     this.syncGridStack(builder, page)
     this.syncCanvasViewport(page)
   }
@@ -2724,14 +2727,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private onGridInteractionStop(_element: GridItemHTMLElement, compact: boolean): void {
     this.gridCompactPending = compact
     this.gridInteracting = false
-    this.syncCanvasViewport(this.builder ? this.selectedPage(this.builder) : undefined)
+    this.syncCanvasViewport(this.canvasPage)
     this.gridInteractionMessage = 'Layout updated.'
     this.scheduleGridCommit()
   }
 
   private onGridChange(_event: Event, _nodes: GridStackNode[]): void {
-    this.syncCanvasViewport(this.builder ? this.selectedPage(this.builder) : undefined)
-    if (!this.gridInteracting) this.scheduleGridCommit()
+    if (this.gridInteracting) return
+    this.syncCanvasViewport(this.canvasPage)
+    this.scheduleGridCommit()
   }
 
   private syncCanvasViewport(page: DashboardBuilderPageSignal | undefined): void {
@@ -2752,7 +2756,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (scroll !== this.canvasViewportElement && typeof ResizeObserver !== 'undefined') {
       this.destroyCanvasViewportObserver()
       this.canvasViewportElement = scroll
-      this.canvasResizeObserver = new ResizeObserver(() => this.syncCanvasViewport(this.builder ? this.selectedPage(this.builder) : undefined))
+      this.canvasResizeObserver = new ResizeObserver(() => this.syncCanvasViewport(this.canvasPage))
       this.canvasResizeObserver.observe(scroll)
     }
     const availableWidth = scroll.clientWidth
