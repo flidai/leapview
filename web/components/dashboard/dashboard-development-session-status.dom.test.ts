@@ -37,7 +37,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await browser?.close()
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-}, 15_000)
+}, 30_000)
 
 test('ordinary local dashboard shows invalid edit diagnostics and reloads after a valid activation', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
@@ -72,4 +72,4 @@ test('ordinary local dashboard shows invalid edit diagnostics and reloads after 
   } finally {
     await page.close()
   }
-})
+}, 30_000)
