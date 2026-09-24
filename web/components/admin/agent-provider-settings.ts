@@ -55,7 +55,13 @@ export class AgentProviderSettings extends LitElement {
   private onFetch = (event: Event) => {
     if (!this.busy) return
     const failure = browserCommandFailure(event, 'Agent configuration')
-    if (failure) { this.busy = false; this.message = failure.message; this.token = '' }
+    if (failure) {
+      this.busy = false
+      this.message = failure.kind === 'validation'
+        ? 'We couldn’t verify these settings. Check the provider endpoint, model ID, API key, API mode, and reasoning setting, then test again. Your active configuration hasn’t changed.'
+        : failure.message
+      this.token = ''
+    }
   }
   private change(key: keyof AdminAgentProviderInput, value: string | boolean) {
     this.draft = { ...this.draft, [key]: value }; this.normalizeReasoning(); this.token = ''; this.message = ''; this.restoreRevision = 0
