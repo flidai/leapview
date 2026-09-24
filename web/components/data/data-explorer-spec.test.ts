@@ -1,5 +1,15 @@
 import { expect, test } from 'bun:test'
-import { explorationSpecFromCommand } from './data-explorer-spec'
+import type { ExplorationSpec } from '../../generated/exploration'
+import {
+  boundedExplorationLimit,
+  explorationRunValidation,
+  explorationSpecFromCommand,
+  filterOperatorsForType,
+  moveExplorationSort,
+  setExplorationTime,
+  setExplorationTimeRange,
+  upsertExplorationSort,
+} from './data-explorer-spec'
 
 test('canonical exploration specs omit absent optional signal members', () => {
   const spec = explorationSpecFromCommand({
@@ -79,4 +89,30 @@ test('canonical exploration filter dataset stays paired when invalid filters are
 
   expect(spec.filters).toHaveLength(1)
   expect(spec.filters[0]?.datasetId).toBe('orders')
+})
+
+test('V1 query controls preserve sort priority, time range, and server row limits', () => {
+  const base: ExplorationSpec = {
+    schemaVersion: 1, modelId: 'sales', datasetId: 'orders',
+    dimensions: [{ field: 'orders.status' }, { field: 'orders.created_at' }], metrics: [{ field: 'revenue' }],
+    filters: [], sort: [], limit: 100,
+  }
+  const sorted = upsertExplorationSort(upsertExplorationSort(base, 'revenue', 'desc'), 'orders.status')
+  expect(moveExplorationSort(sorted, 1, -1).sort.map((entry) => entry.field)).toEqual(['orders.status', 'revenue'])
+  const timed = setExplorationTimeRange(setExplorationTime(base, 'orders.created_at', 'month'), {
+    kind: 'absolute', lower: { value: { kind: 'date', value: '2026-01-01' }, inclusive: true },
+  })
+  expect(timed.time).toMatchObject({ field: 'orders.created_at', grain: 'month', range: { kind: 'absolute' } })
+  expect(boundedExplorationLimit(-1)).toBe(1)
+  expect(boundedExplorationLimit(2000)).toBe(1000)
+})
+
+test('V1 run validation and type-aware filters fail closed', () => {
+  const empty: ExplorationSpec = { schemaVersion: 1, modelId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 }
+  expect(explorationRunValidation(empty)).toEqual(expect.arrayContaining([
+    'Choose a semantic model before running the exploration.',
+    'Select at least one field or time grain before running the exploration.',
+  ]))
+  expect(filterOperatorsForType('decimal').map((option) => option.value)).toEqual(expect.arrayContaining(['greater_than', 'less_than']))
+  expect(filterOperatorsForType('string').map((option) => option.value)).not.toEqual(expect.arrayContaining(['greater_than', 'less_than']))
 })

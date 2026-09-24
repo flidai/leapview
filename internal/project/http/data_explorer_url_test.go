@@ -37,10 +37,15 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				ModelName: "orders",
+				ModelName:   "orders",
+				GrainEntity: "order",
+				Entities: map[string]semanticmodel.EntityDefinition{
+					"order": {Type: "primary", Fields: []string{"status"}},
+				},
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"status":     {Label: "Status", Type: "string"},
 					"created_at": {Label: "Created at", Type: "timestamp"},
+					"revenue":    {Label: "Revenue", Type: "number"},
 				},
 			},
 		},
@@ -49,7 +54,7 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 	}
-	compiled, err := semanticquery.CompileDatasetBindings(model)
+	compiled, err := semanticquery.CompileModel(model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,10 +69,11 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 			SemanticModels: map[string]*semanticmodel.Model{modelID: model},
 			NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
 		}, compiled: map[string]*semanticquery.CompiledModel{modelID: compiled}},
-		QueryExecutor:    executor,
-		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
-		Environment:      "dev",
-		CurrentUser:      func(*http.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
+		QueryExecutor:           executor,
+		ExplorationQueryLowerer: testDataExplorerQueryLowerer,
+		ResolveProjectID:        func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
+		Environment:             "dev",
+		CurrentUser:             func(*http.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
 	}
 	return h, executor
 }

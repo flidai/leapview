@@ -312,6 +312,7 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.tableWidth).toBeGreaterThan(700)
     expect(state.firstCellWidth).toBeGreaterThan(100)
     expect(state.commands.some((command) => command.objectKey === 'model:model:olist.customers')).toBe(true)
+    expect(state.commands.every((command) => typeof command.clientId === 'string' && command.clientId.startsWith('explorer-'))).toBe(true)
     expect(state.commands.some((command) => command.objectKey === 'model:model:olist.customers' && command.visibleColumns?.length === 0 && Object.keys(command.columnWidths ?? {}).length === 0)).toBe(true)
     expect(state.commands.some((command) => command.sort?.column === 'order_id')).toBe(true)
     expect(state.commands.some((command) => command.visibleColumns?.length === 1 && command.visibleColumns[0] === 'order_id')).toBe(true)
@@ -506,10 +507,15 @@ test('data explorer builds a governed semantic exploration and filter command', 
       if (!filterButton) throw new Error(`Status filter button was not rendered: ${root.textContent}`)
       filterButton.click()
       await element.updateComplete
-      const filterInput = root.querySelector<HTMLInputElement>('.filter-editor label:nth-child(3) input')!
+      const controls = root.querySelector('lv-data-explorer-query-controls') as any
+      await controls.updateComplete
+      const controlsRoot = controls.shadowRoot as ShadowRoot
+      const filterInput = controlsRoot.querySelector<HTMLInputElement>('.filter-editor label:nth-child(3) input')!
       filterInput.value = 'delivered'
       filterInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-      const applyButton = Array.from(root.querySelectorAll<HTMLButtonElement>('.filter-editor .text-button')).find((button) => button.textContent?.trim() === 'Apply')
+      await element.updateComplete
+      await controls.updateComplete
+      const applyButton = Array.from(controlsRoot.querySelectorAll<HTMLButtonElement>('.filter-editor .text-button')).find((button) => button.textContent?.trim() === 'Apply')
       if (!applyButton) throw new Error(`Apply filter button was not rendered: ${root.textContent}`)
       applyButton.click()
       await element.updateComplete
@@ -573,7 +579,10 @@ test('data explorer builds a governed semantic exploration and filter command', 
       }
     })
 
-    expect(state.modes).toEqual([])
+    expect(state.modes).toEqual([
+      { text: 'Rows', pressed: 'false' },
+      { text: 'Analyze', pressed: 'true' },
+    ])
     expect(state.hasBreadcrumb).toBe(false)
     expect(state.resourceTables).toContain('orders')
     expect(state.chips.join(' ')).toContain('Order ID')
@@ -600,7 +609,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.resetToTableCommand.spec.metrics).toEqual([])
     expect(state.commands.some((command) => command.explore?.dimensions?.includes('items.sku'))).toBe(false)
     expect(state.commands.some((command) => command.mode === 'explore' && command.explore?.dimensions?.includes('orders.order_id'))).toBe(true)
-    expect(state.commands.some((command) => command.explore?.filters?.[0]?.field === 'orders.status' && command.explore.filters[0].values[0] === 'delivered')).toBe(true)
+    expect(state.commands.some((command) => command.explore?.spec?.filters?.[0]?.field === 'orders.status' && command.explore.spec.filters[0].expression?.value?.value === 'delivered')).toBe(true)
   } finally {
     await page.close()
   }
@@ -669,7 +678,10 @@ test('data preview and semantic query failures expose retry and reset actions', 
       const exploreAlert = failure.textContent!.replace(/\s+/g, ' ').trim()
       const exploreButtons = Array.from(failure.querySelectorAll('button')) as HTMLButtonElement[]
       exploreButtons[0].click()
-      exploreButtons[1].click()
+      await explorer.updateComplete
+      const refreshedFailure = (explorer.shadowRoot as ShadowRoot)!.querySelector('.result-failure') as HTMLElement
+      const refreshedButtons = Array.from(refreshedFailure.querySelectorAll('button')) as HTMLButtonElement[]
+      refreshedButtons[1].click()
       await explorer.updateComplete
       return { previewAlert, previewCommands, exploreAlert, exploreCommands }
     })
@@ -678,8 +690,8 @@ test('data preview and semantic query failures expose retry and reset actions', 
     expect(state.previewCommands[0]).toMatchObject({ objectKey: 'orders', requestSeq: 8, resetVersion: 2 })
     expect(state.previewCommands[1]).toMatchObject({ objectKey: 'orders', offset: 0, start: 0, block: 'all', requestSeq: 8, resetVersion: 3, sort: {} })
     expect(state.exploreAlert).toContain('Query service is unavailable.')
-    expect(state.exploreCommands[0].explore).toMatchObject({ semanticModelId: 'sales', datasetId: 'orders' })
-    expect(state.exploreCommands[1].explore).toMatchObject({ dimensions: [], metrics: [], filters: [], sort: [] })
+    expect(state.exploreCommands[0]).toMatchObject({ action: 'run', explore: { semanticModelId: 'sales', datasetId: 'orders', action: 'run' } })
+    expect(state.exploreCommands[1]).toMatchObject({ action: 'configure', explore: { spec: { dimensions: [], metrics: [], filters: [], sort: [] } } })
   } finally {
     await page.close()
   }

@@ -3,6 +3,8 @@ import {
   DataExplorerPanelController,
   DataExplorerQueryController,
   DataExplorerSelectionController,
+  prepareExplorationRun,
+  prepareExplorationStop,
   readDataExplorerAgentState,
   toggleVisibleColumns,
 } from './data-explorer-controller'
@@ -44,6 +46,22 @@ test('query controller advances request and reset sequences', () => {
   expect(next.spec.modelId).toBe('sales')
   expect(next.spec.datasetId).toBe('orders')
   expect(next.spec.dimensions).toEqual([{ field: 'orders.status' }])
+})
+
+test('canonical query edits and explicit run lifecycle remain separate', () => {
+  const query = new DataExplorerQueryController()
+  const current = {
+    spec: { schemaVersion: 1 as const, modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 },
+    semanticModelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100,
+    requestSeq: 7, resetVersion: 9, columnWidths: {},
+  }
+  const configured = query.exploreSpec(current, { dimensions: [{ field: 'orders.status' }] })
+  expect(configured).toMatchObject({ action: 'configure', requestSeq: 8, resetVersion: 10 })
+  expect(configured.spec.dimensions).toEqual([{ field: 'orders.status' }])
+  const run = prepareExplorationRun(configured)
+  expect(run).toMatchObject({ action: 'run', requestSeq: 9, resetVersion: 11 })
+  const stop = prepareExplorationStop(run)
+  expect(stop).toMatchObject({ action: 'stop', requestSeq: 9, resetVersion: 11 })
 })
 
 test('visible column toggles preserve one visible fallback and reset all to defaults', () => {

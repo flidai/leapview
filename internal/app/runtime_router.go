@@ -789,7 +789,7 @@ func buildApplicationSurfaces(
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
-		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
+		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, ExplorationQueryLowerer: analyticsmodule.NewExplorationQueryLowerer(), Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardAppearances, DashboardCatalog: capabilities.Authoring,
 		DashboardPopularity: func(ctx context.Context, dashboardCount int) (map[string]string, error) {
 			if routes.dashboardModule == nil {

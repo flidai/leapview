@@ -17,6 +17,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	connectionadmin "github.com/flidai/leapview/internal/analytics/connectionadmin"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
@@ -183,6 +184,7 @@ type BrowserHandler struct {
 	DashboardCatalog         DashboardCatalogReader
 	DashboardPopularity      func(context.Context, int) (map[string]string, error)
 	QueryExecutor            DataQueryExecutor
+	ExplorationQueryLowerer  exploration.QueryLowerer
 	Catalog                  CatalogAuthorizer
 	SearchCatalog            ProductSearchCatalog
 	PrincipalDisplayReader   PrincipalDisplayReader
@@ -221,6 +223,7 @@ type BrowserHandler struct {
 	CSRFToken                      func(*stdhttp.Request) string
 	CurrentUser                    func(*stdhttp.Request) (Principal, bool)
 	Authenticate                   func(stdhttp.Handler) stdhttp.Handler
+	dataExplorerLifecycle          dataExplorerLifecycle
 }
 
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
@@ -464,10 +467,19 @@ func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhtt
 		stdhttp.Error(w, "data explorer command payload is required", stdhttp.StatusBadRequest)
 		return
 	}
+	if !h.hasDataExplorerClientIdentity(r, signals.Command) {
+		stdhttp.Error(w, "data explorer client identity is required", stdhttp.StatusBadRequest)
+		return
+	}
 	page, explorer, ok := h.dataExplorerSignalsForCommand(w, r, signals.Command)
 	if !ok {
 		return
 	}
+	unlock, current := h.dataExplorerResponseLease(r, explorer.Command)
+	if !current {
+		return
+	}
+	defer unlock()
 	_ = pagestream.PatchResponse(w, r, dataExplorerSignalPatch(page, explorer))
 }
 
@@ -498,6 +510,10 @@ func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *s
 		stdhttp.Error(w, "data explorer command payload is required", stdhttp.StatusBadRequest)
 		return
 	}
+	if !h.hasDataExplorerClientIdentity(r, signals.Command) {
+		stdhttp.Error(w, "data explorer client identity is required", stdhttp.StatusBadRequest)
+		return
+	}
 	_, explorer, asset, ok := h.dataExplorerSignalsForAssetCommand(w, r, chi.URLParam(r, "asset"), signals.Command)
 	if !ok {
 		return
@@ -506,6 +522,11 @@ func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *s
 		stdhttp.NotFound(w, r)
 		return
 	}
+	unlock, current := h.dataExplorerResponseLease(r, explorer.Command)
+	if !current {
+		return
+	}
+	defer unlock()
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
 		"dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
 	})
@@ -1802,103 +1823,6 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 
 func (h *BrowserHandler) dataExplorerSignalsForRestoredCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
 	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, executeQuery, true)
-}
-
-func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery, strictURLState bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
-	command = normalizeDataExplorerCommand(command)
-	project := h.navigationCatalog(r).Project
-	page := projectsignals.DataExplorerPageSignal{Kind: projectsignals.RouteKindData, Title: "Data Explorer", Description: projectsignals.Optional("Explore governed semantic data."), Tabs: []projectsignals.ResourceTabSignal{}, Context: projectsignals.DataExplorerContextSignal{Active: true, Environment: h.Environment, ProjectID: project.ID, ProjectTitle: projectsignals.Optional(project.Title)}}
-	exploreCommand := projectsignals.DataExploreCommand{Spec: defaultExplorationSpec(), Dimensions: []string{}, Metrics: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: dataExplorerDefaultLimit}
-	if command.Explore != nil {
-		exploreCommand = *command.Explore
-	}
-	exploreCommand = dataExploreCommandWithCanonicalSpec(exploreCommand)
-	if value := strings.TrimSpace(r.URL.Query().Get("semanticModel")); value != "" && exploreCommand.SemanticModelID == nil {
-		exploreCommand.SemanticModelID = projectsignals.Optional(value)
-	}
-	if value := strings.TrimSpace(r.URL.Query().Get("dataset")); value != "" && exploreCommand.DatasetID == nil {
-		exploreCommand.DatasetID = projectsignals.Optional(value)
-	}
-	command.Explore = &exploreCommand
-	explorer := projectsignals.DataExplorerSignal{Command: command, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, SemanticModels: []projectsignals.DataExploreSemanticModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: emptyDataExplorerBlocks(command), Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: command.Count, RowHeight: dataExplorerRowHeight}}
-	_, assets, _, ok := h.assets(w, r)
-	if !ok {
-		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-	}
-	if h == nil || h.ProjectDefinitionReader == nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-	}
-	definition, compiledModels, err := h.ProjectDefinitionReader.ProjectDefinitionSnapshot(r.Context())
-	if err != nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-	}
-	consumers := dataExplorerSemanticConsumers(r.Context(), h.QueryExecutor, definition)
-	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels, consumers)
-	if strictURLState && projectsignals.ValueOrZero(command.Mode) == "explore" {
-		semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.SemanticModelID))
-		if err := validateRestoredDataExploreState(exploreCommand, projection, definition.SemanticModels[semanticModelID], compiledModels); err != nil {
-			stdhttp.Error(w, "invalid exploration URL state: "+err.Error(), stdhttp.StatusBadRequest)
-			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-		}
-	}
-	explorer.Objects = projection.Objects
-	explorer.Explore.SemanticModels = projection.SemanticModels
-	explorer.Explore.SelectedSemanticModel = projection.SelectedSemanticModel
-	explorer.Explore.Datasets = projection.Datasets
-	explorer.Explore.SelectedDataset = projection.SelectedDataset
-	explorer.Explore.Fields = projection.Fields
-	exploreCommand = projection.Command
-	explorer.Explore.Command = exploreCommand
-	explorer.Command.Explore = &exploreCommand
-	if executeQuery && projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
-		projectID, err := h.boundProject(r.Context())
-		if err != nil {
-			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-		}
-		exploreCommand, explorer.Explore.Result = dataExplorerSemanticResult(r.Context(), h.QueryExecutor, projectID, exploreCommand, explorer.Explore.Fields)
-		explorer.Explore.Result.Warnings = append(explorer.Explore.Result.Warnings, projection.Warnings...)
-		explorer.Explore.Command = exploreCommand
-		explorer.Command.Explore = &exploreCommand
-	}
-	page.Context.ObjectCount = int64(len(explorer.Objects))
-
-	requestedObject := strings.TrimSpace(projectsignals.ValueOrZero(command.ObjectKey))
-	if projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
-		requestedObject = ""
-		semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.SemanticModelID))
-		datasetID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.DatasetID))
-		for _, object := range explorer.Objects {
-			if object.Layer == "model" && projectsignals.ValueOrZero(object.SemanticModelID) == semanticModelID && projectsignals.ValueOrZero(object.DatasetID) == datasetID {
-				requestedObject = object.Key
-				break
-			}
-		}
-	}
-	if requestedObject != "" {
-		for index := range explorer.Objects {
-			object := explorer.Objects[index]
-			if object.Key != requestedObject && object.ResourceID != requestedObject && projectsignals.ValueOrZero(object.AssetID) != requestedObject {
-				continue
-			}
-			explorer.Command.ObjectKey = projectsignals.Optional(object.Key)
-			explorer.SelectedKey = projectsignals.Optional(object.Key)
-			explorer.SelectedObject = &object
-			page.SelectedObject = projectsignals.Optional(object.Key)
-			projectID, err := h.boundProject(r.Context())
-			if err != nil {
-				stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-				return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-			}
-			if executeQuery && projectsignals.ValueOrZero(explorer.Command.Mode) != "explore" {
-				explorer.Preview = dataExplorerPreview(r.Context(), h.QueryExecutor, projectID, object, explorer.Command)
-			}
-			break
-		}
-	}
-	return page, explorer, true
 }
 
 func (h *BrowserHandler) dataExplorerSignalsForAssetCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, assetID string, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, projectview.DevelopAssetView, bool) {
