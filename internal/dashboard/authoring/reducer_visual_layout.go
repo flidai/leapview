@@ -27,9 +27,19 @@ func canonicalVisualPlacementSize(visualType document.DashboardVisualType) (colu
 
 // resizeCanonicalVisualPlacement applies the type-specific footprint used for
 // newly added visuals, then packs every page component against a column
-// skyline in stable reading order. A later SetPlacements command remains
-// authoritative, so a user can still fine-tune the suggested layout.
+// skyline in stable reading order.
 func resizeCanonicalVisualPlacement(value *document.DashboardDocument, pageID, componentID string) error {
+	return packCanonicalPageComponents(value, pageID, componentID, true)
+}
+
+// compactCanonicalPagePlacements closes gaps after an explicit resize while
+// retaining every user-chosen component footprint. Ordinary placement edits
+// remain authoritative unless the caller asks for this compaction.
+func compactCanonicalPagePlacements(value *document.DashboardDocument, pageID string) error {
+	return packCanonicalPageComponents(value, pageID, "", false)
+}
+
+func packCanonicalPageComponents(value *document.DashboardDocument, pageID, componentID string, normalizeVisualSizes bool) error {
 	pageIndex := -1
 	for index := range value.Spec.Pages {
 		if value.Spec.Pages[index].ID == pageID {
@@ -48,7 +58,7 @@ func resizeCanonicalVisualPlacement(value *document.DashboardDocument, pageID, c
 	}
 
 	components := make([]canonicalPackedComponent, 0, len(page.Components))
-	foundTarget := false
+	foundTarget := componentID == ""
 	for index := range page.Components {
 		base, err := page.Components[index].Base()
 		if err != nil {
@@ -79,7 +89,7 @@ func resizeCanonicalVisualPlacement(value *document.DashboardDocument, pageID, c
 
 	const maxDensePackingColumns int64 = 4096
 	if columns > maxDensePackingColumns {
-		return packCanonicalComponentsInRows(value, page, components, int32(columns))
+		return packCanonicalComponentsInRows(value, page, components, int32(columns), normalizeVisualSizes)
 	}
 	skyline := make([]int64, int(columns))
 	for index := range skyline {
@@ -87,7 +97,7 @@ func resizeCanonicalVisualPlacement(value *document.DashboardDocument, pageID, c
 	}
 	for _, item := range components {
 		columnSpan, rowSpan := item.placement.ColumnSpan, item.placement.RowSpan
-		if visual, ok := value.Spec.Visuals[item.visualID]; item.visualID != "" && ok {
+		if visual, ok := value.Spec.Visuals[item.visualID]; normalizeVisualSizes && item.visualID != "" && ok {
 			columnSpan, rowSpan = canonicalVisualPlacementSize(visual.Type)
 		}
 		columnSpan = minPositive(int32(columns), columnSpan)
@@ -136,11 +146,11 @@ func lowestCanonicalSkylinePosition(skyline []int64, columnSpan int32) (int32, i
 	return bestColumn, bestRow
 }
 
-func packCanonicalComponentsInRows(value *document.DashboardDocument, page *document.DashboardPage, components []canonicalPackedComponent, columns int32) error {
+func packCanonicalComponentsInRows(value *document.DashboardDocument, page *document.DashboardPage, components []canonicalPackedComponent, columns int32, normalizeVisualSizes bool) error {
 	column, row, rowSpan := int32(1), int64(1), int32(0)
 	for _, item := range components {
 		columnSpan, componentRows := item.placement.ColumnSpan, item.placement.RowSpan
-		if visual, ok := value.Spec.Visuals[item.visualID]; item.visualID != "" && ok {
+		if visual, ok := value.Spec.Visuals[item.visualID]; normalizeVisualSizes && item.visualID != "" && ok {
 			columnSpan, componentRows = canonicalVisualPlacementSize(visual.Type)
 		}
 		columnSpan = minPositive(columns, columnSpan)

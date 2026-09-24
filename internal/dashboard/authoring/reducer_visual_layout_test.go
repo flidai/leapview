@@ -160,6 +160,56 @@ func TestCanonicalVisualTypeSwitchPacksCFOLayoutAroundFixedFilters(t *testing.T)
 	}
 }
 
+func TestCanonicalPlacementResizeCompactsCFOLayoutWithoutChangingChosenSize(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	page := &revision.Document.Spec.Pages[0]
+	page.Components = []document.DashboardPageComponent{
+		canonicalTestFilterComponent("reporting-period", document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 4, RowSpan: 2}),
+		canonicalTestFilterComponent("country", document.DashboardPlacement{Column: 5, Row: 1, ColumnSpan: 4, RowSpan: 2}),
+		canonicalTestFilterComponent("segment", document.DashboardPlacement{Column: 9, Row: 1, ColumnSpan: 4, RowSpan: 2}),
+		canonicalTestVisualComponent("net-revenue", "net-revenue-visual", document.DashboardPlacement{Column: 1, Row: 3, ColumnSpan: 4, RowSpan: 3}),
+		canonicalTestVisualComponent("gross-margin", "gross-margin-visual", document.DashboardPlacement{Column: 5, Row: 3, ColumnSpan: 4, RowSpan: 3}),
+		canonicalTestVisualComponent("ebitda", "ebitda-visual", document.DashboardPlacement{Column: 9, Row: 3, ColumnSpan: 4, RowSpan: 3}),
+		canonicalTestVisualComponent("current-cash", "current-cash-visual", document.DashboardPlacement{Column: 1, Row: 6, ColumnSpan: 6, RowSpan: 4}),
+		canonicalTestVisualComponent("performance", "performance-visual", document.DashboardPlacement{Column: 7, Row: 6, ColumnSpan: 6, RowSpan: 4}),
+		canonicalTestVisualComponent("variance", "variance-visual", document.DashboardPlacement{Column: 1, Row: 10, ColumnSpan: 6, RowSpan: 5}),
+		canonicalTestVisualComponent("scorecard", "scorecard-visual", document.DashboardPlacement{Column: 7, Row: 10, ColumnSpan: 6, RowSpan: 5}),
+	}
+
+	if err := setCanonicalPlacements(&revision.Document, SetPlacementsPayload{
+		PageID:  "overview",
+		Compact: true,
+		Placements: []PlacementUpdate{{
+			ComponentID: "current-cash",
+			Placement:   document.DashboardPlacement{Column: 1, Row: 6, ColumnSpan: 3, RowSpan: 4},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]document.DashboardPlacement{
+		"reporting-period": {Column: 1, Row: 1, ColumnSpan: 4, RowSpan: 2},
+		"country":          {Column: 5, Row: 1, ColumnSpan: 4, RowSpan: 2},
+		"segment":          {Column: 9, Row: 1, ColumnSpan: 4, RowSpan: 2},
+		"net-revenue":      {Column: 1, Row: 3, ColumnSpan: 4, RowSpan: 3},
+		"gross-margin":     {Column: 5, Row: 3, ColumnSpan: 4, RowSpan: 3},
+		"ebitda":           {Column: 9, Row: 3, ColumnSpan: 4, RowSpan: 3},
+		"current-cash":     {Column: 1, Row: 6, ColumnSpan: 3, RowSpan: 4},
+		"performance":      {Column: 4, Row: 6, ColumnSpan: 6, RowSpan: 4},
+		"variance":         {Column: 1, Row: 10, ColumnSpan: 6, RowSpan: 5},
+		"scorecard":        {Column: 7, Row: 10, ColumnSpan: 6, RowSpan: 5},
+	}
+	for _, component := range page.Components {
+		placed, err := component.Base()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if placed.Placement != want[placed.ID] {
+			t.Errorf("%s placement = %#v, want %#v", placed.ID, placed.Placement, want[placed.ID])
+		}
+	}
+}
+
 func canonicalTestVisualComponent(componentID, visualID string, placement document.DashboardPlacement) document.DashboardPageComponent {
 	return document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{
 		DashboardPageComponentBase: document.DashboardPageComponentBase{ID: componentID, Type: "visual", Placement: placement},

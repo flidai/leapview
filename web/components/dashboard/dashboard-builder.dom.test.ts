@@ -1552,6 +1552,7 @@ test('dashboard builder resizes a selected widget from its left edge', async () 
     const command = await element.evaluate((builder: any) => (window as any).__builderPlacementCommands.at(-1))
     const placement = command?.placements?.[0]?.placement
     expect(placement).toBeDefined()
+    expect(command.compact).toBe(true)
     expect(placement.column).toBeGreaterThan(initial.column)
     expect(placement.columnSpan).toBeLessThan(initial.columnSpan)
   } finally {
@@ -1578,6 +1579,7 @@ test('dashboard builder emits one canonical atomic placement command after a Gri
     expect(command).toMatchObject({
       action: 'set_placements',
       pageId: 'overview',
+      compact: false,
       placements: [{ componentId: 'sales-chart', placement: { column: 3, row: 4, columnSpan: 5, rowSpan: 6 } }],
     })
   } finally {

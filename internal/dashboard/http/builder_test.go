@@ -640,7 +640,7 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
 	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
 		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": revisionHash,
-		"pageId": "overview", "action": "set_placements", "placements": []map[string]any{
+		"pageId": "overview", "action": "set_placements", "compact": true, "placements": []map[string]any{
 			{"componentId": "orders-component", "column": 1, "row": 1, "columnSpan": 6, "rowSpan": 4},
 			{"visualId": "summary-component", "col": 7, "row": 1, "colSpan": 6, "rowSpan": 4},
 		},
@@ -656,6 +656,9 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 		t.Fatalf("builder dispatch calls=%d/%d command=%#v", fake.intentCalls, fake.executeCalls, fake.executed)
 	}
 	placements := fake.executed.SetPlacements.Placements
+	if !fake.executed.SetPlacements.Compact {
+		t.Fatal("translated placement command did not preserve compact-after-resize intent")
+	}
 	if len(placements) != 2 || placements[0].ComponentID != "orders-component" || placements[0].Placement.ColumnSpan != 6 || placements[1].ComponentID != "summary-component" || placements[1].Placement.Column != 7 {
 		t.Fatalf("translated placements = %#v", placements)
 	}

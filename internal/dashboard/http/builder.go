@@ -902,6 +902,7 @@ type dashboardBuilderCommandSignal struct {
 	Color                     string                            `json:"color"`
 	Placement                 *document.DashboardPlacement      `json:"placement,omitempty"`
 	Placements                []dashboardBuilderPlacementSignal `json:"placements,omitempty"`
+	Compact                   bool                              `json:"compact,omitempty"`
 	Column                    int32                             `json:"column,omitempty"`
 	Row                       int32                             `json:"row,omitempty"`
 	ColumnSpan                int32                             `json:"columnSpan,omitempty"`
@@ -1022,7 +1023,7 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 				Column: s.Column, Row: s.Row, ColumnSpan: s.ColumnSpan, RowSpan: s.RowSpan, Col: s.Col, ColSpan: s.ColSpan,
 			}.placementUpdate())
 		}
-		command.SetPlacements = &authoring.SetPlacementsPayload{PageID: strings.TrimSpace(s.PageID), Placements: placements}
+		command.SetPlacements = &authoring.SetPlacementsPayload{PageID: strings.TrimSpace(s.PageID), Placements: placements, Compact: s.Compact}
 	case "add_filter":
 		command.AddFilter = &authoring.AddFilterPayload{FilterID: strings.TrimSpace(s.FilterID), Label: strings.TrimSpace(s.Title), Dimension: strings.TrimSpace(s.FieldID), Dataset: strings.TrimSpace(s.Dataset), ControlType: strings.TrimSpace(s.ControlType)}
 	case "add_slicer":

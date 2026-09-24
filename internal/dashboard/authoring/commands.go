@@ -258,6 +258,7 @@ type PlacementUpdate struct {
 type SetPlacementsPayload struct {
 	PageID     string            `json:"pageId"`
 	Placements []PlacementUpdate `json:"placements"`
+	Compact    bool              `json:"compact,omitempty"`
 }
 
 func (SetPlacementsPayload) authoringPayload() {}

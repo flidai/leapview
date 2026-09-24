@@ -195,6 +195,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private gridLayoutKey = ''
   private gridIsMobile = false
   private gridCommitQueued = false
+  private gridCompactPending = false
   private viewportMediaQuery: MediaQueryList | null = null
   private canvasResizeObserver: ResizeObserver | null = null
   private canvasViewportElement: HTMLElement | null = null
@@ -2688,12 +2689,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       }, canvas as GridItemHTMLElement)
       if (this.gridStack) {
         syncGridStackNodesToCanonical(this.gridStack, this.shadowRoot, this.pagePlacedComponents(page))
-        this.gridStack.on('dragstart resizestart', () => {
+        this.gridStack.on('dragstart resizestart', (event: Event) => {
+          this.gridCompactPending = event.type === 'resizestart'
           this.gridInteracting = true
           this.syncCanvasViewport(page)
         })
-        this.gridStack.on('dragstop', (_event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element))
-        this.gridStack.on('resizestop', (_event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element))
+        this.gridStack.on('dragstop resizestop', (event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element, event.type === 'resizestop'))
         this.gridStack.on('drag', () => this.syncCanvasViewport(page))
         this.gridStack.on('resize', () => this.syncCanvasViewport(page))
         this.gridStack.on('change', (event: Event, nodes: GridStackNode[]) => this.onGridChange(event, nodes))
@@ -2709,6 +2710,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.gridElement = null
     this.gridLayoutKey = ''
     this.gridCommitQueued = false
+    this.gridCompactPending = false
   }
 
   private setGridEditingEnabled(enabled: boolean): void {
@@ -2717,7 +2719,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.gridStack.enableResize(enabled)
   }
 
-  private onGridInteractionStop(_element: GridItemHTMLElement): void {
+  private onGridInteractionStop(_element: GridItemHTMLElement, compact: boolean): void {
+    this.gridCompactPending = compact
     this.gridInteracting = false
     this.syncCanvasViewport(this.builder ? this.selectedPage(this.builder) : undefined)
     this.gridInteractionMessage = 'Layout updated.'
@@ -2726,7 +2729,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private onGridChange(_event: Event, _nodes: GridStackNode[]): void {
     this.syncCanvasViewport(this.builder ? this.selectedPage(this.builder) : undefined)
-    this.scheduleGridCommit()
+    if (!this.gridInteracting) this.scheduleGridCommit()
   }
 
   private syncCanvasViewport(page: DashboardBuilderPageSignal | undefined): void {
@@ -2831,9 +2834,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         },
       }
     })
-    if (placements.every((placement, index) => this.placementEqual(placement, components[index].placement))) return
+    if (placements.every((placement, index) => this.placementEqual(placement, components[index].placement))) {
+      this.gridCompactPending = false
+      return
+    }
     if (!this.gridInteractionMessage) this.gridInteractionMessage = 'Layout updated.'
-    this.emitCommand('set_placements', { pageId: page.id, placements })
+    const compact = this.gridCompactPending
+    this.gridCompactPending = false
+    this.emitCommand('set_placements', { pageId: page.id, placements, compact })
   }
 
   private placementEqual(left: GridPlacement, right: DashboardBuilderVisualSignal['placement']): boolean {
@@ -5770,6 +5778,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     const element = this.gridStack?.getGridItems().find((item) => (item.gridstackNode?.id || item.getAttribute('gs-id')) === componentID)
     if (this.gridStack && element) {
+      this.gridCompactPending = resize
       this.gridStack.update(element, { x: next.col - 1, y: next.row - 1, w: next.colSpan, h: next.rowSpan })
     }
     const direction = key.replace('Arrow', '').toLowerCase()

@@ -1796,6 +1796,9 @@ func setCanonicalPlacements(value *document.DashboardDocument, patch SetPlacemen
 		}
 		base.Placement = placement
 	}
+	if patch.Compact {
+		return compactCanonicalPagePlacements(value, patch.PageID)
+	}
 	return nil
 }
 
