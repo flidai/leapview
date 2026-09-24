@@ -4,21 +4,13 @@ import { governedBarPreviewEnvelope } from './dashboard-builder-test-fixtures'
 
 export async function verifyBuilderZoomActionTargets(page: Page, baseURL: string): Promise<void> {
   const previewEnvelope = governedBarPreviewEnvelope('sha256:builder-zoom-targets')
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await page.goto(baseURL)
-      await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-      await page.waitForLoadState('networkidle')
-      await page.locator('lv-dashboard-builder').evaluate(async (element: any, envelope: any) => {
-        const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-        mergePatch({ builderVisuals: { 'sales-chart': envelope } })
-        await element.updateComplete
-      }, previewEnvelope)
-      break
-    } catch (error) {
-      if (attempt === 2 || !String(error).includes('Execution context was destroyed')) throw error
-    }
-  }
+  await page.goto(baseURL)
+  await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+  await page.locator('lv-dashboard-builder').evaluate(async (element: any, envelope: any) => {
+    const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+    mergePatch({ builderVisuals: { 'sales-chart': envelope } })
+    await element.updateComplete
+  }, previewEnvelope)
   await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-builder')?.shadowRoot?.querySelector('.visual-preview lv-visualization-host')?.shadowRoot?.querySelector('.visual-options')))
 
   const result = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
