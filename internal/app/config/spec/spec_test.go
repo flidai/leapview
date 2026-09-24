@@ -84,6 +84,22 @@ func TestCatalogExcludesRemovedLegacySettings(t *testing.T) {
 	}
 }
 
+func TestAgentProviderSelectionHasNoProductDefaults(t *testing.T) {
+	settings := map[string]Setting{}
+	for _, setting := range Settings() {
+		settings[setting.Name] = setting
+	}
+	for _, name := range []string{"LEAPVIEW_AGENT_MODEL", "LEAPVIEW_AGENT_REASONING_EFFORT"} {
+		setting, ok := settings[name]
+		if !ok {
+			t.Fatalf("agent setting %s is missing", name)
+		}
+		if setting.Default != "" || setting.Example != "" || setting.EnvExample != "" {
+			t.Errorf("agent setting %s selects a product default: %#v", name, setting)
+		}
+	}
+}
+
 func TestRulesOnlyReferenceCatalogSettings(t *testing.T) {
 	known := map[string]struct{}{}
 	for _, setting := range Settings() {

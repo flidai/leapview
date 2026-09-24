@@ -29,16 +29,17 @@ Pass a returned ID to `docs_read`. Reads are line- and byte-bounded and return `
 The built-in chat surface uses an OpenAI-compatible provider configuration:
 
 ```sh
-LEAPVIEW_AGENT_BASE_URL=https://api.openai.com/v1
-LEAPVIEW_AGENT_MODEL=gpt-6-luna
-LEAPVIEW_AGENT_REASONING_EFFORT=high
-LEAPVIEW_AGENT_API_KEY=<secret>
+LEAPVIEW_AGENT_BASE_URL="$AGENT_BASE_URL"
+LEAPVIEW_AGENT_MODEL="$AGENT_MODEL"
+LEAPVIEW_AGENT_REASONING_EFFORT="$AGENT_REASONING_EFFORT"
+LEAPVIEW_AGENT_API_KEY="$AGENT_API_KEY"
 ```
 
-`gpt-6-luna` is the recommended model for the OpenAI endpoint. LeapView uses the
-Responses API for GPT-6 Luna so `high` reasoning remains compatible with its
-function tools. Supported effort values are `none`, `low`, `medium`, `high`,
-`xhigh`, and `max`.
+The deployment selects the provider endpoint, model, and optional reasoning
+effort; LeapView does not impose a model or reasoning default. Supported effort
+values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. When a deployment
+selects GPT-6 Luna, LeapView uses its Responses API integration so reasoning
+remains compatible with function tools.
 
 Store the API key in the deployment secret manager. The agent administration page shows the active system prompt in rendered and raw Markdown views. Provider prompts and responses may contain business context; review the provider's data handling, retention, regional, and contractual requirements before enabling it.
 
@@ -55,10 +56,10 @@ The file contains one complete configuration revision:
 ```json
 {
   "enabled": true,
-  "apiKey": "<secret>",
-  "model": "gpt-6-luna",
-  "baseUrl": "https://api.openai.com/v1",
-  "reasoningEffort": "high"
+  "apiKey": "<secret-manager-value>",
+  "model": "<deployment-selected-model>",
+  "baseUrl": "<deployment-selected-base-url>",
+  "reasoningEffort": "<deployment-selected-supported-effort>"
 }
 ```
 

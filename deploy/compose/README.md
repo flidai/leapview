@@ -34,8 +34,9 @@ the server certificate and hostname.
 
 The agent is enabled when both `LEAPVIEW_AGENT_API_KEY` and
 `LEAPVIEW_AGENT_MODEL` are set in the private `leapview.env` on the host. The
-template selects `gpt-6-luna` with `LEAPVIEW_AGENT_REASONING_EFFORT=high` by
-default.
+shared template deliberately leaves the model and reasoning effort unset;
+select both through the target's deployment configuration. Reasoning effort is
+optional and must be supported by the selected provider and model.
 `LEAPVIEW_AGENT_BASE_URL` defaults to the OpenAI-compatible endpoint shown in
 the template and may be changed for another compatible provider. Never commit
 the real API key. Run `./leapviewctl start` after changing these values so

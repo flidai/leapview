@@ -2215,14 +2215,13 @@
       "x-scope": "serve"
     },
     "LEAPVIEW_AGENT_MODEL": {
-      "description": "Agent model identifier.",
+      "description": "Deployment-selected agent model identifier.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
     "LEAPVIEW_AGENT_REASONING_EFFORT": {
-      "default": "high",
-      "description": "Reasoning effort sent to supported agent models.",
+      "description": "Optional deployment-selected reasoning effort sent to supported agent models.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"

@@ -75,8 +75,8 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 		"LEAPVIEW_TRUST_PROXY_HEADERS=true",
 		"LEAPVIEW_AGENT_API_KEY=",
 		"LEAPVIEW_AGENT_BASE_URL=https://api.openai.com/v1",
-		"LEAPVIEW_AGENT_MODEL=gpt-6-luna",
-		"LEAPVIEW_AGENT_REASONING_EFFORT=high",
+		"LEAPVIEW_AGENT_MODEL=\n",
+		"LEAPVIEW_AGENT_REASONING_EFFORT=\n",
 		"LEAPVIEW_POSTGRES_CONTROL_URL=",
 		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=",
 		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE=leapview_control_migrator",
@@ -92,6 +92,11 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 	} {
 		if !strings.Contains(appEnvironment, required) {
 			t.Fatalf("leapview.env.example missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"LEAPVIEW_AGENT_MODEL=gpt-6-luna", "LEAPVIEW_AGENT_REASONING_EFFORT=high"} {
+		if strings.Contains(appEnvironment, forbidden) {
+			t.Fatalf("leapview.env.example selects deployment policy %q", forbidden)
 		}
 	}
 	https := read(t, "compose.https.yaml")
