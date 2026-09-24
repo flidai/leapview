@@ -235,3 +235,22 @@ type failingWriter struct{}
 func (failingWriter) Write([]byte) (int, error) {
 	return 0, errors.New("output failed")
 }
+
+func TestInitializationPreservesAgentCredentialEncryptionKey(t *testing.T) {
+	options := InitOptions{AdminEmail: "admin@example.com", Domain: "dash.example.com", Environment: "prod"}
+	initial, err := initializationEnvironment(nil, options, "csrf", "metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := environmentValues(initial)["LEAPVIEW_AGENT_CREDENTIAL_KEY"]
+	if len(key) != 64 {
+		t.Fatalf("encryption key length=%d", len(key))
+	}
+	repeated, err := initializationEnvironment([]byte(initial), options, "other-csrf", "other-metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if environmentValues(repeated)["LEAPVIEW_AGENT_CREDENTIAL_KEY"] != key {
+		t.Fatal("initialization rotated the credential encryption key")
+	}
+}

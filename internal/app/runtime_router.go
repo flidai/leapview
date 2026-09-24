@@ -1622,7 +1622,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		var err error
 		routes.adminModule, err = adminmodule.Build(ctx, adminmodule.Config{
-			Access: accessReader,
+			PlatformAdmin: routes.accessModule.IsPlatformAdmin,
+			Access:        accessReader,
 			AgentDetails: func(ctx context.Context) (agentmodule.AdminAgentResponse, error) {
 				return routes.agentModule.HTTP().AdminDetails(ctx)
 			},

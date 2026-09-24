@@ -645,17 +645,25 @@ func (h *Handler) GetAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	var signals adminAgentCommandSignals
 	if err := pagestream.ReadSignals(r, &signals); err != nil {
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
 		return
 	}
-	input := api.AdminAgentConfigPatchRequest{SystemPrompt: signals.SystemPrompt}
+	input := signals.AdminAgentCommand
+	if input.SystemPrompt == nil {
+		input.SystemPrompt = signals.SystemPrompt
+	}
 	if input.SystemPrompt == nil {
 		input.SystemPrompt = signals.AdminAgentCommand.SystemPrompt
 	}
 	auditInput := ""
-	if input.SystemPrompt != nil {
+	if input.Provider != nil || input.RestoreRevision > 0 {
+		auditInput = "provider-configuration"
+	} else if input.SystemPrompt != nil {
 		auditInput = *input.SystemPrompt
 	}
 	ctx, err := beginUICommandInvocation(r, agentgen.GenUIActionUpdateAgentConfig(), nil, "", auditInput, "")
@@ -705,6 +713,10 @@ func (h *Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Requ
 }
 
 func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request, input api.AdminAgentConfigPatchRequest) {
+	if input.Provider != nil || input.RestoreRevision > 0 {
+		h.updateProviderConfig(w, r, input)
+		return
+	}
 	current, err := h.AdminDetails(r.Context())
 	if err != nil {
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("unavailable", err))
@@ -759,8 +771,8 @@ func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 	writeJSON(w, stdhttp.StatusOK, agentConfigResponse(details))
 }
 
-func agentResourceETag(value any) string {
-	token, err := apigencommand.RevisionToken(value)
+func agentResourceETag(value api.AdminAgentResponse) string {
+	token, err := api.AgentConfigRevision(value)
 	if err != nil {
 		return ""
 	}
@@ -769,10 +781,23 @@ func agentResourceETag(value any) string {
 
 func agentConfigResponse(details api.AdminAgentResponse) agentgen.GenSchemaAgentConfigResponse {
 	response := agentgen.GenSchemaAgentConfigResponse{
-		Configured:   details.Configured,
-		Enabled:      details.Enabled,
-		Status:       details.Status,
-		SystemPrompt: details.SystemPrompt,
+		Configured:            details.Configured,
+		Enabled:               details.Enabled,
+		Status:                details.Status,
+		SystemPrompt:          details.SystemPrompt,
+		ConfigurationRevision: details.ConfigurationRevision, AdminManaged: details.AdminManaged, CredentialConfigured: details.CredentialConfigured, ConfigurationAvailable: details.ConfigurationAvailable,
+	}
+	if details.BaseURL != "" {
+		response.BaseUrl = &details.BaseURL
+	}
+	if details.APIMode != "" {
+		response.ApiMode = &details.APIMode
+	}
+	if details.TestToken != "" {
+		response.TestToken = &details.TestToken
+	}
+	if details.TestMessage != "" {
+		response.TestMessage = &details.TestMessage
 	}
 	if details.Model != "" {
 		response.Model = &details.Model
@@ -793,6 +818,22 @@ func (h *Handler) AdminDetails(ctx context.Context) (api.AdminAgentResponse, err
 	}
 	out := api.AdminAgentResponse{SystemPrompt: prompt, Status: string(agent.AgentRuntimeDisabled)}
 	if h.options.Service != nil {
+		if manager := h.options.Service.ConfigurationManager(); manager != nil {
+			if err := manager.Refresh(ctx); err != nil {
+				h.options.Service.ReportRuntimeConfigError()
+				return out, err
+			}
+			c := h.options.Service.DeploymentConfig()
+			out.BaseURL, out.APIMode, out.ConfigurationRevision = c.NormalizedBaseURL(), c.APIMode, c.Revision
+			out.ConfigurationAvailable, out.AdminManaged = true, c.Revision > 0
+			out.CredentialConfigured = h.options.Service.HasProviderCredential()
+			if out.APIMode == "" {
+				out.APIMode = "chat-completions"
+				if strings.Contains(strings.ToLower(c.Model), "gpt-6-luna") {
+					out.APIMode = "responses"
+				}
+			}
+		}
 		status := h.options.Service.RuntimeStatus()
 		out.Configured, out.Enabled = status.Configured, status.Enabled
 		out.Status, out.StatusDetail = string(status.State), status.Detail
@@ -864,10 +905,8 @@ func (h *Handler) SystemPrompt(ctx context.Context) (string, error) {
 }
 
 type adminAgentCommandSignals struct {
-	SystemPrompt      *string `json:"systemPrompt"`
-	AdminAgentCommand struct {
-		SystemPrompt *string `json:"systemPrompt"`
-	} `json:"adminAgentCommand"`
+	SystemPrompt      *string                          `json:"systemPrompt"`
+	AdminAgentCommand api.AdminAgentConfigPatchRequest `json:"adminAgentCommand"`
 }
 
 func agentCredentialScope(credential access.APICredential) agent.CredentialScope {

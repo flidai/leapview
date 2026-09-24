@@ -190,7 +190,7 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
   }
 })
 
-test('agent settings makes deployment ownership and mobile tools layout explicit', async () => {
+test('agent settings makes admin permissions and mobile tools layout explicit', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 760 } })
   try {
     await page.goto(baseURL)
@@ -223,7 +223,7 @@ test('agent settings makes deployment ownership and mobile tools layout explicit
     expect(state.text).toContain('Read-only')
     expect(state.text).toContain('Not configured')
     expect(state.hasStatusControl).toBe(false)
-    expect(state.text).toContain('Deployment managed')
+    expect(state.text).toContain('Only a LeapView platform admin')
     expect(state.managedBadge).toBe('Deployment managed')
     expect(state.hasSharedList).toBe(true)
     expect(state.drawerModal).toBe(false)
@@ -236,3 +236,96 @@ test('agent settings makes deployment ownership and mobile tools layout explicit
 function testDocument(): string {
   return `<!doctype html><html><head><style>body { ${typographyTestTokens} --base-size-2: 2px; --base-size-4: 4px; }</style></head><body><lv-agent-settings></lv-agent-settings><script type="module" src="/agent-settings.js"></script></body></html>`
 }
+
+test('admin model configuration requires testing and invalidates tests after edits', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-agent-settings'))
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { configured: true, enabled: true, status: 'enabled', model: 'model-a', baseUrl: 'https://provider.example/v1', apiMode: 'responses', reasoningEffort: '', revision: '"r0"', configurationRevision: 0, adminManaged: false, credentialConfigured: true, configurationAvailable: true, canWrite: true, systemPrompt: '', tools: [], updatePath: '/admin/agent/config' }
+      await element.updateComplete
+      ;(window as any).agentCommands = []
+      element.addEventListener('lv-agent-config-command', (event: CustomEvent) => { (window as any).agentCommands.push(event.detail) })
+    })
+    const settings = page.locator('lv-agent-provider-settings')
+    await expect(settings.getByRole('button', { name: 'Save and activate' }).isDisabled()).resolves.toBe(true)
+    await settings.getByRole('button', { name: 'Test connection' }).click()
+    let commands = await page.evaluate(() => (window as any).agentCommands)
+    expect(commands[0].action).toBe('test')
+    expect(commands[0].provider.model).toBe('model-a')
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { ...element.agent, testToken: 'test-token-1', testMessage: 'Connection verified.' }
+      await element.updateComplete
+    })
+    await expect(settings.getByRole('button', { name: 'Save and activate' }).isEnabled()).resolves.toBe(true)
+    await settings.getByLabel('Model identifier').fill('model-b')
+    await expect(settings.getByRole('button', { name: 'Save and activate' }).isDisabled()).resolves.toBe(true)
+    await settings.getByLabel('Replace API key').fill('private-new-key')
+    await settings.getByRole('button', { name: 'Test connection' }).click()
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { ...element.agent, testToken: 'test-token-2' }
+      await element.updateComplete
+    })
+    await settings.getByRole('button', { name: 'Save and activate' }).click()
+    commands = await page.evaluate(() => (window as any).agentCommands)
+    expect(commands.at(-1).provider.model).toBe('model-b')
+    expect(commands.at(-1).testToken).toBe('test-token-2')
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { ...element.agent, model: 'model-b', configurationRevision: 1, adminManaged: true, testToken: '', testMessage: 'Configuration saved and activated.' }
+      await element.updateComplete
+    })
+    expect(await settings.getByLabel('Replace API key').inputValue()).toBe('')
+  } finally { await page.close() }
+})
+
+test('configuration draft retains its original revision when another admin saves', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-agent-settings'))
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { canWrite: true, configurationAvailable: true, enabled: true, configured: true, model: 'model-a', baseUrl: 'https://provider.example', apiMode: 'responses', configurationRevision: 1, status: 'enabled', revision: '"r1"', systemPrompt: '', tools: [], updatePath: '/admin/agent/config' }
+      await element.updateComplete
+      await element.shadowRoot.querySelector('lv-agent-provider-settings').updateComplete
+      element.agent = { ...element.agent, configurationRevision: 2, model: 'another-admin-model' }
+      await element.updateComplete
+      element.addEventListener('lv-agent-config-command', (event: CustomEvent) => { (window as any).draftCommand = event.detail })
+    })
+    await page.locator('lv-agent-provider-settings').getByRole('button', { name: 'Test connection' }).click()
+    const command = await page.evaluate(() => (window as any).draftCommand)
+    expect(command.expectedRevision).toBe(1)
+    expect(command.provider.model).toBe('model-a')
+  } finally { await page.close() }
+})
+
+test('reasoning choices follow protocol and model when switching providers', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-agent-settings'))
+    await page.locator('lv-agent-settings').evaluate((element: any) => {
+      element.agent = { canWrite: true, configurationAvailable: true, enabled: true, model: 'model-a', apiMode: 'responses', reasoningEffort: 'high', configurationRevision: 0, tools: [] }
+      element.addEventListener('lv-agent-config-command', (event: CustomEvent) => { (window as any).reasoningCommand = event.detail })
+    })
+    const settings = page.locator('lv-agent-provider-settings')
+    await settings.locator('summary').click()
+    await settings.getByLabel('API mode').selectOption('chat-completions')
+    const reasoning = settings.getByLabel('Reasoning')
+    expect(await reasoning.locator('option').evaluateAll(options => options.map((o: any) => o.value))).toEqual([''])
+    expect(await reasoning.inputValue()).toBe('')
+    await settings.getByLabel('Provider preset').selectOption('deepseek')
+    await settings.getByLabel('Model identifier').fill('deepseek-v4-pro')
+    expect(await reasoning.inputValue()).toBe('none')
+    expect(await reasoning.locator('option').evaluateAll(options => options.map((o: any) => o.value))).toEqual(['none'])
+    await settings.getByLabel('Model identifier').fill('deepseek-chat')
+    expect(await reasoning.inputValue()).toBe('')
+    await settings.getByRole('button', { name: 'Test connection' }).click()
+    expect((await page.evaluate(() => (window as any).reasoningCommand)).provider.reasoningEffort).toBe('')
+  } finally { await page.close() }
+})
