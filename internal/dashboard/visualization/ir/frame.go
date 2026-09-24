@@ -1090,6 +1090,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 	ids := make(map[string]struct{}, len(*base.ConditionalFormatting))
 	targets := make(map[string]struct{}, len(*base.ConditionalFormatting))
 	pointMarkFill := false
+	iconsSupported := specSupportsConditionalIcons(spec)
 	for formatIndex, format := range *base.ConditionalFormatting {
 		if strings.TrimSpace(format.ID) == "" {
 			return fmt.Errorf("conditional formatting ID is required")
@@ -1140,7 +1141,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 				position string
 				style    VisualizationConditionalStyle
 			}{{"low", rule.Low}, {"high", rule.High}, {"null", rule.NullStyle}} {
-				if err := validateVisualizationConditionalStyle(named.style, false); err != nil {
+				if err := validateVisualizationConditionalStyle(named.style, false, iconsSupported, base.Kind); err != nil {
 					return fmt.Errorf("conditional formatting %q %s style: %w", format.ID, named.position, err)
 				}
 			}
@@ -1155,7 +1156,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 				if !finite(threshold.Value) || !validVisualizationComparisonOperator(threshold.Operator) {
 					return fmt.Errorf("conditional formatting %q rule %d is invalid", format.ID, index)
 				}
-				if err := validateVisualizationConditionalStyle(threshold.Style, true); err != nil {
+				if err := validateVisualizationConditionalStyle(threshold.Style, iconsSupported, iconsSupported, base.Kind); err != nil {
 					return fmt.Errorf("conditional formatting %q rule %d style: %w", format.ID, index, err)
 				}
 			}
@@ -1164,7 +1165,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 				style        VisualizationConditionalStyle
 				redundantCue bool
 			}{{"null", rule.NullStyle, false}, {"default", rule.DefaultStyle, true}} {
-				if err := validateVisualizationConditionalStyle(named.style, named.redundantCue); err != nil {
+				if err := validateVisualizationConditionalStyle(named.style, named.redundantCue && iconsSupported, iconsSupported, base.Kind); err != nil {
 					return fmt.Errorf("conditional formatting %q %s style: %w", format.ID, named.position, err)
 				}
 			}
@@ -1193,7 +1194,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 				if strings.TrimSpace(value) == "" {
 					return fmt.Errorf("conditional formatting %q has an empty field value", format.ID)
 				}
-				if err := validateVisualizationConditionalStyle(rule.Values[value], true); err != nil {
+				if err := validateVisualizationConditionalStyle(rule.Values[value], iconsSupported, iconsSupported, base.Kind); err != nil {
 					return fmt.Errorf("conditional formatting %q value %q style: %w", format.ID, value, err)
 				}
 			}
@@ -1202,7 +1203,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 				style        VisualizationConditionalStyle
 				redundantCue bool
 			}{{"null", rule.NullStyle, false}, {"default", rule.DefaultStyle, true}} {
-				if err := validateVisualizationConditionalStyle(named.style, named.redundantCue); err != nil {
+				if err := validateVisualizationConditionalStyle(named.style, named.redundantCue && iconsSupported, iconsSupported, base.Kind); err != nil {
 					return fmt.Errorf("conditional formatting %q %s style: %w", format.ID, named.position, err)
 				}
 			}
@@ -1414,6 +1415,15 @@ func specSupportsConditionalFormatting(spec VisualizationSpec) bool {
 	}
 }
 
+func specSupportsConditionalIcons(spec VisualizationSpec) bool {
+	switch spec.Value.(type) {
+	case *PointVisualizationSpec, *KPIVisualizationSpec, *TableVisualizationSpec, *MatrixVisualizationSpec, *PivotVisualizationSpec:
+		return true
+	default:
+		return false
+	}
+}
+
 func validateConditionalFormattingTarget(kind string, format VisualizationConditionalFormat) error {
 	switch format.Target {
 	case VisualizationConditionalTargetMarkFill,
@@ -1452,6 +1462,11 @@ func validateConditionalFormattingTarget(kind string, format VisualizationCondit
 			return fmt.Errorf("target %q is incompatible with %s visualizations", format.Target, kind)
 		}
 		return nil
+	case "cartesian":
+		if format.Target != VisualizationConditionalTargetMarkFill && format.Target != VisualizationConditionalTargetSeriesColor && format.Target != VisualizationConditionalTargetLabelForeground {
+			return fmt.Errorf("target %q is incompatible with cartesian visualizations", format.Target)
+		}
+		return nil
 	}
 
 	switch format.Target {
@@ -1487,7 +1502,7 @@ func numericVisualizationField(field VisualizationField) bool {
 	return field.DataType == VisualizationDataTypeInteger || field.DataType == VisualizationDataTypeDecimal || field.DataType == VisualizationDataTypeFloat
 }
 
-func validateVisualizationConditionalStyle(style VisualizationConditionalStyle, redundantCue bool) error {
+func validateVisualizationConditionalStyle(style VisualizationConditionalStyle, redundantCue, iconsSupported bool, kind string) error {
 	if style.Color == nil && style.Icon == nil {
 		return fmt.Errorf("style requires color or icon")
 	}
@@ -1496,6 +1511,9 @@ func validateVisualizationConditionalStyle(style VisualizationConditionalStyle, 
 	}
 	if style.Icon != nil && !validVisualizationIconIntent(*style.Icon) {
 		return fmt.Errorf("unsupported icon intent %q", *style.Icon)
+	}
+	if style.Icon != nil && !iconsSupported {
+		return fmt.Errorf("icon cues are not rendered by %s visualizations; remove style.icon", kind)
 	}
 	if redundantCue && style.Color != nil && style.Icon == nil {
 		return fmt.Errorf("data-driven color requires a redundant icon cue")

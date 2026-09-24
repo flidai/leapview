@@ -211,15 +211,17 @@ All entries below describe renderer-neutral compiled contracts. Unsupported comb
 Conditional-format targets are closed by visual family. Point visuals accept only
 `mark_fill`; its field must be one of the rendered `x`, `y`, `size`, `color`,
 `label`, or tooltip channels, and the icon cue is rendered as the point symbol.
-Supported Cartesian marks retain `mark_fill`, `series_color`, `label_foreground`,
-and `icon`. KPI accepts `visual_background` and `kpi_value`, both bound to the
+Supported Cartesian marks retain `mark_fill`, `series_color`, and `label_foreground`.
+KPI accepts `visual_background` and `kpi_value`, both bound to the
 current `value` field, while table, matrix, and pivot accept `cell_foreground`,
 `cell_background`, and `icon`. Proportional visuals (`pie`, `donut`, and
 `funnel`) currently accept `mark_fill` and `series_color`, both bound to the
-`value` field; authored icon cues are rendered in sector labels. Cartesian
+`value` field. Point, KPI, table, matrix, and pivot styles support renderer-neutral
+icon cues; Cartesian and proportional styles reject icons because those families
+do not render them. Cartesian
 conditional formatting is mark-aware across its supported marks.
 Row-level mark stroke variation is not part of the rendering contract; use
-`mark_fill` or a label/icon cue instead.
+`mark_fill` or a label cue instead.
 
 Decision-context field references use stable dataset and field identities. Gradient domains, rule order, null/default outcomes, series order, colors, scale domains, zero policies, units, and tick density are explicit in the compiled IR. Bound titles, subtitles, descriptions, summaries, reference values, and accessibility text recompute when filters or data revisions change and use authored fallbacks when governed data is empty.
 

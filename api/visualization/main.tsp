@@ -665,6 +665,7 @@ model VisualizationEventAnnotation {
 
 model VisualizationConditionalStyle {
   `color`?: VisualizationColorIntent;
+  /** Supported by point, KPI, table, matrix, and pivot visuals. */
   `icon`?: VisualizationIconIntent;
 }
 

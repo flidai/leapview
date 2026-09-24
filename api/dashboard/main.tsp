@@ -595,6 +595,7 @@ model DashboardSeriesIntent {
 /** A renderer-neutral color or icon intent applied by a conditional rule. */
 model DashboardConditionalStyle {
   color?: LeapViewVisualization.VisualizationColorIntent;
+  /** Supported by point, KPI, table, matrix, and pivot visuals. */
   icon?: LeapViewVisualization.VisualizationIconIntent;
 }
 

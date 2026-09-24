@@ -37,9 +37,8 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     Array.isArray(params.value) ? params.value[categoryIndex] : undefined,
     context,
   )
-  // Icon-only conditional outcomes intentionally have no fill color. Keep
-  // the normal, category-stable color for those rows instead of suppressing
-  // the sector color with an undefined itemStyle callback result.
+  // Defensively retain a category color if a direct renderer caller bypasses
+  // IR validation and supplies an unsupported icon-only outcome.
   const itemColor = markFill || seriesFill
     ? conditionalColorWithFallback(markFill, conditionalColorWithFallback(seriesFill, categoryColor))
     : categoryColor

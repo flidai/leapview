@@ -439,16 +439,16 @@ spec:
             kind: field
             source: order_status
             values:
-              approved: {color: data_8, icon: circle}
-              canceled: {color: data_3, icon: warning}
-              created: {color: data_7, icon: square}
-              delivered: {color: data_1, icon: circle}
-              invoiced: {color: data_5, icon: diamond}
-              processing: {color: data_6, icon: circle}
-              shipped: {color: data_2, icon: arrow_up}
-              unavailable: {color: data_4, icon: warning}
-            nullStyle: {color: neutral, icon: square}
-            defaultStyle: {color: neutral, icon: square}
+              approved: {color: data_8}
+              canceled: {color: data_3}
+              created: {color: data_7}
+              delivered: {color: data_1}
+              invoiced: {color: data_5}
+              processing: {color: data_6}
+              shipped: {color: data_2}
+              unavailable: {color: data_4}
+            nullStyle: {color: neutral}
+            defaultStyle: {color: neutral}
       interactions:
       - type: selection
         mode: multiple
@@ -488,16 +488,16 @@ spec:
             kind: field
             source: order_status
             values:
-              approved: {color: data_8, icon: circle}
-              canceled: {color: data_3, icon: warning}
-              created: {color: data_7, icon: square}
-              delivered: {color: data_1, icon: circle}
-              invoiced: {color: data_5, icon: diamond}
-              processing: {color: data_6, icon: circle}
-              shipped: {color: data_2, icon: arrow_up}
-              unavailable: {color: data_4, icon: warning}
-            nullStyle: {color: neutral, icon: square}
-            defaultStyle: {color: neutral, icon: square}
+              approved: {color: data_8}
+              canceled: {color: data_3}
+              created: {color: data_7}
+              delivered: {color: data_1}
+              invoiced: {color: data_5}
+              processing: {color: data_6}
+              shipped: {color: data_2}
+              unavailable: {color: data_4}
+            nullStyle: {color: neutral}
+            defaultStyle: {color: neutral}
       interactions:
       - type: selection
         mode: multiple
@@ -621,16 +621,16 @@ spec:
             kind: field
             source: order_status
             values:
-              approved: {color: data_8, icon: circle}
-              canceled: {color: data_3, icon: warning}
-              created: {color: data_7, icon: square}
-              delivered: {color: data_1, icon: circle}
-              invoiced: {color: data_5, icon: diamond}
-              processing: {color: data_6, icon: circle}
-              shipped: {color: data_2, icon: arrow_up}
-              unavailable: {color: data_4, icon: warning}
-            nullStyle: {color: neutral, icon: square}
-            defaultStyle: {color: neutral, icon: square}
+              approved: {color: data_8}
+              canceled: {color: data_3}
+              created: {color: data_7}
+              delivered: {color: data_1}
+              invoiced: {color: data_5}
+              processing: {color: data_6}
+              shipped: {color: data_2}
+              unavailable: {color: data_4}
+            nullStyle: {color: neutral}
+            defaultStyle: {color: neutral}
     - id: status_delivery_flow
       type: sankey
       query:

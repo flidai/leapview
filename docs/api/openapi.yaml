@@ -68558,6 +68558,7 @@ components:
           $ref: '#/components/schemas/VisualizationColorIntent'
         icon:
           $ref: '#/components/schemas/VisualizationIconIntent'
+          description: Supported by point, KPI, table, matrix, and pivot visuals.
       description: A renderer-neutral color or icon intent applied by a conditional
         rule.
       example:
@@ -84963,6 +84964,7 @@ components:
           $ref: '#/components/schemas/VisualizationColorIntent'
         icon:
           $ref: '#/components/schemas/VisualizationIconIntent'
+          description: Supported by point, KPI, table, matrix, and pivot visuals.
       example:
         color: accent
         icon: circle

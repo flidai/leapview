@@ -633,7 +633,8 @@
           "$ref": "#/$defs/VisualizationColorIntent"
         },
         "icon": {
-          "$ref": "#/$defs/VisualizationIconIntent"
+          "$ref": "#/$defs/VisualizationIconIntent",
+          "description": "Supported by point, KPI, table, matrix, and pivot visuals."
         }
       },
       "type": "object",

@@ -9,10 +9,6 @@ func TestValidateSpecEnforcesGovernedConditionalFormatting(t *testing.T) {
 	t.Parallel()
 
 	color := func(value VisualizationColorIntent) *VisualizationColorIntent { return &value }
-	icon := func(value VisualizationIconIntent) *VisualizationIconIntent { return &value }
-	style := func(colorValue VisualizationColorIntent, iconValue VisualizationIconIntent) VisualizationConditionalStyle {
-		return VisualizationConditionalStyle{Color: color(colorValue), Icon: icon(iconValue)}
-	}
 	valid := func() VisualizationSpec {
 		formats := []VisualizationConditionalFormat{
 			{
@@ -27,14 +23,14 @@ func TestValidateSpecEnforcesGovernedConditionalFormatting(t *testing.T) {
 				}},
 			},
 			{
-				ID: "status-values", Target: VisualizationConditionalTargetIcon,
+				ID: "status-values", Target: VisualizationConditionalTargetLabelForeground,
 				Field: VisualizationFieldRef{Dataset: "primary", Field: "revenue"},
 				Rule: VisualizationConditionalRule{Value: &FieldVisualizationConditionalRule{
 					VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "field"}, Kind: "field",
 					Source:       VisualizationFieldRef{Dataset: "primary", Field: "status"},
-					Values:       map[string]VisualizationConditionalStyle{"late": style(VisualizationColorIntentDanger, VisualizationIconIntentWarning)},
-					NullStyle:    VisualizationConditionalStyle{Icon: icon(VisualizationIconIntentWarning)},
-					DefaultStyle: style(VisualizationColorIntentInk, VisualizationIconIntentCircle),
+					Values:       map[string]VisualizationConditionalStyle{"late": {Color: color(VisualizationColorIntentDanger)}},
+					NullStyle:    VisualizationConditionalStyle{Color: color(VisualizationColorIntentNeutral)},
+					DefaultStyle: VisualizationConditionalStyle{Color: color(VisualizationColorIntentInk)},
 				}},
 			},
 		}
@@ -114,7 +110,6 @@ func TestValidateSpecEnforcesGovernedConditionalFormatting(t *testing.T) {
 func TestValidateSpecAllowsGovernedProportionalCategoryColors(t *testing.T) {
 	t.Parallel()
 	data1 := VisualizationColorIntentData1
-	circle := VisualizationIconIntentCircle
 	formats := []VisualizationConditionalFormat{{
 		ID: "status-colors", Target: VisualizationConditionalTargetSeriesColor,
 		Field: VisualizationFieldRef{Dataset: "primary", Field: "orders"},
@@ -122,10 +117,10 @@ func TestValidateSpecAllowsGovernedProportionalCategoryColors(t *testing.T) {
 			VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "field"}, Kind: "field",
 			Source: VisualizationFieldRef{Dataset: "primary", Field: "status"},
 			Values: map[string]VisualizationConditionalStyle{
-				"delivered": {Color: &data1, Icon: &circle},
+				"delivered": {Color: &data1},
 			},
-			NullStyle:    VisualizationConditionalStyle{Color: &data1, Icon: &circle},
-			DefaultStyle: VisualizationConditionalStyle{Color: &data1, Icon: &circle},
+			NullStyle:    VisualizationConditionalStyle{Color: &data1},
+			DefaultStyle: VisualizationConditionalStyle{Color: &data1},
 		}},
 	}}
 	base := VisualizationSpecBase{
@@ -148,6 +143,74 @@ func TestValidateSpecAllowsGovernedProportionalCategoryColors(t *testing.T) {
 	}}
 	if err := ValidateSpec(spec); err != nil {
 		t.Fatalf("valid proportional conditional formatting: %v", err)
+	}
+}
+
+func TestValidateSpecRejectsConditionalIconsOutsideRenderingFamilies(t *testing.T) {
+	t.Parallel()
+
+	ref := func(field string) VisualizationFieldRef {
+		return VisualizationFieldRef{Dataset: "primary", Field: field}
+	}
+	color := VisualizationColorIntentData1
+	icon := VisualizationIconIntentCircle
+	format := VisualizationConditionalFormat{
+		ID: "status-colors", Target: VisualizationConditionalTargetSeriesColor, Field: ref("value"),
+		Rule: VisualizationConditionalRule{Value: &FieldVisualizationConditionalRule{
+			VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "field"}, Kind: "field", Source: ref("status"),
+			Values: map[string]VisualizationConditionalStyle{
+				"delivered": {Color: &color, Icon: &icon},
+			},
+			NullStyle:    VisualizationConditionalStyle{Color: &color},
+			DefaultStyle: VisualizationConditionalStyle{Color: &color},
+		}},
+	}
+	base := func(kind string) VisualizationSpecBase {
+		formats := []VisualizationConditionalFormat{format}
+		return VisualizationSpecBase{
+			Kind: kind, Title: "Orders by status",
+			Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+				{ID: "status", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Status"},
+				{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeInteger, Label: "Orders"},
+			}}},
+			DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+			Accessibility: VisualizationAccessibility{Title: "Orders by status", Description: "Order status"},
+			Interactions:  []VisualizationInteraction{}, ConditionalFormatting: &formats,
+		}
+	}
+	presentation := testVisualizationPresentation(VisualizationLegendPositionBottom)
+	tests := []struct {
+		name string
+		spec VisualizationSpec
+	}{
+		{
+			name: "cartesian",
+			spec: VisualizationSpec{Value: &CartesianVisualizationSpec{
+				VisualizationSpecBase: base("cartesian"), Kind: "cartesian", Mark: VisualizationCartesianMarkColumn,
+				X: ref("status"), Y: []VisualizationFieldRef{ref("value")},
+				Presentation: CartesianVisualizationPresentation{VisualizationPresentation: presentation},
+			}},
+		},
+		{
+			name: "proportional",
+			spec: VisualizationSpec{Value: &ProportionalVisualizationSpec{
+				VisualizationSpecBase: base("proportional"), Kind: "proportional", Mark: VisualizationProportionalMarkDonut,
+				Category: ref("status"), Value: ref("value"),
+				Presentation: ProportionalVisualizationPresentation{VisualizationPresentation: presentation},
+			}},
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateSpec(test.spec)
+			want := "icon cues are not rendered by " + test.name + " visualizations; remove style.icon"
+			if err == nil || !strings.Contains(err.Error(), `conditional formatting "status-colors" value "delivered" style`) || !strings.Contains(err.Error(), want) {
+				t.Fatalf("ValidateSpec() error = %v, want path-bearing unsupported-icon diagnostic", err)
+			}
+		})
 	}
 }
 
@@ -292,7 +355,6 @@ func TestValidateConditionalFormattingTargetAllowlists(t *testing.T) {
 		{kind: "cartesian", allowed: []VisualizationConditionalTarget{
 			VisualizationConditionalTargetMarkFill,
 			VisualizationConditionalTargetSeriesColor, VisualizationConditionalTargetLabelForeground,
-			VisualizationConditionalTargetIcon,
 		}},
 	}
 	for _, test := range tests {

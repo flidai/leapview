@@ -305,6 +305,31 @@ func TestCompileVisualsValidatesProportionalConditionalFormattingTargets(t *test
 	}
 }
 
+func TestCompileVisualsRejectsUnrenderedProportionalConditionalIcons(t *testing.T) {
+	t.Parallel()
+
+	color := visualizationir.VisualizationColorIntentData1
+	icon := visualizationir.VisualizationIconIntentCircle
+	visual := proportionalDashboardVisual(visualizationir.VisualizationConditionalTargetSeriesColor)
+	proportional := visual.Presentation.Value.(*document.ProportionalDashboardPresentation)
+	proportional.ConditionalFormatting = &[]document.DashboardConditionalFormat{{
+		ID: "state-colors", Target: visualizationir.VisualizationConditionalTargetSeriesColor, Field: "revenue",
+		Rule: document.DashboardConditionalRule{Value: &document.DashboardFieldConditionalRule{
+			DashboardConditionalRuleBase: document.DashboardConditionalRuleBase{Kind: "field"}, Kind: "field", Source: "state",
+			Values: map[string]document.DashboardConditionalStyle{
+				"CA": {Color: &color, Icon: &icon},
+			},
+			NullStyle:    document.DashboardConditionalStyle{Color: &color},
+			DefaultStyle: document.DashboardConditionalStyle{Color: &color},
+		}},
+	}}
+
+	_, err := (dashboardCompileContext{model: dashboardQueryTestModel(), modelID: "sales"}).compileVisuals(map[string]document.DashboardVisual{"orders-share": visual})
+	if err == nil || !strings.Contains(err.Error(), `visual "orders-share" IR`) || !strings.Contains(err.Error(), `conditional formatting "state-colors" value "CA" style`) || !strings.Contains(err.Error(), "remove style.icon") {
+		t.Fatalf("compileVisuals() error = %v, want visual, conditional-format, value, and style path", err)
+	}
+}
+
 func TestCompileVisualsRejectsConditionalFormattingTargetOutsideRenderedChannel(t *testing.T) {
 	format := pointGradientFormat("state", visualizationir.VisualizationConditionalTargetMarkFill)
 	visual := document.DashboardVisual{
