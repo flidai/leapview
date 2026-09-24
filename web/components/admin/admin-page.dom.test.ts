@@ -290,6 +290,7 @@ test('security settings use a unified session list, focused password dialog, and
         currentAction: root.querySelector('.security-session-table tr.is-current .session-action')?.textContent?.trim(),
         sessionActions: [root.querySelector('[data-logout-all]')?.textContent?.trim(), otherRow.querySelector('.session-action')?.textContent?.trim()],
         authoringText: Array.from(root.querySelectorAll('.security-session-table tbody tr')).find((row) => row.textContent?.includes('LeapView CLI'))?.textContent?.replace(/\s+/g, ' ').trim(),
+        authoringKind: Array.from(root.querySelectorAll('.security-session-table tbody tr')).find((row) => row.textContent?.includes('LeapView CLI'))?.querySelector('.security-session-kind')?.textContent?.trim(),
         passwordInputsBeforeOpen,
         passwordDialogOpened,
         passwordDialogClosed: !root.querySelector('[data-password-dialog]'),
@@ -311,6 +312,7 @@ test('security settings use a unified session list, focused password dialog, and
     expect(state.currentAction).toBe('Sign out')
     expect(state.sessionActions).toEqual(['Log out all', 'Revoke'])
     expect(state.authoringText).toContain('LeapView CLI')
+    expect(state.authoringKind).toBe('CLI')
     expect(state.authoringText).toContain('sales')
     expect(state.authoringText).toContain('Resource read')
     expect(state.passwordInputsBeforeOpen).toBe(0)

@@ -122,7 +122,7 @@ func TestServiceLoadBuildsPersonalSettingsSignal(t *testing.T) {
 	repo := &fakeRepository{
 		principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser, Email: "user@example.com", DisplayName: "User"},
 		identity:  access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal, HasLocalPassword: true},
-		sessions:  []access.Session{{ID: "browser-1", Kind: access.SessionKindBrowser, CreatedAt: "today"}, {ID: "desktop-1", Kind: access.SessionKindDesktop, ClientID: "LeapView Desktop"}},
+		sessions:  []access.Session{{ID: "browser-1", Kind: access.SessionKindBrowser, ClientLabel: "Chrome on Windows", CreatedAt: "today"}, {ID: "desktop-1", Kind: access.SessionKindDesktop, ClientID: "leapview-desktop"}},
 		tokens: []access.APIToken{
 			{ID: "token-1", Name: "CI", Capabilities: []access.Capability{access.CapabilityResourceRead}},
 			{ID: "token-revoked", Name: "Old CI", RevokedAt: "yesterday"},
@@ -146,6 +146,12 @@ func TestServiceLoadBuildsPersonalSettingsSignal(t *testing.T) {
 	}
 	if !state.Security.Sessions[1].Current || state.Security.Sessions[1].ClientLabel != "LeapView Desktop" {
 		t.Fatalf("sessions = %#v", state.Security.Sessions)
+	}
+	if state.Security.Sessions[0].ClientLabel != "Chrome on Windows" {
+		t.Fatalf("browser session label = %q", state.Security.Sessions[0].ClientLabel)
+	}
+	if state.Security.AuthoringSessions[0].ClientID != "LeapView CLI" {
+		t.Fatalf("authoring session label = %q", state.Security.AuthoringSessions[0].ClientID)
 	}
 	if len(state.Security.AuthoringSessions) != 1 || state.Security.AuthoringSessions[0].Capabilities[0] != string(access.CapabilityResourcePublish) {
 		t.Fatalf("authoring sessions = %#v", state.Security.AuthoringSessions)
