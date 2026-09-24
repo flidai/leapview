@@ -448,7 +448,7 @@ test('ECharts preserves conditional icon and label color on percent-stack labels
 
 test('ECharts translation emits one multi-value financial series', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'ohlc', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'ohlc', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'OHLC', mark: 'candlestick',
       datasets: [{ id: 'primary', fields: ['label', 'open', 'close', 'low', 'high'].map((id, index) => ({ id, role: index ? 'metric' : 'dimension', dataType: index ? 'decimal' : 'string', nullable: false, label: id })) }],
@@ -474,7 +474,7 @@ test('ECharts translation emits one multi-value financial series', () => {
 
 test('ECharts candlestick colors use authored intents and a neutral equal-value fallback', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'ohlc-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'ohlc-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'OHLC', mark: 'candlestick',
       datasets: [{ id: 'primary', fields: ['label', 'open', 'close', 'low', 'high'].map((id, index) => ({ id, role: index ? 'metric' : 'dimension', dataType: index ? 'decimal' : 'string', nullable: false, label: id })) }],
@@ -523,7 +523,7 @@ test('ECharts candlestick colors use authored intents and a neutral equal-value 
 
 test('ECharts renders candlestick colors in large mode, including equal-value neutral strokes', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'ohlc-large-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'ohlc-large-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'OHLC', mark: 'candlestick',
       datasets: [{ id: 'primary', fields: ['label', 'open', 'close', 'low', 'high'].map((id, index) => ({ id, role: index ? 'metric' : 'dimension', dataType: index ? 'decimal' : 'string', nullable: false, label: id })) }],
@@ -574,7 +574,7 @@ test('ECharts keeps exact decimal candlestick direction in normal rendering abov
   ]
   for (let index = rows.length; index < 601; index++) rows.push([String(index), 1, 2, 0, 3])
   const envelope = {
-    schemaVersion: 9, visualID: 'ohlc-exact-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'ohlc-exact-colors', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'OHLC', mark: 'candlestick',
       datasets: [{ id: 'primary', fields: ['label', 'open', 'close', 'low', 'high'].map((id, index) => ({ id, role: index ? 'metric' : 'dimension', dataType: index ? 'decimal' : 'string', nullable: true, label: id })) }],
@@ -623,7 +623,7 @@ function cartesianFixture(mark: string, columns = ['label', 'value']): Visualiza
   const y = columns.slice(1).map((field) => ({ dataset: 'primary', field }))
   const row = columns.map((id, index) => index === 0 ? 'A' : id === 'row' ? 'R1' : index)
   return {
-    schemaVersion: 9, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: { kind: 'cartesian', title: mark, mark, datasets: [{ id: 'primary', fields }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], x: { dataset: 'primary', field: 'label' }, y, presentation: { legend: 'bottom', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: true, stacked: true, showSymbols: false, dataZoom: true, area: mark === 'area', step: true, symbolSize: 12, labelPosition: 'top', orientation: mark === 'bar' ? 'horizontal' : 'vertical', histogramBins: mark === 'histogram' ? 10 : undefined } },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns, rows: [row], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as unknown as VisualizationEnvelope
@@ -631,7 +631,7 @@ function cartesianFixture(mark: string, columns = ['label', 'value']): Visualiza
 
 function cartesianSeriesFixture(): VisualizationEnvelope {
   return {
-    schemaVersion: 9, visualID: 'series', rendererID: 'echarts', specRevision: 'sha256:series', dataRevision: 1,
+    schemaVersion: 14, visualID: 'series', rendererID: 'echarts', specRevision: 'sha256:series', dataRevision: 1,
     spec: {
       kind: 'cartesian', title: 'Orders', mark: 'area',
       datasets: [{ id: 'primary', fields: [

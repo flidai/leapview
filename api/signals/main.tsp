@@ -1,4 +1,5 @@
 import "@yacobolo/apigen";
+import "../exploration/main.tsp";
 import "../dashboard/main.tsp";
 import "../visualization/main.tsp";
 import "./personal-settings.tsp";
@@ -24,6 +25,84 @@ enum RouteKind {
   data: "data",
   admin: "admin",
   login: "login",
+}
+
+/** Metadata-only saved-exploration lifecycle projection for browser lists. */
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationRevisionSignal {
+  `revisionId`: string;
+  `number`: int64;
+  `contentHash`: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationListItemSignal {
+  `id`: string;
+  `title`: string;
+  `slug`: string;
+  `visibility`: "private" | "organization";
+  `status`: "active" | "archived";
+  `semanticModelId`: string;
+  `createdAt`: utcDateTime;
+  `updatedAt`: utcDateTime;
+  `archivedAt`?: utcDateTime;
+  `revision`: SavedExplorationRevisionSignal;
+}
+
+/** The selected resource is metadata-only until an explicit reopen command. */
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationCurrentSignal {
+  `id`: string;
+  `title`: string;
+  `slug`: string;
+  `visibility`: "private" | "organization";
+  `status`: "active" | "archived";
+  `semanticModelId`: string;
+  `revision`: SavedExplorationRevisionSignal;
+  `detached`: boolean;
+  `spec`?: LeapViewExploration.ExplorationSpec;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "command"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationCommandSignal {
+  `action`: "create" | "update" | "duplicate" | "archive" | "reopen";
+  `explorationId`?: string;
+  `sourceExplorationId`?: string;
+  `title`?: string;
+  `slug`?: string;
+  `visibility`?: "private" | "organization";
+  `spec`?: LeapViewExploration.ExplorationSpec;
+  `expectedRevision`?: SavedExplorationRevisionSignal;
+  `expectedSourceRevision`?: SavedExplorationRevisionSignal;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationSaveStateSignal {
+  `state`: "saved" | "dirty" | "saving" | "error";
+  `message`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationListSignal {
+  `items`: SavedExplorationListItemSignal[];
+  `includeArchived`: boolean;
+  `selectedId`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
+model SavedExplorationStateSignal {
+  `enabled`: boolean;
+  `list`: SavedExplorationListSignal;
+  `current`?: SavedExplorationCurrentSignal;
+  `command`: SavedExplorationCommandSignal;
+  `save`: SavedExplorationSaveStateSignal;
 }
 
 /**
@@ -847,7 +926,7 @@ model AgentContextSignal {
   `pageTitle`: string;
   `modelId`: string;
   `datasetId`?: string;
-  `exploration`?: DataExploreAgentContextSignal;
+  `exploration`?: LeapViewExploration.ExplorationSpec;
   `generation`: int64;
   `filters`: DashboardFilterState;
   `referenceLimit`: int32;
@@ -1432,7 +1511,7 @@ model DashboardInteractionCommand {
 @apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard" })
 model DashboardVisualizationSignal {
-  `schemaVersion`: 4;
+  `schemaVersion`: 14;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;
@@ -1586,19 +1665,13 @@ model DataExplorerCommand {
   `visibleColumns`?: string[];
 }
 
-model DataExploreAgentContextSignal {
-  `dimensions`: string[];
-  `filters`: DataExploreFilterSignal[];
-  `limit`: int64;
-  `metrics`: string[];
-  `sort`: DataExploreSortSignal[];
-  `time`?: DataExploreTimeSignal;
-}
-
 @apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
 model DataExploreCommand {
+  `spec`: LeapViewExploration.ExplorationSpec;
   `columnWidths`?: Record<float64>;
+  // Deprecated compatibility projection. The server rebuilds these fields
+  // from spec before execution and never persists them independently.
   `datasetId`?: string;
   `dimensions`: string[];
   `filters`: DataExploreFilterSignal[];
@@ -1607,6 +1680,15 @@ model DataExploreCommand {
   `semanticModelId`?: string;
   `requestSeq`: int64;
   `resetVersion`: int64;
+  `sort`: DataExploreSortSignal[];
+  `time`?: DataExploreTimeSignal;
+}
+
+model DataExploreAgentContextSignal {
+  `dimensions`: string[];
+  `filters`: DataExploreFilterSignal[];
+  `limit`: int64;
+  `metrics`: string[];
   `sort`: DataExploreSortSignal[];
   `time`?: DataExploreTimeSignal;
 }
@@ -1731,6 +1813,8 @@ model DataExplorerPageEnvelope {
   `page`: DataExplorerPageSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
   `runtime`: RouteRuntimeSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "savedExplorations" })
+  `savedExplorations`: SavedExplorationStateSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
   `status`: DashboardStatus;
 }

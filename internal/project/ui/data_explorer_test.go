@@ -1,8 +1,8 @@
 package ui
 
 import (
+	"encoding/json"
 	"net/url"
-	"reflect"
 	"testing"
 
 	catalog "github.com/flidai/leapview/internal/project/navigation"
@@ -24,7 +24,7 @@ func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 	if context.Surface != "data" || context.ModelID != "commerce" || uisignals.ValueOrZero(context.DatasetID) != "orders" {
 		t.Fatalf("agent context = %#v", context)
 	}
-	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Metrics[0] != "order_count" {
+	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Metrics[0].Field != "order_count" {
 		t.Fatalf("agent exploration = %#v", context.Exploration)
 	}
 	if signals["agent"] == nil || signals["agentVisuals"] == nil {
@@ -46,14 +46,15 @@ func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := updates.Query()
-	if values.Get("route") != "data" || values.Get("surface") != "explore" || values.Get("mode") != "explore" || values.Get("v") != "1" {
+	if values.Get("route") != "data" || values.Get("surface") != "explore" || values.Get("mode") != "explore" || values.Get("v") != "2" {
 		t.Fatalf("routing values = %#v", values)
 	}
-	if !reflect.DeepEqual(values["dimension"], []string{"orders.month"}) || !reflect.DeepEqual(values["metric"], []string{"revenue"}) || values.Get("limit") != "250" {
-		t.Fatalf("exploration values = %#v", values)
+	var spec map[string]any
+	if err := json.Unmarshal([]byte(values.Get("state")), &spec); err != nil {
+		t.Fatalf("state = %q: %v", values.Get("state"), err)
 	}
-	if values.Get("semanticModel") != "semantic:sales" || values.Has("model") {
-		t.Fatalf("semantic model values = %#v", values)
+	if spec["modelId"] != "semantic:sales" || spec["limit"] != float64(250) || values.Has("semanticModel") || values.Has("dimension") {
+		t.Fatalf("canonical exploration values = %#v / %#v", values, spec)
 	}
 	if values.Has("requestSeq") || values.Has("resetVersion") {
 		t.Fatalf("runtime state leaked into updates URL: %#v", values)

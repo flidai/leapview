@@ -6,7 +6,7 @@ import { echartsOption } from './echarts'
 
 test('ECharts translation builds radar indicators and aligned series from typed fields', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'quality', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'quality', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'polar', title: 'Quality', mark: 'radar',
       datasets: [{ id: 'primary', fields: [
@@ -68,7 +68,7 @@ test('ECharts translation builds radar indicators and aligned series from typed 
 
 test('ECharts gauge axis labels and guides use theme contrast tokens', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'gauge', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'gauge', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'polar', title: 'Gauge', mark: 'gauge',
       datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Rate' }] }],
@@ -93,7 +93,7 @@ test('ECharts gauge axis labels and guides use theme contrast tokens', () => {
 
 test('ECharts radar keeps null, display-colliding, and typed series identities distinct', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'quality-identities', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'quality-identities', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'polar', title: 'Quality', mark: 'radar',
       datasets: [{ id: 'primary', fields: [
@@ -179,7 +179,7 @@ test('ECharts emits only mark-supported proportional fields and preserves explic
 
 function proportionalFixture(mark: 'pie' | 'donut' | 'funnel'): VisualizationEnvelope {
   return {
-    schemaVersion: 9, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: { kind: 'proportional', title: mark, mark, datasets: [{ id: 'primary', fields: [{ id: 'label', role: 'dimension', dataType: 'string', nullable: false, label: 'Label' }, { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' }] }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], category: { dataset: 'primary', field: 'label' }, value: { dataset: 'primary', field: 'value' }, presentation: { legend: 'right', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, orientation: 'vertical', rose: true, centerLabel: mark === 'donut' ? 'Orders' : undefined, labelPosition: 'outside', innerRadius: mark === 'donut' ? 0.54 : undefined, outerRadius: mark === 'donut' ? 0.76 : undefined, align: mark === 'funnel' ? 'left' : undefined, sort: mark === 'funnel' ? 'ascending' : undefined } },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [['A', 10]], completeness: 'complete' }] }, selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope

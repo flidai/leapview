@@ -77,7 +77,8 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 					"status":   {Name: "status", Type: "string", Description: "Order status"},
 				},
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"status": {Label: "Status", Type: "string", Description: "Order status"},
+					"order_id": {Type: "number", Datatype: semanticmodel.DataTypeInteger},
+					"status":   {Label: "Status", Type: "string", Datatype: semanticmodel.DataTypeString, Description: "Order status"},
 				},
 			},
 		},
@@ -126,8 +127,8 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 	if modelObject.ColumnCount != 2 || modelObject.Columns == nil || len(*modelObject.Columns) != 2 {
 		t.Fatalf("model object columns = %#v, want rich table columns", modelObject)
 	}
-	if len(projection.Fields) != 2 || projection.Fields[0].ID != "orders.status" || projection.Fields[1].ID != "order_count" {
-		t.Fatalf("fields = %#v, want dimension and metric", projection.Fields)
+	if len(projection.Fields) != 3 || projection.Fields[1].ID != "orders.status" || projection.Fields[2].ID != "order_count" {
+		t.Fatalf("fields = %#v, want dimensions and metric", projection.Fields)
 	}
 }
 
@@ -262,8 +263,10 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
-			"customers": {ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{"region": {Label: "Region"}}},
+			"orders": {ModelName: "orders", GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"status"}}}, Columns: map[string]semanticmodel.ModelColumn{"status": {Type: "string"}, "revenue": {Type: "decimal"}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status", Type: "string", Datatype: semanticmodel.DataTypeString}, "revenue": {Type: "number", Datatype: semanticmodel.DataTypeDecimal}}},
+			"customers": {ModelName: "customers", GrainEntity: "customer", Entities: map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"region"}}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"region": {Label: "Region", Type: "string", Datatype: semanticmodel.DataTypeString}}},
 		},
 		Metrics:  map[string]semanticmodel.Metric{"revenue": {Type: "aggregate", Dataset: "orders", Label: "Revenue", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}}},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
@@ -282,8 +285,8 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 	if projection.SelectedDataset == nil || projection.SelectedDataset.ID != "customers" {
 		t.Fatalf("selected dataset = %#v, want customers", projection.SelectedDataset)
 	}
-	if len(projection.Fields) != 3 {
-		t.Fatalf("fields = %#v, want two dimensions and one metric", projection.Fields)
+	if len(projection.Fields) != 4 {
+		t.Fatalf("fields = %#v, want three dimensions and one metric", projection.Fields)
 	}
 	for _, field := range projection.Fields {
 		switch field.ID {
@@ -304,16 +307,16 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				ModelName: "orders",
+				ModelName: "orders", GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"customer_id"}}},
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"customer_id": {Field: "orders.customer_id", Table: "orders"},
+					"customer_id": {Field: "orders.customer_id", Table: "orders", Type: "string", Datatype: semanticmodel.DataTypeString},
 					"status":      {Field: "orders.status", Table: "orders"},
 				},
 			},
 			"customers": {
-				ModelName: "customers",
+				ModelName: "customers", GrainEntity: "customer", Entities: map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"customer_id": {Field: "customers.customer_id", Table: "customers"},
+					"customer_id": {Field: "customers.customer_id", Table: "customers", Type: "string", Datatype: semanticmodel.DataTypeString},
 					"region":      {Field: "customers.region", Table: "customers"},
 				},
 			},
@@ -426,8 +429,10 @@ func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "Order ID"}}},
-			"customers": {ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "Customer ID"}}},
+			"orders": {ModelName: "orders", GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"id"}}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "Order ID", Type: "number", Datatype: semanticmodel.DataTypeInteger}}},
+			"customers": {ModelName: "customers", GrainEntity: "customer", Entities: map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"id"}}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "Customer ID", Type: "number", Datatype: semanticmodel.DataTypeInteger}}},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count":    {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}},
@@ -447,9 +452,13 @@ func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
 		{ID: "model:customers", Type: string(projectview.AssetTypeModel), Key: "customers", Title: "Customers"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}
+	compiled, err := semanticquery.CompileAuthoringModel(model)
+	if err != nil {
+		t.Fatal(err)
+	}
 	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{
 		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
-	}, compiledProjectionModels(t, project))
+	}, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled})
 	fields := map[string]projectsignals.DataExploreFieldSignal{}
 	for _, field := range projection.Fields {
 		fields[field.ID] = field
@@ -472,7 +481,10 @@ func compiledProjectionModels(t *testing.T, project projectmanifest.ResourceMani
 		if model == nil {
 			continue
 		}
-		value, err := semanticquery.CompileDatasetBindings(model)
+		value, err := semanticquery.CompileAuthoringModel(model)
+		if err != nil {
+			value, err = semanticquery.CompileDatasetBindings(model)
+		}
 		if err != nil {
 			t.Fatalf("compile semantic model %q: %v", id, err)
 		}

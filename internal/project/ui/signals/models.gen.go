@@ -5,22 +5,23 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
 type AgentContextSignal struct {
-	Surface        string                         `json:"surface" yaml:"surface"`
-	DashboardID    string                         `json:"dashboardId" yaml:"dashboardId"`
-	DashboardTitle string                         `json:"dashboardTitle" yaml:"dashboardTitle"`
-	PageID         string                         `json:"pageId" yaml:"pageId"`
-	PageTitle      string                         `json:"pageTitle" yaml:"pageTitle"`
-	ModelID        string                         `json:"modelId" yaml:"modelId"`
-	DatasetID      *string                        `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
-	Exploration    *DataExploreAgentContextSignal `json:"exploration,omitempty" yaml:"exploration,omitempty"`
-	Generation     int64                          `json:"generation" yaml:"generation"`
-	Filters        DashboardFilterState           `json:"filters" yaml:"filters"`
-	ReferenceLimit int32                          `json:"referenceLimit" yaml:"referenceLimit"`
-	References     []AgentReferenceSignal         `json:"references" yaml:"references"`
+	Surface        string                       `json:"surface" yaml:"surface"`
+	DashboardID    string                       `json:"dashboardId" yaml:"dashboardId"`
+	DashboardTitle string                       `json:"dashboardTitle" yaml:"dashboardTitle"`
+	PageID         string                       `json:"pageId" yaml:"pageId"`
+	PageTitle      string                       `json:"pageTitle" yaml:"pageTitle"`
+	ModelID        string                       `json:"modelId" yaml:"modelId"`
+	DatasetID      *string                      `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
+	Exploration    *exploration.ExplorationSpec `json:"exploration,omitempty" yaml:"exploration,omitempty"`
+	Generation     int64                        `json:"generation" yaml:"generation"`
+	Filters        DashboardFilterState         `json:"filters" yaml:"filters"`
+	ReferenceLimit int32                        `json:"referenceLimit" yaml:"referenceLimit"`
+	References     []AgentReferenceSignal       `json:"references" yaml:"references"`
 }
 
 type AgentReferenceKeySignal struct {
@@ -1035,27 +1036,19 @@ type DashboardUnfilteredExpression struct {
 	Kind string `json:"kind" yaml:"kind"`
 }
 
-type DataExploreAgentContextSignal struct {
-	Dimensions []string                  `json:"dimensions" yaml:"dimensions"`
-	Filters    []DataExploreFilterSignal `json:"filters" yaml:"filters"`
-	Limit      int64                     `json:"limit" yaml:"limit"`
-	Metrics    []string                  `json:"metrics" yaml:"metrics"`
-	Sort       []DataExploreSortSignal   `json:"sort" yaml:"sort"`
-	Time       *DataExploreTimeSignal    `json:"time,omitempty" yaml:"time,omitempty"`
-}
-
 type DataExploreCommand struct {
-	ColumnWidths    *map[string]float64       `json:"columnWidths,omitempty" yaml:"columnWidths,omitempty"`
-	DatasetID       *string                   `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
-	Dimensions      []string                  `json:"dimensions" yaml:"dimensions"`
-	Filters         []DataExploreFilterSignal `json:"filters" yaml:"filters"`
-	Limit           int64                     `json:"limit" yaml:"limit"`
-	Metrics         []string                  `json:"metrics" yaml:"metrics"`
-	SemanticModelID *string                   `json:"semanticModelId,omitempty" yaml:"semanticModelId,omitempty"`
-	RequestSeq      int64                     `json:"requestSeq" yaml:"requestSeq"`
-	ResetVersion    int64                     `json:"resetVersion" yaml:"resetVersion"`
-	Sort            []DataExploreSortSignal   `json:"sort" yaml:"sort"`
-	Time            *DataExploreTimeSignal    `json:"time,omitempty" yaml:"time,omitempty"`
+	Spec            exploration.ExplorationSpec `json:"spec" yaml:"spec"`
+	ColumnWidths    *map[string]float64         `json:"columnWidths,omitempty" yaml:"columnWidths,omitempty"`
+	DatasetID       *string                     `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
+	Dimensions      []string                    `json:"dimensions" yaml:"dimensions"`
+	Filters         []DataExploreFilterSignal   `json:"filters" yaml:"filters"`
+	Limit           int64                       `json:"limit" yaml:"limit"`
+	Metrics         []string                    `json:"metrics" yaml:"metrics"`
+	SemanticModelID *string                     `json:"semanticModelId,omitempty" yaml:"semanticModelId,omitempty"`
+	RequestSeq      int64                       `json:"requestSeq" yaml:"requestSeq"`
+	ResetVersion    int64                       `json:"resetVersion" yaml:"resetVersion"`
+	Sort            []DataExploreSortSignal     `json:"sort" yaml:"sort"`
+	Time            *DataExploreTimeSignal      `json:"time,omitempty" yaml:"time,omitempty"`
 }
 
 type DataExploreDatasetSignal struct {
@@ -1181,6 +1174,7 @@ type DataExplorerPageEnvelope struct {
 	DataExplorer         DataExplorerSignal                               `json:"dataExplorer" yaml:"dataExplorer"`
 	Page                 DataExplorerPageSignal                           `json:"page" yaml:"page"`
 	Runtime              RouteRuntimeSignal                               `json:"runtime" yaml:"runtime"`
+	SavedExplorations    SavedExplorationStateSignal                      `json:"savedExplorations" yaml:"savedExplorations"`
 	Status               DashboardStatus                                  `json:"status" yaml:"status"`
 }
 
@@ -1579,6 +1573,68 @@ type RouteRuntimeSignal struct {
 	StreamInstanceID *string   `json:"streamInstanceId,omitempty" yaml:"streamInstanceId,omitempty"`
 	ServingStateID   *string   `json:"servingStateId,omitempty" yaml:"servingStateId,omitempty"`
 	ProjectID        *string   `json:"projectId,omitempty" yaml:"projectId,omitempty"`
+}
+
+type SavedExplorationCommandSignal struct {
+	Action                 string                          `json:"action" yaml:"action"`
+	ExplorationID          *string                         `json:"explorationId,omitempty" yaml:"explorationId,omitempty"`
+	SourceExplorationID    *string                         `json:"sourceExplorationId,omitempty" yaml:"sourceExplorationId,omitempty"`
+	Title                  *string                         `json:"title,omitempty" yaml:"title,omitempty"`
+	Slug                   *string                         `json:"slug,omitempty" yaml:"slug,omitempty"`
+	Visibility             *string                         `json:"visibility,omitempty" yaml:"visibility,omitempty"`
+	Spec                   *exploration.ExplorationSpec    `json:"spec,omitempty" yaml:"spec,omitempty"`
+	ExpectedRevision       *SavedExplorationRevisionSignal `json:"expectedRevision,omitempty" yaml:"expectedRevision,omitempty"`
+	ExpectedSourceRevision *SavedExplorationRevisionSignal `json:"expectedSourceRevision,omitempty" yaml:"expectedSourceRevision,omitempty"`
+}
+
+type SavedExplorationCurrentSignal struct {
+	ID              string                         `json:"id" yaml:"id"`
+	Title           string                         `json:"title" yaml:"title"`
+	Slug            string                         `json:"slug" yaml:"slug"`
+	Visibility      string                         `json:"visibility" yaml:"visibility"`
+	Status          string                         `json:"status" yaml:"status"`
+	SemanticModelID string                         `json:"semanticModelId" yaml:"semanticModelId"`
+	Revision        SavedExplorationRevisionSignal `json:"revision" yaml:"revision"`
+	Detached        bool                           `json:"detached" yaml:"detached"`
+	Spec            *exploration.ExplorationSpec   `json:"spec,omitempty" yaml:"spec,omitempty"`
+}
+
+type SavedExplorationListItemSignal struct {
+	ID              string                         `json:"id" yaml:"id"`
+	Title           string                         `json:"title" yaml:"title"`
+	Slug            string                         `json:"slug" yaml:"slug"`
+	Visibility      string                         `json:"visibility" yaml:"visibility"`
+	Status          string                         `json:"status" yaml:"status"`
+	SemanticModelID string                         `json:"semanticModelId" yaml:"semanticModelId"`
+	CreatedAt       string                         `json:"createdAt" yaml:"createdAt"`
+	UpdatedAt       string                         `json:"updatedAt" yaml:"updatedAt"`
+	ArchivedAt      *string                        `json:"archivedAt,omitempty" yaml:"archivedAt,omitempty"`
+	Revision        SavedExplorationRevisionSignal `json:"revision" yaml:"revision"`
+}
+
+type SavedExplorationListSignal struct {
+	Items           []SavedExplorationListItemSignal `json:"items" yaml:"items"`
+	IncludeArchived bool                             `json:"includeArchived" yaml:"includeArchived"`
+	SelectedID      *string                          `json:"selectedId,omitempty" yaml:"selectedId,omitempty"`
+}
+
+type SavedExplorationRevisionSignal struct {
+	RevisionID  string `json:"revisionId" yaml:"revisionId"`
+	Number      int64  `json:"number" yaml:"number"`
+	ContentHash string `json:"contentHash" yaml:"contentHash"`
+}
+
+type SavedExplorationSaveStateSignal struct {
+	State   string  `json:"state" yaml:"state"`
+	Message *string `json:"message,omitempty" yaml:"message,omitempty"`
+}
+
+type SavedExplorationStateSignal struct {
+	Enabled bool                            `json:"enabled" yaml:"enabled"`
+	List    SavedExplorationListSignal      `json:"list" yaml:"list"`
+	Current *SavedExplorationCurrentSignal  `json:"current,omitempty" yaml:"current,omitempty"`
+	Command SavedExplorationCommandSignal   `json:"command" yaml:"command"`
+	Save    SavedExplorationSaveStateSignal `json:"save" yaml:"save"`
 }
 
 type SemanticModelGraphEdgeSignal struct {

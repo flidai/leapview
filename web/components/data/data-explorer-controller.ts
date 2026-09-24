@@ -4,6 +4,7 @@ import type {
   DataExplorerCommand,
   DataExplorerObjectSignal,
 } from '../../generated/signals'
+import { explorationSpecFromCommand } from './data-explorer-spec'
 
 const dataExplorerAgentStorageKey = 'leapview-data-explorer-agent-state'
 
@@ -161,6 +162,7 @@ export class DataExplorerQueryController {
       resetVersion: Math.max(current.resetVersion ?? 0, next.resetVersion ?? 0) + 1,
       columnWidths: next.columnWidths ?? current.columnWidths ?? {},
     }
+    command.spec = explorationSpecFromCommand(command)
     // The flag is intentionally accepted for call-site readability. Debounce
     // scheduling belongs to the route because it owns its lifecycle timer.
     void requestNow

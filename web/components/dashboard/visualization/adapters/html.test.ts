@@ -17,7 +17,7 @@ test('HTML KPI accessible labels normalize sentence boundaries', () => {
 
 test('HTML KPI values compose governed display units with the field formatting contract', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'revenue', rendererID: 'html', specRevision: 'sha256:test', dataRevision: 1,
+    schemaVersion: 14, visualID: 'revenue', rendererID: 'html', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
       kind: 'kpi', title: 'Revenue', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue', format: { kind: 'currency', currency: 'BRL' } }] }],
       dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Revenue', description: 'Revenue' }, interactions: [],
@@ -34,7 +34,7 @@ test('HTML KPI values compose governed display units with the field formatting c
 
 test('HTML KPI formatting resolves semantic backgrounds, readable text, and redundant status cues', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'health', rendererID: 'html', specRevision: 'sha256:health', dataRevision: 1,
+    schemaVersion: 14, visualID: 'health', rendererID: 'html', specRevision: 'sha256:health', dataRevision: 1,
     spec: {
       kind: 'kpi', title: 'Health', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Health' }] }],
       dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Health', description: 'Health' }, interactions: [],
@@ -65,7 +65,7 @@ test('HTML KPI formatting resolves semantic backgrounds, readable text, and redu
 
 test('HTML KPI conditional value formatting preserves null, first-match, default, and theme-safe cues', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'health', rendererID: 'html', specRevision: 'sha256:health-cues', dataRevision: 1,
+    schemaVersion: 14, visualID: 'health', rendererID: 'html', specRevision: 'sha256:health-cues', dataRevision: 1,
     spec: {
       kind: 'kpi', title: 'Health', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: true, label: 'Health' }] }],
       dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Health', description: 'Health' }, interactions: [],
@@ -97,7 +97,7 @@ test('HTML KPI conditional value formatting preserves null, first-match, default
 
 test('HTML KPI layout requirements come only from explicitly configured features', () => {
   const envelope = {
-    schemaVersion: 9, visualID: 'revenue', rendererID: 'html', specRevision: 'sha256:responsive', dataRevision: 1,
+    schemaVersion: 14, visualID: 'revenue', rendererID: 'html', specRevision: 'sha256:responsive', dataRevision: 1,
     spec: {
       kind: 'kpi', title: 'Revenue', subtitle: 'Trailing 12 months',
       datasets: [

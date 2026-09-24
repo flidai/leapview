@@ -4,7 +4,7 @@ import type { VisualizationEnvelope } from '../../../generated/visualization'
 import { interactionCommandForRowIndex, interactionOptions } from './interaction-command'
 
 const envelope = {
-  schemaVersion: 9, visualID: 'customers', rendererID: 'maplibre', specRevision: 'sha256:test', dataRevision: 7,
+  schemaVersion: 14, visualID: 'customers', rendererID: 'maplibre', specRevision: 'sha256:test', dataRevision: 7,
   spec: {
     kind: 'geographic', title: 'Customers',
     datasets: [{ id: 'primary', fields: [

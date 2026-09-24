@@ -4,6 +4,7 @@ package modelts
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Yacobolo/toolbelt/apigen/emit/contractimport"
@@ -148,6 +149,9 @@ func emitSchema(b *strings.Builder, name string, schema ir.Schema, resolveType f
 }
 
 func tsType(doc ir.Document, imports contractimport.Bindings, aliases map[string]string, ref ir.SchemaRef) string {
+	if ref.Const != nil {
+		return strconv.FormatFloat(*ref.Const, 'f', -1, 64)
+	}
 	if ref.Ref != "" {
 		name, ok := ir.NormalizedSchemaRefName(ref)
 		if ok {

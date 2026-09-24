@@ -191,6 +191,8 @@ type BrowserHandler struct {
 	TargetID                 string
 	ConnectionAdministration connectionadmin.Administration
 	ConnectionCommands       projectui.ConnectionCommandBindings
+	SavedExplorations        SavedExplorationService
+	SavedExplorationCommands SavedExplorationCommandBindings
 	PipelineRunCommand       uicommand.Binding
 	PipelineCancelCommand    uicommand.Binding
 	RunPipeline              func(context.Context, string, string, string) error
@@ -207,16 +209,18 @@ type BrowserHandler struct {
 	// AuthorizeCreateDashboard evaluates the project-root edit capability used
 	// to expose the browser's new-draft affordance. The catalog remains usable
 	// for read-only principals when this decision is denied.
-	AuthorizeCreateDashboard func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
-	AuthorizeDashboard       func(*stdhttp.Request, string, access.Capability) (bool, error)
-	AuthorizeConnection      func(*stdhttp.Request, string, access.Capability) (bool, error)
-	BeginConnectionCommand   func(context.Context, CreatorCommandInvocation) (context.Context, error)
-	BeginPipelineCommand     func(context.Context, CreatorCommandInvocation) (context.Context, error)
-	MutationMiddleware       func(stdhttp.Handler) stdhttp.Handler
-	Layout                   func(*stdhttp.Request) webpage.Provider
-	CSRFToken                func(*stdhttp.Request) string
-	CurrentUser              func(*stdhttp.Request) (Principal, bool)
-	Authenticate             func(stdhttp.Handler) stdhttp.Handler
+	AuthorizeCreateDashboard       func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
+	AuthorizeDashboard             func(*stdhttp.Request, string, access.Capability) (bool, error)
+	AuthorizeConnection            func(*stdhttp.Request, string, access.Capability) (bool, error)
+	BeginConnectionCommand         func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	BeginPipelineCommand           func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	BeginSavedExplorationCommand   func(context.Context, SavedExplorationCommandInvocation) (context.Context, error)
+	ExecuteSavedExplorationCommand func(context.Context, SavedExplorationCommandInvocation, func(context.Context) error) error
+	MutationMiddleware             func(stdhttp.Handler) stdhttp.Handler
+	Layout                         func(*stdhttp.Request) webpage.Provider
+	CSRFToken                      func(*stdhttp.Request) string
+	CurrentUser                    func(*stdhttp.Request) (Principal, bool)
+	Authenticate                   func(stdhttp.Handler) stdhttp.Handler
 }
 
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
@@ -249,6 +253,8 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/search", wrap(h.ProductSearch))
 	r.Get("/explore", wrap(h.Explore))
 	r.Post("/explore/command", wrap(h.DataExplorerCommand))
+	r.Get("/explore/saved/{exploration}", wrap(h.SavedExplorationReopen))
+	r.Post("/explore/saved/command", wrapMutation(h.SavedExplorationCommand))
 	r.Get("/sources", wrap(h.Sources))
 	r.Get("/sources/{asset}/{section}", wrap(h.SourceAsset))
 	r.Get("/models", wrap(h.Models))
@@ -439,7 +445,12 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !ok {
 		return
 	}
-	writeDocument(w, projectui.DataExplorerPage(catalog, page, explorer, h.csrf(r), h.layout(r)))
+	savedState := h.savedExplorationStateForBrowser(r, r.URL.Query().Get("saved"), savedExplorationIncludeArchived(r))
+	savedState.Commands = projectui.DataExplorerSavedExplorationCommandBindings{
+		Create: h.SavedExplorationCommands.Create, Update: h.SavedExplorationCommands.Update,
+		Duplicate: h.SavedExplorationCommands.Duplicate, Archive: h.SavedExplorationCommands.Archive,
+	}
+	writeDocument(w, projectui.DataExplorerPageWithSavedExplorations(catalog, page, explorer, savedState, h.csrf(r), h.layout(r)))
 }
 
 func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -777,7 +788,12 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if !ok {
 				return
 			}
-			patch = projectui.DataExplorerBootstrapSignals(h.navigationCatalog(r), page, explorer, h.layout(r))
+			savedState := h.savedExplorationStateForBrowser(r, r.URL.Query().Get("saved"), savedExplorationIncludeArchived(r))
+			savedState.Commands = projectui.DataExplorerSavedExplorationCommandBindings{
+				Create: h.SavedExplorationCommands.Create, Update: h.SavedExplorationCommands.Update,
+				Duplicate: h.SavedExplorationCommands.Duplicate, Archive: h.SavedExplorationCommands.Archive,
+			}
+			patch = projectui.DataExplorerBootstrapSignalsWithSavedExplorations(h.navigationCatalog(r), page, explorer, savedState, h.layout(r))
 		} else if surface == "asset" {
 			if assetPatch, ok := h.assetBootstrap(w, r); ok {
 				patch = assetPatch
@@ -1792,10 +1808,11 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 	command = normalizeDataExplorerCommand(command)
 	project := h.navigationCatalog(r).Project
 	page := projectsignals.DataExplorerPageSignal{Kind: projectsignals.RouteKindData, Title: "Data Explorer", Description: projectsignals.Optional("Explore governed semantic data."), Tabs: []projectsignals.ResourceTabSignal{}, Context: projectsignals.DataExplorerContextSignal{Active: true, Environment: h.Environment, ProjectID: project.ID, ProjectTitle: projectsignals.Optional(project.Title)}}
-	exploreCommand := projectsignals.DataExploreCommand{Dimensions: []string{}, Metrics: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: dataExplorerDefaultLimit}
+	exploreCommand := projectsignals.DataExploreCommand{Spec: defaultExplorationSpec(), Dimensions: []string{}, Metrics: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: dataExplorerDefaultLimit}
 	if command.Explore != nil {
 		exploreCommand = *command.Explore
 	}
+	exploreCommand = dataExploreCommandWithCanonicalSpec(exploreCommand)
 	if value := strings.TrimSpace(r.URL.Query().Get("semanticModel")); value != "" && exploreCommand.SemanticModelID == nil {
 		exploreCommand.SemanticModelID = projectsignals.Optional(value)
 	}

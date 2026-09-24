@@ -443,9 +443,11 @@ type browserDataQueryStub struct {
 	query  dataquery.Query
 	result dataquery.Result
 	err    error
+	calls  int
 }
 
 func (s *browserDataQueryStub) ExecuteDataQuery(_ context.Context, query dataquery.Query) (dataquery.Result, error) {
+	s.calls++
 	s.query = query
 	return s.result, s.err
 }
@@ -1000,7 +1002,7 @@ func TestDataExplorerSignalPatchRefreshesAgentContext(t *testing.T) {
 	if context.Surface != "data" || context.ModelID != "semantic-model:visuals" || projectsignals.ValueOrZero(context.DatasetID) != "orders" {
 		t.Fatalf("agent context = %#v", context)
 	}
-	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Dimensions[0] != "orders.status" || len(context.Exploration.Metrics) != 1 || context.Exploration.Metrics[0] != "revenue" {
+	if context.Exploration == nil || len(context.Exploration.Dimensions) != 1 || context.Exploration.Dimensions[0].Field != "orders.status" || len(context.Exploration.Metrics) != 1 || context.Exploration.Metrics[0].Field != "revenue" {
 		t.Fatalf("agent exploration = %#v", context.Exploration)
 	}
 }

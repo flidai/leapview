@@ -123,6 +123,7 @@ type SpatialMetadata struct {
 type Field struct {
 	Field string
 	Alias string
+	Grain string
 	// Kind preserves the semantic member kind when a field is carried outside
 	// its original dimensions/metrics collection (for example, into a
 	// count-only authorization projection). An empty kind is retained for

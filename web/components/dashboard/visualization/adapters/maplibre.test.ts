@@ -1050,7 +1050,7 @@ function tiledPointEnvelope(): VisualizationEnvelope {
 
 function selectableEnvelope(): VisualizationEnvelope {
   return {
-    schemaVersion: 9, visualID: 'state-map', rendererID: 'maplibre', specRevision: 'sha256:test', dataRevision: 4,
+    schemaVersion: 14, visualID: 'state-map', rendererID: 'maplibre', specRevision: 'sha256:test', dataRevision: 4,
     spec: {
       kind: 'geographic', title: 'States', datasets: [{ id: 'primary', fields: [
         { id: 'state', role: 'identity', dataType: 'string', nullable: false, label: 'State' },

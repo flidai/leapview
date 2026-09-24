@@ -121,6 +121,17 @@
       "evidence": ["internal/analytics/dataquery/audit_test.go", "internal/analytics/queryaudit/postgres/repository_test.go"]
     },
     {
+      "id": "analytics.saved-exploration-lifecycle",
+      "owner": "analytics",
+      "kind": "generated-command-audit",
+      "events": ["saved_exploration.created", "saved_exploration.updated", "saved_exploration.duplicated", "saved_exploration.archived"],
+      "guarantee": "transactional",
+      "failureBehavior": "Saved-exploration state, immutable revision, idempotency evidence, and durable audit intent commit atomically; any failure rolls the mutation back.",
+      "implementation": ["internal/analytics/exploration/saved/postgres/repository.go", "internal/app/savedexplorationaudit/adapter.go", "internal/project/http/saved_explorations.go"],
+      "contractSources": ["api/typespec/saved_explorations.tsp"],
+      "evidence": ["internal/analytics/exploration/saved/postgres/repository_test.go", "internal/app/saved_exploration_adapters_test.go", "internal/project/http/saved_explorations_test.go"]
+    },
+    {
       "id": "connection.binding-administration",
       "owner": "analytics",
       "kind": "generated-command-audit",

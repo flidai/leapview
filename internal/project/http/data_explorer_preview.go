@@ -289,6 +289,7 @@ func dataExplorerRows(rows []dataquery.Row) []map[string]any {
 }
 
 func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, command projectsignals.DataExploreCommand, fields []projectsignals.DataExploreFieldSignal) (projectsignals.DataExploreCommand, projectsignals.DataExploreResultSignal) {
+	command = dataExploreCommandWithCanonicalSpec(command)
 	resultSignal := projectsignals.DataExploreResultSignal{
 		Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}, RequestSeq: command.RequestSeq,
 	}
@@ -307,18 +308,18 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	command.Filters = validExplorerFilters(command.Filters, fieldByID)
 	command.Sort = validExplorerSort(command.Sort, command)
 	if len(command.Dimensions) == 0 && len(command.Metrics) == 0 && command.Time == nil {
-		return command, resultSignal
+		return dataExploreCommandWithCanonicalSpec(command), resultSignal
 	}
 	if executor == nil {
 		resultSignal.Error = projectsignals.Pointer("governed exploration execution is unavailable")
-		return command, resultSignal
+		return dataExploreCommandWithCanonicalSpec(command), resultSignal
 	}
 	semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(command.SemanticModelID))
 	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
 	clearTarget := explorerCommandHasMultiRootMetric(command.Metrics, fieldByID)
 	if semanticModelID == "" || datasetID == "" {
 		resultSignal.Error = projectsignals.Pointer("semantic exploration target is incomplete")
-		return command, resultSignal
+		return dataExploreCommandWithCanonicalSpec(command), resultSignal
 	}
 	aliases := explorerQueryAliases(command.Dimensions, command.Metrics)
 	dimensions := make([]dataquery.Field, 0, len(command.Dimensions))
@@ -359,11 +360,11 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	executed, err := executor.ExecuteDataQuery(ctx, query)
 	if err != nil {
 		resultSignal.Error = projectsignals.Pointer(err.Error())
-		return command, resultSignal
+		return dataExploreCommandWithCanonicalSpec(command), resultSignal
 	}
 	if strings.TrimSpace(executed.Error) != "" {
 		resultSignal.Error = projectsignals.Pointer(executed.Error)
-		return command, resultSignal
+		return dataExploreCommandWithCanonicalSpec(command), resultSignal
 	}
 	rows := executed.Rows
 	truncated := int64(len(rows)) > command.Limit
@@ -375,7 +376,7 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	for _, column := range executed.Columns {
 		columns = append(columns, projectsignals.DataPreviewColumnSignal{Key: column.Name, Label: firstExplorerNonEmpty(labels[column.Name], column.Name)})
 	}
-	return command, projectsignals.DataExploreResultSignal{
+	return dataExploreCommandWithCanonicalSpec(command), projectsignals.DataExploreResultSignal{
 		Columns: columns, Rows: dataExplorerRows(rows), SQL: projectsignals.Optional(executed.SQL), Plan: projectsignals.Optional(executed.PlanText),
 		DurationMS: executed.DurationMS, RowsReturned: int64(len(rows)), Truncated: truncated,
 		Warnings: append([]string(nil), executed.Warnings...), RequestSeq: command.RequestSeq,

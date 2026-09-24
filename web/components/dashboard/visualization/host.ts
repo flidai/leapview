@@ -21,6 +21,8 @@ export { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, su
 /** Start mounting within 600 CSS pixels above or below the viewport. */
 export const visualizationNearViewportRootMargin = '600px 0px'
 
+let openVisualOptionsHost: VisualizationHost | undefined
+
 export class VisualizationHost extends LitElement {
   private envelopeValue?: VisualizationEnvelope
   @property({ attribute: false })
@@ -42,6 +44,7 @@ export class VisualizationHost extends LitElement {
   @property({ attribute: false }) openVisualFocus?: (source: HTMLElement, detail: VisualActionDetail) => void
   @property({ type: Boolean, attribute: 'defer-mount', reflect: true }) deferMount = false
   @property({ type: Boolean, reflect: true }) authoring = false
+  @property({ type: Boolean, attribute: 'visual-options-open', reflect: true }) visualOptionsOpen = false
   @query('.renderer') private rendererContainer?: HTMLDivElement
   @state() private error = ''
   @state() private applying = false
@@ -147,6 +150,7 @@ export class VisualizationHost extends LitElement {
 
   disconnectedCallback(): void {
     const generation = ++this.connectionGeneration
+    this.setVisualOptionsOpen(false)
     super.disconnectedCallback()
     // A synchronous DOM move fires disconnected/connected callbacks even though
     // the visual remains live. Defer teardown so transient moves retain renderer
@@ -350,8 +354,8 @@ export class VisualizationHost extends LitElement {
   private visualActions() {
     const envelope = this.envelope
     if (!envelope || !supportsHostDataActions(envelope)) return null
-    return html`<details class="visual-options">
-      <summary aria-label="Visual options" aria-haspopup="menu" title="Visual options">${lucideIcon(EllipsisVertical)}</summary>
+    return html`<details class="visual-options" @toggle=${this.handleVisualOptionsToggle}>
+      <summary aria-label="Visual options" aria-haspopup="menu" title="Visual options" @click=${this.handleVisualOptionsClick}>${lucideIcon(EllipsisVertical)}</summary>
       <div class="menu" role="menu">
         <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
@@ -359,6 +363,56 @@ export class VisualizationHost extends LitElement {
         ${envelope.selection.length > 0 && clearInteractionCommand(envelope) ? html`<button type="button" role="menuitem" @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>` : null}
       </div>
     </details>`
+  }
+
+  private handleVisualOptionsToggle = (event: Event): void => {
+    const options = event.currentTarget as HTMLDetailsElement
+    this.setVisualOptionsOpen(options.open)
+  }
+
+  private handleVisualOptionsClick = (event: MouseEvent): void => {
+    event.preventDefault()
+    const options = (event.currentTarget as HTMLElement).closest('details') as HTMLDetailsElement | null
+    if (!options) return
+    options.open = !options.open
+    this.setVisualOptionsOpen(options.open)
+  }
+
+  private setVisualOptionsOpen(open: boolean): void {
+    if (this.visualOptionsOpen === open) return
+    if (open) {
+      openVisualOptionsHost?.closeVisualOptions()
+      openVisualOptionsHost = this
+      document.addEventListener('pointerdown', this.handleDocumentPointerDown, true)
+      document.addEventListener('keydown', this.handleDocumentKeyDown)
+    } else {
+      if (openVisualOptionsHost === this) openVisualOptionsHost = undefined
+      document.removeEventListener('pointerdown', this.handleDocumentPointerDown, true)
+      document.removeEventListener('keydown', this.handleDocumentKeyDown)
+    }
+    this.visualOptionsOpen = open
+    this.dispatchEvent(new CustomEvent('lv-visual-options-toggle', {
+      bubbles: true,
+      composed: true,
+      detail: { open },
+    }))
+  }
+
+  private handleDocumentPointerDown = (event: PointerEvent): void => {
+    if (this.visualOptionsOpen && !event.composedPath().includes(this)) this.closeVisualOptions()
+  }
+
+  private handleDocumentKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !this.visualOptionsOpen) return
+    this.closeVisualOptions()
+    this.renderRoot.querySelector<HTMLElement>('.visual-options summary')?.focus()
+  }
+
+  private closeVisualOptions(): void {
+    const options = this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')
+    if (!options) return
+    options.open = false
+    this.setVisualOptionsOpen(false)
   }
 
   private runAction(action: Extract<VisualActionDetail['action'], 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'>): void {

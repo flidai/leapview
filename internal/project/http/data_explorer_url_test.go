@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectview "github.com/flidai/leapview/internal/project"
@@ -88,7 +89,7 @@ func TestDataExplorerDocumentDefersSemanticExecutionToCanonicalUpdates(t *testin
 	if executor.calls != 0 {
 		t.Fatalf("document executed %d analytical queries, want 0", executor.calls)
 	}
-	for _, want := range []string{"mode=explore", "semanticModel=semantic%3Asales", "dataset=orders", "dimension=orders.status"} {
+	for _, want := range []string{"mode=explore", "v=2", "state=", "semantic%3Asales", "orders.status"} {
 		if !strings.Contains(document.Body.String(), want) {
 			t.Fatalf("document shell missing normalized updates URL component %q:\n%s", want, document.Body.String())
 		}
@@ -136,7 +137,7 @@ func TestDataExplorerRestoredURLCanonicalizesSpacedOperandsBeforeExecution(t *te
 		t.Fatalf("spaced document executed %d analytical queries, want 0", executor.calls)
 	}
 	body := document.Body.String()
-	if !strings.Contains(body, "dimension=orders.status") || strings.Contains(body, "dimension=+orders.status+") {
+	if !strings.Contains(body, "orders.status") || strings.Contains(body, "+orders.status+") {
 		t.Fatalf("spaced field was not canonicalized in updates URL:\n%s", body)
 	}
 }
@@ -359,6 +360,54 @@ func TestValidateRestoredDataExploreStateRejectsEmptyMembershipFilters(t *testin
 	}
 }
 
+func TestValidateRestoredDataExploreStateAcceptsCanonicalRangeFilter(t *testing.T) {
+	dataset := "orders"
+	rangeFilter := exploration.ExplorationFilter{
+		Field: "orders.score", DatasetID: &dataset,
+		Expression: exploration.ExplorationFilterExpression{Value: &exploration.RangeExplorationFilterExpression{
+			ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "range"}, Kind: "range",
+			Lower: &exploration.ExplorationFilterBound{Inclusive: true, Value: exploration.ExplorationFilterValue{Value: &exploration.IntegerExplorationFilterValue{ExplorationFilterValueBase: exploration.ExplorationFilterValueBase{Kind: "integer"}, Kind: "integer", Value: "1"}}},
+		}},
+	}
+	command := projectsignals.DataExploreCommand{
+		Spec:            exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &dataset, Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{rangeFilter}, Sort: []exploration.ExplorationSort{}, Limit: 100},
+		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: &dataset,
+		Filters: []projectsignals.DataExploreFilterSignal{{Field: "orders.score", DatasetID: &dataset, Operator: "range", Values: []string{}}},
+	}
+	projection := DataExplorerProjection{
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
+		Fields:         []projectsignals.DataExploreFieldSignal{{ID: "orders.score", DatasetID: "orders", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("number")}},
+		Command:        projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: &dataset},
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(&semanticmodel.Model{
+		Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders"}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRestoredDataExploreState(command, projection, nil, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}); err != nil {
+		t.Fatalf("canonical range filter rejected: %v", err)
+	}
+}
+
+func TestValidateRestoredDataExploreStateRejectsMismatchedCanonicalRangeFilter(t *testing.T) {
+	dataset := "orders"
+	command := projectsignals.DataExploreCommand{
+		Spec: exploration.ExplorationSpec{Filters: []exploration.ExplorationFilter{{
+			Field: "orders.other_score", DatasetID: &dataset,
+			Expression: exploration.ExplorationFilterExpression{Value: &exploration.RangeExplorationFilterExpression{
+				ExplorationFilterExpressionBase: exploration.ExplorationFilterExpressionBase{Kind: "range"}, Kind: "range",
+			}},
+		}}},
+		Filters: []projectsignals.DataExploreFilterSignal{{Field: "orders.score", DatasetID: &dataset, Operator: "range", Values: []string{}}},
+	}
+	if err := validateRestoredExploreFilter(0, command.Filters[0], command.Spec); err == nil || !strings.Contains(err.Error(), "requires canonical version 2 state") {
+		t.Fatalf("mismatched canonical range error = %v, want canonical-state diagnostic", err)
+	}
+}
+
 func TestValidateRestoredDataExploreStateRejectsUnavailableTargets(t *testing.T) {
 	projection := DataExplorerProjection{
 		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
@@ -394,9 +443,9 @@ func TestValidateRestoredDataExploreStateConstrainsFilterDatasetParticipation(t 
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Type: "string"}}},
-			"customers": {ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{"region": {Type: "string"}}},
-			"other":     {ModelName: "other", Dimensions: map[string]semanticmodel.MetricDimension{"name": {Type: "string"}}},
+			"orders":    {ModelName: "orders", GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"status"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"status": {Type: "string", Datatype: semanticmodel.DataTypeString}}},
+			"customers": {ModelName: "customers", GrainEntity: "customer", Entities: map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"region"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"region": {Type: "string", Datatype: semanticmodel.DataTypeString}}},
+			"other":     {ModelName: "other", GrainEntity: "other", Entities: map[string]semanticmodel.EntityDefinition{"other": {Type: "primary", Fields: []string{"name"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"name": {Type: "string", Datatype: semanticmodel.DataTypeString}}},
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
 			"orders": {Model: "orders"}, "customers": {Model: "customers"}, "other": {Model: "other"},
@@ -407,7 +456,7 @@ func TestValidateRestoredDataExploreStateConstrainsFilterDatasetParticipation(t 
 			"combined":       {Type: "ratio", Numerator: "order_count", Denominator: "customer_count"},
 		},
 	}
-	compiled, err := semanticquery.CompileDatasetBindings(model)
+	compiled, err := semanticquery.CompileModel(model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -495,8 +544,8 @@ func TestValidateRestoredDataExploreStateAcceptsSafeRebase(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Field: "orders.customer_id"}, "status": {Field: "orders.status"}}},
-			"customers": {ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Field: "customers.customer_id"}, "region": {Field: "customers.region"}}},
+			"orders":    {ModelName: "orders", GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"customer_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Field: "orders.customer_id", Type: "string", Datatype: semanticmodel.DataTypeString}, "status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString}}},
+			"customers": {ModelName: "customers", GrainEntity: "customer", Entities: map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Field: "customers.customer_id", Type: "string", Datatype: semanticmodel.DataTypeString}, "region": {Field: "customers.region", Type: "string", Datatype: semanticmodel.DataTypeString}}},
 		},
 		Relationships: []semanticmodel.Relationship{{ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"}},
 		Datasets:      map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
@@ -511,7 +560,7 @@ func TestValidateRestoredDataExploreStateAcceptsSafeRebase(t *testing.T) {
 		{ID: "model:customers", Type: string(projectview.AssetTypeModel), Key: "customers", Title: "Customers"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}
-	compiled, err := semanticquery.CompileDatasetBindings(model)
+	compiled, err := semanticquery.CompileModel(model)
 	if err != nil {
 		t.Fatal(err)
 	}

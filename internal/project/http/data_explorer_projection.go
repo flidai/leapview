@@ -44,6 +44,7 @@ type explorerModelBinding struct {
 // output: manifest entries that do not have a visible serving asset are never
 // exposed to the browser.
 func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project projectmanifest.ResourceManifest, command projectsignals.DataExploreCommand, compiledModels map[string]*semanticquery.CompiledModel, consumers ...map[string]*semanticquery.SemanticAccessConsumer) DataExplorerProjection {
+	command = dataExploreCommandWithCanonicalSpec(command)
 	var consumersByModel map[string]*semanticquery.SemanticAccessConsumer
 	if len(consumers) != 0 {
 		consumersByModel = consumers[0]
@@ -224,6 +225,7 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		}
 		result.Warnings = append(result.Warnings, "Grain changed from "+explorerLabel(previousBase)+" to "+explorerLabel(baseTable)+" to support the selected fields.")
 	}
+	command = dataExploreCommandRefreshSpec(command)
 	result.Command = command
 	result.Fields = explorerFields(model, baseTable, command, compiled, access)
 	return result
@@ -261,14 +263,15 @@ func explorerDatasets(model *semanticmodel.Model, compiled *semanticquery.Compil
 				}
 			}
 		}
-		for metricName, metric := range model.Metrics {
-			if metric.Hidden {
+		for _, metricName := range compiled.MetricNames() {
+			metric, ok := compiled.Metric(metricName)
+			if !ok || metric.Hidden {
 				continue
 			}
 			if !access.allowsMetric(metricName) {
 				continue
 			}
-			for _, root := range explorerMetricRootDatasets(model, metricName) {
+			for _, root := range explorerMetricRootDatasets(compiled, metricName) {
 				if root == name {
 					fieldCount++
 					break
@@ -355,7 +358,7 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 			dimension := table.Dimensions[fieldName]
 			id := tableName + "." + fieldName
 			fieldType := firstExplorerNonEmpty(dimension.Type, table.Columns[fieldName].Type)
-			compatible, reason, path := explorerFieldCompatibility(model, baseTable, tableName)
+			compatible, reason, path := explorerFieldCompatibility(baseTable, tableName, compiled)
 			rebaseDatasetID := ""
 			if !compatible {
 				rebaseDatasetID = explorerFieldRebase(model, command, baseTable, id, "dimension", compiled)
@@ -371,19 +374,63 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 			})
 		}
 	}
-	metricNames := make([]string, 0, len(model.Metrics))
-	for name, metric := range model.Metrics {
-		if !metric.Hidden {
-			metricNames = append(metricNames, name)
+	// Conformed dimensions are governed semantic references, not physical
+	// table columns. Expose them only when activation compiled both their
+	// semantic type metadata and a binding for the selected base dataset. The
+	// detached binding supplies the physical owner and relationship route used
+	// by the executor, while the semantic metadata supplies the logical type
+	// needed by typed filters and time validation.
+	for _, name := range compiled.SemanticDimensionNames() {
+		semantic, ok := compiled.SemanticDimension(name)
+		if !ok {
+			continue
 		}
+		binding, compatible := compiled.DimensionBinding(name, baseTable)
+		boundDataset := ""
+		path := []string(nil)
+		if compatible {
+			boundDataset = binding.Physical.Table
+			for _, relationship := range binding.Path {
+				path = append(path, relationship.ID)
+			}
+		}
+		if !access.allowsDimension(name, boundDataset, binding.Physical.Field) {
+			continue
+		}
+		physicalID := strings.TrimSpace(binding.Physical.Field)
+		if !strings.Contains(physicalID, ".") {
+			physicalID = strings.TrimSpace(boundDataset) + "." + physicalID
+		}
+		duplicatePhysical := false
+		for _, field := range out {
+			if field.ID == physicalID {
+				duplicatePhysical = true
+				break
+			}
+		}
+		if duplicatePhysical {
+			continue
+		}
+		fieldType := firstExplorerNonEmpty(string(semantic.Datatype), semantic.Type, string(binding.Physical.Datatype), binding.Physical.Type)
+		reason := ""
+		if !compatible {
+			reason = "Not available from " + explorerLabel(baseTable) + " because no compiled binding reaches this semantic dimension."
+		}
+		out = append(out, projectsignals.DataExploreFieldSignal{
+			ID: name, Label: firstExplorerNonEmpty(semantic.Label, explorerLabel(name)), Kind: "dimension", DatasetID: boundDataset,
+			Description: projectsignals.Optional(semantic.Description), Type: projectsignals.Optional(fieldType), Selected: selectedDimensions[name],
+			Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RelationshipPath: projectsignals.OptionalSlice(path),
+		})
 	}
-	sort.Strings(metricNames)
-	for _, name := range metricNames {
+	for _, name := range compiled.MetricNames() {
 		if !access.allowsMetric(name) {
 			continue
 		}
-		metric := model.Metrics[name]
-		roots := explorerMetricRootDatasets(model, name)
+		metric, ok := compiled.Metric(name)
+		if !ok || metric.Hidden {
+			continue
+		}
+		roots := explorerMetricRootDatasets(compiled, name)
 		// Aggregate metrics have one root dataset. Derived and ratio metrics
 		// may span multiple roots; keep those visible from every base and let
 		// the governed planner decide whether the selected combination is safe.
@@ -404,19 +451,19 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 		}
 		out = append(out, projectsignals.DataExploreFieldSignal{
 			ID: name, Label: firstExplorerNonEmpty(metric.Label, explorerLabel(name)), Kind: "metric", DatasetID: datasetID,
-			Description: projectsignals.Optional(metric.Description), Type: projectsignals.Optional(firstExplorerNonEmpty(metric.Aggregation, metric.Type)), Selected: selectedMetrics[name],
+			Description: projectsignals.Optional(metric.Description), Type: projectsignals.Optional(compiledExplorerMetricType(metric)), Selected: selectedMetrics[name],
 			Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RebaseDatasetID: projectsignals.Optional(rebaseDatasetID),
 		})
 	}
 	return out
 }
 
-func explorerFieldCompatibility(model *semanticmodel.Model, baseTable, table string) (bool, string, []string) {
+func explorerFieldCompatibility(baseTable, table string, compiled *semanticquery.CompiledModel) (bool, string, []string) {
 	baseTable = strings.TrimSpace(baseTable)
-	if model == nil || baseTable == "" || baseTable == table {
+	if compiled == nil || baseTable == "" || baseTable == table {
 		return true, "", nil
 	}
-	path, err := model.SafeRelationshipPath(baseTable, table)
+	path, err := compiled.RelationshipPath(baseTable, table)
 	if err != nil {
 		return false, "Not available from " + explorerLabel(baseTable) + " because no grain-preserving relationship path reaches " + explorerLabel(table) + ".", nil
 	}
@@ -427,18 +474,28 @@ func explorerFieldCompatibility(model *semanticmodel.Model, baseTable, table str
 	return true, "", ids
 }
 
+func compiledExplorerMetricType(metric semanticquery.CompiledMetric) string {
+	if metric.Aggregate != nil {
+		return firstExplorerNonEmpty(metric.Aggregate.Aggregation, metric.Type)
+	}
+	return metric.Type
+}
+
 func resolveExplorerBase(model *semanticmodel.Model, currentBase string, command projectsignals.DataExploreCommand, compiled *semanticquery.CompiledModel) (string, bool) {
 	currentBase = strings.TrimSpace(currentBase)
-	if model == nil {
+	if model == nil || compiled == nil {
 		return currentBase, false
 	}
-	targets, metricDatasets := explorerCommandTargets(model, command)
-	if explorerBaseScore(model, currentBase, targets, metricDatasets, compiled) >= 0 {
+	targets, metricDatasets := explorerCommandTargets(command, compiled)
+	if explorerBaseSupportsSemanticFields(command, currentBase, compiled) && explorerBaseScore(currentBase, targets, metricDatasets, compiled) >= 0 {
 		return currentBase, false
 	}
 	bestBase, bestScore, tied := "", -1, false
 	for candidate := range explorerDatasetTableMap(model, compiled) {
-		score := explorerBaseScore(model, candidate, targets, metricDatasets, compiled)
+		if !explorerBaseSupportsSemanticFields(command, candidate, compiled) {
+			continue
+		}
+		score := explorerBaseScore(candidate, targets, metricDatasets, compiled)
 		if score < 0 {
 			continue
 		}
@@ -455,69 +512,27 @@ func resolveExplorerBase(model *semanticmodel.Model, currentBase string, command
 	return bestBase, true
 }
 
-// explorerMetricRootDatasets resolves the physical dataset roots for a metric.
-// Aggregate metrics have one direct root; derived and ratio metrics recurse
-// through their metric dependencies. Validation rejects cycles, but the
-// visiting guard keeps this browser projection defensive for an incomplete
-// or stale manifest.
-func explorerMetricRootDatasets(model *semanticmodel.Model, name string) []string {
-	if model == nil {
+// explorerMetricRootDatasets returns the activation-computed physical dataset
+// roots for a metric, avoiding request-time traversal of authored definitions.
+func explorerMetricRootDatasets(compiled *semanticquery.CompiledModel, name string) []string {
+	if compiled == nil {
 		return nil
 	}
-	memo := map[string]map[string]struct{}{}
-	visiting := map[string]bool{}
-	var visit func(string) map[string]struct{}
-	visit = func(metricName string) map[string]struct{} {
-		if roots, ok := memo[metricName]; ok {
-			return roots
-		}
-		if visiting[metricName] {
-			return nil
-		}
-		metric, ok := model.Metrics[metricName]
-		if !ok {
-			return nil
-		}
-		visiting[metricName] = true
-		roots := map[string]struct{}{}
-		if metric.Type == "aggregate" && strings.TrimSpace(metric.Dataset) != "" {
-			roots[metric.Dataset] = struct{}{}
-		}
-		var refs []string
-		switch metric.Type {
-		case "derived":
-			if expression, err := semanticmodel.ParseExpression(metric.Expression); err == nil {
-				refs = expression.References()
-			}
-		case "ratio":
-			refs = []string{metric.Numerator, metric.Denominator}
-		}
-		for _, ref := range refs {
-			for root := range visit(ref) {
-				roots[root] = struct{}{}
-			}
-		}
-		delete(visiting, metricName)
-		memo[metricName] = roots
-		return roots
+	metric, ok := compiled.Metric(strings.TrimSpace(name))
+	if !ok {
+		return nil
 	}
-	roots := visit(strings.TrimSpace(name))
-	out := make([]string, 0, len(roots))
-	for root := range roots {
-		out = append(out, root)
-	}
-	sort.Strings(out)
-	return out
+	return append([]string(nil), metric.RootDatasets...)
 }
 
-func explorerCommandTargets(model *semanticmodel.Model, command projectsignals.DataExploreCommand) ([]string, []string) {
-	if model == nil {
+func explorerCommandTargets(command projectsignals.DataExploreCommand, compiled *semanticquery.CompiledModel) ([]string, []string) {
+	if compiled == nil {
 		return nil, nil
 	}
 	targetSet := map[string]bool{}
 	metricSet := map[string]bool{}
 	addDimension := func(id string) {
-		if dimension, err := model.ResolveDimension(strings.TrimSpace(id)); err == nil {
+		if dimension, err := compiled.ResolveDimension(strings.TrimSpace(id)); err == nil {
 			targetSet[dimension.Table] = true
 		}
 	}
@@ -532,8 +547,8 @@ func explorerCommandTargets(model *semanticmodel.Model, command projectsignals.D
 	}
 	for _, id := range command.Metrics {
 		metric := strings.TrimSpace(id)
-		if resolved, err := model.ResolveMetric(metric); err == nil && !resolved.Hidden {
-			roots := explorerMetricRootDatasets(model, metric)
+		if resolved, ok := compiled.Metric(metric); ok && !resolved.Hidden {
+			roots := explorerMetricRootDatasets(compiled, metric)
 			// A base can be constrained safely only when a metric has one root
 			// dataset. Multi-dataset derived/ratio metrics remain unconstrained here
 			// so they are not misrepresented as belonging to one table.
@@ -555,11 +570,11 @@ func explorerCommandTargets(model *semanticmodel.Model, command projectsignals.D
 	return targets, metricDatasets
 }
 
-func explorerBaseScore(model *semanticmodel.Model, candidate string, targets, metricDatasets []string, compiled *semanticquery.CompiledModel) int {
-	if model == nil {
+func explorerBaseScore(candidate string, targets, metricDatasets []string, compiled *semanticquery.CompiledModel) int {
+	if compiled == nil {
 		return -1
 	}
-	if _, ok := explorerDatasetTableMap(model, compiled)[candidate]; !ok {
+	if _, ok := compiled.Dataset(candidate); !ok {
 		return -1
 	}
 	for _, dataset := range metricDatasets {
@@ -572,13 +587,41 @@ func explorerBaseScore(model *semanticmodel.Model, candidate string, targets, me
 		if target == candidate {
 			continue
 		}
-		path, err := model.SafeRelationshipPath(candidate, target)
+		path, err := compiled.RelationshipPath(candidate, target)
 		if err != nil {
 			return -1
 		}
 		score += len(path)
 	}
 	return score
+}
+
+func explorerBaseSupportsSemanticFields(command projectsignals.DataExploreCommand, candidate string, compiled *semanticquery.CompiledModel) bool {
+	if compiled == nil {
+		return false
+	}
+	check := func(field string) bool {
+		field = strings.TrimSpace(field)
+		if _, ok := compiled.SemanticDimension(field); !ok {
+			return true
+		}
+		_, ok := compiled.DimensionBinding(field, candidate)
+		return ok
+	}
+	for _, field := range command.Dimensions {
+		if !check(field) {
+			return false
+		}
+	}
+	for _, filter := range command.Filters {
+		if !check(filter.Field) {
+			return false
+		}
+	}
+	if command.Time != nil && !check(command.Time.Field) {
+		return false
+	}
+	return true
 }
 
 func explorerFieldRebase(model *semanticmodel.Model, command projectsignals.DataExploreCommand, currentBase, fieldID, kind string, compiled *semanticquery.CompiledModel) string {

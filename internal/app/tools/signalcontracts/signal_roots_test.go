@@ -76,6 +76,7 @@ func signalRootEvidenceCatalog() map[string]signalRootEvidence {
 		"productSettings":            {producer: rootMarker("internal/admin/http/handler.go", "productSettings"), reader: rootMarker("web/components/admin/product-settings.ts", "productSettings")},
 		"refreshRunDrawer":           {reader: rootMarker("web/components/project/project-page.ts", "refreshRunDrawer"), allow: "surface-specific"},
 		"runtime":                    {producer: rootMarker("internal/dashboard/ui/page.go", "runtime"), reader: rootMarker("web/components/dashboard/dashboard-page.ts", "runtime")},
+		"savedExplorations":          {producer: rootMarker("internal/project/http/saved_explorations.go", "savedExplorations"), reader: rootMarker("web/components/data/data-explorer.ts", "savedExplorations")},
 		"spatialInteractionCommand":  {producer: rootMarker("internal/dashboard/ui/page.go", "spatialInteractionCommand"), allow: "surface-specific"},
 		"spatialSelections":          {producer: rootMarker("internal/dashboard/ui/draft_preview_page.go", "spatialSelections"), reader: rootMarker("web/components/dashboard/dashboard-page.ts", "spatialSelections")},
 		"status":                     {producer: rootMarker("internal/dashboard/ui/page.go", "status"), reader: rootMarker("web/components/dashboard/dashboard-page.ts", "status")},
