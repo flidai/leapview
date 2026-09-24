@@ -76,6 +76,7 @@ type StorageConfig struct {
 }
 
 type Config struct {
+	PlatformAdmin                func(context.Context, string) (bool, error)
 	Access                       AccessReader
 	AgentDetails                 func(context.Context) (api.AdminAgentResponse, error)
 	QueryAuditReader             QueryAuditReaderProvider
@@ -128,7 +129,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		publications:                 config.Publications, publicationCommands: config.PublicationCommands, productCommands: config.ProductUICommands,
 	}
 	readModel := adminhttp.ReadModel{
-		Access: config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,
+		PlatformAdmin: config.PlatformAdmin,
+		Access:        config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,
 		StorageService:   adminstorage.Service{Runtime: config.Storage.Runtime},
 		QueryAuditReader: adminhttp.QueryAuditReaderProvider(config.QueryAuditReader), CSRFToken: config.CSRFToken,
 		CurrentPrincipal: func(r *http.Request) (adminhttp.Principal, bool) {
