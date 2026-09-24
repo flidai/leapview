@@ -12,6 +12,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
 
@@ -87,6 +88,36 @@ def inspect():
     ready()
     return {'image': image, 'revision': version['revision']}
 
+def stage_release(image):
+    releases = ROOT/'releases'
+    release = releases/('sha256-'+image.split('sha256:')[1])
+    # Never extract into an existing release: it may be the live current target.
+    with tempfile.TemporaryDirectory(prefix='.demo-stage-', dir=releases) as directory:
+        staged = Path(directory)/'payload'
+        staged.mkdir(mode=0o700)
+        cid = out('docker', 'create', image)
+        try: run('docker', 'cp', cid+':/usr/local/share/leapview/deployment/.', str(staged))
+        finally: run('docker', 'rm', cid)
+        for name in ['compose.yaml', 'compose.https.yaml', 'Caddyfile', 'deployment.env.example']:
+            if (staged/name).read_bytes() != (ROOT/name).read_bytes():
+                raise RuntimeError('Deployment payload changed; reviewed host upgrade required: '+name)
+            (staged/name).chmod(0o600)
+        (staged/'leapviewctl').chmod(0o700)
+        if release.exists() or release.is_symlink():
+            def contents(path):
+                entries = {}
+                for entry in path.rglob('*'):
+                    if entry.is_symlink():
+                        raise RuntimeError('Existing release contains a symlink; operator review required')
+                    entries[entry.relative_to(path)] = None if entry.is_dir() else entry.read_bytes()
+                return entries
+            if release.is_symlink() or contents(release) != contents(staged):
+                raise RuntimeError('Existing release differs from image payload; operator review required')
+        else:
+            staged.rename(release)
+    return release
+
+
 def main():
     global LOG
     os.umask(0o077)
@@ -116,16 +147,7 @@ def main():
     run('docker', 'pull', image)
     identity = json.loads(out('docker', 'run', '--rm', image, 'version', '--json'))
     if identity['revision'] != revision or identity['dirty']: raise RuntimeError('Image identity mismatch')
-    release = ROOT/'releases'/('sha256-'+image.split('sha256:')[1])
-    release.mkdir(mode=0o700, exist_ok=True)
-    cid = out('docker', 'create', image)
-    try: run('docker', 'cp', cid+':/usr/local/share/leapview/deployment/.', str(release))
-    finally: run('docker', 'rm', cid)
-    for name in ['compose.yaml', 'compose.https.yaml', 'Caddyfile', 'deployment.env.example']:
-        if (release/name).read_bytes() != (ROOT/name).read_bytes():
-            raise RuntimeError('Deployment payload changed; reviewed host upgrade required: '+name)
-        (release/name).chmod(0o600)
-    (release/'leapviewctl').chmod(0o700)
+    release = stage_release(image)
     volume = out('docker', 'volume', 'inspect', VOLUME, '--format', '{{.Mountpoint}}')
     db_size = int(out('docker', 'exec', POSTGRES, 'sh', '-c',
         'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT sum(pg_database_size(oid)) FROM pg_database WHERE datname IN (\'leapview_control\',\'leapview_ducklake\')"'))

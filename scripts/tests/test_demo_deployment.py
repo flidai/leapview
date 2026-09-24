@@ -91,6 +91,77 @@ class RolloutTests(unittest.TestCase):
         def fail(): raise RuntimeError('broken')
         with self.assertRaisesRegex(RuntimeError,'rollback failed'): self.rollout.transaction(fail, lambda:None, fail)
 
+class StagingTests(unittest.TestCase):
+    def setUp(self):
+        self.rollout = load('demo_compose_runtime')
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = pathlib.Path(self.directory.name)
+        self.rollout.ROOT = self.root
+        self.image = 'ghcr.io/flidai/leapview@sha256:' + 'a' * 64
+        self.release = self.root/'releases'/('sha256-'+'a'*64)
+        self.release.mkdir(parents=True)
+        self.payload = {name: b'packaged content' for name in
+                        ['compose.yaml', 'compose.https.yaml', 'Caddyfile',
+                         'deployment.env.example', 'leapviewctl']}
+        for name, data in self.payload.items():
+            (self.release/name).write_bytes(data)
+            (self.root/name).symlink_to('current/'+name)
+        (self.root/'current').symlink_to('releases/'+self.release.name)
+
+    def copy(self, *args):
+        if args[:2] == ('docker', 'cp'):
+            for name, data in self.payload.items():
+                (pathlib.Path(args[-1])/name).write_bytes(data)
+
+    def stage(self):
+        with patch.object(self.rollout, 'out', return_value='container'), patch.object(self.rollout, 'run', side_effect=self.copy):
+            return self.rollout.stage_release(self.image)
+
+    def test_same_image_retry_preserves_custom_configuration_on_rejection(self):
+        (self.release/'Caddyfile').write_bytes(b'operator configuration')
+        with self.assertRaisesRegex(RuntimeError, 'Deployment payload changed'):
+            self.stage()
+        self.assertEqual((self.release/'Caddyfile').read_bytes(), b'operator configuration')
+        self.assertEqual((self.root/'current').resolve(), self.release)
+
+    def test_same_image_retry_preserves_existing_files(self):
+        before = {name: (self.release/name).stat() for name in self.payload}
+        self.assertEqual(self.stage(), self.release)
+        for name, previous in before.items():
+            current = (self.release/name).stat()
+            self.assertEqual((previous.st_ino, previous.st_mtime_ns, previous.st_mode),
+                             (current.st_ino, current.st_mtime_ns, current.st_mode))
+        self.assertEqual(list((self.root/'releases').iterdir()), [self.release])
+
+    def test_changed_existing_release_tool_is_rejected_without_overwriting(self):
+        (self.release/'leapviewctl').write_bytes(b'operator tool')
+        with self.assertRaisesRegex(RuntimeError, 'Existing release'):
+            self.stage()
+        self.assertEqual((self.release/'leapviewctl').read_bytes(), b'operator tool')
+
+    def test_interrupted_extraction_leaves_current_untouched(self):
+        def failed_copy(*args):
+            if args[:2] == ('docker', 'cp'):
+                (pathlib.Path(args[-1])/'Caddyfile').write_bytes(b'partial extraction')
+                raise RuntimeError('copy interrupted')
+        with patch.object(self.rollout, 'out', return_value='container'), patch.object(self.rollout, 'run', side_effect=failed_copy):
+            with self.assertRaisesRegex(RuntimeError, 'copy interrupted'):
+                self.rollout.stage_release(self.image)
+        for name, data in self.payload.items():
+            self.assertEqual((self.release/name).read_bytes(), data)
+        self.assertEqual(list((self.root/'releases').iterdir()), [self.release])
+
+    def test_new_release_is_staged_without_mutating_current(self):
+        previous = self.release
+        self.image = 'ghcr.io/flidai/leapview@sha256:'+'b'*64
+        release = self.stage()
+        self.assertNotEqual(release, previous)
+        self.assertEqual((self.root/'current').resolve(), previous)
+        for name, data in self.payload.items():
+            self.assertEqual((release/name).read_bytes(), data)
+        self.assertEqual((release/'leapviewctl').stat().st_mode & 0o777, 0o700)
+
 class PublicIdentityTests(unittest.TestCase):
     def test_public_endpoint_must_match_exact_revision(self):
         deploy=load('demo_compose_deploy')

@@ -48,6 +48,9 @@ Dump/tar readability is checked; this is not a full restore rehearsal.
 Only image updates with unchanged schema/engine dependencies and Compose payloads
 are admitted. Schema changes require the canonical `host upgrade` recovery and
 migration-capability process; this workflow never applies or reverses migrations.
+Image payloads are extracted into a separate temporary directory before validation.
+Same-image retries reuse an existing release only when its contents match the image;
+they never overwrite the active release or its local configuration.
 A host lock protects against overlapping operators. After replacement, the remote
 transaction waits up to five minutes for the runner's authenticated shared-viewer
 check of all four CFO pages (27 visuals). Readiness failure, failed browser checks,
