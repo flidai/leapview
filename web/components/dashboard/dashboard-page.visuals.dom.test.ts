@@ -402,6 +402,51 @@ test('visualization actions keep touch targets and spacing when a report is scal
   } finally { await page.close() }
 })
 
+test('an open visual menu escapes its card clipping layer and raises only its frame', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
+    const state = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
+      const first = hosts.find((host) => host.envelope?.visualID === 'orders_kpi')
+      const second = hosts.find((host) => host.envelope?.visualID === 'orders_chart')
+      const firstFrame = first.closest('lv-dashboard-visual-frame') as HTMLElement
+      const secondFrame = second.closest('lv-dashboard-visual-frame') as HTMLElement
+      const firstOptions = first.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
+      const secondOptions = second.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
+      const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+      firstOptions.querySelector<HTMLElement>('summary')!.click()
+      await settle()
+      const firstZIndex = Number.parseInt(getComputedStyle(firstFrame).zIndex, 10)
+      const secondZIndex = Number.parseInt(getComputedStyle(secondFrame).zIndex, 10)
+      const firstOpen = {
+        frameMarked: firstFrame.hasAttribute('data-visual-options-open'),
+        frameOverflow: getComputedStyle(firstFrame).overflow,
+        innerOverflow: getComputedStyle(firstFrame.shadowRoot!.querySelector<HTMLElement>('.frame')!).overflow,
+        raised: Number.isFinite(firstZIndex) && (!Number.isFinite(secondZIndex) || firstZIndex > secondZIndex),
+      }
+
+      secondOptions.querySelector<HTMLElement>('summary')!.click()
+      await settle()
+      return {
+        firstOpen,
+        onlySecondRaised: !firstFrame.hasAttribute('data-visual-options-open')
+          && secondFrame.hasAttribute('data-visual-options-open')
+          && !firstOptions.open
+          && secondOptions.open,
+      }
+    })
+    expect(state).toEqual({
+      firstOpen: { frameMarked: true, frameOverflow: 'visible', innerOverflow: 'visible', raised: true },
+      onlySecondRaised: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 for (const start of [50, 950]) {
   test(`table scrolling loads missing rows at ${start} and completes at the browse boundary`, async () => {
     const page = await browser.newPage()

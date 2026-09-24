@@ -232,6 +232,53 @@ test('mounted deferred hosts retain current renderer, shell, and actions after s
   }
 })
 
+test('visual option menus are exclusive and dismiss on Escape or outside pointer input', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean((window as any).__lvSourceHosts))
+    const state = await page.evaluate(async () => {
+      const envelope = structuredClone((window as any).__lvSourceHosts.orders_kpi.envelope)
+      const first = document.createElement('lv-visualization-host') as any
+      const second = document.createElement('lv-visualization-host') as any
+      first.envelope = envelope
+      second.envelope = { ...structuredClone(envelope), visualID: 'orders_kpi_second' }
+      document.body.append(first, second)
+      await Promise.all([first.updateComplete, second.updateComplete])
+      const firstOptions = first.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
+      const secondOptions = second.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
+      const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+      firstOptions.querySelector<HTMLElement>('summary')!.click()
+      await settle()
+      const firstOpened = firstOptions.open && first.hasAttribute('visual-options-open')
+
+      secondOptions.querySelector<HTMLElement>('summary')!.click()
+      await settle()
+      const exclusive = !firstOptions.open && !first.hasAttribute('visual-options-open')
+        && secondOptions.open && second.hasAttribute('visual-options-open')
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await settle()
+      const escapeDismissed = !secondOptions.open && !second.hasAttribute('visual-options-open')
+        && secondOptions.querySelector('summary') === second.shadowRoot.activeElement
+
+      firstOptions.querySelector<HTMLElement>('summary')!.click()
+      await settle()
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }))
+      await settle()
+      const outsideDismissed = !firstOptions.open && !first.hasAttribute('visual-options-open')
+
+      first.remove()
+      second.remove()
+      return { firstOpened, exclusive, escapeDismissed, outsideDismissed }
+    })
+    expect(state).toEqual({ firstOpened: true, exclusive: true, escapeDismissed: true, outsideDismissed: true })
+  } finally {
+    await page.close()
+  }
+})
+
 test('queued signals are announced only after their own renderer apply completes', async () => {
   const page = await browser.newPage()
   try {

@@ -1620,6 +1620,15 @@ class DashboardVisualFrame extends LitElement {
       overflow: visible;
     }
 
+    :host([data-visual-options-open]),
+    :host([data-visual-options-open]) .frame {
+      overflow: visible;
+    }
+
+    :host([data-visual-options-open]) {
+      z-index: var(--zIndex-dropdown, 100);
+    }
+
     ::slotted(*) {
       display: block;
       width: 100%;
@@ -1630,10 +1639,14 @@ class DashboardVisualFrame extends LitElement {
 
   render() {
     return html`
-      <article class="frame">
+      <article class="frame" @lv-visual-options-toggle=${this.handleVisualOptionsToggle}>
         <slot></slot>
       </article>
     `
+  }
+
+  private handleVisualOptionsToggle = (event: CustomEvent<{ open?: boolean }>): void => {
+    this.toggleAttribute('data-visual-options-open', event.detail?.open === true)
   }
 }
 

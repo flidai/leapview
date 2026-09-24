@@ -163,6 +163,11 @@ class ReportCanvas extends LitElement {
       box-sizing: border-box;
     }
 
+    ::slotted([data-canvas-visual][data-visual-options-open]) {
+      z-index: var(--zIndex-dropdown, 100);
+      overflow: visible;
+    }
+
     ::slotted([data-canvas-filter-visual]) {
       overflow: visible;
       z-index: 5;
