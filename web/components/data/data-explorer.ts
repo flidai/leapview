@@ -1859,18 +1859,16 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const datasetID = objectDatasetID(object)
     const localDimensions = localPreviewDimensions(object, this.dataExplorer?.explore?.fields ?? [])
     const semanticActive = this.dataExplorer?.command?.mode === 'explore'
-    const explore: DataExploreCommand = {
-      ...currentExplore,
+    const explore = this.queryController.explore(currentExplore, {
       semanticModelId: object.semanticModelId ?? '',
       datasetId: datasetID,
       dimensions: localDimensions,
       metrics: [],
       filters: [],
       sort: [],
-      requestSeq: 0,
-      resetVersion: 0,
+      time: undefined,
       columnWidths: {},
-    }
+    }, true)
     this.emitCommand({
       mode: semanticActive ? 'explore' : 'browse',
       explore,

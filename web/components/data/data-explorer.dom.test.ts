@@ -488,6 +488,9 @@ test('data explorer builds a governed semantic exploration and filter command', 
       }
 
       const root = (element.shadowRoot as ShadowRoot)
+      const resetToTable = root.querySelector<HTMLButtonElement>('[aria-label="Return to all table columns"]')!
+      resetToTable.click()
+      const resetToTableCommand = commands.at(-1)?.explore
       const customersTable = Array.from(root.querySelectorAll<HTMLElement>('.object-button')).find((button) => button.textContent?.includes('customers'))!
       customersTable.click()
       await element.updateComplete
@@ -565,6 +568,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
         rebaseField: { disabled: rebaseField.disabled, text: rebaseField.textContent?.replace(/\s+/g, ' ').trim(), title: rebaseField.title },
         rebaseCommand,
         tableSelectionCommand,
+        resetToTableCommand,
         commands,
       }
     })
@@ -590,6 +594,10 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.tableSelectionCommand.datasetId).toBe('customers')
     expect(state.tableSelectionCommand.dimensions).toEqual(['customers.customer_id', 'customers.state'])
     expect(state.tableSelectionCommand.metrics).toEqual([])
+    expect(state.resetToTableCommand.dimensions).toEqual(['orders.order_id', 'orders.status'])
+    expect(state.resetToTableCommand.metrics).toEqual([])
+    expect(state.resetToTableCommand.spec.dimensions.map((dimension: { field: string }) => dimension.field)).toEqual(['orders.order_id', 'orders.status'])
+    expect(state.resetToTableCommand.spec.metrics).toEqual([])
     expect(state.commands.some((command) => command.explore?.dimensions?.includes('items.sku'))).toBe(false)
     expect(state.commands.some((command) => command.mode === 'explore' && command.explore?.dimensions?.includes('orders.order_id'))).toBe(true)
     expect(state.commands.some((command) => command.explore?.filters?.[0]?.field === 'orders.status' && command.explore.filters[0].values[0] === 'delivered')).toBe(true)
