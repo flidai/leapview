@@ -188,6 +188,24 @@ test('proportional labels honor hidden and inside presentation settings without 
   })
 })
 
+test('growing an inside pie restores horizontal labels after compact radial layout', () => {
+  const envelope = proportionalWithIconFormat('pie')
+  if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
+  envelope.spec.presentation.labelPosition = 'inside'
+  const source = echartsOption(envelope, defaultRendererContext) as any
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 396, height: 420 })
+  try {
+    chart.setOption({ ...source, ...responsiveEChartsPatch(source, 396, 420), animation: false })
+    expect((chart as any).getModel().getSeriesByIndex(0).get(['label', 'rotate'])).toBe('radial')
+
+    chart.resize({ width: 700, height: 500 })
+    chart.setOption(responsiveEChartsPatch(source, 700, 500))
+    expect((chart as any).getModel().getSeriesByIndex(0).get(['label', 'rotate'])).toBeUndefined()
+  } finally {
+    chart.dispose()
+  }
+})
+
 test('card-sized inside pie labels do not collide', () => {
   const envelope = proportionalWithIconFormat('pie')
   if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected proportional fixture')
@@ -237,7 +255,7 @@ test('card-sized inside pies tilt every formatted value instead of hiding crowde
   expect(compact.label.rotate).toBe('radial')
   expect(compact.label.formatter({ value: rows[4], dataIndex: 4 })).toBe('R$1.07M')
   expect(compact.label.formatter({ value: rows[5], dataIndex: 5 })).toBe('R$0.903M')
-  expect((responsiveEChartsPatch(source, 700, 500).series[0].label as any).rotate).toBeUndefined()
+  expect((responsiveEChartsPatch(source, 700, 500).series[0].label as any).rotate).toBeNull()
 })
 
 test('empty and loading donuts show only the shared status graphic', () => {

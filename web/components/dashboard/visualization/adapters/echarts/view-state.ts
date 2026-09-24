@@ -26,7 +26,10 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
   if (envelope.spec.presentation.labelPosition === 'inside') {
     return `${compact ? 'compact' : 'roomy'}:inside-${width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT ? 'crowded' : 'full'}`
   }
-  return `${compact ? 'compact' : 'roomy'}:outside-${width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT ? 'bounded' : 'local'}`
+  const bounded = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
+  return bounded
+    ? `${compact ? 'compact' : 'roomy'}:outside-bounded`
+    : `${compact ? 'compact' : 'roomy'}:outside-local-${proportionalLabelLineLength(width, height)}-${proportionalLabelLineEndLength(width)}`
 }
 
 export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
@@ -87,7 +90,12 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     if (labelOption.position === 'inside') {
       const crowded = width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT
       hasResponsivePieLabels = true
-      if (!crowded) return entry
+      if (!crowded) {
+        return {
+          ...source,
+          label: { ...labelOption, rotate: null },
+        }
+      }
       return {
         ...source,
         label: {
@@ -121,8 +129,8 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
           ...((source.labelLine && typeof source.labelLine === 'object' && !Array.isArray(source.labelLine))
             ? source.labelLine as Record<string, unknown>
             : {}),
-          length: Math.min(64, Math.max(24, Math.round(Math.min(width, height) * 0.08))),
-          length2: Math.min(48, Math.max(20, Math.round(width * 0.035))),
+          length: proportionalLabelLineLength(width, height),
+          length2: proportionalLabelLineEndLength(width),
         },
       }),
     }
@@ -132,6 +140,14 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
 
 function finiteNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function proportionalLabelLineLength(width: number, height: number): number {
+  return Math.min(64, Math.max(24, Math.round(Math.min(width, height) * 0.08)))
+}
+
+function proportionalLabelLineEndLength(width: number): number {
+  return Math.min(48, Math.max(20, Math.round(width * 0.035)))
 }
 
 function compactInset(value: unknown, fallback: number): unknown {
@@ -170,6 +186,8 @@ function desktopLegend(value: unknown): unknown {
     // Clear compact sizing, retaining the scroll component and its selection state.
     return {
       type: 'scroll', left: 'center', right: 'auto', width: 'auto', height: 'auto', ...legend,
+      itemWidth: finiteNumber(legend.itemWidth) ?? 25,
+      itemHeight: finiteNumber(legend.itemHeight) ?? 14,
       textStyle: {
         ...((legend.textStyle && typeof legend.textStyle === 'object' && !Array.isArray(legend.textStyle))
           ? legend.textStyle as Record<string, unknown>

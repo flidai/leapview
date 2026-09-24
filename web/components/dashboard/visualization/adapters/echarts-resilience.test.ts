@@ -192,6 +192,11 @@ test('ECharts handle reapplies width-sensitive legends and switches proportional
   })
   expect(calls.at(-1)!.series[0].radius).toEqual(['54%', '76%'])
 
+  const roomyCount = calls.length
+  handle.resize(900, 500)
+  expect(calls.length).toBe(roomyCount + 1)
+  expect(calls.at(-1)!.series[0].labelLine).toMatchObject({ length: 40, length2: 32 })
+
   handle.resize(320, 300)
   expect(calls.at(-1)!.series[0]).toMatchObject({ id: 'series:primary:donut', label: { alignTo: 'edge' } })
 

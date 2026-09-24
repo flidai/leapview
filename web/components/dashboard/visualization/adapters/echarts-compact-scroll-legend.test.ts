@@ -100,6 +100,8 @@ test('growing a compact proportional legend restores unrestricted text and selec
     const legend = (chart as any).getModel().getComponent('legend')
     expect(legend.isSelected(rows[0][0])).toBe(false)
     expect(legend.get('width')).toBe('auto')
+    expect(legend.get('itemWidth')).toBe(25)
+    expect(legend.get('itemHeight')).toBe(14)
     expect(legend.get(['textStyle', 'width'], true)).toBeNull()
     expect(legend.get(['textStyle', 'overflow'], true)).toBeNull()
   } finally {
