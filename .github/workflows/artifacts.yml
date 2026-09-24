@@ -211,3 +211,20 @@ jobs:
             '.version == $version and .revision == $revision and .buildTime == $build_time and .dirty == false and .development == true' \
             <<<"${identity}" >/dev/null
           printf 'Production image: `%s`\n' "${immutable_image}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Record exact image qualification
+        env:
+          IMAGE: ${{ steps.admission.outputs.image }}
+          REVISION: ${{ needs.build-production-image.outputs.revision }}
+        run: |
+          jq -n --arg image "$IMAGE" --arg revision "$REVISION" \
+            --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{image:$image,revision:$revision,runId:$runId,runAttempt:$runAttempt,qualified:true}' > qualification.json
+
+      - name: Upload exact image qualification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-image-qualification-${{ github.run_attempt }}
+          path: qualification.json
+          if-no-files-found: error
+          retention-days: 90
