@@ -3792,6 +3792,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const draggedField = this.draggedFieldFromBuilder(this.builder)
     const fieldDrop = draggedField ? (this.fieldCompatibleWithVisual(draggedField, visual) ? 'compatible' : 'incompatible') : ''
     const requirementMessages = this.visualRequirementMessages(visual)
+    const suggestedMeasure = visualType === 'gauge' && !visual.slots.some((slot) => this.slotRole(slot) === 'metric')
+      && this.builder?.capabilities.canEdit && !this.commandPending
+      ? this.defaultGaugeMeasure(this.builder)
+      : undefined
     const previewIssue = this.visualPreviewErrorMessage(visual)
     const previewUnavailable = requirementMessages.length > 0 || Boolean(previewIssue) || Boolean(this.builder?.preview.error && !this.builder.preview.active)
     const preview = previewUnavailable ? undefined : previewCandidate
@@ -3803,7 +3807,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div class="grid-stack-item-content">
           ${preview
             ? keyed(preview.dataState.kind === 'windowed' ? `${visual.id}:${preview.specRevision}:${this.builderFilterState.revision}` : visual.id, html`<span class="visual-preview"><lv-visualization-host .resizeSuspended=${this.previewResizeSuspended} ?authoring=${previewHasHeader} .envelope=${preview}>${previewHasHeader ? html`<span slot="authoring-drag-handle" class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span>` : nothing}</lv-visualization-host>${previewHasHeader ? nothing : this.renderComponentDragGrip(visual.title, () => this.selectVisualFromPointer(visual.id))}</span>`)
-            : html`<span class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span><span class="visual-preview-empty" role="status"><strong>${previewLoading ? `Loading ${this.visualLabel(visualType).toLowerCase()}…` : `${this.visualLabel(visualType)} preview unavailable`}</strong>${previewLoading ? nothing : requirementMessages.length > 0 ? requirementMessages.map((message) => html`<span>${message}</span>`) : html`<span>${previewIssue || fallbackMessage}</span>`}</span><span class="visual-type">${visualType} · ${visual.slots.length} field slots</span>`}
+            : html`<span class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span><span class="visual-preview-empty" role="status"><strong>${previewLoading ? `Loading ${this.visualLabel(visualType).toLowerCase()}…` : suggestedMeasure ? 'Gauge needs a measure' : `${this.visualLabel(visualType)} preview unavailable`}</strong>${previewLoading ? nothing : requirementMessages.length > 0 ? requirementMessages.map((message) => html`<span>${message}</span>`) : html`<span>${previewIssue || fallbackMessage}</span>`}${suggestedMeasure && !previewLoading ? html`<button type="button" @click=${(event: MouseEvent) => { event.stopPropagation(); this.emitCommand('assign_field', { pageId: page.id, visualId: visual.id, fieldId: suggestedMeasure.id, role: 'metric' }) }}>Use ${suggestedMeasure.label} measure</button>` : nothing}</span><span class="visual-type">${visualType} · ${visual.slots.length} field slots</span>`}
         </div>
       </div>
     `
@@ -4278,6 +4282,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           <div class="format-section" data-format-section=${section}>
             <h3>${section}</h3>
             ${options.map((option) => this.renderFormatOption(visual, option, editable))}
+            ${section === 'Scale' && this.visualTypeForRender(visual) === 'gauge' ? html`<button type="button" ?disabled=${!editable} @click=${() => this.updateVisualFormatOption(visual, 'autoRange', 'true')}>Use automatic range</button>` : nothing}
           </div>
         `)}
         ${formatOptions.length === 0 ? html`<p class="pane-hint">This presentation has no additional formatting controls. Configure advanced options in dashboard code.</p>` : nothing}
@@ -4668,6 +4673,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const type = this.visualTypeForRender(visual)
     if (type === 'map') return role === 'dimension' ? 'Dimensions' : 'Measures'
     if (type === 'kpi') return 'Value'
+    if (type === 'matrix' || type === 'pivot') return role === 'dimension' ? 'Rows / Columns' : 'Values'
     if (['pie', 'donut', 'funnel', 'treemap', 'sunburst'].includes(type)) return role === 'dimension' ? 'Category' : 'Values'
     const horizontal = type === 'bar'
     if (role === 'dimension') return horizontal ? 'Y-axis' : 'X-axis'
@@ -4941,14 +4947,23 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
     if (!builder?.capabilities.canAddVisual || !page || this.commandPending) return
+    const measure = type === 'gauge' ? this.defaultGaugeMeasure(builder) : undefined
     this.pendingAddVisual = {
       revision: this.revisionKey(builder),
       visualIDs: new Set(page.visuals.map((visual) => visual.id)),
       pageID: page.id,
     }
     this.visualType = type
-    this.visualActionMessage = `Adding a ${this.visualLabel(type, builder)} visual.`
-    this.emitCommand('add_visual', { pageId: page.id, visualId: '', componentId: '', type, title: '' })
+    this.visualActionMessage = `Adding a ${this.visualLabel(type, builder)} visual${measure ? ` for ${measure.label}` : ''}.`
+    this.emitCommand('add_visual', {
+      pageId: page.id, visualId: '', componentId: '', type, title: measure?.label ?? '',
+      ...(measure ? { fieldId: measure.id, role: 'metric' } : {}),
+    })
+  }
+
+  private defaultGaugeMeasure(builder: DashboardBuilderSignal): DashboardBuilderFieldSignal | undefined {
+    return buildSemanticCatalog(builder.semanticModel.datasets ?? []).find((item) =>
+      item.group === 'metric' && this.fieldCompatibleWithRole(item.field, 'metric'))?.field
   }
 
   private copySelectedVisual(): boolean {

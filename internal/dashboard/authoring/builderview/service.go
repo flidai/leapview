@@ -826,12 +826,16 @@ func canonicalSlots(query dashboarddocument.DashboardQuery) ([]uisignals.Dashboa
 		}
 	case *dashboarddocument.HistogramDashboardQuery:
 		id, label := canonicalMetric(value.Field)
-		slots = append(slots, slot("metric-0", label, "metric", id, true))
-		projectSlotOptions(&slots[len(slots)-1], value.Field.Reference)
+		if id != "" && id != "pending_metric" {
+			slots = append(slots, slot("metric-0", label, "metric", id, true))
+			projectSlotOptions(&slots[len(slots)-1], value.Field.Reference)
+		}
 	case *dashboarddocument.DistributionDashboardQuery:
 		id, label := canonicalMetric(value.Field)
-		slots = append(slots, slot("metric-0", label, "metric", id, true))
-		projectSlotOptions(&slots[len(slots)-1], value.Field.Reference)
+		if id != "" && id != "pending_metric" {
+			slots = append(slots, slot("metric-0", label, "metric", id, true))
+			projectSlotOptions(&slots[len(slots)-1], value.Field.Reference)
+		}
 		if value.Group != nil {
 			id, label := canonicalDimension(*value.Group)
 			projected := slot("dimension-0", label, "dimension", id, false)

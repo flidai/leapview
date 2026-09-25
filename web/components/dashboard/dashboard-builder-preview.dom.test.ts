@@ -11,6 +11,117 @@ let browser: Browser
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/dashboard-builder-test')
 
+test('dashboard appearance picker only offers canonical colors', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const colors = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      ;(element.shadowRoot.querySelector('[data-builder-action="appearance"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const picker = element.shadowRoot.querySelector('lv-dashboard-icon-picker') as any
+      await picker.updateComplete
+      return [...picker.shadowRoot.querySelectorAll('.colors button')].map((button: Element) => button.getAttribute('aria-label'))
+    })
+    expect(colors).toEqual(['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('pivot-backed field wells describe their row and column roles', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const labels = await page.locator('lv-dashboard-builder').evaluate((element: any) => ['matrix', 'pivot'].map((type) => [
+      element.fieldWellLabel({ type }, 'dimension'),
+      element.fieldWellLabel({ type }, 'metric'),
+    ]))
+    expect(labels).toEqual([['Rows / Columns', 'Values'], ['Rows / Columns', 'Values']])
+  } finally {
+    await page.close()
+  }
+})
+
+test('a new Gauge starts with an available governed measure', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const command = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await element.updateComplete
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      ;(element.shadowRoot.querySelector('[data-visual-picker-type="gauge"]') as HTMLButtonElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return command
+    })
+    expect(command).toMatchObject({ action: 'add_visual', pageId: 'overview', type: 'gauge', title: 'Total', fieldId: 'orders.total', role: 'metric' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('an existing empty Gauge offers a one-click measure repair', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const pages = structuredClone(element.builder.pages)
+      pages[0].visuals[0].type = 'gauge'
+      pages[0].visuals[0].slots = []
+      mergePatch({ builder: { pages } })
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const button = root.querySelector('.visual-preview-empty button') as HTMLButtonElement
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      button.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { label: button.textContent?.trim(), command }
+    })
+    expect(state.label).toBe('Use Total measure')
+    expect(state.command).toMatchObject({ action: 'assign_field', pageId: 'overview', visualId: 'sales-chart', fieldId: 'orders.total', role: 'metric' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('an existing Gauge can explicitly restore automatic range', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const command = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const pages = structuredClone(element.builder.pages)
+      pages[0].visuals[0].type = 'gauge'
+      pages[0].visuals[0].formatOptions = [
+        { key: 'minimum', label: 'Minimum', section: 'Scale', control: 'number', value: '0', choices: [] },
+        { key: 'maximum', label: 'Maximum', section: 'Scale', control: 'number', value: '100', choices: [] },
+      ]
+      mergePatch({ builder: { pages } })
+      await element.updateComplete
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      ;(element.shadowRoot.querySelector('[data-format-section="Scale"] button') as HTMLButtonElement).click()
+      await new Promise(resolve => setTimeout(resolve, 20))
+      return command
+    })
+    expect(command).toMatchObject({ action: 'update_visual_format', pageId: 'overview', visualId: 'sales-chart', formatKey: 'autoRange', formatValue: 'true' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('filter settings prevent invalid requirements and visibly restore a blank label', async () => {
   const page = await browser.newPage()
   try {

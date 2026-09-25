@@ -27,10 +27,53 @@ func canonicalVisualPlacementSize(visualType document.DashboardVisualType) (colu
 	}
 }
 
-// resizeCanonicalVisualPlacement applies the type-specific footprint only to
-// the changed visual, then packs the page without discarding other manually
-// chosen sizes.
+// resizeCanonicalVisualPlacement keeps an authored position when the new
+// visual footprint fits there. Repacking is only needed for a collision.
 func resizeCanonicalVisualPlacement(value *document.DashboardDocument, pageID, componentID string) error {
+	for pageIndex := range value.Spec.Pages {
+		page := &value.Spec.Pages[pageIndex]
+		if page.ID != pageID {
+			continue
+		}
+		columns, err := canonicalPlacementColumns(*value, *page)
+		if err != nil {
+			return err
+		}
+		for componentIndex := range page.Components {
+			component, ok := page.Components[componentIndex].Value.(*document.VisualDashboardPageComponent)
+			if !ok || (component.ID != componentID && component.Visual != componentID) {
+				continue
+			}
+			visual, ok := value.Spec.Visuals[component.Visual]
+			if !ok {
+				break
+			}
+			placement := component.Placement
+			placement.ColumnSpan, placement.RowSpan = canonicalVisualPlacementSize(visual.Type)
+			if validatePlacementCoordinates(placement) == nil && int64(placement.Column)+int64(placement.ColumnSpan)-1 <= columns {
+				available := true
+				for otherIndex := range page.Components {
+					if otherIndex == componentIndex {
+						continue
+					}
+					other, err := page.Components[otherIndex].Base()
+					if err != nil {
+						return err
+					}
+					if placementsOverlapCanonical(placement, other.Placement) {
+						available = false
+						break
+					}
+				}
+				if available {
+					component.Placement = placement
+					return nil
+				}
+			}
+			break
+		}
+		break
+	}
 	return packCanonicalPageComponents(value, pageID, componentID, true)
 }
 

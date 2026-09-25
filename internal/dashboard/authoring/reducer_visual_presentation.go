@@ -166,6 +166,9 @@ func configureTargetPresentationBindings(visual *document.DashboardVisual) {
 	if !ok {
 		return
 	}
+	presentation.Identity = []string{"pending_identity"}
+	presentation.X = "pending_x"
+	presentation.Y = "pending_y"
 	if len(query.Dimensions) > 0 {
 		_, alias := canonicalDimensionSelection(query.Dimensions[0])
 		if alias != "" {

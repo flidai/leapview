@@ -41,7 +41,7 @@ func TestCanonicalVisualTypeSwitchAppliesTargetFootprint(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := component.Placement; got != (document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 4, RowSpan: 3}) {
+	if got := component.Placement; got != (document.DashboardPlacement{Column: 7, Row: 2, ColumnSpan: 4, RowSpan: 3}) {
 		t.Fatalf("KPI placement = %#v", got)
 	}
 
@@ -60,7 +60,7 @@ func TestCanonicalVisualTypeSwitchAppliesTargetFootprint(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := component.Placement; got != (document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 5}) {
+	if got := component.Placement; got != (document.DashboardPlacement{Column: 2, Row: 5, ColumnSpan: 6, RowSpan: 5}) {
 		t.Fatalf("table placement = %#v", got)
 	}
 
@@ -75,7 +75,7 @@ func TestCanonicalVisualTypeSwitchAppliesTargetFootprint(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := component.Placement; got != (document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 6}) {
+	if got := component.Placement; got != (document.DashboardPlacement{Column: 2, Row: 5, ColumnSpan: 6, RowSpan: 6}) {
 		t.Fatalf("tree placement = %#v", got)
 	}
 }
@@ -111,6 +111,33 @@ func TestCanonicalVisualTypeSwitchPreservesAnotherManuallyResizedVisual(t *testi
 	}
 	if got := second.Placement; got.ColumnSpan != 6 || got.RowSpan != 6 {
 		t.Fatalf("changed visual's tree footprint = %#v, want 6x6", got)
+	}
+}
+
+func TestCanonicalVisualTypeSwitchKeepsDroppedPositionWhenFootprintFits(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	page := &revision.Document.Spec.Pages[0]
+	first, err := page.Components[0].Base()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Placement = document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 4, RowSpan: 7}
+	page.Components = append(page.Components, canonicalTestVisualComponent("second", "second-visual", document.DashboardPlacement{Column: 5, Row: 9, ColumnSpan: 4, RowSpan: 3}))
+	revision.Document.Spec.Visuals["second-visual"] = defaultCanonicalVisual("kpi", "Second")
+	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{
+		PageID: "overview", VisualID: "second", Type: document.DashboardVisualTypeGauge,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := page.Components[1].Base()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := first.Placement, (document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 4, RowSpan: 7}); got != want {
+		t.Fatalf("first placement = %#v, want %#v", got, want)
+	}
+	if got, want := second.Placement, (document.DashboardPlacement{Column: 5, Row: 9, ColumnSpan: 4, RowSpan: 3}); got != want {
+		t.Fatalf("dropped visual placement = %#v, want %#v", got, want)
 	}
 }
 
@@ -163,7 +190,7 @@ func TestCanonicalVisualTypeSwitchPacksPageWithoutChangingSiblingSizes(t *testin
 	}
 }
 
-func TestCanonicalVisualTypeSwitchPacksCFOLayoutAroundFixedFilters(t *testing.T) {
+func TestCanonicalVisualTypeSwitchKeepsCFOLayoutWhenFootprintFits(t *testing.T) {
 	_, revision := canonicalReducerFixture(t)
 	page := &revision.Document.Spec.Pages[0]
 	page.Components = []document.DashboardPageComponent{
@@ -199,10 +226,10 @@ func TestCanonicalVisualTypeSwitchPacksCFOLayoutAroundFixedFilters(t *testing.T)
 		"net-revenue":      {Column: 1, Row: 3, ColumnSpan: 3, RowSpan: 3},
 		"gross-margin":     {Column: 4, Row: 3, ColumnSpan: 3, RowSpan: 3},
 		"current-cash":     {Column: 7, Row: 3, ColumnSpan: 6, RowSpan: 4},
-		"ebitda":           {Column: 1, Row: 6, ColumnSpan: 3, RowSpan: 3},
-		"performance":      {Column: 4, Row: 7, ColumnSpan: 8, RowSpan: 6},
-		"variance":         {Column: 1, Row: 13, ColumnSpan: 4, RowSpan: 6},
-		"scorecard":        {Column: 1, Row: 19, ColumnSpan: 12, RowSpan: 6},
+		"ebitda":           {Column: 1, Row: 7, ColumnSpan: 3, RowSpan: 3},
+		"performance":      {Column: 1, Row: 10, ColumnSpan: 8, RowSpan: 6},
+		"variance":         {Column: 9, Row: 10, ColumnSpan: 4, RowSpan: 6},
+		"scorecard":        {Column: 1, Row: 16, ColumnSpan: 12, RowSpan: 6},
 	}
 	for _, component := range page.Components {
 		placed, err := component.Base()

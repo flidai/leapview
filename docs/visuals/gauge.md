@@ -1,10 +1,10 @@
 # Gauge
 
-Use a gauge to communicate one value against a known range or threshold scale.
+Use a gauge to communicate one value against an automatically derived or authored range.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
-Gauge presentation requires an explicit `minimum` and `maximum` domain. Optional `target`, `showPointer`, `progressWidth`, and `thresholds` annotate that domain; gauge values at either configured boundary remain in range.
+Omit both `minimum` and `maximum` to derive a readable domain from the current single metric value. Set both to author a stable domain; an out-of-range value is shown as a diagnostic rather than clipped. Optional `target` and `thresholds` are anchored to an authored domain, while `showPointer` and `progressWidth` can be used with either mode.
 
 ## Customer review health
 

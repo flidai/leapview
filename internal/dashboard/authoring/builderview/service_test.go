@@ -39,6 +39,22 @@ func TestVisualReferencesUseThePublicDocumentationSite(t *testing.T) {
 	}
 }
 
+func TestUnboundSingleMetricVisualsDoNotOccupyTheFieldWell(t *testing.T) {
+	pending := "pending_metric"
+	for _, query := range []document.DashboardQuery{
+		{Value: &document.HistogramDashboardQuery{Field: document.DashboardMetricSelection{String: &pending}}},
+		{Value: &document.DistributionDashboardQuery{Field: document.DashboardMetricSelection{String: &pending}}},
+	} {
+		slots, err := canonicalSlots(query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(slots) != 0 {
+			t.Fatalf("unbound %T slots = %#v, want none", query.Value, slots)
+		}
+	}
+}
+
 func newBuilderFixture(t *testing.T) *builderFixture {
 	t.Helper()
 	provenance := authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}

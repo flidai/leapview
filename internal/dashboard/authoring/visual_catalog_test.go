@@ -4,11 +4,30 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/dashboard/compiler"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
+
+func TestCanonicalAddGaugeBindsGovernedMeasureAtomically(t *testing.T) {
+	lifecycle, current := canonicalReducerFixture(t)
+	command := Command{
+		ID: "add-metric-gauge", DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID,
+		ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance(),
+		AddVisual: &AddVisualPayload{PageID: "overview", Type: "gauge", Title: "Revenue", FieldID: "revenue", Role: FieldRoleMetric, FieldValidated: true},
+	}
+	_, next, err := ApplyEdit(lifecycle, current, command, "rev-2", 2, time.Date(2026, 8, 18, 12, 1, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	visual := next.Document.Spec.Visuals["visual_2"]
+	query, ok := visual.Query.Value.(*document.AggregateDashboardQuery)
+	if !ok || visual.Type != document.DashboardVisualTypeGauge || len(query.Metrics) != 1 || query.Metrics[0].String == nil || *query.Metrics[0].String != "revenue" {
+		t.Fatalf("initial gauge = %#v query=%#v", visual, query)
+	}
+}
 
 func TestCanonicalVisualCatalogMatchesExecutableVisualReference(t *testing.T) {
 	var reference struct {

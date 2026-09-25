@@ -56,7 +56,26 @@ func TestSameFamilySwitchKeepsTargetDefaultsAndCompatibleFormatting(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if raw["minimum"] != float64(0) || raw["maximum"] != float64(100) || raw["displayUnits"] != "millions" {
+	if raw["minimum"] != nil || raw["maximum"] != nil || raw["displayUnits"] != "millions" {
 		t.Fatalf("lost target defaults or compatible formatting: %#v", raw)
+	}
+}
+
+func TestGaugeAutoRangeExplicitlyClearsBothAuthoredBounds(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	visual := defaultCanonicalVisual("gauge", "Actual")
+	minimum, maximum := 0.0, 100.0
+	presentation := visual.Presentation.Value.(*document.PolarDashboardPresentation)
+	presentation.Minimum, presentation.Maximum = &minimum, &maximum
+	revision.Document.Spec.Visuals["base"] = visual
+	formatValue := "true"
+	if err := updateCanonicalVisualFormat(&revision.Document, UpdateVisualFormatPayload{
+		PageID: "overview", VisualID: "base-component", FormatKey: "autoRange", FormatValue: &formatValue,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := revision.Document.Spec.Visuals["base"].Presentation.Value.(*document.PolarDashboardPresentation)
+	if got.Minimum != nil || got.Maximum != nil {
+		t.Fatalf("auto range left explicit bounds: minimum=%v maximum=%v", got.Minimum, got.Maximum)
 	}
 }

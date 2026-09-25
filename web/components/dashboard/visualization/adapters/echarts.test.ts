@@ -1343,6 +1343,7 @@ test('ECharts formats gauges, applies semantic thresholds, and renders status st
     pointer: { show: true }, progress: { show: true, width: 12 },
     data: [{ value: '0.75', __lv_dataset: 'primary', __lv_row_index: 0 }],
   })
+  expect(option.series[0].axisLabel.formatter(0.5)).toBe('50%')
   expect(option.series[0].axisLine.lineStyle.color).toEqual([[0.5, defaultRendererContext.colors.attention], [0.8, defaultRendererContext.colors.danger]])
   expect(option.series[0].detail.formatter(0.75)).toBe('75%')
   const gaugePresentation = envelope.spec.presentation as Extract<VisualizationEnvelope['spec'], { kind: 'polar' }>['presentation']
@@ -1374,11 +1375,44 @@ test('ECharts owns the complete gauge color scale when thresholds are omitted', 
   expect(option.series[0].axisLine.lineStyle.color).toEqual([[1, defaultRendererContext.colors.accent]])
 })
 
-test('ECharts rejects gauge envelopes without an explicit truthful domain', () => {
+test('ECharts derives a truthful gauge domain only when no range was authored', () => {
   const envelope = gaugeFixture() as any
   envelope.spec.presentation.minimum = undefined
   envelope.spec.presentation.maximum = undefined
-  expect(() => echartsOption(envelope, defaultRendererContext)).toThrow(/explicit minimum and maximum/)
+  envelope.spec.presentation.target = undefined
+  envelope.spec.presentation.thresholds = undefined
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0]).toMatchObject({ min: 0, max: 1, data: [{ value: '0.75' }] })
+
+  envelope.spec.datasets[0].fields[0].format = { kind: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['118726350.28']]
+  const readableLargeDomain = echartsOption(envelope, defaultRendererContext) as any
+  expect(readableLargeDomain.series[0]).toMatchObject({ min: 0, max: 200000000, splitNumber: 5 })
+  expect(readableLargeDomain.series[0].axisLabel.formatter(20000000)).toBe('$20M')
+
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['-25346402.8']]
+  const largeNegative = echartsOption(envelope, defaultRendererContext) as any
+  expect(largeNegative.series[0]).toMatchObject({ min: -50000000, max: 0 })
+
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['0']]
+  const zero = echartsOption(envelope, defaultRendererContext) as any
+  expect(zero.series[0]).toMatchObject({ min: 0, max: 1 })
+
+  envelope.spec.presentation.minimum = 0
+  envelope.spec.presentation.maximum = 1
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['1.2']]
+  const explicitOutOfRange = echartsOption(envelope, defaultRendererContext) as any
+  expect(explicitOutOfRange.graphic[0].style.text).toContain('outside configured gauge domain')
+})
+
+test('ECharts rejects incomplete authored gauge domains and auto-domain annotations', () => {
+  const envelope = gaugeFixture() as any
+  envelope.spec.presentation.minimum = undefined
+  expect(() => echartsOption(envelope, defaultRendererContext)).toThrow(/both minimum and maximum/)
+
+  envelope.spec.presentation.maximum = undefined
+  envelope.spec.presentation.target = 0.8
+  expect(() => echartsOption(envelope, defaultRendererContext)).toThrow(/require an explicit minimum and maximum/)
 })
 
 test('ECharts renders an explicit labeled target independently from the metricd value', () => {
