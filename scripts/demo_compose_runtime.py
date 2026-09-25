@@ -146,6 +146,10 @@ def upgrade_guard():
 
 def main():
     os.umask(0o077)
+    # Recovery needs the read-only viewer credential handoff while the journal
+    # fences all runtime inspection and mutation.
+    if sys.argv[1:] == ["viewer"]:
+        return _main()
     with upgrade_guard():
         _main()
 

@@ -28,7 +28,8 @@ def classify(current, target, before, after, changed_paths):
     if target == current and changed_paths:
         mode = 'review-required'
     return dict(mode=mode, currentSchema=current, candidateSchema=target,
-                pendingMigrations=pending, changedCompatibilityPaths=sorted(changed_paths),
+                pendingMigrations=pending, pendingMigrationDigests={name: after[name] for name in pending},
+                changedCompatibilityPaths=sorted(changed_paths),
                 imageOnlyEligible=mode == 'image-only', migrationExecutionAuthorized=False)
 
 

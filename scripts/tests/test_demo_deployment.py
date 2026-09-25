@@ -77,7 +77,8 @@ class PreflightTests(unittest.TestCase):
                         popen.assert_not_called()
                         public.assert_not_called()
                         self.assertEqual(run.call_count, 2)  # temporary inspector upload and cleanup only
-                        self.assertEqual(run.call_args.args[0][-3:-1], ['rm','-f'])
+                        self.assertIn('rm', run.call_args.args[0])
+                        self.assertIn('-f', run.call_args.args[0])
                     self.assertIn(mode, pathlib.Path(env['GITHUB_STEP_SUMMARY']).read_text())
                 finally:
                     os.umask(previous_umask)

@@ -118,6 +118,108 @@ because the project graph is not active until its exact candidate is
 activated. The subsequent authoring, ingestion, publication, approval, and
 activation calls remain protected by the canonical project grants.
 
+## Database upgrades and interrupted-operation recovery
+
+Use **Hosted demo deployment → `upgrade`** for the reviewed schema **28 → 30**
+transition on `app-leapview-demo-02`. Supply the immutable candidate image and its
+successful **main-push Main artifacts** qualification run. This is a maintenance
+operation: public access closes while the backup, restore rehearsal, migration,
+and private CFO checks run. Ordinary `deploy` remains image-only and refuses
+schema or engine changes before creating a deployment record.
+
+The upgrade is bounded to the existing native demo topology: pinned demo-02 SSH
+identity, local PostgreSQL 18 at its exact digest, the two existing databases,
+local managed data inside the application home, and the existing Compose network
+and four volumes. It rejects external storage, unaccounted writable mounts,
+unexpected network participants, pending background jobs, historical SQL edits,
+changed DuckDB/DuckLake dependencies, and any other migration boundary. It never
+changes DNS or provisions another server.
+
+The Actions environment and pinned root SSH connection remain this provider's
+operator authority. The private request binds the exact successful qualification
+receipt, live OCI admission report, source comparison, reviewed migration hashes,
+and workflow run/attempt. The host executes the controller extracted from that
+same candidate image. This bounded provider adapter does **not** create generic
+release-authority records or bypass the generic host transition runner's
+binary-rollback restriction. Other provider topologies still need their own
+qualified transition integration.
+
+The sequence is:
+
+1. Preflight source compatibility and candidate-owned request validation before
+   creating a runtime deployment record; authenticate the current CFO viewer.
+2. Acquire the host upgrade lock; validate the running predecessor and storage
+   topology. Retain private original configuration and immutable image identities.
+3. Change Caddy to loopback-only bindings, disable automatic writer restarts,
+   stop the application, require drained jobs, and stop PostgreSQL and Caddy.
+4. Capture the entire stopped PostgreSQL cluster (both databases and roles),
+   application home/managed files, and Caddy state. Hash and retain a private
+   manifest. Restore all volumes into independent directories on an internal
+   Docker network. Start the exact predecessor and validate all four CFO pages
+   (27 visuals) through pinned SSH, retaining the real HTTPS origin and certificate
+   verification. Listing a backup is never treated as restore proof.
+5. Persist migration intent outside restored volumes. Run only the candidate's
+   embedded migrations 029 and 030 with the control migrator credential under the
+   canonical PostgreSQL migration fence, revalidate the request/recovery frontier,
+   retain the existing River schema, and reconcile product role policy.
+6. Preserve the agent encryption key, or provision it once if absent. Start the
+   candidate behind the loopback gate. Require exact image/source/schema/readiness
+   and another authenticated check of all four CFO pages.
+7. Persist the commit boundary **before** restoring public bindings. Verify the
+   public source and CFO pages, then mark the runtime deployment successful.
+   Publication follows this successful record; it never advances on a failed check.
+
+The private journal is `/etc/leapview-provider-cfo/upgrade-operation.json`.
+Snapshots, original configuration, request evidence, and restricted operator logs
+live under `upgrade-operations/<request-digest>/` beside it. Keep this directory
+outside every restored volume. Snapshots and retained failed state are deliberately
+not pruned automatically. The provisioned agent key is retained privately in the
+operation directory as well as `leapview.env`; preserve it in operator backups.
+No credentials or state archives are uploaded to Actions artifacts.
+
+Before commit, migration, readiness, browser failure, SSH EOF, or handled
+cancellation invokes paired recovery with a fresh bounded context. Recovery first
+stops the named migration process and all writers, verifies the entire recovery
+set, restores the cluster and file volumes together, restores configuration and
+the predecessor, and checks its schema/readiness behind the gate. It persists
+reopening intent before exposing the predecessor. It never runs down SQL.
+A failed recovery leaves the journal blocking normal deployments and publication.
+
+For power loss, a killed controller, or incomplete finalization, dispatch
+**`recover` with the same candidate digest and qualification run**. It loads the
+persisted request; a new workflow attempt cannot replace an unfinished operation.
+Before commit it restores the predecessor. The Actions deployment is intentionally
+reported unsuccessful in that case: the candidate was not deployed. After commit
+it only completes candidate exposure/verification and the runtime record; it will
+**never restore old data after the candidate could have accepted public writes**.
+After successful predecessor recovery, start a new `upgrade` run when the failure
+has been corrected. Ordinary deployments share the same lock and reject every
+nonterminal journal.
+
+If registry or Actions access is unavailable, the root operator can use the already
+retained candidate controller and request on demo-02:
+
+```sh
+/etc/leapview-provider-cfo/upgrade-controllers/<candidate-sha256>/leapviewctl \
+  demo-upgrade recover \
+  --request /etc/leapview-provider-cfo/upgrade-operations/<request-digest>/request.json
+```
+
+Inspect the durable phase and private operator log first. This offline command
+recovers/finalizes the host only; reconcile the GitHub runtime deployment through
+`recover` once Actions access returns. Do not edit the journal, Goose ledger, or
+runtime pin to conceal an incomplete operation.
+
+CI exercises real PostgreSQL 28 → 30 migration, partial migration failure,
+restricted-role policy reconciliation, physical paired recovery, process restart,
+lock exclusion, and browser-approval failure paths using disposable resources.
+The **actual deployed predecessor/data and selected candidate** receive the two
+private browser gates during the explicitly dispatched maintenance operation;
+CI fixtures are not represented as a backup of the live demo. The candidate image
+also requires the normal provenance, OCI admission and enterprise qualification.
+Future schema transitions are intentionally rejected until their policy and
+recovery tests are reviewed; image-only updates continue through `deploy`.
+
 ## Human access
 
 Human credentials are isolated from the deployment identity in the Infisical
@@ -165,9 +267,9 @@ The operator provisions `LEAPVIEW_AGENT_CREDENTIAL_KEY` once in the private
 database: saved provider credentials are encrypted with this key. The Compose
 rollout preserves the environment file byte-for-byte and does not rotate keys.
 
-Introducing admin configuration adds a database migration. The image-only
-hosted-demo workflow cannot apply it; the phased `host upgrade` command alone
-does not supply the required migration and recovery orchestration. After upgrading, an admin tests
+Introducing admin configuration adds a database migration. Use the explicit `upgrade` action above for the reviewed 28 → 30 boundary;
+the phased `host upgrade` command alone does not provide the native recovery
+orchestration. After upgrading, an admin tests
 and saves the provider configuration before verifying a chatbot conversation.
 
 Treat the shared credential as public. To rotate it, reset the local password,

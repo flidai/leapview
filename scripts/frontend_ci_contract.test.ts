@@ -111,7 +111,7 @@ test('pinned publication rejects unsupported datasets before credentials or publ
 
 test('runtime deployment admits exact evidence before secrets and advances pin only after validation', () => {
   const workflow = parse(readFileSync('.github/workflows/demo-deploy.yml', 'utf8'))
-  expect(workflow.on.workflow_dispatch.inputs.action.options).toEqual(['publish', 'deploy'])
+  expect(workflow.on.workflow_dispatch.inputs.action.options).toEqual(['publish', 'deploy', 'upgrade', 'recover'])
   expect(workflow.on.workflow_run).toBeUndefined()
   expect(workflow.concurrency['cancel-in-progress']).toBe(false)
   const runtime = workflow.jobs.runtime
