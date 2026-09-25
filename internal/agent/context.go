@@ -209,7 +209,7 @@ func turnContextItems(context *TurnContext) []agentcore.ContextItem {
 	}
 	items := []agentcore.ContextItem{{Key: "leapview_context", Value: normalized}}
 	if normalized.Surface == builderTurnContextSurface {
-		items = append(items, agentcore.ContextItem{Key: "leapview_builder_v1_policy", Value: "Edit only this open dashboard draft. Creating, forking, deleting, publishing, archiving, or changing visibility is not available through the agent. Ask the user to create a dashboard and select its semantic model in the UI first."})
+		items = append(items, agentcore.ContextItem{Key: "leapview_builder_v1_policy", Value: "Edit only this open dashboard draft. Creating, forking, deleting, publishing, archiving, or changing visibility is not available through the agent. Ask the user to create a dashboard and select its semantic model in the UI first. A tool preview query can be blocked independently of the live Builder preview; do not claim the Builder chart failed unless its own status confirms that."})
 	}
 	return items
 }

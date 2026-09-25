@@ -87,8 +87,14 @@ func TestDashboardBuilderRefreshPreservesAgentSignals(t *testing.T) {
 	}
 
 	patches := ssetest.PatchSignals(t, rec.Body.String())
-	if len(patches) != 1 {
-		t.Fatalf("builder refresh patches = %d, want one canonical bootstrap without loading flicker: %s", len(patches), rec.Body.String())
+	if len(patches) != 2 {
+		t.Fatalf("builder refresh patches = %d, want preview reset then canonical bootstrap: %s", len(patches), rec.Body.String())
+	}
+	if previews, ok := patches[0]["builderVisuals"]; !ok || previews != nil {
+		t.Fatalf("builder refresh did not clear old visual envelope: %#v", patches[0])
+	}
+	if _, loading := patches[0]["status"]; loading {
+		t.Fatalf("builder refresh showed a loading shell: %#v", patches[0])
 	}
 	bootstrap := patches[len(patches)-1]
 	if builder, ok := bootstrap["builder"].(map[string]any); !ok || builder["title"] != "Revenue" {

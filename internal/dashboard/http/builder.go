@@ -451,6 +451,14 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 	envelope.Runtime.DashboardID = uisignals.Optional(dashboardID)
 	envelope.Runtime.PageID = uisignals.Optional(firstBuilderPage(builder))
 	bootstrap := ui.DashboardBuilderBootstrapSignals(envelope)
+	if snapshot {
+		// A one-shot Agent refresh replaces the complete visual graph. Datastar
+		// merges nested objects, so clear old envelopes before publishing a new
+		// chart type; otherwise stale union fields survive until a page reload.
+		if err := updates.Patch(pagestream.SignalPatch{"builderVisuals": nil}); err != nil {
+			return
+		}
+	}
 	if hasClientAgentState(r) {
 		delete(bootstrap, "agent")
 		delete(bootstrap, "agentVisuals")
