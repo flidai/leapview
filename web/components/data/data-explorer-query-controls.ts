@@ -54,9 +54,10 @@ export class DataExplorerQueryControls extends LitElement {
     .search { position: relative; min-width: 0; max-width: 32rem; }
     .search input { width: 100%; min-width: 0; height: var(--control-small-size); border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); padding: 0 var(--base-size-8) 0 var(--base-size-32); font: var(--lv-type-body); box-sizing: border-box; }
     .search-icon { position: absolute; left: var(--base-size-8); top: 50%; display: grid; color: var(--lv-fg-muted); transform: translateY(-50%); }
-    .field-groups { display: grid; max-height: 15rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: var(--base-size-8); overflow: auto; padding: 0; }
+    .field-groups { display: grid; max-height: 18rem; grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); overflow: auto; padding: 0; }
     .field-group { min-width: 0; margin: 0; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); padding: var(--base-size-4); }
     .field-group summary { display: flex; min-height: var(--control-small-size); align-items: center; gap: var(--base-size-6); padding: var(--base-size-4) var(--base-size-6); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-medium); text-transform: uppercase; }
+    .field-group summary em { margin-left: auto; font-style: normal; text-transform: none; }
     .object-list { display: grid; gap: var(--base-size-2); padding: var(--base-size-2); }
     .field-row { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: var(--lv-radius-default); }
     .field-row:hover, .field-row:focus-within { background: var(--lv-bg-control-hover); }
@@ -94,13 +95,14 @@ export class DataExplorerQueryControls extends LitElement {
     const selected = new Set([...spec.dimensions, ...spec.metrics].map((ref) => ref.field))
     return html`
       ${this.filterField ? this.renderFilterEditor(spec) : nothing}
-      <details class="field-picker" open>
-        <summary><span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span><span>${selected.size ? `${selected.size} selected` : 'Choose fields'}</span><span class="config-note">Rows are dimensions; Analyze values are metrics.</span></summary>
+      <details class="field-picker">
+        <summary><span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span><span>Columns${selected.size ? ` (${selected.size})` : ''}</span><span class="config-note">Choose columns or add a filter</span></summary>
         <label class="search"><span class="search-icon" aria-hidden="true">${lucideIcon(Search, { size: 15 })}</span><input type="search" aria-label="Search semantic fields" .value=${this.fieldQuery} @input=${this.changeFieldQuery} placeholder="Search fields" autocomplete="off" /></label>
-        ${fields.length ? html`<div class="field-groups">${groupFields(fields).map((group) => html`
-          <details class="field-group" open><summary><span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 13 })}</span><span aria-hidden="true">${lucideIcon(group.kind === 'metric' ? Sigma : Table2, { size: 13 })}</span><span>${group.label}</span><em>${group.fields.length}</em></summary>
-          <div class="object-list">${group.fields.map((field) => this.renderField(field, selected.has(field.id), spec))}</div></details>
-        `)}</div>` : html`<p class="config-note">No semantic fields match this search.</p>`}
+        ${fields.length ? html`<div class="field-groups">${groupFields(fields).map((group) => {
+          const selectedCount = group.fields.filter((field) => selected.has(field.id)).length
+          return html`<details class="field-group" name="data-explorer-field-group"><summary><span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 13 })}</span><span aria-hidden="true">${lucideIcon(group.kind === 'metric' ? Sigma : Table2, { size: 13 })}</span><span>${group.label}</span><em>${selectedCount ? `${selectedCount} selected · ` : ''}${group.fields.length}</em></summary>
+            <div class="object-list">${group.fields.map((field) => this.renderField(field, selected.has(field.id), spec))}</div></details>`
+        })}</div>` : html`<p class="config-note">No semantic fields match this search.</p>`}
       </details>
       ${this.renderConfig(spec)}
     `
@@ -161,8 +163,8 @@ export class DataExplorerQueryControls extends LitElement {
   private renderConfig(spec: ExplorationSpec) {
     const timeFields = this.fields.filter((field) => field.kind === 'dimension' && isTemporalType(field.type))
     const sortFields = explorationSortFields(spec)
-    return html`<details class="query-config" aria-label="Query configuration" open>
-      <summary><span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span><span>Query configuration</span><span class="config-note">Time, sort, and row limit</span></summary>
+    return html`<details class="query-config" aria-label="More table options">
+      <summary><span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span><span>More</span><span class="config-note">Time, sort, and row limit</span></summary>
       <div class="config-grid">
         <label>Time field<select aria-label="Time field" .value=${spec.time?.field ?? ''} @change=${(event: Event) => this.changeTimeField((event.target as HTMLSelectElement).value, spec)}><option value="" .selected=${!spec.time?.field}>No time field</option>${timeFields.map((field) => {
           const unavailable = field.compatible === false && !field.rebaseDatasetId

@@ -483,7 +483,7 @@ test('query controls hydrate canonical select values on their first render', asy
         filterOperator: value('.filter-editor select'),
         rangeFrom: root.querySelector<HTMLInputElement>('[aria-label="Time range from"]')?.value,
         rangeTo: root.querySelector<HTMLInputElement>('[aria-label="Time range to"]')?.value,
-        unavailableTimeDisabled: root.querySelector<HTMLOptionElement>('option[value="shipments.created_at"]')?.disabled,
+        unavailableTimeDisabled: root.querySelector<HTMLOptionElement>('option[value="shipments.created_at"]')?.disabled, progressiveDisclosure: { columnsOpen: root.querySelector<HTMLDetailsElement>('.field-picker')?.open, moreOpen: root.querySelector<HTMLDetailsElement>('.query-config')?.open, exclusiveGroups: Array.from(root.querySelectorAll<HTMLDetailsElement>('.field-group')).every((group) => group.name === 'data-explorer-field-group') },
       }
     })
 
@@ -497,7 +497,7 @@ test('query controls hydrate canonical select values on their first render', asy
       filterOperator: 'greater_than',
       rangeFrom: '2026-01-01',
       rangeTo: '2026-01-31',
-      unavailableTimeDisabled: true,
+      unavailableTimeDisabled: true, progressiveDisclosure: { columnsOpen: false, moreOpen: false, exclusiveGroups: true },
     })
   } finally {
     await page.close()
@@ -617,7 +617,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
         modes: Array.from(root.querySelectorAll('.mode-button')).map((button) => ({ text: button.textContent?.trim(), pressed: button.getAttribute('aria-pressed') })),
         hasBreadcrumb: Boolean(root.querySelector('[aria-label="Breadcrumb"]')),
         resourceTables: root.querySelector('.resource-group')?.textContent?.replace(/\s+/g, ' ').trim(),
-        chips: Array.from(root.querySelectorAll('.selection-shelf .chip')).map((chip) => chip.textContent?.replace(/\s+/g, ' ').trim()),
+        querySummary: Array.from(root.querySelectorAll('.selection-shelf .query-summary')).map((item) => item.textContent?.replace(/\s+/g, ' ').trim()),
         grain: root.querySelector('.result-meta')?.textContent?.replace(/\s+/g, ' ').trim(),
         tableRows: table.result.rows,
         resultLayout: { overflowY: getComputedStyle(resultPane).overflowY, scrollable: resultPane.scrollHeight > resultPane.clientHeight, tableHeight: table.getBoundingClientRect().height },
@@ -673,11 +673,11 @@ test('data explorer builds a governed semantic exploration and filter command', 
     ])
     expect(state.hasBreadcrumb).toBe(false)
     expect(state.resourceTables).toContain('orders')
-    expect(state.chips.join(' ')).toContain('Order ID')
-    expect(state.chips.join(' ')).toContain('Revenue')
+    expect(state.querySummary).toContain('3 columns')
+    expect(state.querySummary).toContain('No filters')
     expect(state.grain).toContain('Grain: order_id')
     expect(state.tableRows).toEqual([{ status: 'delivered', revenue: 1200 }])
-    expect(state.resultLayout).toMatchObject({ overflowY: 'auto', scrollable: true })
+    expect(state.resultLayout).toMatchObject({ overflowY: 'auto' })
     expect(state.resultLayout.tableHeight).toBeGreaterThan(200)
     expect(state.relatedField.disabled).toBe(false)
     expect(state.relatedField.text).toContain('related')

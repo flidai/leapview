@@ -57,7 +57,6 @@ import {
   filterOperator,
   filterValues,
   makeExplorationFilter,
-  removeExplorationField,
 } from './data-explorer-spec'
 import {
   datasetGrainLabel,
@@ -820,6 +819,11 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       flex-wrap: wrap;
     }
 
+    .query-summary {
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+    }
+
     .chip {
       display: inline-flex;
       max-width: 18rem;
@@ -1349,9 +1353,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     `
   }
 
-  private renderQueryChip(id: string, kind: 'dimension' | 'metric', fields: DataExploreFieldSignal[], command: DataExploreCommand) {
-    return html`<button type="button" class=${`chip ${kind}`} title="Remove field" @click=${() => this.removeExploreField(id, kind, command)}>
-      ${fieldLabel(id, fields)} ${lucideIcon(X, { size: 12 })}
+  private renderExploreFilterChip(filter: ExplorationSpec['filters'][number], index: number, fields: DataExploreFieldSignal[], command: DataExploreCommand) {
+    const description = [fieldLabel(filter.field, fields), filterOperator(filter).replaceAll('_', ' '), filterValues(filter).join(', ')].filter(Boolean).join(' ')
+    return html`<button type="button" class="chip" title="Remove filter" @click=${() => this.removeExploreFilter(index, command)}>
+      ${description} ${lucideIcon(X, { size: 12 })}
     </button>`
   }
 
@@ -1464,10 +1469,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const selectedNow = values.includes(field.id) || selectedByDefault
     const next = selectedNow ? values.filter((id) => id !== field.id) : [...values, field.id]
     this.emitExplore({ ...command, [key]: next, sort: (command.sort ?? []).filter((sort) => sort.field !== field.id) })
-  }
-
-  private removeExploreField(id: string, kind: 'dimension' | 'metric', command: DataExploreCommand) {
-    this.emitExploreSpec(removeExplorationField(explorationSpecFor(command), id, kind), command)
   }
 
   private resetExplore(command: DataExploreCommand) {
@@ -1845,13 +1846,15 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     return html`
       <div class="content" aria-label="Data exploration">
         <section class="semantic-result" aria-label="Governed result table">
-            <section class="query-bar" aria-label="Query">
+            <section class="query-bar" aria-label="Table controls">
               <div class="query-row">
-                <span class="query-label">Query</span>
+                <span class="query-label">Table</span>
                 <div class="selection-shelf">
-                  ${spec.dimensions.map((field) => this.renderQueryChip(field.field, 'dimension', explore.fields, command))}
-                  ${spec.metrics.map((field) => this.renderQueryChip(field.field, 'metric', explore.fields, command))}
-                  ${!queryFields.size ? html`<span class="empty">Select fields to build a governed query.</span>` : nothing}
+                  <span class="query-summary">${queryFields.size} ${queryFields.size === 1 ? 'column' : 'columns'}</span>
+                  ${spec.filters.length
+                    ? spec.filters.map((filter, index) => this.renderExploreFilterChip(filter, index, explore.fields, command))
+                    : html`<span class="query-summary">No filters</span>`}
+                  ${spec.filters.length ? html`<button type="button" class="chip" @click=${() => this.emitExploreSpec({ ...spec, filters: [] }, command)}>Clear filters</button>` : nothing}
                   ${this.renderExecutionState(command, rawResult, currentStatus, this.exploreExecutionState === 'uncertain' ? this.exploreTransportFailure?.message : undefined)}
                 </div>
                 <div class="query-actions">
