@@ -65,6 +65,13 @@ func (w integrationAuditWriter) RecordRefreshCancelAuditTx(context.Context, refr
 	return nil
 }
 
+func (w integrationAuditWriter) RecordRefreshAuditTx(context.Context, refreshpostgres.Tx, access.AuditIntent) error {
+	if w.fail {
+		return errors.New("audit writer failure")
+	}
+	return nil
+}
+
 type recordingCancelAuditWriter struct{ calls int }
 
 func (w *recordingCancelAuditWriter) RecordRefreshCancelAuditTx(context.Context, refreshpostgres.Tx, access.AuditIntent) error {
@@ -774,7 +781,7 @@ func TestPostgresConcreteCancelAuditWriterCallerTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	intent := access.AuditIntent{EventID: "0198f2c0-7c7a-7f00-8a11-000000000109", Source: "refresh", Operation: "cancel", Action: "refresh.cancel", ResourceKind: "refresh_run", ResourceID: "run-audit-concrete", Capability: access.CapabilityResourceUse, Outcome: "failure", AggregateKey: "refresh_run:run-audit-concrete", AggregateSequence: 1, MetadataJSON: `{}`}
+	intent := access.AuditIntent{EventID: "sha256:" + strings.Repeat("ab", 32), Source: "refresh", Operation: "cancel", Action: "refresh.cancel", ResourceKind: "refresh_run", ResourceID: "run-audit-concrete", Capability: access.CapabilityResourceUse, Outcome: "failure", AggregateKey: "refresh_run:run-audit-concrete", AggregateSequence: 1, MetadataJSON: `{}`}
 	if err := writer.RecordRefreshCancelAuditTx(t.Context(), tx, intent); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
@@ -783,11 +790,12 @@ func TestPostgresConcreteCancelAuditWriterCallerTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	var eventID string
-	if err := db.QueryRow(t.Context(), `SELECT audit_id::text FROM audit.audit_event WHERE audit_id=$1::uuid`, intent.EventID).Scan(&eventID); err != nil {
+	expectedID := "abababab-abab-abab-abab-abababababab"
+	if err := db.QueryRow(t.Context(), `SELECT audit_id::text FROM audit.audit_event WHERE audit_id=$1::uuid`, expectedID).Scan(&eventID); err != nil {
 		t.Fatal(err)
 	}
-	if eventID != intent.EventID {
-		t.Fatalf("stored audit id=%q", eventID)
+	if eventID != expectedID {
+		t.Fatalf("stored audit id=%q, want %q", eventID, expectedID)
 	}
 }
 

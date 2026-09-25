@@ -44,6 +44,7 @@ func (w *PostgresCancelAuditWriterAdapter) RecordRefreshCancelAuditTx(ctx contex
 	if tx == nil {
 		return errors.New("refresh cancellation audit transaction is required")
 	}
+	intent.EventID = nativeAuditEventID(intent.EventID)
 	_, err := auditadapter.New(w.Audit).Record(ctx, tx, intent)
 	return err
 }

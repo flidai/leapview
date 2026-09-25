@@ -17,6 +17,20 @@ import (
 
 var errAssetNotFound = errors.New("project asset not found")
 
+// PipelineWaitingIntent is the browser adapter's request-stage read model.
+// The app composition root maps refresh-module records into this transport
+// shape without importing the project's UI implementation.
+type PipelineWaitingIntent struct {
+	IntentID      string
+	PipelineID    string
+	Status        string
+	CreatedAt     string
+	Reason        string
+	QueuePosition int64
+	RunID         string
+	CancelAllowed bool
+}
+
 // pipelineMonitorState is the single read-model builder used by the initial
 // document, stream bootstrap, and post-command refresh paths.
 func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID projectgraph.ResourceID, assets []projectview.DevelopAssetView) (projectui.PipelineMonitorState, error) {
@@ -80,6 +94,10 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 			}
 		}
 	}
+	state.WaitingIntents, err = h.pipelineWaitingIntents(r, projectID, visiblePipelineIDs(pipelines, ""))
+	if err != nil {
+		return projectui.PipelineMonitorState{}, err
+	}
 	if pipelineCollectionView(r) == "runs" {
 		if h.RunMonitor == nil {
 			return projectui.PipelineMonitorState{}, errors.New("run monitor is unavailable")
@@ -109,6 +127,31 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 		state.RunMonitor = monitor
 	}
 	return state, nil
+}
+
+func (h *BrowserHandler) pipelineWaitingIntents(r *http.Request, projectID projectgraph.ResourceID, visibleIDs []string) ([]projectui.PipelineWaitingIntent, error) {
+	if h.ReadPipelineIntents == nil || len(visibleIDs) == 0 {
+		return nil, nil
+	}
+	intents, err := h.ReadPipelineIntents(r.Context(), refreshrun.ReadScope{ProjectID: projectID, Environment: h.Environment})
+	if err != nil {
+		return nil, err
+	}
+	visible := make(map[string]struct{}, len(visibleIDs))
+	for _, id := range visibleIDs {
+		visible[id] = struct{}{}
+	}
+	result := make([]projectui.PipelineWaitingIntent, 0, len(intents))
+	for _, intent := range intents {
+		if _, allowed := visible[intent.PipelineID]; allowed {
+			result = append(result, projectui.PipelineWaitingIntent{
+				IntentID: intent.IntentID, PipelineID: intent.PipelineID, Status: intent.Status,
+				CreatedAt: intent.CreatedAt, Reason: intent.Reason, QueuePosition: intent.QueuePosition,
+				RunID: intent.RunID, CancelAllowed: intent.CancelAllowed,
+			})
+		}
+	}
+	return result, nil
 }
 
 func pipelineSemanticModelTitle(reference string, assets []projectview.DevelopAssetView) string {
@@ -185,7 +228,9 @@ func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.Monito
 	}
 	status := strings.ToLower(strings.TrimSpace(query.Get("status")))
 	switch status {
-	case "queued", "running", "prepared", "succeeded", "failed", "cancelled", "superseded", "skipped":
+	case "queued", "running", "succeeded", "failed", "cancelled", "superseded", "skipped":
+	case "prepared":
+		status = "running"
 	default:
 		status = ""
 	}

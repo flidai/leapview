@@ -138,7 +138,8 @@ test('asset lineage keeps the complete upstream and downstream path highlighted 
     await page.goto(baseURL)
     const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
     await graph.locator('.react-flow__node').first().waitFor()
-    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+    await graph.evaluate((element: HTMLElement & { graph: any; scope: string }) => {
+      element.scope = 'full'
       element.graph = {
         nodes: [
           { id: 'connection', label: 'CFO demo managed files', kind: 'connection', rank: -2 },

@@ -1038,11 +1038,73 @@ test('pipeline detail run action emits canonical pipeline command detail', async
       button?.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }))
       return { command, documentCommand, button: Boolean(button), disabled: button?.disabled, labels: Array.from((element.shadowRoot as ShadowRoot)?.querySelectorAll('button') ?? []).map((candidate) => candidate.getAttribute('aria-label')) }
     })
-    expect(detail).toEqual({ command: { action: 'run', assetId: 'pipeline:sales', pipelineId: 'pipeline:sales', runId: '' }, documentCommand: { action: 'run', assetId: 'pipeline:sales', pipelineId: 'pipeline:sales', runId: '' }, button: true, disabled: false, labels: ['Run now'] })
+    expect(detail).toEqual({ command: { action: 'run', assetId: 'pipeline:sales', intentId: '', pipelineId: 'pipeline:sales', runId: '' }, documentCommand: { action: 'run', assetId: 'pipeline:sales', intentId: '', pipelineId: 'pipeline:sales', runId: '' }, button: true, disabled: false, labels: ['Run now'] })
   } finally {
     await page.close()
   }
 })
+
+test('pipeline detail confirms a queued run in the shared toast', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipeline-detail-height`)
+    const detail = page.locator('lv-pipeline-detail-page')
+    await detail.evaluate(async (element: any) => {
+      element.signals.page.canRun = true
+      element.requestUpdate()
+      await element.updateComplete
+    })
+    await detail.getByRole('button', { name: 'Run now' }).click()
+    await detail.evaluate(async (element: any) => {
+      element.signals.pipelineCommandStatus.message = 'Pipeline command accepted.'
+      await element.updateComplete
+    })
+    expect((await page.locator('lv-toast-region lv-toast .message').textContent())?.trim()).toBe('Run queued')
+    expect(await detail.locator('.command-feedback').count()).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('pipeline Overview counts the latest active run duration', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipeline-detail-height`)
+    const host = page.locator('lv-pipeline-detail-page')
+    await host.evaluate(async (element: any) => {
+      element.signals.page.latestRun = { ...element.signals.page.latestRun, status: 'running', startedAt: new Date(Date.now() - 3200).toISOString(), finishedAt: undefined, duration: undefined }
+      element.requestUpdate()
+      await element.updateComplete
+    })
+    const duration = page.locator('lv-pipeline-detail-page .latest-run-duration')
+    const initial = Number.parseInt((await duration.innerText()).trim(), 10)
+    expect(initial).toBeGreaterThanOrEqual(3)
+    await page.locator('lv-pipeline-detail-page lv-asset-lineage-graph').evaluate((graph: any) => { (window as any).__overviewDurationGraph = graph.graph })
+    await page.waitForTimeout(1200)
+    expect(Number.parseInt((await duration.innerText()).trim(), 10)).toBeGreaterThan(initial)
+    expect(await page.locator('lv-pipeline-detail-page lv-asset-lineage-graph').evaluate((graph: any) => graph.graph === (window as any).__overviewDurationGraph)).toBe(true)
+    await page.evaluate(() => {
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'retrying', el: document.querySelector('main[data-init]') } }))
+    })
+    await page.getByRole('alert').filter({ hasText: 'live duration paused' }).waitFor()
+    const paused = await duration.innerText()
+    await page.waitForTimeout(1200)
+    expect(await duration.innerText()).toBe(paused)
+    await page.evaluate(() => {
+      document.dispatchEvent(new CustomEvent('datastar-signal-patch', { detail: { runtime: { streamInstanceId: 'reconnected-detail' } } }))
+    })
+    await page.waitForFunction(() => !document.querySelector('lv-pipeline-detail-page')?.shadowRoot?.querySelector('[role="alert"]'))
+    expect(Number.parseInt((await duration.innerText()).trim(), 10)).toBeGreaterThan(Number.parseInt(paused.trim(), 10))
+    await host.evaluate(async (element: any) => {
+      element.signals.page.latestRun = { ...element.signals.page.latestRun, status: 'succeeded', finishedAt: new Date().toISOString(), duration: '5s' }
+      element.requestUpdate()
+      await element.updateComplete
+    })
+    expect((await duration.innerText()).trim()).toBe('5s')
+  } finally {
+    await page.close()
+  }
+}, 15_000)
 
 test('pipeline Overview labels direct dependencies and reveals the complete graph on request', async () => {
   const page = await browser.newPage()
@@ -1072,6 +1134,8 @@ test('pipeline Overview labels direct dependencies and reveals the complete grap
           recentRunCount: root.querySelectorAll('.recent-run').length,
           latestRunDate: root.querySelector('.summary-item:nth-child(3) a')?.textContent?.trim(),
           latestRunHref: root.querySelector('.summary-item:nth-child(3) a')?.getAttribute('href'),
+          latestRunStatus: root.querySelector('.summary-item:nth-child(3) .status')?.textContent?.trim(),
+          latestRunDuration: root.querySelector('.summary-item:nth-child(3) .latest-run-duration')?.textContent?.trim(),
         }
       })
       expect(graph.display).toBe('block')
@@ -1087,6 +1151,10 @@ test('pipeline Overview labels direct dependencies and reveals the complete grap
       expect(graph.scopeAction).toBe('Show all upstream')
       expect(graph.recentRunCount).toBe(0)
       expect(graph.latestRunDate).toContain('UTC')
+      expect(graph.latestRunDate).not.toContain(' · ')
+      expect(graph.latestRunDate).not.toContain('Succeeded')
+      expect(graph.latestRunStatus).toBe('Succeeded')
+      expect(graph.latestRunDuration).toBe('54s')
       expect(graph.latestRunHref).toBe('/pipelines/pipeline:sales/runs/run:latest')
       if (viewport.width === 1440) expect(graph.bottom).toBeLessThanOrEqual(viewport.height)
     }
@@ -1171,6 +1239,27 @@ test('pipeline detail uses one breadcrumb title with its action in the asset hea
   }
 })
 
+test('pipeline-specific Runs pauses its live clock when updates disconnect', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipeline-detail-runs`)
+    const list = page.locator('lv-pipeline-detail-page lv-pipeline-runs-list')
+    await list.waitFor()
+    expect(await list.evaluate((element: any) => element.live)).toBe(true)
+    await page.evaluate(() => {
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'retrying', el: document.querySelector('main[data-init]') } }))
+    })
+    await page.getByRole('alert').filter({ hasText: 'live duration paused' }).waitFor()
+    expect(await list.evaluate((element: any) => element.live)).toBe(false)
+    await page.evaluate(() => {
+      document.dispatchEvent(new CustomEvent('datastar-signal-patch', { detail: { runtime: { streamInstanceId: 'reconnected-runs' } } }))
+    })
+    await page.waitForFunction(() => (document.querySelector('lv-pipeline-detail-page')?.shadowRoot?.querySelector('lv-pipeline-runs-list') as any)?.live === true)
+  } finally {
+    await page.close()
+  }
+}, 15_000)
+
 test('pipeline Runs uses filtered, paginated table links within the fixed pipeline context', async () => {
   const page = await browser.newPage()
   try {
@@ -1192,9 +1281,9 @@ test('pipeline Runs uses filtered, paginated table links within the fixed pipeli
         hasPipelineSelector: Boolean(form.querySelector('[name="pipeline"]')),
         headings: Array.from(root.querySelectorAll('.entity-list-table thead th')).map((cell) => cell.textContent?.trim()),
         identity: { text: identity?.textContent?.trim(), href: identity?.getAttribute('href') },
-        startedHref: started?.getAttribute('href'),
-        startedText: started?.textContent?.trim(),
-        startedTitle: started?.closest('td')?.getAttribute('title'),
+        timeHref: started?.getAttribute('href'),
+        timeText: started?.textContent?.trim(),
+        timeTitle: started?.closest('td')?.getAttribute('title'),
         pagination: root.querySelector('.run-pagination')?.textContent?.replace(/\s+/g, ' ').trim(),
         nextHref: next?.getAttribute('href'),
         description: root.textContent?.includes('Recent runs (up to 50)'),
@@ -1205,11 +1294,11 @@ test('pipeline Runs uses filtered, paginated table links within the fixed pipeli
     expect(runs.query).toBe('failed')
     expect(runs.filters).toEqual([{ name: 'range', value: '7d' }, { name: 'status', value: 'failed' }, { name: 'trigger', value: 'schedule' }])
     expect(runs.hasPipelineSelector).toBe(false)
-    expect(runs.headings).toEqual(['Status', 'Run ID', 'Started', 'Duration', 'Trigger'])
+    expect(runs.headings).toEqual(['Start time', 'Status', 'Duration', 'Trigger', 'Run / request ID', ''])
     expect(runs.identity.href).toBe('/pipelines/pipeline:sales/runs/run:failed')
-    expect(runs.startedHref).toBe(runs.identity.href)
-    expect(runs.startedText).toContain('UTC')
-    expect(runs.startedTitle).toContain('UTC')
+    expect(runs.timeHref).toBe(runs.identity.href)
+    expect(runs.timeText).toBe('Sep 22, 12:00 UTC')
+    expect(runs.timeTitle).toContain('UTC')
     expect(runs.identity.text).toContain('run:failed')
     expect(runs.pagination).toContain('Showing 26–50 of 60 runs')
     expect(runs.nextHref).toContain('/pipelines/pipeline:sales/runs?q=failed&range=7d&status=failed&trigger=schedule&page=3')
@@ -1218,6 +1307,44 @@ test('pipeline Runs uses filtered, paginated table links within the fixed pipeli
     await page.close()
   }
 })
+
+test('pipeline detail includes queued requests as rows and hides one after its run appears', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipeline-detail-runs`)
+    const host = page.locator('lv-pipeline-detail-page')
+    await host.evaluate(async (element: any) => {
+      element.signals.page.runMonitor = { ...element.signals.page.runMonitor, query: '', range: 'all', status: '', trigger: '', page: 1 }
+      element.signals.page.waitingIntents = [
+        { intentId: 'request:detail', pipelineId: 'pipeline:sales', status: 'waiting', createdAt: '2026-09-24T09:00:00Z', queuePosition: 1, cancelAllowed: true },
+      ]
+      element.requestUpdate()
+      await element.updateComplete
+      await (element.shadowRoot.querySelector('lv-pipeline-runs-list') as any).updateComplete
+    })
+    expect(await host.locator('.waiting-requests').count()).toBe(0)
+    const waiting = host.locator('.run-table .entity-list-table-row').first()
+    expect(await waiting.locator('[data-column="status"]').textContent()).toContain('Queued')
+    expect(await waiting.locator('[data-column="status"] .entity-list-cell-detail').count()).toBe(0)
+    await host.evaluate((element: any) => {
+      element.addEventListener('lv-pipeline-command', (event: CustomEvent) => { (window as any).__detailCancelIntent = event.detail }, { once: true })
+    })
+    await waiting.getByRole('button', { name: 'Cancel queued request request:detail' }).click()
+    expect(await page.evaluate(() => (window as any).__detailCancelIntent)).toEqual({ action: 'cancel-intent', pipelineId: 'pipeline:sales', assetId: 'pipeline:sales', intentId: 'request:detail', runId: '' })
+
+    await host.evaluate(async (element: any) => {
+      element.signals.page.waitingIntents = [
+        { intentId: 'request:detail', pipelineId: 'pipeline:sales', status: 'attached', createdAt: '2026-09-24T09:00:00Z', queuePosition: 1, runId: 'run:failed', cancelAllowed: false },
+      ]
+      element.requestUpdate()
+      await element.updateComplete
+      await (element.shadowRoot.querySelector('lv-pipeline-runs-list') as any).updateComplete
+    })
+    expect(await host.locator('.run-table .entity-list-table-row').count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+}, 15_000)
 
 test('pipeline Definition presents authored YAML before technical identity', async () => {
   const page = await browser.newPage()
@@ -1317,6 +1444,7 @@ test('pipeline terminal command failure clears loading and offers reload guidanc
   try {
     await page.goto(`${baseURL}/?root=pipelines`)
     await page.waitForFunction(() => customElements.get('lv-pipelines-page'))
+    await page.getByRole('button', { name: 'Run Sales refresh now' }).click()
     const state = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
       await element.updateComplete
       // Model the fetch lifecycle for the in-flight Run action without making
@@ -1330,21 +1458,21 @@ test('pipeline terminal command failure clears loading and offers reload guidanc
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
       await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
       await element.updateComplete
-      const feedback = (element.shadowRoot as ShadowRoot)?.querySelector('[role="alert"]') as HTMLElement | null
-      const retry = feedback?.querySelector('button') as HTMLButtonElement | null
       return {
-        message: feedback?.textContent?.trim(),
         failureKind: element.terminalFailure?.kind,
-        retryLabel: retry?.textContent?.trim(),
+        bannerCount: (element.shadowRoot as ShadowRoot)?.querySelectorAll('.command-feedback').length,
         pendingAfterFailure: element.commandPendingFor('pipeline:sales'),
         unrelatedIgnored,
       }
     })
     expect(state.unrelatedIgnored).toBe(true)
     expect(state.failureKind).toBe('unavailable')
-    expect(state.message).toContain('previous state was kept')
-    expect(state.retryLabel).toBe('Reload latest pipeline state')
+    expect(state.bannerCount).toBe(0)
     expect(state.pendingAfterFailure).toBe(false)
+    const toast = page.locator('lv-toast-region lv-toast').filter({ hasText: 'Could not confirm whether the pipeline action was accepted' })
+    await toast.waitFor()
+    expect(await toast.locator('.message').textContent()).toContain('Check Recent runs before retrying')
+    expect(await toast.getByRole('button', { name: 'Reload latest pipeline state' }).count()).toBe(1)
   } finally {
     await page.close()
   }

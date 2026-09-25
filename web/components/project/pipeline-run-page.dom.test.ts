@@ -45,6 +45,91 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('publishing remains a secondary detail while the primary run is Running', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?status=prepared`)
+    const state = await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => {
+      element.signals.page.execution.publicationOutcome = 'pending'
+      element.requestUpdate()
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return {
+        primary: root.querySelector('.run-status:first-child .run-status-value')?.textContent?.trim(),
+        secondary: root.querySelector('.run-status:nth-child(2) .run-status-value')?.textContent?.trim(),
+        evidence: root.querySelector('.run-status:nth-child(2) .run-status-detail')?.textContent?.trim(),
+        progress: root.querySelector('.lifecycle-phase:nth-child(4) strong')?.textContent?.trim(),
+        animation: getComputedStyle(root.querySelector('.run-status-progress')!).animationName,
+      }
+    })
+    expect(state).toEqual({ primary: 'Running', secondary: 'Publishing', evidence: 'Activating the new data.', progress: 'Publishing', animation: 'run-status-spin' })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    expect(await page.locator('lv-pipeline-run-page .run-status-progress').evaluate((indicator) => getComputedStyle(indicator).animationName)).toBe('none')
+  } finally {
+    await page.close()
+  }
+}, 15_000)
+
+test('run investigation uses Primer status colors for each execution outcome', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?status=running`)
+    const colors = await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => {
+      element.style.setProperty('--lv-fg-warning', '#d29922')
+      element.style.setProperty('--lv-fg-success', '#3fb950')
+      element.style.setProperty('--lv-fg-danger', '#f85149')
+      const result: Record<string, string> = {}
+      for (const status of ['queued', 'running', 'prepared', 'succeeded', 'failed']) {
+        element.signals.page.status = status
+        element.signals.page.statusLabel = status.charAt(0).toUpperCase() + status.slice(1)
+        element.requestUpdate()
+        await element.updateComplete
+        result[status] = getComputedStyle(element.shadowRoot.querySelector('.run-status:first-child .run-status-value')).color
+      }
+      return result
+    })
+    expect(colors).toEqual({ queued: 'rgb(210, 153, 34)', running: 'rgb(210, 153, 34)', prepared: 'rgb(210, 153, 34)', succeeded: 'rgb(63, 185, 80)', failed: 'rgb(248, 81, 73)' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('run detail duration ticks until the persisted finish arrives', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?status=running`)
+    const host = page.locator('lv-pipeline-run-page')
+    await host.evaluate(async (element: any) => {
+      element.signals.page.execution.startedAt = new Date(Date.now() - 3200).toISOString()
+      element.signals.page.execution.duration = undefined
+      element.requestUpdate()
+      await element.updateComplete
+    })
+    const detail = page.locator('lv-pipeline-run-page .run-status:first-child .run-status-detail')
+    const seconds = async () => Number.parseInt((await detail.innerText()).trim(), 10)
+    const initial = await seconds()
+    expect(initial).toBeGreaterThanOrEqual(3)
+    await page.locator('lv-pipeline-run-page lv-asset-lineage-graph').evaluate((graph: any) => { (window as any).__durationGraph = graph.graph })
+    await page.waitForTimeout(1200)
+    expect(await seconds()).toBeGreaterThan(initial)
+    expect(await page.locator('lv-pipeline-run-page lv-asset-lineage-graph').evaluate((graph: any) => graph.graph === (window as any).__durationGraph)).toBe(true)
+
+    await host.evaluate(async (element: any) => {
+      element.signals.page.status = 'succeeded'
+      element.signals.page.statusLabel = 'Succeeded'
+      element.signals.page.execution.finishedAt = new Date().toISOString()
+      element.signals.page.execution.duration = '5s'
+      element.requestUpdate()
+      await element.updateComplete
+    })
+    expect((await detail.innerText()).trim().startsWith('5s ·')).toBe(true)
+    await page.waitForTimeout(1200)
+    expect((await detail.innerText()).trim().startsWith('5s ·')).toBe(true)
+  } finally {
+    await page.close()
+  }
+}, 15_000)
+
 test('pipeline run investigation separates execution and publication and exposes diagnostics truthfully', async () => {
   const page = await browser.newPage()
   try {
@@ -84,7 +169,7 @@ test('pipeline run investigation separates execution and publication and exposes
       pipelineIcon: true,
       redundantHeading: false,
       liveIndicator: false,
-      executionStatus: 'Finalizing',
+      executionStatus: 'Running',
       publicationStatus: 'Unverified',
       finishStatus: undefined,
       selectedModel: 'Failed model',
@@ -299,7 +384,7 @@ test('run update indicator follows only its page stream and recovers on a fresh 
 }, 15_000)
 
 function runDocument(activeTab: string, status: string): string {
-  const statusLabels: Record<string, string> = { prepared: 'Finalizing', failed: 'Failed', running: 'Running' }
+  const statusLabels: Record<string, string> = { prepared: 'Running', failed: 'Failed', running: 'Running' }
   const page = {
     kind: 'pipeline_run_detail', title: 'Run run:latest', description: 'Run investigation', activeTab,
     environment: 'dev', pipelineId: 'pipeline:sales', pipelineTitle: 'Sales refresh', pipelineHref: '/pipelines/pipeline:sales/details',
@@ -313,7 +398,7 @@ function runDocument(activeTab: string, status: string): string {
       ], edges: [] },
       models: [
         { modelId: 'failed', status: 'failed', statusLabel: 'Failed', duration: '5s', error: 'Model query failed', attempts: [{ number: 1, status: 'failed', claimedAt: '2026-09-21T13:00:12Z', duration: '5s', error: 'Model query failed' }] },
-        { modelId: 'prepared', status: status === 'running' ? 'running' : 'prepared', statusLabel: status === 'running' ? 'Running' : 'Finalizing', attempts: [] },
+        { modelId: 'prepared', status: status === 'running' ? 'running' : 'prepared', statusLabel: status === 'running' ? 'Running' : 'Ready to publish', attempts: [] },
       ],
     },
     events: [], eventsUnavailable: true, eventsTruncated: false,

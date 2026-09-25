@@ -302,6 +302,13 @@ func (f *PostgresJourneyFixture) assembleRoutes(t *testing.T, options PostgresJo
 		data.RefreshPersistence = f.RefreshPersistence
 		data.RequireNativeDashboard = true
 		capabilities.Authoring = f.DashboardAuthoring
+		// Native refresh composition requires a source identity for manual
+		// request admission. Route-qualification fixtures do not activate an
+		// authored source, so keep this deterministic until a test supplies a
+		// complete serving runtime.
+		workflow.RefreshSourceDigest = func(context.Context, projectgraph.ServingIdentity) (string, error) {
+			return "sha256:" + strings.Repeat("a", 64), nil
+		}
 	}
 	routes, runtime, platform, policy, err := buildApplicationSurfaces(t.Context(), nil, data, capabilities, workflow, runtimeConfig, httpAssemblyInputs{PublicURL: "http://localhost"})
 	if err != nil {

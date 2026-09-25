@@ -167,7 +167,7 @@ test('chat deletion persists after the undo window, refreshes the list, and stay
     await page.evaluate((requestId) => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: requestId, undoDeadline: new Date(Date.now() + 80).toISOString(), archivedConversations: [] } })
     }, pendingRequest)
-    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c2"] button.action').waitFor()
     expect(await page.locator('a[href="/chats/c2"]').count()).toBe(0)
     await page.waitForFunction(() => (window as any).managementLoads.length === 1)
     const refreshRequest = await page.evaluate(() => (window as any).managementLoads[0].requestId)
@@ -200,7 +200,7 @@ test('failed chat deletion keeps the conversation visible and reports the persis
     await page.locator('lv-chat-manager').evaluate((element: any) => document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } })))
     await page.getByRole('alert').filter({ hasText: 'temporarily unavailable' }).waitFor()
     expect(await page.locator('a[href="/chats/c2"]').count()).toBe(1)
-    expect(await page.locator('button.undo[data-conversation-id="c2"]').count()).toBe(0)
+    expect(await page.locator('lv-toast[data-conversation-id="c2"] button.action').count()).toBe(0)
   } finally {
     await page.close()
   }
@@ -222,7 +222,7 @@ test('deleting the open chat returns to a new conversation after persistence com
     await page.evaluate((requestId) => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: requestId, undoDeadline: new Date(Date.now() + 80).toISOString(), archivedConversations: [] } })
     }, pendingRequest)
-    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c2"] button.action').waitFor()
     await page.waitForURL(url => new URL(url).pathname === '/chats/new')
   } finally {
     await page.close()

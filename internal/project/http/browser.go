@@ -190,12 +190,15 @@ type CreatorCommandInvocation struct {
 }
 
 type BrowserHandler struct {
-	Graph                    GraphReader
-	HistoricalGraph          HistoricalGraphReader
-	AssetVersions            AssetVersionsReader
-	ActiveServingState       ActiveServingStateReader
-	RefreshState             AssetRefreshStateReader
-	RunMonitor               RunMonitorReader
+	Graph              GraphReader
+	HistoricalGraph    HistoricalGraphReader
+	AssetVersions      AssetVersionsReader
+	ActiveServingState ActiveServingStateReader
+	RefreshState       AssetRefreshStateReader
+	RunMonitor         RunMonitorReader
+	// ReadPipelineIntents supplies request-stage queue entries. They are never
+	// projected as immutable execution runs.
+	ReadPipelineIntents      func(context.Context, refreshrun.ReadScope) ([]PipelineWaitingIntent, error)
 	RunDetailReader          RunDetailReader
 	RunPublicationReader     RunPublicationReader
 	RunEventReader           RunEventReader
@@ -218,13 +221,16 @@ type BrowserHandler struct {
 	ConnectionCommands       projectui.ConnectionCommandBindings
 	PipelineRunCommand       uicommand.Binding
 	PipelineCancelCommand    uicommand.Binding
-	RunPipeline              func(context.Context, string, string, string) error
+	RunPipeline              func(context.Context, string, string, string, string) error
 	// CancelPipeline receives both the pipeline and run identifiers from the
 	// command. Implementations must verify that the run belongs to that
 	// pipeline before mutating it; keeping the pipeline ID in this callback
 	// prevents an opaque run ID from becoming a cross-pipeline capability.
-	CancelPipeline    func(context.Context, string, string, string) error
-	AuthorizePipeline func(*stdhttp.Request, string, access.Capability) (bool, error)
+	CancelPipeline func(context.Context, string, string, string) error
+	// CancelPipelineIntent cancels a waiting request before it is admitted as
+	// an immutable run. The pipeline ID remains part of the authorization scope.
+	CancelPipelineIntent func(context.Context, string, string, string, string) error
+	AuthorizePipeline    func(*stdhttp.Request, string, access.Capability) (bool, error)
 	// AuthorizeConnectionCreate checks the project-root capability required by
 	// the generated createTargetConnectionBinding command. Updates remain
 	// resource-scoped in the administration service.

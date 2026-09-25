@@ -84,6 +84,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		CurrentCredential: accessmodule.APICredentialFromContext, RequireAuthority: persistence.requireNativePersistence,
 		CurrentSessionEvidence: accessmodule.SessionCredentialEvidenceFromContext,
 		ExecutionGrants:        executionGrants, InstanceID: storage.instanceID,
+		TargetID:               storage.instanceID,
 		Artifacts: appruntimefactory.NewRefreshArtifactLoader(workflow.servingArtifacts),
 		HTTP: refreshmodule.HTTPConfig{
 			RunnerConfigured: func() bool { return runtime.metrics != nil },

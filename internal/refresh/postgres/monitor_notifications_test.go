@@ -13,7 +13,7 @@ func TestMonitorRunsFiltersBeforePaginationAndKeepsActiveOutsideRange(t *testing
 	repository := New(db)
 	for _, item := range []struct{ id, pipeline, status string }{
 		{"monitor-a", "pipe-a", "failed"}, {"monitor-b", "pipe-a", "succeeded"},
-		{"monitor-c", "pipe-a", "queued"}, {"monitor-other", "pipe-b", "failed"},
+		{"monitor-c", "pipe-a", "cancelled"}, {"monitor-other", "pipe-b", "failed"}, {"monitor-prepared", "pipe-prepared", "prepared"},
 	} {
 		seedRefreshJob(t, db, "job-"+item.id, item.id, "monitor-project", "dev", "principal")
 		_, err := repository.CreateRun(t.Context(), RunInput{RunID: item.id, ProjectID: "monitor-project", Environment: "dev", GenerationID: "generation",
@@ -23,6 +23,15 @@ func TestMonitorRunsFiltersBeforePaginationAndKeepsActiveOutsideRange(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
+		if item.status == "prepared" {
+			if _, err := repository.ClaimAttempt(t.Context(), item.id, "monitor-worker", 1, time.Hour); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(t.Context(), `UPDATE refresh.run SET status='prepared' WHERE run_id=$1`, item.id); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
 		if item.status != "queued" {
 			if _, err := db.Exec(t.Context(), `UPDATE refresh.run SET status=$2, started_at=clock_timestamp(), finished_at=clock_timestamp(), error=CASE WHEN $2='failed' THEN 'test failure' ELSE '' END WHERE run_id=$1`, item.id, item.status); err != nil {
 				t.Fatal(err)
@@ -30,18 +39,18 @@ func TestMonitorRunsFiltersBeforePaginationAndKeepsActiveOutsideRange(t *testing
 		}
 	}
 	now := time.Now().UTC()
-	filter := MonitorFilter{Since: now.Add(-time.Hour), Until: now.Add(time.Hour), AllowedPipelineIDs: []string{"pipe-a"}, Limit: 1}
+	filter := MonitorFilter{Since: now.Add(-time.Hour), Until: now.Add(time.Hour), AllowedPipelineIDs: []string{"pipe-a", "pipe-prepared"}, Limit: 1}
 	page, err := repository.MonitorRuns(t.Context(), Scope{ProjectID: "monitor-project", Environment: "dev"}, filter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 3 || page.Failed != 1 || page.Completed != 1 || page.Active != 1 || len(page.Runs) != 1 {
+	if page.Total != 4 || page.Failed != 1 || page.Completed != 1 || page.Active != 1 || len(page.Runs) != 1 {
 		t.Fatalf("monitor page = %#v", page)
 	}
 	firstID := page.Runs[0].RunID
 	filter.Offset = 1
 	page, err = repository.MonitorRuns(t.Context(), Scope{ProjectID: "monitor-project", Environment: "dev"}, filter)
-	if err != nil || page.Total != 3 || len(page.Runs) != 1 || page.Runs[0].RunID == firstID {
+	if err != nil || page.Total != 4 || len(page.Runs) != 1 || page.Runs[0].RunID == firstID {
 		t.Fatalf("second page = %#v, %v", page, err)
 	}
 	filter.Offset = 0
@@ -53,11 +62,16 @@ func TestMonitorRunsFiltersBeforePaginationAndKeepsActiveOutsideRange(t *testing
 	if page.Total != 1 || len(page.Runs) != 1 || page.Runs[0].RunID != "monitor-a" || page.Completed != 0 || page.Failed != 1 {
 		t.Fatalf("filtered page = %#v", page)
 	}
+	filter.Status = "running"
+	page, err = repository.MonitorRuns(t.Context(), Scope{ProjectID: "monitor-project", Environment: "dev"}, filter)
+	if err != nil || page.Total != 1 || len(page.Runs) != 1 || page.Runs[0].RunID != "monitor-prepared" {
+		t.Fatalf("running filter must include publishing run: %#v, %v", page, err)
+	}
 	filter.Status = ""
 	filter.Search = "Sales title"
-	filter.PipelineIDs = []string{"pipe-a"}
+	filter.PipelineIDs = []string{"pipe-a", "pipe-prepared"}
 	page, err = repository.MonitorRuns(t.Context(), Scope{ProjectID: "monitor-project", Environment: "dev"}, filter)
-	if err != nil || page.Total != 3 {
+	if err != nil || page.Total != 4 {
 		t.Fatalf("title-matched page = %#v, %v", page, err)
 	}
 	filter.Since = now.Add(time.Minute)

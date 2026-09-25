@@ -15,6 +15,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	"github.com/flidai/leapview/internal/refresh/artifact"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/internal/servingstate"
@@ -170,6 +171,27 @@ func TestCancelPipelineRefreshForUIDeniesCrossPipelineRun(t *testing.T) {
 	}
 }
 
+func TestCancelPipelineRefreshForUIRejectsStartedRun(t *testing.T) {
+	run := refreshrun.RunRecord{ID: "run_1", Identity: projectgraphIdentity("project_sales", "dev", "generation_a"), PipelineID: "pipeline_daily", TargetID: "pipeline_daily", TargetType: refreshrun.TargetRefreshPipeline, Status: refreshrun.RunStatusRunning}
+	fake := &testRunPersistence{run: run}
+	m := &Module{runs: fake}
+	if err := m.CancelPipelineRefreshForUI(t.Context(), run.Identity, "pipeline_daily", run.ID, "user:test"); !errors.Is(err, refreshrun.ErrRunNotCancellable) {
+		t.Fatalf("cancel running run error = %v, want not cancellable", err)
+	}
+	if fake.cancelled {
+		t.Fatal("running run reached cancellation repository")
+	}
+}
+
+func TestCancelPipelineRefreshForUIMapsClaimRaceToNotCancellable(t *testing.T) {
+	run := refreshrun.RunRecord{ID: "run_1", Identity: projectgraphIdentity("project_sales", "dev", "generation_a"), PipelineID: "pipeline_daily", TargetID: "pipeline_daily", TargetType: refreshrun.TargetRefreshPipeline, Status: refreshrun.RunStatusQueued}
+	fake := &testRunPersistence{run: run, cancelErr: refreshpostgres.ErrStaleFence}
+	m := &Module{runs: fake}
+	if err := m.CancelPipelineRefreshForUI(t.Context(), run.Identity, "pipeline_daily", run.ID, "user:test"); !errors.Is(err, refreshrun.ErrRunNotCancellable) {
+		t.Fatalf("cancel claimed run error = %v, want not cancellable", err)
+	}
+}
+
 func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testing.T) {
 	schedules := &testScheduleRepository{}
 	m := reconcileTestModule(schedules, servingstate.SourcePublish, 42, nil)
@@ -275,6 +297,7 @@ type testRunPersistence struct {
 	latest     refreshrun.RunRecord
 	run        refreshrun.RunRecord
 	cancelled  bool
+	cancelErr  error
 }
 
 func (*testRunPersistence) Enqueue(context.Context, jobs.EnqueueInput) (jobs.Job, error) {
@@ -361,7 +384,7 @@ func (p *testRunPersistence) GetRun(context.Context, refreshrun.ReadScope, strin
 }
 func (p *testRunPersistence) CancelRun(context.Context, projectgraph.ServingIdentity, string) (refreshrun.RunRecord, error) {
 	p.cancelled = true
-	return p.run, nil
+	return p.run, p.cancelErr
 }
 func (p *testRunPersistence) CancelRunWithAudit(context.Context, projectgraph.ServingIdentity, string, *access.AuditIntent) (refreshrun.RunRecord, error) {
 	p.cancelled = true

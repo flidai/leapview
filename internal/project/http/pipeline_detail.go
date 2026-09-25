@@ -100,9 +100,12 @@ func (h *BrowserHandler) pipelineDetailPageState(r *http.Request, assetID, secti
 	project := projectview.DevelopView{ID: projectID.String(), Title: projectTitle, Description: nav.Project.Description}
 	state := projectui.PipelineDetailState{
 		Project: project, Asset: asset, Assets: assets, Edges: edges, Refresh: refresh,
-		Environment: h.Environment, ActiveTab: section, CSRFToken: h.csrf(r), RunCommand: h.PipelineRunCommand,
-		CanRun: h.PipelineRunCommand.OperationID() != "" && h.pipelineMutationAllowed(r, asset.ID) && !refresh.Unavailable &&
-			refresh.Latest.Status != refreshrun.RunStatusQueued && refresh.Latest.Status != refreshrun.RunStatusRunning && refresh.Latest.Status != refreshrun.RunStatusPrepared,
+		Environment: h.Environment, ActiveTab: section, CSRFToken: h.csrf(r), RunCommand: h.PipelineRunCommand, CancelCommand: h.PipelineCancelCommand,
+		CanRun: h.PipelineRunCommand.OperationID() != "" && h.pipelineMutationAllowed(r, asset.ID) && !refresh.Unavailable,
+	}
+	state.WaitingIntents, err = h.pipelineWaitingIntents(r, projectID, []string{asset.ID})
+	if err != nil {
+		return projectnavigation.Catalog{}, projectui.PipelineDetailState{}, err
 	}
 	if section == projectui.PipelineDetailRuns {
 		if h.RunMonitor == nil {

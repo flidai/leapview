@@ -1,10 +1,12 @@
 import { html } from 'lit'
-import { CheckCircle2, Circle, Clock3, XCircle } from 'lucide'
+import { CheckCircle2, Circle, Clock3, LoaderCircle, XCircle } from 'lucide'
 import type { EntityListRowAction } from '../shared/entity-list'
 import { lucideIcon } from '../shared/lucide-icons'
 
 export function commandLoadingLabel(action: string): string {
-  return action === 'cancel' ? 'Cancelling pipeline run…' : 'Queuing pipeline run…'
+  if (action === 'cancel') return 'Cancelling pipeline run…'
+  if (action === 'cancel-intent') return 'Cancelling queued request…'
+  return 'Queuing pipeline run…'
 }
 
 export function capitalize(value: string): string {
@@ -12,7 +14,7 @@ export function capitalize(value: string): string {
 }
 
 export function pipelineStatusLabel(status: string): string {
-  return status === 'prepared' ? 'Finalizing' : capitalize(status)
+	return status === 'prepared' ? 'Running' : capitalize(status)
 }
 
 export function shortFailureReason(error: string): string {
@@ -73,7 +75,8 @@ export function runStatusTone(status: string): 'success' | 'danger' | 'attention
 export function runStatusIcon(status: string) {
   if (status === 'succeeded') return lucideIcon(CheckCircle2, { size: 16, strokeWidth: 2 })
   if (status === 'failed' || status === 'cancelled') return lucideIcon(XCircle, { size: 16, strokeWidth: 2 })
-  if (status === 'queued' || status === 'running' || status === 'prepared') return lucideIcon(Clock3, { size: 16, strokeWidth: 2 })
+  if (status === 'running' || status === 'prepared') return lucideIcon(LoaderCircle, { size: 16, strokeWidth: 2 })
+  if (status === 'queued') return lucideIcon(Clock3, { size: 16, strokeWidth: 2 })
   return lucideIcon(Circle, { size: 16, strokeWidth: 2 })
 }
 

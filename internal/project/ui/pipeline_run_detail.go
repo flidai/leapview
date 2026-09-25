@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"net/url"
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard"
@@ -152,16 +151,4 @@ type PipelineRunDetailPageState struct {
 	Execution                                  uisignals.PipelineRunExecutionSignal
 	Events                                     []uisignals.PipelineRunEventSignal
 	Details                                    uisignals.PipelineRunDetailsSignal
-}
-
-// PipelineRunDetailTabHref builds a canonical section link while preserving
-// the run's identity in the path.
-func PipelineRunDetailTabHref(pipelineID, runID, section string) string {
-	base := "/pipelines/" + url.PathEscape(pipelineID) + "/runs/" + url.PathEscape(runID)
-	switch section {
-	case "events", "details":
-	default:
-		section = "execution"
-	}
-	return base + "?section=" + url.QueryEscape(section)
 }

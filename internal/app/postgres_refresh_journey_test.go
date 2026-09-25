@@ -103,6 +103,10 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 	definition := journeyRefreshDefinition()
 	module, err := refreshmodule.Build(t.Context(), refreshmodule.Config{
 		Persistence: fixture.RefreshPersistence, Production: true,
+		TargetID: postgresJourneyTargetID,
+		ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) {
+			return identity, nil
+		},
 		Service: refreshrun.Service{
 			ServingStates:         state,
 			ResolveTargetRevision: func(context.Context, projectgraph.ServingIdentity) (int64, error) { return 1, nil },

@@ -1,16 +1,36 @@
 package ui
 
 import (
+	"bytes"
 	"math"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	projectview "github.com/flidai/leapview/internal/project"
 	catalog "github.com/flidai/leapview/internal/project/navigation"
 	uisignals "github.com/flidai/leapview/internal/project/ui/signals"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
+
+func TestPipelineCollectionBindsWaitingRequestCancellation(t *testing.T) {
+	state := PipelineMonitorState{
+		RunCommand:    refreshgen.GenUIActionCreateRefreshRun(),
+		CancelCommand: refreshgen.GenUIActionCancelRefreshRun(),
+		CSRFToken:     "csrf-test",
+	}
+	var rendered bytes.Buffer
+	if err := PipelinesPage(catalog.Catalog{}, state, "pipelines", "").Render(&rendered); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"cancel-intent", "cancelRefreshRun"} {
+		if !strings.Contains(rendered.String(), expected) {
+			t.Fatalf("pipeline collection command bridge missing %q", expected)
+		}
+	}
+}
 
 func TestPipelineListSeparatesLatestRunFromConfirmedPublication(t *testing.T) {
 	publishedAt := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
@@ -41,6 +61,44 @@ func TestPipelineListUsesReadableSemanticModelAndNeverRunLabel(t *testing.T) {
 	}
 	if got := page.Pipelines[0].Status; got != "never run" {
 		t.Fatalf("status = %q, want never run", got)
+	}
+}
+
+func TestPipelineListRecentRunsAreNewestRootInvocationsOnly(t *testing.T) {
+	state := PipelineMonitorState{Pipelines: []PipelineMonitorPipeline{{
+		Asset: projectview.DevelopAssetView{ID: "pipeline:sales", Title: "Sales refresh"},
+		Refresh: AssetRefreshState{Runs: []AssetRefreshRun{
+			{ID: "run-2", Status: "failed", StartedAt: "2026-09-22T12:02:00Z"},
+			{ID: "child", ParentRunID: "run-2", Status: "failed", StartedAt: "2026-09-22T12:09:00Z"},
+			{ID: "run-1", Status: "succeeded", StartedAt: "2026-09-22T12:01:00Z"},
+			{ID: "run-6", Status: "succeeded", StartedAt: "2026-09-22T12:06:00Z"},
+			{ID: "run-5", Status: "succeeded", StartedAt: "2026-09-22T12:05:00Z"},
+			{ID: "run-4", Status: "succeeded", StartedAt: "2026-09-22T12:04:00Z"},
+			{ID: "run-3", Status: "succeeded", StartedAt: "2026-09-22T12:03:00Z"},
+		}},
+	}}}
+	runs := pipelineMonitorPageSignal(state, "pipelines").Pipelines[0].RecentRuns
+	if len(runs) != 5 {
+		t.Fatalf("recent runs = %#v, want five root runs", runs)
+	}
+	for index, id := range []string{"run-6", "run-5", "run-4", "run-3", "run-2"} {
+		if runs[index].ID != id || runs[index].Href != "/pipelines/pipeline:sales/runs/"+id {
+			t.Fatalf("recent run %d = %#v, want %s", index, runs[index], id)
+		}
+	}
+	if runs[4].Status != "failed" {
+		t.Fatalf("failed run status = %q", runs[4].Status)
+	}
+}
+
+func TestPipelineListRecentRunsUsesLatestFallback(t *testing.T) {
+	state := PipelineMonitorState{Pipelines: []PipelineMonitorPipeline{{
+		Asset:   projectview.DevelopAssetView{ID: "pipeline:sales"},
+		Refresh: AssetRefreshState{Latest: AssetRefreshRun{ID: "run-latest", Status: "succeeded"}},
+	}}}
+	runs := pipelineMonitorPageSignal(state, "pipelines").Pipelines[0].RecentRuns
+	if len(runs) != 1 || runs[0].ID != "run-latest" {
+		t.Fatalf("recent runs = %#v, want latest fallback", runs)
 	}
 }
 
@@ -94,6 +152,22 @@ func TestPipelineMonitorSignalHidesMutationActionsWithoutUseCapability(t *testin
 	}
 }
 
+func TestPipelineRunHistoryDoesNotOfferRunAgain(t *testing.T) {
+	state := PipelineMonitorState{Pipelines: []PipelineMonitorPipeline{{
+		Asset:  projectview.DevelopAssetView{ID: "pipeline:sales", Key: "sales", Title: "Sales refresh"},
+		CanRun: true,
+		Refresh: AssetRefreshState{Runs: []AssetRefreshRun{{ID: "run:finished", Status: "succeeded"}}},
+	}}}
+	page := pipelineMonitorPageSignal(state, "runs")
+	if len(page.RunsTable.Rows) != 1 {
+		t.Fatalf("run rows = %#v", page.RunsTable.Rows)
+	}
+	actions := page.RunsTable.Rows[0]["actions"].([]map[string]any)
+	if len(actions) != 1 || actions[0]["action"] != "detail" {
+		t.Fatalf("terminal run actions = %#v, want details only", actions)
+	}
+}
+
 func TestPipelineMonitorShowsPreparedAsActiveWithoutInventingCapacity(t *testing.T) {
 	state := PipelineMonitorState{
 		Capacity: PipelineMonitorCapacity{Running: 1, Queued: 2, Prepared: 1},
@@ -106,8 +180,8 @@ func TestPipelineMonitorShowsPreparedAsActiveWithoutInventingCapacity(t *testing
 	if !page.Pipelines[0].Running {
 		t.Fatal("prepared pipeline is not marked active")
 	}
-	if len(page.Metrics) != 3 || page.Metrics[2].Label != "Prepared" || page.Metrics[2].Value != "1" {
-		t.Fatalf("metrics = %#v, want a prepared count instead of unknown node capacity", page.Metrics)
+	if len(page.Metrics) != 2 || page.Metrics[0].Label != "Running" || page.Metrics[0].Value != "2" {
+		t.Fatalf("metrics = %#v, want prepared runs counted as running", page.Metrics)
 	}
 }
 
@@ -156,6 +230,50 @@ func TestPipelineRunsTableOmitsChildRefreshRuns(t *testing.T) {
 	page := pipelineMonitorPageSignal(state, "runs")
 	if len(page.RunsTable.Rows) != 1 || page.RunsTable.Rows[0]["run_id"] != "pipeline-run" {
 		t.Fatalf("pipeline runs = %#v, want only the root pipeline invocation", page.RunsTable.Rows)
+	}
+}
+
+func TestPipelineWaitingIntentsStaySeparateAndDisappearOnceTheirRunIsVisible(t *testing.T) {
+	state := PipelineMonitorState{
+		Pipelines: []PipelineMonitorPipeline{{
+			Asset:   projectview.DevelopAssetView{ID: "pipeline:sales", Title: "Sales refresh"},
+			Refresh: AssetRefreshState{Runs: []AssetRefreshRun{{ID: "run:attached", Status: "running"}}},
+		}},
+		WaitingIntents: []PipelineWaitingIntent{
+			{IntentID: "request:queued", PipelineID: "pipeline:sales", Status: "waiting", CreatedAt: "2026-09-24T09:00:00Z", QueuePosition: 2, CancelAllowed: true},
+			{IntentID: "request:attached", PipelineID: "pipeline:sales", Status: "attached", CreatedAt: "2026-09-24T08:00:00Z", QueuePosition: 1, RunID: "run:attached"},
+			{IntentID: "request:cancelled", PipelineID: "pipeline:sales", Status: "cancelled", CreatedAt: "2026-09-24T07:00:00Z"},
+		},
+	}
+	page := pipelineMonitorPageSignal(state, "pipelines")
+	if len(page.RunsTable.Rows) != 1 || page.RunsTable.Rows[0]["run_id"] != "run:attached" {
+		t.Fatalf("execution run table = %#v", page.RunsTable.Rows)
+	}
+	if len(page.WaitingIntents) != 1 {
+		t.Fatalf("waiting intents = %#v, want only the unattached queued request", page.WaitingIntents)
+	}
+	queued := page.WaitingIntents[0]
+	if queued.IntentID != "request:queued" || queued.Status != "waiting" || queued.CreatedAt != "2026-09-24T09:00:00Z" || uisignals.ValueOrZero(queued.QueuePosition) != 2 || !queued.CancelAllowed || queued.RunID != nil {
+		t.Fatalf("queued intent signal = %#v", queued)
+	}
+
+	state.Pipelines[0].Refresh.Runs = nil
+	page = pipelineMonitorPageSignal(state, "pipelines")
+	if len(page.WaitingIntents) != 2 || page.WaitingIntents[0].IntentID != "request:attached" || uisignals.ValueOrZero(page.WaitingIntents[0].RunID) != "run:attached" {
+		t.Fatalf("attached intent without visible run = %#v, want a separately linked intent", page.WaitingIntents)
+	}
+}
+
+func TestPipelineWaitingIntentProjectsStaleOutcomeAndReason(t *testing.T) {
+	page := pipelineMonitorPageSignal(PipelineMonitorState{WaitingIntents: []PipelineWaitingIntent{{
+		IntentID: "request:stale", PipelineID: "pipeline:sales", Status: "stale", CreatedAt: "2026-09-24T09:00:00Z",
+	}}}, "runs")
+	if len(page.WaitingIntents) != 1 {
+		t.Fatalf("waiting intents = %#v, want stale terminal request", page.WaitingIntents)
+	}
+	intent := page.WaitingIntents[0]
+	if intent.Status != "stale" || uisignals.ValueOrZero(intent.Reason) != "Pipeline definition changed while waiting; start a new request" || intent.CancelAllowed || len(page.RunsTable.Rows) != 0 {
+		t.Fatalf("stale request projection = %#v, run rows = %#v", intent, page.RunsTable.Rows)
 	}
 }
 

@@ -1,4 +1,4 @@
-import { LitElement, html, nothing } from 'lit'
+import { LitElement, html, nothing, type TemplateResult } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { repeat } from 'lit/directives/repeat.js'
 import {
@@ -22,6 +22,7 @@ import {
   FilePenLine,
   FileText,
   LayoutDashboard,
+  LoaderCircle,
   KeyRound,
   LockKeyhole,
   EllipsisVertical,
@@ -49,6 +50,7 @@ import './user-avatar'
 export type EntityListItem = {
   id: string
   title: string
+  rowActionDisabled?: boolean
   description?: string
   href?: string
   avatarUrl?: string
@@ -63,6 +65,7 @@ export type EntityListItem = {
   category?: string
   group?: string
   columns?: Record<string, string | number>
+  columnContent?: Record<string, TemplateResult>
   columnTitles?: Record<string, string>
   columnHrefs?: Record<string, string>
   columnLinkLabels?: Record<string, string>
@@ -828,6 +831,10 @@ const entityListStyles = `
   .entity-list-status.is-success .entity-list-status-icon { color: var(--lv-fg-success); }
   .entity-list-status.is-danger .entity-list-status-icon { color: var(--lv-fg-danger); }
   .entity-list-status.is-attention .entity-list-status-icon { color: var(--lv-fg-warning); }
+  .entity-list-status.is-accent .entity-list-status-icon { color: var(--lv-fg-accent); }
+  .entity-list-status.is-running .entity-list-status-icon svg { animation: entity-list-status-spin 1s linear infinite; }
+  @keyframes entity-list-status-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .entity-list-status.is-running .entity-list-status-icon svg { animation: none; } }
 
   .entity-list-status.is-quiet {
     gap: var(--base-size-4);
@@ -959,8 +966,8 @@ class EntityList extends LitElement {
   @property({ type: Boolean, attribute: 'hover-sort-indicators' }) hoverSortIndicators = false
   @state() private query = ''
   @state() private filter = ''
-  @state() private sortColumnId = ''
-  @state() private sortDirection: 'asc' | 'desc' = 'asc'
+  @property({ attribute: 'sort-column' }) sortColumnId = ''
+  @property({ attribute: 'sort-direction' }) sortDirection: 'asc' | 'desc' = 'asc'
   @state() private collapsedGroups: string[] = []
 
   createRenderRoot(): HTMLElement {
@@ -1175,7 +1182,7 @@ class EntityList extends LitElement {
   private renderItem(item: EntityListItem, columns: EntityListColumn[]) {
     const badgesColumn = columns.some((column) => column.render === 'badges')
     return html`
-      <tr class=${`entity-list-table-row ${this.rowAction ? 'is-actionable' : ''}`} tabindex=${this.rowAction ? '0' : nothing} @click=${() => this.emitItemAction(item)} @keydown=${(event: KeyboardEvent) => this.handleItemKeyDown(event, item)}>
+      <tr class=${`entity-list-table-row ${this.rowAction && !item.rowActionDisabled ? 'is-actionable' : ''}`} tabindex=${this.rowAction && !item.rowActionDisabled ? '0' : nothing} @click=${() => { if (!item.rowActionDisabled) this.emitItemAction(item) }} @keydown=${(event: KeyboardEvent) => { if (!item.rowActionDisabled) this.handleItemKeyDown(event, item) }}>
         ${columns.map((column) => column.id === 'name'
           ? this.renderIdentityCell(item, badgesColumn)
           : this.renderDataCell(item, column))}
@@ -1242,7 +1249,7 @@ class EntityList extends LitElement {
     return html`
       <td class=${`entity-list-cell ${alignment} ${column.render === 'person-avatar' || column.render === 'popularity' || column.render === 'datetime' ? 'is-hover-indicator' : ''}`} data-column=${column.id} data-label=${column.label} title=${column.render === 'person-avatar' || column.render === 'popularity' || column.render === 'datetime' ? '' : title}>
         ${column.render !== 'actions' ? html`<span class="entity-list-mobile-cell-label">${column.label}:</span>` : nothing}
-        ${column.render === 'badges'
+        ${item.columnContent?.[column.id] ?? (column.render === 'badges'
           ? (badges.length ? badges.map((badge) => this.renderBadge(badge)) : html`
               <span class="entity-list-badge-empty" role="img" aria-label="No popularity data">—</span>
             `)
@@ -1272,7 +1279,7 @@ class EntityList extends LitElement {
                       ? this.renderDateTime(item, column, value, title)
               : item.columnHrefs?.[column.id]
                 ? html`<a class="entity-list-column-link" href=${item.columnHrefs[column.id]} aria-label=${item.columnLinkLabels?.[column.id] ?? nothing} @click=${(event: Event) => event.stopPropagation()}>${value == null || value === '' ? '—' : value}</a>`
-                : (value == null || value === '' ? '—' : value)}
+                : (value == null || value === '' ? '—' : value))}
         ${item.columnDescriptions?.[column.id] ? html`<span class="entity-list-cell-detail" title=${item.columnDescriptions[column.id]}>${item.columnDescriptions[column.id]}</span>` : nothing}
       </td>
     `
@@ -1380,7 +1387,7 @@ class EntityList extends LitElement {
     const label = value == null || value === '' ? '—' : String(value)
     const status = entityStatusPresentation(label)
     return html`
-      <span class=${`entity-list-status is-${status.tone}${quiet ? ' is-quiet' : ''}`}>
+      <span class=${`entity-list-status is-${status.tone}${label.trim().toLowerCase() === 'running' ? ' is-running' : ''}${quiet ? ' is-quiet' : ''}`}>
         <span class="entity-list-status-icon" aria-hidden="true">${lucideIcon(status.icon, { size: quiet ? 14 : 16, strokeWidth: 2 })}</span>
         <span>${label}</span>
       </span>
@@ -1513,7 +1520,7 @@ function entityActionIcon(type: EntityListRowAction['icon']): IconNode {
   }
 }
 
-function entityStatusPresentation(label: string): { icon: IconNode, tone: 'success' | 'danger' | 'attention' | 'muted' } {
+function entityStatusPresentation(label: string): { icon: IconNode, tone: 'success' | 'danger' | 'attention' | 'accent' | 'muted' } {
   switch (label.trim().toLowerCase()) {
     case 'succeeded':
     case 'success':
@@ -1528,14 +1535,17 @@ function entityStatusPresentation(label: string): { icon: IconNode, tone: 'succe
     case 'changes pending':
       return { icon: FilePenLine, tone: 'attention' }
     case 'failed':
+    case 'stale request':
     case 'cancelled':
     case 'error':
     case 'disabled':
     case 'revoked':
     case 'expired':
       return { icon: XCircle, tone: 'danger' }
-    case 'queued':
     case 'running':
+      return { icon: LoaderCircle, tone: 'attention' }
+    case 'queued':
+      return { icon: Clock3, tone: 'accent' }
     case 'prepared':
     case 'pending':
       return { icon: Clock3, tone: 'attention' }

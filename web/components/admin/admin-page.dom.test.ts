@@ -721,7 +721,7 @@ test('users directory list delegates search and filtering to the page stream', a
         headers: Array.from(root.querySelectorAll('thead th .entity-list-sort-button > span:first-child')).map((header) => header.textContent?.trim()),
         filterOptions: Array.from(root.querySelectorAll('select option')).map((option) => option.textContent?.trim()),
         lastSeenCells: Array.from(root.querySelectorAll('.entity-list-table-row td:last-child')).map((cell) => ({
-          text: cell.textContent?.trim(),
+          text: cell.textContent?.replace(cell.querySelector('.entity-list-mobile-cell-label')?.textContent ?? '', '').trim(),
           title: cell.getAttribute('title'),
         })),
         toolbarActions: Array.from(root.querySelectorAll('.entity-toolbar-actions button')).map((button) => button.textContent?.replace(/\s+/g, ' ').trim()),
@@ -1685,8 +1685,8 @@ test('storage renders a simple shared table with a schema column', async () => {
       root.style.width = '672px'
       const rowState = () => ({
         rows: Array.from(root.querySelectorAll('.entity-list-table-row .entity-list-title')).map((title) => title.textContent?.trim()),
-        schemas: Array.from(root.querySelectorAll('.entity-list-table-row')).map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
-        types: Array.from(root.querySelectorAll('.entity-list-table-row')).map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
+        schemas: Array.from(root.querySelectorAll('.entity-list-table-row')).map((row) => row.querySelectorAll('.entity-list-cell')[0]?.getAttribute('title')),
+        types: Array.from(root.querySelectorAll('.entity-list-table-row')).map((row) => row.querySelectorAll('.entity-list-cell')[1]?.getAttribute('title')),
       })
       const initial = rowState()
       const columnLabels = Array.from(root.querySelectorAll('.entity-list-sort-button > span:first-child')).map((label) => label.textContent?.trim())
@@ -2243,7 +2243,7 @@ test('admin agent tools use the shared list and a detail drawer for schemas', as
       const listText = list.textContent ?? ''
       const groupLabels = Array.from(list.querySelectorAll('.entity-list-group-label')).map((label) => label.textContent?.trim())
       const queryRow = listRows.find((row) => row.textContent?.includes('query_visual'))!
-      const queryCells = Array.from(queryRow.querySelectorAll('th, td')).map((cell) => cell.textContent?.replace(/\s+/g, ' ').trim())
+      const queryCells = Array.from(queryRow.querySelectorAll('th, td')).map((cell) => cell.textContent?.replace(cell.querySelector('.entity-list-mobile-cell-label')?.textContent ?? '', '').replace(/\s+/g, ' ').trim())
       queryRow.click()
       await element.updateComplete
       const drawer = root.querySelector('lv-drawer') as any

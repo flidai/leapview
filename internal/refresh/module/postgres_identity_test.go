@@ -8,6 +8,7 @@ import (
 	"time"
 
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrecovery "github.com/flidai/leapview/internal/refresh/recovery"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
@@ -92,7 +93,7 @@ func TestBuildProductionInjectsNativeRecoveryLedger(t *testing.T) {
 	queue := NewPostgresJobsAdapter(jobspostgres.New(db), refresh)
 	persistence, err := NewPostgresPersistence(refresh, PostgresPersistenceConfig{
 		SchedulerOwner: "scheduler", PublicationIdentityResolver: staticPublicationIdentityResolver("pool", "catalog"), Jobs: queue,
-		CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool", catalogID: "catalog"}, CancelAuditWriter: integrationAuditWriter{},
+		CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool", catalogID: "catalog"}, CancelAuditWriter: integrationAuditWriter{}, CreateAuditWriter: integrationAuditWriter{},
 		NativeFinalizer: PostgresNativeRefreshFinalizerFunc(func(context.Context, refreshpostgres.Tx, refreshrun.JobRecord, refreshrun.CanonicalRefreshResult, refreshpostgres.PublicationInput) error {
 			return nil
 		}),
@@ -104,7 +105,19 @@ func TestBuildProductionInjectsNativeRecoveryLedger(t *testing.T) {
 		Definitions: func(context.Context) ([]refreshrecovery.Definition, error) { return nil, nil }, WorkerID: "worker", Actor: "operator",
 		Lease: time.Minute, BatchSize: 1, ComplianceWindow: time.Hour, EvidenceRoot: "/var/lib/leapview/evidence",
 	}
-	if _, err := Build(t.Context(), Config{Persistence: &persistence, Production: true, Authorization: testAuthorization(), RecoveryLifecycle: lifecycle}); err != nil {
+	if _, err := Build(t.Context(), Config{
+		Persistence: &persistence, Production: true, Authorization: testAuthorization(), RecoveryLifecycle: lifecycle,
+		TargetID: "instance_native",
+		ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) {
+			return projectgraphIdentity("sales", "dev", "generation"), nil
+		},
+		Service: refreshrun.Service{
+			ResolveSourceDigest: func(context.Context, projectgraph.ServingIdentity) (string, error) {
+				return "sha256:" + strings.Repeat("a", 64), nil
+			},
+			Artifacts: intentTestArtifactLoader{definition: intentTestDefinition()},
+		},
+	}); err != nil {
 		t.Fatalf("build production recovery lifecycle: %v", err)
 	}
 	if lifecycle.Repository != persistence.Recovery {

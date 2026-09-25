@@ -42,8 +42,8 @@ func TestPipelineRunModelsUseOnlyDurableInScopeChildRuns(t *testing.T) {
 	if models[0].Duration == nil || *models[0].Duration != "5s" {
 		t.Fatalf("durable child duration = %v; want 5s", models[0].Duration)
 	}
-	if models[1].Status == nil || *models[1].Status != refreshrun.RunStatusPrepared || models[1].StatusLabel == nil || *models[1].StatusLabel != "Finalizing" {
-		t.Fatalf("prepared model evidence = %#v; want durable prepared status labeled Finalizing", models[1])
+	if models[1].Status == nil || *models[1].Status != refreshrun.RunStatusPrepared || models[1].StatusLabel == nil || *models[1].StatusLabel != "Ready to publish" {
+		t.Fatalf("prepared model evidence = %#v; want durable prepared status labeled Ready to publish", models[1])
 	}
 	if models[2].Status != nil || models[2].Error != nil {
 		t.Fatalf("missing durable child outcome was invented: %#v", models[2])
@@ -162,7 +162,7 @@ func TestPipelineRunPageDegradesWhenOptionalReadersFail(t *testing.T) {
 	if data.Page.Events == nil || len(data.Page.Events) != 0 || data.Page.EventsUnavailable == nil || !*data.Page.EventsUnavailable {
 		t.Fatalf("event fallback = %#v, unavailable %v", data.Page.Events, data.Page.EventsUnavailable)
 	}
-	if data.Page.Execution.PublicationOutcome != "unverified" || data.Page.StatusLabel != "Finalizing" {
+	if data.Page.Execution.PublicationOutcome != "unverified" || data.Page.StatusLabel != "Running" {
 		t.Fatalf("run/publication statuses = %q / %q", data.Page.StatusLabel, data.Page.Execution.PublicationOutcome)
 	}
 	if data.Page.Execution.AttemptsUnavailable == nil || !*data.Page.Execution.AttemptsUnavailable || data.Page.Execution.Models[0].AttemptsUnavailable == nil || !*data.Page.Execution.Models[0].AttemptsUnavailable {

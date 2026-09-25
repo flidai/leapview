@@ -36,6 +36,7 @@ type PipelineDetailState struct {
 	Refresh                   AssetRefreshState
 	RunMonitor                *PipelineRunMonitor
 	MonitorRuns               []PipelineMonitorRun
+	WaitingIntents            []PipelineWaitingIntent
 	Environment               string
 	ActiveTab                 string
 	PublicationRunID          string
@@ -45,6 +46,7 @@ type PipelineDetailState struct {
 	PublicationUnavailable    bool
 	CanRun                    bool
 	RunCommand                uicommand.Binding
+	CancelCommand             uicommand.Binding
 	CSRFToken                 string
 }
 
@@ -58,7 +60,7 @@ type PipelineDetailPublicationSignal = uisignals.PipelineDetailPublicationSignal
 func PipelineDetailPage(nav catalog.Catalog, state PipelineDetailState, roleLabel string, chromeOptions ...webpage.Provider) g.Node {
 	page := pipelineDetailPageSignal(state, state.ActiveTab)
 	attrs := []g.Node{g.Attr("slot", "page")}
-	if state.RunCommand.OperationID() != "" {
+	if state.RunCommand.OperationID() != "" || state.CancelCommand.OperationID() != "" {
 		commandValues := url.Values{"surface": {"pipeline_detail"}, "asset": {state.Asset.ID}, "section": {page.ActiveTab}}
 		if monitor := page.RunMonitor; monitor != nil {
 			commandValues.Set("q", monitor.Query)
@@ -68,7 +70,7 @@ func PipelineDetailPage(nav catalog.Catalog, state PipelineDetailState, roleLabe
 			commandValues.Set("page", strconv.FormatInt(monitor.Page, 10))
 		}
 		commandURL := "/pipelines/command?" + commandValues.Encode()
-		command := "$pipelineCommand = evt.detail; $pipelineCommandStatus = {loading: true, error: '', message: ''}; " + uiactions.CommandPostSwitch("evt.detail.action", map[string]uicommand.Binding{"run": state.RunCommand}, commandURL, "pipelineCommand")
+		command := "$pipelineCommand = evt.detail; $pipelineCommandStatus = {loading: true, error: '', message: ''}; " + uiactions.CommandPostSwitch("evt.detail.action", map[string]uicommand.Binding{"run": state.RunCommand, "cancel-intent": state.CancelCommand}, commandURL, "pipelineCommand")
 		attrs = append(attrs, g.Attr("data-on:lv-pipeline-command", command))
 	}
 	extraHead := []g.Node{
@@ -113,6 +115,7 @@ func pipelineDetailPageSignal(state PipelineDetailState, activeTab string) Pipel
 		StartingDeadlineSeconds: metaInt64(asset.Payload, "StartingDeadlineSeconds", "startingDeadlineSeconds"),
 		DefinitionYaml:          metaString(asset.Payload, "Configuration", "configuration"),
 		RecentRuns:              pipelineDetailRuns(asset, state.Refresh),
+		WaitingIntents:          pipelineWaitingIntentSignals(state.WaitingIntents, nil),
 	}
 	if monitor := state.RunMonitor; monitor != nil {
 		page.RunMonitor = &uisignals.PipelineRunMonitorSignal{
@@ -125,6 +128,7 @@ func pipelineDetailPageSignal(state PipelineDetailState, activeTab string) Pipel
 		}
 		table := pipelineRunsTable([]PipelineMonitorPipeline{monitorPipeline})
 		page.RunsTable = &table
+		page.WaitingIntents = pipelineWaitingIntentSignals(state.WaitingIntents, table.Rows)
 	}
 	page.ConcurrencyDescription = pipelineConcurrencyDescription(page.ConcurrencyPolicy, len(page.Schedules) > 0)
 	if !state.Refresh.NextRun.IsZero() {

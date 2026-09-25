@@ -4,6 +4,8 @@ import type { AssetLineageGraphSignal, PipelineRunDetailPageSignal, PipelineRunM
 import { DatastarLit } from '../shared/datastar-lit'
 import { breadcrumbStyles, renderAssetBreadcrumbGlyph, renderBreadcrumb, type BreadcrumbItem } from '../shared/breadcrumb'
 import { checkSignalContract } from '../shared/signal-contract'
+import { hasLiveRunDuration } from './live-run-duration'
+import './live-run-duration-element'
 
 class LeapViewPipelineRunPage extends DatastarLit(LitElement) {
   @state() private selectedModelID = ''
@@ -47,6 +49,9 @@ class LeapViewPipelineRunPage extends DatastarLit(LitElement) {
     .run-status + .run-status { border-left: var(--lv-border-muted); }
     .run-status-label { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .run-status-value { overflow-wrap: anywhere; color: var(--lv-fg-default); font: var(--lv-type-section-title); }
+    .run-status-progress { display: inline-block; width: .9em; height: .9em; margin-right: var(--base-size-6); border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -.08em; animation: run-status-spin 1s linear infinite; }
+    @keyframes run-status-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .run-status-progress { animation: none; } }
     .run-status-detail { color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
     .tone-success { color: var(--lv-fg-success); }
     .tone-danger { color: var(--lv-fg-danger); }
@@ -182,6 +187,7 @@ class LeapViewPipelineRunPage extends DatastarLit(LitElement) {
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
+    const countingDuration = hasLiveRunDuration(page.status, page.execution.startedAt, page.execution.finishedAt)
     const selectedModel = this.selectedModel(page)
     const tabs: Array<{ id: 'execution' | 'events' | 'details', label: string }> = [
       { id: 'execution', label: 'Execution' }, { id: 'events', label: 'Events' }, { id: 'details', label: 'Details' },
@@ -198,8 +204,8 @@ class LeapViewPipelineRunPage extends DatastarLit(LitElement) {
         ${this.streamState !== 'live' ? html`<span class=${`run-live-status is-${this.streamState}`} role="status" aria-live="polite">${this.streamState === 'reconnecting' ? 'Reconnecting' : 'Connection lost'}</span>` : nothing}
       </div>
       <div class="run-status-grid" aria-label="Run outcome">
-        <div class="run-status"><strong class=${`run-status-value ${statusTone(page.status)}`}>${page.statusLabel}</strong><span class="run-status-detail">${[page.execution.duration, humanize(page.details.trigger), page.execution.startedAt ? formatRunDate(page.execution.startedAt) : 'Not started'].filter(Boolean).join(' · ')}</span></div>
-        <div class="run-status"><span class="run-status-label">Publication</span><strong class=${`run-status-value ${publicationTone(page.execution.publicationOutcome)}`}>${publicationLabel(page.execution.publicationOutcome)}</strong>${this.renderPublicationEvidence(page)}</div>
+        <div class="run-status"><strong class=${`run-status-value ${statusTone(page.status)}`}>${(page.status === 'running' || page.status === 'prepared') && this.streamState === 'live' ? html`<span class="run-status-progress" aria-hidden="true"></span>` : nothing}${page.status === 'prepared' ? 'Running' : page.statusLabel}</strong><span class="run-status-detail">${countingDuration ? html`<lv-live-run-duration .status=${page.status} .startedAt=${page.execution.startedAt || ''} .finishedAt=${page.execution.finishedAt || ''} .recordedDuration=${page.execution.duration || ''} .live=${this.streamState === 'live'}></lv-live-run-duration> · ` : page.execution.duration ? html`${page.execution.duration} · ` : nothing}${humanize(page.details.trigger)} · ${page.execution.startedAt ? formatRunDate(page.execution.startedAt) : 'Not started'}</span></div>
+        <div class="run-status"><span class="run-status-label">Publication</span><strong class=${`run-status-value ${publicationTone(page.execution.publicationOutcome)}`}>${page.status === 'prepared' && page.execution.publicationOutcome === 'pending' ? 'Publishing' : publicationLabel(page.execution.publicationOutcome)}</strong>${this.renderPublicationEvidence(page)}</div>
       </div>
       ${page.runError ? html`<div class="run-error" role="alert"><strong>Run error</strong><div>${page.runError}</div>${page.execution.models.some((model) => model.status === 'failed') ? html`<button type="button" @click=${() => this.showFailedModel(page)}>View failed model</button>` : nothing}</div>` : nothing}
       <nav class="tabs" aria-label="Run investigation sections">
@@ -211,7 +217,7 @@ class LeapViewPipelineRunPage extends DatastarLit(LitElement) {
 
   private renderPublicationEvidence(page: PipelineRunDetailPageSignal) {
     const publication = page.execution.publication
-    if (!publication) return html`<span class="run-status-detail">${page.execution.publicationOutcome === 'not_published' ? 'No new data published.' : 'No confirmed publication yet.'}</span>`
+    if (!publication) return html`<span class="run-status-detail">${page.execution.publicationOutcome === 'not_published' ? 'No new data published.' : page.status === 'prepared' && page.execution.publicationOutcome === 'pending' ? 'Activating the new data.' : 'No confirmed publication yet.'}</span>`
     return html`<span class="run-status-detail">Snapshot ${publication.snapshotId} · ${formatRunDate(publication.publishedAt)}</span>`
   }
 
@@ -357,7 +363,7 @@ class LeapViewPipelineRunPage extends DatastarLit(LitElement) {
           ...node,
           ...(modelID ? { selected: graphNodeMatchesModel(node, modelID) } : {}),
           ...(model?.status ? { runStatus: model.status, runStatusLabel: model.statusLabel || humanize(model.status), runAnimate: model.status === 'running' && this.streamState === 'live' } : {}),
-          ...(pipeline ? { runStatus: page.status, runStatusLabel: page.statusLabel } : {}),
+          ...(pipeline ? { runStatus: page.status, runStatusLabel: page.status === 'prepared' ? 'Running' : page.statusLabel } : {}),
         }
       }),
     }
@@ -415,7 +421,10 @@ function factRow(label: string, value: string) {
 function statusTone(status: string): string {
   switch (status) {
     case 'succeeded': return 'tone-success'
-    case 'failed': return 'tone-danger'
+    case 'failed':
+    case 'cancelled': return 'tone-danger'
+    case 'queued':
+    case 'running':
     case 'prepared': return 'tone-warning'
     default: return ''
   }
@@ -486,6 +495,7 @@ function modelsProgress(page: PipelineRunDetailPageSignal): string {
 }
 
 function publicationProgress(page: PipelineRunDetailPageSignal): string {
+  if (page.status === 'prepared' && page.execution.publicationOutcome === 'pending') return 'Publishing'
   switch (page.execution.publicationOutcome) {
     case 'published': return 'Completed'
     case 'pending': return 'Pending'
