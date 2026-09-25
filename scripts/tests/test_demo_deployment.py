@@ -185,7 +185,7 @@ class StagingTests(unittest.TestCase):
         self.release.mkdir(parents=True)
         self.payload = {name: b'packaged content' for name in
                         ['compose.yaml', 'compose.https.yaml', 'Caddyfile',
-                         'deployment.env.example', 'leapviewctl']}
+                         'deployment.env.example', 'leapviewctl', 'leapviewctl-wrapper']}
         for name, data in self.payload.items():
             (self.release/name).write_bytes(data)
             (self.root/name).symlink_to('current/'+name)
@@ -194,7 +194,9 @@ class StagingTests(unittest.TestCase):
     def copy(self, *args):
         if args[:2] == ('docker', 'cp'):
             for name, data in self.payload.items():
-                (pathlib.Path(args[-1])/name).write_bytes(data)
+                target = pathlib.Path(args[-1])/name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
 
     def stage(self):
         with patch.object(self.rollout, 'out', return_value='container'), patch.object(self.rollout, 'run', side_effect=self.copy):
@@ -215,6 +217,63 @@ class StagingTests(unittest.TestCase):
             self.assertEqual((previous.st_ino, previous.st_mtime_ns, previous.st_mode),
                              (current.st_ino, current.st_mtime_ns, current.st_mode))
         self.assertEqual(list((self.root/'releases').iterdir()), [self.release])
+
+    def add_auxiliary_payload(self):
+        self.payload.update({'README.md': b'documentation',
+                             'qualification/browser.mjs': b'qualification helper'})
+
+    def test_host_upgrade_generation_accepts_image_auxiliary_files(self):
+        before = {name: (self.release/name).stat() for name in self.payload}
+        self.add_auxiliary_payload()
+        self.assertEqual(self.stage(), self.release)
+        self.assertEqual({entry.name for entry in self.release.iterdir()}, set(before))
+        for name, previous in before.items():
+            current = (self.release/name).stat()
+            self.assertEqual((previous.st_ino, previous.st_mtime_ns, previous.st_mode),
+                             (current.st_ino, current.st_mtime_ns, current.st_mode))
+
+    def test_new_generation_contains_only_canonical_runtime_payload(self):
+        runtime_files = set(self.payload)
+        self.add_auxiliary_payload()
+        self.image = 'ghcr.io/flidai/leapview@sha256:'+'b'*64
+        staged = self.stage()
+        self.assertEqual({entry.name for entry in staged.iterdir()}, runtime_files)
+        for name in runtime_files:
+            expected = 0o700 if name in ('leapviewctl', 'leapviewctl-wrapper') else 0o600
+            self.assertEqual((staged/name).stat().st_mode & 0o777, expected)
+
+    def test_legacy_complete_payload_is_accepted_without_rewriting(self):
+        self.add_auxiliary_payload()
+        for name, data in self.payload.items():
+            target = self.release/name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        before = {name: (self.release/name).stat() for name in self.payload}
+        self.assertEqual(self.stage(), self.release)
+        for name, previous in before.items():
+            current = (self.release/name).stat()
+            self.assertEqual((previous.st_ino, previous.st_mtime_ns, previous.st_mode),
+                             (current.st_ino, current.st_mtime_ns, current.st_mode))
+
+    def test_unverified_extra_files_are_still_rejected(self):
+        for name, contents in [('unexpected', b'unknown'), ('README.md', b'modified docs')]:
+            with self.subTest(name=name):
+                self.add_auxiliary_payload()
+                extra = self.release/name
+                extra.write_bytes(contents)
+                with self.assertRaisesRegex(RuntimeError, 'Existing release'):
+                    self.stage()
+                self.assertEqual(extra.read_bytes(), contents)
+                extra.unlink()
+
+    def test_missing_or_modified_wrapper_is_rejected(self):
+        self.payload.pop('leapviewctl-wrapper')
+        with self.assertRaisesRegex(RuntimeError, 'payload'):
+            self.stage()
+        self.payload['leapviewctl-wrapper'] = b'packaged content'
+        (self.release/'leapviewctl-wrapper').write_bytes(b'modified wrapper')
+        with self.assertRaisesRegex(RuntimeError, 'Existing release'):
+            self.stage()
 
     def test_changed_existing_release_tool_is_rejected_without_overwriting(self):
         (self.release/'leapviewctl').write_bytes(b'operator tool')
