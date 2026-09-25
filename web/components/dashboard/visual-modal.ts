@@ -77,11 +77,16 @@ export class VisualModal extends LitElement {
     }
 
     .data-dialog.is-compact {
-      width: min(38rem, 100%);
+      width: min(30rem, 100%);
     }
 
     .data-dialog.is-medium {
       width: min(54rem, 100%);
+    }
+
+    .data-dialog.is-compact lv-record-table .record-table {
+      margin-inline: auto;
+      table-layout: auto;
     }
 
     .focus-dialog {
@@ -309,6 +314,7 @@ export class VisualModal extends LitElement {
   private renderData(detail: VisualActionDetail) {
     const columns = detail.columns ?? []
     const rows = detail.rows ?? []
+    const compactColumns = columns.length === 2
     if (columns.length === 0 || rows.length === 0) return html`
       <div class="data-shell">
         <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
@@ -328,7 +334,8 @@ export class VisualModal extends LitElement {
               })),
               rows,
               empty: 'No visual data',
-              minWidth: columns.length > 4 ? `${columns.length * 160}px` : '0',
+              width: compactColumns ? 'max-content' : '',
+              minWidth: compactColumns ? 'min(20rem, 100%)' : columns.length > 4 ? `${columns.length * 160}px` : '0',
               density: 'tight',
             }}
           ></lv-record-table>

@@ -282,6 +282,8 @@ test('show-data balances small result tables and preserves scrolling for wide re
       const revenueHeaderLabel = headers[1].querySelector('.record-table-sort > span:first-child') as HTMLElement
       const dialog = modal.shadowRoot.querySelector('[role="dialog"]') as HTMLElement
       const revenueHeaderStyle = getComputedStyle(headers[1])
+      const tableBounds = table.getBoundingClientRect()
+      const scrollBounds = scroll.getBoundingClientRect()
       return {
         rowHeight: row.getBoundingClientRect().height,
         scrollHeight: scroll.scrollHeight,
@@ -289,6 +291,8 @@ test('show-data balances small result tables and preserves scrolling for wide re
         tableWidth: table.getBoundingClientRect().width,
         availableWidth: scroll.getBoundingClientRect().width,
         tableLayout: getComputedStyle(table).tableLayout,
+        tableLeftGap: Math.round(tableBounds.left - scrollBounds.left),
+        tableRightGap: Math.round(scrollBounds.right - tableBounds.right),
         columnWidths: headers.map((header) => Math.round(header.getBoundingClientRect().width)),
         revenueAlignment: getComputedStyle(headers[1]).textAlign,
         revenueHeaderRightGap: Math.round(
@@ -302,12 +306,13 @@ test('show-data balances small result tables and preserves scrolling for wide re
     })
     expect(state.rowHeight).toBeLessThanOrEqual(32)
     expect(state.scrollHeight).toBeGreaterThan(state.clientHeight)
-    expect(state.tableLayout).toBe('fixed')
-    expect(Math.round(state.tableWidth)).toBe(Math.round(state.availableWidth))
-    expect(state.columnWidths[0]).toBe(state.columnWidths[1])
+    expect(state.tableLayout).toBe('auto')
+    expect(state.tableWidth).toBe(320)
+    expect(state.tableWidth).toBeLessThan(state.availableWidth)
+    expect(state.tableLeftGap).toBe(state.tableRightGap)
     expect(state.revenueAlignment).toBe('right')
     expect(state.revenueHeaderRightGap).toBe(0)
-    expect(state.dialogWidth).toBe(608)
+    expect(state.dialogWidth).toBe(480)
     expect(state.dialogBottom).toBeLessThanOrEqual(640 - 28)
 
     const scrollTop = await page.locator('lv-visual-modal').evaluate((modal: any) => {
