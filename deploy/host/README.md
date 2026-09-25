@@ -64,7 +64,9 @@ the existing durable transition operation before reporting success. Run it from 
 that includes it, with
 `LEAPVIEWCTL_ROOT=/opt/leapview`. The command is in the OCI host payload built
 with CGO and DuckDB Arrow support; the standalone CGO-free controller archive
-retains its existing install-only surface. It requires an existing, live fenced
+does not expose this authoritative `--phase` interface. The separate operator
+maintenance subcommands below are available in both builds. This interface
+requires an existing, live fenced
 operation whose authoritative preflight and migrations have already completed.
 The installed host marker must contain the provisioned `targetId` matching
 the operation, except for the exact revision-019 predecessor installed through
@@ -108,14 +110,51 @@ The existing `host install` command still rejects changed image configuration.
 If an effect fails after activation, the operation records an indeterminate
 outcome and needs operator assessment; this command does not roll back.
 
-Application-level backup and restore commands are not part of the generic host
-deployment. PostgreSQL backups and PITR, along with DuckLake or object-storage
-snapshots, versioning, replication, and recovery, are provider-native concerns
-and must be configured and exercised through the [PostgreSQL operations
-guide](/docs/guides/operate/postgresql-operations), [Backup and restore
-guide](/docs/guides/operate/backup-restore), and relevant provider before
-reopening traffic.
+### Operator maintenance for a single host
+
+`leapviewctl host upgrade plan|apply|recover|status --request <private-request>`
+provides a separate operator-authorized lifecycle for local PostgreSQL 18 and
+local application/managed-data volumes. It reuses the host payload staging and
+activation functions and the canonical Goose migration provider. It does not
+weaken or fabricate the owner-backed operation required by `--phase` above.
+
+The request binds an immutable qualified image, live OCI admission, exact source
+compatibility and a versioned installation profile. The profile selects the host,
+installation/recovery roots, Compose services/project, PostgreSQL image and
+container, network, four state volumes, HTTPS origin and loopback validation
+bindings. `controlMigratorUrlFile` optionally references a root-private URL file;
+otherwise the adapter reads the existing installed control-migrator environment
+binding. Credentials never appear in request evidence or command arguments.
+Unknown writable state, external tablespaces/storage, engine changes and remote
+Docker endpoints are rejected. Different hostnames, roots, projects and volume
+names require configuration, not a different compiled controller.
+
+The operation closes traffic, captures a stopped whole-cluster/files recovery
+point, restores an isolated copy, validates the predecessor and rehearses the
+candidate upgrade before live migration. The caller must validate the original
+HTTPS origin at each operation-bound checkpoint. The demo adapter supplies CFO
+checks; another installation supplies its own application checks. EOF, mismatched
+acknowledgments and timeouts are failures, never approval.
+
+The journal and `.leapviewctl.lock` reside at the installation root, outside all
+restored volumes. Normal lifecycle commands respect pending maintenance after
+reboot. During the first upgrade, the supported launcher temporarily selects the
+retained candidate controller so an older installed controller cannot ignore the
+journal. Completed operations restore the canonical `current/leapviewctl` link;
+the previous immutable payload is never rewritten.
+
+Precommit failure restores the matching application, database/files and original
+configuration. Once the operation commits public exposure, retries only finalize
+the candidate. Recovery failures keep traffic closed. Snapshot cleanup is explicit.
+This is coordinated provider-native filesystem recovery, not a logical application
+backup API. Managed databases, HA, external object storage and engine upgrades
+remain separate provider qualification work. See the [demo adapter runbook](../demo/README.md#database-upgrades-and-interrupted-operation-recovery)
+for the workflow wiring and concrete profile example.
 
 DNS, provider firewalls, server creation, provider snapshots, and destruction
 remain provider responsibilities. Provider adapters must not implement Docker
 Compose, initialization, or application backup/restore behavior.
+
+Migration URLs that name TLS certificate or key files must reference existing
+read-only application bind mounts. The one-shot migrator receives only those
+individual files, never the application environment or entire secret directory.

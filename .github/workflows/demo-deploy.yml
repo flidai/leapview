@@ -8,13 +8,13 @@ on:
         type: choice
         required: true
         default: publish
-        options: [publish, deploy]
+        options: [publish, deploy, upgrade, recover]
       image:
-        description: 'Deploy only: immutable ghcr.io/flidai/leapview@sha256 digest'
+        description: 'Runtime operations: immutable ghcr.io/flidai/leapview@sha256 digest'
         type: string
         required: false
       qualification_run:
-        description: 'Deploy only: successful Main artifacts run ID with qualification receipt'
+        description: 'Runtime operations: successful Main artifacts run ID with qualification receipt'
         type: string
         required: false
 
@@ -138,7 +138,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   runtime:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action == 'deploy'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && contains(fromJSON('["deploy","upgrade","recover"]'), inputs.action)
     name: Deploy qualified application image to demo-02
     permissions:
       contents: read
@@ -148,9 +148,10 @@ jobs:
       attestations: read
       deployments: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     environment: leapview-demo
     env:
+      DEMO_ACTION: ${{ inputs.action }}
       DEMO_IMAGE: ${{ inputs.image }}
       QUALIFICATION_RUN: ${{ inputs.qualification_run }}
       DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
@@ -185,12 +186,16 @@ jobs:
           project-slug: leapview
           env-slug: prod
           secret-path: /demo/deployment
+      - name: Check demo upgrade requirements before recording deployment
+        env:
+          SOURCE_REVISION: ${{ steps.qualified.outputs.revision }}
+        run: python3 scripts/demo_compose_deploy.py --preflight
       - name: Record runtime deployment in progress
         id: record
         env:
           SOURCE_REVISION: ${{ steps.qualified.outputs.revision }}
         run: python3 scripts/demo_runtime_record.py start
-      - name: Back up, replace image and validate CFO pages
+      - name: Execute reviewed operation and validate CFO pages
         id: rollout
         env:
           SOURCE_REVISION: ${{ steps.qualified.outputs.revision }}

@@ -7,8 +7,10 @@ import tempfile
 import os
 import io
 import json
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts'))
 def load(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / 'scripts' / (name + '.py'))
     module = importlib.util.module_from_spec(spec)
@@ -42,6 +44,86 @@ class AdmissionTests(unittest.TestCase):
         for image in ['ghcr.io/flidai/leapview:latest', 'other@sha256:'+'a'*64]:
             with self.assertRaises(ValueError):
                 self.policy.admit(self.run, self.receipt, image)
+
+class PreflightTests(unittest.TestCase):
+    def test_preflight_never_starts_host_transaction_or_fetches_viewer(self):
+        for mode in ['image-only', 'database-upgrade-required', 'review-required']:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                runner = load('demo_compose_deploy')
+                revision = 'b' * 40
+                commands = []
+                def output(args, **kwargs):
+                    commands.append(args)
+                    if args[0] == 'ssh-keyscan': return b'host public-key'
+                    if args[0] == 'ssh-keygen': return '256 ' + runner.FINGERPRINT + ' host'
+                    if args[-1] == 'inspect': return json.dumps({'revision':revision}).encode()
+                    self.fail('Unexpected preflight command: ' + repr(args))
+                env = {'DEMO_IMAGE':'ghcr.io/flidai/leapview@sha256:'+'a'*64,
+                       'SOURCE_REVISION':revision, 'DEMO_HOST':runner.HOST,
+                       'DEMO_SSH_PRIVATE_KEY':'test-only',
+                       'GITHUB_STEP_SUMMARY':str(pathlib.Path(directory)/'summary')}
+                report = {'mode':mode, 'currentSchema':28, 'candidateSchema':30}
+                previous_umask = os.umask(0o077)
+                try:
+                    with patch.dict(os.environ, env, clear=True), patch.object(sys, 'argv', ['runner','--preflight']), \
+                         patch.object(runner.subprocess, 'check_output', side_effect=output), \
+                         patch.object(runner.subprocess, 'run') as run, \
+                         patch.object(runner.subprocess, 'Popen') as popen, \
+                         patch.object(runner, 'inspect_transition', return_value=report), \
+                         patch.object(runner.upgrade, 'prepare'), \
+                         patch.object(runner, 'verify_public_revision') as public, patch('sys.stdout', io.StringIO()):
+                        if mode == 'image-only': runner.main()
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, mode): runner.main()
+                        popen.assert_not_called()
+                        public.assert_not_called()
+                        self.assertEqual(run.call_count, 2)  # temporary inspector upload and cleanup only
+                        self.assertIn('rm', run.call_args.args[0])
+                        self.assertIn('-f', run.call_args.args[0])
+                    self.assertIn(mode, pathlib.Path(env['GITHUB_STEP_SUMMARY']).read_text())
+                finally:
+                    os.umask(previous_umask)
+
+class UpgradeGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = load('demo_compose_runtime')
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.runtime.PROVIDER = pathlib.Path(self.directory.name)
+        self.runtime.ROOT = pathlib.Path(self.directory.name)
+        self.journal = self.runtime.PROVIDER/'upgrade-operation.json'
+
+    def write(self, phase, version=1):
+        self.journal.write_text(json.dumps({'version':version, 'state':{'phase':phase}}))
+        self.journal.chmod(0o600)
+
+    def test_incomplete_upgrade_blocks_image_only_deploy(self):
+        for phase in ['prepared','quiescing','capturing','verified','migrating','starting',
+                      'validating','committed','restoring','reopening','unknown']:
+            with self.subTest(phase=phase):
+                self.write(phase)
+                with self.assertRaisesRegex(RuntimeError, 'Unfinished schema upgrade'):
+                    with self.runtime.upgrade_guard(): self.fail('entered image rollout')
+
+    def test_no_journal_or_terminal_upgrade_allows_image_only_path(self):
+        with self.runtime.upgrade_guard(): pass
+        for phase in ['succeeded','recovered']:
+            self.write(phase)
+            with self.runtime.upgrade_guard(): pass
+
+    def test_competing_operator_is_rejected(self):
+        with self.runtime.upgrade_guard():
+            with self.assertRaises(BlockingIOError):
+                with self.runtime.upgrade_guard(): self.fail('concurrent operator entered')
+
+    def test_unknown_journal_version_and_permissions_rejected(self):
+        self.write('succeeded', version=2)
+        with self.assertRaises(RuntimeError):
+            with self.runtime.upgrade_guard(): self.fail('accepted future version')
+        self.write('succeeded')
+        self.journal.chmod(0o644)
+        with self.assertRaises(RuntimeError):
+            with self.runtime.upgrade_guard(): self.fail('accepted writable journal')
 
 class RolloutTests(unittest.TestCase):
     def setUp(self):

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Demo-02 image-only transaction. EOF/timeout before browser approval rolls back."""
 import datetime
+import contextlib
+import stat
 import fcntl
 import hashlib
 import json
@@ -118,7 +120,41 @@ def stage_release(image):
     return release
 
 
+@contextlib.contextmanager
+def upgrade_guard():
+    # Shared with hostinstall.FileJournal. Hold this across the entire image
+    # transaction so a schema upgrade cannot enter its maintenance window.
+    descriptor = os.open(ROOT/'.leapviewctl.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, 'r+') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        journal = ROOT/'upgrade-operation.json'
+        try:
+            info = journal.lstat()
+        except FileNotFoundError:
+            yield
+            return
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_size > 16384:
+            raise RuntimeError('Invalid private upgrade journal; operator recovery required')
+        data = json.loads(journal.read_text())
+        if not isinstance(data, dict) or type(data.get('version')) is not int or data['version'] != 1:
+            raise RuntimeError('Unknown upgrade journal; operator recovery required')
+        state = data.get('state')
+        if not isinstance(state, dict) or state.get('phase') not in ('succeeded', 'recovered'):
+            raise RuntimeError('Unfinished schema upgrade; explicit recovery or commit completion required')
+        yield
+
+
 def main():
+    os.umask(0o077)
+    # Recovery needs the read-only viewer credential handoff while the journal
+    # fences all runtime inspection and mutation.
+    if sys.argv[1:] == ["viewer"]:
+        return _main()
+    with upgrade_guard():
+        _main()
+
+
+def _main():
     global LOG
     os.umask(0o077)
     if sys.argv[1:] == ['viewer']:

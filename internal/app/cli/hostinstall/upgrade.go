@@ -11,6 +11,7 @@ import (
 	"time"
 
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/platform/hostmaintenance"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	"github.com/flidai/leapview/internal/platform/ociref"
 	"github.com/flidai/leapview/internal/release/transitionoperation"
@@ -262,6 +263,9 @@ func (u *Upgrader) upgrade(ctx context.Context, request UpgradeRequest, mutated 
 		return transitionrunner.EffectResult{}, err
 	}
 	defer lock.Release()
+	if err := hostmaintenance.Check(paths.Root); err != nil {
+		return transitionrunner.EffectResult{}, err
+	}
 	installed, _, err := readUpgradeInstallation(paths.Root)
 	if err != nil {
 		return transitionrunner.EffectResult{}, fmt.Errorf("existing host installation is required: %w", err)

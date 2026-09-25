@@ -3,6 +3,7 @@
 import io
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -45,6 +46,9 @@ def main():
         receipt = json.loads(archive.read('qualification.json'))
     revision = admit(run, receipt, image)
     subprocess.run(['git', 'merge-base', '--is-ancestor', revision, 'origin/main'], check=True)
+    receipt_path = Path(os.environ['RUNNER_TEMP'])/'demo-qualification.json'
+    receipt_path.write_text(json.dumps(receipt))
+    receipt_path.chmod(0o600)
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
         output.write(f'revision={revision}\nimage={image}\n')
     print(f'Qualified immutable image admitted at revision {revision}')
