@@ -505,7 +505,7 @@ test('query controls hydrate canonical select values on their first render', asy
 })
 
 test('data explorer builds a governed semantic exploration and filter command', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 600 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-data-explorer') && customElements.get('lv-data-explore-table'))
@@ -609,6 +609,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
 
       const table = root.querySelector('lv-data-explore-table') as any
       await table.updateComplete
+      const resultPane = root.querySelector<HTMLElement>('.semantic-result')!
       const stateField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('State'))!
       const skuField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('SKU'))!
       skuField.click()
@@ -619,6 +620,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
         chips: Array.from(root.querySelectorAll('.selection-shelf .chip')).map((chip) => chip.textContent?.replace(/\s+/g, ' ').trim()),
         grain: root.querySelector('.result-meta')?.textContent?.replace(/\s+/g, ' ').trim(),
         tableRows: table.result.rows,
+        resultLayout: { overflowY: getComputedStyle(resultPane).overflowY, scrollable: resultPane.scrollHeight > resultPane.clientHeight, tableHeight: table.getBoundingClientRect().height },
         relatedField: { disabled: stateField.disabled, text: stateField.textContent?.replace(/\s+/g, ' ').trim(), title: stateField.title },
       }
       const unavailableField = { disabled: skuField.disabled, text: skuField.textContent?.replace(/\s+/g, ' ').trim(), title: skuField.title }
@@ -675,6 +677,8 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.chips.join(' ')).toContain('Revenue')
     expect(state.grain).toContain('Grain: order_id')
     expect(state.tableRows).toEqual([{ status: 'delivered', revenue: 1200 }])
+    expect(state.resultLayout).toMatchObject({ overflowY: 'auto', scrollable: true })
+    expect(state.resultLayout.tableHeight).toBeGreaterThan(200)
     expect(state.relatedField.disabled).toBe(false)
     expect(state.relatedField.text).toContain('related')
     expect(state.relatedField.title).toContain('orders_customers')

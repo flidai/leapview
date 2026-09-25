@@ -780,8 +780,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       display: grid;
       min-width: 0;
       min-height: 0;
-      grid-template-rows: auto auto auto minmax(0, 1fr);
-      overflow: hidden;
+      grid-template-rows: auto auto auto minmax(18rem, 1fr);
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
 
     .explore-main {
