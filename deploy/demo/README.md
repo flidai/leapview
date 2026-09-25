@@ -63,8 +63,12 @@ can be restarted. Do not bypass the guard or run a destructive down migration.
 Preflight rejection creates no runtime deployment record, leaving the existing
 publication pin unchanged.
 Image payloads are extracted into a separate temporary directory before validation.
-Same-image retries reuse an existing release only when its contents match the image;
-they never overwrite the active release or its local configuration.
+New releases contain the same six runtime files and permissions as the host
+installer. Documentation and qualification helpers remain in the image, outside
+the installed generation. Same-image retries accept either that runtime-only
+layout or the legacy complete payload, provided its contents match the image
+exactly. They never overwrite the active release or its local configuration;
+modified files and unknown extras still require operator review.
 A host lock protects against overlapping operators. After replacement, the remote
 transaction waits up to five minutes for the runner's authenticated shared-viewer
 check of all four CFO pages (27 visuals). Readiness failure, failed browser checks,
