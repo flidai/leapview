@@ -319,7 +319,7 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 	if err != nil || parsedMigrator.Hostname() != e.request.Profile.Postgres || parsedMigrator.Path != "/leapview_control" || parsedMigrator.User == nil || parsedMigrator.User.Username() != "leapview_control_migrator" || parsedMigrator.Query().Get("sslmode") != "verify-full" {
 		return errors.New("control migrator identity and verified TLS are required")
 	}
-	if _, err := migrationTLSMounts(migrator, app); err != nil {
+	if _, err := migrationTLSMounts(migrator, app, map[string]string{volumes["home"]: volumes["home"]}); err != nil {
 		return err
 	}
 	raw, err := e.docker(ctx, "exec", e.app(), "leapview", "version", "--json")
