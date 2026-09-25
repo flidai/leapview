@@ -61,7 +61,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await browser?.close()
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-}, 30_000)
+}, 15_000)
 
 async function measureInspector(width: number) {
   const page = await browser.newPage({ viewport: { width, height: 1000 } })
@@ -154,4 +154,4 @@ test('visual inspector controls stay within the pane at desktop and narrow width
     expect(layout.pickerButtonCount).toBe(27)
     expect(layout.queryControlCount).toBeGreaterThan(3)
   }
-}, 45_000)
+}, 15_000)
