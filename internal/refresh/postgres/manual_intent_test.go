@@ -218,7 +218,7 @@ func TestManualIntentRecentStaleListIsSeparateAndBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.MarkManualIntentStaleTx(ctx, tx, claim.IntentID, claim.LeaseOwner, claim.FenceGeneration); err != nil {
+	if err := r.MarkManualIntentStaleTx(ctx, tx, claim.IntentID, claim.LeaseOwner, claim.FenceGeneration, "Pipeline definition changed while waiting; start a new request"); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
 	}

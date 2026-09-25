@@ -21,6 +21,7 @@ import (
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 // ManualPipelineIntentCommand is a generation-independent request to run an
@@ -56,7 +57,7 @@ type manualIntentRepository interface {
 	ClaimNextManualIntent(context.Context, refreshpostgres.Scope, string, time.Duration) (refreshpostgres.ManualIntent, bool, error)
 	AttachManualIntentTx(context.Context, refreshpostgres.Tx, string, string, int64, string) error
 	ReleaseManualIntentTx(context.Context, refreshpostgres.Tx, string, string, int64) error
-	MarkManualIntentStaleTx(context.Context, refreshpostgres.Tx, string, string, int64) error
+	MarkManualIntentStaleTx(context.Context, refreshpostgres.Tx, string, string, int64, string) error
 	GetManualIntent(context.Context, refreshpostgres.Scope, string) (refreshpostgres.ManualIntent, error)
 	GetManualIntentByIdempotency(context.Context, refreshpostgres.Scope, string, string) (refreshpostgres.ManualIntent, error)
 	ListManualIntents(context.Context, refreshpostgres.Scope, string, int) ([]refreshpostgres.ManualIntent, error)
@@ -148,6 +149,22 @@ func (m *Module) QueueManualPipelineIntent(ctx context.Context, command ManualPi
 	if err := refreshschedule.ValidateArtifactDigest(sourceDigest); err != nil {
 		return ManualIntentView{}, fmt.Errorf("resolve source digest for manual intent: %w", err)
 	}
+	authority, err := m.captureAuthority(ctx, activeIdentity, pipelineID, principalID)
+	if err != nil {
+		return ManualIntentView{}, err
+	}
+	if m.service.RequireAuthority {
+		if m.service.AuthorityRevalidator == nil {
+			return ManualIntentView{}, errors.New("manual refresh authority revalidator is unavailable")
+		}
+		if err := m.service.AuthorityRevalidator.Revalidate(ctx, authority); err != nil {
+			return ManualIntentView{}, fmt.Errorf("authorize manual refresh request: %w", err)
+		}
+	}
+	authorityJSON, err := jobs.MarshalAuthority(authority)
+	if err != nil {
+		return ManualIntentView{}, fmt.Errorf("encode manual refresh authority: %w", err)
+	}
 	requestID := strings.TrimSpace(command.RequestID)
 	if requestID == "" {
 		requestID = strings.TrimPrefix(key, "ui:")
@@ -175,7 +192,7 @@ func (m *Module) QueueManualPipelineIntent(ctx context.Context, command ManualPi
 		IdempotencyKey: key, RequestDigest: requestDigest,
 		ProjectID: activeIdentity.ProjectID.String(), Environment: activeIdentity.Environment,
 		PipelineID: pipelineID.String(), TargetID: m.manualTargetID, PrincipalID: principalID,
-		SourceDigest: sourceDigest, AuditIntentJSON: auditIntentJSON,
+		SourceDigest: sourceDigest, AuditIntentJSON: auditIntentJSON, AuthorityJSON: authorityJSON,
 	}, func(auditCtx context.Context, tx refreshpostgres.Tx, accepted refreshpostgres.ManualIntent) error {
 		acceptanceAudit := *auditIntent
 		acceptanceAudit.Action = "refresh.request.accepted"
@@ -285,7 +302,7 @@ func (m *Module) manualIntentView(ctx context.Context, intent refreshpostgres.Ma
 		CancelAllowed: intent.Status == refreshpostgres.ManualIntentWaiting,
 	}
 	if intent.Status == refreshpostgres.ManualIntentStale {
-		view.Reason = "Pipeline definition changed while waiting; start a new request"
+		view.Reason = intent.StaleReason
 	}
 	if queuePosition > 0 {
 		view.QueuePosition = queuePosition
@@ -499,16 +516,32 @@ func (m *Module) dispatchOneManualIntent(ctx context.Context) error {
 		return m.releaseManualIntent(ctx, intent, fmt.Errorf("current source digest is invalid: %w", err))
 	}
 	if currentDigest != intent.SourceDigest {
-		if err := m.manualIntents.InTx(ctx, func(tx refreshpostgres.Tx) error {
-			return m.manualIntents.MarkManualIntentStaleTx(ctx, tx, intent.IntentID, m.manualIntentOwner, intent.FenceGeneration)
-		}); err != nil {
-			return fmt.Errorf("mark stale manual refresh intent: %w", err)
-		}
-		return nil
+		return m.staleManualIntent(ctx, intent, "Pipeline definition changed while waiting; start a new request")
 	}
 	pipeline, err := projectgraph.NewResourceID(intent.PipelineID)
 	if err != nil {
 		return m.releaseManualIntent(ctx, intent, err)
+	}
+	authority, err := jobs.UnmarshalAuthority(intent.AuthorityJSON)
+	if err != nil || (m.service.RequireAuthority && authority.IsZero()) {
+		return m.staleManualIntent(ctx, intent, "Request authority is no longer valid; start a new request")
+	}
+	if !authority.IsZero() {
+		if err := authority.Validate(); err != nil || authority.Mode != jobs.CallerAuthorityMode ||
+			authority.ActorPrincipalID != intent.PrincipalID || authority.ExecutionPrincipalID != intent.PrincipalID ||
+			authority.Target.ProjectID != intent.ProjectID || authority.Target.Environment != intent.Environment ||
+			authority.Target.ResourceKind != string(projectgraph.KindPipeline) || authority.Target.ResourceID != intent.PipelineID {
+			return m.staleManualIntent(ctx, intent, "Request authority is no longer valid; start a new request")
+		}
+		if m.service.AuthorityRevalidator == nil {
+			return m.releaseManualIntent(ctx, intent, errors.New("manual refresh authority revalidator is unavailable"))
+		}
+		if err := m.service.AuthorityRevalidator.Revalidate(ctx, authority); err != nil {
+			if errors.Is(err, jobs.ErrAuthorityInvalid) || errors.Is(err, jobs.ErrAuthorityRequired) || errors.Is(err, jobs.ErrAuthorityNoPermissions) {
+				return m.staleManualIntent(ctx, intent, "Request authority was revoked or expired; start a new request")
+			}
+			return m.releaseManualIntent(ctx, intent, fmt.Errorf("revalidate manual refresh authority: %w", err))
+		}
 	}
 	var auditIntent *access.AuditIntent
 	if len(intent.AuditIntentJSON) == 0 {
@@ -548,7 +581,7 @@ func (m *Module) dispatchOneManualIntent(ctx context.Context) error {
 		RunID: intent.ReservedRunID, Identity: activeIdentity, PrincipalID: intent.PrincipalID,
 		EstimatedMemoryBytes: 1, PipelineID: pipeline, TriggerType: refreshrun.TriggerManual,
 		InvocationSource: refreshrun.TriggerManual, IdempotencyKey: "manual-intent:" + intent.IntentID,
-		AuditIntent: auditIntent,
+		AuditIntent: auditIntent, Authority: authority,
 	})
 	if err != nil {
 		return m.releaseManualIntent(ctx, intent, fmt.Errorf("queue reserved manual refresh run: %w", err))
@@ -563,6 +596,15 @@ func (m *Module) dispatchOneManualIntent(ctx context.Context) error {
 	}
 	if err := m.verifyRunCreated(ctx, queued.Run); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (m *Module) staleManualIntent(ctx context.Context, intent refreshpostgres.ManualIntent, reason string) error {
+	if err := m.manualIntents.InTx(ctx, func(tx refreshpostgres.Tx) error {
+		return m.manualIntents.MarkManualIntentStaleTx(ctx, tx, intent.IntentID, m.manualIntentOwner, intent.FenceGeneration, reason)
+	}); err != nil {
+		return fmt.Errorf("mark stale manual refresh intent: %w", err)
 	}
 	return nil
 }

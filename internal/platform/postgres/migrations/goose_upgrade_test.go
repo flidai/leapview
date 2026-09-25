@@ -92,7 +92,7 @@ DELETE FROM upgrade_probe WHERE id=2;
 	}
 }
 
-func TestRefreshManualIntentMigrationUpgradesVersionTwentyEight(t *testing.T) {
+func TestRefreshManualIntentMigrationUpgradesVersionFortyTwo(t *testing.T) {
 	harness := postgrestest.Start(t)
 	owner := harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator", Password: "manual-intent-migration", Login: true})
@@ -126,38 +126,38 @@ func TestRefreshManualIntentMigrationUpgradesVersionTwentyEight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(t.Context(), 28); err != nil {
-		t.Fatalf("apply existing database through revision 28: %v", err)
+	if _, err := provider.UpTo(t.Context(), 42); err != nil {
+		t.Fatalf("apply existing database through revision 42: %v", err)
 	}
 	var exists bool
 	if err := admin.QueryRow(t.Context(), `SELECT to_regclass('refresh.manual_intent') IS NOT NULL`).Scan(&exists); err != nil {
 		t.Fatal(err)
 	}
 	if exists {
-		t.Fatal("revision 28 unexpectedly contains refresh.manual_intent")
+		t.Fatal("revision 42 unexpectedly contains refresh.manual_intent")
 	}
 	if _, err := provider.Up(t.Context()); err != nil {
-		t.Fatalf("upgrade existing database through revision 29: %v", err)
+		t.Fatalf("upgrade existing database through revision 43: %v", err)
 	}
 	current, _, err := provider.GetVersions(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current != 29 {
-		t.Fatalf("upgraded schema revision = %d, want 29", current)
+	if current != 43 {
+		t.Fatalf("upgraded schema revision = %d, want 43", current)
 	}
 	if err := admin.QueryRow(t.Context(), `SELECT to_regclass('refresh.manual_intent') IS NOT NULL`).Scan(&exists); err != nil {
 		t.Fatal(err)
 	}
 	if !exists {
-		t.Fatal("revision 29 did not create refresh.manual_intent")
+		t.Fatal("revision 43 did not create refresh.manual_intent")
 	}
 	var rootGuard, occurrenceGuard string
 	if err := admin.QueryRow(t.Context(), `SELECT pg_get_functiondef('refresh.guard_run_insert()'::regprocedure), pg_get_functiondef('refresh.guard_occurrence_update()'::regprocedure)`).Scan(&rootGuard, &occurrenceGuard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(rootGuard, "project environment already has an active root refresh run") || !strings.Contains(occurrenceGuard, "'queued','skipped'") {
-		t.Fatalf("revision 29 did not install scope-wide run and terminal-skip guards")
+		t.Fatalf("revision 43 did not install scope-wide run and terminal-skip guards")
 	}
 	runtimeDB, err := pgxpool.New(t.Context(), database.URL(runtime))
 	if err != nil {

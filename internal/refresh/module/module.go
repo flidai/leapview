@@ -454,16 +454,11 @@ func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity project
 			return errors.New("refresh retry is invalid")
 		}
 	}
-	authority, err := m.captureAuthority(ctx, identity, pipeline, principalID)
-	if err != nil {
-		return err
-	}
 	// ADR-0014 models a retry as a fresh manual invocation. The prior run is
 	// validated above for UI safety, but it is not retained as mutable execution
 	// state on the new immutable pipeline occurrence. Browser Run now records a
 	// generation-independent intent; the background dispatcher binds the run
 	// only when it becomes the target-wide next invocation.
-	_ = authority // admission is validated here; dispatch must capture a fresh authority envelope.
 	_, err = m.QueueManualPipelineIntent(ctx, ManualPipelineIntentCommand{
 		Identity: identity, PipelineID: pipeline.String(), PrincipalID: principalID,
 		IdempotencyKey: idempotencyKey, RetryOf: retryOf,

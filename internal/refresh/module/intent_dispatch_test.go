@@ -19,6 +19,7 @@ import (
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 const intentTestDigest = "sha256:" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -94,8 +95,12 @@ func (s *manualIntentMemoryStore) ReleaseManualIntentTx(_ context.Context, _ ref
 	return s.transition(id, owner, fence, refreshpostgres.ManualIntentWaiting)
 }
 
-func (s *manualIntentMemoryStore) MarkManualIntentStaleTx(_ context.Context, _ refreshpostgres.Tx, id, owner string, fence int64) error {
-	return s.transition(id, owner, fence, refreshpostgres.ManualIntentStale)
+func (s *manualIntentMemoryStore) MarkManualIntentStaleTx(_ context.Context, _ refreshpostgres.Tx, id, owner string, fence int64, reason string) error {
+	if err := s.transition(id, owner, fence, refreshpostgres.ManualIntentStale); err != nil {
+		return err
+	}
+	s.row(id).StaleReason = reason
+	return nil
 }
 
 func (s *manualIntentMemoryStore) transition(id, owner string, fence int64, status string) error {
@@ -445,6 +450,61 @@ func TestDispatchManualIntentQueuesReservedRunAgainstCurrentGeneration(t *testin
 	}
 	if store.rows[0].Status != refreshpostgres.ManualIntentAttached || store.rows[0].AttachedRunID != accepted.ReservedRunID {
 		t.Fatalf("attached intent = %#v", store.rows[0])
+	}
+}
+
+func TestManualIntentPersistsAndRevalidatesCallerAuthorityAtDispatch(t *testing.T) {
+	m, store, runs, _, _, activeGeneration, _ := newIntentTestModule(t)
+	m.service.RequireAuthority = true
+	m.currentSessionEvidence = func(context.Context) (access.CredentialEvidence, bool) {
+		return access.CredentialEvidence{Class: "session", ID: "session-1", Fingerprint: "fingerprint-1", PrincipalID: "user:test", ExpiresAt: time.Now().UTC().Add(time.Hour)}, true
+	}
+	checks := 0
+	m.service.AuthorityRevalidator = jobs.AuthorityRevalidatorFunc(func(_ context.Context, authority jobs.AuthorityEnvelope) error {
+		checks++
+		if authority.Credential == nil || authority.Credential.ID != "session-1" || authority.Target.ResourceID != "daily" {
+			t.Fatalf("revalidated authority = %#v", authority)
+		}
+		return nil
+	})
+	command := ManualPipelineIntentCommand{Identity: *activeGeneration, PipelineID: "daily", PrincipalID: "user:test", IdempotencyKey: "ui:authorized_request"}
+	if _, err := m.QueueManualPipelineIntent(beginIntentTestCommand(t, m, command.IdempotencyKey), command); err != nil {
+		t.Fatalf("accept authorized intent: %v", err)
+	}
+	if len(store.rows) != 1 || string(store.rows[0].AuthorityJSON) == "{}" || checks != 1 {
+		t.Fatalf("persisted authority=%s checks=%d", store.rows[0].AuthorityJSON, checks)
+	}
+	if err := m.dispatchOneManualIntent(t.Context()); err != nil {
+		t.Fatalf("dispatch authorized intent: %v", err)
+	}
+	if checks != 2 || len(runs.created) != 1 || runs.created[0].Root.Authority.Credential == nil || runs.created[0].Root.Authority.Credential.ID != "session-1" {
+		t.Fatalf("dispatched authority checks=%d run trees=%#v", checks, runs.created)
+	}
+}
+
+func TestManualIntentRevokedAuthorityBecomesStaleWithoutRun(t *testing.T) {
+	m, store, runs, _, _, activeGeneration, _ := newIntentTestModule(t)
+	m.service.RequireAuthority = true
+	m.currentSessionEvidence = func(context.Context) (access.CredentialEvidence, bool) {
+		return access.CredentialEvidence{Class: "session", ID: "session-1", Fingerprint: "fingerprint-1", PrincipalID: "user:test", ExpiresAt: time.Now().UTC().Add(time.Hour)}, true
+	}
+	revoked := false
+	m.service.AuthorityRevalidator = jobs.AuthorityRevalidatorFunc(func(context.Context, jobs.AuthorityEnvelope) error {
+		if revoked {
+			return jobs.ErrAuthorityInvalid
+		}
+		return nil
+	})
+	command := ManualPipelineIntentCommand{Identity: *activeGeneration, PipelineID: "daily", PrincipalID: "user:test", IdempotencyKey: "ui:revoked_request"}
+	if _, err := m.QueueManualPipelineIntent(beginIntentTestCommand(t, m, command.IdempotencyKey), command); err != nil {
+		t.Fatalf("accept authorized intent: %v", err)
+	}
+	revoked = true
+	if err := m.dispatchOneManualIntent(t.Context()); err != nil {
+		t.Fatalf("terminalize revoked intent: %v", err)
+	}
+	if store.rows[0].Status != refreshpostgres.ManualIntentStale || len(runs.created) != 0 || !strings.Contains(store.rows[0].StaleReason, "revoked") {
+		t.Fatalf("revoked intent=%#v, runs=%d", store.rows[0], len(runs.created))
 	}
 }
 
