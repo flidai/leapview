@@ -28,7 +28,7 @@ afterAll(async () => {
   } finally {
     await siteServer?.stop()
   }
-})
+}, 15_000)
 
 test('compliance page shows distinct, bounded assurance categories', async () => {
   const page = await browser.newPage()
