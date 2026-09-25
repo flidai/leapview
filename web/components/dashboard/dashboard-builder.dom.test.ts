@@ -1368,7 +1368,7 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
       )).filter(Boolean).sort()
       return {
         hasGridStack: Boolean(canvas?.gridstack),
-        floating: canvas?.gridstack?.getFloat(),
+        layoutMode: canvas?.gridstack?.getMode(),
         nodeID: visual.gridstackNode?.id,
         visualID: visual.getAttribute('gs-id'),
         contentWrapper: Boolean(visual.querySelector('.grid-stack-item-content')),
@@ -1380,7 +1380,7 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
     })
     expect(state).toEqual({
       hasGridStack: true,
-      floating: true,
+      layoutMode: 'float',
       nodeID: 'sales-chart',
       visualID: 'sales-chart',
       contentWrapper: true,
