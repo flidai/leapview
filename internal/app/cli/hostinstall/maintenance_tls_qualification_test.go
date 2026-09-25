@@ -79,7 +79,10 @@ func TestVolumeTLSMountQualification(t *testing.T) {
 		if source == restored {
 			want = "restored-ca"
 		}
-		if !strings.HasPrefix(output, want) {
+		// Docker combines stdout and stderr without preserving their relative
+		// order. The expected certificate must be an exact output line even if
+		// the rejected write's shell diagnostic arrives first.
+		if !strings.Contains("\n"+output+"\n", "\n"+want+"\n") {
 			t.Fatalf("wrong TLS source: got %q, want %q", output, want)
 		}
 		data, err := os.ReadFile(filepath.Join(source, "ca.pem"))
