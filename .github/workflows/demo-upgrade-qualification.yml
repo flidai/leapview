@@ -1,0 +1,47 @@
+name: Demo upgrade recovery qualification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/demo-upgrade-qualification.yml'
+      - 'internal/app/demoupgrade/**'
+      - 'internal/app/postgresbaseline/**'
+      - 'internal/platform/postgres/migrations/**'
+      - 'scripts/demo_*'
+      - 'scripts/tests/test_demo*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-upgrade-qualification-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  recovery:
+    name: Isolated demo migration and recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up the pinned toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          go-cache-restore-workload: full-validation
+      - name: Generate build contracts
+        run: task generate
+      - name: Test upgrade interruption and deployment exclusion
+        run: |
+          go test -race ./internal/app/demoupgrade -count=1
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_demo*.py'
+      - name: Exercise real PostgreSQL 28 to 30 boundaries
+        env:
+          LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: 'true'
+        run: go test ./internal/platform/postgres/migrations -run '^Test(DemoUpgrade|UpgradeBoundary)' -count=1 -timeout=5m -v
+      - name: Rehearse physical recovery on disposable PostgreSQL and files
+        env:
+          LEAPVIEW_DEMO_UPGRADE_QUALIFICATION: '1'
+        run: go test ./internal/app/demoupgrade -run '^TestColdPostgreSQLPairRecovery$' -count=1 -timeout=6m -v
