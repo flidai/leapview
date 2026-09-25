@@ -1,4 +1,25 @@
 import type { GridItemHTMLElement, GridStack } from 'gridstack'
+import type { VisualizationHost } from './visualization/host'
+
+export function setBuilderPreviewResizeSuspended(root: ShadowRoot | null, suspended: boolean): void {
+  // Move the grid outline live, but do not reallocate chart backing stores at
+  // every pointer pixel. The hosts retain the latest size and paint on release.
+  for (const host of root?.querySelectorAll<VisualizationHost>('.canvas lv-visualization-host') ?? []) {
+    host.resizeSuspended = suspended
+  }
+}
+
+export function builderGridOccupiedRows(grid: GridStack | null, components?: CanonicalGridComponent[]): number {
+  if (grid) {
+    return grid.getGridItems().reduce((maximum, item) => {
+      const node = item.gridstackNode
+      return Math.max(maximum, (node?.y ?? 0) + (node?.h ?? 1))
+    }, 0)
+  }
+  return (components ?? []).reduce((maximum, component) => (
+    Math.max(maximum, Math.max(1, component.placement.row) - 1 + Math.max(1, component.placement.rowSpan))
+  ), 0)
+}
 
 type CanonicalGridComponent = {
   id: string

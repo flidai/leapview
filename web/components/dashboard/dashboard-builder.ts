@@ -9,7 +9,7 @@ import { dashboardBuilderToolbarStyles } from './dashboard-builder-toolbar-style
 import { dashboardBuilderFilterStyles } from './dashboard-builder-filter-styles'
 import { hasCompiledBuilderPreview } from './builder-preview-readiness'
 import { canRequireFilter, filterControlChoices, filterControlLabel } from './builder-filter-settings'
-import { applyCanonicalGridAttributes, syncGridStackNodesToCanonical } from './builder-grid-sync'
+import { applyCanonicalGridAttributes, builderGridOccupiedRows, setBuilderPreviewResizeSuspended, syncGridStackNodesToCanonical } from './builder-grid-sync'
 import { createBuilderGridDragHelper, styleBuilderGridPlaceholder } from './builder-grid-drag-preview'
 import type {
   DashboardBuilderDiagnosticSignal,
@@ -44,7 +44,6 @@ import { checkSignalContract } from '../shared/signal-contract'
 import { emptyDashboardStatus } from '../shared/signal-defaults'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import './visualization/host'
-import type { VisualizationHost } from './visualization/host'
 import { BuilderVisualizationState } from './builder-visualization-state'
 import { renderVisualTypeIcon } from './visual-type-icon'
 import './filters/filter-control'
@@ -2749,11 +2748,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private setPreviewResizeSuspended(suspended: boolean): void {
     this.previewResizeSuspended = suspended
-    // Move the grid outline live, but do not reallocate chart backing stores at
-    // every pointer pixel. The hosts retain the latest size and paint on release.
-    for (const host of this.shadowRoot?.querySelectorAll<VisualizationHost>('.canvas lv-visualization-host') ?? []) {
-      host.resizeSuspended = suspended
-    }
+    setBuilderPreviewResizeSuspended(this.shadowRoot, suspended)
   }
 
   private onGridChange(_event: Event, _nodes: GridStackNode[]): void {
@@ -2788,7 +2783,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const minimumHeight = page.canvas.height > 0 ? page.canvas.height : builderCanvasMinimumHeight
     const fitScale = Math.min(1, availableWidth / logicalWidth)
     const scale = Math.min(2, Math.max(0.25, this.canvasZoom ?? fitScale))
-    const occupiedRows = this.canvasOccupiedRows(page)
+    const occupiedRows = builderGridOccupiedRows(this.gridStack, this.gridStack ? undefined : this.pagePlacedComponents(page))
     const workingRows = occupiedRows + (this.gridInteracting || this.draggedFieldID ? builderCanvasRunwayRows : 0)
     const rowHeight = Math.max(1, page.grid.rowHeight || 48)
     const gap = Math.max(0, page.grid.gap || 0)
@@ -2819,18 +2814,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private readonly fitCanvasToViewport = (): void => {
     this.canvasZoom = null
     this.syncCanvasViewport(this.builder ? this.selectedPage(this.builder) : undefined)
-  }
-
-  private canvasOccupiedRows(page: DashboardBuilderPageSignal): number {
-    if (this.gridStack) {
-      return this.gridStack.getGridItems().reduce((maximum, item) => {
-        const node = item.gridstackNode
-        return Math.max(maximum, (node?.y ?? 0) + (node?.h ?? 1))
-      }, 0)
-    }
-    return this.pagePlacedComponents(page).reduce((maximum, component) => (
-      Math.max(maximum, Math.max(1, component.placement.row) - 1 + Math.max(1, component.placement.rowSpan))
-    ), 0)
   }
 
   private destroyCanvasViewportObserver(): void {
