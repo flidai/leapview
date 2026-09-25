@@ -3,6 +3,7 @@ package gcadapter
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/deployment/gcstore"
 	"github.com/flidai/leapview/internal/extension"
+	"github.com/flidai/leapview/internal/platform/outbound"
 )
 
 // S3Config contains target-owned connection settings for a physical pool.
@@ -59,10 +61,22 @@ func NewPoolStore(ctx context.Context, contract *ducklake.PoolContract, config S
 		if strings.TrimSpace(config.Region) != "" {
 			loadOptions = append(loadOptions, awsconfig.WithRegion(strings.TrimSpace(config.Region)))
 		}
+		mode := outbound.PublicOnly
+		if strings.TrimSpace(config.Endpoint) != "" {
+			mode = outbound.ExplicitPrivate
+		}
+		guardedHTTP := outbound.New(mode, outbound.Options{}).HTTPClient(
+			&http.Client{}, outbound.HTTPConfig{
+				AllowedSchemes: []string{"http", "https"}, MaxRedirects: 5,
+				SameOriginRedirects: strings.TrimSpace(config.Endpoint) != "",
+			},
+		)
+		loadOptions = append(loadOptions, awsconfig.WithHTTPClient(guardedHTTP))
 		awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOptions...)
 		if err != nil {
 			return nil, fmt.Errorf("initialize physical-pool S3 client: %w", err)
 		}
+		awsCfg.HTTPClient = guardedHTTP
 		client := awss3.NewFromConfig(awsCfg, func(options *awss3.Options) {
 			options.UsePathStyle = config.PathStyle
 			if endpoint := strings.TrimSpace(config.Endpoint); endpoint != "" {

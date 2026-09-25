@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/flidai/leapview/internal/platform/outbound"
 )
 
 const maxClientMetadataBytes = 1 << 20
@@ -84,40 +85,14 @@ func (s *Service) resolveClientMetadata(ctx context.Context, clientID string) (s
 }
 
 func secureClientMetadataHTTPClient() *http.Client {
-	dialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
 		Proxy:                 nil,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		ResponseHeaderTimeout: 5 * time.Second,
 		IdleConnTimeout:       30 * time.Second,
 	}
-	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
-		}
-		addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if err != nil {
-			return nil, err
-		}
-		for _, address := range addresses {
-			if !publicIP(address.IP) {
-				continue
-			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(address.IP.String(), port))
-		}
-		return nil, fmt.Errorf("client metadata host has no public IP address")
-	}
-	return &http.Client{
+	return outbound.New(outbound.PublicOnly, outbound.Options{}).HTTPClient(&http.Client{
 		Transport: transport,
 		Timeout:   7 * time.Second,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-}
-
-func publicIP(ip net.IP) bool {
-	return ip != nil && !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsUnspecified() &&
-		!ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsMulticast()
+	}, outbound.HTTPConfig{AllowedSchemes: []string{"https"}, MaxRedirects: 0})
 }

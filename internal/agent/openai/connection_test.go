@@ -2,11 +2,13 @@ package openai
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	agentapp "github.com/flidai/leapview/internal/agent"
+	"github.com/flidai/leapview/internal/platform/outbound"
 )
 
 func TestConnectionRequiresSuccessfulToolRoundTrip(t *testing.T) {
@@ -57,7 +59,8 @@ func TestConnectionRequiresSuccessfulToolRoundTrip(t *testing.T) {
 				writeJSON(t, w, openAIChatResponse{Choices: []openAIChoice{choice}})
 			}))
 			defer server.Close()
-			err := TestConnection(t.Context(), agentapp.Config{APIKey: "test-key", BaseURL: server.URL, Model: "selected-model", APIMode: "chat-completions"})
+			model := NewModel(agentapp.Config{APIKey: "test-key", BaseURL: server.URL, Model: "selected-model", APIMode: "chat-completions"}, server.Client())
+			err := testConnection(t.Context(), model)
 			if (err != nil) != (scenario.failure != "") {
 				t.Fatalf("connection result = %v", err)
 			}
@@ -65,5 +68,12 @@ func TestConnectionRequiresSuccessfulToolRoundTrip(t *testing.T) {
 				t.Fatalf("provider calls = %d, want %d", calls, scenario.calls)
 			}
 		})
+	}
+}
+
+func TestConnectionRejectsLoopbackDestination(t *testing.T) {
+	err := TestConnection(t.Context(), agentapp.Config{APIKey: "test-key", BaseURL: "http://127.0.0.1:1", Model: "selected-model", APIMode: "chat-completions"})
+	if !errors.Is(err, outbound.ErrDestinationDenied) {
+		t.Fatalf("connection probe error = %v, want outbound destination denial", err)
 	}
 }
