@@ -430,7 +430,9 @@ func setCanonicalVisualQueryOptions(value *document.DashboardDocument, patch Set
 		return err
 	}
 	syncCanonicalComboSeries(&visual)
-	configureTargetPresentationBindings(&visual)
+	if patch.FieldID != "" && patch.Alias != nil {
+		configureTargetPresentationBindings(&visual)
+	}
 	value.Spec.Visuals[visualID] = visual
 	return nil
 }

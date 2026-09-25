@@ -34,3 +34,25 @@ func TestScatterPresentationTracksFieldChangesAfterTypeSwitch(t *testing.T) {
 		t.Fatalf("scatter presentation retained stale field references: %#v", presentation)
 	}
 }
+
+func TestScatterSortChangePreservesAuthoredAxisBinding(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	visual := defaultCanonicalVisual(string(document.DashboardVisualTypeScatter), "Scatter")
+	category, revenue, orders := "category", "revenue", "order_count"
+	visual.Query.Value = &document.AggregateDashboardQuery{
+		DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"}, Type: "aggregate",
+		Dimensions: []document.DashboardDimensionSelection{{String: &category}},
+		Metrics:    []document.DashboardMetricSelection{{String: &revenue}, {String: &orders}},
+	}
+	point := visual.Presentation.Value.(*document.PointDashboardPresentation)
+	point.Identity, point.X, point.Y = []string{"category"}, "order_count", "revenue"
+	revision.Document.Spec.Visuals["base"] = visual
+	sort := []document.DashboardSort{}
+	if err := setCanonicalVisualQueryOptions(&revision.Document, SetVisualQueryOptionsPayload{PageID: "overview", VisualID: "base-component", Sort: &sort}); err != nil {
+		t.Fatal(err)
+	}
+	got := revision.Document.Spec.Visuals["base"].Presentation.Value.(*document.PointDashboardPresentation)
+	if got.X != "order_count" || got.Y != "revenue" {
+		t.Fatalf("sort edit replaced authored scatter axes: X=%q Y=%q", got.X, got.Y)
+	}
+}
