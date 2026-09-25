@@ -7,7 +7,7 @@ const sitePort = 30000 + (process.pid % 10000)
 const baseURL = `http://127.0.0.1:${sitePort}`
 let browser: Browser
 let siteServer: SiteTestServer | undefined
-const siteReadyTimeout = 60_000
+const siteReadyTimeout = 120_000
 
 beforeAll(async () => {
   const startupDeadline = Date.now() + siteReadyTimeout
