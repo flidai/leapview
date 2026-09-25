@@ -9,11 +9,12 @@ import sys
 import tempfile
 
 PROVIDER = Path('/etc/leapview-provider-cfo')
+INSTALLATION = Path('/opt/leapview')
 IMAGE = r'ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}'
 
 
 def pending_request(image, revision):
-    journal = PROVIDER / 'upgrade-operation.json'
+    journal = INSTALLATION / 'upgrade-operation.json'
     state = json.loads(journal.read_text())['state']
     identity = state['identity']
     digest = identity['artifactAdmissionDigest']
@@ -37,7 +38,7 @@ def controller(image):
     try:
         with tempfile.TemporaryDirectory(dir=destination) as directory:
             temporary = Path(directory)/'leapviewctl'
-            subprocess.run(['docker', 'cp', cid+':/usr/local/libexec/leapviewctl', str(temporary)], check=True)
+            subprocess.run(['docker', 'cp', cid+':/usr/local/libexec/leapviewctl', str(temporary)], check=True, stdout=sys.stderr)
             temporary.chmod(0o500)
             with temporary.open('rb') as stream:
                 os.fsync(stream.fileno())
@@ -53,19 +54,23 @@ def controller(image):
 def main():
     os.umask(0o077)
     if os.geteuid() != 0: raise ValueError('Root SSH is required')
+    if os.environ.get('DOCKER_HOST') or os.environ.get('DOCKER_CONTEXT', 'default') != 'default':
+        raise ValueError('Only the local Docker endpoint is supported')
+    if subprocess.check_output(['docker', 'context', 'show'], text=True).strip() != 'default':
+        raise ValueError('Only the default local Docker context is supported')
     action, image, revision = sys.argv[1:4]
     if not re.fullmatch(IMAGE, image) or not re.fullmatch(r'[0-9a-f]{40}', revision):
         raise ValueError('Invalid immutable candidate')
     if action == 'pending':
         print(json.dumps(pending_request(image, revision)))
         return
-    if action not in ('check', 'apply', 'recover'): raise ValueError('Unsupported operation')
+    if action not in ('plan', 'apply', 'recover'): raise ValueError('Unsupported operation')
     request = Path(sys.argv[4])
     data = json.loads(request.read_text())
     if data['candidateImage'] != image or data['candidateRevision'] != revision:
         raise ValueError('Request identity mismatch')
     binary = controller(image)
-    os.execv(str(binary), [str(binary), 'demo-upgrade', action, '--request', str(request)])
+    os.execv(str(binary), [str(binary), 'host', 'upgrade', action, '--request', str(request)])
 
 
 if __name__ == '__main__': main()

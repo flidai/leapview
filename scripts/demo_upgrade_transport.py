@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import select
+import re
 import socket
 import socketserver
 import subprocess
@@ -49,7 +50,7 @@ class DemoTunnelProxy(socketserver.StreamRequestHandler):
 
 @contextmanager
 def private_browser(ssh, remote_port, browser_env):
-    if remote_port not in (8443, 8444): raise ValueError('Unknown private validation port')
+    if type(remote_port) is not int or not 1024 <= remote_port <= 65535: raise ValueError('Invalid private validation port')
     with socket.socket() as reservation:
         reservation.bind(('127.0.0.1', 0))
         local_port = reservation.getsockname()[1]
@@ -82,7 +83,7 @@ def private_browser(ssh, remote_port, browser_env):
 def qualified_request(previous, image, revision, plan):
     receipt = json.loads((Path(os.environ['RUNNER_TEMP'])/'demo-qualification.json').read_text())
     admission = json.loads((Path(os.environ['RUNNER_TEMP'])/'oci-admission.json').read_text())
-    return dict(version=1, deploymentRunId=os.environ['GITHUB_RUN_ID'],
+    return dict(profile=json.loads((ROOT/'deploy/demo/host-upgrade.json').read_text()),version=1, deploymentRunId=os.environ['GITHUB_RUN_ID'],
                 deploymentAttempt=os.environ['GITHUB_RUN_ATTEMPT'],
                 predecessorImage=previous['image'], predecessorRevision=previous['revision'],
                 candidateImage=image, candidateRevision=revision, qualification=receipt,
@@ -102,32 +103,34 @@ def prepare(ssh, remote, action, previous, image, revision, plan):
                    input=json.dumps(request).encode(), check=True)
     # Candidate-owned policy checks the exact reviewed transition before the
     # workflow creates a deployment record or asks the host to close traffic.
-    subprocess.run([*ssh, 'python3', helper, 'check', image, revision, request_path], check=True)
-    return helper, request_path, request
+    report = json.loads(subprocess.check_output([*ssh, 'python3', helper, 'plan', image, revision, request_path]))
+    if report['plan']['mode'] != request['plan']['mode'] or not re.fullmatch(r'sha256:[0-9a-f]{64}', report['operationDigest']):
+        raise ValueError('Candidate preflight identity mismatch')
+    return helper, request_path, dict(request, operationDigest=report['operationDigest'])
 
 
-def rollout(ssh, helper, request_path, action, image, revision, browser_env):
+def rollout(ssh, helper, request_path, action, image, revision, browser_env, expected_digest, profile):
     process = subprocess.Popen([*ssh, 'python3', helper, 'apply' if action == 'upgrade' else 'recover',
                                 image, revision, request_path], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     approved = set()
     result = None
     try:
         for line in process.stdout:
-            marker = line.strip()
+            marker, _, identity = line.strip().partition(' ')
             print(marker, flush=True)
-            ports = {'AWAITING_RECOVERY_BROWSER_VALIDATION': 8444, 'AWAITING_CANDIDATE_BROWSER_VALIDATION': 8443}
+            ports = {'AWAITING_RECOVERY_BROWSER_VALIDATION': int(profile['rehearsalBinding'].rsplit(':',1)[1]), 'AWAITING_REHEARSAL_BROWSER_VALIDATION': int(profile['rehearsalBinding'].rsplit(':',1)[1]), 'AWAITING_CANDIDATE_BROWSER_VALIDATION': int(profile['httpsBinding'].rsplit(':',1)[1])}
             if marker in ports:
-                if action != 'upgrade' or marker in approved:
+                if action != 'upgrade' or marker in approved or identity != expected_digest:
                     raise RuntimeError('Unexpected or repeated browser approval request')
                 with private_browser(ssh, ports[marker], browser_env) as env:
                     subprocess.run(['node', 'scripts/demo_validate_browser.mjs'], cwd=ROOT, check=True, timeout=240, env=env)
-                process.stdin.write('commit\n'); process.stdin.flush()
+                process.stdin.write(f'commit {identity} {marker}\n'); process.stdin.flush()
                 approved.add(marker)
             if marker in ('DEPLOYMENT_COMMITTED', 'PREDECESSOR_RECOVERED'): result = marker
         if process.wait() != 0 or result is None:
             raise RuntimeError('Upgrade/recovery did not finish; inspect durable host journal before retrying')
-        if action == 'upgrade' and (result != 'DEPLOYMENT_COMMITTED' or len(approved) != 2):
-            raise RuntimeError('Upgrade did not complete both isolated browser gates')
+        if action == 'upgrade' and (result != 'DEPLOYMENT_COMMITTED' or len(approved) != 3):
+            raise RuntimeError('Upgrade did not complete all recovery/rehearsal/candidate browser gates')
         return result
     finally:
         process.stdin.close()  # EOF cancels approval and invokes paired recovery.

@@ -598,3 +598,14 @@ func joinQualificationError(primary error, cleanup error) error {
 	}
 	return errors.Join(primary, fmt.Errorf("qualification cleanup: %w", cleanup))
 }
+
+// MaintenanceInvocation uses the canonical Compose selection and sanitized
+// environment. Callers must already hold the installation maintenance lock.
+func MaintenanceInvocation(root string, args ...string) ([]string, []string, error) {
+	command, err := composeArguments(root, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	env, err := composeProcessEnvironment(root, nil)
+	return command, env, err
+}

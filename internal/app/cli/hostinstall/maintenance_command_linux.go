@@ -1,6 +1,6 @@
 //go:build linux
 
-package demoupgrade
+package hostinstall
 
 import (
 	"context"
@@ -16,44 +16,64 @@ import (
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
 func runNative(ctx context.Context, action string, r NativeRequest, journalPath, credential, digest string, stdin io.Reader, stdout io.Writer) error {
-	if action == "migrate" {
-		return runNativeMigration(ctx, r, journalPath, credential, digest)
+	if action == "migrate" || action == "rehearse" {
+		return runNativeMigration(ctx, r, journalPath, credential, digest, action == "rehearse")
 	}
 	id, err := r.Identity()
 	if err != nil {
 		return err
 	}
 	if os.Geteuid() != 0 {
-		return errors.New("demo upgrade requires root")
+		return errors.New("host maintenance requires root")
 	}
 	host, err := os.Hostname()
-	if err != nil || host != "app-leapview-demo-02" {
-		return errors.New("demo upgrade requires the verified demo-02 host")
+	if err != nil || host != r.Profile.Hostname {
+		return errors.New("host maintenance requires the verified configured host")
 	}
 	binary := buildinfo.Current()
 	if binary.Dirty || binary.Revision != r.CandidateRevision {
 		return errors.New("controller must be the qualified candidate")
 	}
+	installLock, err := instancelock.AcquireNamed(r.Profile.Root, installLockName)
+	if err != nil {
+		return err
+	}
+	defer installLock.Release()
 	// Persist the request before the journal can fence the host. A crash after
 	// preparing the journal must never leave recovery without its request file.
 	raw, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
-	operation := filepath.Join(nativeProvider, "upgrade-operations", strings.TrimPrefix(id.ArtifactAdmissionDigest, "sha256:"))
+	operation := filepath.Join(r.Profile.StateRoot, "upgrade-operations", strings.TrimPrefix(id.ArtifactAdmissionDigest, "sha256:"))
 	if err = securefs.WritePrivateFileAtomic(filepath.Join(operation, "request.json"), raw); err != nil {
 		return err
 	}
-	journal, err := OpenJournal(nativeProvider, id)
+	journal, err := OpenJournal(r.Profile.Root, id)
 	if err != nil {
 		return err
 	}
 	defer journal.Close()
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if err = installMaintenanceController(r.Profile.Root, executable); err != nil {
+		return err
+	}
+	defer func() {
+		state, readErr := journal.Load(context.Background())
+		if readErr == nil && (state.Phase == Succeeded || state.Phase == Recovered) {
+			// Failure leaves the newer guarded controller selected, a safe state.
+			_ = maintenanceControllerLink(r.Profile.Root, "current/leapviewctl")
+		}
+	}()
 	effects, err := NewNativeEffects(r, stdin, stdout)
 	if err != nil {
 		return err
@@ -117,13 +137,24 @@ func validateMigrationIntent(r NativeRequest, state State, digest string, binary
 	}
 	return state.validate()
 }
-func runNativeMigration(ctx context.Context, r NativeRequest, journalPath, credential, digest string) error {
+func runNativeMigration(ctx context.Context, r NativeRequest, journalPath, credential, digest string, rehearsal bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	revalidate := func(context.Context) error {
 		state, err := readJournalFile(journalPath)
 		if err != nil {
 			return err
+		}
+		if rehearsal {
+			id, err := r.Identity()
+			if err != nil {
+				return err
+			}
+			binary := buildinfo.Current()
+			if binary.Dirty || binary.Revision != r.CandidateRevision || state.Identity != id || state.Phase != Capturing || !digestPattern.MatchString(digest) {
+				return errors.New("rehearsal requires the exact capturing operation")
+			}
+			return nil
 		}
 		return validateMigrationIntent(r, state, digest, buildinfo.Current())
 	}
@@ -139,16 +170,34 @@ func runNativeMigration(ctx context.Context, r NativeRequest, journalPath, crede
 		return errors.New("invalid private migrator URL")
 	}
 	c := config.ConnConfig
-	if c.Host != nativePG || c.Database != "leapview_control" || c.User != "leapview_control_migrator" || c.TLSConfig == nil || len(c.Fallbacks) > 0 {
-		return errors.New("migration requires the demo control migrator role with mandatory TLS")
+	if c.Host != r.Profile.Postgres || c.Database != "leapview_control" || c.User != "leapview_control_migrator" || c.TLSConfig == nil || c.TLSConfig.InsecureSkipVerify || len(c.Fallbacks) > 0 {
+		return errors.New("migration requires the control migrator role with mandatory TLS")
 	}
 	config.MaxConns = 3
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
-		return errors.New("open demo migration pool")
+		return errors.New("open host migration pool")
 	}
 	defer pool.Close()
 	db := stdlib.OpenDBFromPool(pool)
 	defer db.Close()
-	return postgresbaseline.ApplyDemoUpgrade(ctx, pool, db, revalidate)
+	return postgresbaseline.ApplyUpgrade(ctx, pool, db, int64(r.Plan.CurrentSchema), revalidate)
+}
+
+func checkMaintenancePlan(ctx context.Context, r NativeRequest) error {
+	if os.Geteuid() != 0 {
+		return errors.New("operator maintenance requires root")
+	}
+	host, err := os.Hostname()
+	if err != nil || host != r.Profile.Hostname {
+		return errors.New("installation host mismatch")
+	}
+	binary := buildinfo.Current()
+	if binary.Dirty || binary.Revision != r.CandidateRevision {
+		return errors.New("controller must match qualified candidate")
+	}
+	if err := requireLocalDocker(ctx); err != nil {
+		return err
+	}
+	return validateImageSupplies(ctx, r)
 }

@@ -1,6 +1,6 @@
 //go:build linux
 
-package demoupgrade
+package hostinstall
 
 import (
 	"context"

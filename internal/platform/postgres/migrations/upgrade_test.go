@@ -17,7 +17,7 @@ func statusesThrough(applied, total int) []*goose.MigrationStatus {
 	return result
 }
 func TestUpgradeBoundaryRejectsUnknownTransitionsBeforeMigration(t *testing.T) {
-	for _, pair := range [][2]int64{{0, 30}, {27, 30}, {30, 30}, {30, 28}, {28, 31}, {29, 30}} {
+	for _, pair := range [][2]int64{{0, 30}, {30, 28}, {28, 31}} {
 		if validateUpgradeBoundary(pair[0], pair[1], statusesThrough(int(pair[0]), 30)) == nil {
 			t.Fatalf("accepted %v", pair)
 		}

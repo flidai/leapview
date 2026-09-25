@@ -120,110 +120,97 @@ activation calls remain protected by the canonical project grants.
 
 ## Database upgrades and interrupted-operation recovery
 
-Use **Hosted demo deployment → `upgrade`** for the reviewed schema **28 → 30**
-transition on `app-leapview-demo-02`. Supply the immutable candidate image and its
-successful **main-push Main artifacts** qualification run. This is a maintenance
-operation: public access closes while the backup, restore rehearsal, migration,
-and private CFO checks run. Ordinary `deploy` remains image-only and refuses
-schema or engine changes before creating a deployment record.
+The demo workflow is a transport adapter for the shared **operator-authorized
+single-host** `leapviewctl host upgrade` commands. Its installation profile is
+`deploy/demo/host-upgrade.json`; it contains no secrets. The workflow validates
+that profile against the host, installed image, Compose services, storage and
+public origin. Other equivalent installations supply their own private profile
+in the request and their own authenticated application validator.
 
-The upgrade is bounded to the existing native demo topology: pinned demo-02 SSH
-identity, local PostgreSQL 18 at its exact digest, the two existing databases,
-local managed data inside the application home, and the existing Compose network
-and four volumes. It rejects external storage, unaccounted writable mounts,
-unexpected network participants, pending background jobs, historical SQL edits,
-changed DuckDB/DuckLake dependencies, and any other migration boundary. It never
-changes DNS or provisions another server.
+Select `deploy` for compatible image-only changes, `upgrade` for supported forward
+control-schema/permission-policy changes, and `recover` for an interrupted
+operation. Supply the immutable image and its successful main-push Main artifacts
+qualification run. The controller is extracted from that exact candidate. No
+migration is run during serving startup or by the Python transport.
 
-The Actions environment and pinned root SSH connection remain this provider's
-operator authority. The private request binds the exact successful qualification
-receipt, live OCI admission report, source comparison, reviewed migration hashes,
-and workflow run/attempt. The host executes the controller extracted from that
-same candidate image. This bounded provider adapter does **not** create generic
-release-authority records or bypass the generic host transition runner's
-binary-rollback restriction. Other provider topologies still need their own
-qualified transition integration.
+Preflight compares immutable SQL history, relevant River/DuckDB dependencies,
+product role policy and the actual packaged extension supply. Unrelated module
+changes do not block deployment. Historical SQL changes, downgrade, changed
+River/DuckLake/engine supply, external storage, unaccounted writers and unsupported
+topology fail closed. The local provider supports PostgreSQL 18 at the existing
+installation's exact digest, local managed data, and the canonical Compose
+application/proxy payload. It does not upgrade the PostgreSQL engine.
 
-The sequence is:
+This command uses protected Actions and pinned root SSH as operator authority.
+It does not create release-owner records or change the existing authoritative
+`host upgrade --phase` contract. Goose remains the sole schema version store and
+migration engine. Pending versions are derived from the candidate, not hardcoded
+as a particular release pair.
 
-1. Preflight source compatibility and candidate-owned request validation before
-   creating a runtime deployment record; authenticate the current CFO viewer.
-2. Acquire the host upgrade lock; validate the running predecessor and storage
-   topology. Retain private original configuration and immutable image identities.
-3. Change Caddy to loopback-only bindings, disable automatic writer restarts,
-   stop the application, require drained jobs, and stop PostgreSQL and Caddy.
-4. Capture the entire stopped PostgreSQL cluster (both databases and roles),
-   application home/managed files, and Caddy state. Hash and retain a private
-   manifest. Restore all volumes into independent directories on an internal
-   Docker network. Start the exact predecessor and validate all four CFO pages
-   (27 visuals) through a loopback-only host relay and pinned SSH, retaining the real HTTPS origin and certificate
-   verification. Listing a backup is never treated as restore proof.
-5. Persist migration intent outside restored volumes. Run only the candidate's
-   embedded migrations 029 and 030 with the control migrator credential under the
-   canonical PostgreSQL migration fence, revalidate the request/recovery frontier,
-   retain the existing River schema, and reconcile product role policy.
-6. Preserve the agent encryption key, or provision it once if absent. Start the
-   candidate behind the loopback gate. Require exact image/source/schema/readiness
-   and another authenticated check of all four CFO pages.
-7. Persist the commit boundary **before** restoring public bindings. Verify the
-   public source and CFO pages, then mark the runtime deployment successful.
-   Publication follows this successful record; it never advances on a failed check.
+The maintenance sequence is:
 
-The cold-copy boundary follows [PostgreSQL file-system backup requirements](https://www.postgresql.org/docs/18/backup-file.html).
-The rehearsal uses a [Docker internal network](https://docs.docker.com/reference/cli/docker/network/create/#internal);
-because it does not publish ports, a loopback-only host relay reaches the cloned
-Caddy bridge address without attaching it to the live network or terminating TLS.
+1. Validate qualification/admission and source compatibility before recording a
+   runtime deployment. Validate the current viewer, host inventory and capacity.
+2. Acquire the shared installation lifecycle lock and persist maintenance intent.
+   Ordinary start/install/update commands reject an unfinished journal, even
+   after reboot. Close public bindings, disable restarts and stop every writer.
+3. Copy the whole stopped PostgreSQL cluster, application/managed files and proxy
+   state. Retain original configuration outside all restored volumes.
+4. Restore an independent writable copy on an internal Docker network. Validate
+   the predecessor, then run the candidate's actual migration/configuration and
+   validate the candidate on that copy. All four CFO pages/27 visuals must pass.
+   The copy has no production-network membership or external integration access.
+5. Persist live migration intent. Run embedded Goose migrations with the control
+   migrator under the canonical fence and reconcile product permissions. Keep
+   River unchanged. Preserve the agent credential encryption key, generating a
+   missing key once per operation without rotating an existing key.
+6. Start and validate the live candidate through loopback bindings. Persist commit
+   before reopening public traffic. Public image/source and CFO checks must pass
+   before the workflow advances the runtime record.
 
-The private journal is `/etc/leapview-provider-cfo/upgrade-operation.json`.
-Snapshots, original configuration, request evidence, and restricted operator logs
-live under `upgrade-operations/<request-digest>/` beside it. Keep this directory
-outside every restored volume. Snapshots and retained failed state are deliberately
-not pruned automatically. The provisioned agent key is retained privately in the
-operation directory as well as `leapview.env`; preserve it in operator backups.
-No credentials or state archives are uploaded to Actions artifacts.
+This operation requires downtime throughout capture, rehearsal and live upgrade.
+A fresh-install image qualification does not replace the restored-data rehearsal.
+The [PostgreSQL cold-copy requirements](https://www.postgresql.org/docs/18/backup-file.html)
+require stopping the cluster and copying it as a whole. The isolated Docker
+network uses a loopback TCP relay and pinned SSH for normal HTTPS validation.
+Each validation acknowledgment binds the operation digest and named checkpoint.
 
-Before commit, migration, readiness, browser failure, SSH EOF, or handled
-cancellation invokes paired recovery with a fresh bounded context. Recovery first
-stops the named migration process and all writers, verifies the entire recovery
-set, restores the cluster and file volumes together, restores configuration and
-the predecessor, and checks its schema/readiness behind the gate. It persists
-reopening intent before exposing the predecessor. It never runs down SQL.
-A failed recovery leaves the journal blocking normal deployments and publication.
+For demo-02 the durable journal is `/opt/leapview/upgrade-operation.json` and the
+shared lifecycle lock is `/opt/leapview/.leapviewctl.lock`. Private backups,
+request evidence, original configuration, generated key and logs remain under
+`/etc/leapview-provider-cfo/upgrade-operations/<request-digest>/`. Keep these paths
+outside restored volumes. They are not automatically pruned.
 
-For power loss, a killed controller, or incomplete finalization, dispatch
-**`recover` with the same candidate digest and qualification run**. It loads the
-persisted request; a new workflow attempt cannot replace an unfinished operation.
-Before commit it restores the predecessor. The Actions deployment is intentionally
-reported unsuccessful in that case: the candidate was not deployed. After commit
-it only completes candidate exposure/verification and the runtime record; it will
-**never restore old data after the candidate could have accepted public writes**.
-After successful predecessor recovery, start a new `upgrade` run when the failure
-has been corrected. Ordinary deployments share the same lock and reject every
-nonterminal journal.
+On precommit failure the controller stops all writers and restores the previous
+application, database/files and configuration together, then verifies readiness
+before reopening. A rehearsal failure does not migrate live data. A failed
+recovery leaves traffic closed. After commit, retries finalize the candidate and
+never restore old data over new public writes. Never run down migrations or
+manually start the application through an unfinished maintenance window.
 
-If registry or Actions access is unavailable, the root operator can use the already
-retained candidate controller and request on demo-02:
+For an interrupted Actions run, choose `recover` with the same candidate and
+qualification run. The transport loads the original persisted request. An
+operator on the host can also use the retained candidate controller:
 
 ```sh
-/etc/leapview-provider-cfo/upgrade-controllers/<candidate-sha256>/leapviewctl \
-  demo-upgrade recover \
-  --request /etc/leapview-provider-cfo/upgrade-operations/<request-digest>/request.json
+sudo /etc/leapview-provider-cfo/upgrade-controllers/<candidate-digest>/leapviewctl \
+  host upgrade status --request /etc/leapview-provider-cfo/upgrade-operations/<request-digest>/request.json
+sudo /etc/leapview-provider-cfo/upgrade-controllers/<candidate-digest>/leapviewctl \
+  host upgrade recover --request /etc/leapview-provider-cfo/upgrade-operations/<request-digest>/request.json
 ```
 
-Inspect the durable phase and private operator log first. This offline command
-recovers/finalizes the host only; reconcile the GitHub runtime deployment through
-`recover` once Actions access returns. Do not edit the journal, Goose ledger, or
-runtime pin to conceal an incomplete operation.
+`plan` validates a private admitted request and image engine compatibility without
+starting maintenance. `apply` performs the full operation. `status` reports the
+persisted state. `recover` restores precommit state or finalizes a committed
+candidate. The `migrate`/`rehearse` subcommands are guarded internal container
+entrypoints, not a standalone bypass for operators.
 
-CI exercises real PostgreSQL 28 → 30 migration, partial migration failure,
-restricted-role policy reconciliation, physical paired recovery, process restart,
-lock exclusion, and browser-approval failure paths using disposable resources.
-The **actual deployed predecessor/data and selected candidate** receive the two
-private browser gates during the explicitly dispatched maintenance operation;
-CI fixtures are not represented as a backup of the live demo. The candidate image
-also requires the normal provenance, OCI admission and enterprise qualification.
-Future schema transitions are intentionally rejected until their policy and
-recovery tests are reviewed; image-only updates continue through `deploy`.
+CI exercises migration preservation, partial failure, a synthetic future revision,
+physical recovery, two installation profiles, private validation failure and
+ordinary-start exclusion. These disposable fixtures are not a live demo backup.
+After merge, qualify the final main image and explicitly schedule the first live
+upgrade. No host, database, runtime pin or DNS change is performed by opening or
+merging this PR.
 
 ## Human access
 
@@ -272,7 +259,7 @@ The operator provisions `LEAPVIEW_AGENT_CREDENTIAL_KEY` once in the private
 database: saved provider credentials are encrypted with this key. The Compose
 rollout preserves the environment file byte-for-byte and does not rotate keys.
 
-Introducing admin configuration adds a database migration. Use the explicit `upgrade` action above for the reviewed 28 → 30 boundary;
+Introducing admin configuration adds a database migration. Use the explicit `upgrade` action above for supported control-schema changes;
 the phased `host upgrade` command alone does not provide the native recovery
 orchestration. After upgrading, an admin tests
 and saves the provider configuration before verifying a chatbot conversation.

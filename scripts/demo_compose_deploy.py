@@ -81,7 +81,7 @@ def main():
                 if plan['mode'] != expected_mode:
                     raise RuntimeError(f"{plan['mode']}: schema {plan['currentSchema']} -> {plan['candidateSchema']}; "
                                        'select the matching reviewed operation; no runtime deployment was attempted')
-            if action in ('upgrade', 'recover'):
+            if action in ('deploy', 'upgrade', 'recover') and not (action == 'deploy' and previous.get('image') == image):
                 prepared = upgrade.prepare(ssh, remote, action, previous, image, revision, plan)
             if args.preflight:
                 return
@@ -98,9 +98,9 @@ def main():
             if action != 'recover':
                 verify_public_revision(old_revision)
                 subprocess.run(['node','scripts/demo_validate_browser.mjs'],cwd=ROOT,check=True,timeout=240,env=browser_env)
-            if prepared:
+            if prepared and action != 'deploy':
                 helper, request_path, request = prepared
-                result = upgrade.rollout(ssh, helper, request_path, action, image, revision, browser_env)
+                result = upgrade.rollout(ssh, helper, request_path, action, image, revision, browser_env, request['operationDigest'], request['profile'])
                 expected = revision if result == 'DEPLOYMENT_COMMITTED' else request['predecessorRevision']
                 verify_public_revision(expected)
                 subprocess.run(['node','scripts/demo_validate_browser.mjs'],cwd=ROOT,check=True,timeout=240,env=browser_env)

@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"io/fs"
 	"testing"
+	"testing/fstest"
 
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -52,7 +55,7 @@ func TestDemoUpgradePostgreSQL18(t *testing.T) {
 	denied := errors.New("admission denied")
 	hookCalled := false
 	after := func(context.Context, *sql.DB) error { hookCalled = true; return nil }
-	err = ApplyDemoUpgrade(t.Context(), pool, db, func(context.Context) error { return denied }, after)
+	err = ApplyUpgrade(t.Context(), pool, db, 28, func(context.Context) error { return denied }, after)
 	if !errors.Is(err, denied) || hookCalled {
 		t.Fatalf("denied admission: %v, hook=%t", err, hookCalled)
 	}
@@ -60,7 +63,7 @@ func TestDemoUpgradePostgreSQL18(t *testing.T) {
 	if err != nil || before != 28 {
 		t.Fatalf("denied admission changed schema: %d %v", before, err)
 	}
-	if err = ApplyDemoUpgrade(t.Context(), pool, db, func(context.Context) error { return nil }, after); err != nil {
+	if err = ApplyUpgrade(t.Context(), pool, db, 28, func(context.Context) error { return nil }, after); err != nil {
 		t.Fatal(err)
 	}
 	if !hookCalled {
@@ -78,7 +81,7 @@ func TestDemoUpgradePostgreSQL18(t *testing.T) {
 		t.Fatalf("missing upgraded structures: %t %t %v", table, column, err)
 	}
 	hookCalled = false
-	if err = ApplyDemoUpgrade(t.Context(), pool, db, func(context.Context) error { return nil }, after); err == nil || hookCalled {
+	if err = ApplyUpgrade(t.Context(), pool, db, 28, func(context.Context) error { return nil }, after); err == nil || hookCalled {
 		t.Fatal("already-migrated database was blindly replayed")
 	}
 }
@@ -99,18 +102,45 @@ func TestDemoUpgradePartialMigrationPostgreSQL18RequiresRecovery(t *testing.T) {
 	}
 	hookCalled := false
 	after := func(context.Context, *sql.DB) error { hookCalled = true; return nil }
-	if err = ApplyDemoUpgrade(t.Context(), pool, db, func(context.Context) error { return nil }, after); err == nil {
+	if err = ApplyUpgrade(t.Context(), pool, db, 28, func(context.Context) error { return nil }, after); err == nil {
 		t.Fatal("injected migration failure accepted")
 	}
 	current, _, err := provider.GetVersions(t.Context())
 	if err != nil || current != 29 || hookCalled {
 		t.Fatalf("partial boundary: %d, hook=%t, err=%v", current, hookCalled, err)
 	}
-	if err = ApplyDemoUpgrade(t.Context(), pool, db, func(context.Context) error { return nil }, after); err == nil {
+	if err = ApplyUpgrade(t.Context(), pool, db, 28, func(context.Context) error { return nil }, after); err == nil {
 		t.Fatal("partial migration blindly resumed")
 	}
 	var value string
 	if err = pool.QueryRow(t.Context(), `SELECT value FROM platform.setting WHERE key='demo-upgrade-preservation'`).Scan(&value); err != nil || value != "CFO state must survive" {
 		t.Fatalf("predecessor data lost: %q %v", value, err)
+	}
+}
+
+func TestHostUpgradeFutureRevisionUsesSameExecutor(t *testing.T) {
+	pool, db, _ := newDemoUpgradeDatabase(t)
+	admit := func(context.Context) error { return nil }
+	policy := func(context.Context, *sql.DB) error { return nil }
+	if err := ApplyUpgrade(t.Context(), pool, db, 28, admit, policy); err != nil {
+		t.Fatal(err)
+	}
+	source := fstest.MapFS{}
+	entries, _ := fs.ReadDir(MigrationFS(), ".")
+	for _, e := range entries {
+		raw, err := fs.ReadFile(MigrationFS(), e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		source[e.Name()] = &fstest.MapFile{Data: raw}
+	}
+	next := CurrentRevision + 1
+	source[fmt.Sprintf("%03d_future_fixture.sql", next)] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE public.future_upgrade_fixture(value text);\nINSERT INTO public.future_upgrade_fixture VALUES ('preserved');\n-- +goose Down\nDROP TABLE public.future_upgrade_fixture;\n")}
+	if err := applyUpgrade(t.Context(), pool, db, source, next, CurrentRevision, admit, policy); err != nil {
+		t.Fatal(err)
+	}
+	var value string
+	if err := pool.QueryRow(t.Context(), "SELECT value FROM public.future_upgrade_fixture").Scan(&value); err != nil || value != "preserved" {
+		t.Fatalf("future migration: %s %v", value, err)
 	}
 }

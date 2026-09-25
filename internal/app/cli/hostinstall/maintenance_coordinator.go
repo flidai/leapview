@@ -1,8 +1,6 @@
-// Package demoupgrade coordinates the demo provider's maintenance window.
-// Concrete effects own artifact admission, stopped-writer fencing and physical
-// recovery evidence. The native demo profile does not create generic release
-// authority records or relax the generic transition runner.
-package demoupgrade
+// This file coordinates operator-authorized single-host maintenance. SQL and
+// schema versioning remain owned by Goose; this journal survives paired restore.
+package hostinstall
 
 import (
 	"context"

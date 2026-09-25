@@ -1,4 +1,4 @@
-package demoupgrade
+package hostinstall
 
 import (
 	"bytes"
@@ -8,25 +8,30 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 )
 
 // NativeRequest is the private handoff from the existing qualified-image
-// workflow to the demo provider. The workflow authenticates to pinned SSH and
+// workflow to the single-host maintenance provider. The workflow authenticates to pinned SSH and
 // must perform LIVE OCI admission before writing this file. This is not a
 // substitute for a generic release-transition owner record, and is never
-// published into those authorities. It authorizes only the bounded demo profile.
+// published into those authorities. It binds the operator-selected installation profile.
 type NativeRequest struct {
-	DeploymentRunID     string `json:"deploymentRunId"`
-	DeploymentAttempt   string `json:"deploymentAttempt"`
-	Version             int    `json:"version"`
-	PredecessorImage    string `json:"predecessorImage"`
-	PredecessorRevision string `json:"predecessorRevision"`
-	CandidateImage      string `json:"candidateImage"`
-	CandidateRevision   string `json:"candidateRevision"`
+	Profile             MaintenanceProfile `json:"profile"`
+	DeploymentRunID     string             `json:"deploymentRunId"`
+	DeploymentAttempt   string             `json:"deploymentAttempt"`
+	Version             int                `json:"version"`
+	PredecessorImage    string             `json:"predecessorImage"`
+	PredecessorRevision string             `json:"predecessorRevision"`
+	CandidateImage      string             `json:"candidateImage"`
+	CandidateRevision   string             `json:"candidateRevision"`
 	Qualification       struct {
 		Image      string `json:"image"`
 		Revision   string `json:"revision"`
@@ -36,16 +41,19 @@ type NativeRequest struct {
 	} `json:"qualification"`
 	Admission json.RawMessage `json:"admission"`
 	Plan      struct {
-		Mode                         string            `json:"mode"`
-		CurrentSchema                int               `json:"currentSchema"`
-		CandidateSchema              int               `json:"candidateSchema"`
-		PendingMigrations            []string          `json:"pendingMigrations"`
-		PendingMigrationDigests      map[string]string `json:"pendingMigrationDigests"`
-		ChangedCompatibilityPaths    []string          `json:"changedCompatibilityPaths"`
-		PredecessorRevision          string            `json:"predecessorRevision"`
-		CandidateRevision            string            `json:"candidateRevision"`
-		ImageOnlyEligible            bool              `json:"imageOnlyEligible"`
-		MigrationExecutionAuthorized bool              `json:"migrationExecutionAuthorized"`
+		SourceBefore                 SourceCompatibility `json:"sourceBefore"`
+		SourceAfter                  SourceCompatibility `json:"sourceAfter"`
+		RolePolicyChanged            bool                `json:"rolePolicyChanged"`
+		Mode                         string              `json:"mode"`
+		CurrentSchema                int                 `json:"currentSchema"`
+		CandidateSchema              int                 `json:"candidateSchema"`
+		PendingMigrations            []string            `json:"pendingMigrations"`
+		PendingMigrationDigests      map[string]string   `json:"pendingMigrationDigests"`
+		CompatibilityChanges         []string            `json:"compatibilityChanges"`
+		PredecessorRevision          string              `json:"predecessorRevision"`
+		CandidateRevision            string              `json:"candidateRevision"`
+		ImageOnlyEligible            bool                `json:"imageOnlyEligible"`
+		MigrationExecutionAuthorized bool                `json:"migrationExecutionAuthorized"`
 	} `json:"plan"`
 }
 
@@ -81,28 +89,24 @@ func (r NativeRequest) Identity() (Identity, error) {
 		return Identity{}, errors.New("exact image qualification receipt required")
 	}
 	p := r.Plan
-	if p.Mode != "database-upgrade-required" || p.CurrentSchema != 28 || p.CandidateSchema != 30 || p.PredecessorRevision != r.PredecessorRevision || p.CandidateRevision != r.CandidateRevision || p.ImageOnlyEligible || p.MigrationExecutionAuthorized {
-		return Identity{}, errors.New("unsupported demo upgrade source boundary")
+	if err := r.Profile.Validate(); err != nil {
+		return Identity{}, err
 	}
-	if strings.Join(p.PendingMigrations, ",") != "029_agent_configuration.sql,030_browser_session_client_label.sql" {
-		return Identity{}, errors.New("unexpected pending migrations")
+	mode, pending, err := classifySources(p.SourceBefore, p.SourceAfter)
+	if err != nil {
+		return Identity{}, err
 	}
-	if len(p.PendingMigrationDigests) != 2 ||
-		p.PendingMigrationDigests["029_agent_configuration.sql"] != "55d04d342de0391ff743915867f2265e2309d6837b36d9833e6396fcec7d1a47" ||
-		p.PendingMigrationDigests["030_browser_session_client_label.sql"] != "cd721999bae6b681f358f7730f683877b571f0da43af66021e4b63279470ee26" {
-		return Identity{}, errors.New("candidate SQL differs from the reviewed 28 to 30 transition")
+	if mode != p.Mode || mode == "review-required" || !slices.Equal(pending, p.PendingMigrations) || p.CurrentSchema != p.SourceBefore.Schema || p.CandidateSchema != p.SourceAfter.Schema {
+		return Identity{}, errors.New("source compatibility decision mismatch")
 	}
-	// No runtime/extension/dependency upgrade is admitted incidentally. Changes
-	// under postgres are the candidate's tested embedded migrator and immutable
-	// SQL set; the runner separately rejects rewritten historical SQL.
-	for _, path := range p.ChangedCompatibilityPaths {
-		if strings.HasPrefix(path, "internal/platform/postgres/") || strings.HasPrefix(path, "internal/app/postgresbaseline/") {
-			continue
-		}
-		if strings.HasSuffix(path, "_test.go") && (strings.HasPrefix(path, "internal/analytics/duckdb/") || strings.HasPrefix(path, "internal/analytics/ducklake/")) {
-			continue
-		}
-		return Identity{}, fmt.Errorf("engine/dependency change requires separate qualification: %s", path)
+	if (p.Mode != "database-upgrade-required" && p.Mode != "image-only") || p.CurrentSchema < 1 || p.CandidateSchema != int(migrations.CurrentRevision) || p.CurrentSchema > p.CandidateSchema || p.PredecessorRevision != r.PredecessorRevision || p.CandidateRevision != r.CandidateRevision || p.ImageOnlyEligible != (mode == "image-only") || p.MigrationExecutionAuthorized {
+		return Identity{}, errors.New("unsupported host upgrade source boundary")
+	}
+	if len(p.CompatibilityChanges) > 0 {
+		return Identity{}, fmt.Errorf("unsupported engine/storage compatibility changes: %v", p.CompatibilityChanges)
+	}
+	if err := validateCandidateMigrations(p.CurrentSchema, p.CandidateSchema, p.PendingMigrations, p.PendingMigrationDigests); err != nil {
+		return Identity{}, err
 	}
 	var admission struct {
 		SchemaVersion  int    `json:"schemaVersion"`
@@ -145,10 +149,35 @@ func (r NativeRequest) Identity() (Identity, error) {
 	if err != nil {
 		return Identity{}, err
 	}
-	digest := sha256.Sum256(append([]byte("leapview/demo-upgrade-request/v1\n"), canonical...))
-	id := Identity{Target: "app-leapview-demo-02", Predecessor: r.PredecessorImage, Candidate: r.CandidateImage, ArtifactAdmissionDigest: "sha256:" + hex.EncodeToString(digest[:])}
+	digest := sha256.Sum256(append([]byte("leapview/host-maintenance-request/v1\n"), canonical...))
+	id := Identity{Target: r.Profile.ID, Predecessor: r.PredecessorImage, Candidate: r.CandidateImage, ArtifactAdmissionDigest: "sha256:" + hex.EncodeToString(digest[:])}
 	if !strings.HasPrefix(id.Predecessor, "ghcr.io/flidai/leapview@") || !strings.HasPrefix(id.Candidate, "ghcr.io/flidai/leapview@") {
 		return Identity{}, ErrIdentity
 	}
 	return id, id.validate()
+}
+
+func validateCandidateMigrations(current, target int, names []string, digests map[string]string) error {
+	if len(names) != target-current || len(digests) != len(names) {
+		return errors.New("incomplete pending migration manifest")
+	}
+	for i, name := range names {
+		prefix, _, ok := strings.Cut(name, "_")
+		version, err := strconv.Atoi(prefix)
+		if !ok || err != nil || version != current+i+1 || strings.ContainsAny(name, "/\\") {
+			return errors.New("invalid pending migration chain")
+		}
+		raw, err := fs.ReadFile(migrations.MigrationFS(), name)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(raw)
+		if hex.EncodeToString(sum[:]) != digests[name] {
+			return errors.New("candidate embedded SQL differs from admitted source")
+		}
+		if strings.Contains(string(raw), "-- +goose NO TRANSACTION") {
+			return errors.New("nontransactional migration requires separate qualification")
+		}
+	}
+	return nil
 }

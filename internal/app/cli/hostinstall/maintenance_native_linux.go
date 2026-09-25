@@ -1,6 +1,6 @@
 //go:build linux
 
-package demoupgrade
+package hostinstall
 
 import (
 	"bufio"
@@ -17,19 +17,14 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/flidai/leapview/internal/app/cli/composectl"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 )
 
-const nativeRoot = "/opt/leapview"
-const nativeProvider = "/etc/leapview-provider-cfo"
-const nativeApp = "leapview-cfo-leapview-1"
-const nativePG = "demo02-postgres-cfo"
-const nativeCaddy = "leapview-cfo-caddy-1"
-const nativeNetwork = "leapview-cfo_default"
-const nativePGImage = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
-
 type dockerInspection struct {
+	Name string
+
 	Config struct {
 		Image  string
 		Env    []string
@@ -64,9 +59,9 @@ type nativeOriginal struct {
 	Current  string            `json:"current"`
 }
 
-// NativeEffects is deliberately restricted to the existing single-host demo
-// profile. It must never be used for external tablespaces, S3 roots, a different
-// PostgreSQL image, a clustered target, or a different schema transition.
+// NativeEffects implements coordinated local PostgreSQL/filesystem recovery.
+// Installation selectors come from the request profile; external storage and
+// database/extension engine transitions are not supported.
 type NativeEffects struct {
 	relay          func(context.Context, string, string) (string, func(), error)
 	root, provider string
@@ -83,11 +78,14 @@ type NativeEffects struct {
 
 func NewNativeEffects(request NativeRequest, stdin io.Reader, stdout io.Writer) (*NativeEffects, error) {
 	if os.Geteuid() != 0 {
-		return nil, errors.New("demo upgrade requires root")
+		return nil, errors.New("host maintenance requires root")
 	}
 	host, err := os.Hostname()
-	if err != nil || host != "app-leapview-demo-02" {
-		return nil, errors.New("demo upgrade requires the verified demo-02 host")
+	if err != nil || host != request.Profile.Hostname {
+		return nil, errors.New("host does not match installation profile")
+	}
+	if err := requireLocalDocker(context.Background()); err != nil {
+		return nil, err
 	}
 	id, err := request.Identity()
 	if err != nil {
@@ -97,7 +95,7 @@ func NewNativeEffects(request NativeRequest, stdin io.Reader, stdout io.Writer) 
 	if binary.Dirty || binary.Revision != request.CandidateRevision {
 		return nil, errors.New("host controller must come from the exact qualified candidate")
 	}
-	operation := filepath.Join(nativeProvider, "upgrade-operations", strings.TrimPrefix(id.ArtifactAdmissionDigest, "sha256:"))
+	operation := filepath.Join(request.Profile.StateRoot, "upgrade-operations", strings.TrimPrefix(id.ArtifactAdmissionDigest, "sha256:"))
 	if err = securefs.EnsurePrivateDir(operation); err != nil {
 		return nil, err
 	}
@@ -105,7 +103,7 @@ func NewNativeEffects(request NativeRequest, stdin io.Reader, stdout io.Writer) 
 	if err != nil {
 		return nil, err
 	}
-	e := &NativeEffects{relay: startTCPRelay, root: nativeRoot, provider: nativeProvider, reader: bufio.NewReader(stdin), request: request, id: id, operation: operation, stdin: stdin, stdout: stdout, log: log}
+	e := &NativeEffects{relay: startTCPRelay, root: request.Profile.Root, provider: request.Profile.StateRoot, reader: bufio.NewReader(stdin), request: request, id: id, operation: operation, stdin: stdin, stdout: stdout, log: log}
 	if raw, err := securefs.ReadPrivateFile(filepath.Join(operation, "original.json")); err == nil {
 		if err = json.Unmarshal(raw, &e.original); err != nil {
 			log.Close()
@@ -152,40 +150,66 @@ func containerEnv(c dockerInspection) map[string]string {
 	return m
 }
 func (e *NativeEffects) compose(ctx context.Context, args ...string) error {
-	all := []string{"compose", "--project-name", "leapview-cfo", "--project-directory", e.root, "--env-file", filepath.Join(e.root, "deployment.env"), "-f", filepath.Join(e.root, "compose.yaml"), "-f", filepath.Join(e.root, "compose.https.yaml")}
-	_, err := e.docker(ctx, append(all, args...)...)
-	return err
+	command, environment, err := composectl.MaintenanceInvocation(e.root, args...)
+	if err != nil {
+		return err
+	}
+	if e.execute != nil {
+		_, err = e.docker(ctx, command...)
+		return err
+	}
+	process := exec.CommandContext(ctx, "docker", command...)
+	process.Dir = e.root
+	process.Env = environment
+	process.Stdout = e.log
+	process.Stderr = e.log
+	return process.Run()
 }
 func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 	if id != e.id {
 		return ErrIdentity
 	}
-	app, err := e.inspect(ctx, nativeApp)
+	appName, err := e.service(ctx, e.request.Profile.AppService)
 	if err != nil {
 		return err
 	}
-	pg, err := e.inspect(ctx, nativePG)
+	proxyName, err := e.service(ctx, e.request.Profile.ProxyService)
 	if err != nil {
 		return err
 	}
-	caddy, err := e.inspect(ctx, nativeCaddy)
+	app, err := e.inspect(ctx, appName)
 	if err != nil {
 		return err
 	}
-	if !app.State.Running || !pg.State.Running || !caddy.State.Running || app.Config.Image != id.Predecessor || pg.Config.Image != nativePGImage || app.Config.Labels["com.docker.compose.project"] != "leapview-cfo" {
+	pg, err := e.inspect(ctx, e.request.Profile.Postgres)
+	if err != nil {
+		return err
+	}
+	caddy, err := e.inspect(ctx, proxyName)
+	if err != nil {
+		return err
+	}
+	e.original.App.Name = appName
+	e.original.Caddy.Name = proxyName
+	app.Name = appName
+	caddy.Name = proxyName
+	if !app.State.Running || !pg.State.Running || !caddy.State.Running || app.Config.Image != id.Predecessor || pg.Config.Image != e.request.Profile.PostgresImage || app.Config.Labels["com.docker.compose.project"] != e.request.Profile.Project || app.Config.Labels["com.docker.compose.project.working_dir"] != e.root {
 		return errors.New("unexpected predecessor deployment")
 	}
 	for _, c := range []dockerInspection{app, pg, caddy} {
-		if len(c.NetworkSettings.Networks) != 1 || c.NetworkSettings.Networks[nativeNetwork] == nil || c.HostConfig.RestartPolicy.Name != "unless-stopped" {
+		if len(c.NetworkSettings.Networks) != 1 || c.NetworkSettings.Networks[e.request.Profile.Network] == nil || c.HostConfig.RestartPolicy.Name != "unless-stopped" {
 			return errors.New("unsupported network or restart topology")
 		}
 	}
-	members, err := e.docker(ctx, "network", "inspect", nativeNetwork, "--format", "{{len .Containers}}")
+	members, err := e.docker(ctx, "network", "inspect", e.request.Profile.Network, "--format", "{{len .Containers}}")
 	if err != nil || members != "3" {
 		return errors.New("unexpected network participants; cannot fence all writers")
 	}
 	if !strings.Contains(caddy.Config.Image, "@sha256:") {
 		return errors.New("Caddy must be digest pinned")
+	}
+	if containerEnv(pg)["PG_MAJOR"] != "18" {
+		return errors.New("physical recovery requires PostgreSQL 18")
 	}
 	if len(pg.HostConfig.PortBindings) != 0 {
 		return errors.New("externally published PostgreSQL is unsupported")
@@ -194,10 +218,10 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 		container           dockerInspection
 		volume, destination string
 	}{
-		"postgres":     {pg, "leapview-provider-cfo_postgres-data", "/var/lib/postgresql"},
-		"home":         {app, "leapview-cfo_leapview-state", "/var/lib/leapview"},
-		"caddy-data":   {caddy, "leapview-cfo_caddy-data", "/data"},
-		"caddy-config": {caddy, "leapview-cfo_caddy-config", "/config"},
+		"postgres":     {pg, e.request.Profile.Volumes["postgres"], "/var/lib/postgresql"},
+		"home":         {app, e.request.Profile.Volumes["home"], "/var/lib/leapview"},
+		"caddy-data":   {caddy, e.request.Profile.Volumes["caddy-data"], "/data"},
+		"caddy-config": {caddy, e.request.Profile.Volumes["caddy-config"], "/config"},
 	}
 	volumes := map[string]string{}
 	for name, want := range expected {
@@ -223,17 +247,75 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 			}
 		}
 	}
+	for _, volume := range volumes {
+		resolvedVolume, err := filepath.EvalSymlinks(volume)
+		if err != nil {
+			return err
+		}
+		for _, path := range []string{e.root, e.provider} {
+			resolvedPath, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return err
+			}
+			volume, path = resolvedVolume, resolvedPath
+			if path == volume || strings.HasPrefix(path, volume+"/") || strings.HasPrefix(volume, path+"/") {
+				return errors.New("recovery journal and installation must be outside restored volumes")
+			}
+		}
+	}
+	markerRaw, err := securefs.ReadPrivateFile(filepath.Join(e.root, ".host-install.json"))
+	if err != nil {
+		return err
+	}
+	var marker Config
+	if json.Unmarshal(markerRaw, &marker) != nil || marker.Image != id.Predecessor {
+		return errors.New("installation marker differs from predecessor")
+	}
+	origin, _ := url.Parse(e.request.Profile.Origin)
+	if marker.Domain != origin.Hostname() || containerEnv(app)["LEAPVIEW_PUBLIC_URL"] != e.request.Profile.Origin {
+		return errors.New("installation public origin mismatch")
+	}
+	deployment, err := securefs.ReadPrivateFile(filepath.Join(e.root, "deployment.env"))
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(deployment), "COMPOSE_PROJECT_NAME="+e.request.Profile.Project+"\n") {
+		return errors.New("Compose project binding mismatch")
+	}
+	tablespaces, err := e.pgQuery(ctx, e.request.Profile.Postgres, "leapview_control", `SELECT count(*) FROM pg_tablespace WHERE pg_tablespace_location(oid) <> ''`)
+	if err != nil || tablespaces != "0" {
+		return errors.New("external PostgreSQL tablespaces are unsupported")
+	}
 	env := containerEnv(app)
+	if env["LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH"] != "/usr/local/share/leapview/extensions/extension-supply.json" {
+		return errors.New("custom runtime extension supply is unsupported")
+	}
+	for _, mount := range app.Mounts {
+		if strings.HasPrefix(mount.Destination, "/usr/local/share/leapview/extensions") {
+			return errors.New("mounted extension supply is unsupported")
+		}
+	}
 	if env["LEAPVIEW_MANAGED_DATA_BACKEND"] != "local" || !strings.HasPrefix(env["LEAPVIEW_MANAGED_DATA_DIR"], "/var/lib/leapview/") {
 		return errors.New("only contained local managed data is supported")
 	}
-	for key, database := range map[string]string{"LEAPVIEW_POSTGRES_CONTROL_URL": "leapview_control", "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL": "leapview_control", "LEAPVIEW_POSTGRES_DUCKLAKE_URL": "leapview_ducklake"} {
+	for key, database := range map[string]string{"LEAPVIEW_POSTGRES_CONTROL_URL": "leapview_control", "LEAPVIEW_POSTGRES_DUCKLAKE_URL": "leapview_ducklake"} {
 		parsed, err := url.Parse(env[key])
-		if err != nil || parsed.Hostname() != nativePG || parsed.Path != "/"+database {
+		if err != nil || parsed.Hostname() != e.request.Profile.Postgres || parsed.Path != "/"+database {
 			return errors.New("database binding mismatch")
 		}
 	}
-	raw, err := e.docker(ctx, "exec", nativeApp, "leapview", "version", "--json")
+	migrator, err := e.migratorURL(app)
+	if err != nil {
+		return err
+	}
+	parsedMigrator, err := url.Parse(migrator)
+	if err != nil || parsedMigrator.Hostname() != e.request.Profile.Postgres || parsedMigrator.Path != "/leapview_control" || parsedMigrator.User == nil || parsedMigrator.User.Username() != "leapview_control_migrator" || parsedMigrator.Query().Get("sslmode") != "verify-full" {
+		return errors.New("control migrator identity and verified TLS are required")
+	}
+	if _, err := migrationTLSMounts(migrator, app); err != nil {
+		return err
+	}
+	raw, err := e.docker(ctx, "exec", e.app(), "leapview", "version", "--json")
 	if err != nil {
 		return err
 	}
@@ -242,7 +324,7 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 		return errors.New("predecessor source identity mismatch")
 	}
 	// Native cold copies cannot include unobserved external storage roots.
-	roots, err := e.pgQuery(ctx, nativePG, "leapview_control", `SELECT COALESCE(json_agg(storage_location),'[]')::text FROM physical_pool.physical_pools`)
+	roots, err := e.pgQuery(ctx, e.request.Profile.Postgres, "leapview_control", `SELECT COALESCE(json_agg(storage_location),'[]')::text FROM physical_pool.physical_pools`)
 	if err != nil {
 		return err
 	}
@@ -277,6 +359,9 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 	if err = json.Unmarshal([]byte(raw), &version); err != nil || version.Dirty || version.Revision != e.request.CandidateRevision {
 		return errors.New("candidate source identity mismatch")
 	}
+	if err = validateImageSupplies(ctx, e.request); err != nil {
+		return err
+	}
 	if err = e.stage(ctx); err != nil {
 		return err
 	}
@@ -292,6 +377,9 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 		if err = securefs.WritePrivateFileAtomic(filepath.Join(configDir, name), data); err != nil {
 			return err
 		}
+	}
+	if _, err = e.candidateEnvironment(); err != nil {
+		return err
 	}
 	document, err := json.Marshal(e.original)
 	if err != nil {
@@ -332,50 +420,18 @@ func (e *NativeEffects) checkSpace() error {
 	return nil
 }
 func (e *NativeEffects) stage(ctx context.Context) error {
-	cid, err := e.docker(ctx, "create", e.id.Candidate)
+	payload, err := extractCandidatePayload(ctx, "docker", e.id.Candidate, e.log)
 	if err != nil {
-		return err
-	}
-	defer func() { _, _ = e.docker(context.Background(), "rm", "-v", cid) }()
-	temporary, err := os.MkdirTemp(filepath.Join(e.root, "releases"), ".upgrade-stage-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(temporary)
-	if _, err = e.docker(ctx, "cp", cid+":/usr/local/share/leapview/deployment/.", temporary); err != nil {
 		return err
 	}
 	for _, name := range []string{"compose.yaml", "compose.https.yaml", "Caddyfile", "deployment.env.example"} {
-		candidate, err := os.ReadFile(filepath.Join(temporary, name))
-		if err != nil {
-			return err
-		}
 		installed, err := os.ReadFile(filepath.Join(e.root, name))
-		if err != nil || !bytes.Equal(candidate, installed) {
-			return fmt.Errorf("deployment payload changed: %s", name)
+		if err != nil || !bytes.Equal(installed, payload[name]) {
+			return fmt.Errorf("deployment topology changed: %s", name)
 		}
 	}
-	release := filepath.Join(e.root, "releases", "sha256-"+strings.TrimPrefix(e.id.Candidate, "ghcr.io/flidai/leapview@sha256:"))
-	if _, err = os.Lstat(release); err == nil {
-		before, readErr := snapshotTree(ctx, release)
-		if readErr != nil {
-			return readErr
-		}
-		candidate, readErr := snapshotTree(ctx, temporary)
-		if readErr != nil {
-			return readErr
-		}
-		if !equalEntries(before, candidate) {
-			return errors.New("existing candidate release differs from admitted payload")
-		}
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err = os.Rename(temporary, release); err != nil {
-		return err
-	}
-	return syncDirectory(filepath.Dir(release))
+	_, err = stageGeneration(InstalledPaths(e.root), e.id.Candidate, payload)
+	return err
 }
 func setDeploymentValue(data []byte, key, value string) ([]byte, error) {
 	if strings.ContainsAny(value, "\r\n") {
@@ -407,7 +463,7 @@ func (e *NativeEffects) writeDeployment(image string, private bool) error {
 		return err
 	}
 	if private {
-		for key, value := range map[string]string{"CADDY_HTTP_BIND": "127.0.0.1:8082", "CADDY_HTTPS_BIND": "127.0.0.1:8443", "CADDY_HTTPS_UDP_BIND": "127.0.0.1:8443"} {
+		for key, value := range map[string]string{"CADDY_HTTP_BIND": e.request.Profile.HTTPBinding, "CADDY_HTTPS_BIND": e.request.Profile.HTTPSBinding, "CADDY_HTTPS_UDP_BIND": e.request.Profile.HTTPSBinding} {
 			original, err = setDeploymentValue(original, key, value)
 			if err != nil {
 				return err
@@ -420,10 +476,10 @@ func (e *NativeEffects) Quiesce(ctx context.Context) error {
 	if err := e.writeDeployment(e.id.Predecessor, true); err != nil {
 		return err
 	}
-	if err := e.compose(ctx, "up", "-d", "--no-deps", "caddy"); err != nil {
+	if err := e.compose(ctx, "up", "-d", "--no-deps", e.request.Profile.ProxyService); err != nil {
 		return err
 	}
-	gate, err := e.inspect(ctx, nativeCaddy)
+	gate, err := e.inspect(ctx, e.proxy())
 	if err != nil {
 		return err
 	}
@@ -434,19 +490,19 @@ func (e *NativeEffects) Quiesce(ctx context.Context) error {
 			}
 		}
 	}
-	for _, name := range []string{nativeApp, nativePG} {
+	for _, name := range []string{e.app(), e.request.Profile.Postgres} {
 		if _, err = e.docker(ctx, "update", "--restart=no", name); err != nil {
 			return err
 		}
 	}
-	if _, err = e.docker(ctx, "stop", "--time", "120", nativeApp); err != nil {
+	if _, err = e.docker(ctx, "stop", "--time", "120", e.app()); err != nil {
 		return err
 	}
-	jobs, err := e.pgQuery(ctx, nativePG, "leapview_control", `SELECT count(*) FROM public.river_job WHERE state NOT IN ('completed','cancelled','discarded')`)
+	jobs, err := e.pgQuery(ctx, e.request.Profile.Postgres, "leapview_control", `SELECT count(*) FROM public.river_job WHERE state NOT IN ('completed','cancelled','discarded')`)
 	if err != nil || jobs != "0" {
 		return errors.New("pending jobs require an explicitly drained maintenance window")
 	}
-	for _, name := range []string{nativeCaddy, nativePG} {
+	for _, name := range []string{e.proxy(), e.request.Profile.Postgres} {
 		if _, err = e.docker(ctx, "stop", "--time", "120", name); err != nil {
 			return err
 		}
@@ -454,7 +510,7 @@ func (e *NativeEffects) Quiesce(ctx context.Context) error {
 	return e.stopped(ctx)
 }
 func (e *NativeEffects) stopped(ctx context.Context) error {
-	for _, name := range []string{nativeApp, nativePG, nativeCaddy} {
+	for _, name := range []string{e.app(), e.request.Profile.Postgres, e.proxy()} {
 		info, err := e.inspect(ctx, name)
 		if err != nil {
 			return err
@@ -464,4 +520,17 @@ func (e *NativeEffects) stopped(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (e *NativeEffects) app() string   { return strings.TrimPrefix(e.original.App.Name, "/") }
+func (e *NativeEffects) proxy() string { return strings.TrimPrefix(e.original.Caddy.Name, "/") }
+func (e *NativeEffects) service(ctx context.Context, service string) (string, error) {
+	value, err := e.docker(ctx, "ps", "-a", "--filter", "label=com.docker.compose.project="+e.request.Profile.Project, "--filter", "label=com.docker.compose.service="+service, "--format", "{{.Names}}")
+	if err != nil {
+		return "", err
+	}
+	if !dockerSelector.MatchString(value) {
+		return "", errors.New("expected exactly one installed service container")
+	}
+	return value, nil
 }

@@ -1,4 +1,4 @@
-package demoupgrade
+package hostinstall
 
 import (
 	"bytes"
@@ -12,11 +12,12 @@ import (
 	"path/filepath"
 
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/platform/hostmaintenance"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
 )
 
-const JournalName = "upgrade-operation.json"
-const LockName = "upgrade.lock"
+const JournalName = hostmaintenance.JournalName
+const LockName = hostmaintenance.LockName
 
 // FileJournal holds its process-shared lock until Close. Root MUST reside outside
 // all restored data volumes. Ordinary image rollouts must also take LockName and

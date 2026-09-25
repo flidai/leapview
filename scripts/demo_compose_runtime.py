@@ -122,12 +122,12 @@ def stage_release(image):
 
 @contextlib.contextmanager
 def upgrade_guard():
-    # Shared with demoupgrade.FileJournal. Hold this across the entire image
+    # Shared with hostinstall.FileJournal. Hold this across the entire image
     # transaction so a schema upgrade cannot enter its maintenance window.
-    descriptor = os.open(PROVIDER/'upgrade.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    descriptor = os.open(ROOT/'.leapviewctl.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, 'r+') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        journal = PROVIDER/'upgrade-operation.json'
+        journal = ROOT/'upgrade-operation.json'
         try:
             info = journal.lstat()
         except FileNotFoundError:

@@ -66,10 +66,18 @@ class UpgradePlanTests(unittest.TestCase):
         self.assertFalse(result['migrationExecutionAuthorized'])
 
 
+def write_compatibility(root):
+    (root/'go.mod').write_text('require (\n github.com/duckdb/duckdb-go/v2 v2.1.0\n github.com/riverqueue/river v0.47.0\n)\n')
+    policy = root/'internal/app/postgresbaseline/baseline.go'
+    policy.parent.mkdir(parents=True,exist_ok=True)
+    policy.write_text('const rolePolicySQL = `existing policy`')
+
+
 class SourceTransitionTests(unittest.TestCase):
     def test_sources_are_read_from_exact_commits_not_worktree(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
+            write_compatibility(root)
             def git(*args):
                 return subprocess.check_output(['git', *args], cwd=root, stderr=subprocess.PIPE)
             git('init', '-q')
@@ -102,6 +110,7 @@ class SourceTransitionTests(unittest.TestCase):
     def test_product_role_policy_changes_require_review_without_schema_bump(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
+            write_compatibility(root)
             def git(*args):
                 return subprocess.check_output(['git', *args], cwd=root, stderr=subprocess.PIPE)
             git('init', '-q')
@@ -111,17 +120,37 @@ class SourceTransitionTests(unittest.TestCase):
             migrations.mkdir(parents=True)
             (migrations/'goose.go').write_text('const (\n CurrentRevision int64 = 30\n)\n')
             policy = root/'internal/app/postgresbaseline/baseline.go'
-            policy.parent.mkdir(parents=True)
-            policy.write_text('old role policy')
+            policy.parent.mkdir(parents=True, exist_ok=True)
+            policy.write_text('const rolePolicySQL = `old role policy`')
             git('add', '.'); git('commit', '-qm', 'predecessor')
             previous = git('rev-parse', 'HEAD').decode().strip()
-            policy.write_text('new role policy requiring database reconciliation')
+            policy.write_text('const rolePolicySQL = `new role policy requiring reconciliation`')
             git('add', '.'); git('commit', '-qm', 'candidate')
             candidate = git('rev-parse', 'HEAD').decode().strip()
             with patch.object(plan, 'git', side_effect=git):
                 result = plan.inspect_transition(previous, candidate)
-            self.assertEqual(result['mode'], 'review-required')
+            self.assertEqual(result['mode'], 'database-upgrade-required')
             self.assertFalse(result['imageOnlyEligible'])
+
+    def test_unrelated_module_update_keeps_image_only_eligibility(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_compatibility(root)
+            def git(*args):
+                return subprocess.check_output(['git', *args], cwd=root, stderr=subprocess.PIPE)
+            git('init', '-q'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid')
+            migrations = root/plan.MIGRATIONS
+            migrations.mkdir(parents=True)
+            (migrations/'goose.go').write_text('const (\n CurrentRevision int64 = 30\n)\n')
+            git('add', '.'); git('commit', '-qm', 'before')
+            before = git('rev-parse', 'HEAD').decode().strip()
+            with (root/'go.mod').open('a') as stream: stream.write('require github.com/example/utility v1.2.3\n')
+            git('add', '.'); git('commit', '-qm', 'unrelated dependency')
+            after = git('rev-parse', 'HEAD').decode().strip()
+            with patch.object(plan, 'git', side_effect=git):
+                result = plan.inspect_transition(before, after)
+            self.assertEqual(result['mode'], 'image-only')
+            self.assertEqual(result['compatibilityChanges'], [])
 
     def test_mutable_revision_rejected_before_git(self):
         with patch.object(plan, 'git') as git:

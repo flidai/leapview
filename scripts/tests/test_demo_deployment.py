@@ -70,6 +70,7 @@ class PreflightTests(unittest.TestCase):
                          patch.object(runner.subprocess, 'run') as run, \
                          patch.object(runner.subprocess, 'Popen') as popen, \
                          patch.object(runner, 'inspect_transition', return_value=report), \
+                         patch.object(runner.upgrade, 'prepare'), \
                          patch.object(runner, 'verify_public_revision') as public, patch('sys.stdout', io.StringIO()):
                         if mode == 'image-only': runner.main()
                         else:
@@ -89,6 +90,7 @@ class UpgradeGuardTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.runtime.PROVIDER = pathlib.Path(self.directory.name)
+        self.runtime.ROOT = pathlib.Path(self.directory.name)
         self.journal = self.runtime.PROVIDER/'upgrade-operation.json'
 
     def write(self, phase, version=1):

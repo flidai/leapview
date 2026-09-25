@@ -1,6 +1,6 @@
 //go:build linux
 
-package demoupgrade
+package hostinstall
 
 import (
 	"context"
@@ -26,15 +26,15 @@ import (
 // container, real credential, or network-visible port. Root is needed only to
 // preserve the PostgreSQL volume's native UID/GID through the cold copy.
 func TestColdPostgreSQLPairRecovery(t *testing.T) {
-	if os.Getenv("LEAPVIEW_DEMO_UPGRADE_QUALIFICATION") != "1" {
-		t.Skip("set LEAPVIEW_DEMO_UPGRADE_QUALIFICATION=1 for isolated physical restore qualification")
+	if os.Getenv("LEAPVIEW_HOST_UPGRADE_QUALIFICATION") != "1" {
+		t.Skip("set LEAPVIEW_HOST_UPGRADE_QUALIFICATION=1 for isolated physical restore qualification")
 	}
 	if os.Geteuid() != 0 {
 		executable, err := os.Executable()
 		if err != nil {
 			t.Fatal(err)
 		}
-		command := exec.Command("sudo", "-n", "env", "LEAPVIEW_DEMO_UPGRADE_QUALIFICATION=1", executable, "-test.run=^TestColdPostgreSQLPairRecovery$", "-test.v", "-test.timeout=5m")
+		command := exec.Command("sudo", "-n", "env", "LEAPVIEW_HOST_UPGRADE_QUALIFICATION=1", executable, "-test.run=^TestColdPostgreSQLPairRecovery$", "-test.v", "-test.timeout=5m")
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("root restore rehearsal: %v\n%s", err, output)
 		} else {
@@ -205,7 +205,7 @@ func TestColdPostgreSQLPairRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = postgresbaseline.ApplyDemoUpgrade(ctx, upgraded, upgradeSQL, func(context.Context) error { return nil }); err != nil {
+	if err = postgresbaseline.ApplyUpgrade(ctx, upgraded, upgradeSQL, 28, func(context.Context) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	upgraded.Close()

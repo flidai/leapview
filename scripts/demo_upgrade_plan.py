@@ -5,11 +5,25 @@ import re
 import subprocess
 
 MIGRATIONS = 'internal/platform/postgres/migrations'
-SCHEMA_PATHS = ['internal/platform/postgres', 'internal/app/postgresbaseline', 'internal/analytics/duckdb',
-                'internal/analytics/ducklake', 'go.mod', 'go.sum']
+ENGINE_PREFIXES = ('github.com/duckdb/', 'github.com/riverqueue/')
 
 
-def classify(current, target, before, after, changed_paths):
+def source_compatibility(revision):
+    module = git('show', revision+':go.mod').decode()
+    engines = dict(re.findall(r'^\s*(github\.com/(?:duckdb|riverqueue)/\S+)\s+(v\S+)', module, re.M))
+    if not any(name.startswith('github.com/duckdb/') for name in engines) or not any(name.startswith('github.com/riverqueue/') for name in engines):
+        raise ValueError('Cannot resolve immutable engine dependencies')
+    # Replacements can alter the selected engine independently of its require
+    # line. Reject relevant replacements until independently qualified.
+    if re.search(r'(?m)^\s*(?:replace\s+)?github\.com/(?:duckdb|riverqueue)/.*=>', module):
+        raise ValueError('Engine module replacements require separate qualification')
+    policy = git('show', revision+':internal/app/postgresbaseline/baseline.go')
+    match = re.search(rb'const rolePolicySQL = `([\s\S]*?)`', policy)
+    if not match: raise ValueError('Cannot resolve immutable role policy')
+    return engines, hashlib.sha256(match[1]).hexdigest()
+
+
+def classify(current, target, before, after, compatibility_changes, policy_changed=False):
     if target < current:
         raise ValueError('Downgrade requires a separately admitted recovery operation')
     for name, digest in before.items():
@@ -25,11 +39,11 @@ def classify(current, target, before, after, changed_paths):
     if sorted(versions) != list(range(current + 1, target + 1)):
         raise ValueError('Forward migration chain is missing, ambiguous, or rewrites history')
     mode = 'database-upgrade-required' if target != current else 'image-only'
-    if target == current and changed_paths:
-        mode = 'review-required'
+    if policy_changed: mode = 'database-upgrade-required'
+    if compatibility_changes: mode = 'review-required'
     return dict(mode=mode, currentSchema=current, candidateSchema=target,
                 pendingMigrations=pending, pendingMigrationDigests={name: after[name] for name in pending},
-                changedCompatibilityPaths=sorted(changed_paths),
+                compatibilityChanges=sorted(compatibility_changes), rolePolicyChanged=policy_changed,
                 imageOnlyEligible=mode == 'image-only', migrationExecutionAuthorized=False)
 
 
@@ -53,6 +67,10 @@ def source_schema(revision):
 def inspect_transition(previous, candidate):
     current, before = source_schema(previous)
     target, after = source_schema(candidate)
-    paths = git('diff', '--name-only', previous, candidate, '--', *SCHEMA_PATHS).decode().splitlines()
-    result = classify(current, target, before, after, paths)
+    old_engines, old_policy = source_compatibility(previous)
+    new_engines, new_policy = source_compatibility(candidate)
+    changes = [name for name in set(old_engines) | set(new_engines) if old_engines.get(name) != new_engines.get(name)]
+    result = classify(current, target, before, after, changes, old_policy != new_policy)
+    result['sourceBefore'] = dict(schema=current,migrations=before,engines=old_engines,rolePolicy=old_policy)
+    result['sourceAfter'] = dict(schema=target,migrations=after,engines=new_engines,rolePolicy=new_policy)
     return dict(result, predecessorRevision=previous, candidateRevision=candidate)

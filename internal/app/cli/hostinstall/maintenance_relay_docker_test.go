@@ -1,6 +1,6 @@
 //go:build linux
 
-package demoupgrade
+package hostinstall
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 )
 
 func TestInternalNetworkRecoveryRelay(t *testing.T) {
-	if os.Getenv("LEAPVIEW_DEMO_UPGRADE_QUALIFICATION") != "1" {
+	if os.Getenv("LEAPVIEW_HOST_UPGRADE_QUALIFICATION") != "1" {
 		t.Skip("explicit disposable Docker qualification required")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)

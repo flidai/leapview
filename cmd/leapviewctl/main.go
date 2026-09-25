@@ -11,7 +11,6 @@ import (
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
 	"github.com/flidai/leapview/internal/app/cli/hostinstall"
-	"github.com/flidai/leapview/internal/app/demoupgrade"
 )
 
 func main() {
@@ -44,7 +43,6 @@ func run(ctx context.Context) error {
 		return err
 	}
 	command := composectl.Command(ctx, controller)
-	command.AddCommand(demoupgrade.Command(ctx, os.Stdin, os.Stdout))
 	command.AddCommand(hostinstall.Command(ctx, hostinstall.CommandOptions{
 		Root:      root,
 		DockerBin: dockerBin,

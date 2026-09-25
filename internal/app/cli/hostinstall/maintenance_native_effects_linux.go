@@ -1,6 +1,6 @@
 //go:build linux
 
-package demoupgrade
+package hostinstall
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,16 +28,16 @@ func (e *NativeEffects) clonePrefix() string {
 }
 
 // Browser approval is delivered only by the authenticated runner after testing
-// every CFO page against a loopback-only restored instance. EOF/cancellation is
+// installation-specific checks against a loopback-only instance. EOF/cancellation is
 // failure, not approval; a durable intent already exists before this wait.
 func (e *NativeEffects) awaitBrowser(ctx context.Context, phase string) error {
-	if _, err := fmt.Fprintln(e.stdout, phase); err != nil {
+	if _, err := fmt.Fprintf(e.stdout, "%s %s\n", phase, e.id.ArtifactAdmissionDigest); err != nil {
 		return err
 	}
 	done := make(chan error, 1)
 	go func() {
 		line, err := e.reader.ReadString('\n')
-		if err == nil && line != "commit\n" {
+		if err == nil && line != "commit "+e.id.ArtifactAdmissionDigest+" "+phase+"\n" {
 			err = errors.New("browser validation was not approved")
 		}
 		done <- err
@@ -191,19 +192,19 @@ func (e *NativeEffects) CaptureAndVerify(ctx context.Context, id Identity) (dige
 	if _, err = e.docker(ctx, "network", "create", "--internal", prefix); err != nil {
 		return "", err
 	}
-	if err = e.clone(ctx, prefix+"-pg", nativePG, e.original.Postgres, volumes); err != nil {
+	if err = e.clone(ctx, prefix+"-pg", e.request.Profile.Postgres, e.original.Postgres, volumes); err != nil {
 		return "", err
 	}
-	if err = e.waitPG(ctx, prefix+"-pg", 28); err != nil {
+	if err = e.waitPG(ctx, prefix+"-pg", e.request.Plan.CurrentSchema); err != nil {
 		return "", err
 	}
-	if err = e.clone(ctx, prefix+"-app", "leapview", e.original.App, volumes); err != nil {
+	if err = e.clone(ctx, prefix+"-app", e.request.Profile.AppService, e.original.App, volumes); err != nil {
 		return "", err
 	}
 	if err = e.waitApp(ctx, prefix+"-app", id.Predecessor, e.request.PredecessorRevision); err != nil {
 		return "", err
 	}
-	if err = e.clone(ctx, prefix+"-caddy", "caddy", e.original.Caddy, volumes); err != nil {
+	if err = e.clone(ctx, prefix+"-caddy", e.request.Profile.ProxyService, e.original.Caddy, volumes); err != nil {
 		return "", err
 	}
 	// An internal network has no published Docker ports. Reach its private
@@ -221,12 +222,87 @@ func (e *NativeEffects) CaptureAndVerify(ctx context.Context, id Identity) (dige
 	if ip == nil || !ip.IsPrivate() {
 		return "", errors.New("invalid isolated Caddy bridge address")
 	}
-	_, closeRelay, err := e.relay(ctx, "127.0.0.1:8444", net.JoinHostPort(endpoint.IPAddress, "443"))
+	_, closeRelay, err := e.relay(ctx, e.request.Profile.RehearsalBinding, net.JoinHostPort(endpoint.IPAddress, "443"))
 	if err != nil {
 		return "", err
 	}
 	defer closeRelay()
 	if err = e.awaitBrowser(ctx, "AWAITING_RECOVERY_BROWSER_VALIDATION"); err != nil {
+		return "", err
+	}
+	// Rehearse the exact candidate against the recovered predecessor data before
+	// any SQL is applied to the live cluster. The private network has no route to
+	// production integrations; the backup itself remains immutable.
+	if _, err = e.docker(ctx, "rm", "-f", prefix+"-app"); err != nil {
+		return "", err
+	}
+	if err = e.migrateOn(ctx, id, digest, e.clonePrefix(), true); err != nil {
+		return "", err
+	}
+	candidate := e.original.App
+	candidate.Config.Image = id.Candidate
+	prepared, err := e.candidateEnvironment()
+	if err != nil {
+		return "", err
+	}
+	var key string
+	for _, line := range strings.Split(string(prepared), "\n") {
+		if strings.HasPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY=") {
+			key = line
+		}
+	}
+	candidate.Config.Env = append([]string{}, candidate.Config.Env...)
+	for i, line := range candidate.Config.Env {
+		if strings.HasPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY=") {
+			candidate.Config.Env[i] = key
+			key = ""
+			break
+		}
+	}
+	if key != "" {
+		candidate.Config.Env = append(candidate.Config.Env, key)
+	}
+	if err = e.clone(ctx, prefix+"-app", e.request.Profile.AppService, candidate, volumes); err != nil {
+		return "", err
+	}
+	if err = e.waitPG(ctx, prefix+"-pg", e.request.Plan.CandidateSchema); err != nil {
+		return "", err
+	}
+	if err = e.waitApp(ctx, prefix+"-app", id.Candidate, e.request.CandidateRevision); err != nil {
+		return "", err
+	}
+	// Recreate the proxy so its upstream resolves the candidate clone's address.
+	if _, err = e.docker(ctx, "rm", "-f", prefix+"-caddy"); err != nil {
+		return "", err
+	}
+	if err = e.clone(ctx, prefix+"-caddy", e.request.Profile.ProxyService, e.original.Caddy, volumes); err != nil {
+		return "", err
+	}
+	closeRelay()
+	proxy, err := e.inspect(ctx, prefix+"-caddy")
+	if err != nil {
+		return "", err
+	}
+	if err = json.Unmarshal(proxy.NetworkSettings.Networks[prefix], &endpoint); err != nil {
+		return "", err
+	}
+	ip = net.ParseIP(endpoint.IPAddress)
+	if ip == nil || !ip.IsPrivate() {
+		return "", errors.New("invalid rehearsal proxy address")
+	}
+	_, closeCandidateRelay, err := e.relay(ctx, e.request.Profile.RehearsalBinding, net.JoinHostPort(endpoint.IPAddress, "443"))
+	if err != nil {
+		return "", err
+	}
+	defer closeCandidateRelay()
+	if err = e.awaitBrowser(ctx, "AWAITING_REHEARSAL_BROWSER_VALIDATION"); err != nil {
+		return "", err
+	}
+	proof, err := json.Marshal(State{Identity: id, Phase: Verified, RecoveryDigest: digest})
+	if err != nil {
+		return "", err
+	}
+	if err = securefs.WritePrivateFileAtomic(filepath.Join(e.operation, "rehearsal-passed.json"), proof); err != nil {
 		return "", err
 	}
 	// The immutable snapshot is checked again after exercising the writable clone.
@@ -245,51 +321,71 @@ func (e *NativeEffects) Migrate(ctx context.Context, id Identity, digest string)
 	if err := e.stopped(ctx); err != nil {
 		return err
 	}
-	if _, err := e.docker(ctx, "start", nativePG); err != nil {
+	if _, err := e.docker(ctx, "start", e.request.Profile.Postgres); err != nil {
 		return err
 	}
-	if err := e.waitPG(ctx, nativePG, 28); err != nil {
+	if err := e.waitPG(ctx, e.request.Profile.Postgres, e.request.Plan.CurrentSchema); err != nil {
 		return err
 	}
-	dsn := containerEnv(e.original.App)["LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL"]
-	if dsn == "" {
-		return errors.New("control migrator credential is missing")
+	proof, err := securefs.ReadPrivateFile(filepath.Join(e.operation, "rehearsal-passed.json"))
+	if err != nil {
+		return err
+	}
+	var passed State
+	if json.Unmarshal(proof, &passed) != nil || passed.Identity != id || passed.RecoveryDigest != digest || passed.Phase != Verified {
+		return errors.New("missing exact candidate rehearsal")
+	}
+	return e.migrateOn(ctx, id, digest, e.request.Profile.Network, false)
+}
+func (e *NativeEffects) migrateOn(ctx context.Context, id Identity, digest, network string, rehearsal bool) error {
+	dsn, err := e.migratorURL(e.original.App)
+	if err != nil {
+		return err
 	}
 	secret := filepath.Join(e.operation, "migrator.url")
 	if err := securefs.WritePrivateFileAtomic(secret, []byte(dsn)); err != nil {
 		return err
 	}
 	defer os.Remove(secret)
+	action := "migrate"
+	journalPath := filepath.Join(e.root, JournalName)
+	if rehearsal {
+		action = "rehearse"
+	}
 	// No application environment or runtime credentials enter this process.
-	_, err := e.docker(ctx, "run", "--rm", "--name", e.clonePrefix()+"-migrator", "--user", "0:0", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges:true", "--network", nativeNetwork,
-		"--mount", "type=bind,src="+filepath.Join(e.operation, "request.json")+",dst=/upgrade/request.json,readonly",
-		"--mount", "type=bind,src="+secret+",dst=/upgrade/migrator.url,readonly",
-		"--mount", "type=bind,src="+filepath.Join(e.provider, JournalName)+",dst=/upgrade-journal.json,readonly",
-		"--entrypoint", "/usr/local/libexec/leapviewctl", id.Candidate, "demo-upgrade", "migrate", "--request", "/upgrade/request.json", "--journal", "/upgrade-journal.json", "--credential", "/upgrade/migrator.url", "--recovery-digest", digest)
-	return err
-}
-func (e *NativeEffects) link(target string) error {
-	temp := filepath.Join(e.root, ".upgrade-current")
-	if err := os.Remove(temp); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err := os.Symlink(target, temp); err != nil {
-		return err
-	}
-	if err := os.Rename(temp, filepath.Join(e.root, "current")); err != nil {
-		return err
-	}
-	return syncDirectory(e.root)
-}
-func (e *NativeEffects) ensureAgentKey() error {
-	path := filepath.Join(e.root, "leapview.env")
-	data, err := securefs.ReadPrivateFile(path)
+	args := []string{"run", "--rm", "--name", e.clonePrefix() + "-migrator", "--user", "0:0", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges:true", "--network", network,
+		"--mount", "type=bind,src=" + filepath.Join(e.operation, "request.json") + ",dst=/upgrade/request.json,readonly",
+		"--mount", "type=bind,src=" + secret + ",dst=/upgrade/migrator.url,readonly",
+		"--mount", "type=bind,src=" + journalPath + ",dst=/upgrade-journal.json,readonly"}
+	tlsMounts, err := migrationTLSMounts(dsn, e.original.App)
 	if err != nil {
 		return err
 	}
+	args = append(args, tlsMounts...)
+	args = append(args, "--entrypoint", "/usr/local/libexec/leapviewctl", id.Candidate, "host", "upgrade", action, "--request", "/upgrade/request.json", "--journal", "/upgrade-journal.json", "--credential", "/upgrade/migrator.url", "--recovery-digest", digest)
+	_, err = e.docker(ctx, args...)
+	return err
+}
+func (e *NativeEffects) link(target string) error {
+	if !strings.HasPrefix(target, "releases/") {
+		return errors.New("invalid release generation")
+	}
+	return activateGeneration(InstalledPaths(e.root), strings.TrimPrefix(target, "releases/"))
+}
+func (e *NativeEffects) candidateEnvironment() ([]byte, error) {
+	path := filepath.Join(e.root, "leapview.env")
+	data, err := securefs.ReadPrivateFile(path)
+	if err != nil {
+		return nil, err
+	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY=") && strings.TrimSpace(strings.TrimPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY=")) != "" {
-			return nil
+			key := strings.TrimSpace(strings.TrimPrefix(line, "LEAPVIEW_AGENT_CREDENTIAL_KEY="))
+			decoded, err := hex.DecodeString(key)
+			if err != nil || len(decoded) != 32 {
+				return nil, errors.New("existing agent credential key must be 32-byte hex; refusing to rotate it")
+			}
+			return data, nil
 		}
 	}
 	keyPath := filepath.Join(e.operation, "agent-credential-key")
@@ -297,19 +393,26 @@ func (e *NativeEffects) ensureAgentKey() error {
 	if errors.Is(err, os.ErrNotExist) {
 		raw := make([]byte, 32)
 		if _, err = rand.Read(raw); err != nil {
-			return err
+			return nil, err
 		}
 		key = []byte(hex.EncodeToString(raw))
 		err = securefs.WritePrivateFileAtomic(keyPath, key)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	data, err = setDeploymentValue(data, "LEAPVIEW_AGENT_CREDENTIAL_KEY", string(key))
 	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+func (e *NativeEffects) ensureAgentKey() error {
+	data, err := e.candidateEnvironment()
+	if err != nil {
 		return err
 	}
-	return securefs.WritePrivateFileAtomic(path, data)
+	return securefs.WritePrivateFileAtomic(filepath.Join(e.root, "leapview.env"), data)
 }
 func (e *NativeEffects) StartCandidateIsolated(ctx context.Context, id Identity) error {
 	if id != e.id {
@@ -324,29 +427,29 @@ func (e *NativeEffects) StartCandidateIsolated(ctx context.Context, id Identity)
 	if err := e.link("releases/sha256-" + strings.TrimPrefix(id.Candidate, "ghcr.io/flidai/leapview@sha256:")); err != nil {
 		return err
 	}
-	if err := e.compose(ctx, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", "leapview"); err != nil {
+	if err := e.compose(ctx, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", e.request.Profile.AppService); err != nil {
 		return err
 	}
-	if err := e.compose(ctx, "up", "-d", "--no-deps", "caddy"); err != nil {
+	if err := e.compose(ctx, "up", "-d", "--no-deps", e.request.Profile.ProxyService); err != nil {
 		return err
 	}
 	// Recreated containers inherit Compose restart policy; keep writers fenced
 	// across reboot until the durable commit boundary.
-	for _, name := range []string{nativeApp, nativePG} {
+	for _, name := range []string{e.app(), e.request.Profile.Postgres} {
 		if _, err := e.docker(ctx, "update", "--restart=no", name); err != nil {
 			return err
 		}
 	}
-	return e.waitApp(ctx, nativeApp, id.Candidate, e.request.CandidateRevision)
+	return e.waitApp(ctx, e.app(), id.Candidate, e.request.CandidateRevision)
 }
 func (e *NativeEffects) ValidateCandidate(ctx context.Context, id Identity) error {
 	if id != e.id {
 		return ErrIdentity
 	}
-	if err := e.waitPG(ctx, nativePG, 30); err != nil {
+	if err := e.waitPG(ctx, e.request.Profile.Postgres, e.request.Plan.CandidateSchema); err != nil {
 		return err
 	}
-	if err := e.waitApp(ctx, nativeApp, id.Candidate, e.request.CandidateRevision); err != nil {
+	if err := e.waitApp(ctx, e.app(), id.Candidate, e.request.CandidateRevision); err != nil {
 		return err
 	}
 	return e.awaitBrowser(ctx, "AWAITING_CANDIDATE_BROWSER_VALIDATION")
@@ -355,33 +458,33 @@ func (e *NativeEffects) expose(ctx context.Context, image string) error {
 	if err := e.writeDeployment(image, false); err != nil {
 		return err
 	}
-	for _, name := range []string{nativeApp, nativePG} {
+	for _, name := range []string{e.app(), e.request.Profile.Postgres} {
 		if _, err := e.docker(ctx, "update", "--restart=unless-stopped", name); err != nil {
 			return err
 		}
 	}
-	return e.compose(ctx, "up", "-d", "--no-deps", "caddy")
+	return e.compose(ctx, "up", "-d", "--no-deps", e.request.Profile.ProxyService)
 }
 
 // Commit/reopening may have been fsynced immediately before a host reboot.
 // Restart the already-selected runtime without restoring or replaying SQL.
 func (e *NativeEffects) resumeRuntime(ctx context.Context, image, revision string, schema int) error {
-	if _, err := e.docker(ctx, "start", nativePG); err != nil {
+	if _, err := e.docker(ctx, "start", e.request.Profile.Postgres); err != nil {
 		return err
 	}
-	if err := e.waitPG(ctx, nativePG, schema); err != nil {
+	if err := e.waitPG(ctx, e.request.Profile.Postgres, schema); err != nil {
 		return err
 	}
-	if err := e.compose(ctx, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", "leapview"); err != nil {
+	if err := e.compose(ctx, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", e.request.Profile.AppService); err != nil {
 		return err
 	}
-	return e.waitApp(ctx, nativeApp, image, revision)
+	return e.waitApp(ctx, e.app(), image, revision)
 }
 func (e *NativeEffects) ExposeCandidate(ctx context.Context, id Identity) error {
 	if id != e.id {
 		return ErrIdentity
 	}
-	if err := e.resumeRuntime(ctx, id.Candidate, e.request.CandidateRevision, 30); err != nil {
+	if err := e.resumeRuntime(ctx, id.Candidate, e.request.CandidateRevision, e.request.Plan.CandidateSchema); err != nil {
 		return err
 	}
 	if err := e.expose(ctx, id.Candidate); err != nil {
@@ -413,7 +516,7 @@ func (e *NativeEffects) StopCandidate(ctx context.Context) error {
 	if err := e.cleanupClone(ctx); err != nil {
 		return err
 	}
-	for _, name := range []string{nativeCaddy, nativeApp, nativePG} {
+	for _, name := range []string{e.proxy(), e.app(), e.request.Profile.Postgres} {
 		if _, err := e.docker(ctx, "update", "--restart=no", name); err != nil {
 			return err
 		}
@@ -451,26 +554,83 @@ func (e *NativeEffects) VerifyPredecessor(ctx context.Context, id Identity) erro
 	if err := e.link(e.original.Current); err != nil {
 		return err
 	}
-	if _, err := e.docker(ctx, "start", nativePG); err != nil {
+	if _, err := e.docker(ctx, "start", e.request.Profile.Postgres); err != nil {
 		return err
 	}
-	if err := e.waitPG(ctx, nativePG, 28); err != nil {
+	if err := e.waitPG(ctx, e.request.Profile.Postgres, e.request.Plan.CurrentSchema); err != nil {
 		return err
 	}
-	if err := e.compose(ctx, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", "leapview"); err != nil {
+	if err := e.compose(ctx, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", e.request.Profile.AppService); err != nil {
 		return err
 	}
-	if err := e.compose(ctx, "up", "-d", "--no-deps", "caddy"); err != nil {
+	if err := e.compose(ctx, "up", "-d", "--no-deps", e.request.Profile.ProxyService); err != nil {
 		return err
 	}
-	return e.waitApp(ctx, nativeApp, id.Predecessor, e.request.PredecessorRevision)
+	return e.waitApp(ctx, e.app(), id.Predecessor, e.request.PredecessorRevision)
 }
 func (e *NativeEffects) ExposePredecessor(ctx context.Context, id Identity) error {
 	if id != e.id {
 		return ErrIdentity
 	}
-	if err := e.resumeRuntime(ctx, id.Predecessor, e.request.PredecessorRevision, 28); err != nil {
+	if err := e.resumeRuntime(ctx, id.Predecessor, e.request.PredecessorRevision, e.request.Plan.CurrentSchema); err != nil {
 		return err
 	}
 	return e.expose(ctx, id.Predecessor)
+}
+
+func (e *NativeEffects) migratorURL(app dockerInspection) (string, error) {
+	value := containerEnv(app)["LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL"]
+	if path := e.request.Profile.ControlMigratorURLFile; path != "" {
+		raw, err := securefs.ReadPrivateFile(path)
+		if err != nil {
+			return "", err
+		}
+		value = strings.TrimSpace(string(raw))
+	}
+	if value == "" || strings.ContainsAny(value, "\r\n") {
+		return "", errors.New("private control migrator credential is missing or malformed")
+	}
+	return value, nil
+}
+
+// Mount only the TLS files explicitly named by the migrator URL, preserving
+// their container paths. Never copy the application's environment or whole
+// secret directories into the one-shot migrator.
+func migrationTLSMounts(dsn string, app dockerInspection) ([]string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return nil, errors.New("invalid migrator URL")
+	}
+	var args []string
+	seen := map[string]bool{}
+	for _, key := range []string{"sslrootcert", "sslcert", "sslkey"} {
+		path := u.Query().Get(key)
+		if path == "" || (key == "sslrootcert" && path == "system") || seen[path] {
+			continue
+		}
+		if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, ",\r\n") {
+			return nil, errors.New("TLS material must use canonical container paths")
+		}
+		source := ""
+		for _, mount := range app.Mounts {
+			if mount.Type != "bind" || mount.RW {
+				continue
+			}
+			if path == mount.Destination {
+				source = mount.Source
+				break
+			}
+			if strings.HasPrefix(path, mount.Destination+"/") {
+				source = filepath.Join(mount.Source, strings.TrimPrefix(path, mount.Destination+"/"))
+				break
+			}
+		}
+		info, statErr := os.Lstat(source)
+		if source == "" || strings.ContainsAny(source, ",\r\n") || statErr != nil || !info.Mode().IsRegular() {
+			return nil, errors.New("migrator TLS material must be an existing read-only application bind file")
+		}
+		args = append(args, "--mount", "type=bind,src="+source+",dst="+path+",readonly")
+		seen[path] = true
+	}
+	return args, nil
 }

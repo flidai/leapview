@@ -49,6 +49,7 @@ class ProxyTests(unittest.TestCase):
 class ProtocolTests(unittest.TestCase):
     def process(self, lines, code=0):
         process = MagicMock()
+        lines = lines.replace('AWAITING_RECOVERY_BROWSER_VALIDATION\n', 'AWAITING_RECOVERY_BROWSER_VALIDATION sha256:'+'a'*64+'\n').replace('AWAITING_REHEARSAL_BROWSER_VALIDATION\n', 'AWAITING_REHEARSAL_BROWSER_VALIDATION sha256:'+'a'*64+'\n').replace('AWAITING_CANDIDATE_BROWSER_VALIDATION\n', 'AWAITING_CANDIDATE_BROWSER_VALIDATION sha256:'+'a'*64+'\n')
         process.stdout = io.StringIO(lines)
         process.stdin = MagicMock()
         process.wait.return_value = code
@@ -60,15 +61,22 @@ class ProtocolTests(unittest.TestCase):
         with patch.object(transport.subprocess, 'Popen', return_value=process), \
              patch.object(transport.subprocess, 'run', side_effect=browser_error) as browser, \
              patch.object(transport, 'private_browser', private), patch('sys.stdout', io.StringIO()):
-            result = transport.rollout(['ssh', 'root@host'], '/run/helper', '/run/request', action, 'image', 'revision', {})
+            result = transport.rollout(['ssh', 'root@host'], '/run/helper', '/run/request', action, 'image', 'revision', {}, 'sha256:'+'a'*64, {'rehearsalBinding':'127.0.0.1:8444','httpsBinding':'127.0.0.1:8443'})
             return result, browser
 
-    def test_both_isolated_checks_are_required_before_success(self):
-        process = self.process('AWAITING_RECOVERY_BROWSER_VALIDATION\nAWAITING_CANDIDATE_BROWSER_VALIDATION\nDEPLOYMENT_COMMITTED\n')
+    def test_all_three_isolated_checks_are_required_before_success(self):
+        process = self.process('AWAITING_RECOVERY_BROWSER_VALIDATION\nAWAITING_REHEARSAL_BROWSER_VALIDATION\nAWAITING_CANDIDATE_BROWSER_VALIDATION\nDEPLOYMENT_COMMITTED\n')
         result, browser = self.execute(process)
         self.assertEqual(result, 'DEPLOYMENT_COMMITTED')
-        self.assertEqual(browser.call_count, 2)
-        self.assertEqual(process.stdin.write.call_count, 2)
+        self.assertEqual(browser.call_count, 3)
+        self.assertEqual(process.stdin.write.call_count, 3)
+        process.stdin.close.assert_called_once()
+
+    def test_wrong_operation_is_never_approved(self):
+        process = self.process('AWAITING_RECOVERY_BROWSER_VALIDATION sha256:'+'b'*64+'\n')
+        with self.assertRaisesRegex(RuntimeError, 'Unexpected'):
+            self.execute(process)
+        process.stdin.write.assert_not_called()
         process.stdin.close.assert_called_once()
 
     def test_failed_browser_sends_no_approval_and_closes_stdin_for_recovery(self):
@@ -94,7 +102,7 @@ class ProtocolTests(unittest.TestCase):
 
 class RecoveryRequestTests(unittest.TestCase):
     def test_recovery_cannot_select_another_candidate_or_escape_operation_directory(self):
-        with tempfile.TemporaryDirectory() as directory, patch.object(remote, 'PROVIDER', Path(directory)):
+        with tempfile.TemporaryDirectory() as directory, patch.object(remote, 'PROVIDER', Path(directory)), patch.object(remote, 'INSTALLATION', Path(directory)):
             root = Path(directory)
             digest = 'a'*64
             identity = {'candidate': 'image', 'target': 'app-leapview-demo-02', 'artifactAdmissionDigest': 'sha256:'+digest}
