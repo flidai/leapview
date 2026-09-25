@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -88,6 +89,83 @@ DELETE FROM upgrade_probe WHERE id=2;
 	}
 	if _, err := provider.Up(ctx); err != nil {
 		t.Fatalf("replay upgraded version: %v", err)
+	}
+}
+
+func TestRefreshManualIntentMigrationUpgradesVersionFortyTwo(t *testing.T) {
+	harness := postgrestest.Start(t)
+	owner := harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
+	migrator := harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator", Password: "manual-intent-migration", Login: true})
+	runtime := harness.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "manual-intent-runtime", Login: true})
+	for _, name := range []string{"leapview_control_maintenance", "leapview_control_readonly", "leapview_control_backup"} {
+		harness.EnsureRole(t, postgrestest.Role{Name: name})
+	}
+	harness.GrantRole(t, owner, migrator)
+	database := harness.NewDatabase(t, "refresh_manual_intent_upgrade")
+	harness.GrantDatabase(t, database.Name, owner, "CREATE")
+	harness.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
+	harness.GrantDatabase(t, database.Name, runtime, "CONNECT")
+
+	admin, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	if _, err := admin.Exec(t.Context(), `
+		ALTER DATABASE refresh_manual_intent_upgrade OWNER TO leapview_control_owner;
+		REVOKE ALL ON SCHEMA public FROM PUBLIC;
+		GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator`); err != nil {
+		t.Fatal(err)
+	}
+	migrationDB, err := sql.Open("pgx", database.URL(migrator))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = migrationDB.Close() })
+	provider, err := NewProvider(migrationDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(t.Context(), 42); err != nil {
+		t.Fatalf("apply existing database through revision 42: %v", err)
+	}
+	var exists bool
+	if err := admin.QueryRow(t.Context(), `SELECT to_regclass('refresh.manual_intent') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("revision 42 unexpectedly contains refresh.manual_intent")
+	}
+	if _, err := provider.Up(t.Context()); err != nil {
+		t.Fatalf("upgrade existing database through revision 43: %v", err)
+	}
+	current, _, err := provider.GetVersions(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current != 43 {
+		t.Fatalf("upgraded schema revision = %d, want 43", current)
+	}
+	if err := admin.QueryRow(t.Context(), `SELECT to_regclass('refresh.manual_intent') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("revision 43 did not create refresh.manual_intent")
+	}
+	var rootGuard, occurrenceGuard string
+	if err := admin.QueryRow(t.Context(), `SELECT pg_get_functiondef('refresh.guard_run_insert()'::regprocedure), pg_get_functiondef('refresh.guard_occurrence_update()'::regprocedure)`).Scan(&rootGuard, &occurrenceGuard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rootGuard, "project environment already has an active root refresh run") || !strings.Contains(occurrenceGuard, "'queued','skipped'") {
+		t.Fatalf("revision 43 did not install scope-wide run and terminal-skip guards")
+	}
+	runtimeDB, err := pgxpool.New(t.Context(), database.URL(runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtimeDB.Close)
+	if _, err := runtimeDB.Exec(t.Context(), `SELECT count(*) FROM refresh.manual_intent`); err != nil {
+		t.Fatalf("runtime cannot read migrated manual intent table: %v", err)
 	}
 }
 

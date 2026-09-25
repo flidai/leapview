@@ -44,8 +44,12 @@ import { updateURLSearchParameter } from '../shared/url-search-state'
 import './connection-administration'
 import './dashboard-appearance-editor'
 import './pipelines-page'
+import './pipeline-detail-page'
+import './pipeline-run-page'
 import { projectBaseStyles } from './project-page-base.styles'
 import { projectOverviewStyles } from './project-page-overview.styles'
+import { renderAssetPageShell, renderAssetTabs as renderTabs } from './asset-page-shell'
+import { renderAssetConfiguration } from './asset-configuration'
 import { emptyLineageStatus, renderAssetLineage } from './project-lineage'
 const emptyConnectionAdministration: ConnectionAdministrationSignal = {
   command: {
@@ -581,6 +585,11 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       return
     }
     if (event.detail?.action === 'open-refresh-run') {
+      const runHref = fieldValue(event.detail.row ?? {}, 'runHref', '')
+      if (runHref && runHref !== '-' && runHref !== '—') {
+        window.location.assign(runHref)
+        return
+      }
       const runId = fieldValue(event.detail.row ?? {}, 'runId', '')
       if (!runId) return
       const wasOpen = this.refreshRunDrawer.open
@@ -724,16 +733,11 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   }
 
   private renderAssetPage(page: ResourceAssetPageSignal) {
-    return html`
-      <section
-        class=${`asset-page${page.activeSection === 'data' ? ' data-asset-page' : ''}${page.asset.type === 'semantic_model' && page.activeSection === 'definition' ? ' semantic-model-definition-page' : ''}`}
-        aria-label="Project asset detail"
-        @lv-record-table-action=${this.handleRecordTableAction}
-      >
-        <header class="breadcrumb-header">
-          ${renderAssetBreadcrumb(page)}
-          <div class="actions">
-            ${this.createDashboardHref ? html`
+    return renderAssetPageShell({
+      className: `asset-page${page.activeSection === 'data' ? ' data-asset-page' : ''}${page.asset.type === 'semantic_model' && page.activeSection === 'definition' ? ' semantic-model-definition-page' : ''}`,
+      label: 'Project asset detail',
+      breadcrumb: renderAssetBreadcrumb(page),
+      actions: html`${this.createDashboardHref ? html`
               <a class="action-link" href=${this.createDashboardHref}>
                 ${lucideIcon(ChartColumn)}
                 <span>Create dashboard</span>
@@ -747,17 +751,12 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
                 .administration=${this.connectionAdmin}
               ></lv-connection-administration>
             ` : nothing}
-            ${page.actions?.map((action) => this.renderAction(action, page))}
-          </div>
-        </header>
-        <div class="asset-body">
-          ${renderTabs(page.tabs)}
-          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'data' ? 'section-body data-body' : page.activeSection === 'definition' ? 'section-body definition-body' : page.asset.type === 'semantic_model' && page.activeSection === 'details' ? 'section-body semantic-model-body' : 'section-body'}>
-            ${this.renderSection(page)}
-          </div>
-        </div>
-      </section>
-    `
+            ${page.actions?.map((action) => this.renderAction(action, page))}`,
+      tabs: page.tabs,
+      bodyClass: page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'data' ? 'section-body data-body' : page.activeSection === 'definition' ? 'section-body definition-body' : page.asset.type === 'semantic_model' && page.activeSection === 'details' ? 'section-body semantic-model-body' : 'section-body',
+      body: this.renderSection(page),
+      onRecordTableAction: (event) => this.handleRecordTableAction(event as CustomEvent<{ action?: string, row?: ModelFieldDrawerRow }>),
+    })
   }
 
   private renderSection(page: ResourceAssetPageSignal) {
@@ -788,7 +787,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
           @click=${() => this.dispatchEvent(new CustomEvent('lv-run-refresh-pipeline', {
             bubbles: true,
             composed: true,
-            detail: { action: 'run', assetId: page.assetId, pipelineId: page.assetId, runId: '' },
+            detail: { action: 'run', assetId: page.assetId, intentId: '', pipelineId: page.assetId, runId: '' },
           }))}
         >
           ${page.refresh?.running ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : lucideIcon(RefreshCw)}
@@ -984,10 +983,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       <section class=${embedded ? 'details definition semantic-model-source' : 'details definition'} id=${embedded ? 'model-source' : 'definition'} aria-label="Asset definition">
         <div class="details-content">
           ${configuration?.code
-            ? html`<section class="detail-section configuration-section" aria-label="Configuration">
-                <h2>Configuration</h2>
-                <lv-config-viewer .configuration=${configuration.code} .language=${configuration.lang}></lv-config-viewer>
-              </section>`
+            ? renderAssetConfiguration(configuration.code, configuration.lang)
             : nothing}
           ${fallbackSections.length > 0
             ? fallbackSections.map(renderDetailSection)
@@ -1120,19 +1116,6 @@ function renderAssetTable(assets: ResourceAssetSummarySignal[], empty: string) {
     <div class="panel table-panel">
       <lv-record-table variant="primary" .table=${table}></lv-record-table>
     </div>
-  `
-}
-
-function renderTabs(tabs: ResourceTabSignal[], label = 'Asset sections') {
-  if (!tabs.length) return nothing
-  return html`
-    <nav class="tabs" aria-label=${label}>
-      ${tabs.map((tab) => html`
-        <a class=${tab.active ? 'active' : ''} href=${tab.href} aria-current=${tab.active ? 'page' : nothing}>
-          <span>${tab.label}</span>
-        </a>
-      `)}
-    </nav>
   `
 }
 

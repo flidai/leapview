@@ -1,6 +1,7 @@
 import { css, html, nothing } from 'lit'
 import { ChevronRight } from 'lucide'
 import { lucideIcon } from './lucide-icons'
+import { assetPresentation } from './asset-presentation'
 
 interface BreadcrumbItemBase {
   label: string
@@ -82,7 +83,14 @@ export const breadcrumbStyles = css`
     border: 0;
     background: transparent;
   }
+
+  .asset-breadcrumb-glyph { color: var(--lv-fg-muted); }
 `
+
+export function renderAssetBreadcrumbGlyph(type: string) {
+  const presentation = assetPresentation(type)
+  return html`<span class="breadcrumb-glyph asset-breadcrumb-glyph" aria-hidden="true">${lucideIcon(presentation.icon, { size: 16, strokeWidth: 1.75 })}</span>`
+}
 
 export function renderBreadcrumb(items: BreadcrumbItem[], label = 'Breadcrumb') {
   return html`

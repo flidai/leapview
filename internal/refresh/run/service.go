@@ -347,16 +347,16 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if err := validatePipelineInvocation(pipeline, &input); err != nil {
 		return QueueAssetResult{}, err
 	}
-	if checker, ok := s.Runs.(InvocationAdmissionChecker); ok {
-		if err := checker.CheckInvocationAdmission(ctx, input.Identity, input.PipelineID, input.InvocationSource); err != nil {
-			return QueueAssetResult{}, err
-		}
-	}
 	if input.TriggerType == TriggerSchedule && input.Occurrence != nil {
 		if checker, ok := s.Runs.(ScheduledInvocationAdmissionChecker); ok {
 			if err := checker.CheckScheduledInvocationAdmission(ctx, *input.Occurrence); err != nil {
 				return QueueAssetResult{}, err
 			}
+		}
+	}
+	if checker, ok := s.Runs.(InvocationAdmissionChecker); ok {
+		if err := checker.CheckInvocationAdmission(ctx, input.Identity, input.PipelineID, input.InvocationSource); err != nil {
+			return QueueAssetResult{}, err
 		}
 	}
 	plan, err := refreshplan.ForPipeline(loaded.Definition, input.Identity.ProjectID, input.PipelineID)
@@ -610,8 +610,15 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 	if err := s.revalidateBoundary(ctx, job, "prepare"); err != nil {
 		return err
 	}
-	if _, err := s.Runs.MarkRunPrepared(ctx, job); err != nil {
+	// A claimed run stays Running while its models build. Check the live worker
+	// fence here; only transition to Prepared once execution has produced a
+	// canonical result and publication can begin.
+	claimCurrent, err := s.Runs.RunMayPublish(ctx, job)
+	if err != nil {
 		return err
+	}
+	if !claimCurrent {
+		return ErrLeaseLost
 	}
 	if err := s.revalidateBoundary(ctx, job, "execute"); err != nil {
 		return err
@@ -622,15 +629,15 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 			// Supersession is reserved for scheduled overlap replacement. A
 			// manually invoked run with a stale base is a failed invocation;
 			// attempting to supersede it violates the durable run guard and
-			// strands the run in prepared after the platform job fails.
+			// strands the run after the platform job fails.
 			if job.TriggerType != TriggerSchedule {
-				if failErr := markRunFailedForWorker(ctx, s.Runs, job, err.Error()); failErr != nil {
+				if failErr := markRunFailedForWorker(ctx, s.Runs, job, SafeWorkerFailureMessage(err)); failErr != nil {
 					return errors.Join(err, fmt.Errorf("fail stale refresh tree: %w", failErr))
 				}
 				return err
 			}
 			if fenced, ok := s.Runs.(LeaseFencedSupersedeRepository); ok {
-				if supersedeErr := fenced.MarkRunTreeSupersededClaimed(ctx, job, err.Error()); supersedeErr != nil {
+				if supersedeErr := fenced.MarkRunTreeSupersededClaimed(ctx, job, SafeWorkerFailureMessage(err)); supersedeErr != nil {
 					return fmt.Errorf("supersede stale refresh tree: %w", supersedeErr)
 				}
 			} else {
@@ -638,15 +645,20 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 			}
 			return err
 		}
-		if failErr := markRunFailedForWorker(ctx, s.Runs, job, err.Error()); failErr != nil {
+		if failErr := markRunFailedForWorker(ctx, s.Runs, job, SafeWorkerFailureMessage(err)); failErr != nil {
 			return errors.Join(err, fmt.Errorf("fail refresh tree: %w", failErr))
 		}
 		return err
 	}
-	publication := s.Publication
-	if publication == nil {
+	if s.Publication == nil {
 		return fmt.Errorf("canonical refresh publication unit of work is required")
 	}
+	// Execution remains running while models build. Prepared is the short
+	// publication boundary after the canonical result is ready.
+	if _, err := s.Runs.MarkRunPrepared(ctx, job); err != nil {
+		return err
+	}
+	publication := s.Publication
 	completionCalled := false
 	var completionErr error
 	complete := func() error {

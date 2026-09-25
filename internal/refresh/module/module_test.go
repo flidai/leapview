@@ -15,6 +15,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	"github.com/flidai/leapview/internal/refresh/artifact"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/internal/servingstate"
@@ -153,7 +154,7 @@ func TestAssetRefreshStateReadsScopedRunsAndDataVersion(t *testing.T) {
 	run := refreshrun.RunRecord{ID: "run_1", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TargetRevision: 3, Status: refreshrun.RunStatusSucceeded}
 	m := &Module{runs: &testRunPersistence{targetRuns: []refreshrun.RunRecord{run}, latest: run}, schedules: &testScheduleRepository{versions: map[string]refreshschedule.DataVersion{"generation_a/orders": {Identity: identity, SemanticModelID: "orders", SnapshotID: 42, RefreshedAt: time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC), Source: refreshschedule.DataVersionSourceRefresh}}, next: time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC)}, service: refreshrun.Service{ServingStates: reconciliationStates{state: servingstate.State{ID: "generation_a", ProjectID: "project_sales", Environment: "dev"}}}}
 	state, err := m.AssetRefreshState(t.Context(), "project_sales", "dev", "pipeline_daily", "orders")
-	if err != nil || len(state.Runs) != 1 || state.LatestSuccessful.ID != "run_1" || state.DataVersion.SnapshotID != 42 {
+	if err != nil || len(state.Runs) != 1 || state.Runs[0].PipelineID != "pipeline_daily" || state.LatestSuccessful.ID != "run_1" || state.DataVersion.SnapshotID != 42 {
 		t.Fatalf("asset state = %#v, err=%v", state, err)
 	}
 }
@@ -167,6 +168,27 @@ func TestCancelPipelineRefreshForUIDeniesCrossPipelineRun(t *testing.T) {
 	}
 	if fake.cancelled {
 		t.Fatal("cross-pipeline cancel changed run state")
+	}
+}
+
+func TestCancelPipelineRefreshForUIRejectsStartedRun(t *testing.T) {
+	run := refreshrun.RunRecord{ID: "run_1", Identity: projectgraphIdentity("project_sales", "dev", "generation_a"), PipelineID: "pipeline_daily", TargetID: "pipeline_daily", TargetType: refreshrun.TargetRefreshPipeline, Status: refreshrun.RunStatusRunning}
+	fake := &testRunPersistence{run: run}
+	m := &Module{runs: fake}
+	if err := m.CancelPipelineRefreshForUI(t.Context(), run.Identity, "pipeline_daily", run.ID, "user:test"); !errors.Is(err, refreshrun.ErrRunNotCancellable) {
+		t.Fatalf("cancel running run error = %v, want not cancellable", err)
+	}
+	if fake.cancelled {
+		t.Fatal("running run reached cancellation repository")
+	}
+}
+
+func TestCancelPipelineRefreshForUIMapsClaimRaceToNotCancellable(t *testing.T) {
+	run := refreshrun.RunRecord{ID: "run_1", Identity: projectgraphIdentity("project_sales", "dev", "generation_a"), PipelineID: "pipeline_daily", TargetID: "pipeline_daily", TargetType: refreshrun.TargetRefreshPipeline, Status: refreshrun.RunStatusQueued}
+	fake := &testRunPersistence{run: run, cancelErr: refreshpostgres.ErrStaleFence}
+	m := &Module{runs: fake}
+	if err := m.CancelPipelineRefreshForUI(t.Context(), run.Identity, "pipeline_daily", run.ID, "user:test"); !errors.Is(err, refreshrun.ErrRunNotCancellable) {
+		t.Fatalf("cancel claimed run error = %v, want not cancellable", err)
 	}
 }
 
@@ -275,6 +297,7 @@ type testRunPersistence struct {
 	latest     refreshrun.RunRecord
 	run        refreshrun.RunRecord
 	cancelled  bool
+	cancelErr  error
 }
 
 func (*testRunPersistence) Enqueue(context.Context, jobs.EnqueueInput) (jobs.Job, error) {
@@ -361,7 +384,7 @@ func (p *testRunPersistence) GetRun(context.Context, refreshrun.ReadScope, strin
 }
 func (p *testRunPersistence) CancelRun(context.Context, projectgraph.ServingIdentity, string) (refreshrun.RunRecord, error) {
 	p.cancelled = true
-	return p.run, nil
+	return p.run, p.cancelErr
 }
 func (p *testRunPersistence) CancelRunWithAudit(context.Context, projectgraph.ServingIdentity, string, *access.AuditIntent) (refreshrun.RunRecord, error) {
 	p.cancelled = true

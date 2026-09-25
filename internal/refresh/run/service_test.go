@@ -41,12 +41,16 @@ func canonicalQueueService(repo *fakeRepo) Service {
 
 func TestServiceExecuteClaimedJobCompletesCanonicalTree(t *testing.T) {
 	repo := newFakeRepo()
+	repo.runStatuses["run_root"] = RunStatusRunning
 	executed := false
 	reconciled := false
 	service := Service{
 		Runs: repo,
 		CanonicalExecutor: func(_ context.Context, job JobRecord) (CanonicalRefreshResult, error) {
 			executed = true
+			if got := repo.runStatuses[job.RunID]; got != RunStatusRunning {
+				t.Fatalf("run status during execution = %q, want running", got)
+			}
 			if job.RunID != "run_root" {
 				t.Fatalf("canonical run = %q, want run_root", job.RunID)
 			}
@@ -89,6 +93,9 @@ func TestServiceExecuteClaimedJobCoordinatesCanonicalCompletion(t *testing.T) {
 		},
 		Publication: fakePublication{repo: repo, canonicalCalls: &canonicalCalls},
 		CanonicalCompletionCoordinator: func(_ context.Context, _ JobRecord, _ CanonicalRefreshResult, complete func() error) error {
+			if got := repo.runStatuses["run_root"]; got != RunStatusPrepared {
+				t.Fatalf("run status at publication = %q, want prepared", got)
+			}
 			order = append(order, "before")
 			if err := complete(); err != nil {
 				return err

@@ -71,6 +71,7 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
       return {
         flowHeight: Math.round(flowRect.height),
         flowWidth: Math.round(flowRect.width),
+        graphActions: Array.from(graph.querySelectorAll('.asset-lineage-actions button')).map((button) => button.textContent?.trim()),
         inspectorPanels: graph.querySelectorAll('.asset-lineage-panel').length,
         viewportPosition: getComputedStyle(viewport).position,
         viewportMatchesFlowWidth: Math.round(Number.parseFloat(getComputedStyle(viewport).width)) === Math.round(flowRect.width),
@@ -87,8 +88,9 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
     })
 
     expect(state).toEqual({
-      flowHeight: 420,
+      flowHeight: expect.any(Number),
       flowWidth: 900,
+      graphActions: ['Show all upstream', 'Fit', 'Expand graph'],
       inspectorPanels: 0,
       viewportPosition: 'absolute',
       viewportMatchesFlowWidth: true,
@@ -102,6 +104,7 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
       controlIconWidth: 12,
       controlIconFill: 'rgb(36, 41, 47)',
     })
+    expect(state.flowHeight).toBeLessThan(420)
   } finally {
     await page.close()
   }
@@ -135,7 +138,8 @@ test('asset lineage keeps the complete upstream and downstream path highlighted 
     await page.goto(baseURL)
     const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
     await graph.locator('.react-flow__node').first().waitFor()
-    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+    await graph.evaluate((element: HTMLElement & { graph: any; scope: string }) => {
+      element.scope = 'full'
       element.graph = {
         nodes: [
           { id: 'connection', label: 'CFO demo managed files', kind: 'connection', rank: -2 },
@@ -186,14 +190,14 @@ test('asset lineage uses a non-looping route for peers in the same rank', async 
       }
     })
     const edge = graph.locator('.react-flow__edge[data-id="model-a-model-b"]')
-    await edge.waitFor()
+    await edge.waitFor({ state: 'attached' })
     expect(await edge.getAttribute('class')).toContain('react-flow__edge-default')
   } finally {
     await page.close()
   }
 })
 
-test('asset lineage keeps dense graphs readable on initial fit', async () => {
+test('asset lineage keeps the selected node readable on a dense mobile fit', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
   try {
     await page.goto(`${baseURL}?dense=1`)
@@ -201,7 +205,7 @@ test('asset lineage keeps dense graphs readable on initial fit', async () => {
     await graph.locator('.react-flow__node').first().waitFor()
     await page.waitForFunction(() => {
       const graph = document.querySelector('lineage-test-host')?.shadowRoot?.querySelector('lv-asset-lineage-graph')
-      return graph?.querySelectorAll('.react-flow__node').length === 14
+      return graph?.querySelectorAll('.react-flow__node').length === 1
     })
 
     const state = await graph.evaluate((element) => {
@@ -214,16 +218,162 @@ test('asset lineage keeps dense graphs readable on initial fit', async () => {
       const nodeRects = Array.from(element.querySelectorAll<HTMLElement>('.react-flow__node')).map((node) => node.getBoundingClientRect())
       return {
         scale: Number(match?.[1]),
+        renderedTitlePixels: Number.parseFloat(getComputedStyle(selected.querySelector('.asset-lineage-node-title')!).fontSize) * Number(match?.[1]),
         selectedVisible: selectedRect.top >= flowRect.top
           && selectedRect.bottom <= flowRect.bottom
           && selectedRect.left < flowRect.right
           && selectedRect.right > flowRect.left,
-        allNodesVerticallyVisible: nodeRects.every((rect) => rect.top >= flowRect.top && rect.bottom <= flowRect.bottom),
+        focusedNodeCount: nodeRects.length,
+        titleWhiteSpace: getComputedStyle(selected.querySelector('.asset-lineage-node-title')!).whiteSpace,
+        titleTextOverflow: getComputedStyle(selected.querySelector('.asset-lineage-node-title')!).textOverflow,
       }
     })
-    expect(state.scale).toBeGreaterThanOrEqual(0.45)
+    expect(state.scale).toBeGreaterThanOrEqual(0.85)
+    expect(state.renderedTitlePixels).toBeGreaterThanOrEqual(12)
     expect(state.selectedVisible).toBe(true)
-    expect(state.allNodesVerticallyVisible).toBe(true)
+    expect(state.focusedNodeCount).toBe(1)
+    expect(state.titleWhiteSpace).toBe('normal')
+    expect(state.titleTextOverflow).toBe('clip')
+  } finally {
+    await page.close()
+  }
+})
+
+test('scope controls graph inclusion separately from Fit, and Expand opens a full-width workspace', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 720 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      element.style.width = '346px'
+      element.graph = {
+        nodes: [
+          { id: 'source-upstream', label: 'Earlier source outside the focus', kind: 'source', rank: -2 },
+          { id: 'source-direct', label: 'Direct source dependency with a long complete title', kind: 'source', rank: -1 },
+          { id: 'model-selected', label: 'Selected model with a long complete title', kind: 'model', rank: 0, selected: true },
+        ],
+        edges: [
+          { id: 'earlier-direct', source: 'source-upstream', target: 'source-direct', kind: 'uses_source' },
+          { id: 'direct-selected', source: 'source-direct', target: 'model-selected', kind: 'uses_source' },
+        ],
+      }
+    })
+    await graph.locator('.asset-lineage-node-selected').filter({ hasText: 'Selected model with a long complete title' }).waitFor()
+    const state = await graph.evaluate((element) => {
+      const flow = element.querySelector('.react-flow') as HTMLElement
+      const selected = element.querySelector('.asset-lineage-node-selected') as HTMLElement
+      const direct = Array.from(element.querySelectorAll<HTMLElement>('.react-flow__node')).find((node) => node.textContent?.includes('Direct source dependency'))!
+      const indirect = Array.from(element.querySelectorAll<HTMLElement>('.react-flow__node')).find((node) => node.textContent?.includes('Earlier source'))
+      const match = (element.querySelector('.react-flow__viewport') as HTMLElement).style.transform.match(/scale\(([-\d.]+)\)/)
+      const visible = (node: HTMLElement) => {
+        const rect = node.getBoundingClientRect()
+        const bounds = flow.getBoundingClientRect()
+        return rect.top >= bounds.top && rect.bottom <= bounds.bottom && rect.left < bounds.right && rect.right > bounds.left
+      }
+      return {
+        zoom: Number(match?.[1]),
+        nodeCount: element.querySelectorAll('.react-flow__node').length,
+        selectedVisible: visible(selected),
+        directVisible: visible(direct),
+        indirectIncluded: indirect !== undefined,
+        edgeIDs: Array.from(element.querySelectorAll<HTMLElement>('.react-flow__edge')).map((edge) => edge.getAttribute('data-id')),
+        completeTitle: selected.querySelector('.asset-lineage-node-title')?.textContent?.trim(),
+        clippedTitle: getComputedStyle(selected.querySelector('.asset-lineage-node-title')!).textOverflow,
+      }
+    })
+    expect(state.zoom).toBeGreaterThanOrEqual(0.85)
+    expect(state.nodeCount).toBe(2)
+    expect(state.selectedVisible).toBe(true)
+    expect(state.directVisible).toBe(true)
+    expect(state.indirectIncluded).toBe(false)
+    expect(state.edgeIDs).toEqual(['direct-selected'])
+    expect(state.completeTitle).toBe('Selected model with a long complete title')
+    expect(state.clippedTitle).toBe('clip')
+
+    const scopeToggle = graph.getByRole('button', { name: 'Show all upstream' })
+    await scopeToggle.click()
+    await graph.locator('.react-flow__node').filter({ hasText: 'Earlier source' }).waitFor()
+    expect(await graph.locator('.react-flow__node').count()).toBe(3)
+    expect(await graph.locator('.react-flow__edge').count()).toBe(2)
+    expect(await graph.locator('.asset-lineage-node-selected').textContent()).toContain('Selected model')
+    await page.waitForFunction(() => {
+      const graph = document.querySelector('lineage-test-host')?.shadowRoot?.querySelector('lv-asset-lineage-graph')
+      const flow = graph?.querySelector('.react-flow')
+      const selected = graph?.querySelector('.asset-lineage-node-selected')
+      if (!flow || !selected) return false
+      const flowBounds = flow.getBoundingClientRect()
+      const selectedBounds = selected.getBoundingClientRect()
+      return selectedBounds.top >= flowBounds.top && selectedBounds.bottom <= flowBounds.bottom
+        && selectedBounds.left >= flowBounds.left && selectedBounds.right <= flowBounds.right
+    })
+    const fullScopeView = await graph.evaluate((element) => {
+      const flow = element.querySelector('.react-flow') as HTMLElement
+      const selected = element.querySelector('.asset-lineage-node-selected') as HTMLElement
+      const scale = Number((element.querySelector('.react-flow__viewport') as HTMLElement).style.transform.match(/scale\(([-\d.]+)\)/)?.[1])
+      const selectedBounds = selected.getBoundingClientRect()
+        const flowBounds = flow.getBoundingClientRect()
+        return {
+          scale,
+          selectedVisible: selectedBounds.top >= flowBounds.top && selectedBounds.bottom <= flowBounds.bottom
+          && selectedBounds.left >= flowBounds.left && selectedBounds.right <= flowBounds.right,
+      }
+    })
+    expect(fullScopeView.selectedVisible).toBe(true)
+    expect(fullScopeView.scale).toBeCloseTo(state.zoom, 2)
+
+    await graph.getByRole('button', { name: 'Fit', exact: true }).click()
+    expect(await graph.locator('.react-flow__node').count()).toBe(3)
+    expect(await graph.getByRole('button', { name: 'Show direct dependencies' }).count()).toBe(1)
+    await graph.getByRole('button', { name: 'Show direct dependencies' }).click()
+    expect(await graph.locator('.react-flow__node').count()).toBe(2)
+
+    const expand = graph.getByRole('button', { name: 'Expand graph' })
+    const before = await graph.evaluate((element) => element.getBoundingClientRect().width)
+    await expand.click()
+    const close = graph.getByRole('button', { name: 'Close graph' })
+    await close.waitFor()
+    const expanded = await graph.evaluate((element) => ({
+      width: element.querySelector('dialog')!.getBoundingClientRect().width,
+      viewportWidth: document.documentElement.clientWidth,
+      position: getComputedStyle(element.querySelector('dialog')!).position,
+      modal: element.querySelector('dialog')!.matches(':modal'),
+      label: element.querySelector('dialog')!.getAttribute('aria-label'),
+    }))
+    expect(expanded.width).toBeGreaterThanOrEqual(expanded.viewportWidth - 2)
+    expect(expanded.position).toBe('fixed')
+    expect(expanded.modal).toBe(true)
+    expect(expanded.label).toBe('Expanded dependency graph')
+    expect((await graph.locator('.asset-lineage-dialog-title').textContent())?.trim()).toBe('Expanded dependency graph')
+    expect(await graph.locator('.react-flow__node').count()).toBe(2)
+    expect(await graph.locator('.asset-lineage-node-selected').textContent()).toContain('Selected model')
+    await page.waitForFunction(() => {
+      const graph = document.querySelector('lineage-test-host')?.shadowRoot?.querySelector('lv-asset-lineage-graph')
+      const flow = graph?.querySelector('.react-flow')
+      const selected = graph?.querySelector('.asset-lineage-node-selected')
+      if (!flow || !selected) return false
+      const flowBounds = flow.getBoundingClientRect()
+      const selectedBounds = selected.getBoundingClientRect()
+      const center = (selectedBounds.left + selectedBounds.right) / 2
+      const fraction = (center - flowBounds.left) / flowBounds.width
+      return fraction >= 0.4 && fraction <= 0.6
+    })
+    const dialog = graph.locator('dialog')
+    await page.waitForFunction(() => {
+      const dialog = document.querySelector('lineage-test-host')?.shadowRoot?.querySelector('lv-asset-lineage-graph dialog')
+      return Boolean(dialog?.matches(':focus-within'))
+    })
+    for (let index = 0; index < 24; index++) {
+      await page.keyboard.press('Tab')
+      expect(await dialog.evaluate((element) => element.matches(':focus-within'))).toBe(true)
+    }
+    await page.keyboard.press('Escape')
+    await graph.getByRole('button', { name: 'Expand graph' }).waitFor()
+    expect(await graph.getByRole('button', { name: 'Expand graph' }).evaluate((element) => element.matches(':focus'))).toBe(true)
+    expect(await graph.locator('.asset-lineage-node-selected').textContent()).toContain('Selected model')
+    await graph.getByRole('button', { name: 'Expand graph' }).click()
+    await graph.getByRole('button', { name: 'Close graph' }).click()
+    await graph.getByRole('button', { name: 'Expand graph' }).waitFor()
   } finally {
     await page.close()
   }
@@ -243,6 +393,7 @@ function testDocument(): string {
             --base-text-lineHeight-normal: 1.5;
             --lv-type-caption: 400 12px/1.25 system-ui;
             --lv-type-body: 400 14px/1.5 system-ui;
+            --lv-type-body-compact: 400 14px/1.4 system-ui;
             --lv-type-code-inline: 400 0.9285em ui-monospace;
             --lv-bg-app: #f6f8fa;
             --lv-bg-page: #f6f8fa;

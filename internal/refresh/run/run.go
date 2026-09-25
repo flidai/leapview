@@ -81,6 +81,25 @@ type RunRecord struct {
 	Error          string                  `json:"error,omitempty"`
 }
 
+// RunAttemptRecord is persisted worker-attempt evidence. It intentionally
+// omits worker and fencing identities from user-facing run investigation.
+// Duration is derived by readers only when both stored timestamps are valid.
+type RunAttemptRecord struct {
+	Number     int64  `json:"number"`
+	Status     string `json:"status"`
+	ClaimedAt  string `json:"claimedAt"`
+	StartedAt  string `json:"startedAt,omitempty"`
+	FinishedAt string `json:"finishedAt,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// RunAttemptPage is a bounded, chronologically ordered read of persisted
+// attempts for one run.
+type RunAttemptPage struct {
+	Attempts  []RunAttemptRecord `json:"attempts"`
+	Truncated bool               `json:"truncated"`
+}
+
 type RunInput struct {
 	// RunID is an optional caller-owned command identity. PostgreSQL adapters
 	// require it (or another explicit invocation identity) for exact replay;
@@ -200,8 +219,8 @@ type MonitorFilter struct {
 }
 
 type MonitorPage struct {
-	Runs                             []RunRecord
-	Total, Failed, Completed, Active int64
+	Runs  []RunRecord
+	Total int64
 }
 
 // RunTreeInput describes one refresh pipeline root and all dependency

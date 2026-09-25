@@ -192,6 +192,14 @@ func projectRouteUpdatesURL(routeKind uisignals.RouteKind, catalog catalog.Catal
 	case uisignals.PipelinePageSignal:
 		pairs := []string{"surface", "pipelines", "view", typed.ActiveTab, "environment", typed.Environment}
 		if monitor := typed.RunMonitor; monitor != nil {
+			pairs = append(pairs, "q", monitor.Query, "range", monitor.Range, "pipeline", monitor.Pipeline, "status", monitor.Status,
+				"trigger", monitor.Trigger, "page", strconv.FormatInt(monitor.Page, 10))
+		}
+		return updatesURL(routeKind, pairs...)
+	case PipelineDetailPageSignal:
+		pairs := []string{"surface", "pipeline_detail", "environment", typed.Environment,
+			"asset", typed.Asset.ID, "section", typed.ActiveTab}
+		if monitor := typed.RunMonitor; monitor != nil {
 			pairs = append(pairs, "q", monitor.Query, "range", monitor.Range, "status", monitor.Status,
 				"trigger", monitor.Trigger, "page", strconv.FormatInt(monitor.Page, 10))
 		}
@@ -310,11 +318,14 @@ type AssetDataVersion struct {
 	ServingStateID string
 	RefreshedAt    time.Time
 	Source         string
+	PipelineID     string
+	RunID          string
 }
 
 type AssetRefreshRun struct {
 	ID                   string
 	Environment          string
+	PipelineID           string
 	ModelID              string
 	ServingStateID       string
 	PrincipalID          string

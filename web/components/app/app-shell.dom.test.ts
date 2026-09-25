@@ -1042,7 +1042,7 @@ test('archive persists before showing five-second Undo and waits for cancellatio
     })
     await page.getByRole('status').filter({ hasText: 'Archived chat' }).waitFor()
     expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('lv-chat-manager.pending-undo')!)[0].deadline - Date.now())).toBeGreaterThan(4_000)
-    await page.locator('button.undo').click()
+    await page.locator('lv-toast[data-conversation-id="c1"] button.action').click()
     expect(await page.evaluate(() => (window as any).chatActions.map((a: any) => a.action))).toEqual(['archive_pending', 'undo'])
     expect(await page.evaluate(() => (window as any).chatActions[0].requestId === (window as any).chatActions[1].requestId)).toBe(true)
     await page.evaluate(() => {
@@ -1070,7 +1070,7 @@ test('chat actions keep independent Undo notifications without waiting for the f
     await page.evaluate(() => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
-    await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c1"] button.action').waitFor()
 
     await page.evaluate(() => {
       document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'delete', conversationId: 'c2', title: 'Inventory status' } }))
@@ -1082,19 +1082,19 @@ test('chat actions keep independent Undo notifications without waiting for the f
       ;(window as any).testMergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: (window as any).chatActions[1].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
 
-    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
-    expect(await page.locator('button.undo').count()).toBe(2)
+    await page.locator('lv-toast[data-conversation-id="c2"] button.action').waitFor()
+    expect(await page.locator('lv-toast[data-conversation-id] button.action').count()).toBe(2)
     expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('lv-chat-manager.pending-undo')!).length)).toBe(2)
     expect(await page.locator('a[href="/chats/c1"], a[href="/chats/c2"]').count()).toBe(0)
 
-    await page.locator('button.undo[data-conversation-id="c1"]').click()
+    await page.locator('lv-toast[data-conversation-id="c1"] button.action').click()
     await page.waitForFunction(() => (window as any).chatActions.length === 3)
     await page.evaluate(() => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'undo', completedRequestId: (window as any).chatActions[2].requestId, message: '', archivedConversations: [] } })
     })
 
-    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
-    expect(await page.locator('button.undo').count()).toBe(1)
+    await page.locator('lv-toast[data-conversation-id="c2"] button.action').waitFor()
+    expect(await page.locator('lv-toast[data-conversation-id] button.action').count()).toBe(1)
     expect(await page.locator('a[href="/chats/c1"]').count()).toBe(1)
     expect(await page.locator('a[href="/chats/c2"]').count()).toBe(0)
   } finally {
@@ -1119,7 +1119,7 @@ test('expired chat Undo refreshes the sidebar before releasing its temporary hid
     await page.evaluate(() => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
     })
-    await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c1"] button.action').waitFor()
     await page.waitForFunction(() => (window as any).managementLoads.length > 0)
 
     const duringRefresh = await page.locator('lv-app-shell').evaluate((element: any) => {
@@ -1170,7 +1170,7 @@ test('expired chat refresh keeps the current focus when the sidebar read succeed
     await page.evaluate(() => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
     })
-    await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c1"] button.action').waitFor()
     await page.waitForFunction(() => (window as any).managementLoads.length > 0)
     await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any

@@ -118,7 +118,7 @@ func pipelineOverviewRun(asset projectview.DevelopAssetView, run AssetRefreshRun
 	return uisignals.PipelineOverviewRunSignal{
 		Duration:  uisignals.Optional(refreshRunDuration(run)),
 		Error:     uisignals.Optional(strings.TrimSpace(run.Error)),
-		Href:      assetnav.CanonicalAssetSectionHref(asset, "refreshes") + "?refresh=" + url.QueryEscape(run.ID),
+		Href:      pipelineRunHref(asset.ID, run.ID),
 		ID:        run.ID,
 		StartedAt: uisignals.Optional(run.StartedAt),
 		Status:    strings.ToLower(strings.TrimSpace(run.Status)),

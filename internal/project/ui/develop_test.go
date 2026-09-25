@@ -248,7 +248,7 @@ func TestPipelineOverviewReportsRunsWithoutInferringSuccessFromPublishedData(t *
 	if monitor == nil || monitor.Status != "failed" || monitor.LatestRun == nil || monitor.LatestRun.Error == nil || *monitor.LatestRun.Error != "Source unavailable" {
 		t.Fatalf("failed run monitor = %#v", monitor)
 	}
-	if monitor.LatestRun.Href != "/pipelines/pipeline:sales/refreshes?refresh=run%3Afailed" || len(monitor.RecentRuns) != 1 {
+	if monitor.LatestRun.Href != "/pipelines/pipeline:sales/runs/run:failed" || len(monitor.RecentRuns) != 1 || monitor.RecentRuns[0].Href != monitor.LatestRun.Href {
 		t.Fatalf("run links = %#v", monitor)
 	}
 }
@@ -794,7 +794,7 @@ func TestModelRefreshesSectionIncludesTargetRunHistory(t *testing.T) {
 	if page.Refresh.RunsTable.RowAction == nil || *page.Refresh.RunsTable.RowAction != "open-refresh-run" {
 		t.Fatalf("model refresh table action = %#v", page.Refresh.RunsTable.RowAction)
 	}
-	wantColumns := []string{"status", "started", "duration", "trigger", "triggered_by"}
+	wantColumns := []string{"status", "started", "run", "duration", "trigger", "triggered_by"}
 	for index, want := range wantColumns {
 		if got := page.Refresh.RunsTable.Columns[index].ID; got != want {
 			t.Fatalf("model refresh column %d = %q, want %q", index, got, want)
