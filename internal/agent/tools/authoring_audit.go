@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
-	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
@@ -37,41 +35,11 @@ func agentAuthoringAuditContext(ctx context.Context, project projectgraph.Resour
 	if err != nil {
 		return nil, "", err
 	}
-	contract, ok := dashboardgen.GetAPIGenCommandRuntimeContract(operation)
-	if !ok || contract.Guarantee != apigencommand.GuaranteeTransactional {
-		return nil, "", fmt.Errorf("dashboard authoring operation %q has no transactional audit contract", operation)
-	}
-	if dashboardID == "" {
-		dashboardID = "pending-dashboard"
-	}
-	if draftID == "" {
-		draftID = "pending-draft"
-	}
-	payload := dashboardgen.GenSchemaDashboardAuthoringCommandAuditPayload{
-		OperationId: operation, ProjectId: project.String(), DashboardId: dashboardID,
-		DraftId: draftID, Origin: string(authoring.OriginAgent),
-	}
-	var metadata string
-	switch operation {
-	case "createDashboardAuthoringDraft":
-		metadata, err = dashboardgen.EncodeGenCreateDashboardAuthoringDraftAuditPayload(payload)
-	case "forkDashboardAuthoringDraft":
-		metadata, err = dashboardgen.EncodeGenForkDashboardAuthoringDraftAuditPayload(payload)
-	case "executeDashboardAuthoringCommand":
-		metadata, err = dashboardgen.EncodeGenExecuteDashboardAuthoringCommandAuditPayload(payload)
-	default:
-		return nil, "", fmt.Errorf("unknown dashboard authoring operation %q", operation)
-	}
+	ctx, err = authoring.WithCommandAuditIntent(ctx, operation, project, id, scope.PrincipalID, dashboardID, draftID, authoring.OriginAgent, capability)
 	if err != nil {
 		return nil, "", err
 	}
-	intent := access.AuditIntent{
-		EventID: id, Source: "dashboard.authoring", Operation: operation,
-		ActorID: scope.PrincipalID, PrincipalID: scope.PrincipalID, Action: contract.AuditAction,
-		ResourceKind: "dashboard", ResourceID: dashboardID, Capability: capability,
-		Outcome: "success", MetadataJSON: metadata,
-	}
-	return authoring.WithAuditIntent(ctx, intent), id, nil
+	return ctx, id, nil
 }
 
 func agentAuthoringCapability(command authoring.Command) access.Capability {
