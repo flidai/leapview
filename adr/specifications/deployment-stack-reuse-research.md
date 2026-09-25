@@ -8,8 +8,10 @@ Governing proposal: [ADR-0025](../0025-share-an-open-deployment-stack-for-self-h
 
 Scope clarification after this research: self-hosting prioritizes a straightforward
 Compose installation; operator deployments prioritize reuse and robustness. The
-ADR now proposes Kubernetes/Argo for v1 operated deployments on European Hetzner
-infrastructure. Customer-owned infrastructure is a future portability requirement.
+ADR now proposes Kamal on one dedicated application VPS per customer on European
+Hetzner infrastructure, with external managed PostgreSQL and managed S3-compatible
+storage. Restart-based rollback and measured downtime are accepted; a warm retained
+release is no longer required. Customer-owned infrastructure remains a future option.
 The alternatives below remain research context, not additional v1 support promises.
 
 ## Evaluation objective
@@ -21,9 +23,9 @@ Fewer named tools alone does not establish a simpler system.
 
 The public Compose installation remains supported. Managed hosting uses dedicated
 customer environments, with the same application images and public operational
-contracts. A customer environment may require several VPSs to meet its availability
-objectives; this must be explicitly sized and priced. Namespace separation in a
-shared cluster is not a substitute for the agreed dedicated infrastructure model.
+contracts. V1 has single-host application availability. Higher availability is a
+separately qualified topology when service obligations require it. External data
+services improve host-replacement recovery but cannot prevent application outages.
 
 ## Findings and recommendation
 
@@ -34,9 +36,9 @@ Do not commit to supporting every candidate below.
 
 | Candidate | Existing machinery reused | Remaining cost or limitation | Research conclusion |
 |---|---|---|---|
-| Stock Kamal | Remote container deployment and health-gated release switching | Stops the old container; warm retained releases require additional orchestration; host lifecycle remains ours | Baseline for a small VM offering with restart-based rollback |
+| Stock Kamal | Remote container deployment and health-gated release switching | Stops the old container; warm retained releases require additional orchestration; host lifecycle remains ours | Selected proposed v1 path with restart-based rollback |
 | Docker Swarm + Traefik | Service reconciliation, replica replacement, configurable rolling updates and failure rollback, dynamic ingress | Cluster/quorum and host operations remain ours; no built-in retained full blue/green release contract | Lightweight candidate if rolling replacement meets the service objectives |
-| Managed Kubernetes + Argo Rollouts | Managed node/control-plane lifecycle plus standard rollout controllers | Provider cost and qualification, Kubernetes configuration, controller upgrades and application integration | Preferred candidate to investigate for the proposed warm-release enterprise profile |
+| Managed Kubernetes + Argo Rollouts | Managed node/control-plane lifecycle plus standard rollout controllers | Provider cost and qualification, Kubernetes configuration, controller upgrades and application integration | Deferred alternative if future requirements justify advanced release analysis |
 | Self-managed K3s + Argo Rollouts | Standard rollout controllers and Kubernetes APIs | We own cluster upgrades, networking, datastore recovery and failure response | Portable alternative, but does not remove cluster operations |
 | Uncloud | Compose-oriented deployment, networking and Caddy integration | Failed updates can leave mixed versions; unhealthy containers are removed from routing without automatic health-triggered restart/rollback after deployment | Revisit after core release requirements are satisfied; not the leading candidate |
 | Coolify / Dokploy | Operator UI/API and deployment management | Underlying deployment semantics and edition boundaries still matter | Useful administration products; not sufficient grounds to select a release engine |
@@ -54,7 +56,27 @@ failure-domain design; the latter requires at least three server nodes.
 supplies routing configuration; certificate renewal and ingress availability still
 need qualification on the chosen topology.
 
-### Why Argo Rollouts changes the earlier recommendation
+### Why the revised requirements favor Kamal
+
+The previous Kubernetes recommendation depended on warm retained releases and
+native post-promotion analysis. Accepting restart-based rollback removes those
+requirements. Kamal reuses health-gated deployment while avoiding a Kubernetes
+lifecycle and managed-cluster provider dependency for each customer.
+
+The documented [rollback](https://kamal-deploy.org/docs/commands/rollback/) uses
+an earlier image; local pruning and artifact/configuration retention must match
+the supported window. The [proxy health check](https://kamal-deploy.org/docs/configuration/proxy/)
+ends after deployment, so continuous off-host monitoring and operator response
+remain necessary. Qualify SSE buffering, timeouts, uploads and drain behavior.
+Normal deployment still overlaps processes and needs memory and worker fencing.
+
+Host maintenance stays with us. Managed PostgreSQL and managed S3 storage keep
+durable state outside the application VPS; their backup and coordinated recovery
+behavior require separate evidence. Rebuilding a host against intact data must
+not rewind acknowledged writes. A single-host outage remains an outage, and
+service/customer qualification determines whether its measured recovery is adequate.
+
+### Argo Rollouts for a future stricter release profile
 
 [Argo Rollouts blue/green](https://argoproj.github.io/argo-rollouts/features/bluegreen/)
 already models active/preview services, promotion analysis, rollback after failed
@@ -85,7 +107,8 @@ security boundary.
 
 ### Managed Kubernetes on Hetzner is a distinct option
 
-Evaluate these services before choosing to operate K3s ourselves:
+These services were researched for the earlier warm-release proposal. They are
+not prerequisites or selected providers for the Kamal v1 profile:
 
 - [Syself Autopilot](https://syself.com/docs/hetzner/apalla/concepts/overview)
   documents clusters in the customer's Hetzner account and managed node OS,
@@ -103,8 +126,7 @@ Evaluate these services before choosing to operate K3s ourselves:
 
 These are third-party services, not Hetzner Cloud's own managed Kubernetes
 offering. Procurement and technical qualification remain open. Keep application
-packaging standard and public so self-hosters can use upstream Kubernetes and
-the managed business can change providers.
+packaging standard and public if a future Kubernetes profile is adopted.
 
 Provider-owned node lifecycle should replace our host provisioning and patching
 automation for those nodes. Do not run Ansible and infrastructure reconciliation
@@ -130,9 +152,8 @@ needs to be installed into every customer environment.
 ## Additional infrastructure code to avoid
 
 - **Proxy discovery and certificate controllers:** use the selected platform's
-  standard ingress. Compose can retain Caddy; Kubernetes can use its supported
-  ingress with [cert-manager](https://cert-manager.io/docs/usage/ingress/).
-  Do not carry Caddy plus Kamal Proxy into Kubernetes by default.
+  standard edge. Compose uses optional Caddy; managed Kamal uses kamal-proxy.
+  Avoid multiple release-routing owners.
 - **PostgreSQL backup engines:** use qualified managed backup/PITR or a mature
   native tool such as [pgBackRest](https://pgbackrest.org/user-guide.html).
   LeapView should invoke supported operations and validate the recovered state.
@@ -162,19 +183,19 @@ configuration, and application-specific checks should be added where they suffic
 
 The UBDR project remains the home for release/recovery correctness and evidence.
 Replacing deployment mechanics must preserve that evidence contract and requalify
-the new path. A prior successful Compose qualification does not qualify Argo or
-Swarm. Conversely, a new platform is not a reason to replace completed recovery
-ledger and provider-handoff work.
+the new path. A prior successful Compose qualification does not qualify Kamal.
+Conversely, a new platform is not a reason to replace completed recovery ledger
+and provider-handoff work.
 
 ## Bounded selection exercise
 
-First retain the warm previous-release requirement as the working assumption.
-Evaluate managed Kubernetes plus Argo Rollouts against stock Kamal's operational
-baseline. If service objectives permit rolling replacement instead, include
-Swarm plus Traefik as the lighter alternative. Avoid writing a bespoke blue/green
-controller to make the lighter option pass a different requirement.
+Qualify Kamal first against the revised restart-based rollback contract. The
+selected managed shape is one application VPS per customer with external managed
+PostgreSQL and S3 storage. Keep Compose for self-hosters. Reopen platform selection
+only if measured product behavior or service obligations reveal a concrete gap;
+do not rebuild Argo-style warm retention and analysis around Kamal.
 
-For each shortlisted path, record:
+For the selected path, record:
 
 1. Product-independent controller/host code removed and new integration code added.
 2. Manual steps for onboarding, upgrades, failures, certificate renewal and rebuild.
@@ -182,8 +203,9 @@ For each shortlisted path, record:
 4. Exact-version upgrade; failure before and after promotion; rollback after writes;
    node loss; management outage; and fresh-environment restoration outcomes.
 5. Customer isolation, operator access, provider exit and independent self-hosting.
-6. Remaining ownership for node OS, cluster, controllers, ingress and data services.
+6. Remaining ownership for OS, Docker, Kamal/proxy, monitoring and data services.
 
-Choose one managed path based on these results. Retire replaced mechanisms only
-after equivalent application guarantees and recovery evidence are demonstrated.
+Confirm or revisit the proposed managed path from these results. Retire replaced
+mechanisms only after equivalent application guarantees and recovery evidence are
+demonstrated.
 This research ran no deployment, benchmark, failover or restore exercise.

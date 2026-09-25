@@ -9,62 +9,77 @@ Related: [ADR-0025](../0025-share-an-open-deployment-stack-for-self-hosted-and-m
 
 ## Purpose and release gates
 
-Make the two deployment profiles' promises precise without implementing a custom
-deployment controller. Use existing tooling, shared LeapView lifecycle commands,
-and the UBDR occurrence/evidence contracts. Linear tracks milestone owners and
-delivery status. This specification records the required decisions and proof.
+Qualify public Compose self-hosting and the operated Kamal profile using existing
+tooling, shared LeapView lifecycle commands, and the UBDR occurrence/evidence
+contracts. Linear tracks owners and delivery status. No production capability or
+numeric service guarantee is established by this specification.
 
-| Gate | Required before | Current decision state |
+| Gate | Required before | Open decisions and evidence |
 |---|---|---|
-| Operated cluster and provider | Launching managed Kubernetes deployments | Provider, topology, responsibilities and evidence unresolved |
-| Bundled Compose dependencies | Advertising the bundled single-host production profile | Storage implementation and dependency lifecycle evidence unresolved |
+| Operated VPS and managed data services | Managed launch | Provider/region selection, host operations, isolation, measured recovery, customer eligibility |
+| Bundled Compose dependencies | Advertising bundled single-host production support | Storage implementation, persistence and dependency lifecycle evidence |
 
-Acceptance of the architectural direction does not satisfy these gates. Record
-the actual release, configuration, provider, topology, reviewer and dated evidence
-for each result. No target duration or customer promise is invented here.
+Record the release, configuration, providers, resource layout, reviewer and dated
+results for each gate. The managed profile uses one application VPS per customer
+and external managed PostgreSQL and managed S3-compatible storage. The Compose
+profile retains bundled dependencies and can accept external services.
 
-## Operated cluster qualification
+## Operated profile qualification
 
-Select a provider available on European Hetzner infrastructure. Record worker,
-control-plane, backup and relevant operational-data locations, account ownership,
-customer isolation, supported Kubernetes/Argo versions, and service costs. Verify
-the ability to install and operate Argo Rollouts with its required CRDs and RBAC.
+### Ownership and locations
 
-For every responsibility below, name one accountable party, the implementing
-tool/service, maintenance procedure, failure escalation and recovery evidence:
+Record European application, database, object and backup regions, plus telemetry,
+secret-service and support access locations. Name the accountable party,
+implementation, maintenance process, escalation and recovery evidence for each:
 
 | Responsibility | Required coverage |
 |---|---|
-| Control plane | Availability, upgrades, configuration recovery and access |
-| Workers | OS patching, replacement, drain behavior, capacity and placement |
-| Networking | CNI, cross-node encryption where required, network policy, DNS and load balancing |
-| Public edge | Ingress lifecycle, certificates, renewal, trusted client identity and SSE |
-| Controllers | Argo/other installed controller versions, permissions, upgrades and recovery |
-| Persistent state | Cluster configuration, runtime-created objects, secrets and independent application recovery |
-| Support | Hours, escalation, maintenance notice/control, provider outage behavior and exit procedure |
+| Hetzner resources | Account ownership, dedicated customer VPS, quotas, replacement capacity and region failure |
+| Host and Docker | OS baseline, vulnerability updates, Docker upgrades, reboot windows, firewall and recovery |
+| Kamal and proxy | Pinned versions, application updates, rollback, HTTPS renewal, trusted client identity and SSE |
+| Managed PostgreSQL | Customer isolation, roles, TLS, HA/failover, major upgrades, PITR, retention, export and restore |
+| Managed S3 storage | Customer isolation, conditional writes, versioning, retention, deletion protection, recovery/export and keys |
+| Operations | Scoped credentials, monitoring, retained audit records, support coverage, incident response and supplier exit |
 
-Do not infer ownership from the phrase managed Kubernetes. A provider may leave
-ingress, controllers, secrets or backups to us. Explicitly accept and qualify that
-work or select a service that owns it. Our automation must not reconcile resources
-also owned by the provider's controllers.
+OpenTofu provisions declared infrastructure; Ansible configures hosts; Kamal owns
+application/proxy deployment. Do not let Compose and Kamal manage the same
+containers. Managed data providers own only the duties explicitly supported by
+their service and contract. LeapView retains coordinated recovery correctness.
 
-### Customer isolation selection
+### Isolation and durable state
 
-Select and document one model before launch:
+Use one customer application VPS and scoped deployment credentials per customer.
+Specify dedicated database resources/roles and bucket resources/credentials,
+backup access and all shared administration. Do not infer physical host or storage
+hardware exclusivity. Reject cross-customer database, object and operator access;
+prove resource exhaustion in one application VPS cannot consume another's compute.
+Document any shared data-provider capacity or management failure impact.
 
-- **Separate cluster per customer:** record customer-specific worker resources,
-  cluster access, management-service access and provider/control-plane overhead.
-- **Shared cluster with dedicated customer worker pools:** record scheduling
-  enforcement, restrictions on cross-pool placement, shared administrators and
-  controllers, network policy and shared control-plane failure impact.
+Keep PostgreSQL control/catalog state and durable objects outside the application
+VPS. Inventory local files and classify them as reconstructible caches/scratch or
+state requiring explicit preservation. Acknowledged durable writes must survive
+application host replacement. Stage uploads with defined acknowledgement and retry
+semantics. Independent data services do not make the application highly available.
 
-Shared workers with namespaces alone do not satisfy the dedicated-compute offering.
-For either model, specify database/storage isolation and all shared system
-components. Exercise rejected cross-customer scheduling/access and a customer
-overload or failure. Record whether it affects another customer's service.
+Rebuild on an empty VPS and reconnect to intact data. Fence the previous host
+before permitting writes, including if it returns after replacement. Recover or
+reconcile in-flight jobs safely. Restore older data only for an explicit recovery
+scenario, not as an automatic consequence of losing application compute.
 
-The specification intentionally leaves the model unresolved until reviewed
-against the offering; an implementer may not silently choose the cheaper model.
+### Managed data-service lifecycle
+
+Qualify PostgreSQL versions, extensions/catalog behavior, privilege separation,
+connection security, failover, major upgrades and independently usable backup
+export. Qualify S3 conditional creation together with versioning, retention and
+object recovery. Verify isolation of recovery copies and access paths from a
+compromised production identity; versioning alone is insufficient protection.
+
+Exercise coordinated PostgreSQL/catalog/object/key restoration after corruption
+and provider loss. Test provider or service migration and account/credential loss
+within the declared recovery scope. Include object garbage collection, retention,
+key availability and secret-service dependencies in the recoverable-point proof.
+Use native provider operations or established backup tooling; no custom backup
+engine. Measure cross-provider latency, throughput, recovery transfer time and cost.
 
 ## Bundled Compose dependency qualification
 
@@ -92,79 +107,108 @@ avoid a new LeapView database backup or upgrade engine.
 
 ## Release behavior by profile
 
-| Behavior | Compose | Operated Kubernetes |
+| Behavior | Compose | Operated Kamal |
 |---|---|---|
-| Update mechanism | Documented Compose reconciliation | Argo Rollouts blue/green |
-| Availability | Measured maintenance/interruption bound | Measured cutover/drain bound with overlapping releases |
-| Prior release | Retained immutable artifact and supported restart procedure | Running prior replicas for the declared observation/rollback window |
-| Rollback eligibility | Shared compatibility policy | Same compatibility policy |
-| Durable state | Current compatible data; explicit recovery for incompatible transitions | Same contract; traffic rollback does not restore data |
+| Update | Documented Compose reconciliation | Candidate readiness, proxy switch, drain and stop prior container |
+| Interruption | Measured maintenance/restart bounds | Measured cutover/reconnection and restart-rollback bounds |
+| Previous release | Retained immutable artifact and restart procedure | Retained images and matching configuration; no running standby requirement |
+| Post-deploy failure | Monitoring and operator procedure where configured | Off-host monitoring, alert, campaign halt and operator rollback/recovery |
+| Durable state | Compatible current data; explicit restore for incompatible transitions | Same contract; application rollback does not rewind PostgreSQL or objects |
 
-### Analysis and release retention
+### Release and artifact policy
 
-Pin the Argo version and record active/preview Services, readiness probes,
-pre/post-promotion analysis, queries, thresholds, retries, timeouts, observation
-window and previous-release scale-down settings. Configure these jointly; retaining
-an image or finishing a readiness probe is not proof of the whole observation
-window.
+Pin Kamal/proxy versions. Record readiness checks, deployment/drain/stop timeouts,
+SSE buffering and response timeouts, upload limits, resource limits and supported
+release pairs. Deploy CI-built immutable artifacts; verify the image identity
+actually running. Serialize releases per environment and promote customers in
+explicit batches using ordinary CI/inventory controls.
 
-The proposed safety policy is:
+Retain images, versioned configuration and compatible secret inputs for the
+supported rollback window. Align local pruning and registry retention. Test
+rollback without registry access; define the fallback and recovery bound if the
+prior artifact is absent. A retained container alone does not prove that its old
+configuration or credentials are still usable.
 
-- Before promotion, missing, stale, empty or inconclusive required evidence blocks
-  promotion. After bounded retries or review time, abort the candidate and alert.
-- After promotion, failed checks or an inability to establish success within the
-  bounded observation policy abort to the compatible retained release and alert.
-  An inconclusive result may pause within that bound; it cannot mark success.
-- The old release must remain ready through the observation/abort deadline and
-  the qualified reconciliation allowance. Test native controller behavior when
-  analysis, controller downtime and scale-down deadlines interact.
-- Unknown data is never zero errors. Low-traffic deployments use explicitly
-  defined representative checks rather than an empty query result as success.
+Kamal's initial health gate is not continuous application supervision. Configure
+off-host monitoring and alerts. Required unavailable, empty, stale or failed
+checks stop further customer promotion. An operator investigates within the
+approved response window and rolls back or invokes recovery as appropriate.
+Low traffic needs explicit representative checks; empty metrics cannot mean
+success. Document the monitoring-outage procedure and release freeze. No automatic
+metrics-driven rollback, retained warm release or custom controller is assumed.
 
-Map this policy to standard controller settings and supported analysis checks.
-If the selected version cannot satisfy it, revise the configuration or proposal;
-do not implement a parallel rollout controller. Qualify late failures and lost
-metrics after traffic has switched, plus runner/controller interruption before
-and after promotion.
+Measure the time from failure detection through operator response, restart,
+readiness and successful user requests. Include the support coverage actually
+sold. Ordinary application rollback cannot downgrade incompatible durable state.
 
-### Background work
+### Background work and overlap
 
-The release specification must record which processes may claim each mutating job
-kind during preview, promotion, observation, rollback and final retirement.
-The default requirement is that preview and retained HTTP releases do not claim
-mutating background work. Transfer active work authority through existing durable
-claims/fencing and drain or recover in-flight jobs safely. A separately deployed
-compatible worker role is also possible if its lifecycle is explicitly specified.
+Define job admission, ownership, draining and fencing during candidate startup,
+cutover, rollback and host replacement. A candidate may serve readiness before
+it is authorized to claim mutating work. HTTP routing does not establish worker
+ownership. Use existing durable claims, idempotency and fencing; prove a stale
+worker cannot commit effects after authority transfers.
 
-Do not infer job ownership from the HTTP Service selector. Prove that a stale
-worker cannot commit an effect after ownership transfer and that candidate
-startup, rollback and lease expiry do not duplicate scheduled work. Preserve
-compatibility of queued work across the supported release pair.
+Kamal's normal update briefly overlaps processes even without a warm standby.
+Budget concurrent DuckDB memory, container memory, query admission and temporary
+disk. Qualify file access and catalog compatibility during overlap; do not infer
+safe concurrent writes to a shared local database file. Bound interrupted queries,
+SSE reconnection and upload retries, and preserve queued-work compatibility.
+
+## Availability and assurance gate
+
+Before sale or onboarding, security/privacy and service owners approve customer
+uses, data classes, applicable obligations, maintenance windows, support coverage,
+maximum interruption, RTO and RPO against operating evidence. The profile provides
+single-host application availability. A reboot or failed VPS causes an outage;
+managed data-service HA cannot remove it.
+
+Measure detection, operator response, replacement capacity, provisioning, secrets,
+certificates, routing/DNS changes and restoration as applicable. Exercise provider
+capacity or region unavailability for any promised disaster scenario. A plan to
+buy replacement compute is not proof that it will be available within the RTO.
+
+Preserve the applicable assurance baseline. Where Regulation (EU) 2024/2690
+applies, assess Annex section 4 backup, redundancy and testing requirements;
+record sufficient resources and evidence rather than assuming backups alone
+satisfy redundancy. Assess DORA supplier obligations for the financial customer's
+function. Customer acceptance cannot waive legal duties. Requirements exceeding
+this profile need a separately qualified topology before onboarding.
+
+Maintain isolated recovery copies and scheduled restoration tests, including the
+CIS IG2 safeguard 11.5 minimum quarterly sampling requirement where applicable.
+Certification and legal compliance claims require their own scope and evidence.
 
 ## Targeted failure evidence
 
-- **Migrations:** interrupt/retry migrations; retain one durable operation and
-  correct schema/catalog state. Serving identities cannot assume migration roles.
-- **Management outage:** stop the runner and controller separately during rollout;
-  recover through standard reconciliation without manual state rewriting or
-  duplicate effects. Include full cluster-control-plane outage where promised.
-- **Secrets outage:** restart with the secret service unavailable, then repeat
-  with expired/revoked credentials. Document bounded cached/projected credential
-  use if permitted; never bypass revocation or access controls. If startup must
-  wait for the service, record that dependency and its effect on recovery time.
-- **Analytics overload:** exercise query admission/concurrency, DuckDB memory,
-  container memory and temporary-disk budgets during release overlap. Bound spills,
-  out-of-memory behavior and retry pressure. Readiness must report the real serving
-  state; operator/recovery capacity must remain sufficient to stop or recover work.
-- **Restoration:** reconstruct both profiles from declared inputs without the old
-  host, validate representative governed reads/writes and restart protection.
+- **Upgrade/rollback:** failed candidate readiness, failure after cutover, rollback
+  after new writes, unavailable registry, stale configuration and expired secrets.
+- **Migrations:** interruption/retry preserves one durable operation and correct
+  schema/catalog state; serving identities cannot assume migration privileges.
+- **Management outage:** interrupt the runner before/after cutover; inspect actual
+  host state and safely resume/recover without duplicate effects. Continued serving
+  must not require the central deployment runner.
+- **Secrets outage:** restart without the secret service, then with expired/revoked
+  credentials. Document permitted cached/projected credential behavior; fail closed
+  without an approved path and include startup dependencies in recovery time.
+- **Overload:** saturate memory, query concurrency and temporary disk during overlap;
+  prove bounded failure, truthful readiness and capacity for operator recovery.
+- **Host failure:** replace an unavailable application VPS, preserve current data,
+  safely handle its return and verify operator access, TLS and client reconnection.
+- **Data disaster:** restore coordinated state to an empty environment, validate
+  governed reads/writes and restart protection, and record achieved RTO/RPO.
+- **Maintenance:** qualify OS/Docker/proxy updates and reboot, managed database
+  failover/major upgrades, and bundled Compose dependency interruption separately.
 
 ## References
 
-- [Argo blue/green configuration](https://argoproj.github.io/argo-rollouts/features/bluegreen/)
-  and [analysis outcomes](https://argoproj.github.io/argo-rollouts/features/analysis/).
-- [Kubernetes tenancy](https://kubernetes.io/docs/concepts/security/multi-tenancy/)
-  and [resource controls](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/).
+- [Kamal deployment](https://kamal-deploy.org/docs/commands/deploy/),
+  [rollback](https://kamal-deploy.org/docs/commands/rollback/),
+  [proxy](https://kamal-deploy.org/docs/configuration/proxy/) and
+  [accessories](https://kamal-deploy.org/docs/configuration/accessories/).
+- [NIS2 implementing requirements](https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=CELEX%3A32024R2690),
+  [DORA](https://eur-lex.europa.eu/eli/reg/2022/2554/oj) and
+  [CIS data recovery](https://cas.docs.cisecurity.org/en/latest/source/Controls11/).
 
-These requirements are design commitments proposed for review, not claims that
-the current application, provider or controller configuration already passes.
+These are proposed requirements, not claims that the current product or selected
+provider configuration passes qualification.

@@ -56,10 +56,10 @@ that the target architecture is already qualified.
 - Keep a complete, independently operable open-source product.
 - Make managed-hosting reliability improvements reusable by self-hosters.
 - Minimize custom infrastructure code and recurring operational work by reusing
-  established controllers and qualified managed services.
+  established deployment tools and qualified managed data services.
 - Make basic self-hosting possible with Docker Compose and minimal configuration.
 - Operate dedicated customer environments with established tools, while keeping
-  Kubernetes optional for self-hosters.
+  the product independent of Kubernetes.
 - Preserve deployment portability without building a v1 customer-cloud platform.
 - Give infrastructure, host configuration, application deployment, and data
   migrations distinct owners.
@@ -95,31 +95,37 @@ V1 has two public deployment packages for the same product:
 
 - **Self-hosted:** Docker Compose with a straightforward first-run experience,
   persistent dependencies, and optional HTTPS and monitoring.
-- **Operated by LeapView:** a Kubernetes package with Argo Rollouts, initially
-  qualified on European Hetzner infrastructure. Prefer a qualified service that
-  operates the cluster and nodes, so the team can focus on the application.
+- **Operated by LeapView:** one dedicated application VPS per customer, initially
+  on European Hetzner infrastructure, using Docker and Kamal with restart-based
+  rollback. Managed PostgreSQL and managed S3-compatible object storage run outside
+  the application VPS. Select and qualify European service regions and providers.
 
-The proposed Kubernetes/Argo choice is subject to qualification and remains part
-of this draft. Cluster provider, topology, sizing and service commitments remain
-open. Swarm and stock Kamal are alternatives recorded in the research, not
-additional v1 deployment paths we commit to maintain.
+The application VPS runs LeapView and DuckDB execution. PostgreSQL control/catalog
+state and durable objects belong in the managed data services; local caches and
+scratch space must be reconstructible. Inventory and resolve any other local
+state before claiming that the application host can be replaced independently.
+
+Restart-based rollback and measured downtime are accepted. A continuously running
+previous release and automatic metrics-driven rollback are not v1 requirements.
+Kubernetes/Argo and other deployment platforms remain researched alternatives;
+they are not additional v1 packages we commit to maintain.
 
 Architectural acceptance does not clear either profile for production. The
-companion qualification specification defines two separate gates: operated-cluster
-qualification and bundled Compose dependency-lifecycle qualification. Reduced
-custom controller code is an architectural benefit; reduced recurring operations
-must be demonstrated by the selected provider's responsibilities and evidence.
+companion specification defines separate gates for the operated VPS/data-service
+profile and bundled Compose dependencies. We own OS, Docker and proxy maintenance;
+managed PostgreSQL and storage reduce data-service operations only within their
+qualified provider responsibilities.
 
 V1 includes repeatable installation, upgrades, rollback, monitoring, access, and
 tested recovery using existing tooling. A customer portal, automatic signup,
 billing platform, custom fleet controller, general cloud abstraction, and
 automated customer-account onboarding are outside v1 scope.
 
-Keep application images, Helm/manifests, configuration and lifecycle interfaces
+Keep application images, Compose/Kamal configuration and lifecycle interfaces
 public and portable. Isolate Hetzner-specific provisioning from application
 packaging. Later, the same product can be operated on our infrastructure or the
 customer's infrastructure, with qualification of that environment. V1 does not
-promise support for untested providers or arbitrary Kubernetes distributions.
+promise support for untested hosts, data providers or customer-account onboarding.
 
 ### Public software and private operational information
 
@@ -128,7 +134,7 @@ The public repository owns:
 - The application, released container images, and versioned configuration and
   administrative interfaces.
 - Compose packages, Caddy configuration, deployment adapters, infrastructure modules,
-  host automation, supported orchestrator manifests, and sanitized deployment examples.
+  host automation, Kamal configuration, and sanitized deployment examples.
 - Migration and compatibility checks, readiness and graceful shutdown behavior,
   upgrade and rollback tooling, and backup/export/restore capabilities.
 - Reusable metrics, dashboards, alert rules, operational runbooks, and
@@ -161,38 +167,37 @@ already exists.
 | Layer | Proposed reference | Responsibility and inclusion |
 |---|---|---|
 | Application runtime | Docker Engine and Docker Compose | Default self-hosted application lifecycle. Keep the base package small. |
-| HTTPS edge | Caddy | Supported HTTPS overlay; an existing trusted reverse proxy may replace it. |
-| Operated release deployment | Kubernetes and Argo Rollouts | Proposed v1 operator path on European Hetzner infrastructure, subject to qualification. Public packaging; no Kubernetes requirement for Compose users. |
+| HTTPS edge | Caddy for Compose; kamal-proxy for managed installations | One edge per profile with qualified TLS, SSE and draining behavior. |
+| Operated release deployment | Kamal and Docker Engine | Public configuration for one dedicated customer application VPS; health-gated updates and restart-based rollback. |
 | Infrastructure provisioning | OpenTofu with the official Hetzner provider | Public modules for VPSs, networks, firewalls, and load balancers. Qualify existing Terraform modules and state before changing their runner. |
-| Host configuration | Ansible for self-managed hosts | Public OS baseline and agent configuration where we own the host. A managed cluster's node controller owns its nodes instead. |
+| Host configuration | Ansible | Public OS baseline, Docker and agent configuration. LeapView owns host patching, reboots and replacement procedures. |
 | Observability | Prometheus-compatible metrics, Grafana Alloy, and Grafana | Public collection configuration, dashboards, and alerts. Optional local monitoring package; managed operation uses a central backend. |
 | Deployment secrets | Infisical | Reference managed secrets integration with scoped machine identities. Self-hosters can supply supported secret inputs without subscribing to Infisical Cloud. |
 | Release production | GitHub Actions and GHCR | Produce immutable release images and provenance; deployments verify and promote existing artifacts. |
-| Data services | PostgreSQL and qualified object storage | Retain ADR-0020's authority and privilege boundaries. Bundle dependencies for basic self-hosting; independently provision managed data services for the operated profile. |
-| Initial managed infrastructure | Hetzner dedicated customer VPS environments | Public provider adapter. Select dedicated-vCPU capacity and availability topology from measured workloads and service commitments. |
+| Data services | Managed PostgreSQL and managed S3-compatible storage for operated deployments | External to the application VPS; qualified European regions, isolation, backup/PITR and object recovery. Compose bundles dependencies separately. Retain ADR-0020's authority and privilege boundaries. |
+| Initial managed infrastructure | One dedicated Hetzner application VPS per customer | Public provider adapter; size dedicated-vCPU capacity and transient release overlap from measured workloads. Single-host availability limits apply. |
 
-Compose and a managed deployment controller are alternative owners of application
-container lifecycle. They must not reconcile the same containers. Both consume
-shared LeapView interfaces for initialization, compatibility, migrations,
-readiness, and recovery. Publish the selected controller's configuration; do not
-build a general LeapView release controller for replica replacement, traffic
-switching, or warm-slot retention that established tools can supply.
+Compose and Kamal are alternative owners of application container lifecycle.
+They must not reconcile the same containers. Both consume shared LeapView
+interfaces for initialization, compatibility, migrations, readiness and recovery.
+Publish Kamal configuration and thin integration with these interfaces. Do not
+build a general release controller or warm-slot manager around Kamal.
 
-Qualify the proposed Kubernetes/Argo path against the application and recovery
-contracts before production adoption. The linked research records alternatives
-and comparison criteria. A failure to meet those criteria requires revisiting the
-proposal, rather than filling the gap with a custom general release controller.
-This proposal does not require operating Kubernetes ourselves.
+Qualify the Kamal path against the application and recovery contracts before
+production adoption. A failure to meet them requires revisiting the configuration
+or proposal. Kamal is deployment tooling; it does not replace host maintenance,
+continuous monitoring, incident response or data recovery.
 
-For Compose, Caddy forwards directly to LeapView. A managed path uses the selected
-platform's supported ingress and certificate integration. Use one public edge and
-one owner of release routing; additional proxies require a concrete purpose.
-Qualify SSE, uploads, timeouts, client identity, draining and certificate renewal.
-Private administrative and metrics endpoints must remain protected.
+For Compose, Caddy forwards directly to LeapView. Managed installations use
+kamal-proxy for HTTPS and release routing. Qualify SSE buffering and timeouts,
+uploads, client identity, draining and certificate renewal. Private administrative
+and metrics endpoints must remain protected.
 
-Ansible owns self-managed host configuration and OpenTofu owns declared provider
-resources. If a managed cluster service owns node provisioning, replacement and
-patching, our tools must not also reconcile those nodes.
+OpenTofu owns declared provider resources; Ansible owns the OS baseline, Docker
+and supporting host configuration; Kamal owns application deployment and its proxy
+lifecycle. Define maintenance ownership for each component without competing
+reconcilers. Managed data-service maintenance follows separately qualified
+provider procedures.
 
 Grafana is not an application dependency. A local metrics backend and Grafana may
 be supplied as an optional monitoring package; managed hosting may use Grafana
@@ -225,27 +230,30 @@ does not remove ownership of these dependency lifecycles.
 The Compose profile declares single-host availability limits and a supported
 backup/restore procedure. It can accept external database and storage services
 for operators who need them. Monitoring is optional and Caddy is the supported
-HTTPS addition. The Kubernetes profile can provide stronger availability and
-rollout automation without making those components prerequisites for Compose.
+HTTPS addition. The managed profile uses external managed data services and
+operator-controlled Kamal releases; it does not promise application host failover.
 
 Managed environments dedicate application compute, data-service resources, and
 credentials to the customer. Sharing a management or observability service does
 not permit cross-customer data access. Shared infrastructure administration must
 use scoped identities and preserve customer isolation.
 
-Before managed launch, the companion specification must select separate customer
-clusters or explicitly isolated customer worker pools in a shared cluster. For
-shared control planes, document administrative access and common failure impact;
-prove placement enforcement and network, data and credential isolation. Separate
-namespaces on shared worker pools do not satisfy dedicated customer compute.
-The selected model and its limitations must match the customer-facing offering.
+Managed v1 assigns each customer a separate application VPS, scoped deployment
+credentials, PostgreSQL resources/roles and object-storage resources/credentials.
+Record the exact database, bucket, provider administration and backup isolation
+boundaries and reject cross-customer access. Managed service resource isolation
+does not imply a physically dedicated database or storage server.
 
-Two releases on one VPS provide an upgrade mechanism, not host availability.
-An HA offering requires independent application failure domains, suitable
-routing, qualified session/SSE and background-work coordination, and database
-availability matching the promised recovery objectives. Host placement alone
-does not establish site-level resilience. A dedicated VPS also does not imply
-exclusive ownership of its physical host.
+An application VPS failure or maintenance reboot interrupts that customer's
+service until restart or replacement. External durable data services reduce
+host-loss recovery scope; they do not provide application availability. Qualify
+host rebuild separately from data corruption or provider-loss restoration.
+
+A future HA offering requires independent application failure domains, suitable
+routing, session/SSE and background-work coordination, and matching data-service
+availability. Higher availability is a separately qualified topology and does not
+in itself require Kubernetes. A dedicated VPS does not imply exclusive ownership
+of its physical host.
 
 Hetzner private networking is not an encryption or host-firewall substitute.
 Use TLS for database and cross-host application connections and enforce host
@@ -261,20 +269,28 @@ rollback eligibility. Promote the same artifact through internal qualification,
 selected managed customers, and broader rollout within maintenance windows.
 Serialize mutations per environment and stop promotion on failed checks.
 
-The operated Kubernetes profile uses Argo Rollouts' blue/green strategy with
-active/preview services, promotion analysis, and a defined observation and
-previous-release retention window. Reserve capacity for overlapping processes
-and analytical work. Configure and qualify post-promotion analysis and scale-down
-together so the previous release remains available throughout the promised
-rollback window. Traffic rollback does not establish background-worker rollback.
-The companion specification must define job admission, draining, ownership
-transfer, and fencing for active, preview and retained releases.
+The managed profile uses Kamal's standard health-gated deployment: start the
+candidate, check readiness, switch traffic, drain and stop the prior container.
+Reserve capacity for temporary process overlap and analytical work. Qualify
+candidate failure before cutover, SSE reconnection and bounded shutdown.
 
-Compose declares its own supported interruption and restart-based rollback bounds.
-It does not require active/preview services or custom blue/green machinery. Both
-profiles use the same release-compatibility and recovery contracts; availability
-bounds are qualified separately. Deployment-tool alternatives remain in the
-linked research.
+Rollback restarts a compatible prior release; it does not depend on a warm
+standby. Retain the required immutable images and matching release configuration,
+and configure local pruning and registry retention for the supported rollback
+window. Test rollback with the registry unavailable and define how a missing
+local artifact affects recovery. Secrets must remain valid or be safely refreshed.
+
+Continuous off-host monitoring observes the deployment after cutover. A failed or
+unverifiable release halts the customer rollout campaign and alerts the operator;
+the operator follows a bounded rollback or recovery procedure. Do not infer
+post-deployment health supervision or automatic analysis rollback from Kamal's
+initial readiness check. Use ordinary CI gates, customer inventory and runbooks;
+no bespoke metrics-driven release controller is required.
+
+Compose declares its own interruption and restart-based rollback bounds. Both
+profiles use the same compatibility and recovery contracts. Define background-job
+admission, draining, ownership and fencing during candidate overlap and rollback;
+HTTP routing does not determine which process may mutate durable state.
 
 Both releases use current durable data. Schema and data-format evolution must
 preserve the declared rollback window, using staged compatible changes where
@@ -296,21 +312,22 @@ restoration into a fresh environment is the evidence of recoverability.
 
 ### Service selection and qualification
 
-Provider choices below remain candidates, not commitments made by this ADR:
+Hetzner is the selected application VPS provider. Data and operational service
+providers remain candidates; qualify the responsibilities below before launch:
 
-- **Managed Kubernetes:** qualify European Hetzner availability, the selected
-  customer isolation model, supported Argo Rollouts versions and permissions,
-  and explicit ownership of control-plane upgrades, worker patching/replacement,
-  networking, ingress, certificates, controller maintenance and cluster recovery.
-  Record support/escalation, maintenance behavior, cost and recovery evidence.
-  This gate must pass before managed launch; selecting Kubernetes does not prove
-  that a provider owns these duties. Unassigned duties require a qualified owner.
-- **PostgreSQL:** evaluate Ubicloud on Hetzner for version/privilege compatibility,
-  connection security, replication mode, failover behavior, support, retention,
-  and independently usable backup export.
-- **Object storage:** use AWS S3 as a behavioral reference and evaluate Scaleway
-  Multi-AZ as an alternative. Measure correctness, scan latency/throughput, and
-  transfer cost from Hetzner. Do not select solely on an S3-compatible label.
+- **Application VPS and host operations:** qualify the European Hetzner region,
+  dedicated customer assignment, sizing, OS/Docker/proxy maintenance, support and
+  replacement capacity. Record patch/reboot behavior, operator access, costs and
+  recovery evidence. LeapView owns these duties; Kamal does not outsource them.
+- **PostgreSQL:** use an external managed service; evaluate Ubicloud on Hetzner
+  for European region, version/privilege compatibility, TLS, replication mode,
+  failover, major-version maintenance, support, PITR retention and independently
+  usable backup export. Preserve ADR-0020's managed HA production baseline.
+- **Object storage:** use an external managed S3-compatible service in a qualified
+  European region. Use AWS S3 as a behavioral reference and evaluate Scaleway
+  Multi-AZ as an alternative. Qualify conditional writes, versioning, retention,
+  deletion protection, recovery/export, latency, throughput and transfer cost.
+  An S3-compatible label or versioning alone does not establish backup protection.
 - **Hetzner Object Storage:** its documented exclusion of conditional PUT/DELETE
   on versioned buckets prevents assuming it meets the combined immutable-write
   and versioned-recovery contract. Require provider qualification before adoption.
@@ -325,6 +342,24 @@ behavior, not evidence that vendor defaults meet it. Managed-service assurance
 and customer qualification require separate decisions; this deployment proposal
 does not establish their legal coverage or customer commitments.
 
+### Availability and assurance boundary
+
+Declare this offering as a recoverable single-application-host service. Establish
+customer eligibility, maintenance windows, support coverage, maximum acceptable
+interruption, recovery time (RTO) and data loss (RPO) from the service's risk
+assessment and measured exercises before contractual commitments. Include outage
+detection, operator response, provider capacity, credentials and routing changes
+in recovery measurements. Do not invent numeric guarantees from tool defaults.
+
+The simpler stack preserves the applicable security and assurance baseline.
+Kamal and European hosting do not establish GDPR, NIS2, DORA, CIS or ISO conformance.
+Security/privacy owners must assess the actual service and customer use, including
+redundancy requirements. Where applicable, Regulation (EU) 2024/2690 Annex section 4
+requires backup, redundancy and recovery testing; accepting downtime does not
+waive these duties. Financial-customer commitments require the applicable DORA
+supplier qualification. Customers whose requirements exceed this profile need a
+separately qualified topology before onboarding.
+
 ### Managed operations without a prerequisite platform build
 
 Managed production requires inventory, repeatable provisioning, controlled
@@ -334,8 +369,7 @@ versioned configuration, CI workflows, the public tooling, existing operational
 services, and documented operator procedures.
 
 A custom fleet API, dashboard, billing integration or Temporal workflow service
-is outside v1 scope. Kubernetes/Argo is the proposed operator deployment toolchain,
-not a new product for customers to learn. Add further orchestration only when
+is outside v1 scope. Kamal is the proposed operator deployment toolchain. Add further orchestration only when
 measured operational needs justify its lifecycle and failure modes. Keep routine
 customer requests outside any central management service's availability boundary;
 document and test behavior during management outages.
@@ -364,10 +398,11 @@ public infrastructure modules make Hetzner provisioning reproducible. Customer
 operations can begin before a bespoke fleet platform exists.
 
 Supporting Compose and one managed deployment path creates an ongoing integration
-and qualification cost. Outsourced node operations add provider dependence and
-service fees; self-managed orchestration retains cluster operating work. Public
-operational interfaces need compatibility discipline, documentation,
-and sanitized fixtures. Overlapping release slots require spare capacity. HA,
+and qualification cost. We retain OS, Docker, proxy and host recovery work.
+Managed data services add provider dependence and service fees. Public operational
+interfaces need compatibility discipline, documentation and sanitized fixtures.
+Temporary release overlap requires spare capacity. Single-host outages and
+restart-based rollback constrain the customers and service levels supported. HA,
 backup retention, managed services, and off-provider storage introduce recurring
 costs that must be measured against the offering's service commitments.
 
@@ -392,14 +427,14 @@ retain reproducible evidence appropriate to that profile:
    account. Persisted data survives restart and a documented upgrade. Monitoring
    and managed-service outages do not prevent ordinary application serving
    outside documented dependency requirements.
-2. **Shared lifecycle:** Compose and the selected controller use the same
+2. **Shared lifecycle:** Compose and Kamal use the same
    application artifacts and lifecycle contracts, with a single container owner
    per installation.
 3. **Upgrade and rollback:** under queries, SSE, uploads, and background work,
    upgrade A to B, commit new writes on B, then roll back to A within the supported
    window. Verify preserved writes, correct authorization, reconnect behavior,
-   fenced work, and each profile's documented interruption bound. Kubernetes
-   additionally proves retained-release traffic rollback and worker ownership.
+   fenced work, and each profile's documented interruption bound. Kamal proves
+   restart-based rollback, artifact availability and safe worker ownership.
 4. **Recovery:** restore control state, catalog, objects, and required configuration
    into fresh infrastructure. Verify representative queries and writes, and measure
    actual recovery time and data loss against the selected objectives.
@@ -416,13 +451,13 @@ retain reproducible evidence appropriate to that profile:
    dependency upgrades, including PostgreSQL major-version transitions. Resume or
    recover without inconsistent state; serving credentials cannot acquire migration
    privileges. Preserve the recorded recovery point and data-loss bounds.
-9. **Management interruption:** stop the runner or rollout controller during an
-   update. Reconcile safely after recovery without duplicate migrations or job
-   effects, unintended promotion, or premature previous-release retirement.
-10. **Missing analysis evidence:** inject unavailable, empty, stale and inconclusive
-    rollout metrics. Promotion remains blocked; post-promotion behavior follows
-    the bounded abort/escalation policy in the companion specification. Missing
-    evidence must never be interpreted as a successful check.
+9. **Management interruption:** stop the deployment runner during an update.
+   Inspect and safely resume or recover without duplicate migrations or job effects.
+   Prove routine serving continues during central management outages.
+10. **Missing observation evidence:** inject unavailable, empty or stale monitoring
+    evidence. Halt further customer promotions and alert the operator; exercise the
+    bounded investigation/rollback procedure. Missing evidence cannot approve a
+    release, and no automatic post-deployment Kamal rollback is assumed.
 11. **Secrets outage on restart:** restart an application while its configured
     secret service is unavailable. Prove the declared startup/recovery behavior,
     including credential expiry and denial; fail closed when credentials cannot
@@ -431,6 +466,13 @@ retain reproducible evidence appropriate to that profile:
 12. **Analytics overload:** saturate memory, query concurrency and temporary-disk
     budgets under release overlap. Verify bounded admission and failure behavior,
     truthful readiness, and sufficient capacity for release/recovery operations.
+13. **Application host loss:** rebuild on an empty replacement VPS and reconnect to
+    intact managed PostgreSQL/storage without unnecessarily restoring older data.
+    Fence a returning old host, reconcile jobs and prove preserved acknowledged
+    writes. Test database/object recovery separately for corruption or provider loss.
+14. **Service qualification:** approve the measured maintenance/recovery bounds,
+    support model, customer eligibility and applicable legal/assurance controls.
+    Retain evidence of isolated backups and scheduled recovery testing.
 
 No new qualification is claimed by drafting or accepting this ADR.
 
@@ -439,10 +481,14 @@ No new qualification is claimed by drafting or accepting this ADR.
 Official documentation reviewed on 2026-09-25; provider capabilities must be
 rechecked when qualifying an implementation:
 
-- [Argo Rollouts blue/green](https://argoproj.github.io/argo-rollouts/features/bluegreen/)
-  and [analysis behavior](https://argoproj.github.io/argo-rollouts/features/analysis/).
-- [Kubernetes tenancy boundaries](https://kubernetes.io/docs/concepts/security/multi-tenancy/)
-  and [resource management](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/).
+- [Kamal deployment](https://kamal-deploy.org/docs/commands/deploy/),
+  [rollback](https://kamal-deploy.org/docs/commands/rollback/),
+  [proxy](https://kamal-deploy.org/docs/configuration/proxy/) and
+  [accessories](https://kamal-deploy.org/docs/configuration/accessories/).
+- [NIS2 implementing requirements, Annex section 4](https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=CELEX%3A32024R2690),
+  [DORA Article 30](https://eur-lex.europa.eu/eli/reg/2022/2554/oj),
+  [CIS recovery safeguards](https://cas.docs.cisecurity.org/en/latest/source/Controls11/)
+  and [ISO/IEC 27001 scope](https://www.iso.org/standard/27001).
 - [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https).
 - [Hetzner provider](https://github.com/hetznercloud/terraform-provider-hcloud) and
   [OpenTofu S3 state and locking](https://opentofu.org/docs/language/settings/backends/s3/).
