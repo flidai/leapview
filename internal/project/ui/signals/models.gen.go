@@ -1345,7 +1345,6 @@ type PipelineDetailPageSignal struct {
 	ConcurrencyDescription  string                           `json:"concurrencyDescription" yaml:"concurrencyDescription"`
 	StartingDeadlineSeconds int64                            `json:"startingDeadlineSeconds" yaml:"startingDeadlineSeconds"`
 	LatestRun               *PipelineDetailRunSignal         `json:"latestRun,omitempty" yaml:"latestRun,omitempty"`
-	RecentRuns              []PipelineDetailRunSignal        `json:"recentRuns" yaml:"recentRuns"`
 	WaitingIntents          []PipelineWaitingIntentSignal    `json:"waitingIntents" yaml:"waitingIntents"`
 	RunsTable               *RecordTableSignal               `json:"runsTable,omitempty" yaml:"runsTable,omitempty"`
 	RunMonitor              *PipelineRunMonitorSignal        `json:"runMonitor,omitempty" yaml:"runMonitor,omitempty"`
@@ -1386,29 +1385,17 @@ type PipelineDetailTabSignal struct {
 type PipelineListItemSignal struct {
 	AssetID           string                    `json:"assetId" yaml:"assetId"`
 	CanRun            bool                      `json:"canRun" yaml:"canRun"`
-	Description       *string                   `json:"description,omitempty" yaml:"description,omitempty"`
-	Duration          *string                   `json:"duration,omitempty" yaml:"duration,omitempty"`
 	Href              string                    `json:"href" yaml:"href"`
 	ID                string                    `json:"id" yaml:"id"`
-	LastSuccessful    *string                   `json:"lastSuccessful,omitempty" yaml:"lastSuccessful,omitempty"`
-	LatestRunHref     *string                   `json:"latestRunHref,omitempty" yaml:"latestRunHref,omitempty"`
 	LastPublishedAt   *string                   `json:"lastPublishedAt,omitempty" yaml:"lastPublishedAt,omitempty"`
 	PublicationStatus string                    `json:"publicationStatus" yaml:"publicationStatus"`
 	RecentRuns        []PipelineDetailRunSignal `json:"recentRuns" yaml:"recentRuns"`
 	NextRun           *string                   `json:"nextRun,omitempty" yaml:"nextRun,omitempty"`
 	PipelineID        string                    `json:"pipelineId" yaml:"pipelineId"`
-	Running           bool                      `json:"running" yaml:"running"`
 	Schedule          string                    `json:"schedule" yaml:"schedule"`
 	SemanticModel     string                    `json:"semanticModel" yaml:"semanticModel"`
 	Status            string                    `json:"status" yaml:"status"`
 	Title             string                    `json:"title" yaml:"title"`
-}
-
-type PipelineMetricSignal struct {
-	Detail *string `json:"detail,omitempty" yaml:"detail,omitempty"`
-	Label  string  `json:"label" yaml:"label"`
-	Tone   *string `json:"tone,omitempty" yaml:"tone,omitempty"`
-	Value  string  `json:"value" yaml:"value"`
 }
 
 type PipelineOverviewMonitorSignal struct {
@@ -1443,7 +1430,6 @@ type PipelinePageSignal struct {
 	Description    string                        `json:"description" yaml:"description"`
 	Environment    string                        `json:"environment" yaml:"environment"`
 	Kind           RouteKind                     `json:"kind" yaml:"kind"`
-	Metrics        []PipelineMetricSignal        `json:"metrics" yaml:"metrics"`
 	Pipelines      []PipelineListItemSignal      `json:"pipelines" yaml:"pipelines"`
 	WaitingIntents []PipelineWaitingIntentSignal `json:"waitingIntents" yaml:"waitingIntents"`
 	RunsTable      RecordTableSignal             `json:"runsTable" yaml:"runsTable"`

@@ -20,13 +20,12 @@ type MonitorFilter struct {
 }
 
 type MonitorPage struct {
-	Runs                             []Run
-	Total, Failed, Completed, Active int64
+	Runs  []Run
+	Total int64
 }
 
-// MonitorRuns filters before pagination. Time-scoped counts use the same
-// filters as rows; Active deliberately ignores time and status because it
-// represents jobs executing or waiting now.
+// MonitorRuns filters before pagination. The total uses the same filters as
+// the returned rows.
 func (r *Repository) MonitorRuns(ctx context.Context, scope Scope, filter MonitorFilter) (MonitorPage, error) {
 	if err := r.requireDB(); err != nil {
 		return MonitorPage{}, err
@@ -39,7 +38,7 @@ func (r *Repository) MonitorRuns(ctx context.Context, scope Scope, filter Monito
 	}
 	queries := refreshdb.New(r.db)
 	page := MonitorPage{}
-	counts, err := queries.MonitorRunsCounts(ctx, refreshdb.MonitorRunsCountsParams{
+	total, err := queries.MonitorRunsCounts(ctx, refreshdb.MonitorRunsCountsParams{
 		ProjectID: scope.ProjectID, Environment: scope.Environment, AllowedPipelineIds: filter.AllowedPipelineIDs,
 		Search: filter.Search, MatchedPipelineIds: filter.PipelineIDs, Trigger: filter.Trigger,
 		Status: filter.Status, SinceAt: filter.Since, UntilAt: filter.Until,
@@ -47,14 +46,7 @@ func (r *Repository) MonitorRuns(ctx context.Context, scope Scope, filter Monito
 	if err != nil {
 		return MonitorPage{}, err
 	}
-	page.Total, page.Failed, page.Completed = counts.Total, counts.Failed, counts.Completed
-	page.Active, err = queries.MonitorActiveRunsCount(ctx, refreshdb.MonitorActiveRunsCountParams{
-		ProjectID: scope.ProjectID, Environment: scope.Environment, AllowedPipelineIds: filter.AllowedPipelineIDs,
-		Search: filter.Search, MatchedPipelineIds: filter.PipelineIDs, Trigger: filter.Trigger,
-	})
-	if err != nil {
-		return MonitorPage{}, err
-	}
+	page.Total = total
 	ids, err := queries.MonitorRunIDs(ctx, refreshdb.MonitorRunIDsParams{
 		ProjectID: scope.ProjectID, Environment: scope.Environment, AllowedPipelineIds: filter.AllowedPipelineIDs,
 		Search: filter.Search, MatchedPipelineIds: filter.PipelineIDs, Trigger: filter.Trigger,

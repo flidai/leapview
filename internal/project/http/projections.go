@@ -47,7 +47,6 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 		RunCommand:    h.PipelineRunCommand,
 		CancelCommand: h.PipelineCancelCommand,
 	}
-	seenRuns := make(map[string]struct{})
 	for _, asset := range pipelines {
 		refresh, refreshErr := h.assetRefreshState(r.Context(), projectID, asset)
 		if refreshErr != nil {
@@ -76,23 +75,6 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 			SemanticModelTitle: semanticModelTitle,
 			PublicationAt:      publicationAt, PublicationStatus: publicationStatus,
 		})
-		for _, run := range refresh.Runs {
-			if run.ID == "" {
-				continue
-			}
-			if _, seen := seenRuns[run.ID]; seen {
-				continue
-			}
-			seenRuns[run.ID] = struct{}{}
-			switch run.Status {
-			case "running":
-				state.Capacity.Running++
-			case "queued":
-				state.Capacity.Queued++
-			case "prepared":
-				state.Capacity.Prepared++
-			}
-		}
 	}
 	state.WaitingIntents, err = h.pipelineWaitingIntents(r, projectID, visiblePipelineIDs(pipelines, ""))
 	if err != nil {
@@ -115,7 +97,7 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 			return projectui.PipelineMonitorState{}, err
 		}
 		monitor := &projectui.PipelineRunMonitor{Query: filter.Search, Range: rangeLabel, Pipeline: selectedPipeline, Status: filter.Status, Trigger: filter.Trigger,
-			Page: page, PageSize: 25, Total: result.Total, Failed: result.Failed, Completed: result.Completed, Active: result.Active}
+			Page: page, PageSize: 25, Total: result.Total}
 		for _, run := range result.Runs {
 			monitor.Runs = append(monitor.Runs, projectui.PipelineMonitorRun{PipelineID: run.PipelineID.String(), Run: projectui.AssetRefreshRun{
 				ID: run.ID, Environment: run.Identity.Environment, PipelineID: run.PipelineID.String(), ModelID: run.SemanticModelID.String(), ServingStateID: run.Identity.GenerationID,

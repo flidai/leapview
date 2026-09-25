@@ -219,8 +219,8 @@ type MonitorFilter struct {
 }
 
 type MonitorPage struct {
-	Runs                             []RunRecord
-	Total, Failed, Completed, Active int64
+	Runs  []RunRecord
+	Total int64
 }
 
 // RunTreeInput describes one refresh pipeline root and all dependency
