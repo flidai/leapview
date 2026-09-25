@@ -78,3 +78,14 @@ func TestTurnContextRejectsClientProjectSelector(t *testing.T) {
 		t.Fatal("client project selector was accepted")
 	}
 }
+
+func TestBuilderTurnContextIsIncludedForAgentPrompt(t *testing.T) {
+	items := turnContextItems(&TurnContext{Surface: "dashboard_builder", DashboardID: "dashboard_sales", DraftID: "draft_1", DraftRevision: &DraftRevision{RevisionID: "revision_7", Number: 7, ContentHash: "sha256:abc"}})
+	if len(items) != 1 {
+		t.Fatalf("builder context items = %#v", items)
+	}
+	context, ok := items[0].Value.(TurnContext)
+	if !ok || context.DraftRevision == nil || context.DraftRevision.RevisionID != "revision_7" {
+		t.Fatalf("builder prompt context = %#v", items[0].Value)
+	}
+}

@@ -69,6 +69,7 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 	agentEnabled := strings.TrimSpace(actions.AgentCommands.CreateConversation.OperationID()) != "" && strings.TrimSpace(actions.AgentCommands.CreateRun.OperationID()) != ""
 	if agentEnabled {
 		attrs = append(attrs,
+			g.Attr("data-on:lv-builder-agent-run-complete", uiactions.Get(updates+"&snapshot=1", "agent")),
 			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; $agentContext.filters = $builderFilterState; $agentContext.generation = $status.generation; "+uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{actions.AgentCommands.CreateRun}, actions.AgentCommands.Workflow(), "/chats/turns", "agent", "agentContext")),
 			g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(actions.AgentCommands.CancelRun, "/chats/stop", "agent", "agentContext")),
 			g.Attr("data-on:lv-chat-restore", "$agent.activeConversationId = evt.detail.conversationId; "+uiactions.Get("/chats/restore", "agent")),
@@ -198,9 +199,10 @@ func DashboardBuilderAgentContext(envelope uisignals.DashboardBuilderEnvelope) u
 		}
 	}
 	return uisignals.AgentContextSignal{
-		Surface:        "dashboard",
+		Surface:        "dashboard_builder",
 		DashboardID:    builder.DashboardID,
 		DashboardTitle: builder.Title,
+		DraftID:        uisignals.Optional(builder.DraftID),
 		PageID:         pageID,
 		PageTitle:      pageTitle,
 		ModelID:        builder.SemanticModel.ID,

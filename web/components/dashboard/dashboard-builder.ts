@@ -198,6 +198,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private canvasResizeObserver: ResizeObserver | null = null
   private canvasViewportElement: HTMLElement | null = null
   private canvasPage: DashboardBuilderPageSignal | undefined
+  private agentRunObserved = false
 
   // Add-page uses server-generated identifiers. Keep the page set that was
   // visible when the intent was sent so the authoritative response can select
@@ -2624,6 +2625,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   updated(): void {
+    this.reconcileAgentRunCompletion()
     const builder = this.builder
     if (builder?.redirectTo) {
       const target = new URL(builder.redirectTo, window.location.href)
@@ -2656,6 +2658,19 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.canvasPage = page
     this.syncGridStack(builder, page)
     this.syncCanvasViewport(page)
+  }
+
+  private reconcileAgentRunCompletion(): void {
+    const agent = this.signal<{ status?: { running?: boolean } }>('agent', {})
+    const running = Boolean(agent.status?.running)
+    if (running) {
+      this.agentRunObserved = true
+      return
+    }
+    if (!this.agentRunObserved) return
+
+    this.agentRunObserved = false
+    this.dispatchEvent(new CustomEvent('lv-builder-agent-run-complete', { bubbles: true, composed: true }))
   }
 
   private readonly handleViewportChange = (): void => {

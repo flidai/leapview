@@ -11,6 +11,7 @@ func TestDefaultSystemPromptUsesCompleteDataBeforeExploration(t *testing.T) {
 		"When query results and available definitions cover the user's requested metrics, dates, and comparisons",
 		"answer without exporting a dashboard or searching documentation",
 		"search documentation only when that definition is absent",
+		"On the dashboard_builder surface, edit the exact dashboardId and draftId supplied in context",
 	} {
 		if !strings.Contains(DefaultSystemPrompt, want) {
 			t.Fatalf("DefaultSystemPrompt does not contain %q", want)

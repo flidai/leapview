@@ -4,9 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
+	reportui "github.com/flidai/leapview/internal/dashboard/ui"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 )
@@ -50,5 +53,54 @@ func TestBuilderNavigationShellFlushesBeforePreview(t *testing.T) {
 	h.DashboardBuilderUpdates(rec, httptest.NewRequest(http.MethodGet, "/updates?dashboard=revenue&draft=draft-7&page=overview", nil).WithContext(ctx))
 	if fake.previewCalls != 1 {
 		t.Fatalf("preview calls = %d, body=%s", fake.previewCalls, rec.Body.String())
+	}
+}
+
+func TestDashboardBuilderRefreshPreservesAgentSignals(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rec := httptest.NewRecorder()
+	bootstrapCalls := 0
+	fake := &loadingBuilderFake{builderAuthoringFake: &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{
+		DashboardID: "revenue", DraftID: "draft-7", Title: "Revenue",
+		Capabilities: uisignals.DashboardBuilderCapabilitiesSignal{CanEdit: true, CanAddVisual: true},
+	}}}
+	fake.beforePreview = func() {}
+	h := Handler{
+		Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*http.Request) string { return "principal-1" },
+		AgentBootstrap: func(*http.Request, string) reportui.AgentBootstrap {
+			bootstrapCalls++
+			return reportui.AgentBootstrap{}
+		},
+	}
+	currentSignals := `{"agent":{"activeConversationId":"conversation-1","transcript":[{"id":"answer-1","kind":"assistant","text":"Keep me"}]},"agentVisuals":{"chart":{"title":"Current result"}}}`
+	request := httptest.NewRequest(http.MethodGet, "/updates?dashboard=revenue&draft=draft-7&route=dashboard_builder&snapshot=1&datastar="+url.QueryEscape(currentSignals), nil).WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		h.DashboardBuilderUpdates(rec, request)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("snapshot refresh kept the SSE connection open")
+	}
+
+	patches := ssetest.PatchSignals(t, rec.Body.String())
+	if len(patches) != 1 {
+		t.Fatalf("builder refresh patches = %d, want one canonical bootstrap without loading flicker: %s", len(patches), rec.Body.String())
+	}
+	bootstrap := patches[len(patches)-1]
+	if builder, ok := bootstrap["builder"].(map[string]any); !ok || builder["title"] != "Revenue" {
+		t.Fatalf("canonical builder bootstrap = %#v", bootstrap["builder"])
+	}
+	if _, exists := bootstrap["agent"]; exists {
+		t.Fatalf("builder refresh replaced agent transcript: %#v", bootstrap["agent"])
+	}
+	if _, exists := bootstrap["agentVisuals"]; exists {
+		t.Fatalf("builder refresh replaced agent visuals: %#v", bootstrap["agentVisuals"])
+	}
+	if bootstrapCalls != 0 {
+		t.Fatalf("AgentBootstrap calls = %d, want 0 when client agent state is present", bootstrapCalls)
 	}
 }

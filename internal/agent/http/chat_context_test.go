@@ -101,3 +101,12 @@ func TestChatScopeUsesActiveProjectResolver(t *testing.T) {
 		t.Fatalf("scope project = %q, want project:activated", scope.ProjectID)
 	}
 }
+
+func TestBuilderChatRemainsEmbedded(t *testing.T) {
+	if !isEmbeddedAgentSurface("dashboard_builder") {
+		t.Fatal("builder chat must keep its transcript in the embedded pane")
+	}
+	if isEmbeddedAgentSurface("chat") {
+		t.Fatal("standalone chat must not be treated as embedded")
+	}
+}

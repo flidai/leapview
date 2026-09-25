@@ -438,8 +438,11 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 		streamInstanceID = clientID
 	}
 	updates := pagestream.NewSignalStream(w, r)
-	if err := updates.Patch(builderLoadingPatch(builder)); err != nil {
-		return
+	snapshot := r.URL.Query().Get("snapshot") == "1"
+	if !snapshot {
+		if err := updates.Patch(builderLoadingPatch(builder)); err != nil {
+			return
+		}
 	}
 	envelope := h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder)
 	envelope.Runtime.ClientID = uisignals.Optional(clientID)
@@ -459,7 +462,9 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 	if err := updates.Patch(bootstrap); err != nil {
 		return
 	}
-	updates.Wait(r.Context())
+	if !snapshot {
+		updates.Wait(r.Context())
+	}
 }
 
 // DashboardBuilderCommand accepts the bounded builder intents and routes them
