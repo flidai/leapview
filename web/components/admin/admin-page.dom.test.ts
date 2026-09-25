@@ -265,6 +265,7 @@ test('security settings use a unified session list, focused password dialog, and
       await personal.updateComplete
       const otherDevice = Array.from(root.querySelectorAll<HTMLButtonElement>('.security-session-device')).find((button) => button.textContent?.includes('LeapView Desktop'))!
       const otherRow = otherDevice.closest('tr')!
+      const deviceColumnGap = getComputedStyle(otherDevice).columnGap
       otherDevice.click()
       await personal.updateComplete
       const drawer = root.querySelector('lv-drawer') as any
@@ -289,7 +290,9 @@ test('security settings use a unified session list, focused password dialog, and
         currentBadge: root.querySelector('.security-badge')?.textContent?.trim(),
         currentAction: root.querySelector('.security-session-table tr.is-current .session-action')?.textContent?.trim(),
         sessionActions: [root.querySelector('[data-logout-all]')?.textContent?.trim(), otherRow.querySelector('.session-action')?.textContent?.trim()],
+        deviceColumnGap,
         authoringText: Array.from(root.querySelectorAll('.security-session-table tbody tr')).find((row) => row.textContent?.includes('LeapView CLI'))?.textContent?.replace(/\s+/g, ' ').trim(),
+        authoringKind: Array.from(root.querySelectorAll('.security-session-table tbody tr')).find((row) => row.textContent?.includes('LeapView CLI'))?.querySelector('.security-session-kind')?.textContent?.trim(),
         passwordInputsBeforeOpen,
         passwordDialogOpened,
         passwordDialogClosed: !root.querySelector('[data-password-dialog]'),
@@ -310,7 +313,9 @@ test('security settings use a unified session list, focused password dialog, and
     expect(state.currentBadge).toBe('Current')
     expect(state.currentAction).toBe('Sign out')
     expect(state.sessionActions).toEqual(['Log out all', 'Revoke'])
+    expect(state.deviceColumnGap).toBe('16px')
     expect(state.authoringText).toContain('LeapView CLI')
+    expect(state.authoringKind).toBe('CLI')
     expect(state.authoringText).toContain('sales')
     expect(state.authoringText).toContain('Resource read')
     expect(state.passwordInputsBeforeOpen).toBe(0)
