@@ -28,21 +28,22 @@ func TestCanonicalVisualPlacementSizeCoversCatalog(t *testing.T) {
 	}
 }
 
-func TestCanonicalVisualTypeSwitchAppliesTargetFootprint(t *testing.T) {
+func TestCanonicalVisualTypeSwitchPreservesManualFootprint(t *testing.T) {
 	_, revision := canonicalReducerFixture(t)
 	component, err := revision.Document.Spec.Pages[0].Components[0].Base()
 	if err != nil {
 		t.Fatal(err)
 	}
-	component.Placement = document.DashboardPlacement{Column: 7, Row: 2, ColumnSpan: 9, RowSpan: 7}
+	initial := document.DashboardPlacement{Column: 2, Row: 2, ColumnSpan: 9, RowSpan: 7}
+	component.Placement = initial
 
 	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{
 		PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeKpi,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := component.Placement; got != (document.DashboardPlacement{Column: 7, Row: 2, ColumnSpan: 4, RowSpan: 3}) {
-		t.Fatalf("KPI placement = %#v", got)
+	if got := component.Placement; got != initial {
+		t.Fatalf("KPI placement = %#v, want %#v", got, initial)
 	}
 
 	manual := document.DashboardPlacement{Column: 2, Row: 5, ColumnSpan: 8, RowSpan: 6}
@@ -60,8 +61,8 @@ func TestCanonicalVisualTypeSwitchAppliesTargetFootprint(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := component.Placement; got != (document.DashboardPlacement{Column: 2, Row: 5, ColumnSpan: 6, RowSpan: 5}) {
-		t.Fatalf("table placement = %#v", got)
+	if got := component.Placement; got != manual {
+		t.Fatalf("table placement = %#v, want %#v", got, manual)
 	}
 
 	verticalSource := document.DashboardPlacement{Column: 2, Row: 5, ColumnSpan: 6, RowSpan: 4}
@@ -75,8 +76,8 @@ func TestCanonicalVisualTypeSwitchAppliesTargetFootprint(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := component.Placement; got != (document.DashboardPlacement{Column: 2, Row: 5, ColumnSpan: 6, RowSpan: 6}) {
-		t.Fatalf("tree placement = %#v", got)
+	if got := component.Placement; got != verticalSource {
+		t.Fatalf("tree placement = %#v, want %#v", got, verticalSource)
 	}
 }
 
@@ -109,8 +110,8 @@ func TestCanonicalVisualTypeSwitchPreservesAnotherManuallyResizedVisual(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := second.Placement; got.ColumnSpan != 6 || got.RowSpan != 6 {
-		t.Fatalf("changed visual's tree footprint = %#v, want 6x6", got)
+	if got, want := second.Placement, (document.DashboardPlacement{Column: 7, Row: 1, ColumnSpan: 6, RowSpan: 4}); got != want {
+		t.Fatalf("changed visual's placement = %#v, want %#v", got, want)
 	}
 }
 
@@ -141,7 +142,7 @@ func TestCanonicalVisualTypeSwitchKeepsDroppedPositionWhenFootprintFits(t *testi
 	}
 }
 
-func TestCanonicalVisualTypeSwitchPacksPageWithoutChangingSiblingSizes(t *testing.T) {
+func TestCanonicalVisualTypeSwitchPreservesEveryPlacementWhenDefaultWouldCollide(t *testing.T) {
 	_, revision := canonicalReducerFixture(t)
 	page := &revision.Document.Spec.Pages[0]
 	base, err := page.Components[0].Base()
@@ -165,10 +166,10 @@ func TestCanonicalVisualTypeSwitchPacksPageWithoutChangingSiblingSizes(t *testin
 	}
 
 	want := map[string]document.DashboardPlacement{
-		"base-component": {Column: 7, Row: 4, ColumnSpan: 6, RowSpan: 6},
+		"base-component": {Column: 10, Row: 1, ColumnSpan: 3, RowSpan: 3},
 		"left":           {Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4},
 		"collider":       {Column: 7, Row: 1, ColumnSpan: 3, RowSpan: 3},
-		"below":          {Column: 1, Row: 5, ColumnSpan: 6, RowSpan: 4},
+		"below":          {Column: 7, Row: 4, ColumnSpan: 6, RowSpan: 4},
 	}
 	for _, component := range page.Components {
 		placed, err := component.Base()

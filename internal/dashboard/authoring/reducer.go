@@ -2050,7 +2050,7 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 	newDefault.Interactions = visual.Interactions
 	syncCanonicalComboSeries(&newDefault)
 	value.Spec.Visuals[visualID] = newDefault
-	return resizeCanonicalVisualPlacement(value, patch.PageID, patch.VisualID)
+	return nil
 }
 
 func preserveCanonicalVisualQueryOptions(target, source *document.DashboardQuery) {
