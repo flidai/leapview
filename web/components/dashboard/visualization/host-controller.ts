@@ -19,6 +19,8 @@ export type RendererTheme = 'light' | 'dark'
 export type RendererContext = Readonly<{
   locale: RendererLocale
   theme: RendererTheme
+  /** Authoring previews use SVG to avoid GPU canvas allocations during grid edits. */
+  echartsRenderer?: 'canvas' | 'svg'
   reducedMotion: boolean
   devicePixelRatio: number
   fontFamily: string
@@ -98,7 +100,7 @@ export type RendererRegistration = Readonly<{
   kinds: readonly VisualizationSpec['kind'][]
   capabilities: RendererCapabilities
   /** A changed mount key requires a fresh renderer instance for the new spec. */
-  mountKey?(envelope: VisualizationEnvelope): string
+  mountKey?(envelope: VisualizationEnvelope, context: RendererContext): string
   load(): Promise<RendererAdapter>
 }>
 
@@ -198,7 +200,7 @@ export class VisualizationController {
     const change = changes(previous, next) | (sameJSON(this.#context, context) ? Change.None : Change.Context)
     if (change === Change.None) return false
 
-    if (!this.#handle || previous?.rendererID !== next.rendererID || (previous && registration.mountKey?.(previous) !== registration.mountKey?.(next))) {
+    if (!this.#handle || previous?.rendererID !== next.rendererID || (previous && registration.mountKey?.(previous, this.#context ?? context) !== registration.mountKey?.(next, context))) {
       this.#handle?.dispose()
       this.#handle = undefined
       const generation = ++this.#loadGeneration

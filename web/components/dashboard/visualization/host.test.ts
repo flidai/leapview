@@ -111,6 +111,25 @@ test('controller remounts when a renderer changes its backing mode', async () =>
   expect(disposals).toBe(2)
 })
 
+test('controller remounts when the authoring renderer surface changes', async () => {
+  const surfaces: string[] = []
+  const registry = new RendererRegistry()
+  registry.register({
+    id: 'test', version: '1.0.0', schemaVersion: currentVisualizationSchemaVersion, kinds: ['kpi'],
+    capabilities: { snapshot: true, windowed: false, interactive: false },
+    mountKey: (_value, context) => context.echartsRenderer ?? 'canvas',
+    load: async () => ({ mount: (_container, _value, context) => {
+      surfaces.push(context.echartsRenderer ?? 'canvas')
+      return { update: () => {}, resize: () => {}, snapshot: async () => new Blob(), dispose: () => {} }
+    } }),
+  })
+  const controller = new VisualizationController(registry, {} as HTMLElement)
+  await controller.apply(envelope(1), defaultRendererContext)
+  await controller.apply(envelope(1), { ...defaultRendererContext, echartsRenderer: 'svg' })
+  expect(surfaces).toEqual(['canvas', 'svg'])
+  controller.dispose()
+})
+
 test('controller coalesces resize and applies the latest size after a lazy mount', async () => {
   const sizes: number[][] = []
   let release!: (adapter: { mount: () => RendererHandle }) => void

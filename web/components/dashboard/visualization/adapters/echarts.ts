@@ -85,9 +85,9 @@ export const adapter: RendererAdapter = {
   async mount(container, envelope, context) {
     const echarts = await import('echarts')
     const frame = createEChartsRendererFrame(container)
-    // A funnel has few vector shapes. SVG avoids a large canvas backing store
-    // in the dashboard builder, where several high-DPI charts stay mounted.
-    const renderer = envelope.spec.kind === 'proportional' && envelope.spec.mark === 'funnel' ? 'svg' : 'canvas'
+    // Builder grid edits can resize several mounted charts at once. Use SVG in
+    // authoring so none of those previews allocates a GPU canvas backing store.
+    const renderer = context.echartsRenderer === 'svg' || (envelope.spec.kind === 'proportional' && envelope.spec.mark === 'funnel') ? 'svg' : 'canvas'
     const chart = echarts.getInstanceByDom(frame) ?? echarts.init(frame, undefined, { renderer, devicePixelRatio: context.devicePixelRatio })
     const handle = new EChartsHandle(container, frame, chart, categoryColorRegistryFor(container))
     try {

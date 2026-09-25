@@ -88,6 +88,13 @@ test('native resize handles suspend chart rendering until the placement save fin
     }, governedBarPreviewEnvelope('rev-7'))
     const host = builder.locator('lv-visualization-host')
     await host.waitFor()
+    await page.waitForFunction(() => {
+      const builder = document.querySelector('lv-dashboard-builder') as any
+      const host = builder?.shadowRoot?.querySelector('lv-visualization-host') as any
+      return Boolean(host?.controller?.envelope)
+    })
+    expect(await host.evaluate((element: any) => Boolean(element.shadowRoot.querySelector('.renderer svg')))).toBe(true)
+    expect(await host.evaluate((element: any) => element.shadowRoot.querySelectorAll('.renderer canvas').length)).toBe(0)
     const handle = builder.locator('.visual > .ui-resizable-se')
     const box = (await handle.boundingBox())!
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)

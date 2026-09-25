@@ -56,6 +56,23 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('standalone chart hosts keep the canvas renderer outside the builder', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+    const surface = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.style.cssText = 'display:block;width:400px;height:300px'
+      host.envelope = { ...(window as any).__lvSourceHosts.orders_chart.envelope, status: { kind: 'ready' } }
+      document.body.append(host)
+      await host.ensureMounted()
+      return { canvas: host.shadowRoot.querySelectorAll('.renderer canvas').length, svg: host.shadowRoot.querySelectorAll('.renderer svg').length }
+    })
+    expect(surface).toEqual({ canvas: 1, svg: 0 })
+  } finally { await page.close() }
+})
+
 test('deferred hosts retain the latest valid envelope and mount once on eligibility', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

@@ -427,6 +427,8 @@ export class VisualizationHost extends LitElement {
   private rendererContext(): RendererContext {
     const target = this.rendererContainer
     if (!target) return defaultRendererContext
+    const root = this.getRootNode()
+    const builderPreview = root instanceof ShadowRoot && root.host.localName === 'lv-dashboard-builder'
     const styles = getComputedStyle(target)
     const color = (name: string, fallback: string): string => styles.getPropertyValue(name).trim() || fallback
     const colorScheme = document.documentElement.style.colorScheme.trim()
@@ -434,6 +436,7 @@ export class VisualizationHost extends LitElement {
     return {
       locale: normalizeRendererLocale(document.documentElement.lang || 'en'),
       theme,
+      echartsRenderer: builderPreview ? 'svg' : 'canvas',
       reducedMotion: this.reducedMotionMedia?.matches ?? true,
       devicePixelRatio: window.devicePixelRatio || 1,
       fontFamily: styles.fontFamily || defaultRendererContext.fontFamily,
