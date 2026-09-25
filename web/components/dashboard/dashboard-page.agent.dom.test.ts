@@ -736,7 +736,7 @@ test('side agent keeps the composer visible and starter prompts never submit aut
     })
     await page.locator('.agent-toggle').click()
     const drawer = page.locator('lv-chat-drawer[open]')
-    await drawer.getByRole('button', { name: 'Summarize the key takeaways on this page.', exact: true }).click()
+    await drawer.getByRole('button', { name: 'Summarize: Summarize the key takeaways on this page.', exact: true }).click()
     expect(await drawer.locator('textarea').inputValue()).toBe('Summarize the key takeaways on this page.')
     expect(await page.evaluate(() => (window as any).sideSubmits)).toBe(0)
     const geometry = await drawer.evaluate(element => ({ bottom: element.getBoundingClientRect().bottom, composerBottom: element.shadowRoot!.querySelector('lv-chat-composer')!.getBoundingClientRect().bottom, viewport: innerHeight }))
