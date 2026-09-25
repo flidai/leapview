@@ -206,6 +206,13 @@ func TestPRWorkflowConsumesPlannerOutputsAndAlwaysGates(t *testing.T) {
 			If      string            `yaml:"if"`
 			Needs   []string          `yaml:"needs"`
 			Outputs map[string]string `yaml:"outputs"`
+			Steps   []struct {
+				ID   string            `yaml:"id"`
+				Uses string            `yaml:"uses"`
+				Run  string            `yaml:"run"`
+				Env  map[string]string `yaml:"env"`
+				With map[string]string `yaml:"with"`
+			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &config); err != nil {
@@ -230,6 +237,27 @@ func TestPRWorkflowConsumesPlannerOutputsAndAlwaysGates(t *testing.T) {
 	if gate.If != "${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}" || !slices.Contains(gate.Needs, "prepare") {
 		t.Fatal("gate must skip drafts and require planning on every eligible outcome")
 	}
+	prepare := config.Jobs["prepare"]
+	if prepare.Outputs["plan_attempt"] != "${{ steps.plan.outputs.plan_attempt }}" || prepare.Outputs["plan_artifact_id"] != "${{ steps.plan-artifact.outputs.artifact-id }}" {
+		t.Error("gate evidence must identify the planning job's attempt and immutable artifact")
+	}
+	var uploadBound, downloadBound, attemptBound bool
+	for _, step := range prepare.Steps {
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.ID == "plan-artifact" && step.With["path"] == "ci-plan.json" {
+			uploadBound = true
+		}
+	}
+	for _, step := range gate.Steps {
+		if strings.HasPrefix(step.Uses, "actions/download-artifact@") {
+			downloadBound = step.With["artifact-ids"] == "${{ needs.prepare.outputs.plan_artifact_id }}" && step.With["name"] == "" && step.With["merge-multiple"] == "true"
+		}
+		if strings.Contains(step.Run, "--expected-attempt \"$PLAN_ATTEMPT\"") {
+			attemptBound = step.Env["PLAN_ATTEMPT"] == "${{ needs.prepare.outputs.plan_attempt }}"
+		}
+	}
+	if !uploadBound || !downloadBound || !attemptBound {
+		t.Errorf("gate must consume producer evidence across retries: upload=%t download=%t attempt=%t", uploadBound, downloadBound, attemptBound)
+	}
 	for neutral := range platformci.FullPRJobs().Selected() {
 		workflow := WorkflowJobID(neutral)
 		job, ok := config.Jobs[workflow]
@@ -247,7 +275,7 @@ func TestPRWorkflowConsumesPlannerOutputsAndAlwaysGates(t *testing.T) {
 			t.Errorf("gate omits %s", workflow)
 		}
 	}
-	for _, fragment := range []string{"fetch-depth: 0", "--stack-base \"$STACK_BASE\"", "--head \"$GITHUB_SHA\"", "--expected-attempt \"$GITHUB_RUN_ATTEMPT\"", "--expected-deferred=\"$DEFERRED\"", "--frontend-matrix \"$FRONTEND_MATRIX\""} {
+	for _, fragment := range []string{"fetch-depth: 0", "--stack-base \"$STACK_BASE\"", "--head \"$GITHUB_SHA\"", "--expected-attempt \"$PLAN_ATTEMPT\"", "--expected-deferred=\"$DEFERRED\"", "--frontend-matrix \"$FRONTEND_MATRIX\""} {
 		if !strings.Contains(string(data), fragment) {
 			t.Errorf("missing candidate/gate contract %s", fragment)
 		}
