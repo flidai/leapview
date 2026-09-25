@@ -7,14 +7,18 @@ const sitePort = 30000 + (process.pid % 10000)
 const baseURL = `http://127.0.0.1:${sitePort}`
 let browser: Browser
 let siteServer: SiteTestServer | undefined
-const siteReadyTimeout = 120_000
+const siteReadyTimeout = 60_000
 
 beforeAll(async () => {
   const startupDeadline = Date.now() + siteReadyTimeout
   try {
+    console.error('compliance test startup: site build start')
     siteServer = await startSiteTestServer(sitePort, startupDeadline)
+    console.error('compliance test startup: site build done')
     await waitForSite(siteServer.process, startupDeadline)
+    console.error('compliance test startup: site ready')
     browser = await chromium.launch()
+    console.error('compliance test startup: browser ready')
   } catch (error) {
     await siteServer?.stop()
     siteServer = undefined
@@ -23,12 +27,16 @@ beforeAll(async () => {
 }, siteReadyTimeout + 10_000)
 
 afterAll(async () => {
+  console.error('compliance test cleanup: browser close start')
   try {
     await browser?.close()
+    console.error('compliance test cleanup: browser close done')
   } finally {
+    console.error('compliance test cleanup: site stop start')
     await siteServer?.stop()
+    console.error('compliance test cleanup: site stop done')
   }
-}, 15_000)
+})
 
 test('compliance page shows distinct, bounded assurance categories', async () => {
   const page = await browser.newPage()
