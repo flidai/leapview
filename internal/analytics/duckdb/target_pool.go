@@ -326,6 +326,7 @@ func (pool *targetRuntimePool) Resolve(
 	}
 	resolved := logical
 	resolved.Host = pool.connection.Host
+	resolved.ResolvedHost = pool.connection.ResolvedHost
 	resolved.Port = pool.connection.Port
 	resolved.Database = pool.connection.Database
 	resolved.Username = pool.connection.Username

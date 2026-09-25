@@ -6,9 +6,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -16,6 +19,56 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	platformstore "github.com/flidai/leapview/internal/platform/objectstore"
 )
+
+func TestS3FactorySeparatesIMDSCredentialsFromGuardedDataPlane(t *testing.T) {
+	metadata := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/latest/api/token":
+			_, _ = io.WriteString(w, "test-token")
+		case "/latest/meta-data/iam/security-credentials/":
+			_, _ = io.WriteString(w, "test-role")
+		case "/latest/meta-data/iam/security-credentials/test-role":
+			_, _ = io.WriteString(w, `{"Code":"Success","Type":"AWS-HMAC","AccessKeyId":"test-access","SecretAccessKey":"test-secret","Token":"test-session","Expiration":"2099-01-01T00:00:00Z"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer metadata.Close()
+	for _, name := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("AWS_CONFIG_FILE", filepath.Join(t.TempDir(), "no-config"))
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(t.TempDir(), "no-credentials"))
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "false")
+	t.Setenv("AWS_EC2_METADATA_SERVICE_ENDPOINT", metadata.URL)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	_, _, err := NewWithOptions(ctx, config.Config{
+		ObjectStoreBackend: "s3", ObjectStoreS3Bucket: "test", ObjectStoreS3Region: "eu-west-1", ObjectStoreS3EncryptionMode: "AES256",
+	}, "test-instance", "production", Options{
+		NewS3Client: func(cfg aws.Config, _ ...func(*awss3.Options)) platformstore.S3Client {
+			creds, err := cfg.Credentials.Retrieve(ctx)
+			if err != nil {
+				t.Fatalf("retrieve synthetic IMDS credentials: %v", err)
+			}
+			if creds.Source != "EC2RoleProvider" || creds.AccessKeyID != "test-access" {
+				t.Fatal("expected synthetic EC2 credentials")
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadata.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response, err := cfg.HTTPClient.Do(req); err == nil {
+				response.Body.Close()
+				t.Fatal("S3 data-plane client allowed loopback metadata destination")
+			}
+			return &stubS3Client{}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestFilesystemFactoryDerivesStableDomainAndPrivateRoot(t *testing.T) {
 	home := t.TempDir()
@@ -83,6 +136,9 @@ func TestS3FactoryUsesInjectedConstructorsAndAmbientCredentials(t *testing.T) {
 				}
 			}
 			gotRegion, gotCredentials = loadOptions.Region, loadOptions.Credentials != nil
+			if loadOptions.HTTPClient != nil {
+				t.Fatal("data-plane policy must not replace the credential provider HTTP client")
+			}
 			return aws.Config{Region: "eu-west-1"}, nil
 		},
 		NewS3Client: func(_ aws.Config, options ...func(*awss3.Options)) platformstore.S3Client {
@@ -98,7 +154,7 @@ func TestS3FactoryUsesInjectedConstructorsAndAmbientCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if domain == "" || gotLoadOptions != 2 || gotClientOptions != 1 || gotRegion != "eu-west-1" || gotCredentials || gotEndpoint != "https://s3.example.com" || !gotPathStyle {
+	if domain == "" || gotLoadOptions != 1 || gotClientOptions != 1 || gotRegion != "eu-west-1" || gotCredentials || gotEndpoint != "https://s3.example.com" || !gotPathStyle {
 		t.Fatalf("domain=%q loadOptions=%d clientOptions=%d region=%q credentials=%v endpoint=%q pathStyle=%v", domain, gotLoadOptions, gotClientOptions, gotRegion, gotCredentials, gotEndpoint, gotPathStyle)
 	}
 	static := cfg

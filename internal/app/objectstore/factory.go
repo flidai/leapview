@@ -223,7 +223,8 @@ func newS3(ctx context.Context, cfg appconfig.Config, instanceID, environment st
 			SameOriginRedirects: endpoint != "",
 		},
 	)
-	loadOptions = append(loadOptions, awsconfig.WithHTTPClient(guardedHTTP))
+	// Credential discovery is a trusted SDK control-plane operation (including
+	// EC2 IMDS). Apply the destination guard only after its clients are built.
 	awsCfg, err := load(ctx, loadOptions...)
 	if err != nil {
 		return nil, "", fmt.Errorf("initialize object-store S3 client: %w", err)

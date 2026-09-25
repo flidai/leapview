@@ -258,6 +258,9 @@ func TestTargetRuntimePoolFactoryRejectsUnboundedOrUnsupportedEndpointsBeforeOpe
 
 func TestTargetRuntimePoolResolvesTargetOwnedConnectionAfterProviderSnapshotIsDestroyed(t *testing.T) {
 	factory, err := NewTargetRuntimePoolFactory(TargetRuntimePoolFactoryConfig{
+		DestinationPolicy: outbound.New(outbound.ExplicitPrivate, outbound.Options{Resolver: targetPoolResolver{
+			"warehouse.internal": {netip.MustParseAddr("10.20.30.40")},
+		}}),
 		Open: func(context.Context) (TargetRuntimeSession, error) {
 			return &recordingTargetSession{}, nil
 		},
@@ -283,6 +286,9 @@ func TestTargetRuntimePoolResolvesTargetOwnedConnectionAfterProviderSnapshotIsDe
 		semanticmodel.Connection{Kind: "postgres"},
 	)
 	require.NoError(t, err)
+	require.Equal(t, "10.20.30.40", resolved.ResolvedHost)
+	secretParts := appendDatabaseSecretEndpoint(nil, resolved)
+	require.Contains(t, secretParts, "HOSTADDR '10.20.30.40'")
 	if resolved.Host != "warehouse.internal" || resolved.Database != "analytics" ||
 		resolved.Auth["password"] != "source-secret" {
 		t.Fatalf("resolved target connection = %#v", resolved)

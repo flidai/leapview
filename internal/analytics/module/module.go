@@ -201,7 +201,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	var environment *analyticsducklake.Environment
 	if !config.DisableProcessEnvironment {
 		environment, err = analyticsducklake.Open(ctx, analyticsducklake.Config{
-			RootDir: config.RootDir, CatalogPath: config.CatalogPath, DataPath: config.DataPath,
+			GuardOutbound: config.Production,
+			RootDir:       config.RootDir, CatalogPath: config.CatalogPath, DataPath: config.DataPath,
 			MaxConnections: config.MaxConnections, MemoryMaxBytes: config.MemoryMaxBytes,
 			TempMaxBytes: config.TempMaxBytes, MaxThreads: config.MaxThreads, TempDir: config.TempDir, ExtensionAdmission: config.ExtensionAdmission,
 		})

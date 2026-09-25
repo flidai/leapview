@@ -24,6 +24,7 @@ import (
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/platform/outbound"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/workload"
@@ -41,9 +42,12 @@ var catalogWriteLocks sync.Map
 type CredentialBootstrap func(context.Context, driver.ExecerContext) error
 
 type Config struct {
-	RootDir     string
-	CatalogPath string
-	DataPath    string
+	// GuardOutbound routes HTTP/S3 source and data reads through a target-owned
+	// destination guard before the shared DuckDB configuration is locked.
+	GuardOutbound bool
+	RootDir       string
+	CatalogPath   string
+	DataPath      string
 	// PostgresCatalog selects the target-owned PostgreSQL metadata catalog
 	// path. When set, CatalogPath is never opened or written; DuckDB attaches
 	// the catalog through a separately provisioned DuckLake/PostgreSQL secret.
@@ -90,6 +94,7 @@ type Layout struct {
 }
 
 type Environment struct {
+	egressProxy      *outbound.Proxy
 	db               *sql.DB
 	connector        driver.Connector
 	layout           Layout
@@ -439,6 +444,19 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	}
 	var initializeOnce sync.Once
 	var initializeErr error
+	var egressProxy *outbound.Proxy
+	if config.GuardOutbound {
+		egressProxy, err = outbound.StartProxy(outbound.New(outbound.ExplicitPrivate, outbound.Options{}))
+		if err != nil {
+			return nil, err
+		}
+	}
+	proxyTransferred := false
+	defer func() {
+		if egressProxy != nil && !proxyTransferred {
+			_ = egressProxy.Close()
+		}
+	}()
 	admissionCtx := ctx
 	if admissionCtx == nil {
 		admissionCtx = context.Background()
@@ -446,6 +464,14 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	connector, err := duckdb.NewConnector(":memory:", func(execer driver.ExecerContext) error {
 		initializeOnce.Do(func() {
 			statements := []string{"SET allow_persistent_secrets = false", "SET ducklake_default_data_inlining_row_limit = 0"}
+			if egressProxy != nil {
+				user, password := egressProxy.Credentials()
+				statements = append(statements,
+					"SET http_proxy = '"+sqlLiteral(egressProxy.URL())+"'",
+					"SET http_proxy_username = '"+sqlLiteral(user)+"'",
+					"SET http_proxy_password = '"+sqlLiteral(password)+"'",
+				)
+			}
 			admitted, admissionErr := config.ExtensionAdmission.AdmitExtension(admissionCtx, "ducklake")
 			if admissionErr != nil {
 				initializeErr = fmt.Errorf("admit ducklake extension: %w", admissionErr)
@@ -525,7 +551,8 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 		catalogLock = "postgres:" + postgresMetadata
 	}
 	env := &Environment{
-		db: db, connector: dbConnector, layout: layout, catalogIdentity: catalogIdentity, catalogLock: catalogLock,
+		egressProxy: egressProxy,
+		db:          db, connector: dbConnector, layout: layout, catalogIdentity: catalogIdentity, catalogLock: catalogLock,
 		postgresCatalog: postgresMode, postgresMetadata: postgresMetadata, postgresSnapshot: postgresSnapshot, commitMarker: commitMarker,
 		readConcurrency: connections,
 		physicalPoolID:  strings.TrimSpace(config.PhysicalPoolID), sharedPool: config.SharedPool || strings.TrimSpace(config.PhysicalPoolID) != "", compatibility: config.Compatibility, readOnly: config.ReadOnly,
@@ -550,6 +577,7 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 			return nil, err
 		}
 	}
+	proxyTransferred = true
 	return env, nil
 }
 
@@ -1668,6 +1696,9 @@ func (e *Environment) Close() error {
 	e.closeOnce.Do(func() {
 		e.closed.Store(true)
 		e.closeErr = e.db.Close()
+		if e.egressProxy != nil {
+			e.closeErr = errors.Join(e.closeErr, e.egressProxy.Close())
+		}
 	})
 	return e.closeErr
 }
