@@ -529,13 +529,14 @@ func (AddFilterPayload) RequiredAction() (AuthorizationAction, error) {
 // the canonical document still stores the ordinary filter definition and
 // filter page component used by dashboards as code.
 type AddSlicerPayload struct {
-	PageID      string `json:"pageId"`
-	FilterID    string `json:"filterId,omitempty"`
-	ComponentID string `json:"componentId,omitempty"`
-	Label       string `json:"label"`
-	Dimension   string `json:"dimension"`
-	Dataset     string `json:"dataset,omitempty"`
-	ControlType string `json:"controlType"`
+	PageID      string   `json:"pageId"`
+	FilterID    string   `json:"filterId,omitempty"`
+	ComponentID string   `json:"componentId,omitempty"`
+	Label       string   `json:"label"`
+	Dimension   string   `json:"dimension"`
+	Dataset     string   `json:"dataset,omitempty"`
+	ControlType string   `json:"controlType"`
+	Targets     []string `json:"-"` // resolved from the active semantic model before reduction
 }
 
 func (AddSlicerPayload) authoringPayload() {}

@@ -80,6 +80,12 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 			return a.prepareVisualTypeSwitch(ctx, project, request.Command, lifecycle, visual)
 		}
 	}
+	if request.Command.AddSlicer != nil {
+		slicer := request.Command.AddSlicer
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			return a.prepareSlicerTargets(ctx, project, request.Command, lifecycle, slicer)
+		}
+	}
 	return a.authoring.ExecuteValidated(ctx, project, request.Command, validator)
 }
 

@@ -1088,6 +1088,10 @@ func canonicalNewFilterID(value *document.DashboardDocument, requested string) (
 }
 
 func addCanonicalSlicer(value *document.DashboardDocument, patch AddSlicerPayload) error {
+	targetPolicy, err := canonicalSlicerTargetPolicy(patch.Targets)
+	if err != nil {
+		return err
+	}
 	filterID, err := canonicalNewFilterID(value, patch.FilterID)
 	if err != nil {
 		return err
@@ -1099,6 +1103,7 @@ func addCanonicalSlicer(value *document.DashboardDocument, patch AddSlicerPayloa
 	}); err != nil {
 		return err
 	}
+	value.Spec.Filters[len(value.Spec.Filters)-1].Targets = targetPolicy
 	if err := addCanonicalFilterComponent(value, AddFilterComponentPayload{PageID: patch.PageID, FilterID: filterID, ComponentID: patch.ComponentID}); err != nil {
 		value.Spec.Filters = value.Spec.Filters[:filterCount]
 		return err

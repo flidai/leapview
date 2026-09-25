@@ -289,7 +289,7 @@ test('ECharts gives selectable line and area rows reliable hit targets at either
 
     const option = echartsOption(envelope, defaultRendererContext) as any
     expect(option.series).toHaveLength(2)
-    expect(option.series[0]).toMatchObject({ type: 'line', symbol: 'none' })
+    expect(option.series[0]).toMatchObject({ type: 'line', symbol: 'circle' }) // The singleton stays visible even with authored symbols off.
     expect(option.series[1]).toMatchObject({
       id: 'series:interaction-hit:primary:label:value',
       type: 'scatter',
