@@ -277,6 +277,8 @@ test('show-data balances small result tables and preserves scrolling for wide re
     const state = await page.locator('lv-visual-modal').evaluate((modal: any) => {
       const scroll = modal.shadowRoot.querySelector('.data-scroll') as HTMLElement
       const row = modal.shadowRoot.querySelector('lv-record-table tbody tr') as HTMLElement
+      const firstCell = row.querySelector('td') as HTMLElement
+      const lastCell = modal.shadowRoot.querySelector('lv-record-table tbody tr:last-child td') as HTMLElement
       const table = modal.shadowRoot.querySelector('lv-record-table table') as HTMLTableElement
       const headers = Array.from(table.querySelectorAll('th')) as HTMLElement[]
       const revenueHeaderLabel = headers[1].querySelector('.record-table-sort > span:first-child') as HTMLElement
@@ -287,6 +289,9 @@ test('show-data balances small result tables and preserves scrolling for wide re
       const scrollBounds = scroll.getBoundingClientRect()
       return {
         rowHeight: row.getBoundingClientRect().height,
+        rowDividerWidth: Number.parseFloat(getComputedStyle(firstCell).borderBottomWidth),
+        rowDividerStyle: getComputedStyle(firstCell).borderBottomStyle,
+        lastRowDividerWidth: Number.parseFloat(getComputedStyle(lastCell).borderBottomWidth),
         scrollHeight: scroll.scrollHeight,
         clientHeight: scroll.clientHeight,
         tableWidth: table.getBoundingClientRect().width,
@@ -310,6 +315,9 @@ test('show-data balances small result tables and preserves scrolling for wide re
       }
     })
     expect(state.rowHeight).toBeLessThanOrEqual(32)
+    expect(state.rowDividerWidth).toBe(1)
+    expect(state.rowDividerStyle).toBe('solid')
+    expect(state.lastRowDividerWidth).toBe(0)
     expect(state.scrollHeight).toBeGreaterThan(state.clientHeight)
     expect(state.tableLayout).toBe('auto')
     expect(state.tableWidth).toBe(state.availableWidth)

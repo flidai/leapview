@@ -91,6 +91,7 @@ type RecordTablePayload = {
   density?: RecordTableDensity
   rowAction?: string
   columnDividers?: boolean
+  rowDividers?: boolean
 }
 type NormalizedRecordTable = Omit<Required<RecordTablePayload>, 'columnSelector'> & {
   columnSelector: Required<RecordColumnSelector>
@@ -110,6 +111,7 @@ const emptyRecordTable: NormalizedRecordTable = {
   density: 'normal',
   rowAction: '',
   columnDividers: false,
+  rowDividers: false,
 }
 
 function cellLabel(value: unknown): string {
@@ -193,6 +195,7 @@ function normalizeTable(table: RecordTablePayload): NormalizedRecordTable {
     density: table.density ?? emptyRecordTable.density,
     rowAction: table.rowAction ?? emptyRecordTable.rowAction,
     columnDividers: table.columnDividers ?? emptyRecordTable.columnDividers,
+    rowDividers: table.rowDividers ?? emptyRecordTable.rowDividers,
   }
 }
 
@@ -257,6 +260,7 @@ class RecordTable extends LitElement {
           'record-table',
           columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : '',
           table.columnDividers ? 'has-column-dividers' : '',
+          table.rowDividers ? 'has-row-dividers' : '',
         ].filter(Boolean).join(' ')} style=${[table.width ? `width: ${table.width}` : '', table.minWidth ? `min-width: ${table.minWidth}` : ''].filter(Boolean).join('; ')}>
           <thead>
             <tr>
@@ -1011,6 +1015,10 @@ const recordTableStyles = `
   lv-record-table .record-table.has-column-dividers td + td {
     border-left: var(--lv-border-muted, 1px solid var(--lv-line-muted, #d0d7de));
     padding-left: var(--base-size-16, 16px);
+  }
+
+  lv-record-table .record-table.has-row-dividers tbody tr:not(:last-child) td {
+    border-bottom: var(--lv-border-muted, 1px solid var(--lv-line-muted, #d0d7de));
   }
 
   lv-record-table .variant-primary .record-table tbody tr {
