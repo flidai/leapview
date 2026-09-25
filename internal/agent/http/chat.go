@@ -427,7 +427,7 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 	}
 	h.recordLegacyCommandAudit(r.WithContext(createCtx), createAgentConversationOperation, scope, "conversation", conversation.ID)
 	prompt := agent.PromptInput{
-		Scope:          scope,
+		Scope:          builderToolScope(scope, turnContext),
 		ConversationID: conversation.ID,
 		Input:          input,
 		Context:        turnContext,
@@ -512,7 +512,7 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 		runCtx = withIntent.Context()
 	}
 	prompt := agent.PromptInput{
-		Scope:          scope,
+		Scope:          builderToolScope(scope, turnContext),
 		ConversationID: conversationID,
 		EditMessageID:  editMessageID,
 		Input:          input,
@@ -743,6 +743,15 @@ func (h *Handler) resolveChatTurnContext(r *nethttp.Request, scope agent.Scope, 
 		return nil, embedded, err
 	}
 	return &resolved, embedded, nil
+}
+
+func builderToolScope(scope agent.Scope, turnContext *agent.TurnContext) agent.Scope {
+	scope.BuilderDashboardID, scope.BuilderDraftID = "", ""
+	if turnContext != nil && turnContext.Surface == "dashboard_builder" {
+		scope.BuilderDashboardID = turnContext.DashboardID
+		scope.BuilderDraftID = turnContext.DraftID
+	}
+	return scope
 }
 
 func isEmbeddedAgentSurface(surface string) bool {

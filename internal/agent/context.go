@@ -207,7 +207,11 @@ func turnContextItems(context *TurnContext) []agentcore.ContextItem {
 	if normalized.Surface != dashboardTurnContextSurface && normalized.Surface != builderTurnContextSurface && normalized.Surface != dataTurnContextSurface && (normalized.Surface != "chat" || len(normalized.References) == 0) {
 		return nil
 	}
-	return []agentcore.ContextItem{{Key: "leapview_context", Value: normalized}}
+	items := []agentcore.ContextItem{{Key: "leapview_context", Value: normalized}}
+	if normalized.Surface == builderTurnContextSurface {
+		items = append(items, agentcore.ContextItem{Key: "leapview_builder_v1_policy", Value: "Edit only this open dashboard draft. Creating, forking, deleting, publishing, archiving, or changing visibility is not available through the agent. Ask the user to create a dashboard and select its semantic model in the UI first."})
+	}
+	return items
 }
 
 func normalizeDataExploration(value DataExploration) *DataExploration {
