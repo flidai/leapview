@@ -7,8 +7,10 @@ import tempfile
 import os
 import io
 import json
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts'))
 def load(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / 'scripts' / (name + '.py'))
     module = importlib.util.module_from_spec(spec)
@@ -42,6 +44,43 @@ class AdmissionTests(unittest.TestCase):
         for image in ['ghcr.io/flidai/leapview:latest', 'other@sha256:'+'a'*64]:
             with self.assertRaises(ValueError):
                 self.policy.admit(self.run, self.receipt, image)
+
+class PreflightTests(unittest.TestCase):
+    def test_preflight_never_starts_host_transaction_or_fetches_viewer(self):
+        for mode in ['image-only', 'database-upgrade-required', 'review-required']:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                runner = load('demo_compose_deploy')
+                revision = 'b' * 40
+                commands = []
+                def output(args, **kwargs):
+                    commands.append(args)
+                    if args[0] == 'ssh-keyscan': return b'host public-key'
+                    if args[0] == 'ssh-keygen': return '256 ' + runner.FINGERPRINT + ' host'
+                    if args[-1] == 'inspect': return json.dumps({'revision':revision}).encode()
+                    self.fail('Unexpected preflight command: ' + repr(args))
+                env = {'DEMO_IMAGE':'ghcr.io/flidai/leapview@sha256:'+'a'*64,
+                       'SOURCE_REVISION':revision, 'DEMO_HOST':runner.HOST,
+                       'DEMO_SSH_PRIVATE_KEY':'test-only',
+                       'GITHUB_STEP_SUMMARY':str(pathlib.Path(directory)/'summary')}
+                report = {'mode':mode, 'currentSchema':28, 'candidateSchema':30}
+                previous_umask = os.umask(0o077)
+                try:
+                    with patch.dict(os.environ, env, clear=True), patch.object(sys, 'argv', ['runner','--preflight']), \
+                         patch.object(runner.subprocess, 'check_output', side_effect=output), \
+                         patch.object(runner.subprocess, 'run') as run, \
+                         patch.object(runner.subprocess, 'Popen') as popen, \
+                         patch.object(runner, 'inspect_transition', return_value=report), \
+                         patch.object(runner, 'verify_public_revision') as public, patch('sys.stdout', io.StringIO()):
+                        if mode == 'image-only': runner.main()
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, mode): runner.main()
+                        popen.assert_not_called()
+                        public.assert_not_called()
+                        self.assertEqual(run.call_count, 2)  # temporary inspector upload and cleanup only
+                        self.assertEqual(run.call_args.args[0][-3:-1], ['rm','-f'])
+                    self.assertIn(mode, pathlib.Path(env['GITHUB_STEP_SUMMARY']).read_text())
+                finally:
+                    os.umask(previous_umask)
 
 class RolloutTests(unittest.TestCase):
     def setUp(self):

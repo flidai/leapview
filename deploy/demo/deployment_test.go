@@ -160,7 +160,7 @@ func TestHostedDemoPreservesPrivateRuntimeConfiguration(t *testing.T) {
 }
 
 func TestDemoDeploymentBehavior(t *testing.T) {
-	command := exec.Command("python3", "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_demo_deployment.py")
+	command := exec.Command("python3", "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_demo*.py")
 	command.Dir = filepath.Join("..", "..")
 	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
 	output, err := command.CombinedOutput()

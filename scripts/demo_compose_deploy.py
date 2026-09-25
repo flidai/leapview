@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Runner-side pinned SSH transport and browser approval of the host transaction."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -10,13 +11,11 @@ import tempfile
 import urllib.parse
 import urllib.request
 
+from demo_upgrade_plan import inspect_transition
+
 ROOT = Path(__file__).resolve().parents[1]
 HOST = '89.58.13.145'
 FINGERPRINT = 'SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE'
-# Conservative image-only boundary. Schema/engine dependency changes require
-# the canonical host upgrade/recovery path, not an image-only rollback.
-SCHEMA_PATHS = ['internal/platform/postgres', 'internal/analytics/duckdb',
-                'internal/analytics/ducklake', 'go.mod', 'go.sum']
 
 def verify_public_revision(expected):
     # Capabilities use API workload auth, not a browser session cookie.
@@ -40,6 +39,9 @@ def verify_public_revision(expected):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--preflight', action='store_true', help='check source compatibility without deployment')
+    args = parser.parse_args()
     os.umask(0o077)
     image, revision = os.environ['DEMO_IMAGE'], os.environ['SOURCE_REVISION']
     if not re.fullmatch(r'ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}',image) or not re.fullmatch(r'[0-9a-f]{40}',revision):
@@ -63,9 +65,18 @@ def main():
             previous = json.loads(subprocess.check_output([*ssh,'python3',remote,'inspect']))
             old_revision = previous['revision']
             if not re.fullmatch(r'[0-9a-f]{40}',old_revision): raise RuntimeError('Invalid predecessor identity')
-            differences = subprocess.check_output(['git','diff','--name-only',old_revision,revision,'--',*SCHEMA_PATHS],text=True)
-            if differences:
-                raise RuntimeError('Schema/engine paths changed; use reviewed host upgrade/recovery before image deployment:\n'+differences)
+            plan = inspect_transition(old_revision, revision)
+            if args.preflight:
+                report = json.dumps(plan, indent=2)
+                print(report)
+                if os.environ.get('GITHUB_STEP_SUMMARY'):
+                    with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                        summary.write('### Demo deployment preflight\n```json\n'+report+'\n```\n')
+            if plan['mode'] != 'image-only':
+                raise RuntimeError(f"{plan['mode']}: schema {plan['currentSchema']} -> {plan['candidateSchema']}; "
+                                   'use the admitted migration/recovery path; no runtime deployment was attempted')
+            if args.preflight:
+                return
             viewer = json.loads(subprocess.check_output([*ssh,'python3',remote,'viewer']))
             browser_env = {k:v for k,v in os.environ.items() if k in ('PATH','HOME','PLAYWRIGHT_BROWSERS_PATH','TMPDIR','LANG','LC_ALL')}
             for key in ['DEMO_VIEWER_EMAIL','DEMO_VIEWER_PASSWORD']:

@@ -185,6 +185,10 @@ jobs:
           project-slug: leapview
           env-slug: prod
           secret-path: /demo/deployment
+      - name: Check demo upgrade requirements before recording deployment
+        env:
+          SOURCE_REVISION: ${{ steps.qualified.outputs.revision }}
+        run: python3 scripts/demo_compose_deploy.py --preflight
       - name: Record runtime deployment in progress
         id: record
         env:

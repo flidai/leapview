@@ -46,8 +46,22 @@ backed up together under `/etc/leapview-provider-cfo/compose-backup-*`.
 Dump/tar readability is checked; this is not a full restore rehearsal.
 
 Only image updates with unchanged schema/engine dependencies and Compose payloads
-are admitted. Schema changes require the canonical `host upgrade` recovery and
-migration-capability process; this workflow never applies or reverses migrations.
+are admitted. Before creating a runtime deployment record, the workflow inspects
+both immutable source revisions and reports their schema revisions, pending SQL
+migrations, and changed schema/engine paths in the run summary. Modified or
+removed historical migrations, missing forward migrations, and downgrades are
+rejected. This source comparison is diagnostic, not migration admission or
+proof of recoverability. The runner repeats it immediately before rollout.
+
+Schema changes remain blocked: this workflow never applies or reverses migrations.
+The existing `host upgrade` command implements fenced staging, activation, and
+restart phases; it requires an already admitted operation whose migrations have
+completed. It is not a standalone database upgrade or provider restore command.
+A schema upgrade needs an independently verified coordinated recovery frontier,
+an explicit migration executor, and paired state recovery before the old image
+can be restarted. Do not bypass the guard or run a destructive down migration.
+Preflight rejection creates no runtime deployment record, leaving the existing
+publication pin unchanged.
 Image payloads are extracted into a separate temporary directory before validation.
 Same-image retries reuse an existing release only when its contents match the image;
 they never overwrite the active release or its local configuration.
@@ -151,9 +165,9 @@ The operator provisions `LEAPVIEW_AGENT_CREDENTIAL_KEY` once in the private
 database: saved provider credentials are encrypted with this key. The Compose
 rollout preserves the environment file byte-for-byte and does not rotate keys.
 
-Introducing admin configuration adds a database migration. Use the canonical
-`host upgrade` recovery and migration-capability process for this upgrade; the
-image-only hosted-demo workflow cannot apply it. After upgrading, an admin tests
+Introducing admin configuration adds a database migration. The image-only
+hosted-demo workflow cannot apply it; the phased `host upgrade` command alone
+does not supply the required migration and recovery orchestration. After upgrading, an admin tests
 and saves the provider configuration before verifying a chatbot conversation.
 
 Treat the shared credential as public. To rotate it, reset the local password,
