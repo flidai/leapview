@@ -166,9 +166,9 @@ test('windowed table retries a dropped deep-scroll request', async () => {
       const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...seed, order_id: `retry-${start + offset}` }))
       const block = (start: number, requestSeq = 0) => ({ ...base.blocks.a, start, requestSeq, resetVersion: base.resetVersion, rows: rows(start) })
       table.clearJumpTimer()
-      table.clearWindowRetryTimers()
+      table.windowRetryController.clear()
       table.expectedBlocks.clear()
-      table.windowRetryDelay = 50
+      table.windowRetryController.delay = 50
       table.table = {
         ...base,
         availableRows: 1000,
@@ -200,20 +200,41 @@ test('windowed table retries a dropped deep-scroll request', async () => {
       }
       await table.updateComplete
       await new Promise((resolve) => window.setTimeout(resolve, 70))
-      return {
+      const successful = {
         requests: requests.filter((request) => request.start === 500),
         pending: table.expectedBlocks.size,
         skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length,
       }
+      requests.length = 0
+      table.viewportTop = 800 * table.rowHeight
+      table.virtualizationController.setViewport(table.viewportTop, table.viewportHeight)
+      table.emitBlock('all', 800)
+      const exhaustionDeadline = Date.now() + 4000
+      while (requests.filter((request) => request.start === 800).length < 2) {
+        if (Date.now() > exhaustionDeadline) throw new Error('Dropped window request was not retried once')
+        await new Promise((resolve) => window.setTimeout(resolve, 10))
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 130))
+      return {
+        successful,
+        exhaustedRequests: requests.filter((request) => request.start === 800),
+        pending: table.expectedBlocks.size,
+        retryTimers: table.windowRetryController.size,
+        suppressed: table.windowRetryController.blocked,
+      }
     })
-    expect(result.requests).toHaveLength(2)
-    expect(result.requests.map((request: any) => [request.blockID, request.start, request.limit])).toEqual([
+    expect(result.successful.requests).toHaveLength(2)
+    expect(result.successful.requests.map((request: any) => [request.blockID, request.start, request.limit])).toEqual([
       ['all', 500, 100],
       ['all', 500, 100],
     ])
-    expect(result.requests[1].requestSeq).toBeGreaterThan(result.requests[0].requestSeq)
+    expect(result.successful.requests[1].requestSeq).toBeGreaterThan(result.successful.requests[0].requestSeq)
+    expect(result.successful.pending).toBe(0)
+    expect(result.successful.skeletons).toBe(0)
+    expect(result.exhaustedRequests).toHaveLength(2)
     expect(result.pending).toBe(0)
-    expect(result.skeletons).toBe(0)
+    expect(result.retryTimers).toBe(0)
+    expect(result.suppressed).toBe(true)
   } finally { await page.close() }
 })
 
@@ -231,9 +252,9 @@ for (const outcome of ['slow', 'error'] as const) test(`windowed table does not 
       const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...seed, order_id: `${outcome}-${start + offset}` }))
       const block = (start: number, requestSeq = 0) => ({ ...base.blocks.a, start, requestSeq, resetVersion: base.resetVersion, rows: rows(start) })
       table.clearJumpTimer()
-      table.clearWindowRetryTimers()
+      table.windowRetryController.clear()
       table.expectedBlocks.clear()
-      table.windowRetryDelay = 50
+      table.windowRetryController.delay = 50
       table.table = {
         ...base,
         availableRows: 1000,
@@ -256,7 +277,7 @@ for (const outcome of ['slow', 'error'] as const) test(`windowed table does not 
       const request = requests[0]
       table.table = { ...table.table, loadingBlock: outcome === 'slow' ? 'all' : '', error: outcome === 'error' ? 'query failed' : '' }
       await table.updateComplete
-      const acknowledged = { error: table.table.error, pending: table.expectedBlocks.size, retryTimers: table.windowRetryTimers.size, requests: requests.filter((candidate) => candidate.start === 500).length, suppressed: table.suppressWindowRequests }
+      const acknowledged = { error: table.table.error, pending: table.expectedBlocks.size, retryTimers: table.windowRetryController.size, requests: requests.filter((candidate) => candidate.start === 500).length, suppressed: table.windowRetryController.blocked }
       await new Promise((resolve) => window.setTimeout(resolve, 130))
       const requestsAfterTimeout = requests.filter((candidate) => candidate.start === 500).length
       if (outcome === 'slow') {
@@ -273,8 +294,8 @@ for (const outcome of ['slow', 'error'] as const) test(`windowed table does not 
         requestsAfterTimeout,
         requests: requests.filter((candidate) => candidate.start === 500).length,
         pending: table.expectedBlocks.size,
-        retryTimers: table.windowRetryTimers.size,
-        suppressed: table.suppressWindowRequests,
+        retryTimers: table.windowRetryController.size,
+        suppressed: table.windowRetryController.blocked,
         skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length,
       }
     }, outcome)
