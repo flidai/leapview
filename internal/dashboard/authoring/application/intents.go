@@ -285,11 +285,15 @@ func resolveVisualTypeFieldBindingsForTarget(model *semanticmodel.Model, visual 
 		}
 	}
 	sort.Strings(dimensionIDs)
-	for _, id := range dimensionIDs {
-		if int32(len(bindings.Dimensions)) >= minimums[authoring.FieldRoleDimension] {
-			break
+	if target == document.DashboardVisualTypeMap {
+		bindings.Dimensions = mapCoordinateDimensions(model, dataset, bindings.Dimensions, dimensionIDs)
+	} else {
+		for _, id := range dimensionIDs {
+			if int32(len(bindings.Dimensions)) >= minimums[authoring.FieldRoleDimension] {
+				break
+			}
+			bindings.Dimensions = appendUniqueVisualSwitchField(bindings.Dimensions, id)
 		}
-		bindings.Dimensions = appendUniqueVisualSwitchField(bindings.Dimensions, id)
 	}
 
 	metricIDs := make([]string, 0, len(model.Metrics))
@@ -310,6 +314,93 @@ func resolveVisualTypeFieldBindingsForTarget(model *semanticmodel.Model, visual 
 	// arbitrary column would replace the visual's meaning while retaining its
 	// title (for example, revenue variance becoming a table of budget COGS).
 	return bindings
+}
+
+func mapCoordinateDimensions(model *semanticmodel.Model, dataset string, current, candidates []string) []string {
+	latitude, longitude := "", ""
+	consider := func(id string) {
+		if latitude != "" && longitude != "" {
+			return
+		}
+		switch mapDimensionPriority(model, dataset, id) {
+		case 0:
+			if latitude == "" {
+				latitude = id
+			}
+		case 1:
+			if longitude == "" {
+				longitude = id
+			}
+		}
+	}
+	for _, id := range current {
+		consider(id)
+	}
+	for _, id := range candidates {
+		consider(id)
+	}
+	if latitude == "" || longitude == "" {
+		return nil
+	}
+	return []string{latitude, longitude}
+}
+
+func mapDimensionPriority(model *semanticmodel.Model, dataset, id string) int {
+	dimension, ok := model.Dimensions[id]
+	if !ok || !isNumericMapDimension(model, dataset, dimension) {
+		return 2
+	}
+	if binding, ok := dimension.Bindings[dataset]; ok {
+		if candidate := mapCoordinateNamePriority(unqualifiedVisualSwitchField(dataset, binding.Field)); candidate < 2 {
+			return candidate
+		}
+	}
+	return mapCoordinateNamePriority(id)
+}
+
+func isNumericMapDimension(model *semanticmodel.Model, dataset string, dimension semanticmodel.SemanticDimension) bool {
+	if dimension.Datatype != "" {
+		return numericLogicalDatatype(dimension.Datatype)
+	}
+	binding, ok := dimension.Bindings[dataset]
+	if !ok {
+		return false
+	}
+	field := strings.TrimSpace(binding.Field)
+	parts := strings.SplitN(field, ".", 2)
+	tableID := dataset
+	if len(parts) == 2 {
+		tableID, field = parts[0], parts[1]
+	}
+	table, ok := model.Tables[tableID]
+	if !ok {
+		return false
+	}
+	physical, ok := table.Dimensions[field]
+	return ok && numericLogicalDatatype(physical.Datatype)
+}
+
+func numericLogicalDatatype(datatype semanticmodel.LogicalDataType) bool {
+	switch datatype {
+	case semanticmodel.DataTypeInteger, semanticmodel.DataTypeDecimal, semanticmodel.DataTypeFloat:
+		return true
+	default:
+		return false
+	}
+}
+
+func mapCoordinateNamePriority(name string) int {
+	for _, token := range strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	}) {
+		switch token {
+		case "lat", "latitude":
+			return 0
+		case "lon", "long", "longitude":
+			return 1
+		}
+	}
+	return 2
 }
 
 func uniqueSemanticDimensionForRecord(model *semanticmodel.Model, dataset, field string) string {

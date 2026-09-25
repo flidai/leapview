@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	nethttp "net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,11 +10,46 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+func TestDashboardBuilderVisualTypeCommandKeepsActiveFilters(t *testing.T) {
+	page := "overview"
+	hash := "sha256:" + strings.Repeat("a", 64)
+	retainedID := "builder:draft-1:revision-1:" + hash + ":generation:generation-1"
+	state := dashboardfilter.NewMachine(dashboardfilter.ApplicationImmediate, nil).Snapshot()
+	state.State.Revision = 7
+	store := dashboardsession.NewMemoryStore()
+	key := dashboardsession.Key{ProjectID: projectgraph.ResourceID("sales"), DashboardID: projectgraph.ResourceID("revenue"), PrincipalOrClient: "principal-1:client_1", ServingStateID: retainedID, StreamInstanceID: "stream_1"}
+	if _, err := store.Create(context.Background(), key, dashboardsession.NewState(page, state)); err != nil {
+		t.Fatal(err)
+	}
+	fake := &builderAuthoringFake{
+		builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1", Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-2", Number: 2, ContentHash: hash}, Pages: []uisignals.DashboardBuilderPageSignal{{ID: page, Visuals: []uisignals.DashboardBuilderVisualSignal{{ID: "revenue-component", VisualID: "revenue"}}}}},
+		preview: preview.Preview{PagePatch: dashboard.Patch{Filters: dashboard.Filters{CompiledState: &state.State}}},
+	}
+	handler := Handler{Authoring: fake, ProjectID: "sales", SessionStore: store, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{
+		"builderCommand": map[string]any{"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": hash, "pageId": page, "visualId": "revenue-component", "type": "line", "action": "set_visual_type"},
+		"runtime":        map[string]any{"clientId": "client_1", "streamInstanceId": "stream_1", "servingStateId": retainedID},
+	})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "retained-filter-type-change")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if fake.previewReq.Filters.CompiledState == nil || fake.previewReq.Filters.CompiledState.Revision != 7 || fake.previewReq.Filters.ServingStateID != retainedID {
+		t.Fatalf("target preview lost active filters: %#v", fake.previewReq.Filters)
+	}
+}
 
 func TestDashboardBuilderVisualTypeCommandRefreshesOnlyChangedVisual(t *testing.T) {
 	page := "overview"

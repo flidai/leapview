@@ -90,6 +90,24 @@ func TestBuilderFilterServingStateIdentityIncludesActiveGeneration(t *testing.T)
 	}
 }
 
+func TestBuilderActiveServingStateIDRetainsOnlySameDraftAndGeneration(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("a", 64)
+	builder := uisignals.DashboardBuilderSignal{DraftID: "draft-7", Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-2", Number: 2, ContentHash: hash}}
+	retained := "builder:draft-7:revision-1:" + hash + ":generation:generation-1"
+	if got, err := builderActiveServingStateID(builder, "generation-1", retained); err != nil || got != retained {
+		t.Fatalf("retained identity = %q, %v", got, err)
+	}
+	for _, invalid := range []string{
+		"builder:other-draft:revision-1:" + hash + ":generation:generation-1",
+		"builder:draft-7:revision-1:" + hash + ":generation:generation-2",
+		"builder:draft-7:malformed:generation:generation-1",
+	} {
+		if _, err := builderActiveServingStateID(builder, "generation-1", invalid); !errors.Is(err, authoring.ErrStaleRevision) {
+			t.Errorf("identity %q: error = %v, want stale revision", invalid, err)
+		}
+	}
+}
+
 func TestWriteBuilderFilterErrorMapsOnlyKnownClientConflicts(t *testing.T) {
 	tests := []struct {
 		name string

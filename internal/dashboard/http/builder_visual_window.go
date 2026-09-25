@@ -70,12 +70,10 @@ func (h Handler) DashboardBuilderVisualWindow(w nethttp.ResponseWriter, r *netht
 		if generation == "" {
 			return dashboard.Filters{}, errors.New("dashboard builder visual window requires an active serving generation")
 		}
-		request.Key.ServingStateID = builderServingStateIDForGeneration(request.Builder, generation)
-		if request.Key.ServingStateID == "" {
-			return dashboard.Filters{}, fmt.Errorf("%w: complete builder draft revision is required", authoring.ErrInvalidPayload)
-		}
-		if supplied := strings.TrimSpace(optionalRuntimeValue(signals.Runtime.ServingStateID)); supplied != "" && supplied != request.Key.ServingStateID {
-			return dashboard.Filters{}, authoring.ErrStaleRevision
+		var err error
+		request.Key.ServingStateID, err = builderActiveServingStateID(request.Builder, generation, optionalRuntimeValue(signals.Runtime.ServingStateID))
+		if err != nil {
+			return dashboard.Filters{}, err
 		}
 		if err := validateBuilderVisualWindow(compiled.Definition, request.PageID, signals.VisualWindowCommand); err != nil {
 			return dashboard.Filters{}, err
@@ -83,6 +81,9 @@ func (h Handler) DashboardBuilderVisualWindow(w nethttp.ResponseWriter, r *netht
 		record, err := h.ensureBuilderFilterSession(r.Context(), request.Key, request.PageID, compiled.Definition)
 		if err != nil {
 			return dashboard.Filters{}, err
+		}
+		if _, err := dashboardfilter.RestoreMachine(compiled.Definition.FilterApplication.WithDefaults().Mode, compiled.Definition.FilterBindingSpecs(), record.State.Filters); err != nil {
+			return dashboard.Filters{}, authoring.ErrStaleRevision
 		}
 		state = record.State.Filters.State
 		if err := validateBuilderFilterRevision(signals.BuilderFilterState.Revision, state.Revision); err != nil {
@@ -139,6 +140,7 @@ func (h Handler) DashboardBuilderVisualWindow(w nethttp.ResponseWriter, r *netht
 		writeBuilderVisualWindowError(w, fmt.Errorf("dashboard builder visual window response omitted visual %q", visualID))
 		return
 	}
+	envelope.ServingStateID = request.Key.ServingStateID
 	// Keep window results separate from the base preview. Otherwise an old
 	// response can erase a new preview before the browser has rendered it.
 	// Full preview replacement clears these bounded, per-context window slots.

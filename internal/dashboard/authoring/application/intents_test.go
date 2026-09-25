@@ -103,6 +103,12 @@ func TestResolveVisualTypeFieldBindingsForTargetCompletesRequiredRolesFromSource
 			if len(got.Metrics) == 0 || got.Metrics[0] != "current_cash" {
 				t.Fatalf("metrics = %#v, want current_cash retained first", got.Metrics)
 			}
+			if entry.Type == document.DashboardVisualTypeMap {
+				if len(got.Dimensions) != 0 {
+					t.Fatalf("map dimensions = %#v, want empty without numeric latitude/longitude", got.Dimensions)
+				}
+				return
+			}
 			for _, limit := range authoring.CanonicalVisualRoleLimits(entry.Type) {
 				var count int
 				switch limit.Role {
@@ -128,6 +134,65 @@ func TestResolveVisualTypeFieldBindingsForTargetCompletesRequiredRolesFromSource
 				}
 			}
 		})
+	}
+}
+
+func TestResolveVisualTypeFieldBindingsForMapPrefersNumericLatitudeAndLongitude(t *testing.T) {
+	model := &semanticmodel.Model{
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"country":   {Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"stores": {Field: "stores.country"}}},
+			"latitude":  {Datatype: semanticmodel.DataTypeFloat, Bindings: map[string]semanticmodel.DimensionBinding{"stores": {Field: "stores.latitude"}}},
+			"longitude": {Datatype: semanticmodel.DataTypeFloat, Bindings: map[string]semanticmodel.DimensionBinding{"stores": {Field: "stores.longitude"}}},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"store_count": {Dataset: "stores"},
+		},
+	}
+	storeCount := "store_count"
+	want := []string{"latitude", "longitude"}
+	for _, test := range []struct {
+		name       string
+		dimensions []string
+	}{
+		{name: "auto-selects coordinates before country"},
+		{name: "removes other existing dimensions and orders coordinates", dimensions: []string{"country", "longitude", "latitude"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			queryDimensions := make([]document.DashboardDimensionSelection, 0, len(test.dimensions))
+			for _, id := range test.dimensions {
+				id := id
+				queryDimensions = append(queryDimensions, document.DashboardDimensionSelection{String: &id})
+			}
+			visual := document.DashboardVisual{Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+				Type: "aggregate", Dimensions: queryDimensions, Metrics: []document.DashboardMetricSelection{{String: &storeCount}},
+			}}}
+
+			got := resolveVisualTypeFieldBindingsForTarget(model, visual, document.DashboardVisualTypeMap)
+			if !reflect.DeepEqual(got.Dimensions, want) {
+				t.Fatalf("map dimensions = %#v, want numeric coordinates in latitude/longitude order: %#v", got.Dimensions, want)
+			}
+		})
+	}
+}
+
+func TestResolveVisualTypeFieldBindingsForMapStaysEmptyWithoutCoordinatePair(t *testing.T) {
+	model := &semanticmodel.Model{
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"country": {Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"stores": {Field: "stores.country"}}},
+			"revenue": {Datatype: semanticmodel.DataTypeDecimal, Bindings: map[string]semanticmodel.DimensionBinding{"stores": {Field: "stores.revenue"}}},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"store_count": {Dataset: "stores"},
+		},
+	}
+	country, revenue, storeCount := "country", "revenue", "store_count"
+	visual := document.DashboardVisual{Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+		Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: &country}, {String: &revenue}}, Metrics: []document.DashboardMetricSelection{{String: &storeCount}},
+	}}}
+
+	got := resolveVisualTypeFieldBindingsForTarget(model, visual, document.DashboardVisualTypeMap)
+	if len(got.Dimensions) != 0 {
+		t.Fatalf("map dimensions = %#v, want empty without a latitude/longitude pair", got.Dimensions)
 	}
 }
 

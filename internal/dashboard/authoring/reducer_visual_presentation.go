@@ -198,6 +198,13 @@ func mergeCompatiblePresentation(target *document.DashboardVisual, source docume
 	if err != nil {
 		return err
 	}
+	// Gauge domains require an authored minimum and maximum together. Radar
+	// supports only maximum, so carry the pair across only when both bounds
+	// were explicitly present on the source presentation.
+	if target.Type == document.DashboardVisualTypeGauge && (prior["minimum"] == nil || prior["maximum"] == nil) {
+		delete(prior, "minimum")
+		delete(prior, "maximum")
+	}
 	// Sharing a generated presentation family does not make every option
 	// compatible (for example, even rose:false is invalid on a Funnel).
 	// Keep family-wide fields outside the bounded applicability registry,

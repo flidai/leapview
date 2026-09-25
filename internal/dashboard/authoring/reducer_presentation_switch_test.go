@@ -61,6 +61,26 @@ func TestSameFamilySwitchKeepsTargetDefaultsAndCompatibleFormatting(t *testing.T
 	}
 }
 
+func TestRadarMaximumDoesNotCreatePartialGaugeRange(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	visual := defaultCanonicalVisual("radar", "Cash")
+	maximum := 100.0
+	visual.Presentation.Value.(*document.PolarDashboardPresentation).Maximum = &maximum
+	revision.Document.Spec.Visuals["base"] = visual
+
+	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeGauge}); err != nil {
+		t.Fatal(err)
+	}
+	switched := revision.Document.Spec.Visuals["base"]
+	presentation := switched.Presentation.Value.(*document.PolarDashboardPresentation)
+	if presentation.Minimum != nil || presentation.Maximum != nil {
+		t.Fatalf("radar maximum became a partial gauge range: minimum=%v maximum=%v", presentation.Minimum, presentation.Maximum)
+	}
+	if _, err := compiler.LowerCanonicalDashboardPresentation(switched.Presentation, document.DashboardVisualTypeGauge); err != nil {
+		t.Fatalf("switched gauge presentation does not compile: %v", err)
+	}
+}
+
 func TestGaugeAutoRangeExplicitlyClearsBothAuthoredBounds(t *testing.T) {
 	_, revision := canonicalReducerFixture(t)
 	visual := defaultCanonicalVisual("gauge", "Actual")

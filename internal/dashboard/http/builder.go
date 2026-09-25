@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/dashboard"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
@@ -598,7 +599,17 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	if command.SetVisualType != nil {
 		previewVisualID = builderVisualDefinitionID(builder, input.PageID, input.VisualID)
 	}
-	envelope := h.dashboardBuilderEnvelopeWithTargetPreviewForProject(r.Context(), project, actorID, builder, previewVisualID)
+	var retainedFilters dashboard.Filters
+	if previewVisualID != "" && h.SessionStore != nil && signals.Runtime.ServingStateID != nil {
+		if request, requestErr := h.builderFilterRequest(r, builderFilterSignals{Builder: builder, Runtime: signals.Runtime}); requestErr == nil {
+			request.Key.ServingStateID = strings.TrimSpace(*signals.Runtime.ServingStateID)
+			if record, loadErr := h.SessionStore.Load(r.Context(), request.Key); loadErr == nil {
+				state := record.State.Filters.State
+				retainedFilters = dashboard.Filters{CompiledState: &state, ActivePageID: input.PageID, ServingStateID: request.Key.ServingStateID}
+			}
+		}
+	}
+	envelope := h.dashboardBuilderEnvelopeWithTargetPreviewAndFiltersForProject(r.Context(), project, actorID, builder, previewVisualID, retainedFilters)
 	envelope.Runtime = h.builderCommandRuntime(r, signals.Runtime, envelope.Runtime, project.String(), dashboardID, input.PageID, builder)
 	if previewVisualID != "" && signals.Runtime.ServingStateID != nil {
 		if servingStateID := strings.TrimSpace(*signals.Runtime.ServingStateID); servingStateID != "" {
@@ -1186,6 +1197,10 @@ func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Conte
 }
 
 func (h Handler) dashboardBuilderEnvelopeWithTargetPreviewForProject(ctx context.Context, projectID projectgraph.ResourceID, actorID string, builder uisignals.DashboardBuilderSignal, visualID string) uisignals.DashboardBuilderEnvelope {
+	return h.dashboardBuilderEnvelopeWithTargetPreviewAndFiltersForProject(ctx, projectID, actorID, builder, visualID, dashboard.Filters{})
+}
+
+func (h Handler) dashboardBuilderEnvelopeWithTargetPreviewAndFiltersForProject(ctx context.Context, projectID projectgraph.ResourceID, actorID string, builder uisignals.DashboardBuilderSignal, visualID string, filters dashboard.Filters) uisignals.DashboardBuilderEnvelope {
 	envelope := dashboardBuilderEnvelope(builder)
 	if servingStateID := builderServingStateID(builder); servingStateID != "" {
 		envelope.Runtime.ServingStateID = uisignals.Optional(servingStateID)
@@ -1197,7 +1212,7 @@ func (h Handler) dashboardBuilderEnvelopeWithTargetPreviewForProject(ctx context
 		ExpectedRevision: authoring.RevisionToken{
 			RevisionID: authoring.RevisionID(strings.TrimSpace(builder.Revision.ID)), Number: uint64(maxInt64(builder.Revision.Number)), ContentHash: strings.TrimSpace(builder.Revision.ContentHash),
 		},
-		PageID: firstBuilderPage(builder), VisualID: strings.TrimSpace(visualID), BestEffortVisuals: true,
+		PageID: firstBuilderPage(builder), VisualID: strings.TrimSpace(visualID), Filters: filters, BestEffortVisuals: true,
 	})
 	contractDefinition := result.Definition
 	contractEvidence := result.SemanticEvidence
