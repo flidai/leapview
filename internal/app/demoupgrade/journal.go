@@ -72,14 +72,18 @@ func (j *FileJournal) Load(ctx context.Context) (State, error) {
 	if j == nil || j.lock == nil {
 		return State{}, errors.New("journal lock not held")
 	}
-	info, err := os.Lstat(j.path)
+	return readJournalFile(j.path)
+}
+
+func readJournalFile(path string) (State, error) {
+	info, err := os.Lstat(path)
 	if err != nil {
 		return State{}, err
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 16384 {
 		return State{}, errors.New("invalid private upgrade journal")
 	}
-	raw, err := securefs.ReadPrivateFile(j.path)
+	raw, err := securefs.ReadPrivateFile(path)
 	if err != nil {
 		return State{}, err
 	}

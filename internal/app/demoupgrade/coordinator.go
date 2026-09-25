@@ -1,6 +1,7 @@
 // Package demoupgrade coordinates the demo provider's maintenance window.
-// It does not manufacture migration admission or recovery evidence: concrete
-// effects must resolve those through the existing release/recovery authorities.
+// Concrete effects own artifact admission, stopped-writer fencing and physical
+// recovery evidence. The native demo profile does not create generic release
+// authority records or relax the generic transition runner.
 package demoupgrade
 
 import (
@@ -37,8 +38,8 @@ var (
 )
 
 // Identity binds the local maintenance journal to the immutable candidate
-// artifact admission. Transition preflight is resolved AFTER capture, against
-// the exact newly verified frontier, by the migration execution boundary.
+// artifact admission and provider request. The migration execution boundary
+// revalidates this identity against the newly verified recovery digest.
 type Identity struct {
 	Target                  string `json:"target"`
 	Predecessor             string `json:"predecessor"`
@@ -115,10 +116,11 @@ type Journal interface {
 // point in isolation and return its verified, target-bound frontier digest.
 // Restore restores BOTH databases, managed files and configuration; it must not
 // expose either image. VerifyPredecessor checks restored state behind the gate.
-// Migrate must resolve authoritative transition preflight against this exact
+// Migrate must revalidate the admitted provider request against this exact
 // recovery digest and execute the candidate-owned migrations under its fence.
-// Neither admission nor restore verification may be implemented as a boolean
-// supplied by the workflow, or by reading a backup's table of contents.
+// Restore verification requires a real isolated restore and runtime validation,
+// not a backup table of contents. Artifact evidence comes from the authenticated
+// qualification/admission workflow, bound to the exact immutable image.
 type Effects interface {
 	Admit(context.Context, Identity) error
 	Quiesce(context.Context) error

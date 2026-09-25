@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -96,6 +97,14 @@ func TestColdPostgreSQLPairRecovery(t *testing.T) {
 		port := info[0].NetworkSettings.Ports["5432/tcp"][0].HostPort
 		return (&url.URL{Scheme: "postgres", User: url.UserPassword("postgres", "isolated-test-only"), Host: "127.0.0.1:" + port, Path: "/" + db, RawQuery: "sslmode=disable"}).String()
 	}
+	migrationConnection := func(name string) string {
+		parsed, err := url.Parse(connection(name, "leapview_control"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed.User = url.UserPassword("leapview_control_migrator", "isolated-migrator-only")
+		return parsed.String()
+	}
 	start(original, "type=volume,source="+volume+",target=/var/lib/postgresql")
 	wait(original)
 	admin, err := pgxpool.New(ctx, connection(original, "postgres"))
@@ -112,12 +121,23 @@ func TestColdPostgreSQLPairRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, err = admin.Exec(ctx, "ALTER ROLE leapview_control_migrator LOGIN NOINHERIT PASSWORD 'isolated-migrator-only'; GRANT leapview_control_owner TO leapview_control_migrator"); err != nil {
+		t.Fatal(err)
+	}
 	admin.Close()
-	control, err := pgxpool.New(ctx, connection(original, "leapview_control"))
+	provision, err := pgxpool.New(ctx, connection(original, "leapview_control"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sqlDB, err := sql.Open("pgx", connection(original, "leapview_control"))
+	if _, err = provision.Exec(ctx, "GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator"); err != nil {
+		t.Fatal(err)
+	}
+	defer provision.Close()
+	control, err := pgxpool.New(ctx, migrationConnection(original))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := sql.Open("pgx", migrationConnection(original))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,11 +151,12 @@ func TestColdPostgreSQLPairRecovery(t *testing.T) {
 	if _, err = provider.UpTo(ctx, 28); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = control.Exec(ctx, `INSERT INTO platform.setting(key,value) VALUES('recovery-proof','before-upgrade')`); err != nil {
+	if _, err = provision.Exec(ctx, `INSERT INTO platform.setting(key,value) VALUES('recovery-proof','before-upgrade')`); err != nil {
 		t.Fatal(err)
 	}
 	control.Close()
 	sqlDB.Close()
+	provision.Close()
 	docker("exec", original, "psql", "-U", "postgres", "-d", "leapview_ducklake", "-v", "ON_ERROR_STOP=1", "-c", "CREATE TABLE recovery_marker(value text); INSERT INTO recovery_marker VALUES ('paired-catalog-state');")
 	docker("stop", "--time", "30", original)
 	pgPath := docker("volume", "inspect", volume, "--format", "{{.Mountpoint}}")
@@ -176,15 +197,15 @@ func TestColdPostgreSQLPairRecovery(t *testing.T) {
 		}
 	}
 	verify(28)
-	upgraded, err := pgxpool.New(ctx, connection(clone, "leapview_control"))
+	upgraded, err := pgxpool.New(ctx, migrationConnection(clone))
 	if err != nil {
 		t.Fatal(err)
 	}
-	upgradeSQL, err := sql.Open("pgx", connection(clone, "leapview_control"))
+	upgradeSQL, err := sql.Open("pgx", migrationConnection(clone))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = migrations.ApplyDemoUpgrade(ctx, upgraded, upgradeSQL, func(context.Context) error { return nil }, func(context.Context, *sql.DB) error { return nil }); err != nil {
+	if err = postgresbaseline.ApplyDemoUpgrade(ctx, upgraded, upgradeSQL, func(context.Context) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	upgraded.Close()

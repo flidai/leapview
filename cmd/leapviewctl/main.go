@@ -11,10 +11,11 @@ import (
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
 	"github.com/flidai/leapview/internal/app/cli/hostinstall"
+	"github.com/flidai/leapview/internal/app/demoupgrade"
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	if err := run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "leapviewctl: %v\n", err)
@@ -43,6 +44,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	command := composectl.Command(ctx, controller)
+	command.AddCommand(demoupgrade.Command(ctx, os.Stdin, os.Stdout))
 	command.AddCommand(hostinstall.Command(ctx, hostinstall.CommandOptions{
 		Root:      root,
 		DockerBin: dockerBin,
