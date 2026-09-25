@@ -7,8 +7,10 @@ import tempfile
 import os
 import io
 import json
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts'))
 def load(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / 'scripts' / (name + '.py'))
     module = importlib.util.module_from_spec(spec)
@@ -42,6 +44,86 @@ class AdmissionTests(unittest.TestCase):
         for image in ['ghcr.io/flidai/leapview:latest', 'other@sha256:'+'a'*64]:
             with self.assertRaises(ValueError):
                 self.policy.admit(self.run, self.receipt, image)
+
+class PreflightTests(unittest.TestCase):
+    def test_preflight_never_starts_host_transaction_or_fetches_viewer(self):
+        for mode in ['image-only', 'database-upgrade-required', 'review-required']:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                runner = load('demo_compose_deploy')
+                revision = 'b' * 40
+                commands = []
+                def output(args, **kwargs):
+                    commands.append(args)
+                    if args[0] == 'ssh-keyscan': return b'host public-key'
+                    if args[0] == 'ssh-keygen': return '256 ' + runner.FINGERPRINT + ' host'
+                    if args[-1] == 'inspect': return json.dumps({'revision':revision}).encode()
+                    self.fail('Unexpected preflight command: ' + repr(args))
+                env = {'DEMO_IMAGE':'ghcr.io/flidai/leapview@sha256:'+'a'*64,
+                       'SOURCE_REVISION':revision, 'DEMO_HOST':runner.HOST,
+                       'DEMO_SSH_PRIVATE_KEY':'test-only',
+                       'GITHUB_STEP_SUMMARY':str(pathlib.Path(directory)/'summary')}
+                report = {'mode':mode, 'currentSchema':28, 'candidateSchema':30}
+                previous_umask = os.umask(0o077)
+                try:
+                    with patch.dict(os.environ, env, clear=True), patch.object(sys, 'argv', ['runner','--preflight']), \
+                         patch.object(runner.subprocess, 'check_output', side_effect=output), \
+                         patch.object(runner.subprocess, 'run') as run, \
+                         patch.object(runner.subprocess, 'Popen') as popen, \
+                         patch.object(runner, 'inspect_transition', return_value=report), \
+                         patch.object(runner.upgrade, 'prepare'), \
+                         patch.object(runner, 'verify_public_revision') as public, patch('sys.stdout', io.StringIO()):
+                        if mode == 'image-only': runner.main()
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, mode): runner.main()
+                        popen.assert_not_called()
+                        public.assert_not_called()
+                        self.assertEqual(run.call_count, 2)  # temporary inspector upload and cleanup only
+                        self.assertIn('rm', run.call_args.args[0])
+                        self.assertIn('-f', run.call_args.args[0])
+                    self.assertIn(mode, pathlib.Path(env['GITHUB_STEP_SUMMARY']).read_text())
+                finally:
+                    os.umask(previous_umask)
+
+class UpgradeGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = load('demo_compose_runtime')
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.runtime.PROVIDER = pathlib.Path(self.directory.name)
+        self.runtime.ROOT = pathlib.Path(self.directory.name)
+        self.journal = self.runtime.PROVIDER/'upgrade-operation.json'
+
+    def write(self, phase, version=1):
+        self.journal.write_text(json.dumps({'version':version, 'state':{'phase':phase}}))
+        self.journal.chmod(0o600)
+
+    def test_incomplete_upgrade_blocks_image_only_deploy(self):
+        for phase in ['prepared','quiescing','capturing','verified','migrating','starting',
+                      'validating','committed','restoring','reopening','unknown']:
+            with self.subTest(phase=phase):
+                self.write(phase)
+                with self.assertRaisesRegex(RuntimeError, 'Unfinished schema upgrade'):
+                    with self.runtime.upgrade_guard(): self.fail('entered image rollout')
+
+    def test_no_journal_or_terminal_upgrade_allows_image_only_path(self):
+        with self.runtime.upgrade_guard(): pass
+        for phase in ['succeeded','recovered']:
+            self.write(phase)
+            with self.runtime.upgrade_guard(): pass
+
+    def test_competing_operator_is_rejected(self):
+        with self.runtime.upgrade_guard():
+            with self.assertRaises(BlockingIOError):
+                with self.runtime.upgrade_guard(): self.fail('concurrent operator entered')
+
+    def test_unknown_journal_version_and_permissions_rejected(self):
+        self.write('succeeded', version=2)
+        with self.assertRaises(RuntimeError):
+            with self.runtime.upgrade_guard(): self.fail('accepted future version')
+        self.write('succeeded')
+        self.journal.chmod(0o644)
+        with self.assertRaises(RuntimeError):
+            with self.runtime.upgrade_guard(): self.fail('accepted writable journal')
 
 class RolloutTests(unittest.TestCase):
     def setUp(self):
@@ -103,7 +185,7 @@ class StagingTests(unittest.TestCase):
         self.release.mkdir(parents=True)
         self.payload = {name: b'packaged content' for name in
                         ['compose.yaml', 'compose.https.yaml', 'Caddyfile',
-                         'deployment.env.example', 'leapviewctl']}
+                         'deployment.env.example', 'leapviewctl', 'leapviewctl-wrapper']}
         for name, data in self.payload.items():
             (self.release/name).write_bytes(data)
             (self.root/name).symlink_to('current/'+name)
@@ -112,7 +194,9 @@ class StagingTests(unittest.TestCase):
     def copy(self, *args):
         if args[:2] == ('docker', 'cp'):
             for name, data in self.payload.items():
-                (pathlib.Path(args[-1])/name).write_bytes(data)
+                target = pathlib.Path(args[-1])/name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
 
     def stage(self):
         with patch.object(self.rollout, 'out', return_value='container'), patch.object(self.rollout, 'run', side_effect=self.copy):
@@ -133,6 +217,63 @@ class StagingTests(unittest.TestCase):
             self.assertEqual((previous.st_ino, previous.st_mtime_ns, previous.st_mode),
                              (current.st_ino, current.st_mtime_ns, current.st_mode))
         self.assertEqual(list((self.root/'releases').iterdir()), [self.release])
+
+    def add_auxiliary_payload(self):
+        self.payload.update({'README.md': b'documentation',
+                             'qualification/browser.mjs': b'qualification helper'})
+
+    def test_host_upgrade_generation_accepts_image_auxiliary_files(self):
+        before = {name: (self.release/name).stat() for name in self.payload}
+        self.add_auxiliary_payload()
+        self.assertEqual(self.stage(), self.release)
+        self.assertEqual({entry.name for entry in self.release.iterdir()}, set(before))
+        for name, previous in before.items():
+            current = (self.release/name).stat()
+            self.assertEqual((previous.st_ino, previous.st_mtime_ns, previous.st_mode),
+                             (current.st_ino, current.st_mtime_ns, current.st_mode))
+
+    def test_new_generation_contains_only_canonical_runtime_payload(self):
+        runtime_files = set(self.payload)
+        self.add_auxiliary_payload()
+        self.image = 'ghcr.io/flidai/leapview@sha256:'+'b'*64
+        staged = self.stage()
+        self.assertEqual({entry.name for entry in staged.iterdir()}, runtime_files)
+        for name in runtime_files:
+            expected = 0o700 if name in ('leapviewctl', 'leapviewctl-wrapper') else 0o600
+            self.assertEqual((staged/name).stat().st_mode & 0o777, expected)
+
+    def test_legacy_complete_payload_is_accepted_without_rewriting(self):
+        self.add_auxiliary_payload()
+        for name, data in self.payload.items():
+            target = self.release/name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        before = {name: (self.release/name).stat() for name in self.payload}
+        self.assertEqual(self.stage(), self.release)
+        for name, previous in before.items():
+            current = (self.release/name).stat()
+            self.assertEqual((previous.st_ino, previous.st_mtime_ns, previous.st_mode),
+                             (current.st_ino, current.st_mtime_ns, current.st_mode))
+
+    def test_unverified_extra_files_are_still_rejected(self):
+        for name, contents in [('unexpected', b'unknown'), ('README.md', b'modified docs')]:
+            with self.subTest(name=name):
+                self.add_auxiliary_payload()
+                extra = self.release/name
+                extra.write_bytes(contents)
+                with self.assertRaisesRegex(RuntimeError, 'Existing release'):
+                    self.stage()
+                self.assertEqual(extra.read_bytes(), contents)
+                extra.unlink()
+
+    def test_missing_or_modified_wrapper_is_rejected(self):
+        self.payload.pop('leapviewctl-wrapper')
+        with self.assertRaisesRegex(RuntimeError, 'payload'):
+            self.stage()
+        self.payload['leapviewctl-wrapper'] = b'packaged content'
+        (self.release/'leapviewctl-wrapper').write_bytes(b'modified wrapper')
+        with self.assertRaisesRegex(RuntimeError, 'Existing release'):
+            self.stage()
 
     def test_changed_existing_release_tool_is_rejected_without_overwriting(self):
         (self.release/'leapviewctl').write_bytes(b'operator tool')

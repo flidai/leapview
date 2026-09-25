@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "id": "app-leapview-demo-02",
+  "hostname": "app-leapview-demo-02",
+  "root": "/opt/leapview",
+  "stateRoot": "/etc/leapview-provider-cfo",
+  "project": "leapview-cfo",
+  "appService": "leapview",
+  "proxyService": "caddy",
+  "postgres": "demo02-postgres-cfo",
+  "postgresImage": "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8",
+  "network": "leapview-cfo_default",
+  "origin": "https://demo.leapview.dev",
+  "httpBinding": "127.0.0.1:8082",
+  "httpsBinding": "127.0.0.1:8443",
+  "rehearsalBinding": "127.0.0.1:8444",
+  "volumes": {
+    "postgres": "leapview-provider-cfo_postgres-data",
+    "home": "leapview-cfo_leapview-state",
+    "caddy-data": "leapview-cfo_caddy-data",
+    "caddy-config": "leapview-cfo_caddy-config"
+  }
+}

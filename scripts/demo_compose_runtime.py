@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Demo-02 image-only transaction. EOF/timeout before browser approval rolls back."""
 import datetime
+import contextlib
+import stat
 import fcntl
 import hashlib
 import json
@@ -23,6 +25,16 @@ POSTGRES = 'demo02-postgres-cfo'
 VOLUME = 'leapview-cfo_leapview-state'
 LOG = sys.stderr
 IMAGE_RE = r'ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}'
+# Match hostinstall's requiredPayloadFiles. The cross-language staging test
+# exercises both directions so the two generation formats cannot drift.
+RUNTIME_PAYLOAD_MODES = {
+    'leapviewctl': 0o700,
+    'leapviewctl-wrapper': 0o700,
+    'compose.yaml': 0o600,
+    'compose.https.yaml': 0o600,
+    'Caddyfile': 0o600,
+    'deployment.env.example': 0o600,
+}
 
 def run(*args, **kwargs):
     return subprocess.run(args, check=True, stdout=kwargs.pop('stdout', LOG), stderr=LOG, **kwargs)
@@ -93,32 +105,79 @@ def stage_release(image):
     release = releases/('sha256-'+image.split('sha256:')[1])
     # Never extract into an existing release: it may be the live current target.
     with tempfile.TemporaryDirectory(prefix='.demo-stage-', dir=releases) as directory:
-        staged = Path(directory)/'payload'
-        staged.mkdir(mode=0o700)
+        packaged = Path(directory)/'payload'
+        packaged.mkdir(mode=0o700)
         cid = out('docker', 'create', image)
-        try: run('docker', 'cp', cid+':/usr/local/share/leapview/deployment/.', str(staged))
+        try: run('docker', 'cp', cid+':/usr/local/share/leapview/deployment/.', str(packaged))
         finally: run('docker', 'rm', cid)
+
+        def contents(path):
+            entries = {}
+            for entry in path.rglob('*'):
+                mode = entry.lstat().st_mode
+                if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                    raise RuntimeError('Deployment payload contains a link or special file; operator review required')
+                entries[str(entry.relative_to(path))] = None if stat.S_ISDIR(mode) else entry.read_bytes()
+            return entries
+
+        complete = contents(packaged)
+        if any(not complete.get(name) for name in RUNTIME_PAYLOAD_MODES):
+            raise RuntimeError('Required runtime payload file is missing or empty')
+        runtime = {name: complete[name] for name in RUNTIME_PAYLOAD_MODES}
         for name in ['compose.yaml', 'compose.https.yaml', 'Caddyfile', 'deployment.env.example']:
-            if (staged/name).read_bytes() != (ROOT/name).read_bytes():
+            if runtime[name] != (ROOT/name).read_bytes():
                 raise RuntimeError('Deployment payload changed; reviewed host upgrade required: '+name)
-            (staged/name).chmod(0o600)
-        (staged/'leapviewctl').chmod(0o700)
         if release.exists() or release.is_symlink():
-            def contents(path):
-                entries = {}
-                for entry in path.rglob('*'):
-                    if entry.is_symlink():
-                        raise RuntimeError('Existing release contains a symlink; operator review required')
-                    entries[entry.relative_to(path)] = None if entry.is_dir() else entry.read_bytes()
-                return entries
-            if release.is_symlink() or contents(release) != contents(staged):
+            # Host upgrades stage only runtime files. Older demo deployments
+            # staged the whole image payload; accept either exact layout without
+            # rewriting the active generation or trusting arbitrary extras.
+            if release.is_symlink() or contents(release) not in (runtime, complete):
                 raise RuntimeError('Existing release differs from image payload; operator review required')
         else:
+            staged = Path(directory)/'generation'
+            staged.mkdir(mode=0o700)
+            for name, mode in RUNTIME_PAYLOAD_MODES.items():
+                (staged/name).write_bytes(runtime[name])
+                (staged/name).chmod(mode)
             staged.rename(release)
     return release
 
 
+@contextlib.contextmanager
+def upgrade_guard():
+    # Shared with hostinstall.FileJournal. Hold this across the entire image
+    # transaction so a schema upgrade cannot enter its maintenance window.
+    descriptor = os.open(ROOT/'.leapviewctl.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, 'r+') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        journal = ROOT/'upgrade-operation.json'
+        try:
+            info = journal.lstat()
+        except FileNotFoundError:
+            yield
+            return
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_size > 16384:
+            raise RuntimeError('Invalid private upgrade journal; operator recovery required')
+        data = json.loads(journal.read_text())
+        if not isinstance(data, dict) or type(data.get('version')) is not int or data['version'] != 1:
+            raise RuntimeError('Unknown upgrade journal; operator recovery required')
+        state = data.get('state')
+        if not isinstance(state, dict) or state.get('phase') not in ('succeeded', 'recovered'):
+            raise RuntimeError('Unfinished schema upgrade; explicit recovery or commit completion required')
+        yield
+
+
 def main():
+    os.umask(0o077)
+    # Recovery needs the read-only viewer credential handoff while the journal
+    # fences all runtime inspection and mutation.
+    if sys.argv[1:] == ["viewer"]:
+        return _main()
+    with upgrade_guard():
+        _main()
+
+
+def _main():
     global LOG
     os.umask(0o077)
     if sys.argv[1:] == ['viewer']:

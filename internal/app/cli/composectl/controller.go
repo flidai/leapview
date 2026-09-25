@@ -17,6 +17,7 @@ import (
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	"github.com/flidai/leapview/internal/platform/hostmaintenance"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	"github.com/flidai/leapview/internal/platform/ociref"
 )
@@ -25,7 +26,7 @@ const (
 	deploymentEnvName    = "deployment.env"
 	appEnvName           = "leapview.env"
 	credentialsName      = "initial-credentials.json"
-	controllerLockName   = ".leapviewctl.lock"
+	controllerLockName   = hostmaintenance.LockName
 	defaultEnvironment   = "prod"
 	defaultHealthChecks  = 120
 	publicDomainHelpText = "--domain must be a hostname without a scheme, path, port, wildcard, or credentials"
@@ -583,6 +584,9 @@ func (c *Controller) withLock(operation func() error) error {
 		return err
 	}
 	defer lock.Release()
+	if err := hostmaintenance.Check(c.root); err != nil {
+		return err
+	}
 	return operation()
 }
 

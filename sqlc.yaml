@@ -36,6 +36,7 @@ sql:
     queries: "internal/access/postgres/queries"
     schema:
       - "internal/access/postgres/schema.sql"
+      - "internal/platform/bootstrap/postgres/schema.sql"
     gen:
       go:
         package: "db"

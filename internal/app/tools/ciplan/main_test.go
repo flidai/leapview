@@ -312,3 +312,92 @@ func TestGateRejectsNeutralAndWireResultCollision(t *testing.T) {
 		t.Fatal("neutral/wire alias collision was accepted")
 	}
 }
+
+// Retrying a lane or only the gate increments the consumer's run attempt, while
+// successful planning outputs and its artifact still belong to the producer.
+func TestGateRetryUsesPlanningAttempt(t *testing.T) {
+	t.Setenv("GITHUB_RUN_ATTEMPT", "2")
+	plan := platformci.PlanChanges(platformci.Input{Event: "pull_request", PullRequestNumber: 1}, []platformci.Change{{Status: "M", Paths: []string{"internal/analytics/query/planner.go"}}})
+	plan.PR.Head, plan.PR.RunID = "candidate", "42"
+	root := t.TempDir()
+	output, planPath, resultsPath := filepath.Join(root, "outputs"), filepath.Join(root, "plan.json"), filepath.Join(root, "results.json")
+	results := map[string]string{"prepare": "success"}
+	for name, selected := range plan.PR.Effective.Selected() {
+		results[ciadapter.WorkflowJobID(name)] = "skipped"
+		if selected {
+			results[ciadapter.WorkflowJobID(name)] = "success"
+		}
+	}
+	resultData, err := json.Marshal(results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resultsPath, resultData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Attempt 1 models a partial retry; attempt 2 models a full workflow rerun.
+	for _, producer := range []string{"1", "2"} {
+		t.Run("producer_"+producer, func(t *testing.T) {
+			plan.PR.Attempt = producer
+			artifact, err := ciadapter.MarshalPlan(plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(planPath, artifact, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(output, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeGitHubOutputs(output, plan); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var attempt string
+			for line := range strings.SplitSeq(string(data), "\n") {
+				if value, ok := strings.CutPrefix(line, "plan_attempt="); ok {
+					attempt = value
+				}
+			}
+			if attempt != producer {
+				t.Fatalf("planning attempt output = %q, want %q", attempt, producer)
+			}
+			args := []string{"--plan", planPath, "--results", resultsPath, "--expected-head", "candidate", "--expected-run-id", "42", "--expected-attempt", attempt, "--frontend-matrix", prFrontendMatrix(plan)}
+			if err := runGate(args); err != nil {
+				t.Fatalf("valid producer evidence rejected on retry: %v", err)
+			}
+			for _, mismatch := range []string{"head", "run", "attempt"} {
+				t.Run("reject_"+mismatch, func(t *testing.T) {
+					wrong := *plan.PR
+					switch mismatch {
+					case "head":
+						wrong.Head = "other-candidate"
+					case "run":
+						wrong.RunID = "43"
+					case "attempt":
+						if producer == "1" {
+							wrong.Attempt = "2"
+						} else {
+							wrong.Attempt = "1"
+						}
+					}
+					bad := plan
+					bad.PR = &wrong
+					data, err := ciadapter.MarshalPlan(bad)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(planPath, data, 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := runGate(args); err == nil {
+						t.Fatal("mismatched producer evidence accepted")
+					}
+				})
+			}
+		})
+	}
+}

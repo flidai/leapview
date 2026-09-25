@@ -226,7 +226,7 @@ func writeGitHubOutputs(filename string, plan platformci.Plan) error {
 				return err
 			}
 		}
-		_, err := fmt.Fprintf(file, "frontend_matrix=%s\n", prFrontendMatrix(plan))
+		_, err := fmt.Fprintf(file, "frontend_matrix=%s\nplan_attempt=%s\n", prFrontendMatrix(plan), plan.PR.Attempt)
 		return err
 	}
 	for _, name := range []string{

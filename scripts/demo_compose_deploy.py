@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Runner-side pinned SSH transport and browser approval of the host transaction."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -10,13 +11,12 @@ import tempfile
 import urllib.parse
 import urllib.request
 
+from demo_upgrade_plan import inspect_transition
+import demo_upgrade_transport as upgrade
+
 ROOT = Path(__file__).resolve().parents[1]
 HOST = '89.58.13.145'
 FINGERPRINT = 'SHA256:k3AZrVrLBF5tyItYzRUkcsVJEFVVOqxsHhBvQypTVWE'
-# Conservative image-only boundary. Schema/engine dependency changes require
-# the canonical host upgrade/recovery path, not an image-only rollback.
-SCHEMA_PATHS = ['internal/platform/postgres', 'internal/analytics/duckdb',
-                'internal/analytics/ducklake', 'go.mod', 'go.sum']
 
 def verify_public_revision(expected):
     # Capabilities use API workload auth, not a browser session cookie.
@@ -40,6 +40,11 @@ def verify_public_revision(expected):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--preflight', action='store_true', help='check source compatibility without deployment')
+    args = parser.parse_args()
+    action = os.environ.get("DEMO_ACTION", "deploy")
+    if action not in ("deploy", "upgrade", "recover"): raise ValueError("Unsupported demo operation")
     os.umask(0o077)
     image, revision = os.environ['DEMO_IMAGE'], os.environ['SOURCE_REVISION']
     if not re.fullmatch(r'ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}',image) or not re.fullmatch(r'[0-9a-f]{40}',revision):
@@ -60,12 +65,26 @@ def main():
         # umask protects the temporary script; no secrets are uploaded in it.
         subprocess.run([*ssh,f'umask 077; cat > {remote}'],input=(ROOT/'scripts/demo_compose_runtime.py').read_bytes(),check=True)
         try:
-            previous = json.loads(subprocess.check_output([*ssh,'python3',remote,'inspect']))
-            old_revision = previous['revision']
-            if not re.fullmatch(r'[0-9a-f]{40}',old_revision): raise RuntimeError('Invalid predecessor identity')
-            differences = subprocess.check_output(['git','diff','--name-only',old_revision,revision,'--',*SCHEMA_PATHS],text=True)
-            if differences:
-                raise RuntimeError('Schema/engine paths changed; use reviewed host upgrade/recovery before image deployment:\n'+differences)
+            previous, plan, prepared = None, None, None
+            if action != 'recover':
+                previous = json.loads(subprocess.check_output([*ssh,'python3',remote,'inspect']))
+                old_revision = previous['revision']
+                if not re.fullmatch(r'[0-9a-f]{40}',old_revision): raise RuntimeError('Invalid predecessor identity')
+                plan = inspect_transition(old_revision, revision)
+                if args.preflight:
+                    report = json.dumps(plan, indent=2)
+                    print(report)
+                    if os.environ.get('GITHUB_STEP_SUMMARY'):
+                        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                            summary.write('### Demo deployment preflight\n```json\n'+report+'\n```\n')
+                expected_mode = 'image-only' if action == 'deploy' else 'database-upgrade-required'
+                if plan['mode'] != expected_mode:
+                    raise RuntimeError(f"{plan['mode']}: schema {plan['currentSchema']} -> {plan['candidateSchema']}; "
+                                       'select the matching reviewed operation; no runtime deployment was attempted')
+            if action in ('deploy', 'upgrade', 'recover') and not (action == 'deploy' and previous.get('image') == image):
+                prepared = upgrade.prepare(ssh, remote, action, previous, image, revision, plan)
+            if args.preflight:
+                return
             viewer = json.loads(subprocess.check_output([*ssh,'python3',remote,'viewer']))
             browser_env = {k:v for k,v in os.environ.items() if k in ('PATH','HOME','PLAYWRIGHT_BROWSERS_PATH','TMPDIR','LANG','LC_ALL')}
             for key in ['DEMO_VIEWER_EMAIL','DEMO_VIEWER_PASSWORD']:
@@ -76,8 +95,18 @@ def main():
                     print('::add-mask::'+value.replace('%','%25'),flush=True)
                 browser_env[key] = value
             # A fresh login before touching the host detects stale viewer credentials.
-            verify_public_revision(old_revision)
-            subprocess.run(['node','scripts/demo_validate_browser.mjs'],cwd=ROOT,check=True,timeout=240,env=browser_env)
+            if action != 'recover':
+                verify_public_revision(old_revision)
+                subprocess.run(['node','scripts/demo_validate_browser.mjs'],cwd=ROOT,check=True,timeout=240,env=browser_env)
+            if prepared and action != 'deploy':
+                helper, request_path, request = prepared
+                result = upgrade.rollout(ssh, helper, request_path, action, image, revision, browser_env, request['operationDigest'], request['profile'])
+                expected = revision if result == 'DEPLOYMENT_COMMITTED' else request['predecessorRevision']
+                verify_public_revision(expected)
+                subprocess.run(['node','scripts/demo_validate_browser.mjs'],cwd=ROOT,check=True,timeout=240,env=browser_env)
+                if result == 'PREDECESSOR_RECOVERED':
+                    raise RuntimeError('Predecessor safely recovered; candidate was NOT deployed and its runtime pin must not advance')
+                return
             process = subprocess.Popen([*ssh,'python3',remote,image,revision,old_revision],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
             approved = False
             committed = False
@@ -99,6 +128,6 @@ def main():
                     process.kill()
                     raise RuntimeError('SSH recovery exceeded timeout; inspect host before retrying')
         finally:
-            subprocess.run([*ssh,'rm','-f',remote],check=True)
+            subprocess.run([*ssh,'rm','-f',remote+'.upgrade',remote+'.request',remote],check=True)
 
 if __name__ == '__main__': main()
