@@ -90,6 +90,7 @@ type RecordTablePayload = {
   columnSelector?: RecordColumnSelector
   density?: RecordTableDensity
   rowAction?: string
+  columnDividers?: boolean
 }
 type NormalizedRecordTable = Omit<Required<RecordTablePayload>, 'columnSelector'> & {
   columnSelector: Required<RecordColumnSelector>
@@ -108,6 +109,7 @@ const emptyRecordTable: NormalizedRecordTable = {
   columnSelector: { enabled: false, storageKey: '', label: 'Columns', defaultColumns: [] },
   density: 'normal',
   rowAction: '',
+  columnDividers: false,
 }
 
 function cellLabel(value: unknown): string {
@@ -190,6 +192,7 @@ function normalizeTable(table: RecordTablePayload): NormalizedRecordTable {
     },
     density: table.density ?? emptyRecordTable.density,
     rowAction: table.rowAction ?? emptyRecordTable.rowAction,
+    columnDividers: table.columnDividers ?? emptyRecordTable.columnDividers,
   }
 }
 
@@ -250,7 +253,11 @@ class RecordTable extends LitElement {
         aria-label="Scrollable table"
         tabindex="0"
       >
-        <table class=${`record-table ${columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : ''}`} style=${[table.width ? `width: ${table.width}` : '', table.minWidth ? `min-width: ${table.minWidth}` : ''].filter(Boolean).join('; ')}>
+        <table class=${[
+          'record-table',
+          columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : '',
+          table.columnDividers ? 'has-column-dividers' : '',
+        ].filter(Boolean).join(' ')} style=${[table.width ? `width: ${table.width}` : '', table.minWidth ? `min-width: ${table.minWidth}` : ''].filter(Boolean).join('; ')}>
           <thead>
             <tr>
               ${columns.map((column) => {
@@ -993,6 +1000,17 @@ const recordTableStyles = `
 
   lv-record-table .density-tight .record-table td {
     padding: var(--base-size-4) var(--base-size-8);
+  }
+
+  lv-record-table .record-table.has-column-dividers th:first-child,
+  lv-record-table .record-table.has-column-dividers td:first-child {
+    padding-right: var(--base-size-16, 16px);
+  }
+
+  lv-record-table .record-table.has-column-dividers th + th,
+  lv-record-table .record-table.has-column-dividers td + td {
+    border-left: var(--lv-border-muted, 1px solid var(--lv-line-muted, #d0d7de));
+    padding-left: var(--base-size-16, 16px);
   }
 
   lv-record-table .variant-primary .record-table tbody tr {

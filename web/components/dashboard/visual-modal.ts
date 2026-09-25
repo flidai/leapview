@@ -337,6 +337,7 @@ export class VisualModal extends LitElement {
               width: compactColumns ? 'max-content' : '',
               minWidth: compactColumns ? 'min(20rem, 100%)' : columns.length > 4 ? `${columns.length * 160}px` : '0',
               density: 'tight',
+              columnDividers: compactColumns,
             }}
           ></lv-record-table>
         </div>
