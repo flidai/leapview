@@ -427,14 +427,14 @@ func (e *NativeEffects) StartCandidateIsolated(ctx context.Context, id Identity)
 	if err := e.link("releases/sha256-" + strings.TrimPrefix(id.Candidate, "ghcr.io/flidai/leapview@sha256:")); err != nil {
 		return err
 	}
-	if err := e.compose(ctx, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", e.request.Profile.AppService); err != nil {
+	if err := e.composePrivate(ctx, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", e.request.Profile.AppService); err != nil {
 		return err
 	}
-	if err := e.compose(ctx, "up", "-d", "--no-deps", e.request.Profile.ProxyService); err != nil {
+	if err := e.composePrivate(ctx, "up", "-d", "--no-deps", e.request.Profile.ProxyService); err != nil {
 		return err
 	}
-	// Recreated containers inherit Compose restart policy; keep writers fenced
-	// across reboot until the durable commit boundary.
+	// The Compose override disables restart at container creation, without a
+	// crash window between creation and a later Docker update.
 	for _, name := range []string{e.app(), e.request.Profile.Postgres} {
 		if _, err := e.docker(ctx, "update", "--restart=no", name); err != nil {
 			return err
@@ -560,10 +560,10 @@ func (e *NativeEffects) VerifyPredecessor(ctx context.Context, id Identity) erro
 	if err := e.waitPG(ctx, e.request.Profile.Postgres, e.request.Plan.CurrentSchema); err != nil {
 		return err
 	}
-	if err := e.compose(ctx, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", e.request.Profile.AppService); err != nil {
+	if err := e.composePrivate(ctx, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", e.request.Profile.AppService); err != nil {
 		return err
 	}
-	if err := e.compose(ctx, "up", "-d", "--no-deps", e.request.Profile.ProxyService); err != nil {
+	if err := e.composePrivate(ctx, "up", "-d", "--no-deps", e.request.Profile.ProxyService); err != nil {
 		return err
 	}
 	return e.waitApp(ctx, e.app(), id.Predecessor, e.request.PredecessorRevision)
@@ -633,4 +633,21 @@ func migrationTLSMounts(dsn string, app dockerInspection) ([]string, error) {
 		seen[path] = true
 	}
 	return args, nil
+}
+
+// Set restart policy as part of container creation. Updating it only after
+// compose up leaves a reboot window before validation/recovery has completed.
+func (e *NativeEffects) composePrivate(ctx context.Context, args ...string) error {
+	raw, err := json.Marshal(map[string]any{"services": map[string]any{
+		e.request.Profile.AppService:   map[string]string{"restart": "no"},
+		e.request.Profile.ProxyService: map[string]string{"restart": "no"},
+	}})
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(e.operation, "compose.maintenance.json")
+	if err := securefs.WritePrivateFileAtomic(path, raw); err != nil {
+		return err
+	}
+	return e.compose(ctx, append([]string{"--file", path}, args...)...)
 }

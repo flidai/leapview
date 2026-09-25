@@ -211,6 +211,13 @@ func (e *NativeEffects) Admit(ctx context.Context, id Identity) error {
 	if containerEnv(pg)["PG_MAJOR"] != "18" {
 		return errors.New("physical recovery requires PostgreSQL 18")
 	}
+	for _, bindings := range app.HostConfig.PortBindings {
+		for _, binding := range bindings {
+			if binding.HostIP != "127.0.0.1" && binding.HostIP != "::1" {
+				return errors.New("direct application ports must remain loopback-only")
+			}
+		}
+	}
 	if len(pg.HostConfig.PortBindings) != 0 {
 		return errors.New("externally published PostgreSQL is unsupported")
 	}

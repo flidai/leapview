@@ -424,3 +424,38 @@ func TestMigratorGetsOnlyRequiredReadOnlyTLSFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestPrivateContainersHaveRestartDisabledAtCreation(t *testing.T) {
+	e := nativeEffectsFixture(t)
+	called := false
+	e.execute = func(_ context.Context, args ...string) (string, error) {
+		called = true
+		overlay := filepath.Join(e.operation, "compose.maintenance.json")
+		index := slices.Index(args, overlay)
+		if index < 1 || args[index-1] != "--file" || index >= slices.Index(args, "up") {
+			t.Fatalf("override missing before container creation: %v", args)
+		}
+		raw, err := os.ReadFile(overlay)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config struct {
+			Services map[string]struct{ Restart string }
+		}
+		if err := json.Unmarshal(raw, &config); err != nil {
+			t.Fatal(err)
+		}
+		for _, service := range []string{e.request.Profile.AppService, e.request.Profile.ProxyService} {
+			if config.Services[service].Restart != "no" {
+				t.Fatalf("restart enabled for %s", service)
+			}
+		}
+		return "", nil
+	}
+	if err := e.composePrivate(t.Context(), "up", "-d", e.request.Profile.AppService); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("container creation not exercised")
+	}
+}
