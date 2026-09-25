@@ -26,17 +26,73 @@ Pass a returned ID to `docs_read`. Reads are line- and byte-bounded and return `
 
 ## Configure the built-in model provider
 
-The built-in chat surface uses an OpenAI-compatible provider configuration:
+LeapView platform admins manage the instance-wide chatbot in **Agent Settings**.
+Project admins and chatbot users cannot change its provider or model.
 
-```sh
-LEAPVIEW_AGENT_BASE_URL=https://api.openai.com/v1
-LEAPVIEW_AGENT_MODEL=<model-id>
-LEAPVIEW_AGENT_API_KEY=<secret>
-```
+1. Choose a provider preset or enter a compatible endpoint, then enter the model identifier.
+2. Select the supported API mode and optional reasoning effort. Unset reasoning uses the provider default; `none` explicitly disables reasoning where supported.
+3. Enter a provider API key, or leave the key field blank to retain the saved credential. Changing the endpoint requires explicitly entering a credential for that endpoint.
+4. Select **Test connection**. LeapView sends a small synthetic tool round-trip, never project data. This makes provider API calls and may incur a small charge.
+5. Select **Save and activate** within five minutes. Changing any field requires another test. Failed tests leave the active configuration unchanged.
 
-Store the API key in the deployment secret manager. The global administrator-controlled system prompt is configured in the agent administration page. Provider prompts and responses may contain business context; review the provider's data handling, retention, regional, and contractual requirements before enabling it.
+The configuration applies to new requests without restarting LeapView. Active
+requests retain their original configuration. Administrator revisions survive
+restart, including an explicitly disabled agent. Queued admin-managed runs retain
+their configuration revision across restart. Legacy queued runs cannot silently
+resume with a newly selected administrator provider.
 
-The MCP endpoint does not depend on this provider configuration. External MCP hosts can use LeapView tools when the built-in model is disabled.
+**Test previous configuration** tests the preceding revision; **Restore tested
+revision** activates it as a new revision. Provider keys must still be valid for
+restoration. Ordinary message and tool history remains usable after a provider
+change; opaque provider reasoning state is only replayed to its original model,
+endpoint, and credential.
+
+### Deployment prerequisite: credential encryption
+
+Set `LEAPVIEW_AGENT_CREDENTIAL_KEY` to a cryptographically generated 32-byte key,
+encoded as 64 hexadecimal characters, before enabling admin-managed settings.
+Compose initialization generates this value when absent. Existing installations
+must provision it through their deployment secret manager and restart once.
+Back up this encryption key separately from the PostgreSQL database and preserve
+it across deployments. Losing it makes saved provider credentials unrecoverable;
+replacing it is not a supported key-rotation procedure. Do not reuse the CSRF key.
+
+Provider credentials are encrypted in agent-owned PostgreSQL revision storage.
+Saved keys never appear in configuration reads, browser signals, or audit
+payloads. The admin sees only whether a key is configured, and can replace or
+explicitly remove it. Configuration revisions record the administrator identity
+and creation time. Historical encrypted credentials are retained so active work
+and explicit restoration can use their original revision.
+
+### Existing deployment-managed configuration
+
+Until an administrator saves a configuration, existing `LEAPVIEW_AGENT_API_KEY`,
+`LEAPVIEW_AGENT_BASE_URL`, `LEAPVIEW_AGENT_MODEL`, and optional
+`LEAPVIEW_AGENT_REASONING_EFFORT` remain startup configuration. Both key and model
+are required to enable the legacy agent. Shared templates do not select a model
+or reasoning effort. Luna support remains available when explicitly selected.
+
+Existing deployments may still use `LEAPVIEW_AGENT_CONFIG_FILE`, a protected JSON
+file containing `enabled`, `apiKey`, `model`, `baseUrl`, and optional
+`reasoningEffort`. Valid revisions apply to new requests; invalid revisions retain
+the last known-good configuration. Environment changes require a restart.
+
+The first successful admin save transfers configuration ownership to LeapView.
+Afterward, environment settings and file reloads cannot override that decision,
+even if the admin disables the agent. The administration page identifies the
+configuration source. Do not delete database revisions to switch ownership back.
+
+### Supported provider behavior
+
+The Responses integration supports explicit model identifiers and reasoning
+settings. Chat Completions supports compatible tool-calling providers; explicit
+reasoning effort is rejected unless the adapter implements it. DeepSeek V4
+currently requires non-thinking mode (`none`); full thinking support is not
+implemented. Native Claude support is not implied by the custom endpoint field.
+Connection testing checks the actual selected model and protocol.
+
+The MCP endpoint is independent of this chatbot provider configuration. External
+MCP hosts can use LeapView tools while the built-in chatbot is disabled.
 
 ## Ask through the CLI
 

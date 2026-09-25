@@ -1,5 +1,7 @@
 package api
 
+import "github.com/flidai/leapview/internal/agent"
+
 type AgentConversationCreateRequest struct {
 	Title string `json:"title"`
 }
@@ -76,12 +78,31 @@ type AdminAgentToolResponse struct {
 }
 
 type AdminAgentResponse struct {
-	Enabled      bool                     `json:"enabled"`
-	Model        string                   `json:"model,omitempty"`
-	SystemPrompt string                   `json:"systemPrompt"`
-	Tools        []AdminAgentToolResponse `json:"tools"`
+	BaseURL                string `json:"baseUrl,omitempty"`
+	APIMode                string `json:"apiMode,omitempty"`
+	ConfigurationRevision  int64  `json:"configurationRevision"`
+	AdminManaged           bool   `json:"adminManaged"`
+	CredentialConfigured   bool   `json:"credentialConfigured"`
+	ConfigurationAvailable bool   `json:"configurationAvailable"`
+	TestToken              string `json:"testToken,omitempty"`
+	TestMessage            string `json:"testMessage,omitempty"`
+
+	Configured      bool                     `json:"configured"`
+	Enabled         bool                     `json:"enabled"`
+	Status          string                   `json:"status"`
+	StatusDetail    string                   `json:"statusDetail,omitempty"`
+	Model           string                   `json:"model,omitempty"`
+	ReasoningEffort string                   `json:"reasoningEffort,omitempty"`
+	SystemPrompt    string                   `json:"systemPrompt"`
+	Tools           []AdminAgentToolResponse `json:"tools"`
 }
 
 type AdminAgentConfigPatchRequest struct {
-	SystemPrompt string `json:"systemPrompt"`
+	RestoreRevision  int64                     `json:"restoreRevision,omitempty"`
+	Provider         *agent.ConfigurationInput `json:"provider,omitempty"`
+	Action           string                    `json:"action,omitempty"`
+	ExpectedRevision int64                     `json:"expectedRevision,omitempty"`
+	TestToken        string                    `json:"testToken,omitempty"`
+
+	SystemPrompt *string `json:"systemPrompt,omitempty"`
 }

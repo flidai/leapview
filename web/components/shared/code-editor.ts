@@ -41,8 +41,8 @@ class CodeEditor extends LitElement {
       overflow: hidden;
       min-width: 0;
       min-height: 22rem;
-      border: var(--lv-code-editor-border, var(--lv-border-muted));
-      border-radius: var(--lv-code-editor-radius, var(--lv-radius-default));
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
       background: var(--lv-bg-panel);
     }
 

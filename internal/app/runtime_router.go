@@ -224,6 +224,7 @@ type workflowInputs struct {
 	recoveryInterval               time.Duration
 	agent                          *agentmodule.Service
 	agentConfig                    agentmodule.ModelConfig
+	agentConfigFile                string
 	reloader                       runtimeReloader
 	deploymentConfig               deploymentmodule.Config
 	servingArtifacts               projectbundle.ArtifactObjectReader
@@ -319,6 +320,7 @@ type capabilityAssemblyInputs struct {
 
 type workflowAssemblyInputs struct {
 	AgentSettings                  agentmodule.Settings
+	AgentConfigFile                string
 	ManagedDataResolver            runtimehostmodule.ManagedDataResolver
 	AgentConfig                    agentmodule.ModelConfig
 	Auth                           *accessmodule.Auth
@@ -487,6 +489,16 @@ func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capab
 	return nil
 }
 
+// Local dashboard rendering and the browser event route must see the same
+// session authority during composition. Installing it after dashboard Build
+// leaves the ordinary page without the event subscription marker.
+func validateLocalDevelopmentSessionComposition(capabilities capabilityAssemblyInputs, runtimeConfig runtimeAssemblyInputs) error {
+	if runtimeConfig.LocalCheckoutID != "" && capabilities.DevelopmentSessions == nil {
+		return errors.New("local development composition requires a development session store before dashboard assembly")
+	}
+	return nil
+}
+
 // validateDashboardAssemblyInputs is the runtime-router admission gate for
 // native dashboard composition. The native path is deliberately all-or-
 // nothing: it requires the complete opaque persistence bundle, the exact
@@ -551,6 +563,9 @@ func buildApplicationSurfaces(
 		return nil, nil, nil, nil, err
 	}
 	if err := validateProductionRuntimeInputs(data, capabilities, runtimeConfig); err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if err := validateLocalDevelopmentSessionComposition(capabilities, runtimeConfig); err != nil {
 		return nil, nil, nil, nil, err
 	}
 	if data.RequireNativeDashboard && data.RefreshPersistence == nil {
@@ -735,6 +750,7 @@ func buildApplicationSurfaces(
 	persistence.accessRepo = data.AccessRepo
 	moduleWorkflow.agent = capabilities.Agent
 	moduleWorkflow.agentConfig = workflow.AgentConfig
+	moduleWorkflow.agentConfigFile = workflow.AgentConfigFile
 	platform.auth = workflow.Auth
 	routes.accessModule = capabilities.AccessModule
 	moduleWorkflow.reloader = workflow.Reloader
@@ -1235,6 +1251,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			RequirePublication:       persistence.requireNativeDashboard,
 			Authoring:                routes.dashboardAuthoring,
 			HTTP: dashboardmodule.HTTPConfig{
+				LocalDevelopmentSession:    runtime.developmentSessions != nil && runtime.checkoutID != "" && runtime.worktreeID != "" && runtime.developmentProjectIDResolver != nil,
 				Metrics:                    runtime.metrics,
 				ProjectID:                  runtime.projectID,
 				ResolveProjectID:           runtime.resolveProjectID,
@@ -1386,7 +1403,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		agentConfig := agentmodule.Config{
 			Persistence: persistence.agentPersistence, Production: runtimeConfig.Production, Model: moduleWorkflow.agentConfig,
-			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
+			ModelConfigFile: moduleWorkflow.agentConfigFile,
+			Service:         moduleWorkflow.agent, Jobs: platform.asyncJobs,
 			AllowDevAuthBypass: runtimeConfig.AllowDevAuthBypass,
 			ProductName:        brand.Name,
 			BuildVersion:       platform.buildIdentity.Version,
@@ -1604,7 +1622,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		var err error
 		routes.adminModule, err = adminmodule.Build(ctx, adminmodule.Config{
-			Access: accessReader,
+			PlatformAdmin: routes.accessModule.IsPlatformAdmin,
+			Access:        accessReader,
 			AgentDetails: func(ctx context.Context) (agentmodule.AdminAgentResponse, error) {
 				return routes.agentModule.HTTP().AdminDetails(ctx)
 			},

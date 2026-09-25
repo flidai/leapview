@@ -10,8 +10,8 @@ operations binary for the archive's operating system and architecture.
 cp deployment.env.example deployment.env
 cp leapview.env.example leapview.env
 # Configure the external PostgreSQL URLs and roles in leapview.env.
-# Configure LEAPVIEW_AGENT_API_KEY and LEAPVIEW_AGENT_MODEL in leapview.env
-# when the agent should be enabled. Keep the API key out of source control.
+# Initialize credential encryption, then configure the chatbot in Agent Settings.
+# Keep all deployment secrets out of source control.
 # Run pool bootstrap without --apply; the database-free result contains the
 # deterministic pool_id and compatibility_digest. Copy them into leapview.env.
 ./leapviewctl init --admin-email admin@example.com --domain dash.example.com
@@ -32,12 +32,18 @@ Each PostgreSQL URL must use `sslmode=verify-full` with a trusted provider CA
 `verify-ca` are intentionally rejected because they do not authenticate both
 the server certificate and hostname.
 
-The agent is enabled when both `LEAPVIEW_AGENT_API_KEY` and
-`LEAPVIEW_AGENT_MODEL` are set in the private `leapview.env` on the host.
-`LEAPVIEW_AGENT_BASE_URL` defaults to the OpenAI-compatible endpoint shown in
-the template and may be changed for another compatible provider. Never commit
-the real API key. Run `./leapviewctl start` after changing these values so
-Compose recreates the application with the updated environment.
+LeapView platform admins configure the chatbot in Agent Settings. Compose
+initialization generates `LEAPVIEW_AGENT_CREDENTIAL_KEY` in private `leapview.env`
+when absent; preserve and back up this encryption key separately from PostgreSQL.
+Existing installations must provision this key and run `./leapviewctl start` once
+before admin-managed settings become available. Subsequent model changes require
+no restart. Do not replace the encryption key after credentials have been saved.
+
+For legacy installations, `LEAPVIEW_AGENT_API_KEY`, `LEAPVIEW_AGENT_BASE_URL`,
+`LEAPVIEW_AGENT_MODEL`, and optional `LEAPVIEW_AGENT_REASONING_EFFORT` still supply
+startup configuration until the first successful admin save. Shared templates
+leave model and reasoning unset. After admin takeover, redeployment cannot
+overwrite the selected configuration.
 
 The pre-initialization pool command must be a dry run. Apply the same reviewed
 pool/evidence pair only after `init`, because durable admission verifies the

@@ -54,8 +54,12 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
     const state = await page.evaluate(async () => {
       const element = document.querySelector('lv-agent-settings') as any
       element.agent = {
+        configured: true,
         enabled: true,
+        status: 'enabled',
         model: 'fake-model',
+        reasoningEffort: 'high',
+        revision: '"revision-1"',
         systemPrompt: 'Signal prompt',
         canWrite: true,
         updatePath: '/admin/agent/config',
@@ -81,46 +85,25 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
       await element.updateComplete
       const root = element.shadowRoot as ShadowRoot
       const overviewText = root.querySelector('.overview')?.textContent?.replace(/\s+/g, ' ').trim()
+      const hasStatusControl = Boolean(root.querySelector('button[role="switch"]'))
       const initialTabs = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="tab"]')).map((button) => ({ text: button.textContent?.trim(), selected: button.getAttribute('aria-selected') }))
       const promptEditor = root.querySelector('lv-agent-prompt-editor') as any
       await promptEditor.updateComplete
       const promptRoot = promptEditor.shadowRoot as ShadowRoot
       const headerText = promptRoot.querySelector('.prompt-header')?.textContent?.replace(/\s+/g, ' ').trim()
-      const modeLabels = Array.from(promptRoot.querySelectorAll<HTMLButtonElement>('.mode-toggle button')).map((button) => button.textContent?.replace(/\s+/g, ' ').trim())
+      const modeLabels = Array.from(promptRoot.querySelectorAll<HTMLButtonElement>('.mode-toggle button')).map((button) => button.getAttribute('aria-label'))
 
       let command: unknown = null
       element.addEventListener('lv-agent-system-prompt-save', (event: CustomEvent) => { command = event.detail })
-      promptRoot.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Edit"]')?.click()
+      promptRoot.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Raw Markdown"]')?.click()
       await promptEditor.updateComplete
-      const codeEditor = promptRoot.querySelector('lv-code-editor') as any
-      await codeEditor.updateComplete
-      codeEditor.dispatchEvent(new CustomEvent('lv-code-editor-change', {
-        bubbles: true,
-        composed: true,
-        detail: { value: 'Changed prompt' },
-      }))
-      await promptEditor.updateComplete
-      const dirtyState = {
-        status: promptRoot.querySelector('.prompt-status')?.textContent?.trim(),
-        hasDiscard: Boolean(promptRoot.querySelector('.discard-button')),
+      const rawState = {
+        activeMode: promptRoot.querySelector('.mode-toggle button[aria-pressed="true"]')?.getAttribute('aria-label'),
+        sourceLabel: promptRoot.querySelector('.prompt-source-label')?.textContent?.trim(),
+        source: promptRoot.querySelector('.raw-markdown')?.textContent,
+        hasCodeEditor: Boolean(promptRoot.querySelector('lv-code-editor')),
         hasSave: Boolean(promptRoot.querySelector('.save-button')),
       }
-      promptRoot.querySelector<HTMLButtonElement>('.discard-button')?.click()
-      await promptEditor.updateComplete
-      const discardedState = {
-        status: promptRoot.querySelector('.prompt-status')?.textContent?.trim() ?? '',
-        hasDiscard: Boolean(promptRoot.querySelector('.discard-button')),
-        editorValue: (promptRoot.querySelector('lv-code-editor') as any).value,
-      }
-      const codeEditorAfterDiscard = promptRoot.querySelector('lv-code-editor') as any
-      codeEditorAfterDiscard.dispatchEvent(new CustomEvent('lv-code-editor-change', {
-        bubbles: true,
-        composed: true,
-        detail: { value: 'Saved prompt' },
-      }))
-      await promptEditor.updateComplete
-      promptRoot.querySelector<HTMLButtonElement>('.save-button')?.click()
-      await promptEditor.updateComplete
 
       const toolsTab = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((button) => button.textContent?.trim() === 'Tools')!
       toolsTab.click()
@@ -155,11 +138,11 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
 
       return {
         overviewText,
+        hasStatusControl,
         initialTabs,
         headerText,
         modeLabels,
-        dirtyState,
-        discardedState,
+        rawState,
         command,
         hasSharedList: Boolean(list),
         firstColumnPositions,
@@ -178,15 +161,17 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
     })
 
     expect(state.overviewText).toContain('Enabled')
+    expect(state.hasStatusControl).toBe(false)
     expect(state.overviewText).toContain('fake-model')
+    expect(state.overviewText).toContain('Reasoning High')
     expect(state.overviewText).toContain('Tools 2')
     expect(state.overviewText).toContain('Editable')
+    expect(state.overviewText).toContain('Configuration Configured')
     expect(state.initialTabs).toEqual([{ text: 'Instructions', selected: 'true' }, { text: 'Tools', selected: 'false' }])
-    expect(state.headerText).toContain('Guide the agent')
-    expect(state.modeLabels).toEqual(['Preview', 'Edit'])
-    expect(state.dirtyState).toEqual({ status: 'Unsaved changes', hasDiscard: true, hasSave: true })
-    expect(state.discardedState).toEqual({ status: '', hasDiscard: false, editorValue: 'Signal prompt' })
-    expect(state.command).toEqual({ systemPrompt: 'Saved prompt' })
+    expect(state.headerText).toContain('rendered instructions')
+    expect(state.modeLabels).toEqual(['Rendered Markdown', 'Raw Markdown'])
+    expect(state.rawState).toEqual({ activeMode: 'Raw Markdown', sourceLabel: '/SYSTEM.md', source: 'Signal prompt', hasCodeEditor: false, hasSave: false })
+    expect(state.command).toBeNull()
     expect(state.hasSharedList).toBe(true)
     expect(state.firstColumnPositions).toEqual(['static', 'static'])
     expect(state.groups).toEqual(['Data & queries', 'Dashboards'])
@@ -205,13 +190,13 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
   }
 })
 
-test('agent settings makes deployment ownership and mobile tools layout explicit', async () => {
+test('agent settings makes admin permissions and mobile tools layout explicit', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 760 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-agent-settings'))
     await page.locator('lv-agent-settings').evaluate((element: any) => {
-      element.agent = { enabled: false, model: '', systemPrompt: '', canWrite: false, updatePath: '', tools: [{ name: 'read_data', description: '', effect: 'read', tags: ['analytics'], defaults: {}, inputSchema: {}, outputSchema: {} }] }
+      element.agent = { configured: false, enabled: false, status: 'disabled', model: '', revision: '"revision-1"', systemPrompt: '', canWrite: false, updatePath: '', tools: [{ name: 'read_data', description: '', effect: 'read', tags: ['analytics'], defaults: {}, inputSchema: {}, outputSchema: {} }] }
     })
 
     const settings = page.locator('lv-agent-settings')
@@ -229,13 +214,16 @@ test('agent settings makes deployment ownership and mobile tools layout explicit
     await drawer.waitFor({ state: 'attached' })
     const state = {
       text: (await settings.locator('.settings-stack').textContent())?.replace(/\s+/g, ' ').trim(),
+      hasStatusControl: await settings.locator('button[role="switch"]').count() > 0,
       managedBadge: managedBadgeText,
       hasSharedList: await list.count() === 1,
       drawerModal: await drawer.evaluate((element: any) => element.modal),
       drawerWidth: Math.round((await drawer.locator('.drawer').boundingBox())?.width ?? 0),
     }
     expect(state.text).toContain('Read-only')
-    expect(state.text).toContain('Deployment managed')
+    expect(state.text).toContain('Not configured')
+    expect(state.hasStatusControl).toBe(false)
+    expect(state.text).toContain('Only a LeapView platform admin')
     expect(state.managedBadge).toBe('Deployment managed')
     expect(state.hasSharedList).toBe(true)
     expect(state.drawerModal).toBe(false)
@@ -248,3 +236,96 @@ test('agent settings makes deployment ownership and mobile tools layout explicit
 function testDocument(): string {
   return `<!doctype html><html><head><style>body { ${typographyTestTokens} --base-size-2: 2px; --base-size-4: 4px; }</style></head><body><lv-agent-settings></lv-agent-settings><script type="module" src="/agent-settings.js"></script></body></html>`
 }
+
+test('admin model configuration requires testing and invalidates tests after edits', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-agent-settings'))
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { configured: true, enabled: true, status: 'enabled', model: 'model-a', baseUrl: 'https://provider.example/v1', apiMode: 'responses', reasoningEffort: '', revision: '"r0"', configurationRevision: 0, adminManaged: false, credentialConfigured: true, configurationAvailable: true, canWrite: true, systemPrompt: '', tools: [], updatePath: '/admin/agent/config' }
+      await element.updateComplete
+      ;(window as any).agentCommands = []
+      element.addEventListener('lv-agent-config-command', (event: CustomEvent) => { (window as any).agentCommands.push(event.detail) })
+    })
+    const settings = page.locator('lv-agent-provider-settings')
+    await expect(settings.getByRole('button', { name: 'Save and activate' }).isDisabled()).resolves.toBe(true)
+    await settings.getByRole('button', { name: 'Test connection' }).click()
+    let commands = await page.evaluate(() => (window as any).agentCommands)
+    expect(commands[0].action).toBe('test')
+    expect(commands[0].provider.model).toBe('model-a')
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { ...element.agent, testToken: 'test-token-1', testMessage: 'Connection verified.' }
+      await element.updateComplete
+    })
+    await expect(settings.getByRole('button', { name: 'Save and activate' }).isEnabled()).resolves.toBe(true)
+    await settings.getByLabel('Model identifier').fill('model-b')
+    await expect(settings.getByRole('button', { name: 'Save and activate' }).isDisabled()).resolves.toBe(true)
+    await settings.getByLabel('Replace API key').fill('private-new-key')
+    await settings.getByRole('button', { name: 'Test connection' }).click()
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { ...element.agent, testToken: 'test-token-2' }
+      await element.updateComplete
+    })
+    await settings.getByRole('button', { name: 'Save and activate' }).click()
+    commands = await page.evaluate(() => (window as any).agentCommands)
+    expect(commands.at(-1).provider.model).toBe('model-b')
+    expect(commands.at(-1).testToken).toBe('test-token-2')
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { ...element.agent, model: 'model-b', configurationRevision: 1, adminManaged: true, testToken: '', testMessage: 'Configuration saved and activated.' }
+      await element.updateComplete
+    })
+    expect(await settings.getByLabel('Replace API key').inputValue()).toBe('')
+  } finally { await page.close() }
+})
+
+test('configuration draft retains its original revision when another admin saves', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-agent-settings'))
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-agent-settings') as any
+      element.agent = { canWrite: true, configurationAvailable: true, enabled: true, configured: true, model: 'model-a', baseUrl: 'https://provider.example', apiMode: 'responses', configurationRevision: 1, status: 'enabled', revision: '"r1"', systemPrompt: '', tools: [], updatePath: '/admin/agent/config' }
+      await element.updateComplete
+      await element.shadowRoot.querySelector('lv-agent-provider-settings').updateComplete
+      element.agent = { ...element.agent, configurationRevision: 2, model: 'another-admin-model' }
+      await element.updateComplete
+      element.addEventListener('lv-agent-config-command', (event: CustomEvent) => { (window as any).draftCommand = event.detail })
+    })
+    await page.locator('lv-agent-provider-settings').getByRole('button', { name: 'Test connection' }).click()
+    const command = await page.evaluate(() => (window as any).draftCommand)
+    expect(command.expectedRevision).toBe(1)
+    expect(command.provider.model).toBe('model-a')
+  } finally { await page.close() }
+})
+
+test('reasoning choices follow protocol and model when switching providers', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-agent-settings'))
+    await page.locator('lv-agent-settings').evaluate((element: any) => {
+      element.agent = { canWrite: true, configurationAvailable: true, enabled: true, model: 'model-a', apiMode: 'responses', reasoningEffort: 'high', configurationRevision: 0, tools: [] }
+      element.addEventListener('lv-agent-config-command', (event: CustomEvent) => { (window as any).reasoningCommand = event.detail })
+    })
+    const settings = page.locator('lv-agent-provider-settings')
+    await settings.locator('summary').click()
+    await settings.getByLabel('API mode').selectOption('chat-completions')
+    const reasoning = settings.getByLabel('Reasoning')
+    expect(await reasoning.locator('option').evaluateAll(options => options.map((o: any) => o.value))).toEqual([''])
+    expect(await reasoning.inputValue()).toBe('')
+    await settings.getByLabel('Provider preset').selectOption('deepseek')
+    await settings.getByLabel('Model identifier').fill('deepseek-v4-pro')
+    expect(await reasoning.inputValue()).toBe('none')
+    expect(await reasoning.locator('option').evaluateAll(options => options.map((o: any) => o.value))).toEqual(['none'])
+    await settings.getByLabel('Model identifier').fill('deepseek-chat')
+    expect(await reasoning.inputValue()).toBe('')
+    await settings.getByRole('button', { name: 'Test connection' }).click()
+    expect((await page.evaluate(() => (window as any).reasoningCommand)).provider.reasoningEffort).toBe('')
+  } finally { await page.close() }
+})

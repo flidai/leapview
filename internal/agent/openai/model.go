@@ -26,7 +26,7 @@ type OpenAIModel struct {
 
 func NewModel(config agentapp.Config, client *http.Client) *OpenAIModel {
 	if client == nil {
-		client = &http.Client{Timeout: DefaultHTTPTimeout}
+		client = &http.Client{Timeout: DefaultHTTPTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	return &OpenAIModel{config: config, client: client}
 }
@@ -34,6 +34,11 @@ func NewModel(config agentapp.Config, client *http.Client) *OpenAIModel {
 func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, stream agentcore.ModelStream) (agentcore.ModelResponse, error) {
 	if !m.config.Enabled() {
 		return agentcore.ModelResponse{}, agentapp.ErrDisabled
+	}
+	if m.config.APIMode == "responses" || (m.config.APIMode == "" && usesGPT6LunaResponses(m.config)) {
+		req.Messages = m.compatibleMessages(req.Messages)
+		response, err := m.completeResponse(ctx, req, stream)
+		return m.scopeResponse(response), err
 	}
 	streaming := req.Purpose == agentcore.ModelRequestPurposeTurn && stream != nil
 	body := openAIChatRequest{

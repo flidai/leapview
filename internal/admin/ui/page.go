@@ -61,14 +61,25 @@ type AdminPublication struct {
 }
 
 type AdminAgentData struct {
-	Enabled      bool
-	Model        string
-	SystemPrompt string
-	Revision     string
-	CanWrite     bool
-	CSRFToken    string
-	UpdatePath   string
-	Tools        []AdminAgentTool
+	BaseURL                string
+	APIMode                string
+	ConfigurationRevision  int64
+	AdminManaged           bool
+	CredentialConfigured   bool
+	ConfigurationAvailable bool
+
+	Configured      bool
+	Enabled         bool
+	Status          string
+	StatusDetail    string
+	Model           string
+	ReasoningEffort string
+	SystemPrompt    string
+	Revision        string
+	CanWrite        bool
+	CSRFToken       string
+	UpdatePath      string
+	Tools           []AdminAgentTool
 }
 
 type AdminAgentTool struct {
@@ -215,6 +226,9 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 			g.Attr("data-on:lv-service-account-command", "$adminServiceAccountCommand = evt.detail; evt.detail.action == 'select' ? ("+serviceAccountSelect+") : ("+serviceAccountMutation+")"),
 		)
 	}
+	if active == "agent" {
+		adminAttrs = append(adminAttrs, g.Attr("data-on:lv-agent-config-command", "$adminAgentCommand = evt.detail; "+uiactions.CommandPatchWithRevision(data.AgentConfigCommand, "/admin/agent/config", "$page.agent.revision", "adminAgentCommand")))
+	}
 	if active == "principals" || active == "groups" || active == "principal-detail" || active == "group-detail" {
 		accessCommands := map[string]uicommand.Binding{
 			"create_principal":    accessgen.GenUIActionCreatePrincipal(),
@@ -245,11 +259,6 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	if active == "audit" {
 		adminAttrs = append(adminAttrs,
 			g.Attr("data-on:lv-audit-log-command", "$adminAuditLogCommand = evt.detail; "+uiactions.QueryPost("/admin/audit/command", "adminAuditLogCommand", "adminAuditLog")),
-		)
-	}
-	if active == "agent" {
-		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-agent-system-prompt-save", "$adminAgentCommand = evt.detail; "+uiactions.CommandPatch(data.AgentConfigCommand, "/admin/agent/config", data.Agent.Revision)),
 		)
 	}
 	if active == "queries" {
@@ -284,7 +293,7 @@ func AdminBootstrapSignals(active string, data AdminData, providers ...webpage.P
 		"status":  uisignals.DashboardStatus{},
 	}
 	if active == "agent" {
-		signals["adminAgentCommand"] = uisignals.AdminAgentCommandSignal{SystemPrompt: data.Agent.SystemPrompt}
+		signals["adminAgentCommand"] = uisignals.AdminAgentCommandSignal{SystemPrompt: uisignals.Pointer(data.Agent.SystemPrompt)}
 	}
 	if active == "queries" {
 		queryHistory := AdminQueryHistorySignalFromData(data.QueryHistory)
@@ -614,12 +623,18 @@ func adminAgentSignal(data AdminAgentData) uisignals.AdminAgentSignal {
 		})
 	}
 	return uisignals.AdminAgentSignal{
-		Enabled:      data.Enabled,
-		Model:        uisignals.Optional(data.Model),
-		SystemPrompt: data.SystemPrompt,
-		CanWrite:     data.CanWrite,
-		UpdatePath:   data.UpdatePath,
-		Tools:        tools,
+		BaseURL: uisignals.Optional(data.BaseURL), APIMode: uisignals.Optional(data.APIMode), ConfigurationRevision: uisignals.Pointer(data.ConfigurationRevision), AdminManaged: uisignals.Pointer(data.AdminManaged), CredentialConfigured: uisignals.Pointer(data.CredentialConfigured), ConfigurationAvailable: uisignals.Pointer(data.ConfigurationAvailable),
+		Configured:      data.Configured,
+		Enabled:         data.Enabled,
+		Status:          data.Status,
+		StatusDetail:    uisignals.Optional(data.StatusDetail),
+		Model:           uisignals.Optional(data.Model),
+		ReasoningEffort: uisignals.Optional(data.ReasoningEffort),
+		Revision:        data.Revision,
+		SystemPrompt:    data.SystemPrompt,
+		CanWrite:        data.CanWrite,
+		UpdatePath:      data.UpdatePath,
+		Tools:           tools,
 	}
 }
 

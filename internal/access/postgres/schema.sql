@@ -516,6 +516,61 @@ CREATE TABLE access.principal (
 );
 CREATE UNIQUE INDEX principal_email_active_key ON access.principal (lower(email)) WHERE email <> '' AND revoked_at IS NULL;
 
+-- FAI-969: facts are recorded in the source transaction. A restored copy of
+-- this table is not an authority for actions after its recovery frontier.
+CREATE TABLE access.lifecycle_authority (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    authority_id uuid NOT NULL
+);
+INSERT INTO access.lifecycle_authority(singleton, authority_id) VALUES (true, uuidv7());
+CREATE TABLE access.lifecycle_action (
+    sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    occurrence_id uuid NOT NULL UNIQUE,
+    customer_id text NOT NULL CHECK (customer_id = btrim(customer_id) AND length(customer_id) BETWEEN 1 AND 255),
+    deployment_id text NOT NULL CHECK (deployment_id = btrim(deployment_id) AND length(deployment_id) BETWEEN 1 AND 255),
+    resource_id uuid NOT NULL,
+    store text NOT NULL CHECK (store = btrim(store) AND length(store) BETWEEN 1 AND 128),
+    action text NOT NULL CHECK (action IN ('delete','restrict','revoke','disable','supersede')),
+    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    source_revision text NOT NULL DEFAULT '' CHECK (source_revision = '' OR source_revision ~ '^sha256:[0-9a-f]{64}$'),
+    completed boolean NOT NULL,
+    CHECK (sequence > 0)
+);
+CREATE INDEX lifecycle_action_deployment_sequence_idx ON access.lifecycle_action(deployment_id, sequence);
+CREATE FUNCTION access.append_lifecycle_action(
+    p_occurrence_id uuid, p_customer_id text, p_deployment_id text,
+    p_resource_id uuid, p_store text, p_action text,
+    p_source_revision text, p_completed boolean
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, access AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(77246215304761);
+    INSERT INTO access.lifecycle_action(
+        occurrence_id, customer_id, deployment_id, resource_id,
+        store, action, source_revision, completed
+    ) VALUES (
+        p_occurrence_id, p_customer_id, p_deployment_id, p_resource_id,
+        p_store, p_action, p_source_revision, p_completed
+    ) ON CONFLICT (occurrence_id) DO NOTHING;
+END;
+$$;
+REVOKE ALL ON access.lifecycle_action FROM PUBLIC;
+REVOKE ALL ON access.lifecycle_authority FROM PUBLIC;
+REVOKE ALL ON FUNCTION access.append_lifecycle_action(uuid,text,text,uuid,text,text,text,boolean) FROM PUBLIC;
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+        GRANT SELECT ON access.lifecycle_authority TO leapview_control_runtime;
+        GRANT SELECT ON access.lifecycle_action TO leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION access.append_lifecycle_action(uuid,text,text,uuid,text,text,text,boolean) TO leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
+        GRANT SELECT ON access.lifecycle_authority, access.lifecycle_action TO leapview_control_readonly;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
+        GRANT SELECT ON access.lifecycle_authority, access.lifecycle_action TO leapview_control_backup;
+    END IF;
+END $$;
+
 CREATE TABLE access.external_identity (
     id uuid PRIMARY KEY,
     principal_id uuid NOT NULL REFERENCES access.principal(id),
@@ -577,6 +632,7 @@ CREATE TABLE access.session (
     instance_id text NOT NULL DEFAULT '' CHECK (length(instance_id) <= 128),
     profile_id text NOT NULL DEFAULT '' CHECK (length(profile_id) <= 128),
     client_id text NOT NULL DEFAULT '' CHECK (length(client_id) <= 255),
+    client_label text NOT NULL DEFAULT '' CHECK (client_label = btrim(client_label) AND length(client_label) <= 255),
     absolute_expires_at timestamptz,
     CHECK (expires_at > created_at),
     CHECK (absolute_expires_at IS NULL OR absolute_expires_at >= expires_at),
@@ -680,7 +736,7 @@ BEGIN IF OLD.membership_id<>NEW.membership_id OR OLD.principal_id<>NEW.principal
 CREATE OR REPLACE FUNCTION access.reject_external_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.provider<>NEW.provider OR OLD.tenant_id<>NEW.tenant_id OR OLD.subject<>NEW.subject OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'external identity is immutable'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_session_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.token_fingerprint<>NEW.token_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.kind<>NEW.kind OR OLD.instance_id<>NEW.instance_id OR OLD.profile_id<>NEW.profile_id OR OLD.client_id<>NEW.client_id OR OLD.created_at<>NEW.created_at OR OLD.absolute_expires_at IS DISTINCT FROM NEW.absolute_expires_at THEN RAISE EXCEPTION 'session identity is immutable'; END IF; RETURN NEW; END; $$;
+BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.token_fingerprint<>NEW.token_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.kind<>NEW.kind OR OLD.instance_id<>NEW.instance_id OR OLD.profile_id<>NEW.profile_id OR OLD.client_id<>NEW.client_id OR OLD.client_label<>NEW.client_label OR OLD.created_at<>NEW.created_at OR OLD.absolute_expires_at IS DISTINCT FROM NEW.absolute_expires_at THEN RAISE EXCEPTION 'session identity is immutable'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_token_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.name<>NEW.name OR OLD.token_fingerprint<>NEW.token_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.expires_at<>NEW.expires_at OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'API token identity is immutable'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_service_secret_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -1101,6 +1157,44 @@ CREATE TABLE access.oauth_client_assertion (
 );
 CREATE INDEX oauth_client_assertion_expiry_idx ON access.oauth_client_assertion(expires_at);
 
+-- A reviewed privacy action is an execution instruction, not a request case.
+-- The caller owns intake/legal decisions. These rows contain only opaque
+-- identities and a bounded per-record execution cursor, never subject data.
+CREATE TABLE access.privacy_action_run (
+    run_id uuid PRIMARY KEY,
+    customer_id text NOT NULL CHECK (customer_id = btrim(customer_id) AND length(customer_id) BETWEEN 1 AND 255),
+    deployment_id text NOT NULL CHECK (deployment_id = btrim(deployment_id) AND length(deployment_id) BETWEEN 1 AND 255),
+    case_id text NOT NULL CHECK (case_id = btrim(case_id) AND length(case_id) BETWEEN 1 AND 256),
+    correlation_id text NOT NULL CHECK (correlation_id = btrim(correlation_id) AND length(correlation_id) BETWEEN 1 AND 256),
+    actor_id uuid NOT NULL,
+    principal_id uuid NOT NULL REFERENCES access.principal(id),
+    principal_type text NOT NULL CHECK (principal_type IN ('user','service')),
+    action text NOT NULL CHECK (action = 'restrict_access'),
+    graph_digest text NOT NULL CHECK (graph_digest ~ '^sha256:[0-9a-f]{64}$'),
+    manifest_digest text NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','completed')),
+    cursor bigint NOT NULL DEFAULT 0 CHECK (cursor >= 0),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    completed_at timestamptz,
+    UNIQUE (customer_id, deployment_id, case_id, action),
+    CHECK ((status = 'pending' AND completed_at IS NULL) OR (status = 'completed' AND completed_at IS NOT NULL))
+);
+CREATE TABLE access.privacy_action_item (
+    run_id uuid NOT NULL REFERENCES access.privacy_action_run(run_id),
+    ordinal bigint NOT NULL CHECK (ordinal > 0),
+    store text NOT NULL CHECK (length(store) BETWEEN 1 AND 128),
+    record_id text NOT NULL CHECK (length(record_id) BETWEEN 1 AND 255),
+    actionable boolean NOT NULL,
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','completed','excluded')),
+    outcome text NOT NULL DEFAULT '' CHECK (length(outcome) <= 64),
+    completed_at timestamptz,
+    PRIMARY KEY (run_id, ordinal),
+    UNIQUE (run_id, store, record_id),
+    CHECK ((status = 'completed') = (completed_at IS NOT NULL))
+);
+CREATE INDEX privacy_action_item_pending_idx ON access.privacy_action_item(run_id, ordinal) WHERE status = 'pending';
+
 CREATE OR REPLACE FUNCTION access.reject_authorization_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_TABLE_NAME = 'authorization_snapshot' THEN
@@ -1170,6 +1264,12 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA access TO leapview_control_runtime';
+        -- Lifecycle facts may only be appended through the ordering function;
+        -- the authority identity is read-only for the runtime role.
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON access.lifecycle_action, access.lifecycle_authority FROM leapview_control_runtime';
+        EXECUTE 'REVOKE UPDATE ON access.privacy_action_run, access.privacy_action_item FROM leapview_control_runtime';
+        EXECUTE 'GRANT UPDATE (status, cursor, updated_at, completed_at) ON access.privacy_action_run TO leapview_control_runtime';
+        EXECUTE 'GRANT UPDATE (status, outcome, completed_at) ON access.privacy_action_item TO leapview_control_runtime';
         EXECUTE 'REVOKE UPDATE ON access.authorization_policy_revision, access.authorization_policy_role_binding, access.authorization_policy_operation FROM leapview_control_runtime';
         EXECUTE 'GRANT DELETE ON access.oauth_session, access.oauth_client_assertion TO leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION access.valid_capabilities(jsonb) TO leapview_control_runtime';
@@ -1191,6 +1291,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA access TO leapview_control_readonly';
+        EXECUTE 'REVOKE SELECT ON access.privacy_action_run, access.privacy_action_item FROM leapview_control_readonly';
         EXECUTE 'REVOKE SELECT ON access.session, access.local_credential, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_credential, access.oauth_client, access.oauth_session, access.oauth_client_assertion FROM leapview_control_readonly';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON audit.audit_event, audit.audit_retention_floor TO leapview_control_readonly';
@@ -1650,6 +1751,10 @@ FOR EACH ROW EXECUTE FUNCTION access.reject_authorization_policy_history_mutatio
 CREATE TRIGGER authorization_policy_grant_no_delete BEFORE DELETE ON access.authorization_policy_grant
 FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 REVOKE ALL ON access.authorization_policy_grant FROM PUBLIC;
+CREATE TRIGGER lifecycle_action_immutable BEFORE UPDATE ON access.lifecycle_action
+FOR EACH ROW EXECUTE FUNCTION access.reject_authorization_policy_history_mutation();
+CREATE TRIGGER lifecycle_action_no_delete BEFORE DELETE ON access.lifecycle_action
+FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN

@@ -135,11 +135,39 @@ model AgentRunCreateRequest {
   correlationId?: string;
 }
 
+model AgentProviderConfiguration {
+ enabled: boolean;
+ `model`: string;
+ baseUrl: string;
+ apiMode: string;
+ reasoningEffort: string;
+ apiKey?: string;
+ removeKey?: boolean;
+}
 model AgentConfigUpdateRequest {
-  systemPrompt: string;
+ restoreRevision?: int64;
+  provider?: AgentProviderConfiguration;
+  action?: string;
+  expectedRevision?: int64;
+  testToken?: string;
+  systemPrompt?: string;
 }
 
 model AgentConfigResponse {
+ baseUrl?: string;
+ apiMode?: string;
+ configurationRevision: int64;
+ adminManaged: boolean;
+ credentialConfigured: boolean;
+ configurationAvailable: boolean;
+ testToken?: string;
+ testMessage?: string;
+  configured: boolean;
+  enabled: boolean;
+  status: string;
+  statusDetail?: string;
+  `model`?: string;
+  reasoningEffort?: string;
   systemPrompt: string;
 }
 

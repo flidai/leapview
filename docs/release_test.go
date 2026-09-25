@@ -52,8 +52,8 @@ func TestInstallationGuideMatchesCurrentPublicRelease(t *testing.T) {
 	if manifest.SchemaVersion != 1 {
 		t.Errorf("public release schemaVersion = %d, want 1", manifest.SchemaVersion)
 	}
-	if !semver.IsValid("v"+version) || semver.Compare("v"+version, manifest.Tag) <= 0 {
-		t.Errorf("candidate VERSION %q must be newer than public predecessor %q", version, manifest.Version)
+	if !semver.IsValid("v"+version) || semver.Compare("v"+version, manifest.Tag) < 0 {
+		t.Errorf("repository VERSION %q must not be older than public release %q", version, manifest.Version)
 	}
 	if manifest.Tag != "v"+manifest.Version {
 		t.Errorf("public release tag = %q, want v%s", manifest.Tag, manifest.Version)

@@ -1,6 +1,6 @@
 // Package productsettings owns the page-stream projection for product and
 // platform settings. It deliberately consumes the redacted product status
-// assembled by the deployment layer; it does not inspect auth credentials.
+// assembled by deployment and runtime providers; it does not inspect auth credentials.
 package productsettings
 
 import (
@@ -21,6 +21,7 @@ type Pinger interface {
 type ReadModel struct {
 	Service      *product.Service
 	Status       product.Status
+	AgentStatus  func(context.Context) (product.AgentStatus, error)
 	ControlPlane Pinger
 }
 
@@ -40,6 +41,13 @@ func (m ReadModel) Data(ctx context.Context, active string, canManage bool) (Dat
 		return Data{}, err
 	}
 	status := m.Status
+	if m.AgentStatus != nil {
+		agent, err := m.AgentStatus(ctx)
+		if err != nil {
+			return Data{}, err
+		}
+		status.System.Agent = agent
+	}
 	if status.System.ControlPlane == "" {
 		status.System.ControlPlane = "unknown"
 	}

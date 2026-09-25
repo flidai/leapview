@@ -82,3 +82,22 @@ func TestDeployCommandLeavesManagedPinsToTargetCandidatePreparation(t *testing.T
 		t.Fatal("deploy command still exposes client-side approval bypass")
 	}
 }
+
+type resolvingDeployClient struct{ deployClient }
+
+func (resolvingDeployClient) Resolve(_ context.Context, credentials cliapi.Credentials) (cliapi.Credentials, error) {
+	credentials.Target = "https://target.example"
+	return credentials, nil
+}
+
+func TestDeployCommandRetainsNamedTargetSelectorAcrossResolution(t *testing.T) {
+	operations := &deployOperations{}
+	command := DeployCommand(context.Background(), resolvingDeployClient{}, operations)
+	command.SetArgs([]string{"--target", "my-local-target", "--new", "--format", "json"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if operations.options.TargetSelector != "my-local-target" || operations.options.Credentials.Target != "https://target.example" {
+		t.Fatalf("resolved deployment lost the named profile: %#v", operations.options)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	"github.com/flidai/leapview/internal/project/developmentsession"
 )
 
 type recordedLifecycle struct {
@@ -26,6 +27,20 @@ func TestBuildApplicationSurfacesRequiresExplicitWorkloadAdmission(t *testing.T)
 	)
 	if err == nil || err.Error() != "workload admission is not configured" {
 		t.Fatalf("build error = %v, want explicit workload admission failure", err)
+	}
+}
+
+func TestLocalDevelopmentSessionIsRequiredBeforeDashboardAssembly(t *testing.T) {
+	local := runtimeAssemblyInputs{LocalCheckoutID: "sha256:checkout"}
+	if err := validateLocalDevelopmentSessionComposition(capabilityAssemblyInputs{}, local); err == nil {
+		t.Fatal("local composition accepted a missing development session store")
+	}
+	capabilities := capabilityAssemblyInputs{DevelopmentSessions: developmentsession.NewMemoryStore()}
+	if err := validateLocalDevelopmentSessionComposition(capabilities, local); err != nil {
+		t.Fatalf("local composition rejected a development session store: %v", err)
+	}
+	if err := validateLocalDevelopmentSessionComposition(capabilityAssemblyInputs{}, runtimeAssemblyInputs{}); err != nil {
+		t.Fatalf("ordinary composition unexpectedly required development sessions: %v", err)
 	}
 }
 

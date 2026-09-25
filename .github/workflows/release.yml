@@ -783,7 +783,8 @@ jobs:
             printf 'build_tags=duckdb_arrow ducklake_minio\n'
             printf 'candidate_test=TestCandidateCatalogMinIOSealedBaseRetainsUnchangedRefs\n'
             printf 'shared_pool_test=TestSharedPoolConformanceMinIOLane\n'
-            printf 'minio_image=%s\n' "$(awk -F'\"' '/^[[:space:]]*conformanceMinIOImage[[:space:]]*=/{print $2; exit}' internal/analytics/ducklake/minio_conformance_test.go)"
+            printf 'minio_image=%s\n' "$(awk -F'\"' '/^const Image =/{print $2; exit}' internal/platform/testminio/minio.go)"
+            printf 'minio_dockerfile_sha256=%s\n' "$(sha256sum internal/platform/testminio/Dockerfile | cut -d ' ' -f 1)"
             go version
             go env GOFLAGS GOOS GOARCH
             go list -m github.com/duckdb/duckdb-go/v2

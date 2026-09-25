@@ -22,11 +22,13 @@ type PromptInput struct {
 	// EditMessageID identifies an existing user turn in the active transcript.
 	// Immutable message/run rows remain audit history; execution starts from
 	// the active transcript prefix before this turn.
-	EditMessageID string
-	Context       *TurnContext
-	CorrelationID string
-	RequestID     string
-	OnEvent       func(EventEnvelope)
+	EditMessageID  string
+	Context        *TurnContext
+	CorrelationID  string
+	RequestID      string
+	OnEvent        func(EventEnvelope)
+	runtimeModel   string
+	runtimeBaseURL string
 }
 
 // PromptDispatch describes delivery metadata persisted with a durable prompt.
@@ -55,6 +57,7 @@ type StartedPrompt struct {
 	transcriptRevision int64
 
 	service       *Service
+	runtime       *agentRuntime
 	systemPrompt  string
 	initial       []agentcore.Message
 	runContext    context.Context
@@ -108,9 +111,17 @@ func (s *Service) StartDurablePrompt(ctx context.Context, input PromptInput, dis
 }
 
 func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *PromptDispatch) (*StartedPrompt, error) {
-	if !s.Enabled() {
+	if s.configuration != nil {
+		if err := s.configuration.Refresh(ctx); err != nil {
+			return nil, err
+		}
+	}
+	runtime := s.runtimeSnapshot()
+	if runtime == nil || !runtime.enabled || !runtime.config.Enabled() || runtime.model == nil {
 		return nil, ErrDisabled
 	}
+	input.runtimeModel = runtime.config.Model
+	input.runtimeBaseURL = runtime.config.NormalizedBaseURL()
 	if s.repo == nil {
 		return nil, fmt.Errorf("agent store is required")
 	}
@@ -159,8 +170,8 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 		PrincipalID:    input.Scope.PrincipalID,
 		ConversationID: input.ConversationID,
 		RunID:          runID,
-		Model:          s.config.Model,
-		MetadataJSON:   metadataJSON(map[string]any{"base_url": s.config.NormalizedBaseURL(), "model": s.config.Model, "request_id": input.RequestID, "request_digest": promptDigest(input), "edit_message_id": input.EditMessageID}),
+		Model:          input.runtimeModel,
+		MetadataJSON:   metadataJSON(map[string]any{"configuration_revision": runtime.config.Revision, "base_url": input.runtimeBaseURL, "model": input.runtimeModel, "request_id": input.RequestID, "request_digest": promptDigest(input), "edit_message_id": input.EditMessageID}),
 		Status:         runStatus,
 	})
 	if err != nil {
@@ -211,7 +222,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				if promptErr != nil {
 					return nil, promptErr
 				}
-				prepared, prepErr := agentcore.New(agentcore.Definition{Name: "leapview-governed", SystemPrompt: systemPrompt, Model: s.model, Tools: s.toolDefinitions(toolScope), InitialTranscript: transcript, IDGenerator: fixedRunIDGenerator{runID: runID}})
+				prepared, prepErr := agentcore.New(agentcore.Definition{Name: "leapview-governed", SystemPrompt: systemPrompt, Model: runtime.model, Tools: s.toolDefinitions(toolScope), InitialTranscript: transcript, IDGenerator: fixedRunIDGenerator{runID: runID}})
 				if prepErr != nil {
 					return nil, prepErr
 				}
@@ -269,9 +280,9 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 					}
 				}
 				runContext, cancel := context.WithCancel(context.Background())
-				s.attachRun(input.ConversationID, runID, cancel)
+				s.attachRun(input.ConversationID, runID, cancel, runtime)
 				release = false
-				return &StartedPrompt{Scope: input.Scope, ConversationID: input.ConversationID, RunID: runID, Input: input.Input, EditMessageID: input.EditMessageID, CorrelationID: input.CorrelationID, RequestID: input.RequestID, transcriptRevision: transcriptRevision, service: s, systemPrompt: systemPrompt, initial: transcript, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
+				return &StartedPrompt{Scope: input.Scope, ConversationID: input.ConversationID, RunID: runID, Input: input.Input, EditMessageID: input.EditMessageID, CorrelationID: input.CorrelationID, RequestID: input.RequestID, transcriptRevision: transcriptRevision, service: s, runtime: runtime, systemPrompt: systemPrompt, initial: transcript, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
 			}
 		}
 		return nil, err
@@ -300,7 +311,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	prepared, err := agentcore.New(agentcore.Definition{
 		Name:              "leapview-governed",
 		SystemPrompt:      systemPrompt,
-		Model:             s.model,
+		Model:             runtime.model,
 		Tools:             s.toolDefinitions(toolScope),
 		InitialTranscript: initial,
 		IDGenerator:       fixedRunIDGenerator{runID: run.ID},
@@ -355,7 +366,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 		durablyQueued = true
 	}
 	runContext, cancel := context.WithCancel(context.Background())
-	s.attachRun(input.ConversationID, run.ID, cancel)
+	s.attachRun(input.ConversationID, run.ID, cancel, runtime)
 	release = false
 	return &StartedPrompt{
 		Scope:              input.Scope,
@@ -367,6 +378,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 		RequestID:          input.RequestID,
 		transcriptRevision: transcriptRevision,
 		service:            s,
+		runtime:            runtime,
 		systemPrompt:       systemPrompt,
 		initial:            initial,
 		runContext:         runContext,
@@ -380,9 +392,6 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 // transcript before it returns, so no request body or in-memory closure is
 // required to continue execution.
 func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID, runID, correlationID string) (*StartedPrompt, error) {
-	if !s.Enabled() {
-		return nil, ErrDisabled
-	}
 	if s.repo == nil {
 		return nil, fmt.Errorf("agent store is required")
 	}
@@ -390,7 +399,8 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 	if conversationID == "" || runID == "" {
 		return nil, fmt.Errorf("conversation and run are required")
 	}
-	if err := s.acquireForResume(conversationID, runID); err != nil {
+	runtime, err := s.acquireForResume(conversationID, runID)
+	if err != nil {
 		return nil, err
 	}
 	release := true
@@ -402,6 +412,31 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 	run, err := s.repo.GetRun(ctx, scope.PrincipalID, conversationID, runID)
 	if err != nil {
 		return nil, err
+	}
+	if runtime == nil {
+		var saved struct {
+			Revision int64 `json:"configuration_revision"`
+		}
+		if err := json.Unmarshal([]byte(firstNonemptyRunMetadata(run.MetadataJSON)), &saved); err != nil {
+			return nil, err
+		}
+		if saved.Revision > 0 {
+			if s.configuration == nil {
+				return nil, fmt.Errorf("saved agent configuration is unavailable")
+			}
+			runtime, err = s.configuration.runtimeForRevision(ctx, saved.Revision)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			runtime = s.runtimeSnapshot()
+			if runtime != nil && runtime.config.Revision > 0 {
+				return nil, fmt.Errorf("legacy queued run cannot resume with an administrator-selected provider")
+			}
+		}
+	}
+	if runtime == nil || !runtime.enabled || !runtime.config.Enabled() || runtime.model == nil {
+		return nil, ErrDisabled
 	}
 	if run.Status != RunStatusRunning {
 		return nil, fmt.Errorf("run %q is not resumable from status %q", runID, run.Status)
@@ -435,25 +470,27 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 		return nil, err
 	}
 	runContext, cancel := context.WithCancel(ctx)
-	s.attachRun(conversationID, runID, cancel)
+	s.attachRun(conversationID, runID, cancel, runtime)
 	release = false
-	return &StartedPrompt{Scope: scope, ConversationID: conversationID, RunID: runID, Input: input, EditMessageID: editMessageID, CorrelationID: correlationID, transcriptRevision: conversation.TranscriptRevision, service: s, systemPrompt: systemPrompt, initial: initial, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
+	return &StartedPrompt{Scope: scope, ConversationID: conversationID, RunID: runID, Input: input, EditMessageID: editMessageID, CorrelationID: correlationID, transcriptRevision: conversation.TranscriptRevision, service: s, runtime: runtime, systemPrompt: systemPrompt, initial: initial, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
 }
 
-func (s *Service) acquireForResume(conversationID, runID string) error {
+func (s *Service) acquireForResume(conversationID, runID string) (*agentRuntime, error) {
+	var runtime *agentRuntime
 	s.mu.Lock()
 	if active, ok := s.running[conversationID]; ok {
 		if active.runID != runID {
 			s.mu.Unlock()
-			return ErrBusy
+			return nil, ErrBusy
 		}
+		runtime = active.runtime
 		if active.cancel != nil {
 			active.cancel()
 		}
 		delete(s.running, conversationID)
 	}
 	s.mu.Unlock()
-	return s.acquire(conversationID)
+	return runtime, s.acquire(conversationID)
 }
 
 func (s *Service) CompletePrompt(ctx context.Context, started *StartedPrompt, onEvent func(EventEnvelope)) (PromptResult, error) {
@@ -487,6 +524,8 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 		EditMessageID:  p.EditMessageID,
 		CorrelationID:  p.CorrelationID,
 		OnEvent:        onEvent,
+		runtimeModel:   p.runtime.config.Model,
+		runtimeBaseURL: p.runtime.config.NormalizedBaseURL(),
 	}
 	toolScope := input.Scope
 	toolScope.ConversationID = input.ConversationID
@@ -495,7 +534,7 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 	def := agentcore.Definition{
 		Name:              "leapview-governed",
 		SystemPrompt:      p.systemPrompt,
-		Model:             s.model,
+		Model:             p.runtime.model,
 		Tools:             s.toolDefinitions(toolScope),
 		InitialTranscript: p.initial,
 		Events:            sink,
@@ -562,7 +601,7 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 			atomicCompletion = true
 			messages := newMessageInputs(input, p.RunID, p.initial, transcript)
 			raw, _ := json.Marshal(compactTranscriptForStorage(transcript))
-			meta := map[string]any{"model": s.config.Model}
+			meta := map[string]any{"model": input.runtimeModel}
 			eventData := map[string]any{"runId": p.RunID, "conversationId": input.ConversationID}
 			if cause != "" {
 				meta["terminationCause"] = cause
@@ -684,11 +723,11 @@ func (s *Service) acquire(conversationID string) error {
 	return nil
 }
 
-func (s *Service) attachRun(conversationID, runID string, cancel context.CancelFunc) {
+func (s *Service) attachRun(conversationID, runID string, cancel context.CancelFunc, runtime *agentRuntime) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.running[conversationID]; ok {
-		s.running[conversationID] = runningPrompt{runID: runID, cancel: cancel}
+		s.running[conversationID] = runningPrompt{runID: runID, cancel: cancel, runtime: runtime}
 	}
 }
 
@@ -840,7 +879,7 @@ func (s *Service) finishRunWithClaimCause(ctx context.Context, input PromptInput
 			errText = errText[:512]
 		}
 	}
-	metadata := map[string]any{"model": s.config.Model}
+	metadata := map[string]any{"model": input.runtimeModel}
 	if cause != "" {
 		metadata["terminationCause"] = cause
 	}
@@ -884,7 +923,7 @@ func (s *Service) cleanupFailedRun(ctx context.Context, input PromptInput, runID
 				errText = errText[:512]
 			}
 			data, _ := json.Marshal(map[string]any{"runId": runID, "conversationId": input.ConversationID})
-			finish := RunFinish{PrincipalID: input.Scope.PrincipalID, ConversationID: input.ConversationID, RunID: runID, Status: RunStatusFailed, Error: errText, MetadataJSON: metadataJSON(map[string]any{"model": s.config.Model, "terminationCause": RunCauseResumeFailure}), Cause: RunCauseResumeFailure}
+			finish := RunFinish{PrincipalID: input.Scope.PrincipalID, ConversationID: input.ConversationID, RunID: runID, Status: RunStatusFailed, Error: errText, MetadataJSON: metadataJSON(map[string]any{"model": input.runtimeModel, "terminationCause": RunCauseResumeFailure}), Cause: RunCauseResumeFailure}
 			_, _, err := terminalizer.FinishRunWorkflow(cleanupCtx, finish, jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.failed:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.failed", Data: data}})
 			return err
 		}
@@ -920,4 +959,11 @@ func decodeTranscript(raw string) ([]agentcore.Message, error) {
 		return nil, err
 	}
 	return messages, nil
+}
+
+func firstNonemptyRunMetadata(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "{}"
+	}
+	return raw
 }

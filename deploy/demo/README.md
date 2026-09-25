@@ -21,26 +21,59 @@ This directory contains only the publication contract, never secret values.
 
 ## Delivery
 
-After `Main artifacts` builds and qualifies the `main` revision,
-`.github/workflows/demo-deploy.yml`:
+Merging a PR does not change the public demo. Both operations in **Hosted demo
+deployment** are manual and run on `main`, using one shared concurrency group:
 
-1. downloads the selected pinned public dataset and synchronizes it as
-   managed data;
-2. authenticates to `/api/v1/capabilities` and admits the running runtime only
-   when it reports API v1, native PostgreSQL delivery, a clean production
-   build, and a canonical immutable build revision;
-3. publishes the selected project source root through the normal candidate,
-   approval, and activation APIs; and
-4. verifies publication activation and public readiness.
+- **deploy** replaces the application image on `app-leapview-demo-02` at
+  `89.58.13.145`. Supply `image` as `ghcr.io/flidai/leapview@sha256:<digest>` and
+  `qualification_run` as the successful **Main artifacts** run ID for that exact
+  digest. The run must contain `production-image-qualification-<attempt>`; older
+  runs without a receipt are not admissible. First qualify an image with the
+  updated workflow. Mutable tags, PR candidates, foreign workflows, stale run
+  attempts and mismatched digests fail before SSH. OCI admission independently
+  verifies provenance, SBOM and vulnerability policy again.
+- **publish** synchronizes and activates CFO/Olist project content using the
+  source revision of the last successful runtime deployment. It does not
+  replace the application container.
 
-This is deliberately a content-only workflow. The `leapview-demo` platform
-operators own runtime image rollout outside this repository workflow, using an
-immutable image that has passed the repository's [release qualification](../../.github/workflows/release.yml)
-and [installed-candidate qualification](../../.github/workflows/installed-candidate.yml).
-The publication records both the selected source revision and the authenticated
-running build revision in its job output; they must match, and the runtime
-must satisfy the compatibility contract above. No SSH host rollout or tracked SSH
-identity is part of the supported path.
+The runtime transaction uses the existing Compose installation at `/opt/leapview`,
+container `leapview-cfo-leapview-1`, state volume `leapview-cfo_leapview-state`, and
+PostgreSQL container `demo02-postgres-cfo`. SSH must match the pinned demo-02 host
+key. It does not mutate Hetzner firewalls, DNS, the old VPS, or agent credentials.
+It checks the actual database bindings and available backup space before stopping
+writes. Control DB, DuckLake DB, globals, application state and configuration are
+backed up together under `/etc/leapview-provider-cfo/compose-backup-*`.
+Dump/tar readability is checked; this is not a full restore rehearsal.
+
+Only image updates with unchanged schema/engine dependencies and Compose payloads
+are admitted. Schema changes require the canonical `host upgrade` recovery and
+migration-capability process; this workflow never applies or reverses migrations.
+Image payloads are extracted into a separate temporary directory before validation.
+Same-image retries reuse an existing release only when its contents match the image;
+they never overwrite the active release or its local configuration.
+A host lock protects against overlapping operators. After replacement, the remote
+transaction waits up to five minutes for the runner's authenticated shared-viewer
+check of all four CFO pages (27 visuals). Readiness failure, failed browser checks,
+SSH EOF, or timeout restores the predecessor image and configuration. Existing
+CFO data and credentials are preserved. The host receipt is
+`/etc/leapview-provider-cfo/compose-deployment.json`.
+
+The runner reads **only** the shared viewer login over pinned SSH from the existing
+root-protected `jacob-cutover-secrets.json` handoff. It masks those values and keeps
+them only in the browser subprocess environment. It does not import the Infisical
+human-access folder or retrieve the administrator login. Keep that protected
+handoff's viewer values synchronized when rotating the shared login.
+
+A successful GitHub deployment record (`task=demo-compose-runtime`, environment
+`leapview-demo-runtime`) is the runtime pin. The workflow token has only the
+additional `deployments: write` permission; no variable-write PAT is required.
+`DEMO_RUNTIME_REVISION` is a **bootstrap fallback only**, used before the first
+runtime deployment record. After that, deployment records take precedence.
+A failed/in-progress record blocks publication until an operator reconciles the
+host and re-runs deployment successfully. If recording success fails after the
+host commits, the image may already be live: inspect the host receipt and re-run
+the same qualified image; do not change the pin manually to hide the failure.
+The retired stage/prepare/systemd entrypoints exit without changing infrastructure.
 
 The `leapview-demo` GitHub environment authenticates to Infisical through
 GitHub OIDC. The Infisical `prod:/demo/deployment` path supplies the
@@ -60,16 +93,6 @@ on every publication. The publisher is restricted to managed-data ingestion,
 project authoring, and release publication. The release principal is restricted
 to viewing, approving, and activating the demo project environment, plus
 managing the public dashboard publications declared by the canonical showcase.
-
-For an operator-qualified replacement runtime, set `DEMO_RUNTIME_REVISION` in
-the `leapview-demo` GitHub environment to the exact source revision reported by
-that immutable image. Set it together with the new project and principal IDs
-only after cutover. Then dispatch the `publish` action to validate the new
-credentials and publish matching source. While this override is set, unrelated
-main artifact builds do not republish the pinned source automatically. An unset
-override preserves the legacy tracked revision for the existing demo. The
-legacy `stage`, `prepare`, and `deploy` actions target the old installation;
-do not use them for the new Compose-managed host.
 
 The `leapview-demo` environment variable `DEMO_PROJECT_ID` stores the target's
 durable `ProjectUID`. Content publication must use that issuer-owned identity;
@@ -117,17 +140,21 @@ absence of a project role must not be treated as a blanket denial of those pages
 
 ### Agent provider
 
-The legacy hosted-demo rollout receives `DEEPSEEK_API_KEY` from the protected
-Infisical `prod:/demo/deployment` path and passes it directly to
-`scripts/rollout_demo_runtime.sh`. The rollout step must not override that
-injected value with an unset GitHub environment secret.
-The checked rollout maps it to `LEAPVIEW_AGENT_API_KEY`, sets
-`LEAPVIEW_AGENT_BASE_URL` and `LEAPVIEW_AGENT_MODEL`, and writes those values
-only to the release's private mode-0600 `runtime.env`. The provider key is never committed.
-Every replacement runtime inherits these variables from the running
-predecessor, while an operator-triggered prepare or deploy refreshes the key
-from the deployment secret. Provider configuration enables the runtime while
-access policy continues to control which resources its tools can reach.
+LeapView platform admins select, test, and save the chatbot provider and model
+in **Admin → Agent**. Ordinary chatbot users cannot change these settings.
+Legacy provider environment values remain in use until an admin saves the first
+configuration; subsequent image deployments do not override the saved selection.
+
+The operator provisions `LEAPVIEW_AGENT_CREDENTIAL_KEY` once in the private
+`/opt/leapview/leapview.env`. It must be 64 hexadecimal characters representing
+32 random bytes. Preserve it across releases and back it up separately from the
+database: saved provider credentials are encrypted with this key. The Compose
+rollout preserves the environment file byte-for-byte and does not rotate keys.
+
+Introducing admin configuration adds a database migration. Use the canonical
+`host upgrade` recovery and migration-capability process for this upgrade; the
+image-only hosted-demo workflow cannot apply it. After upgrading, an admin tests
+and saves the provider configuration before verifying a chatbot conversation.
 
 Treat the shared credential as public. To rotate it, reset the local password,
 revoke every existing session for the principal, complete the forced password
@@ -143,5 +170,5 @@ a new target-policy revision; publish and activate a candidate containing that
 revision before expecting serving access to change. The portable source bundle
 does not contain these target-owned grants.
 
-Manual recovery is available from the workflow dispatch control. It republishes
-the selected `main` revision through the identical project-content path.
+After runtime deployment, dispatch `publish` when the PR changes project content.
+It uses the deployed revision, not an unrelated newer main revision.
