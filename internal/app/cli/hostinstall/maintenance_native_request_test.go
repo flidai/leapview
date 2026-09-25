@@ -4,11 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"io/fs"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 )
 
 func nativeRequestFixture(t *testing.T) NativeRequest {
@@ -22,22 +23,33 @@ func nativeRequestFixture(t *testing.T) NativeRequest {
 	r.Qualification.Qualified = true
 	r.Plan.Mode = "database-upgrade-required"
 	r.Plan.CurrentSchema = 28
-	r.Plan.CandidateSchema = 30
+	r.Plan.CandidateSchema = int(migrations.CurrentRevision)
 	r.Plan.PredecessorRevision = r.PredecessorRevision
 	r.Plan.CandidateRevision = r.CandidateRevision
-	r.Plan.PendingMigrations = []string{"029_agent_configuration.sql", "030_browser_session_client_label.sql"}
-	r.Plan.PendingMigrationDigests = map[string]string{"029_agent_configuration.sql": "55d04d342de0391ff743915867f2265e2309d6837b36d9833e6396fcec7d1a47", "030_browser_session_client_label.sql": "cd721999bae6b681f358f7730f683877b571f0da43af66021e4b63279470ee26"}
+	r.Plan.PendingMigrationDigests = map[string]string{}
 	before := SourceCompatibility{Schema: 28, Migrations: map[string]string{}, Engines: map[string]string{"river": "same", "duckdb": "same"}, RolePolicy: hex64('a')}
-	after := SourceCompatibility{Schema: 30, Migrations: map[string]string{}, Engines: before.Engines, RolePolicy: before.RolePolicy}
-	files, _ := fs.ReadDir(migrations.MigrationFS(), ".")
+	after := SourceCompatibility{Schema: r.Plan.CandidateSchema, Migrations: map[string]string{}, Engines: before.Engines, RolePolicy: before.RolePolicy}
+	files, err := fs.ReadDir(migrations.MigrationFS(), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, f := range files {
 		prefix, _, _ := strings.Cut(f.Name(), "_")
-		n, _ := strconv.Atoi(prefix)
-		raw, _ := fs.ReadFile(migrations.MigrationFS(), f.Name())
+		n, err := strconv.Atoi(prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := fs.ReadFile(migrations.MigrationFS(), f.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
 		hash := fmt.Sprintf("%x", sha256.Sum256(raw))
 		after.Migrations[f.Name()] = hash
-		if n <= 28 {
+		if n <= r.Plan.CurrentSchema {
 			before.Migrations[f.Name()] = hash
+		} else {
+			r.Plan.PendingMigrations = append(r.Plan.PendingMigrations, f.Name())
+			r.Plan.PendingMigrationDigests[f.Name()] = hash
 		}
 	}
 	r.Plan.SourceBefore = before
@@ -65,7 +77,7 @@ func TestNativeRequestRejectsUnqualifiedAndUnreviewedChanges(t *testing.T) {
 		"receipt":       func(r *NativeRequest) { r.Qualification.Qualified = false },
 		"source":        func(r *NativeRequest) { r.Qualification.Revision = strings.Repeat("3", 40) },
 		"digest":        func(r *NativeRequest) { r.Qualification.Image = r.PredecessorImage },
-		"future-schema": func(r *NativeRequest) { r.Plan.CandidateSchema = 31 },
+		"future-schema": func(r *NativeRequest) { r.Plan.CandidateSchema++ },
 		"history":       func(r *NativeRequest) { r.Plan.CurrentSchema = 29 },
 		"SQL":           func(r *NativeRequest) { r.Plan.PendingMigrationDigests["029_agent_configuration.sql"] = hex64('a') },
 		"engine": func(r *NativeRequest) {

@@ -27,7 +27,7 @@ func TestSourceCompatibilityUsesHistoryAndEngineIdentities(t *testing.T) {
 	r := nativeRequestFixture(t)
 	before, after := r.Plan.SourceBefore, r.Plan.SourceAfter
 	mode, pending, err := classifySources(before, after)
-	if err != nil || mode != "database-upgrade-required" || len(pending) != 2 {
+	if err != nil || mode != "database-upgrade-required" || len(pending) != r.Plan.CandidateSchema-r.Plan.CurrentSchema {
 		t.Fatalf("%s %v %v", mode, pending, err)
 	}
 	before = after

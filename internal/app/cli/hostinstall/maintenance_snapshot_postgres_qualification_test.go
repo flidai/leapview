@@ -210,7 +210,7 @@ func TestColdPostgreSQLPairRecovery(t *testing.T) {
 	}
 	upgraded.Close()
 	upgradeSQL.Close()
-	verify(30)
+	verify(migrations.CurrentRevision)
 	docker("exec", clone, "psql", "-U", "postgres", "-d", "leapview_ducklake", "-c", "UPDATE recovery_marker SET value='failed-candidate';")
 	os.WriteFile(filepath.Join(restoredHome, "managed-data"), []byte("failed-candidate"), 0600)
 	docker("stop", "--time", "30", clone)
@@ -220,5 +220,5 @@ func TestColdPostgreSQLPairRecovery(t *testing.T) {
 	docker("start", clone)
 	wait(clone)
 	verify(28)
-	t.Log(fmt.Sprintf("verified cold pair restore, real Goose 28 -> 30, then paired recovery to 28; snapshot %s", digest))
+	t.Log(fmt.Sprintf("verified cold pair restore, real Goose 28 -> %d, then paired recovery to 28; snapshot %s", migrations.CurrentRevision, digest))
 }

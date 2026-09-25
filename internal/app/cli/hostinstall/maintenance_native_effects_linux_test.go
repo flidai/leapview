@@ -322,10 +322,10 @@ func TestNativeFailedCandidateRestoresPairedFilesAndConfiguration(t *testing.T) 
 						}
 					case "run":
 						if slices.Contains(args, "rehearse") {
-							return "", os.WriteFile(filepath.Join(pgRoots[e.clonePrefix()+"-pg"], "state"), []byte("30"), 0600)
+							return "", os.WriteFile(filepath.Join(pgRoots[e.clonePrefix()+"-pg"], "state"), []byte(fmt.Sprint(e.request.Plan.CandidateSchema)), 0600)
 						}
 						if slices.Contains(args, "migrate") {
-							if err := os.WriteFile(filepath.Join(e.original.Volumes["postgres"], "state"), []byte("30"), 0600); err != nil {
+							if err := os.WriteFile(filepath.Join(e.original.Volumes["postgres"], "state"), []byte(fmt.Sprint(e.request.Plan.CandidateSchema)), 0600); err != nil {
 								return "", err
 							}
 							return "", os.WriteFile(filepath.Join(e.original.Volumes["home"], "state"), []byte("failed candidate"), 0600)
