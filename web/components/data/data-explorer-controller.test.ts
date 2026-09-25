@@ -66,6 +66,13 @@ test('canonical query edits and explicit run lifecycle remain separate', () => {
   expect(stop).toMatchObject({ action: 'stop', requestSeq: 9, resetVersion: 11 })
 })
 
+test('data explorer client identity is stable only for the current document', () => {
+  const first = new DataExplorerClientState().clientID()
+  const second = new DataExplorerClientState().clientID()
+  expect(first.startsWith('explorer-')).toBe(true)
+  expect(second).toBe(first)
+})
+
 test('unknown-outcome recovery omits the run ID and latest retries get a fresh ID', () => {
   const query = new DataExplorerQueryController()
   const client = new DataExplorerClientState()

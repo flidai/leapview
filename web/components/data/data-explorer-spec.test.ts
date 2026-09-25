@@ -113,6 +113,15 @@ test('V1 run validation and type-aware filters fail closed', () => {
     'Choose a semantic model before running the exploration.',
     'Select at least one field or time grain before running the exploration.',
   ]))
+  const unavailableTime: ExplorationSpec = {
+    ...empty,
+    modelId: 'sales',
+    datasetId: 'orders',
+    time: { field: 'shipments.created_at', grain: 'day' },
+  }
+  expect(explorationRunValidation(unavailableTime, [{
+    id: 'shipments.created_at', label: 'Created at', kind: 'dimension', datasetId: 'shipments', type: 'timestamp', compatible: false, selected: false,
+  }])).toContain('shipments.created_at is unavailable as a time field for this exploration.')
   expect(filterOperatorsForType('decimal').map((option) => option.value)).toEqual(expect.arrayContaining(['greater_than', 'less_than']))
   expect(filterOperatorsForType('string').map((option) => option.value)).not.toEqual(expect.arrayContaining(['greater_than', 'less_than']))
 })

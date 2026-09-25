@@ -20,6 +20,7 @@ import (
 // substitute for saved exploration persistence or a query job store.
 type dataExplorerLifecycle struct {
 	mu                sync.Mutex
+	responseGates     map[string]*dataExplorerResponseGate
 	active            map[string]*dataExplorerExecution
 	suggestionsActive map[string]*dataExplorerExecution
 	latest            map[string]int64
@@ -38,6 +39,13 @@ type dataExplorerExecution struct {
 	cancel     context.CancelFunc
 	requestSeq int64
 	runID      string
+}
+
+// dataExplorerResponseGate serializes response emission for one browser
+// identity without holding the lifecycle-wide state mutex across network I/O.
+type dataExplorerResponseGate struct {
+	mu   sync.Mutex
+	refs int
 }
 
 func dataExplorerAction(command projectsignals.DataExplorerCommand) string {
@@ -163,6 +171,8 @@ func (l *dataExplorerLifecycle) acceptSemantic(key string, requestSeq int64) boo
 	if requestSeq <= 0 {
 		return true
 	}
+	releaseResponseGate := l.lockResponseGate(key)
+	defer releaseResponseGate()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.latest == nil {
@@ -187,6 +197,8 @@ func (l *dataExplorerLifecycle) acceptSemantic(key string, requestSeq int64) boo
 }
 
 func (l *dataExplorerLifecycle) acceptSuggestions(key string, requestSeq int64) (bool, int64) {
+	releaseResponseGate := l.lockResponseGate(key)
+	defer releaseResponseGate()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.suggestionsLatest == nil {
@@ -245,6 +257,8 @@ func (l *dataExplorerLifecycle) beginLane(key, runID string, requestSeq int64, p
 		parent = context.Background()
 	}
 	ctx, cancel := context.WithCancel(parent)
+	releaseResponseGate := l.lockResponseGate(key)
+	defer releaseResponseGate()
 	l.mu.Lock()
 	if runID = strings.TrimSpace(runID); runID == "" {
 		l.nextRunID++
@@ -299,6 +313,8 @@ func (l *dataExplorerLifecycle) beginLane(key, runID string, requestSeq int64, p
 }
 
 func (l *dataExplorerLifecycle) stop(key, runID string, requestSeq int64) bool {
+	releaseResponseGate := l.lockResponseGate(key)
+	defer releaseResponseGate()
 	l.mu.Lock()
 	l.touchLocked(key)
 	active := l.active[key]
@@ -449,7 +465,7 @@ func (l *dataExplorerLifecycle) pruneLocked() {
 		oldestKey := ""
 		var oldest time.Time
 		for key, accessed := range l.identityAccess {
-			if l.active[key] != nil || l.suggestionsActive[key] != nil {
+			if l.active[key] != nil || l.suggestionsActive[key] != nil || l.responseGates[key] != nil && l.responseGates[key].refs > 0 {
 				continue
 			}
 			if oldestKey == "" || accessed.Before(oldest) {
@@ -466,13 +482,43 @@ func (l *dataExplorerLifecycle) pruneLocked() {
 		delete(l.suggestionsRun, oldestKey)
 		delete(l.stoppedRun, oldestKey)
 		delete(l.stoppedRequestSeq, oldestKey)
+		delete(l.responseGates, oldestKey)
+	}
+}
+
+func (l *dataExplorerLifecycle) lockResponseGate(key string) func() {
+	if strings.TrimSpace(key) == "" {
+		return func() {}
+	}
+	l.mu.Lock()
+	if l.responseGates == nil {
+		l.responseGates = make(map[string]*dataExplorerResponseGate)
+	}
+	gate := l.responseGates[key]
+	if gate == nil {
+		gate = &dataExplorerResponseGate{}
+		l.responseGates[key] = gate
+	}
+	gate.refs++
+	l.touchLocked(key)
+	l.pruneLocked()
+	l.mu.Unlock()
+
+	gate.mu.Lock()
+	return func() {
+		gate.mu.Unlock()
+		l.mu.Lock()
+		gate.refs--
+		l.pruneLocked()
+		l.mu.Unlock()
 	}
 }
 
 // dataExplorerResponseLease closes the check-then-emit race at the command
-// endpoint. Once a response has acquired this lease, a newer request cannot
-// advance lifecycle state until PatchResponse has serialized the current
-// response; if it advanced first, this lease rejects the stale response.
+// endpoint. Responses for one browser identity are serialized, while unrelated
+// clients remain free to advance lifecycle state and emit their own responses.
+// If a newer same-client request advanced first, this lease rejects the stale
+// response after it reaches the front of that client's response queue.
 func (h *BrowserHandler) dataExplorerResponseLease(r *stdhttp.Request, command projectsignals.DataExplorerCommand) (func(), bool) {
 	if h == nil || r == nil {
 		return func() {}, true
@@ -483,6 +529,8 @@ func (h *BrowserHandler) dataExplorerResponseLease(r *stdhttp.Request, command p
 		return nil, false
 	}
 	l := &h.dataExplorerLifecycle
+	release := l.lockResponseGate(key)
+
 	l.mu.Lock()
 	seq := dataExplorerRequestSeq(command)
 	current := true
@@ -496,8 +544,10 @@ func (h *BrowserHandler) dataExplorerResponseLease(r *stdhttp.Request, command p
 	}
 	if !current {
 		l.mu.Unlock()
+		release()
 		return nil, false
 	}
 	l.touchLocked(key)
-	return func() { l.mu.Unlock() }, true
+	l.mu.Unlock()
+	return release, true
 }

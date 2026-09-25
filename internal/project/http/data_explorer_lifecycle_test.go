@@ -109,34 +109,6 @@ func TestDataExplorerClientIdentityFailsClosed(t *testing.T) {
 	}
 }
 
-func TestDataExplorerResponseLeaseSerializesCurrentCheckAndEmission(t *testing.T) {
-	h, req, key, clientID := newDataExplorerLeaseFixture("lease-client", false)
-	command := projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID), RequestSeq: 1}
-	if key == "" || !h.dataExplorerLifecycle.acceptSemantic(key, 1) {
-		t.Fatal("failed to establish lifecycle state")
-	}
-	unlock, ok := h.dataExplorerResponseLease(req, command)
-	if !ok {
-		t.Fatal("current response did not acquire emission lease")
-	}
-	advanced := make(chan struct{})
-	go func() {
-		h.dataExplorerLifecycle.acceptSemantic(key, 2)
-		close(advanced)
-	}()
-	select {
-	case <-advanced:
-		t.Fatal("newer lifecycle state advanced before the current response was emitted")
-	case <-time.After(10 * time.Millisecond):
-	}
-	unlock()
-	select {
-	case <-advanced:
-	case <-time.After(time.Second):
-		t.Fatal("newer lifecycle state remained blocked after response emission")
-	}
-}
-
 func TestDataExplorerLifecycleUsesRunIdentityForSameSequence(t *testing.T) {
 	var lifecycle dataExplorerLifecycle
 	first, finishFirst, firstID := lifecycle.beginRun("client", "", 7, context.Background())

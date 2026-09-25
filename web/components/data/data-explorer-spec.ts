@@ -289,6 +289,12 @@ export function explorationRunValidation(spec: ExplorationSpec, fields: DataExpl
   const messages: string[] = []
   if (!spec.modelId.trim()) messages.push('Choose a semantic model before running the exploration.')
   if (!spec.dimensions.length && !spec.metrics.length && !spec.time) messages.push('Select at least one field or time grain before running the exploration.')
+  if (spec.time) {
+    const field = fields.find((candidate) => candidate.id === spec.time?.field)
+    if (field && (field.kind !== 'dimension' || field.compatible === false && !field.rebaseDatasetId)) {
+      messages.push(`${spec.time.field} is unavailable as a time field for this exploration.`)
+    }
+  }
   if (spec.time?.range?.kind === 'relative') messages.push(unsupportedRelativeTimeRangeMessage)
   messages.push(...explorationPivotValidation(spec, fields))
   return Array.from(new Set(messages))

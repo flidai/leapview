@@ -38,26 +38,14 @@ export class DataExplorerClientState {
       this.generatedClientID = fallbackDataExplorerClientID
       return this.generatedClientID
     }
-    const storageKey = 'leapview-data-explorer-client-id'
-    try {
-      const stored = normalizedClientID(window.sessionStorage.getItem(storageKey))
-      if (stored) {
-        this.generatedClientID = stored
-        return stored
-      }
-    } catch {
-      // Private browsing and embedded documents may deny session storage.
-    }
+    // Keep lifecycle identity scoped to this document. sessionStorage can be
+    // copied into a duplicated/opener-created tab, which would let two tabs
+    // cancel and supersede each other's runs on the server.
     const random = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`
     this.generatedClientID = `explorer-${random}`
     fallbackDataExplorerClientID = this.generatedClientID
-    try {
-      window.sessionStorage.setItem(storageKey, this.generatedClientID)
-    } catch {
-      // The component-local ID remains stable for this mounted explorer.
-    }
     return this.generatedClientID
   }
 

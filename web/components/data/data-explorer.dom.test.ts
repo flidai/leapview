@@ -461,6 +461,7 @@ test('query controls hydrate canonical select values on their first render', asy
       element.fields = [
         { id: 'orders.created_at', label: 'Created at', kind: 'dimension', datasetId: 'orders', type: 'timestamp', compatible: true, selected: false },
         { id: 'orders.purchase_date', label: 'Purchase date', kind: 'dimension', datasetId: 'orders', type: 'date', compatible: true, selected: false },
+        { id: 'shipments.created_at', label: 'Shipment created at', kind: 'dimension', datasetId: 'shipments', type: 'timestamp', compatible: false, selected: false },
         { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
         { id: 'orders.net_total', label: 'Net total', kind: 'metric', datasetId: 'orders', type: 'decimal', compatible: true, selected: true },
       ]
@@ -482,6 +483,7 @@ test('query controls hydrate canonical select values on their first render', asy
         filterOperator: value('.filter-editor select'),
         rangeFrom: root.querySelector<HTMLInputElement>('[aria-label="Time range from"]')?.value,
         rangeTo: root.querySelector<HTMLInputElement>('[aria-label="Time range to"]')?.value,
+        unavailableTimeDisabled: root.querySelector<HTMLOptionElement>('option[value="shipments.created_at"]')?.disabled,
       }
     })
 
@@ -495,6 +497,7 @@ test('query controls hydrate canonical select values on their first render', asy
       filterOperator: 'greater_than',
       rangeFrom: '2026-01-01',
       rangeTo: '2026-01-31',
+      unavailableTimeDisabled: true,
     })
   } finally {
     await page.close()
