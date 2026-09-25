@@ -252,7 +252,7 @@ class LeapViewPipelineRunPage extends DatastarLit(LitElement) {
               <span class="model-name">${this.modelLabel(page, model)}</span><span class=${`model-outcome ${model.status ? statusTone(model.status) : ''}`}>${modelOutcomeLabel(model, page.execution.modelsUnavailable === true)}</span>
               ${model.duration ? html`<small class="model-timing">Duration ${model.duration}</small>` : nothing}
             </button>${model.modelId === selectedModel?.modelId ? this.renderModelDiagnostic(page, model) : nothing}</li>`)}
-          </ul>` : html`<p class="empty-state">No model scope was recorded for this run.</p>`}
+          </ul>` : html`<p class="empty-state">${page.execution.modelsUnavailable ? 'Model details are unavailable for this run.' : 'No model scope was recorded for this run.'}</p>`}
         </section>
       </div>
     </section>`
@@ -306,7 +306,7 @@ class LeapViewPipelineRunPage extends DatastarLit(LitElement) {
           ${factRow('Pipeline ID', page.pipelineId)}
           ${factRow('Run ID', page.runId)}
           ${details.principalId ? factRow('Principal ID', details.principalId) : nothing}
-          ${factRow('Semantic model ID', details.semanticModelId)}
+          ${details.semanticModelId ? factRow('Semantic model ID', details.semanticModelId) : nothing}
           ${details.pipelinePlanId ? factRow('Plan ID', details.pipelinePlanId) : nothing}
           ${factRow('Plan digest', details.planDigest)}
           ${details.artifactDigest ? factRow('Artifact digest', details.artifactDigest) : nothing}
@@ -316,8 +316,8 @@ class LeapViewPipelineRunPage extends DatastarLit(LitElement) {
           ${details.governanceDigest ? factRow('Governance digest', details.governanceDigest) : nothing}
           ${details.evidenceDigest ? factRow('Evidence digest', details.evidenceDigest) : nothing}
         </ul>
-        <details class="recorded-scope"><summary>Recorded model scope · ${details.materializationScope.length}</summary>
-          ${details.materializationScope.length ? html`<ul class="model-list">${details.materializationScope.map((model) => html`<li><a href=${this.modelExecutionHref(page, model)}><code>${model}</code><span class="model-outcome">Inspect execution</span></a></li>`)}</ul>` : html`<p class="empty-state">No materialization scope was recorded.</p>`}
+        <details class="recorded-scope"><summary>${page.execution.modelsUnavailable ? 'Visible model scope' : 'Recorded model scope'} · ${details.materializationScope.length}</summary>
+          ${details.materializationScope.length ? html`<ul class="model-list">${details.materializationScope.map((model) => html`<li><a href=${this.modelExecutionHref(page, model)}><code>${model}</code><span class="model-outcome">Inspect execution</span></a></li>`)}</ul>` : html`<p class="empty-state">${page.execution.modelsUnavailable ? 'Model scope is unavailable.' : 'No materialization scope was recorded.'}</p>`}
         </details>
       </details>
     </section>`

@@ -142,6 +142,17 @@ func (h *BrowserHandler) pipelineRunDocumentData(r *stdhttp.Request) (pipelineRu
 	if run.SemanticModelID.Validate() != nil || run.PlanDigest == "" || !validPipelineRunMaterializationScope(run.MaterializationScope) {
 		return pipelineRunDocumentData{}, pipelineRunDocumentError{status: stdhttp.StatusServiceUnavailable, err: errors.New("pipeline run execution evidence is unavailable or inconsistent")}
 	}
+	visibleModels := make([]string, 0, len(run.MaterializationScope))
+	for _, modelID := range run.MaterializationScope {
+		if h.pipelineRunResourceReadable(r.Context(), r, projectgraph.ResourceID(modelID), projectgraph.KindModel) {
+			visibleModels = append(visibleModels, modelID)
+		}
+	}
+	modelsRestricted := len(visibleModels) != len(run.MaterializationScope)
+	semanticModelID := ""
+	if h.pipelineRunResourceReadable(r.Context(), r, run.SemanticModelID, projectgraph.KindSemanticModel) {
+		semanticModelID = run.SemanticModelID.String()
+	}
 	pageState := projectui.PipelineRunDetailPageState{
 		Title:       "Run " + shortPipelineRunID(run.ID),
 		Description: "Execution status and diagnostics for this pipeline run.",
@@ -164,7 +175,7 @@ func (h *BrowserHandler) pipelineRunDocumentData(r *stdhttp.Request) (pipelineRu
 		ValidationTimingAvailable: false,
 		PublicationOutcome:        "unverified",
 		Attempts:                  []projectsignals.PipelineRunAttemptSignal{},
-		Models:                    pipelineRunModelsFrom(run.MaterializationScope, run, children),
+		Models:                    pipelineRunModelsFrom(visibleModels, run, children),
 	}
 	attemptReader, attemptReaderAvailable := h.RunDetailReader.(RunAttemptReader)
 	rootAttemptsUnavailable := !attemptReaderAvailable
@@ -182,7 +193,7 @@ func (h *BrowserHandler) pipelineRunDocumentData(r *stdhttp.Request) (pipelineRu
 	if rootAttemptsUnavailable {
 		pageState.Execution.AttemptsUnavailable = projectsignals.Optional(true)
 	}
-	childrenByModel := pipelineRunChildrenByModel(run.MaterializationScope, run, children)
+	childrenByModel := pipelineRunChildrenByModel(visibleModels, run, children)
 	for modelIndex := range pageState.Execution.Models {
 		child, exists := childrenByModel[pageState.Execution.Models[modelIndex].ModelID]
 		if childRunsErr != nil || !attemptReaderAvailable {
@@ -215,7 +226,7 @@ func (h *BrowserHandler) pipelineRunDocumentData(r *stdhttp.Request) (pipelineRu
 			}
 		}
 	}
-	if childRunsErr != nil || len(children) >= pipelineRunChildRunPageSize {
+	if childRunsErr != nil || len(children) >= pipelineRunChildRunPageSize || modelsRestricted {
 		pageState.Execution.ModelsUnavailable = projectsignals.Optional(true)
 	}
 	if historicalGraphAvailable {
@@ -255,8 +266,8 @@ func (h *BrowserHandler) pipelineRunDocumentData(r *stdhttp.Request) (pipelineRu
 		PrincipalID:                        optionalPipelineRunValue(run.PrincipalID),
 		ServingStateID:                     run.Identity.GenerationID,
 		PlanDigest:                         run.PlanDigest,
-		SemanticModelID:                    run.SemanticModelID.String(),
-		MaterializationScope:               append([]string{}, run.MaterializationScope...),
+		SemanticModelID:                    semanticModelID,
+		MaterializationScope:               append([]string{}, visibleModels...),
 		MatchingScheduleIds:                append([]string{}, run.MatchingScheduleIDs...),
 		HistoricalPipelineVersionAvailable: historicalGraphAvailable,
 		HistoricalPipelineName:             optionalPipelineRunValue(historicalPipelineTitle),
@@ -345,14 +356,12 @@ func (h *BrowserHandler) historicalPipelineGraph(ctx context.Context, r *stdhttp
 	if err != nil || !found {
 		return projectsignals.AssetLineageGraphSignal{}, false, "", "The historical serving graph for this run is unavailable."
 	}
-	var filtered bool
-	graph, filtered = h.authorizedHistoricalGraph(ctx, r, graph)
-	if filtered {
-		return projectsignals.AssetLineageGraphSignal{}, false, "", "The historical graph includes assets you cannot access, so the complete graph is hidden."
-	}
 	lineage, found, err := projectui.PipelineRunHistoricalGraph(projectID.String(), pipelineID.String(), run.Identity.GenerationID, graph)
 	if err != nil || !found {
 		return projectsignals.AssetLineageGraphSignal{}, false, "", "The historical pipeline graph could not be reconstructed from this run's serving state."
+	}
+	if !h.historicalLineageReadable(ctx, r, graph, lineage, projectID, run.Identity.GenerationID) {
+		return projectsignals.AssetLineageGraphSignal{}, false, "", "The historical graph includes assets you cannot access, so the complete graph is hidden."
 	}
 	name := ""
 	for _, node := range lineage.Nodes {
@@ -364,44 +373,44 @@ func (h *BrowserHandler) historicalPipelineGraph(ctx context.Context, r *stdhttp
 	return lineage, true, name, ""
 }
 
-func (h *BrowserHandler) authorizedHistoricalGraph(ctx context.Context, r *stdhttp.Request, graph servingstate.AssetGraph) (servingstate.AssetGraph, bool) {
+func (h *BrowserHandler) pipelineRunResourceReadable(ctx context.Context, r *stdhttp.Request, id projectgraph.ResourceID, kind projectgraph.Kind) bool {
 	if h == nil || h.CurrentUser == nil || r == nil {
-		return servingstate.AssetGraph{}, true
+		return false
 	}
 	principal, ok := h.CurrentUser(r)
 	if !ok {
-		return servingstate.AssetGraph{}, true
+		return false
 	}
 	if principal.DevBypass {
-		return graph, false
+		return true
 	}
 	if h.Catalog == nil {
-		return servingstate.AssetGraph{}, true
+		return false
 	}
-	visible := make(map[projectgraph.ResourceID]struct{}, len(graph.Assets))
-	assets := make([]servingstate.Asset, 0, len(graph.Assets))
+	_, err := h.Catalog.Resolve(ctx, principal.ID, projectcatalog.Ref{ID: id, Kind: kind}, access.CapabilityResourceRead, false)
+	return err == nil
+}
+
+func (h *BrowserHandler) historicalLineageReadable(ctx context.Context, r *stdhttp.Request, graph servingstate.AssetGraph, lineage projectsignals.AssetLineageGraphSignal, projectID projectgraph.ResourceID, generationID string) bool {
+	kinds := make(map[projectgraph.ResourceID]projectgraph.Kind, len(lineage.Nodes))
 	for _, asset := range graph.Assets {
+		if asset.ProjectID != projectID || string(asset.ServingStateID) != generationID {
+			continue
+		}
 		kind, valid := catalogKindForAssetType(asset.Type)
 		if !valid {
 			continue
 		}
-		if _, err := h.Catalog.Resolve(ctx, principal.ID, projectcatalog.Ref{ID: asset.ID, Kind: kind}, access.CapabilityResourceRead, false); err != nil {
-			continue
-		}
-		visible[asset.ID] = struct{}{}
-		assets = append(assets, asset)
+		kinds[asset.ID] = kind
 	}
-	edges := make([]servingstate.AssetEdge, 0, len(graph.Edges))
-	for _, edge := range graph.Edges {
-		if _, ok := visible[edge.FromAssetID]; !ok {
-			continue
+	for _, node := range lineage.Nodes {
+		id := projectgraph.ResourceID(node.ID)
+		kind, found := kinds[id]
+		if !found || !h.pipelineRunResourceReadable(ctx, r, id, kind) {
+			return false
 		}
-		if _, ok := visible[edge.ToAssetID]; !ok {
-			continue
-		}
-		edges = append(edges, edge)
 	}
-	return servingstate.AssetGraph{Assets: assets, Edges: edges}, len(assets) != len(graph.Assets)
+	return true
 }
 
 func validPipelineRunMaterializationScope(scope []string) bool {
