@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	coreosoidc "github.com/coreos/go-oidc/v3/oidc"
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/platform/outbound"
 )
 
 type ExternalConfig struct {
@@ -36,6 +38,12 @@ func NewExternal(repo access.Repository, config ExternalConfig) (*External, erro
 	}
 	if err := validateCanonicalURL(config.ResourceURL, true); err != nil {
 		return nil, fmt.Errorf("invalid external MCP OAuth resource: %w", err)
+	}
+	if config.HTTPClient == nil {
+		config.HTTPClient = outbound.New(outbound.ExplicitPrivate, outbound.Options{}).HTTPClient(
+			&http.Client{Timeout: 15 * time.Second},
+			outbound.HTTPConfig{AllowedSchemes: []string{"https"}, MaxRedirects: 5, SameOriginRedirects: true},
+		)
 	}
 	return &External{repo: repo, config: config}, nil
 }

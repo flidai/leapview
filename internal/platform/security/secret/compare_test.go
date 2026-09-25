@@ -22,3 +22,23 @@ func TestEqualComparesBearerSecrets(t *testing.T) {
 		})
 	}
 }
+
+func TestEqualFixedBytes(t *testing.T) {
+	want := []byte("fixed-length-proxy-credential")
+	for _, tt := range []struct {
+		name string
+		got  []byte
+		want bool
+	}{
+		{name: "match", got: []byte("fixed-length-proxy-credential"), want: true},
+		{name: "same length mismatch", got: []byte("fixed-length-proxy-credentiam")},
+		{name: "short mismatch", got: []byte("short")},
+		{name: "long mismatch", got: []byte("fixed-length-proxy-credential-extra")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := EqualFixedBytes(tt.got, want); got != tt.want {
+				t.Fatalf("EqualFixedBytes(...) = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

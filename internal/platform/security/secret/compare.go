@@ -10,3 +10,9 @@ func Equal(got, want string) bool {
 	wantDigest := sha256.Sum256([]byte(want))
 	return subtle.ConstantTimeCompare(gotDigest[:], wantDigest[:]) == 1
 }
+
+// EqualFixedBytes compares secrets with a fixed, non-secret length. Callers
+// must not use it when the expected length itself must remain confidential.
+func EqualFixedBytes(got, want []byte) bool {
+	return subtle.ConstantTimeCompare(got, want) == 1
+}

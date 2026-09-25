@@ -16,7 +16,10 @@ func (connectionStream) Delta(context.Context, string) error { return nil }
 
 // TestConnection sends synthetic data only and never executes a product tool.
 func TestConnection(ctx context.Context, config agentapp.Config) error {
-	model := NewModel(config, nil)
+	return testConnection(ctx, NewModel(config, nil))
+}
+
+func testConnection(ctx context.Context, model *OpenAIModel) error {
 	req := agentcore.ModelRequest{Purpose: agentcore.ModelRequestPurposeTurn, Limits: agentcore.Limits{ReserveOutputTokens: 1024}, Messages: []agentcore.Message{{Role: agentcore.RoleUser, Content: "Call connection_check exactly once with no arguments. After its result, reply with OK."}}, Tools: []agentcore.ToolSpec{{Name: "connection_check", Description: "Harmless configuration connectivity check", InputSchema: json.RawMessage(`{"type":"object","properties":{},"required":[],"additionalProperties":false}`)}}}
 	response, err := model.Complete(ctx, req, connectionStream{})
 	if err != nil {
