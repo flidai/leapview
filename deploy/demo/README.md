@@ -140,10 +140,21 @@ absence of a project role must not be treated as a blanket denial of those pages
 
 ### Agent provider
 
-The Compose rollout preserves `/opt/leapview/leapview.env` byte-for-byte,
-including `LEAPVIEW_AGENT_API_KEY`, `LEAPVIEW_AGENT_BASE_URL` and
-`LEAPVIEW_AGENT_MODEL`. These values are never committed or rewritten by image
-deployment. Provider rotation is a separate operator action.
+LeapView platform admins select, test, and save the chatbot provider and model
+in **Admin → Agent**. Ordinary chatbot users cannot change these settings.
+Legacy provider environment values remain in use until an admin saves the first
+configuration; subsequent image deployments do not override the saved selection.
+
+The operator provisions `LEAPVIEW_AGENT_CREDENTIAL_KEY` once in the private
+`/opt/leapview/leapview.env`. It must be 64 hexadecimal characters representing
+32 random bytes. Preserve it across releases and back it up separately from the
+database: saved provider credentials are encrypted with this key. The Compose
+rollout preserves the environment file byte-for-byte and does not rotate keys.
+
+Introducing admin configuration adds a database migration. Use the canonical
+`host upgrade` recovery and migration-capability process for this upgrade; the
+image-only hosted-demo workflow cannot apply it. After upgrading, an admin tests
+and saves the provider configuration before verifying a chatbot conversation.
 
 Treat the shared credential as public. To rotate it, reset the local password,
 revoke every existing session for the principal, complete the forced password

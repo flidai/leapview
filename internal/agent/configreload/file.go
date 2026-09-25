@@ -65,11 +65,14 @@ func NewFileReloader(path string, service *agent.Service, logger *slog.Logger, i
 // Reload reads, validates, and atomically applies one complete file revision.
 // Invalid revisions never replace the service's last known-good snapshot.
 func (r *FileReloader) Reload() (bool, error) {
+	if r.service.AdminManaged() {
+		return false, nil
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	raw, err := readSecureFile(r.path)
 	if err != nil {
-		r.service.ReportRuntimeConfigError()
+		r.service.ReportDeploymentConfigError()
 		return false, err
 	}
 	digest := sha256.Sum256(raw)
@@ -79,11 +82,11 @@ func (r *FileReloader) Reload() (bool, error) {
 	r.digest, r.loaded = digest, true
 	config, err := decode(raw)
 	if err != nil {
-		r.service.ReportRuntimeConfigError()
+		r.service.ReportDeploymentConfigError()
 		return false, err
 	}
 	if err := r.service.ApplyRuntimeConfig(config.agentConfig(), config.Enabled); err != nil {
-		r.service.ReportRuntimeConfigError()
+		r.service.ReportDeploymentConfigError()
 		return false, err
 	}
 	return true, nil

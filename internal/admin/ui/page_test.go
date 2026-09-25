@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
+	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	appshell "github.com/flidai/leapview/internal/app/shell"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 )
@@ -209,5 +210,18 @@ func TestAdminPageRendersAdminRouteShell(t *testing.T) {
 	}
 	if strings.Contains(html, "data-signals=") {
 		t.Fatalf("admin page embedded bootstrap signals:\n%s", html)
+	}
+}
+
+func TestAgentConfigurationUsesPatchWithLiveRevision(t *testing.T) {
+	var output strings.Builder
+	if err := AdminPage("agent", AdminData{AgentConfigCommand: agentgen.GenUIActionUpdateAgentConfig()}, nil).Render(&output); err != nil {
+		t.Fatal(err)
+	}
+	rendered := html.UnescapeString(output.String())
+	for _, want := range []string{"@patch('/admin/agent/config'", "headers('updateAgentConfig', $page.agent.revision)"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("missing %s in agent command binding", want)
+		}
 	}
 }

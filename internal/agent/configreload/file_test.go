@@ -137,3 +137,27 @@ func assertStatus(t *testing.T, status agent.AgentRuntimeStatus, state agent.Age
 		t.Fatalf("status = %+v", status)
 	}
 }
+
+func TestFileReloaderCannotOverrideAdministratorOwnership(t *testing.T) {
+	service := agent.NewService(nil, agent.Config{})
+	service.ConfigureDefaultModel(func(agent.Config) agentcore.Model {
+		return agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+			return agentcore.ModelResponse{}, nil
+		})
+	})
+	if err := service.ApplyRuntimeConfig(agent.Config{Revision: 1, Model: "admin-model", APIKey: "key"}, false); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "missing.json")
+	reloader, err := NewFileReloader(path, service, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := reloader.Reload()
+	if err != nil || changed {
+		t.Fatalf("admin-owned agent still read legacy file: changed=%t err=%v", changed, err)
+	}
+	if service.RuntimeStatus().State != agent.AgentRuntimeDisabled || service.RuntimeStatus().Model != "admin-model" {
+		t.Fatal("file watcher changed administrator configuration")
+	}
+}

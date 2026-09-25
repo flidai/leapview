@@ -30,6 +30,7 @@ import (
 	managedpostgres "github.com/flidai/leapview/internal/manageddata/postgres"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	manageds3 "github.com/flidai/leapview/internal/manageddata/storage/s3"
+	"github.com/flidai/leapview/internal/platform/testminio"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/recoveryset/capture"
 	"github.com/flidai/leapview/internal/recoveryset/successor"
@@ -43,7 +44,6 @@ import (
 const (
 	managedS3DRArtifactDirEnv      = "LEAPVIEW_TEST_UBDR_MANAGED_DATA_S3_DR_EVIDENCE_DIR"
 	managedS3DRScenarioID          = "fai-520-managed-data-s3-dr-seed-v1"
-	managedS3DRImage               = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 	managedS3DRRegion              = "us-east-1"
 	managedS3DRPrefix              = "recovered-data"
 	managedS3DRSentinelPrefix      = "unrelated-sentinel"
@@ -249,13 +249,13 @@ func applyManagedS3DRRecoverySchema(t *testing.T, fixture *providerObservationFi
 
 func startManagedS3DRProvider(t *testing.T) managedS3DRProvider {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	t.Cleanup(cancel)
 	user := "q" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	secret := uuid.NewString()
-	container, err := tcminio.Run(ctx, managedS3DRImage,
+	container, err := testminio.Run(ctx,
 		tcminio.WithUsername(user), tcminio.WithPassword(secret),
-		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g"}),
+		testcontainers.WithTmpfs(map[string]string{"/data": "rw,size=1g,uid=65532,gid=65532,mode=0700"}),
 		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000").WithStartupTimeout(time.Minute)),
 	)
 	if err != nil {
