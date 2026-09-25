@@ -3,10 +3,23 @@ import type {
   ExplorationFilterExpression,
   ExplorationFilterValue,
   ExplorationSpec,
-  ExplorationTimeGrain,
 } from '../../generated/exploration'
 import type { DataExploreCommand } from '../../generated/signals'
 import type { DataExploreDatasetSignal, DataExploreFieldSignal, DataExplorerObjectSignal } from '../../generated/signals'
+
+/** The controls intentionally use the values from the authored contract. */
+export const explorationTimeGrains = ['second', 'minute', 'hour', 'day', 'week', 'month', 'quarter', 'year'] as const
+export type ExplorationTimeGrainValue = typeof explorationTimeGrains[number]
+
+/** Keep UI choices inside the server-side ExplorationRowLimit bounds. */
+export const explorationLimitOptions = [50, 100, 250, 500, 1000] as const
+
+export const unsupportedRelativeTimeRangeMessage = 'Relative time ranges are not supported yet. Choose All available or an absolute range before running the exploration.'
+
+type ExplorationSortValue = ExplorationSpec['sort'][number]
+type ExplorationTimeValue = NonNullable<ExplorationSpec['time']>
+type ExplorationDimensionValue = ExplorationSpec['dimensions'][number]
+type ExplorationMetricValue = ExplorationSpec['metrics'][number]
 
 export const emptyExplorationSpec: ExplorationSpec = {
   schemaVersion: 1,
@@ -39,12 +52,17 @@ export function explorationSpecFor(command: Pick<Partial<DataExploreCommand>, 's
   return command?.spec ?? emptyExplorationSpec
 }
 
+/** Converts compatibility signal fields into the canonical authored spec.
+ * Canonical members already present on the command retain aliases, grains,
+ * typed filters, and display configuration.
+ */
 export function explorationSpecFromCommand(command: DataExploreCommand): ExplorationSpec {
   const base = explorationSpecFor(command)
   const dimensionsByField = new Map(base.dimensions.map((item) => [item.field, item]))
   const metricsByField = new Map(base.metrics.map((item) => [item.field, item]))
   const usedFilters = new Set<number>()
-  const filters = command.filters.flatMap((filter) => {
+  const compatibilityFilters = command.filters
+  const filters = compatibilityFilters === undefined ? base.filters : compatibilityFilters.flatMap((filter) => {
     const previousIndex = base.filters.findIndex((candidate, index) => !usedFilters.has(index) && explorationFilterMatchesSignal(candidate, filter))
     if (previousIndex >= 0) {
       usedFilters.add(previousIndex)
@@ -57,26 +75,24 @@ export function explorationSpecFromCommand(command: DataExploreCommand): Explora
     ...base,
     schemaVersion: 1,
     modelId: command.semanticModelId?.trim() || base.modelId,
-    datasetId: command.datasetId?.trim() || undefined,
-    dimensions: command.dimensions.map((field) => dimensionsByField.get(field) ?? { field }),
-    metrics: command.metrics.map((field) => metricsByField.get(field) ?? { field }),
+    datasetId: command.datasetId?.trim() || base.datasetId,
+    dimensions: command.dimensions === undefined ? base.dimensions : command.dimensions.map((field) => dimensionsByField.get(field) ?? { field }),
+    metrics: command.metrics === undefined ? base.metrics : command.metrics.map((field) => metricsByField.get(field) ?? { field }),
     filters,
-    sort: command.sort.map((item) => ({ field: item.field, direction: item.direction as 'asc' | 'desc' })),
-    time: command.time ? { ...base.time, field: command.time.field, grain: command.time.grain as ExplorationTimeGrain, alias: command.time.alias } : undefined,
-    limit: command.limit || 100,
+    sort: command.sort === undefined ? base.sort : command.sort.map((item) => ({ field: item.field, direction: item.direction as 'asc' | 'desc' })),
+    time: command.time ? { ...base.time, field: command.time.field, grain: command.time.grain as ExplorationTimeGrainValue, alias: command.time.alias } : base.time,
+    limit: command.limit || base.limit || 100,
   }
-  // Datastar represents `undefined` signal members as empty strings. Omit
-  // absent optional members entirely so durable specs remain valid JSON.
   if (!spec.datasetId) delete spec.datasetId
-  if (!command.time) delete spec.time
+  if (!command.time && !base.time) delete spec.time
   return spec
 }
 
 export function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataExploreFieldSignal[]): string[] {
-  const tableID = objectTableID(object)
-  const localFields = fields.filter((field) => field.kind !== 'metric' && field.datasetId === tableID)
+  const datasetID = objectDatasetID(object)
+  const localFields = fields.filter((field) => field.kind !== 'metric' && field.datasetId === datasetID)
   const localByColumn = new Map(localFields.map((field) => [fieldColumnID(field), field.id]))
-  const ordered = (object.columns ?? []).map((column) => localByColumn.get(column.key) ?? `${tableID}.${column.key}`)
+  const ordered = (object.columns ?? []).map((column) => localByColumn.get(column.key) ?? `${datasetID}.${column.key}`)
   const seen = new Set(ordered)
   for (const field of localFields) {
     if (!seen.has(field.id)) ordered.push(field.id)
@@ -84,7 +100,7 @@ export function localPreviewDimensions(object: DataExplorerObjectSignal, fields:
   return ordered
 }
 
-export function objectTableID(object: DataExplorerObjectSignal): string {
+export function objectDatasetID(object: DataExplorerObjectSignal): string {
   return object.datasetId?.trim() || object.title.trim()
 }
 
@@ -184,6 +200,140 @@ export function explorationSortsWithoutField(spec: ExplorationSpec, fieldID: str
   return spec.sort.filter((sort) => sort.field !== fieldID && (!alias || sort.field !== alias))
 }
 
+/** Returns selectable sort references in authored order, including a time field. */
+export function explorationSortFields(spec: ExplorationSpec): string[] {
+  const fields = [...spec.dimensions, ...spec.metrics].flatMap((ref) => [ref.field, ref.alias?.trim() ?? ''])
+  if (spec.time && !fields.includes(spec.time.field)) fields.push(spec.time.field)
+  return Array.from(new Set(fields.filter(Boolean)))
+}
+
+/** Adds a sort key or updates its direction without disturbing other keys. */
+export function upsertExplorationSort(
+  spec: ExplorationSpec,
+  field: string,
+  direction: ExplorationSortValue['direction'] = 'asc',
+): ExplorationSpec {
+  const key = field.trim()
+  if (!key || !explorationSortFields(spec).includes(key)) return spec
+  const index = spec.sort.findIndex((sort) => sort.field === key)
+  const sort = [...spec.sort]
+  if (index >= 0) sort[index] = { ...sort[index], direction }
+  else sort.push({ field: key, direction })
+  return { ...spec, sort }
+}
+
+export function removeExplorationSort(spec: ExplorationSpec, index: number): ExplorationSpec {
+  if (index < 0 || index >= spec.sort.length) return spec
+  return { ...spec, sort: spec.sort.filter((_, current) => current !== index) }
+}
+
+/** Moves a sort key while retaining the user's priority order. */
+export function moveExplorationSort(spec: ExplorationSpec, index: number, delta: -1 | 1): ExplorationSpec {
+  const target = index + delta
+  if (index < 0 || target < 0 || index >= spec.sort.length || target >= spec.sort.length) return spec
+  const sort = [...spec.sort]
+  const [entry] = sort.splice(index, 1)
+  sort.splice(target, 0, entry!)
+  return { ...spec, sort }
+}
+
+export function boundedExplorationLimit(value: number, fallback = 100): number {
+  const candidate = Number.isFinite(value) ? Math.trunc(value) : fallback
+  return Math.min(1000, Math.max(1, candidate || fallback))
+}
+
+/**
+ * Performs the client-side checks that can be made without semantic-model
+ * metadata. The server remains authoritative; these messages prevent users
+ * from submitting an obviously unsafe pivot and explain the correction.
+ */
+export function explorationPivotValidation(spec: ExplorationSpec, fields: DataExploreFieldSignal[] = []): string[] {
+  const pivot = spec.pivot
+  if (!pivot) return []
+  const messages: string[] = []
+  const seen = new Map<string, string>()
+  const check = (refs: Array<ExplorationDimensionValue | ExplorationMetricValue>, section: string) => {
+    refs.forEach((ref) => {
+      const field = ref.field.trim()
+      const previous = seen.get(field)
+      if (previous) messages.push(`${field} is configured as both ${previous} and ${section}; choose one pivot role.`)
+      else seen.set(field, section)
+      const signal = fields.find((candidate) => candidate.id === field)
+      if (signal?.compatible === false && !signal.rebaseDatasetId) {
+        messages.push(`${field} is unavailable for this exploration and cannot be used in the pivot.`)
+      }
+      if (section === 'metric' && signal && signal.kind !== 'metric') messages.push(`${field} is a dimension; choose a metric for pivot values.`)
+      if (section !== 'metric' && signal?.kind === 'metric') messages.push(`${field} is a metric; choose a dimension for pivot ${section}.`)
+    })
+  }
+  check(pivot.rows, 'rows')
+  check(pivot.columns, 'columns')
+  check(pivot.metrics, 'metric')
+  if (!pivot.rows.length) messages.push('Add at least one row dimension before running a pivot.')
+  if (!pivot.columns.length) messages.push('Add at least one column dimension before running a pivot.')
+  if (!pivot.metrics.length) messages.push('Add at least one metric before running a pivot.')
+  if (pivot.window && (!Number.isInteger(pivot.window.limit) || pivot.window.limit < 1 || pivot.window.limit > 1000)) {
+    messages.push('Pivot limit must be between 1 and 1000 rows or columns.')
+  }
+  if (pivot.window?.offset !== undefined && (!Number.isInteger(pivot.window.offset) || pivot.window.offset < 0)) {
+    messages.push('Pivot offset cannot be negative.')
+  }
+  if ((pivot.window?.offset ?? 0) > 0) {
+    messages.push('Pivot row-window offsets are not available yet. Use an offset of 0.')
+  }
+  return Array.from(new Set(messages))
+}
+
+/** Returns the client-side blockers that make an explicit Run unsafe. */
+export function explorationRunValidation(spec: ExplorationSpec, fields: DataExploreFieldSignal[] = []): string[] {
+  const messages: string[] = []
+  if (!spec.modelId.trim()) messages.push('Choose a semantic model before running the exploration.')
+  if (!spec.dimensions.length && !spec.metrics.length && !spec.time) messages.push('Select at least one field or time grain before running the exploration.')
+  if (spec.time) {
+    const field = fields.find((candidate) => candidate.id === spec.time?.field)
+    if (field && (field.kind !== 'dimension' || field.compatible === false && !field.rebaseDatasetId)) {
+      messages.push(`${spec.time.field} is unavailable as a time field for this exploration.`)
+    }
+  }
+  if (spec.time?.range?.kind === 'relative') messages.push(unsupportedRelativeTimeRangeMessage)
+  messages.push(...explorationPivotValidation(spec, fields))
+  return Array.from(new Set(messages))
+}
+
+export function setExplorationTime(
+  spec: ExplorationSpec,
+  field: string,
+  grain: ExplorationTimeGrainValue = 'day',
+): ExplorationSpec {
+  const key = field.trim()
+  const previousTime = spec.time
+  const previousTimeKeys = previousTime
+    ? new Set([previousTime.field.trim(), previousTime.alias?.trim() ?? ''].filter(Boolean))
+    : undefined
+  if (!key) {
+    const { time: _time, ...withoutTime } = spec
+    return {
+      ...withoutTime,
+      sort: previousTimeKeys
+        ? spec.sort.filter((sort) => !previousTimeKeys.has(sort.field))
+        : spec.sort,
+    } as ExplorationSpec
+  }
+  const next: ExplorationTimeValue = { ...spec.time, field: key, grain }
+  const sort = previousTime && previousTime.field.trim() !== key && previousTimeKeys
+    ? spec.sort.filter((entry) => !previousTimeKeys.has(entry.field))
+    : spec.sort
+  return { ...spec, time: next, sort }
+}
+
+export function setExplorationTimeRange(
+  spec: ExplorationSpec,
+  range: NonNullable<ExplorationTimeValue['range']> | undefined,
+): ExplorationSpec {
+  if (!spec.time) return spec
+  return { ...spec, time: { ...spec.time, ...(range ? { range } : { range: undefined }) } }
+}
+
 /** Canonicalizes authored JSON without changing array order or dropping spec fields. */
 export function canonicalExplorationSpec(spec: ExplorationSpec): ExplorationSpec {
   return canonicalJSON(spec) as ExplorationSpec
@@ -198,6 +348,44 @@ const explorationFilterOperators = new Set<ExploreFilterOperator>([
   'is_null', 'is_not_null', 'in', 'not_in', 'equals', 'not_equals', 'contains', 'not_contains',
   'starts_with', 'ends_with', 'greater_than', 'greater_than_or_equal', 'less_than', 'less_than_or_equal',
 ])
+
+type ExplorationFilterOption = { value: string; label: string }
+const nullFilterOptions: ExplorationFilterOption[] = [{ value: 'is_null', label: 'Is null' }, { value: 'is_not_null', label: 'Is not null' }]
+const orderedFilterOptions: ExplorationFilterOption[] = [
+  { value: 'equals', label: 'Equals' },
+  { value: 'not_equals', label: 'Does not equal' },
+  { value: 'greater_than', label: 'Greater than' },
+  { value: 'greater_than_or_equal', label: 'At least' },
+  { value: 'less_than', label: 'Less than' },
+  { value: 'less_than_or_equal', label: 'At most' },
+]
+
+function normalizedFieldType(type: string | undefined): string { return (type ?? '').trim().toLowerCase() }
+function isBooleanType(type: string | undefined): boolean { return normalizedFieldType(type).includes('bool') }
+function isNumericType(type: string | undefined): boolean {
+  const normalized = normalizedFieldType(type)
+  return normalized.includes('int') || normalized === 'number' || /decimal|numeric|double|float/.test(normalized)
+}
+function isTimestampType(type: string | undefined): boolean { return /timestamp|datetime/.test(normalizedFieldType(type)) }
+function isDateType(type: string | undefined): boolean {
+  const normalized = normalizedFieldType(type)
+  return normalized === 'date' || normalized.endsWith('.date') || normalized === 'day'
+}
+
+export function filterOperatorsForType(type: string | undefined): ExplorationFilterOption[] {
+  if (isBooleanType(type)) return [{ value: 'equals', label: 'Equals' }, { value: 'not_equals', label: 'Does not equal' }, ...nullFilterOptions]
+  if (isNumericType(type) || isDateType(type) || isTimestampType(type)) return [...orderedFilterOptions, ...nullFilterOptions]
+  return [
+    ...orderedFilterOptions.slice(0, 2),
+    { value: 'in', label: 'Is one of' },
+    { value: 'not_in', label: 'Is not one of' },
+    { value: 'contains', label: 'Contains' },
+    { value: 'not_contains', label: 'Does not contain' },
+    { value: 'starts_with', label: 'Starts with' },
+    { value: 'ends_with', label: 'Ends with' },
+    ...nullFilterOptions,
+  ]
+}
 
 export function filterOperator(filter: ExplorationFilter): ExploreFilterOperator | '' {
   const expression = filter.expression
@@ -215,7 +403,9 @@ export function filterValues(filter: ExplorationFilter): string[] {
   return []
 }
 
-export function makeExplorationFilter(field: string, operator: string, values: string[], type?: string): ExplorationFilter | undefined {
+type ExplorationFilterField = string | Pick<DataExploreFieldSignal, 'id' | 'kind' | 'datasetId'>
+
+export function makeExplorationFilter(field: ExplorationFilterField, operator: string, values: string[], type?: string, queryDatasetID?: string): ExplorationFilter | undefined {
   if (!explorationFilterOperators.has(operator as ExploreFilterOperator)) return undefined
   if ((operator === 'is_null' || operator === 'is_not_null') && values.length !== 0) return undefined
   if ((operator === 'in' || operator === 'not_in') && values.length < 1) return undefined
@@ -230,7 +420,9 @@ export function makeExplorationFilter(field: string, operator: string, values: s
   } else {
     expression = { kind: 'comparison', operator: operator as ComparisonFilterOperator, value: typedValues[0]! }
   }
-  return { field, expression }
+  const fieldID = typeof field === 'string' ? field : field.id
+  const datasetID = typeof field === 'string' ? undefined : localDimensionDatasetID(field, queryDatasetID)
+  return { field: fieldID, ...(datasetID ? { datasetId: datasetID } : {}), expression }
 }
 
 function explorationFilterMatchesSignal(filter: ExplorationFilter, signal: DataExploreCommand['filters'][number]): boolean {
@@ -243,6 +435,20 @@ function explorationFilterMatchesSignal(filter: ExplorationFilter, signal: DataE
   }
   const values = filterValues(filter)
   return values.length === signal.values.length && values.every((value, index) => value === signal.values[index])
+}
+
+/** Physical dimensions are qualified by their owning dataset in the signal.
+ * Conformed dimensions use their semantic ID while datasetId identifies the
+ * binding owner, so their filters must stay unscoped for multi-dataset plans.
+ */
+function localDimensionDatasetID(field: Pick<DataExploreFieldSignal, 'id' | 'kind' | 'datasetId'>, queryDatasetID?: string): string | undefined {
+  if (field.kind !== 'dimension') return undefined
+  const datasetID = field.datasetId.trim()
+  if (!datasetID || !field.id.startsWith(`${datasetID}.`)) return undefined
+  // Filter scope is the active query root for a single-root exploration. The
+  // physical field owner is only the fallback for callers building a
+  // multi-dataset plan without an active root override.
+  return queryDatasetID?.trim() || datasetID
 }
 
 function filterValue(value: ExplorationFilterValue): string {

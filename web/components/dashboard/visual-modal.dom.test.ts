@@ -244,3 +244,157 @@ test('show-data dialog fits short viewports and keeps its close control reachabl
     await page.close()
   }
 })
+
+test('show-data balances small result tables and preserves scrolling for wide results', async () => {
+  const page = await setupPage()
+  try {
+    await page.setViewportSize({ width: 1280, height: 640 })
+    await page.addStyleTag({ content: ':root { --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --control-small-size: 32px; --lv-bg-app: #ffffff; --lv-bg-panel: #ffffff; --lv-bg-panel-muted: #f6f8fa; --lv-border-muted: 1px solid #d0d7de; --lv-border-default: 1px solid #afb8c1; --lv-type-body: 400 14px/1.5 system-ui; --lv-type-caption: 400 12px/1.25 system-ui; }' })
+    await page.evaluate(() => {
+      const source = document.getElementById('first')!
+      source.dispatchEvent(new CustomEvent('lv-visual-action', {
+        bubbles: true,
+        composed: true,
+        detail: {
+          action: 'show-data',
+          visualType: 'table',
+          visualId: 'first',
+          title: 'first',
+          columns: [
+            { key: 'date', label: 'Purchase date' },
+            { key: 'revenue', label: 'Revenue', align: 'right' },
+          ],
+          rows: Array.from({ length: 40 }, (_, index) => ({ date: `2026-09-${String((index % 30) + 1).padStart(2, '0')}`, revenue: `${index * 1250}.50` })),
+          selection: [],
+        },
+      }))
+    })
+    await page.locator('lv-visual-modal').evaluate(async (modal: any) => {
+      await modal.updateComplete
+      await modal.shadowRoot.querySelector('lv-record-table').updateComplete
+    })
+
+    const state = await page.locator('lv-visual-modal').evaluate((modal: any) => {
+      const scroll = modal.shadowRoot.querySelector('.data-scroll') as HTMLElement
+      const row = modal.shadowRoot.querySelector('lv-record-table tbody tr') as HTMLElement
+      const secondRow = modal.shadowRoot.querySelector('lv-record-table tbody tr:nth-child(2)') as HTMLElement
+      const firstCell = row.querySelector('td') as HTMLElement
+      const lastCell = modal.shadowRoot.querySelector('lv-record-table tbody tr:last-child td') as HTMLElement
+      const table = modal.shadowRoot.querySelector('lv-record-table table') as HTMLTableElement
+      const headers = Array.from(table.querySelectorAll('th')) as HTMLElement[]
+      const revenueHeaderLabel = headers[1].querySelector('.record-table-sort > span:first-child') as HTMLElement
+      const dialog = modal.shadowRoot.querySelector('[role="dialog"]') as HTMLElement
+      const revenueHeaderStyle = getComputedStyle(headers[1])
+      const firstHeaderStyle = getComputedStyle(headers[0])
+      const tableBounds = table.getBoundingClientRect()
+      const scrollBounds = scroll.getBoundingClientRect()
+      return {
+        rowHeight: row.getBoundingClientRect().height,
+        rowBackground: getComputedStyle(row).backgroundColor,
+        secondRowBackground: getComputedStyle(secondRow).backgroundColor,
+        rowDividerWidth: Number.parseFloat(getComputedStyle(firstCell).borderBottomWidth),
+        rowDividerStyle: getComputedStyle(firstCell).borderBottomStyle,
+        lastRowDividerWidth: Number.parseFloat(getComputedStyle(lastCell).borderBottomWidth),
+        scrollHeight: scroll.scrollHeight,
+        clientHeight: scroll.clientHeight,
+        tableWidth: table.getBoundingClientRect().width,
+        availableWidth: scroll.getBoundingClientRect().width,
+        tableLayout: getComputedStyle(table).tableLayout,
+        tableLeftGap: Math.round(tableBounds.left - scrollBounds.left),
+        tableRightGap: Math.round(scrollBounds.right - tableBounds.right),
+        columnWidths: headers.map((header) => Math.round(header.getBoundingClientRect().width)),
+        revenueAlignment: getComputedStyle(headers[1]).textAlign,
+        headerTextTransform: firstHeaderStyle.textTransform,
+        firstColumnRightPadding: Number.parseFloat(firstHeaderStyle.paddingRight),
+        revenueLeftPadding: Number.parseFloat(revenueHeaderStyle.paddingLeft),
+        columnDividerWidth: Number.parseFloat(firstHeaderStyle.borderRightWidth),
+        columnDividerStyle: firstHeaderStyle.borderRightStyle,
+        revenueHeaderRightGap: Math.round(
+          headers[1].getBoundingClientRect().right
+          - Number.parseFloat(revenueHeaderStyle.paddingRight)
+          - revenueHeaderLabel.getBoundingClientRect().right,
+        ),
+        dialogWidth: dialog.getBoundingClientRect().width,
+        dialogBottom: dialog.getBoundingClientRect().bottom,
+      }
+    })
+    expect(state.rowHeight).toBe(32)
+    expect(state.rowBackground).not.toBe(state.secondRowBackground)
+    expect(state.rowDividerWidth).toBe(1)
+    expect(state.rowDividerStyle).toBe('solid')
+    expect(state.lastRowDividerWidth).toBe(0)
+    expect(state.scrollHeight).toBeGreaterThan(state.clientHeight)
+    expect(state.tableLayout).toBe('auto')
+    expect(state.tableWidth).toBe(state.availableWidth)
+    expect(state.tableLeftGap).toBe(0)
+    expect(state.tableRightGap).toBe(0)
+    expect(state.revenueAlignment).toBe('right')
+    expect(state.headerTextTransform).toBe('uppercase')
+    expect(state.firstColumnRightPadding).toBe(8)
+    expect(state.revenueLeftPadding).toBe(8)
+    expect(state.columnDividerWidth).toBe(1)
+    expect(state.columnDividerStyle).toBe('solid')
+    expect(state.revenueHeaderRightGap).toBe(0)
+    expect(state.dialogWidth).toBe(480)
+    expect(state.dialogBottom).toBeLessThanOrEqual(640 - 28)
+
+    const scrollTop = await page.locator('lv-visual-modal').evaluate((modal: any) => {
+      const scroll = modal.shadowRoot.querySelector('.data-scroll') as HTMLElement
+      scroll.scrollTop = scroll.scrollHeight
+      return scroll.scrollTop
+    })
+    expect(scrollTop).toBeGreaterThan(0)
+
+    await page.evaluate(() => {
+      const source = document.getElementById('first')!
+      const columns = Array.from({ length: 8 }, (_, index) => ({ key: `column${index}`, label: `Column ${index + 1}` }))
+      source.dispatchEvent(new CustomEvent('lv-visual-action', {
+        bubbles: true,
+        composed: true,
+        detail: {
+          action: 'show-data',
+          visualType: 'table',
+          visualId: 'first',
+          title: 'wide result',
+          columns,
+          rows: [Object.fromEntries(columns.map((column, index) => [column.key, `Long value ${index + 1} requiring horizontal space`]))],
+          selection: [],
+        },
+      }))
+    })
+    await page.locator('lv-visual-modal').evaluate(async (modal: any) => {
+      await modal.updateComplete
+      await modal.shadowRoot.querySelector('lv-record-table').updateComplete
+    })
+    const wide = await page.locator('lv-visual-modal').evaluate((modal: any) => {
+      const wrapper = modal.shadowRoot.querySelector('lv-record-table .record-table-wrap') as HTMLElement
+      const dialog = modal.shadowRoot.querySelector('[role="dialog"]') as HTMLElement
+      return {
+        dialogWidth: dialog.getBoundingClientRect().width,
+        scrollWidth: wrapper.scrollWidth,
+        clientWidth: wrapper.clientWidth,
+      }
+    })
+    expect(wide.dialogWidth).toBe(1120)
+    expect(wide.scrollWidth).toBeGreaterThan(wide.clientWidth)
+  } finally {
+    await page.close()
+  }
+})
+
+test('a previous action timer cannot clear a newer repeated notice', async () => {
+  const page = await setupPage()
+  try {
+    await page.locator('lv-visual-modal').evaluate((modal: any) => modal.flash('Copied visual data.'))
+    await page.waitForTimeout(200)
+    await page.locator('lv-visual-modal').evaluate((modal: any) => modal.flash('Downloaded CSV.'))
+    await page.waitForTimeout(200)
+    await page.locator('lv-visual-modal').evaluate((modal: any) => modal.flash('Copied visual data.'))
+    await page.waitForTimeout(1_500)
+
+    expect(await page.locator('lv-visual-modal').evaluate((modal: any) => modal.notice)).toBe('Copied visual data.')
+    expect(await page.locator('lv-visual-modal [role="status"]').textContent()).toBe('Copied visual data.')
+  } finally {
+    await page.close()
+  }
+})

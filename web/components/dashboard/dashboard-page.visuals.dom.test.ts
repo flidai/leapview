@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import validateVisualizationEnvelope from '../../generated/visualization/validate'
-import { testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
+import { evaluateAcrossContextTurnover, testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
@@ -508,12 +508,12 @@ test('phone headers keep page actions below the title and default table values r
     expect(result.actionsBelowTitle).toBe(true)
     expect(result.defaultWidths.length).toBeGreaterThan(0)
     expect(Math.min(...result.defaultWidths)).toBeGreaterThanOrEqual(168)
-    await page.evaluate(async () => {
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ page: { pages: ['overview', 'statement', 'liquidity', 'drivers'].map((id, index) => ({
         id, title: id, href: `/dashboards/executive-sales/pages/${id}`, active: index === 0,
       })) } })
-    })
+    }))
     await page.locator('.mobile-page-menu summary').click()
     // Exercise hit testing: chart/table stacking must not intercept the last option.
     await page.locator('.mobile-page-menu a').last().click({ trial: true })

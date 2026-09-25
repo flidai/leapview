@@ -46,7 +46,8 @@ func TestDataExplorerSemanticDatasetDeepLinksHydrateDistinctModelBindings(t *tes
 			SemanticModels: map[string]*semanticmodel.Model{semanticModelID: model},
 			NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": modelID}},
 		}, compiled: map[string]*semanticquery.CompiledModel{semanticModelID: compiled}},
-		QueryExecutor: executor,
+		QueryExecutor:           executor,
+		ExplorationQueryLowerer: testDataExplorerQueryLowerer,
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
 			return projectID, nil
 		},

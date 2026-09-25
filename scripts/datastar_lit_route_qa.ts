@@ -3,6 +3,11 @@ import { chromium, expect, type Locator, type Page } from '@playwright/test'
 import { blockingAxeViolations, formatAxeViolations } from './axe_accessibility'
 import { ensureDashboardVisualizationsMounted } from './dashboard_visualization_readiness'
 import { verifyDashboardCopyBuilder } from './dashboard_copy_builder_qa'
+import {
+  verifyDataExplorerKeyboardJourney,
+  verifyDataExplorerRecoveryActions,
+  verifyDataExplorerResponsiveLayout,
+} from './datastar_lit_data_explorer_qa'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
 type RouteExpectation = {
@@ -23,6 +28,7 @@ const accessibilityRoutes: AccessibilityRoute[] = [
   { label: 'Sources', path: '/sources', root: 'lv-project-page', shell: true },
   { label: 'Dashboard', path: '/dashboards/dashboard:executive-sales/pages/overview', root: 'lv-dashboard-page', shell: true },
   { label: 'Visual Showcase', path: dashboardPath, root: 'lv-dashboard-page', shell: true },
+  { label: 'Data Explorer', path: '/explore', root: 'lv-data-explorer', shell: true },
 ]
 const wcagTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 const routes: RouteExpectation[] = [
@@ -48,7 +54,13 @@ try {
     console.log(`WCAG accessibility route QA passed for ${accessibilityRoutes.length} routes at ${baseURL}`)
   } else if (routeQAScope === 'keyboard') {
     await verifyKeyboardAccessibilityJourney()
+    await verifyDataExplorerKeyboardJourney({ browser, baseURL, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
     console.log(`Keyboard accessibility route QA passed at ${baseURL}`)
+  } else if (routeQAScope === 'data-explorer') {
+    await verifyDataExplorerRecoveryActions({ browser, baseURL, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
+    await verifyDataExplorerKeyboardJourney({ browser, baseURL, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
+    await verifyDataExplorerResponsiveLayout({ browser, baseURL, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
+    console.log(`Data Explorer route QA passed at ${baseURL}`)
   } else if (routeQAScope === 'all') {
     for (const route of routes) {
       await verifyRoute(route)
@@ -59,72 +71,19 @@ try {
     await verifyEChartsFirstNavigation()
     await verifyDashboardCommandDoesNotReopenUpdates()
     await verifyDashboardCopyBuilder(browser, baseURL)
-    await verifyDataExplorerRecoveryActions()
+    await verifyDataExplorerRecoveryActions({ browser, baseURL, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
+    await verifyDataExplorerKeyboardJourney({ browser, baseURL, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
+    await verifyDataExplorerResponsiveLayout({ browser, baseURL, collectBlockingConsoleMessages, assertNoBlockingConsoleMessages, focusByTab })
     await verifyTableShowcase()
     await verifyFilterShowcase()
     await verifySpatialShowcaseMaps()
     await verifySpatialMapWindowing()
     console.log(`DatastarLit route QA passed for ${routes.length} routes at ${baseURL}`)
   } else {
-    throw new Error(`Unsupported LEAPVIEW_ROUTE_QA_SCOPE=${JSON.stringify(routeQAScope)}; expected "all", "accessibility", or "keyboard"`)
+    throw new Error(`Unsupported LEAPVIEW_ROUTE_QA_SCOPE=${JSON.stringify(routeQAScope)}; expected "all", "accessibility", "keyboard", or "data-explorer"`)
   }
 } finally {
   await browser.close()
-}
-
-async function verifyDataExplorerRecoveryActions(): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  const messages = collectBlockingConsoleMessages(page)
-
-  try {
-    const response = await page.goto(new URL('/explore', baseURL).toString(), { waitUntil: 'domcontentloaded' })
-    if (!response?.ok()) throw new Error(`/explore recovery: status ${response?.status() ?? 'unknown'}`)
-    const explorer = page.locator('lv-data-explorer')
-    await explorer.waitFor()
-    // /explore opens in semantic-query mode. Preview recovery belongs to the
-    // browse mode of the same canonical route, so switch the typed command
-    // state before selecting a resource instead of clicking a hidden tree.
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ dataExplorer: { command: { mode: 'browse' } } })
-    })
-    await expect(explorer.locator('.route')).not.toHaveClass(/semantic/)
-
-    const preview = explorer.locator('lv-data-preview-table')
-    if (!await preview.isVisible()) {
-      const firstGroup = explorer.locator('details.resource-group').first()
-      await firstGroup.locator(':scope > summary').click()
-      const firstObject = firstGroup.locator('.object-button').first()
-      await firstObject.waitFor({ state: 'visible' })
-      await firstObject.click()
-    }
-    await preview.waitFor({ state: 'visible' })
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ dataExplorer: { preview: { error: 'Qualification-injected preview failure.' } } })
-    })
-
-    const failure = preview.locator('[role="alert"]')
-    await expect(failure).toContainText('Qualification-injected preview failure.')
-    const retryRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/explore/command' && request.method() === 'POST')
-    await failure.getByRole('button', { name: 'Retry', exact: true }).click()
-    await retryRequest
-
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ dataExplorer: { preview: { error: 'Qualification-injected preview failure.' } } })
-    })
-    await expect(failure).toBeVisible()
-    const resetRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/explore/command' && request.method() === 'POST')
-    await failure.getByRole('button', { name: 'Reset view', exact: true }).click()
-    const reset = await resetRequest
-    if (!reset.postData()?.includes('resetVersion')) {
-      throw new Error('/explore recovery reset did not send canonical reset state')
-    }
-    assertNoBlockingConsoleMessages('data explorer recovery', messages)
-  } finally {
-    await page.close()
-  }
 }
 
 async function verifySidebarCollapseToggle(): Promise<void> {
