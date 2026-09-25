@@ -3,7 +3,7 @@ import * as echarts from 'echarts'
 
 import type { InlineVisualizationDataState } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
-import { EChartsHandle, echartsOption } from './echarts'
+import { EChartsHandle, echartsOption, responsiveEChartsPatch } from './echarts'
 import { CategoryColorRegistry } from './echarts/category-colors'
 import { hierarchyFixture, networkFixture } from './echarts-test-fixtures'
 
@@ -98,6 +98,106 @@ test('ECharts graph tooltips and dense automatic labels remain discoverable', ()
   expect(prioritizedOption.series[0].label.formatter({ data: nonPriorityNode })).toBe('')
   expect(prioritizedOption.series[0].labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: false })
   expect(prioritizedOption.series[0].emphasis.label.formatter({ data: nonPriorityNode })).toBe('Source 1')
+})
+
+test('compact standard graph node labels stay inside the chart as it resizes', () => {
+  const envelope = networkFixture('graph') as any
+  envelope.spec.presentation.layout = 'standard'
+  envelope.spec.presentation.labelPolicy.priority = []
+  envelope.dataState.datasets[0].rows = [[
+    'Origin node with a very long label', 'Destination node with a very long label', 12,
+  ]]
+  const source = echartsOption(envelope, defaultRendererContext) as any
+
+  for (const [width, height] of [[320, 240], [620, 400]] as const) {
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+    try {
+      chart.setOption({ ...source, ...responsiveEChartsPatch(source, width, height), animation: false })
+      chart.renderToSVGString()
+      const labels = chart.getZr().storage.getDisplayList()
+        .filter((item: any) => item.type === 'tspan' && String(item.style?.text).includes('…'))
+      expect(labels).toHaveLength(2)
+      for (const item of labels) {
+        const bounds = item.getBoundingRect().clone()
+        const transform = item.getComputedTransform?.() ?? item.transform
+        if (transform) bounds.applyTransform(transform)
+        expect(bounds.x, `${item.style.text} should not clip on the left at ${width}px`).toBeGreaterThanOrEqual(0)
+        expect(bounds.x + bounds.width, `${item.style.text} should not clip on the right at ${width}px`).toBeLessThanOrEqual(width)
+      }
+    } finally {
+      chart.dispose()
+    }
+  }
+})
+
+test('compact circular graph node labels stay inside the chart around the full ring', () => {
+  const envelope = networkFixture('graph') as any
+  envelope.spec.presentation.layout = 'circular'
+  envelope.spec.presentation.labelPolicy = { ...envelope.spec.presentation.labelPolicy, density: 'always', priority: [] }
+  envelope.dataState.datasets[0].rows = Array.from({ length: 8 }, (_, index) => [
+    `Origin ${index} with a very long label`, `Destination ${index} with a very long label`, index + 1,
+  ])
+  const source = echartsOption(envelope, defaultRendererContext) as any
+  const compact = responsiveEChartsPatch(source, 320, 240)
+  const compactLabel = compact.series[0].label
+  for (let index = 0; index < source.series[0].data.length; index++) {
+    const output = compactLabel.formatter({ dataIndex: index, data: source.series[0].data[index] })
+    expect(Boolean(output), `node label ${index} should follow deterministic compact density`).toBe(index % 4 === 0)
+  }
+  expect(compact.series[0].emphasis.label).toMatchObject({ show: true })
+  expect(compact.series[0].emphasis.label.formatter({ dataIndex: 1, data: source.series[0].data[1] })).toBe('Destination 0 with a ve…')
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 320, height: 240 })
+  try {
+    chart.setOption({ ...source, ...compact, animation: false })
+    chart.renderToSVGString()
+    const labels = chart.getZr().storage.getDisplayList()
+      .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string' && item.style.text.length > 0)
+    expect(labels).toHaveLength(4)
+    const labelBounds = labels.map((item: any) => {
+      const bounds = item.getBoundingRect().clone()
+      const transform = item.getComputedTransform?.() ?? item.transform
+      if (transform) bounds.applyTransform(transform)
+      expect(bounds.x, `${item.style.text} should not clip on the left`).toBeGreaterThanOrEqual(0)
+      expect(bounds.x + bounds.width, `${item.style.text} should not clip on the right`).toBeLessThanOrEqual(320)
+      return { text: item.style.text, x: bounds.x, y: bounds.y, right: bounds.x + bounds.width, bottom: bounds.y + bounds.height }
+    })
+    for (let index = 0; index < labelBounds.length; index++) {
+      for (const other of labelBounds.slice(index + 1)) {
+        const label = labelBounds[index]!
+        const overlaps = label.x < other.right && label.right > other.x && label.y < other.bottom && label.bottom > other.y
+        expect(overlaps, `${label.text} overlaps ${other.text}`).toBe(false)
+      }
+    }
+  } finally {
+    chart.dispose()
+  }
+})
+
+test('compact horizontal Sankey node labels stay within their authored truncation boxes', () => {
+  const envelope = networkFixture('sankey') as any
+  envelope.spec.presentation.orientation = 'horizontal'
+  envelope.dataState.datasets[0].rows = [[
+    'Origin node with a very long label', 'Destination node with a very long label', 12,
+  ]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].label).toMatchObject({ width: 56, overflow: 'truncate', ellipsis: '…' })
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 320, height: 240 })
+  try {
+    chart.setOption({ ...option, animation: false })
+    chart.renderToSVGString()
+    const labels = chart.getZr().storage.getDisplayList()
+      .filter((item: any) => item.type === 'tspan' && String(item.style?.text).includes('…'))
+    expect(labels).toHaveLength(2)
+    for (const item of labels) {
+      const bounds = item.getBoundingRect().clone()
+      const transform = item.getComputedTransform?.() ?? item.transform
+      if (transform) bounds.applyTransform(transform)
+      expect(bounds.x, `${item.style.text} should not clip on the left`).toBeGreaterThanOrEqual(0)
+      expect(bounds.x + bounds.width, `${item.style.text} should not clip on the right`).toBeLessThanOrEqual(320)
+    }
+  } finally {
+    chart.dispose()
+  }
 })
 
 test('ECharts tree survives empty, loaded, and cleared data frames', () => {

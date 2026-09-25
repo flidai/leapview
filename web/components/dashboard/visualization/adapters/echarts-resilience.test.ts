@@ -94,8 +94,9 @@ test('ECharts responsive patch keeps proportional geometry stable while adapting
     const compact = responsiveEChartsPatch(option, 320, 240)
     const expanded = responsiveEChartsPatch(option, 1200, 720)
     if (mark === 'funnel') {
-      expect(compact).toEqual({})
-      expect(expanded).toEqual({})
+      expect(compact.series[0]).toMatchObject({ id: 'series:primary:funnel' })
+      expect(compact.series[0].label.formatter({ value: ['United States of America', 10] })).toBe('United States of Am…:\n10')
+      expect(expanded.series[0].label.formatter({ value: ['United States of America', 10] })).toBe('United States of Am…: 10')
     } else {
       expect(compact.series[0]).toMatchObject({
         id: `series:primary:${mark}`,

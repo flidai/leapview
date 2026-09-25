@@ -23,6 +23,8 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	"github.com/flidai/leapview/internal/dashboard/document"
+	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	"github.com/flidai/leapview/internal/dashboard/ui"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
@@ -38,6 +40,12 @@ import (
 const dashboardBuilderOperationID = dashboardgen.GenOperationExecuteDashboardAuthoringCommand
 
 var dashboardBuilderCommandBinding = dashboardgen.GenUIActionExecuteDashboardAuthoringCommand()
+
+type dashboardBuilderRefreshContext struct {
+	DashboardID string `json:"dashboardId"`
+	PageID      string `json:"pageId"`
+	VisualID    string `json:"visualId"`
+}
 
 // DashboardBuilder serves the governed draft builder document shell. The
 // application boundary authorizes before loading the draft revision.
@@ -417,9 +425,32 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, access.ErrForbidden)
 		return
 	}
+	snapshot := r.URL.Query().Get("snapshot") == "1"
+	var snapshotSignals struct {
+		Refresh dashboardBuilderRefreshContext `json:"builderRefresh"`
+		Runtime uisignals.RouteRuntimeSignal   `json:"runtime"`
+	}
+	if snapshot {
+		// The completion refresh is a one-shot request from an already mounted
+		// builder. Carry its selection and preview identity so the server can
+		// refresh the selected page while retaining its scoped filter session.
+		// Older callers may omit these fields; the authoritative builder read
+		// below remains the source of all authored data.
+		_ = pagestream.ReadSignals(r, &snapshotSignals)
+	}
+	selectedPageID := strings.TrimSpace(r.URL.Query().Get("page"))
+	selectedVisualID := strings.TrimSpace(r.URL.Query().Get("visual"))
+	if snapshot && snapshotSignals.Refresh.DashboardID == dashboardID {
+		if strings.TrimSpace(snapshotSignals.Refresh.PageID) != "" {
+			selectedPageID = strings.TrimSpace(snapshotSignals.Refresh.PageID)
+		}
+		if strings.TrimSpace(snapshotSignals.Refresh.VisualID) != "" {
+			selectedVisualID = strings.TrimSpace(snapshotSignals.Refresh.VisualID)
+		}
+	}
 	builder, err := h.Authoring.Builder(r.Context(), builderview.Request{
 		ProjectID: project, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
-		SelectedPageID: strings.TrimSpace(r.URL.Query().Get("page")), SelectedVisualID: strings.TrimSpace(r.URL.Query().Get("visual")),
+		SelectedPageID: selectedPageID, SelectedVisualID: selectedVisualID,
 	})
 	if err != nil {
 		writeBuilderError(w, r, err)
@@ -434,17 +465,45 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 	streamInstanceID := strings.TrimSpace(r.URL.Query().Get("streamInstance"))
+	if snapshot && snapshotSignals.Runtime.StreamInstanceID != nil && strings.TrimSpace(*snapshotSignals.Runtime.StreamInstanceID) != "" {
+		streamInstanceID = strings.TrimSpace(*snapshotSignals.Runtime.StreamInstanceID)
+	}
 	if streamInstanceID == "" {
 		streamInstanceID = clientID
 	}
 	updates := pagestream.NewSignalStream(w, r)
-	snapshot := r.URL.Query().Get("snapshot") == "1"
 	if !snapshot {
 		if err := updates.Patch(builderLoadingPatch(builder)); err != nil {
 			return
 		}
 	}
-	envelope := h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder)
+	var envelope uisignals.DashboardBuilderEnvelope
+	if snapshot {
+		envelope, err = h.dashboardBuilderSnapshotEnvelope(r, project, actorID, builder, snapshotSignals.Runtime)
+	} else {
+		envelope = h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder)
+	}
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	if snapshot {
+		// Preview work can outlive a manual save. Fence the response before
+		// publishing either half of the clear-and-replace signal update.
+		latestBuilder, latestErr := h.Authoring.Builder(r.Context(), builderview.Request{
+			ProjectID: project, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
+			SelectedPageID: selectedPageID, SelectedVisualID: selectedVisualID,
+		})
+		if latestErr != nil || !sameDashboardBuilderRevision(builder, latestBuilder) {
+			return
+		}
+		if snapshotSignals.Runtime.ClientID != nil && h.SessionStore != nil {
+			servingStateID := optionalRuntimeValue(envelope.Runtime.ServingStateID)
+			if !h.builderSnapshotFilterStateIsCurrent(r.Context(), r, builder, snapshotSignals.Runtime, envelope.BuilderFilterState, servingStateID) {
+				return
+			}
+		}
+	}
 	envelope.Runtime.ClientID = uisignals.Optional(clientID)
 	envelope.Runtime.StreamInstanceID = uisignals.Optional(streamInstanceID)
 	envelope.Runtime.ProjectID = uisignals.Optional(project.String())
@@ -459,7 +518,7 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 			return
 		}
 	}
-	if hasClientAgentState(r) {
+	if snapshot || hasClientAgentState(r) {
 		delete(bootstrap, "agent")
 		delete(bootstrap, "agentVisuals")
 	} else if h.AgentBootstrap != nil {
@@ -473,6 +532,86 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 	if !snapshot {
 		updates.Wait(r.Context())
 	}
+}
+
+func sameDashboardBuilderRevision(left, right uisignals.DashboardBuilderSignal) bool {
+	return left.DraftID == right.DraftID &&
+		left.Revision.ID == right.Revision.ID &&
+		left.Revision.Number == right.Revision.Number &&
+		left.Revision.ContentHash == right.Revision.ContentHash
+}
+
+func (h Handler) dashboardBuilderSnapshotEnvelope(r *nethttp.Request, project projectgraph.ResourceID, actorID string, builder uisignals.DashboardBuilderSignal, runtime uisignals.RouteRuntimeSignal) (uisignals.DashboardBuilderEnvelope, error) {
+	filters := dashboard.Filters{}
+	servingStateID := ""
+	generation := ""
+	if h.SessionStore != nil && runtime.ClientID != nil {
+		request, err := h.builderFilterRequest(r, builderFilterSignals{Builder: builder, Runtime: runtime})
+		if err != nil {
+			return uisignals.DashboardBuilderEnvelope{}, err
+		}
+		compiled, err := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
+			ProjectID: project, ActorID: actorID,
+			DashboardID: authoring.DashboardID(builder.DashboardID), DraftID: authoring.DraftID(builder.DraftID),
+			ExpectedRevision: request.Revision,
+		})
+		if err != nil {
+			return uisignals.DashboardBuilderEnvelope{}, err
+		}
+		generation = strings.TrimSpace(compiled.SemanticEvidence.Identity.GenerationID)
+		servingStateID, err = builderActiveServingStateID(builder, compiled.SemanticEvidence.Identity.GenerationID, optionalRuntimeValue(runtime.ServingStateID))
+		if err != nil {
+			return uisignals.DashboardBuilderEnvelope{}, err
+		}
+		request.Key.ServingStateID = servingStateID
+		record, loadErr := h.SessionStore.Load(r.Context(), request.Key)
+		if errors.Is(loadErr, dashboardsession.ErrNotFound) {
+			record, loadErr = h.ensureBuilderFilterSession(r.Context(), request.Key, request.PageID, compiled.Definition)
+		}
+		if loadErr != nil {
+			return uisignals.DashboardBuilderEnvelope{}, loadErr
+		}
+		if _, err := dashboardfilter.RestoreMachine(compiled.Definition.FilterApplication.WithDefaults().Mode, compiled.Definition.FilterBindingSpecs(), record.State.Filters); err != nil {
+			return uisignals.DashboardBuilderEnvelope{}, authoring.ErrStaleRevision
+		}
+		state := record.State.Filters.State
+		filters = dashboard.Filters{CompiledState: &state, ActivePageID: firstBuilderPage(builder), ServingStateID: servingStateID}
+	}
+
+	envelope := h.dashboardBuilderEnvelopeWithTargetPreviewAndFiltersForProject(r.Context(), project, actorID, builder, "", filters)
+	if generation != "" && servingStateID != "" {
+		previewServingStateID := optionalRuntimeValue(envelope.Runtime.ServingStateID)
+		if !strings.HasSuffix(previewServingStateID, ":generation:"+generation) {
+			return uisignals.DashboardBuilderEnvelope{}, authoring.ErrStaleRevision
+		}
+	}
+	if filters.CompiledState != nil {
+		envelope.BuilderFilterState = uisignals.DashboardFilterStateFromDomain(*filters.CompiledState)
+		envelope.BuilderFilterValidation = uisignals.DashboardFilterValidationResult{Accepted: true, CurrentRevision: int64(filters.CompiledState.Revision)}
+	}
+	if servingStateID != "" {
+		// Preserve the session identity resolved above across authored revisions
+		// within the same draft and semantic runtime generation.
+		envelope.Runtime.ServingStateID = uisignals.Optional(servingStateID)
+		for visualID, visual := range envelope.BuilderVisuals {
+			visual.ServingStateID = servingStateID
+			envelope.BuilderVisuals[visualID] = visual
+		}
+	}
+	return envelope, nil
+}
+
+func (h Handler) builderSnapshotFilterStateIsCurrent(ctx context.Context, r *nethttp.Request, builder uisignals.DashboardBuilderSignal, runtime uisignals.RouteRuntimeSignal, expected uisignals.DashboardFilterState, servingStateID string) bool {
+	request, err := h.builderFilterRequest(r, builderFilterSignals{Builder: builder, Runtime: runtime})
+	if err != nil {
+		return false
+	}
+	request.Key.ServingStateID = servingStateID
+	record, err := h.SessionStore.Load(ctx, request.Key)
+	if errors.Is(err, dashboardsession.ErrNotFound) {
+		return expected.Revision == 0
+	}
+	return err == nil && int64(record.State.Filters.State.Revision) == expected.Revision
 }
 
 // DashboardBuilderCommand accepts the bounded builder intents and routes them

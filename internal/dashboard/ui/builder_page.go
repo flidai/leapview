@@ -69,7 +69,7 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 	agentEnabled := strings.TrimSpace(actions.AgentCommands.CreateConversation.OperationID()) != "" && strings.TrimSpace(actions.AgentCommands.CreateRun.OperationID()) != ""
 	if agentEnabled {
 		attrs = append(attrs,
-			g.Attr("data-on:lv-builder-agent-run-complete", uiactions.Get(updates+"&snapshot=1", "agent")),
+			g.Attr("data-on:lv-builder-agent-run-complete", dashboardBuilderAgentCompletionAction(updates+"&snapshot=1")),
 			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; $agentContext.filters = $builderFilterState; $agentContext.generation = $status.generation; "+uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{actions.AgentCommands.CreateRun}, actions.AgentCommands.Workflow(), "/chats/turns", "agent", "agentContext")),
 			g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(actions.AgentCommands.CancelRun, "/chats/stop", "agent", "agentContext")),
 			g.Attr("data-on:lv-chat-restore", "$agent.activeConversationId = evt.detail.conversationId; "+uiactions.Get("/chats/restore", "agent")),
@@ -228,7 +228,7 @@ func dashboardBuilderUpdatesURL(builder uisignals.DashboardBuilderSignal) string
 }
 
 func builderCommandAction(actions DashboardBuilderActionBindings) g.Node {
-	value := "$builderCommand = evt.detail;"
+	value := "el._lvBuilderAgentRefreshController?.abort(); $builderCommand = evt.detail;"
 	if strings.TrimSpace(actions.CommandPath) != "" {
 		// Include runtime identity with durable builder intents so the command
 		// response can preserve the same client/stream/page context in its
@@ -239,11 +239,18 @@ func builderCommandAction(actions DashboardBuilderActionBindings) g.Node {
 }
 
 func builderFilterCommandAction(actions DashboardBuilderActionBindings) g.Node {
-	value := "$builderFilterCommand = evt.detail;"
+	value := "el._lvBuilderAgentRefreshController?.abort(); $builderFilterCommand = evt.detail;"
 	if strings.TrimSpace(actions.FilterCommandPath) != "" {
 		value += " " + uiactions.EventPost(actions.FilterCommandPath, "builder", "runtime", "builderFilterCommand")
 	}
 	return g.Attr("data-on:lv-builder-filter-command", value)
+}
+
+func dashboardBuilderAgentCompletionAction(path string) string {
+	request := uiactions.Get(path, "builderRefresh", "runtime")
+	request = strings.TrimSuffix(request, "})") + ", requestCancellation: el._lvBuilderAgentRefreshController})"
+	return "el._lvBuilderAgentRefreshController?.abort(); el._lvBuilderAgentRefreshController = new AbortController(); " +
+		"$builderRefresh = { dashboardId: $builder.dashboardId, pageId: $builder.selectedPageId, visualId: $builder.selectedVisualId }; " + request
 }
 
 func builderFilterOptionsAction(actions DashboardBuilderActionBindings) g.Node {

@@ -8,6 +8,7 @@ const CROWDED_INSIDE_LABEL_WIDTH = 640
 const CROWDED_INSIDE_LABEL_HEIGHT = 420
 const GAUGE_LABEL_WIDTH = 360
 const GAUGE_LABEL_HEIGHT = 220
+const RESPONSIVE_LABEL_SEGMENTER = new Intl.Segmenter('en', { granularity: 'grapheme' })
 
 export type EChartsNavigationDefaults = Readonly<{ dataZoom: boolean; roam: boolean }>
 export type EChartsViewState = Readonly<{
@@ -27,7 +28,20 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
   if (envelope.spec.kind === 'polar' && envelope.spec.mark === 'gauge') {
     return `${compact ? 'compact' : 'roomy'}:gauge-${gaugeTickLabelsHidden(width, height) ? 'quiet' : 'labeled'}`
   }
-  if (envelope.spec.kind !== 'proportional' || envelope.spec.mark === 'funnel') return compact ? 'compact' : 'roomy'
+  if (envelope.spec.kind === 'hierarchy' && envelope.spec.mark === 'graph'
+    && (envelope.spec.presentation.layout === 'standard' || envelope.spec.presentation.layout === 'circular')) {
+    return `${compact ? 'compact' : 'roomy'}:graph-${graphLabelWidth(width)}`
+  }
+  if (envelope.spec.kind !== 'proportional') return compact ? 'compact' : 'roomy'
+  if (envelope.spec.mark === 'funnel') {
+    const outsideLabels = envelope.spec.presentation.labelPosition !== 'inside'
+      && envelope.spec.presentation.labelPolicy.density !== 'hidden'
+    if (outsideLabels && compact) {
+      const fontSize = envelope.spec.presentation.labelPolicy.density === 'dense' ? 10 : 12
+      return `compact:funnel-outside-${funnelOutsideLabelCharacterBudget(width, fontSize)}`
+    }
+    return compact ? 'compact' : 'roomy'
+  }
   if (envelope.spec.presentation.labelPosition === 'inside') {
     return `${compact ? 'compact' : 'roomy'}:inside-${width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT ? 'crowded' : 'full'}`
   }
@@ -42,6 +56,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
   const proportionalSeries = responsiveProportionalSeries(option.series, width, height)
   const gaugeSeries = responsiveGaugeSeries(option.series, width, height)
+  const graphSeries = responsiveGraphSeries(option.series, width, compact)
   const gaugeGraphic = responsiveGaugeGraphic(option.graphic, width)
   const responsivePie = hasPieSeries(option.series)
   const patch: Record<string, any> = {}
@@ -66,6 +81,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   }
   if (proportionalSeries !== undefined) patch.series = proportionalSeries
   if (gaugeSeries !== undefined) patch.series = gaugeSeries
+  if (graphSeries !== undefined) patch.series = graphSeries
   if (gaugeGraphic !== undefined) patch.graphic = gaugeGraphic
   if (option.legend !== undefined && (option.grid !== undefined || responsivePie)) {
     patch.legend = compact ? compactLegend(option.legend, width) : desktopLegend(option.legend)
@@ -97,6 +113,55 @@ function responsiveGaugeSeries(value: unknown, width: number, height: number): u
       splitLine: { ...source.splitLine, show: !hideTicks },
     }
   })
+}
+
+function responsiveGraphSeries(value: unknown, width: number, compact: boolean): unknown[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  let hasResponsiveGraph = false
+  const series = value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, any>
+    const label = source.label
+    if (source.type !== 'graph' || !['none', 'circular'].includes(source.layout) || !label || typeof label !== 'object' || label.show === false) return entry
+    hasResponsiveGraph = true
+    const graphNodes = Array.isArray(source.data) ? source.data : []
+    const compactCircular = compact && source.layout === 'circular' && graphNodes.length > 8
+    const visibleCircularLabelIndexes = compactCircular
+      ? new Set(Array.from({ length: 4 }, (_, index) => Math.floor(index * graphNodes.length / 4)))
+      : undefined
+    return {
+      ...source,
+      label: {
+        ...label,
+        width: graphLabelWidth(width),
+        overflow: 'truncate',
+        ellipsis: typeof label.ellipsis === 'string' ? label.ellipsis : '…',
+        ...(visibleCircularLabelIndexes ? {
+          formatter: (params: { dataIndex?: number }) => visibleCircularLabelIndexes.has(params.dataIndex ?? -1)
+            ? label.formatter?.(params)
+            : '',
+        } : {}),
+      },
+      ...(compactCircular ? {
+        // Dense circular layouts have too little circumference for every node
+        // label. Keep four evenly spaced labels visible; the rest are exposed
+        // when emphasized and through each node's tooltip.
+        emphasis: {
+          ...source.emphasis,
+          label: {
+            ...source.emphasis?.label,
+            show: true,
+            ...(typeof label.formatter === 'function' ? { formatter: label.formatter } : {}),
+          },
+        },
+      } : {}),
+    }
+  })
+  return hasResponsiveGraph ? series : undefined
+}
+
+function graphLabelWidth(width: number): number {
+  return Math.max(0, Math.min(160, Math.floor(width * 0.2) - 2))
 }
 
 function responsiveGaugeGraphic(value: unknown, width: number): unknown[] | undefined {
@@ -162,11 +227,36 @@ function hasPieSeries(value: unknown): boolean {
 function responsiveProportionalSeries(value: unknown, width: number, height: number): unknown[] | undefined {
   if (!Array.isArray(value)) return undefined
   const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
-  let hasResponsivePieLabels = false
+  let hasResponsiveLabels = false
   const series = value.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
     const source = entry as Record<string, unknown>
     const label = source.label
+    if (source.type === 'funnel') {
+      if (!label || typeof label !== 'object' || Array.isArray(label)) return entry
+      const labelOption = label as Record<string, unknown>
+      const formatter = labelOption.formatter
+      if (
+        labelOption.position !== 'outside'
+        || labelOption.show === false
+        || typeof formatter !== 'function'
+      ) return entry
+      hasResponsiveLabels = true
+      const responsiveFormatter = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
+        ? (params: unknown) => wrapFunnelOutsideLabel(
+          String(formatter(params) ?? ''),
+          width,
+          finiteNumber(labelOption.fontSize) ?? 12,
+        )
+        : formatter
+      return {
+        ...source,
+        label: {
+          ...labelOption,
+          formatter: responsiveFormatter,
+        },
+      }
+    }
     if (
       source.type !== 'pie'
       || !label || typeof label !== 'object' || Array.isArray(label)
@@ -175,7 +265,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     const labelOption = label as Record<string, unknown>
     if (labelOption.position === 'inside') {
       const crowded = width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT
-      hasResponsivePieLabels = true
+      hasResponsiveLabels = true
       if (!crowded) {
         return {
           ...source,
@@ -199,7 +289,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
       }
     }
     if (labelOption.position !== 'outside') return entry
-    hasResponsivePieLabels = true
+    hasResponsiveLabels = true
     return {
       ...source,
       label: {
@@ -221,7 +311,28 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
       }),
     }
   })
-  return hasResponsivePieLabels ? series : undefined
+  return hasResponsiveLabels ? series : undefined
+}
+
+function wrapFunnelOutsideLabel(value: string, width: number, fontSize: number): string {
+  const separator = value.lastIndexOf(': ')
+  if (separator <= 0 || separator >= value.length - 2) return value
+  const availableCharacters = funnelOutsideLabelCharacterBudget(width, fontSize)
+  if (value.length <= availableCharacters) return value
+  const category = truncateResponsiveLabel(value.slice(0, separator), availableCharacters - 1)
+  const amount = truncateResponsiveLabel(value.slice(separator + 2), availableCharacters)
+  return `${category}:\n${amount}`
+}
+
+function funnelOutsideLabelCharacterBudget(width: number, fontSize: number): number {
+  return Math.floor((width * 0.43) / (fontSize * 0.5))
+}
+
+function truncateResponsiveLabel(value: string, maxCharacters: number): string {
+  const graphemes = [...RESPONSIVE_LABEL_SEGMENTER.segment(value)].map((segment) => segment.segment)
+  if (graphemes.length <= maxCharacters) return value
+  if (maxCharacters <= 1) return maxCharacters === 1 ? '…' : ''
+  return `${graphemes.slice(0, maxCharacters - 1).join('')}…`
 }
 
 function finiteNumber(value: unknown): number | undefined {

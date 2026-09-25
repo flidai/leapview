@@ -11,7 +11,7 @@ let browser: Browser
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/dashboard-builder-test')
 
-test('dashboard builder requests one canonical draft refresh when an agent run finishes', async () => {
+test('dashboard builder refreshes once after a successful agent draft mutation, including when a later tool fails', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(baseURL)
@@ -21,17 +21,69 @@ test('dashboard builder requests one canonical draft refresh when an agent run f
       let completions = 0
       element.addEventListener('lv-builder-agent-run-complete', () => completions++)
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const waitForUpdate = () => new Promise((resolve) => setTimeout(resolve, 25))
+      mergePatch({ agent: { activeConversationId: 'conversation-1', status: { running: true, runId: 'run-read-only' }, transcript: [] } })
+      await waitForUpdate()
+      mergePatch({ agent: { status: { running: false }, transcript: [
+        { id: 'tool-read-only', runId: 'run-read-only', kind: 'tool', name: 'get_dashboard_draft', status: 'complete' },
+      ] } })
+      await waitForUpdate()
+      const afterReadOnlyCompletion = completions
+
       mergePatch({ agent: { status: { running: true, runId: 'run-1' } } })
       await new Promise((resolve) => setTimeout(resolve, 25))
       const whileRunning = completions
-      mergePatch({ agent: { status: { running: false } } })
-      await new Promise((resolve) => setTimeout(resolve, 25))
-      const afterCompletion = completions
+      mergePatch({ agent: { status: { running: false }, transcript: [
+        { id: 'tool-write', runId: 'run-1', kind: 'tool', name: 'add_dashboard_visual', status: 'complete' },
+        { id: 'tool-after-write', runId: 'run-1', kind: 'tool', name: 'assign_dashboard_field', status: 'error', error: 'stale revision' },
+      ] } })
+      await waitForUpdate()
+      const afterMutationCompletion = completions
       mergePatch({ builder: { title: 'Refreshed draft' } })
-      await new Promise((resolve) => setTimeout(resolve, 25))
-      return { whileRunning, afterCompletion, afterUnrelatedPatch: completions }
+      await waitForUpdate()
+      const afterUnrelatedPatch = completions
+      mergePatch({ agent: { status: { running: true, runId: 'run-read-only-after-write' } } })
+      await waitForUpdate()
+      mergePatch({ agent: { status: { running: false }, transcript: [
+        { id: 'tool-write', runId: 'run-1', kind: 'tool', name: 'add_dashboard_visual', status: 'complete' },
+        { id: 'tool-after-write', runId: 'run-1', kind: 'tool', name: 'assign_dashboard_field', status: 'error', error: 'stale revision' },
+        { id: 'tool-read-only-after-write', runId: 'run-read-only-after-write', kind: 'tool', name: 'preview_dashboard_draft', status: 'complete' },
+      ] } })
+      await waitForUpdate()
+      return { afterReadOnlyCompletion, whileRunning, afterMutationCompletion, afterUnrelatedPatch, afterSubsequentReadOnlyCompletion: completions }
     })
-    expect(result).toEqual({ whileRunning: 0, afterCompletion: 1, afterUnrelatedPatch: 1 })
+    expect(result).toEqual({ afterReadOnlyCompletion: 0, whileRunning: 0, afterMutationCompletion: 1, afterUnrelatedPatch: 1, afterSubsequentReadOnlyCompletion: 1 })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder does not refresh after a failed or unrelated agent tool', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const completions = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      let count = 0
+      element.addEventListener('lv-builder-agent-run-complete', () => count++)
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const waitForUpdate = () => new Promise((resolve) => setTimeout(resolve, 25))
+      mergePatch({ agent: { status: { running: true, runId: 'run-failed-write' }, transcript: [] } })
+      await waitForUpdate()
+      mergePatch({ agent: { status: { running: false }, transcript: [
+        { id: 'tool-failed-write', runId: 'run-failed-write', kind: 'tool', name: 'add_dashboard_page', status: 'error', error: 'stale revision' },
+      ] } })
+      await waitForUpdate()
+      mergePatch({ agent: { status: { running: true, runId: 'run-unrelated-tool' } } })
+      await waitForUpdate()
+      mergePatch({ agent: { status: { running: false }, transcript: [
+        { id: 'tool-unrelated', runId: 'run-unrelated-tool', kind: 'tool', name: 'query_semantic_model', status: 'complete' },
+      ] } })
+      await waitForUpdate()
+      return count
+    })
+    expect(completions).toBe(0)
   } finally {
     await page.close()
   }

@@ -49,7 +49,12 @@ func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 		`back-href="/dashboards"`, `preview-href="/dashboards/revenue/preview"`,
 		`page-base-href="/dashboards/revenue/edit"`,
 		`data-on:lv-builder-agent-run-complete`, `@get('/updates?dashboard=revenue&draft=draft-7&route=dashboard_builder&snapshot=1'`,
-		`filterSignals: {include: /^(?:agent)(?:[.]|$)/}`,
+		`filterSignals: {include: /^(?:builderRefresh|runtime)(?:[.]|$)/}`,
+		`requestCancellation: el._lvBuilderAgentRefreshController`,
+		`el._lvBuilderAgentRefreshController?.abort(); el._lvBuilderAgentRefreshController = new AbortController()`,
+		`$builderRefresh = { dashboardId: $builder.dashboardId, pageId: $builder.selectedPageId, visualId: $builder.selectedVisualId }`,
+		`el._lvBuilderAgentRefreshController?.abort(); $builderCommand = evt.detail;`,
+		`el._lvBuilderAgentRefreshController?.abort(); $builderFilterCommand = evt.detail;`,
 		`data-on:lv-chat-submit`, `data-on:lv-chat-restore`, `data-on:lv-chat-new`,
 		`/chats/turns`, `/chats/references/search`, `agentContext`, `builderFilterState`,
 	} {

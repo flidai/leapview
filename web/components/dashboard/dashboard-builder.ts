@@ -12,6 +12,7 @@ import { buildSemanticCatalog, builderFieldCatalogGroup, type BuilderCatalogFiel
 import { canRequireFilter, filterControlChoices, filterControlLabel } from './builder-filter-settings'
 import { applyCanonicalGridAttributes, builderGridOccupiedRows, setBuilderPreviewResizeSuspended, syncGridStackNodesToCanonical } from './builder-grid-sync'
 import { createBuilderGridDragHelper, styleBuilderGridPlaceholder } from './builder-grid-drag-preview'
+import { DashboardBuilderAgentMutationTracker } from './dashboard-builder-agent-refresh'
 import type {
   DashboardBuilderDiagnosticSignal,
   DashboardBuilderFieldSignal,
@@ -198,7 +199,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private canvasResizeObserver: ResizeObserver | null = null
   private canvasViewportElement: HTMLElement | null = null
   private canvasPage: DashboardBuilderPageSignal | undefined
-  private agentRunObserved = false
+  private readonly agentMutationTracker = new DashboardBuilderAgentMutationTracker()
 
   // Add-page uses server-generated identifiers. Keep the page set that was
   // visible when the intent was sent so the authoritative response can select
@@ -2625,9 +2626,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   updated(): void {
-    const agentRunning = Boolean(this.signal<{ status?: { running?: boolean } }>('agent', {}).status?.running)
-    if (this.agentRunObserved && !agentRunning) this.dispatchEvent(new CustomEvent('lv-builder-agent-run-complete', { bubbles: true, composed: true }))
-    this.agentRunObserved = agentRunning
+    if (this.agentMutationTracker.observe(this.signal('agent', {}))) this.dispatchEvent(new CustomEvent('lv-builder-agent-run-complete', { bubbles: true, composed: true }))
     const builder = this.builder
     if (builder?.redirectTo) {
       const target = new URL(builder.redirectTo, window.location.href)
