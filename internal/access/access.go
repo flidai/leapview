@@ -473,6 +473,7 @@ type Session struct {
 	InstanceID        string
 	ProfileID         string
 	ClientID          string
+	ClientLabel       string
 	ExpiresAt         string
 	AbsoluteExpiresAt string
 	CreatedAt         string
