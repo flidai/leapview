@@ -924,7 +924,7 @@ func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 				ClientID: access.AuthoringCLIClientID, PrincipalID: "authoring-user", Scope: scope,
 			},
 		}
-		r := apigenRequest(http.MethodPost, requestPath, parameters)
+		r := apigenRequest(contract.Method, requestPath, parameters)
 		r.Header.Set("Authorization", "Bearer authoring-token")
 		r = r.WithContext(WithPrincipal(r.Context(), Principal{ID: "authoring-user", Kind: access.PrincipalKindUser}))
 		r = r.WithContext(WithAPICredential(r.Context(), credential))
@@ -936,17 +936,22 @@ func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 	}
 
 	for _, test := range []struct {
-		name, operationID, path, requestPath string
-		capability                           access.Capability
-		parameters                           map[string]string
+		name, operationID, method, path, requestPath string
+		capability                                   access.Capability
+		parameters                                   map[string]string
 	}{
 		{name: "createDeliveryPlan", operationID: "createDeliveryPlan", path: "/api/v1/projects/{project}/delivery", requestPath: "/api/v1/projects/project_demo/delivery", capability: access.CapabilityResourceRead, parameters: map[string]string{"project": projectID.String()}},
 		{name: "buildDeliveryPlan", operationID: "buildDeliveryPlan", path: "/api/v1/projects/{project}/delivery/plans/{plan}/build", requestPath: "/api/v1/projects/project_demo/delivery/plans/plan_1/build", capability: access.CapabilityResourceUse, parameters: map[string]string{"project": projectID.String(), "plan": "plan_1"}},
 		{name: "publishDeliveryCandidate", operationID: "publishDeliveryCandidate", path: "/api/v1/projects/{project}/delivery/candidates/{candidate}/publish", requestPath: "/api/v1/projects/project_demo/delivery/candidates/candidate_1/publish", capability: access.CapabilityResourcePublish, parameters: map[string]string{"project": projectID.String(), "candidate": "candidate_1"}},
+		{name: "getDeliveryPublicationEvidence", operationID: "getDeliveryPublicationEvidence", method: http.MethodGet, path: "/api/v1/projects/{project}/delivery/publications/{publication}", requestPath: "/api/v1/projects/project_demo/delivery/publications/publication_1", capability: access.CapabilityResourceRead, parameters: map[string]string{"project": projectID.String(), "publication": "publication_1"}},
+		{name: "getDeliveryOperatorSnapshot", operationID: "getDeliveryOperatorSnapshot", method: http.MethodGet, path: "/api/v1/projects/{project}/delivery/operator", requestPath: "/api/v1/projects/project_demo/delivery/operator", capability: access.CapabilityProjectAdmin, parameters: map[string]string{"project": projectID.String()}},
 		{name: "requestDeliveryPublicationApproval", operationID: "requestDeliveryPublicationApproval", path: "/api/v1/projects/{project}/delivery/publications/{publication}/approval-requests", requestPath: "/api/v1/projects/project_demo/delivery/publications/publication_1/approval-requests", capability: access.CapabilityResourcePublish, parameters: map[string]string{"project": projectID.String(), "publication": "publication_1"}},
 	} {
 		t.Run(test.name+"/exact scope allowed", func(t *testing.T) {
 			contract := newContract(test.operationID, test.path, test.capability)
+			if test.method != "" {
+				contract.Method = test.method
+			}
 			serve(t, contract, test.requestPath, test.parameters, true, projectID, []access.Capability{test.capability}, http.StatusNoContent, true)
 		})
 	}
@@ -956,7 +961,7 @@ func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 	if isAuthoringDeliveryBootstrapOperation("approveDeliveryPublicationApproval") {
 		t.Fatal("reviewer approval operation is authoring-authorized")
 	}
-	for _, operationID := range []string{"getDeliveryPublicationEvidence", "getDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval"} {
+	for _, operationID := range []string{"getDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval"} {
 		if isBootstrapDeliveryAPIGenOperation(operationID) {
 			t.Errorf("non-authoring publication operation %q unexpectedly admitted to bootstrap", operationID)
 		}
@@ -1694,7 +1699,7 @@ func TestAPIGenBootstrapAllowlistIncludesCandidateSourceAndManagedDataStaging(t 
 		}
 	}
 	for _, operation := range []string{
-		"createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview",
+		"createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "getDeliveryPublicationEvidence", "getDeliveryOperatorSnapshot",
 		"requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval",
 	} {
 		if !isBootstrapDeliveryAPIGenOperation(operation) {

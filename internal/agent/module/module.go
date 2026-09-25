@@ -126,6 +126,7 @@ type Principal struct {
 }
 
 type ModelConfig struct {
+	CredentialKey   string
 	APIKey          string
 	BaseURL         string
 	Model           string
@@ -211,7 +212,28 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		service.ConfigureDefaultModel(func(modelConfig agent.Config) agentcore.Model {
 			return agentopenai.NewModel(modelConfig, nil)
 		})
-		if config.ModelConfigFile != "" {
+		if config.Persistence != nil {
+			store, ok := config.Persistence.Repository.(agent.ConfigurationStore)
+			if !ok {
+				return nil, fmt.Errorf("agent configuration persistence is unavailable")
+			}
+			if config.Model.CredentialKey != "" {
+				manager, err := agent.NewConfigurationManager(store, service, config.Model.CredentialKey, agentopenai.TestConnection)
+				if err != nil {
+					return nil, err
+				}
+				service.SetConfigurationManager(manager)
+				if err := manager.Refresh(ctx); err != nil {
+					return nil, err
+				}
+			} else if _, err := store.CurrentConfiguration(ctx); !errors.Is(err, agent.ErrConfigurationNotFound) {
+				if err != nil {
+					return nil, err
+				}
+				return nil, fmt.Errorf("administrator-managed agent credentials require LEAPVIEW_AGENT_CREDENTIAL_KEY")
+			}
+		}
+		if config.ModelConfigFile != "" && !service.AdminManaged() {
 			reloader, reloadErr := configreload.NewFileReloader(config.ModelConfigFile, service, config.Logger, config.ReloadInterval)
 			if reloadErr != nil {
 				return nil, reloadErr

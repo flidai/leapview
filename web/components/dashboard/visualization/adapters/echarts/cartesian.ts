@@ -39,6 +39,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   const xType = axisType(envelope, xRef, horizontal ? 'value' : 'category')
   const stack = stackingMode(spec)
   const xAxis = withContinuousAxisPadding(axis(envelope, xRef, xType, context, horizontal ? 'primary_y' : 'x', horizontal ? spec.y : [spec.x]), spec.mark, stack !== 'percent')
+  containLineAreaEndpoints(xAxis, spec)
   const yRef = horizontal ? spec.x : primaryY
   const yType = axisType(envelope, yRef, horizontal ? 'category' : 'value')
   const yAxis = withContinuousAxisPadding(axis(envelope, yRef, yType, context, horizontal ? 'x' : 'primary_y', horizontal ? [spec.x] : spec.y), spec.mark, stack !== 'percent')
@@ -175,6 +176,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   }
   const split = splitCartesianSeries(envelope, context, categoryColors)
   if (split) {
+    containLineAreaEndpoints(split.categoryAxis, spec)
     const secondary = split.series.some((item) => (horizontal ? item.xAxisIndex : item.yAxisIndex) === 1)
     const primaryY = comboAxisField(spec, 'primary') ?? spec.y[0]!
     const primaryAxis = withContinuousAxisPadding(axis(envelope, primaryY, axisType(envelope, primaryY, 'value'), context, 'primary_y', spec.y), spec.mark, stack !== 'percent')
@@ -250,6 +252,13 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     ...(normalized ? { dataset: { id: `dataset:${normalized.datasetID}`, source: normalized.source } } : {}),
     ...applyBarLegendColors(legendDecoration(spec.presentation.legend, context, false, spec.presentation, values.map((value, index) => ({ value: value.field, name: String(series[index]?.name ?? value.field) }))), envelope, series, values), dataZoom,
     series: [...series, ...interactionHitSeries(envelope, spec, series)],
+  }
+}
+
+function containLineAreaEndpoints(axisOption: EChartsTranslation, spec: CartesianSpec): void {
+  const rotation = spec.axes?.find((candidate) => candidate.id === 'x')?.labelRotation
+  if ((spec.mark === 'line' || spec.mark === 'area') && axisOption.type === 'category' && (!rotation || rotation === 'automatic' || rotation === 'horizontal')) {
+    axisOption.axisLabel = { ...axisOption.axisLabel, alignMinLabel: 'left', alignMaxLabel: 'right' }
   }
 }
 
@@ -332,6 +341,9 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
   const titlelessHorizontalBar = cartesianIsHorizontal(spec)
     && spec.mark === 'bar'
     && !(spec.axes ?? []).some((candidate) => candidate.title || candidate.unit)
+  const titlelessLineArea = (spec.mark === 'line' || spec.mark === 'area')
+    && !(spec.axes ?? []).some((candidate) => candidate.title || candidate.unit)
+  const useOuterBounds = titlelessHorizontalBar || titlelessLineArea
   const outsideHorizontalLabels = spec.mark === 'bar' && cartesianIsHorizontal(spec)
     && ['outside', 'right'].includes(spec.presentation.labelPosition ?? '')
   return {
@@ -342,8 +354,8 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
       : 28 + (spec.presentation.legend === 'right' ? sideInset : 0),
     top: (spec.presentation.legend === 'top' ? 44 : 16) + (spec.presentation.legend === 'top' ? titleInset : 0),
     bottom: 16 + (bottomLegend ? 28 : 0) + (spec.presentation.dataZoom === true ? 42 : 0) + (bottomLegend ? titleInset : 0),
-    containLabel: !titlelessHorizontalBar,
-    ...(titlelessHorizontalBar ? { outerBoundsMode: 'same', outerBoundsContain: 'all' } : {}),
+    containLabel: !useOuterBounds,
+    ...(useOuterBounds ? { outerBoundsMode: 'same', outerBoundsContain: 'all' } : {}),
   }
 }
 

@@ -273,3 +273,13 @@ func TestProductionCustomS3EndpointsRequireHTTPS(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentModelAndReasoningHaveNoSharedDefault(t *testing.T) {
+	for _, setting := range Settings() {
+		if setting.Name == "LEAPVIEW_AGENT_MODEL" || setting.Name == "LEAPVIEW_AGENT_REASONING_EFFORT" {
+			if setting.Default != "" || setting.Example != "" || setting.EnvExample != "" {
+				t.Errorf("%s selects a shared model policy", setting.Name)
+			}
+		}
+	}
+}

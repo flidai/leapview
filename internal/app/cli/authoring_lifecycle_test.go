@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,7 +127,7 @@ func TestDevStatusReportsRedactedDurableProfileApplication(t *testing.T) {
 	parent := &cobra.Command{Use: "dev"}
 	runtime := &fakeLocalRuntimeLifecycle{status: localruntime.LifecycleStatus{
 		Exists: true, RuntimeStatus: "applied", Phase: "ready", CheckoutRoot: "/checkout", CheckoutID: "checkout-one",
-		TargetName: "local-checkout", TargetID: "target-local", ProjectID: "project:one", Attachments: []localruntime.AttachmentStatus{},
+		TargetName: "local-checkout", TargetID: "target-local", ProjectID: "project:one", Services: map[string]string{"leapview": "running"}, Attachments: []localruntime.AttachmentStatus{},
 	}}
 	reader := func(_ context.Context, status localruntime.LifecycleStatus) (*localruntime.DevelopmentProfileStatus, error) {
 		require.Equal(t, "local-checkout", status.TargetName)
@@ -147,6 +148,31 @@ func TestDevStatusReportsRedactedDurableProfileApplication(t *testing.T) {
 	require.Contains(t, output.String(), "Last completed profile application: none")
 	require.Contains(t, output.String(), "connection:inventory")
 	require.NotContains(t, output.String(), "credential")
+}
+
+func TestDevStatusReportsStoppedRuntimeWithoutContactingApplication(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			parent := &cobra.Command{Use: "dev"}
+			runtime := &fakeLocalRuntimeLifecycle{status: localruntime.LifecycleStatus{
+				Exists: true, RuntimeStatus: "applied", Phase: "ready", CheckoutRoot: "/checkout", CheckoutID: "checkout-one",
+				TargetName: "local-checkout", TargetID: "target-local", ProjectID: "project:one",
+				Services: map[string]string{"leapview": "exited", "postgres": "exited"},
+			}}
+			calls := 0
+			reader := func(context.Context, localruntime.LifecycleStatus) (*localruntime.DevelopmentProfileStatus, error) {
+				calls++
+				return nil, errors.New("application is stopped")
+			}
+			addLocalDevLifecycleCommands(t.Context(), parent, localLifecycleTestResolver, func(localdocker.Endpoint, *cobra.Command) (localRuntimeLifecycle, error) { return runtime, nil }, reader)
+			var output strings.Builder
+			parent.SetOut(&output)
+			parent.SetArgs([]string{"status", "--format", format})
+			require.NoError(t, parent.Execute())
+			require.Zero(t, calls)
+			require.Contains(t, output.String(), "exited")
+		})
+	}
 }
 
 func TestDevelopmentProfileStatusUsesExactRetainedLocalLogin(t *testing.T) {

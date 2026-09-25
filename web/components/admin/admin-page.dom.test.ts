@@ -2160,7 +2160,7 @@ test('admin agent prompt raw view stays read-only for deployment-managed instruc
 
     expect(state.rawValue).toBe('Initial prompt')
     expect(state.hasCodeEditor).toBe(false)
-    expect(state.notice).toContain('Deployment managed.')
+    expect(state.notice).toContain('Only a LeapView platform admin')
     expect(state.hasSaveButton).toBe(false)
     expect(state.modeLabels).toEqual(['Rendered Markdown', 'Raw Markdown'])
     expect(state.command).toBeNull()

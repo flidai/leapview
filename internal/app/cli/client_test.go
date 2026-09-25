@@ -65,8 +65,9 @@ func TestCapabilityAPIClientResolvesAuthoringProfile(t *testing.T) {
 		Environment: "production",
 		ProjectID:   "analytics",
 	}}
+	httpClient := authoringRefreshingHTTPClient(server.Client())
 	credentials, err := (capabilityAPIClient{
-		httpClient:        server.Client(),
+		httpClient:        httpClient,
 		authoring:         resolver,
 		validateAuthoring: true,
 	}).Resolve(
@@ -80,6 +81,9 @@ func TestCapabilityAPIClientResolvesAuthoringProfile(t *testing.T) {
 		credentials.CanonicalOrigin != server.URL {
 		t.Fatalf("resolver name=%q credentials=%+v", resolver.name, credentials)
 	}
+	retry, ok := httpClient.Transport.(*authoringRetryTransport)
+	require.True(t, ok)
+	require.Equal(t, boundAuthoringCredential{name: "prod", profile: resolver.profile}, retry.bound[server.URL+"\x00short-lived"])
 }
 
 func TestCapabilityAPIClientPreservesTransportTargetAndCanonicalOrigin(t *testing.T) {

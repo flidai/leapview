@@ -36,6 +36,17 @@ describe('development-session stable preview transitions', () => {
 
   test('stable document route derives its session event endpoint without changing query state', () => {
     expect(developmentSessionEventsPath('/api/v1/projects/project_1/targets/target_1/development-session/candidate/preview/dashboards/sales')).toBe('/api/v1/projects/project_1/targets/target_1/development-session/candidate/preview/events')
+    expect(developmentSessionEventsPath('/dashboards/dashboard:sales-overview/pages/overview', '/development-session/events')).toBe('/development-session/events')
+    expect(developmentSessionEventsPath('/dashboards/dashboard:sales-overview/pages/overview')).toBeNull()
     expect(developmentSessionEventsPath('/candidates/candidate-a/dashboards/sales')).toBeNull()
+  })
+
+  test('the ordinary app reloads only on a later valid candidate and retains invalid diagnostics', () => {
+    const controller = new DevelopmentSessionViewController()
+    expect(controller.consume({ revision: 1, lastValid: identity('candidate-a') })).toMatchObject({ shouldReload: false, outOfDate: false })
+    const invalid = controller.consume({ revision: 2, attempted: identity('', 'artifact-b', 'graph-b'), lastValid: identity('candidate-a'), diagnostics: [{ path: 'dashboards/sales.yaml', line: 9, message: 'invalid YAML' }] })
+    expect(invalid).toMatchObject({ shouldReload: false, outOfDate: true })
+    expect(invalid.diagnostics[0]).toMatchObject({ path: 'dashboards/sales.yaml', line: 9 })
+    expect(controller.consume({ revision: 3, lastValid: identity('candidate-b', 'artifact-b', 'graph-b') })).toMatchObject({ shouldReload: true, outOfDate: false })
   })
 })
