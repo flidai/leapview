@@ -796,7 +796,7 @@ func (p *postgresRunPersistence) MonitorRuns(ctx context.Context, scope refreshr
 	if err != nil {
 		return refreshrun.MonitorPage{}, err
 	}
-	return refreshrun.MonitorPage{Runs: runs, Total: page.Total, Failed: page.Failed, Completed: page.Completed, Active: page.Active}, nil
+	return refreshrun.MonitorPage{Runs: runs, Total: page.Total}, nil
 }
 
 func mapPostgresRuns(runs []refreshpostgres.Run) ([]refreshrun.RunRecord, error) {

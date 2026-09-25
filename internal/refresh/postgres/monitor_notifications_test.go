@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestMonitorRunsFiltersBeforePaginationAndKeepsActiveOutsideRange(t *testing.T) {
+func TestMonitorRunsFiltersBeforePagination(t *testing.T) {
 	_, db := refreshTestDB(t)
 	repository := New(db)
 	for _, item := range []struct{ id, pipeline, status string }{
@@ -44,7 +44,7 @@ func TestMonitorRunsFiltersBeforePaginationAndKeepsActiveOutsideRange(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 4 || page.Failed != 1 || page.Completed != 1 || page.Active != 1 || len(page.Runs) != 1 {
+	if page.Total != 4 || len(page.Runs) != 1 {
 		t.Fatalf("monitor page = %#v", page)
 	}
 	firstID := page.Runs[0].RunID
@@ -59,7 +59,7 @@ func TestMonitorRunsFiltersBeforePaginationAndKeepsActiveOutsideRange(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 1 || len(page.Runs) != 1 || page.Runs[0].RunID != "monitor-a" || page.Completed != 0 || page.Failed != 1 {
+	if page.Total != 1 || len(page.Runs) != 1 || page.Runs[0].RunID != "monitor-a" {
 		t.Fatalf("filtered page = %#v", page)
 	}
 	filter.Status = "running"
@@ -76,7 +76,7 @@ func TestMonitorRunsFiltersBeforePaginationAndKeepsActiveOutsideRange(t *testing
 	}
 	filter.Since = now.Add(time.Minute)
 	page, err = repository.MonitorRuns(t.Context(), Scope{ProjectID: "monitor-project", Environment: "dev"}, filter)
-	if err != nil || page.Total != 0 || page.Active != 1 {
+	if err != nil || page.Total != 0 {
 		t.Fatalf("out-of-range page = %#v, %v", page, err)
 	}
 }

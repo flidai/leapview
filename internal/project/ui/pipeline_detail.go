@@ -114,7 +114,6 @@ func pipelineDetailPageSignal(state PipelineDetailState, activeTab string) Pipel
 		ConcurrencyPolicy:       metaString(asset.Payload, "ConcurrencyPolicy", "concurrencyPolicy"),
 		StartingDeadlineSeconds: metaInt64(asset.Payload, "StartingDeadlineSeconds", "startingDeadlineSeconds"),
 		DefinitionYaml:          metaString(asset.Payload, "Configuration", "configuration"),
-		RecentRuns:              pipelineDetailRuns(asset, state.Refresh),
 		WaitingIntents:          pipelineWaitingIntentSignals(state.WaitingIntents, nil),
 	}
 	if monitor := state.RunMonitor; monitor != nil {
@@ -300,32 +299,6 @@ func pipelineDetailFindAsset(assets []projectview.DevelopAssetView, typ, ref str
 		}
 	}
 	return projectview.DevelopAssetView{}, false
-}
-
-func pipelineDetailRuns(asset projectview.DevelopAssetView, refresh AssetRefreshState) []PipelineDetailRunSignal {
-	runs := append([]AssetRefreshRun(nil), refresh.Runs...)
-	if refresh.Latest.ID != "" {
-		found := false
-		for _, run := range runs {
-			if run.ID == refresh.Latest.ID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			runs = append(runs, refresh.Latest)
-		}
-	}
-	sort.SliceStable(runs, func(i, j int) bool {
-		left := firstNonEmpty(runs[i].StartedAt, runs[i].CreatedAt)
-		right := firstNonEmpty(runs[j].StartedAt, runs[j].CreatedAt)
-		return left > right
-	})
-	out := make([]PipelineDetailRunSignal, 0, len(runs))
-	for _, run := range runs {
-		out = append(out, pipelineDetailRun(asset, run))
-	}
-	return out
 }
 
 func pipelineDetailLatestRun(asset projectview.DevelopAssetView, refresh AssetRefreshState) *PipelineDetailRunSignal {

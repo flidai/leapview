@@ -18,14 +18,6 @@ import (
 	g "maragu.dev/gomponents"
 )
 
-// PipelineMonitorCapacity counts the active pipeline runs represented by the
-// monitor read model. It is not a node-wide admission limit.
-type PipelineMonitorCapacity struct {
-	Running  int
-	Queued   int
-	Prepared int
-}
-
 type PipelineMonitorPipeline struct {
 	Asset              projectview.DevelopAssetView
 	Refresh            AssetRefreshState
@@ -39,7 +31,6 @@ type PipelineMonitorPipeline struct {
 type PipelineMonitorState struct {
 	Environment    string
 	CSRFToken      string
-	Capacity       PipelineMonitorCapacity
 	Pipelines      []PipelineMonitorPipeline
 	WaitingIntents []PipelineWaitingIntent
 	RunCommand     uicommand.Binding
@@ -64,7 +55,7 @@ type PipelineRunMonitor struct {
 	Query, Range, Pipeline, Status, Trigger string
 	Page                                    int64
 	PageSize                                int32
-	Total, Failed, Completed, Active        int64
+	Total                                   int64
 	Runs                                    []PipelineMonitorRun
 }
 
@@ -146,23 +137,13 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 			// search only; never use it as a row or command identity.
 			ID:                pipeline.Asset.ID,
 			Title:             firstNonEmpty(pipeline.Asset.Title, pipeline.Asset.Key, pipeline.Asset.ID),
-			Description:       uisignals.Optional(pipeline.Asset.Description),
 			Href:              assetHref,
 			SemanticModel:     pipelineSemanticModelDisplayName(firstNonEmpty(pipeline.SemanticModelTitle, metaString(pipeline.Asset.Payload, "SemanticModel", "semanticModel"))),
 			Schedule:          pipelineScheduleLabel(pipeline.Asset.Payload),
 			PipelineID:        pipeline.Asset.ID,
-			Running:           status == "queued" || status == "running" || status == "prepared",
 			Status:            status,
 			PublicationStatus: firstNonEmpty(pipeline.PublicationStatus, "none"),
 			RecentRuns:        pipelineRecentRuns(pipeline.Asset.ID, pipeline.Refresh),
-			LatestRunHref:     uisignals.Optional(pipelineRunHref(pipeline.Asset.ID, pipeline.Refresh.Latest.ID)),
-			Duration:          uisignals.Optional(refreshRunDuration(pipeline.Refresh.Latest)),
-			LastSuccessful: uisignals.Optional(
-				pipeline.Refresh.LatestSuccessful.FinishedAt,
-			),
-		}
-		if pipeline.Refresh.Latest.ID == "" {
-			item.LatestRunHref = nil
 		}
 		if !pipeline.PublicationAt.IsZero() {
 			item.LastPublishedAt = uisignals.Optional(pipeline.PublicationAt.UTC().Format(time.RFC3339))
@@ -177,7 +158,6 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 		items = append(items, item)
 	}
 
-	capacity := state.Capacity
 	runsTable := pipelineRunsTable(pipelines)
 	page := uisignals.PipelinePageSignal{
 		Kind:           uisignals.RouteKindPipelines,
@@ -210,16 +190,6 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 			page.WaitingIntents = pipelineWaitingIntentSignals(state.WaitingIntents, page.RunsTable.Rows)
 			page.RunMonitor = &uisignals.PipelineRunMonitorSignal{Query: monitor.Query, Range: monitor.Range, Pipeline: monitor.Pipeline, Status: monitor.Status, Trigger: monitor.Trigger,
 				Page: monitor.Page, PageSize: monitor.PageSize, Total: monitor.Total}
-			page.Metrics = []uisignals.PipelineMetricSignal{
-				{Label: "Active now", Value: fmt.Sprint(monitor.Active), Detail: uisignals.Pointer("All time · current state"), Tone: uisignals.Pointer("accent")},
-				{Label: "Failed in range", Value: fmt.Sprint(monitor.Failed), Detail: uisignals.Pointer("Matches selected time range and filters"), Tone: uisignals.Pointer(metricFailureTone(int(monitor.Failed)))},
-				{Label: "Succeeded in range", Value: fmt.Sprint(monitor.Completed), Detail: uisignals.Pointer("Matches selected time range and filters"), Tone: uisignals.Pointer("success")},
-			}
-		} else {
-			page.Metrics = []uisignals.PipelineMetricSignal{
-				{Label: "Running", Value: fmt.Sprint(capacity.Running + capacity.Prepared), Detail: uisignals.Pointer("Refresh jobs executing or publishing now"), Tone: uisignals.Pointer("accent")},
-				{Label: "Queued", Value: fmt.Sprint(capacity.Queued), Detail: uisignals.Pointer("Waiting for shared capacity"), Tone: uisignals.Pointer("attention")},
-			}
 		}
 	}
 	return page
@@ -448,11 +418,4 @@ func pipelineRunsTable(pipelines []PipelineMonitorPipeline) recordTable {
 
 func pipelineRunHref(pipelineID, runID string) string {
 	return "/pipelines/" + url.PathEscape(pipelineID) + "/runs/" + url.PathEscape(runID)
-}
-
-func metricFailureTone(failed int) string {
-	if failed > 0 {
-		return "danger"
-	}
-	return "success"
 }

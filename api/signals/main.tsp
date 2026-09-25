@@ -746,30 +746,16 @@ model CatalogPageSignal {
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["project", "pipelines", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
-model PipelineMetricSignal {
-  `detail`?: string;
-  `label`: string;
-  `tone`?: string;
-  `value`: string;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["project", "pipelines", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
 model PipelineListItemSignal {
   `assetId`: string;
   `canRun`: boolean;
-  `description`?: string;
-  `duration`?: string;
   `href`: string;
   `id`: string;
-  `lastSuccessful`?: string;
-  `latestRunHref`?: string;
   `lastPublishedAt`?: string;
   `publicationStatus`: "confirmed" | "none" | "unavailable";
   `recentRuns`: PipelineDetailRunSignal[];
   `nextRun`?: string;
   `pipelineId`: string;
-  `running`: boolean;
   `schedule`: string;
   `semanticModel`: string;
   `status`: string;
@@ -831,7 +817,6 @@ model PipelinePageSignal {
   `description`: string;
   `environment`: string;
   `kind`: RouteKind;
-  `metrics`: PipelineMetricSignal[];
   `pipelines`: PipelineListItemSignal[];
   `waitingIntents`: PipelineWaitingIntentSignal[];
   `runsTable`: RecordTableSignal;
@@ -889,7 +874,6 @@ model PipelineDetailPageSignal {
   `concurrencyDescription`: string;
   `startingDeadlineSeconds`: int64;
   `latestRun`?: PipelineDetailRunSignal;
-  `recentRuns`: PipelineDetailRunSignal[];
   `waitingIntents`: PipelineWaitingIntentSignal[];
   `runsTable`?: RecordTableSignal;
   `runMonitor`?: PipelineRunMonitorSignal;
