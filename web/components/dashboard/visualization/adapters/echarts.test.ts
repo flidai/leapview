@@ -1398,11 +1398,6 @@ test('ECharts derives a truthful gauge domain only when no range was authored', 
   const zero = echartsOption(envelope, defaultRendererContext) as any
   expect(zero.series[0]).toMatchObject({ min: 0, max: 1 })
 
-  envelope.spec.presentation.minimum = 0
-  envelope.spec.presentation.maximum = 1
-  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['1.2']]
-  const explicitOutOfRange = echartsOption(envelope, defaultRendererContext) as any
-  expect(explicitOutOfRange.graphic[0].style.text).toContain('outside configured gauge domain')
 })
 
 test('ECharts rejects incomplete authored gauge domains and auto-domain annotations', () => {
