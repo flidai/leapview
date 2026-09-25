@@ -49,6 +49,10 @@ func (c *Controller) PrepareRevision019(ctx context.Context, payloadRoot, initSc
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
+	preparation, err := c.beginPredecessorPreparation(ctx)
+	if err != nil {
+		return nil, err
+	}
 	contents, err := os.ReadFile(filepath.Join(payloadRoot, "leapview.env.example"))
 	if err != nil {
 		return nil, err
@@ -56,6 +60,13 @@ func (c *Controller) PrepareRevision019(ctx context.Context, payloadRoot, initSc
 	if err := securefs.WritePrivateFileAtomic(c.path(appEnvName), contents); err != nil {
 		return nil, err
 	}
+	defer func() {
+		if resultErr != nil {
+			if cleanupErr := preparation.cleanup(); cleanupErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("predecessor preparation cleanup incomplete; retry remains blocked: %w", cleanupErr))
+			}
+		}
+	}()
 	if err := c.setImage(image); err != nil {
 		return nil, fmt.Errorf("select predecessor image for provider setup: %w", err)
 	}
@@ -63,10 +74,12 @@ func (c *Controller) PrepareRevision019(ctx context.Context, payloadRoot, initSc
 	if err != nil {
 		return nil, err
 	}
+	preparation.networkAttempted = true
 	network, err := c.prepareQualificationNativePostgresNetwork(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("prepare predecessor Compose network: %w", err)
 	}
+	preparation.providerAttempted = true
 	topology, err := c.startQualificationNativePostgresTopology(ctx, qualificationNativePostgresTopologyOptions{
 		ComposeProject: project, ComposeNetwork: network, BundleRoot: c.root, InitScript: initScript,
 		PersistentDataVolume: project + "_predecessor-postgres-data",
@@ -75,11 +88,6 @@ func (c *Controller) PrepareRevision019(ctx context.Context, payloadRoot, initSc
 	if err != nil {
 		return nil, fmt.Errorf("start predecessor PostgreSQL topology: %w", err)
 	}
-	defer func() {
-		if resultErr != nil {
-			resultErr = errors.Join(resultErr, topology.Remove(context.Background()))
-		}
-	}()
 	if err := c.writeQualificationNativePostgresEnvironment(topology); err != nil {
 		return nil, err
 	}

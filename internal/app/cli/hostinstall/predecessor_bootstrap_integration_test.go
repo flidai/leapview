@@ -71,6 +71,28 @@ func TestRevision019PredecessorBootstrapWithRealProviders(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(paths.Root, "deployment.env"), []byte(deployment), 0o600))
 	initScript, err := filepath.Abs("../../../../deploy/postgres/init.sh")
 	require.NoError(t, err)
+	// Fail a real install after leapview.env is seeded, then retry through the
+	// same production entrypoint with Docker available again.
+	dockerBin, err := exec.LookPath("docker")
+	require.NoError(t, err)
+	for _, failure := range []struct{ command, message string }{
+		{"create --no-build leapview", "create qualification Compose application"},
+		{"admin delivery pool qualify", "generate qualification physical-pool artifacts"},
+	} {
+		failingDocker := filepath.Join(t.TempDir(), "docker")
+		require.NoError(t, os.WriteFile(failingDocker, []byte("#!/bin/sh\ncase \" $* \" in *' "+failure.command+" '*) exit 71;; esac\nexec "+dockerBin+" \"$@\"\n"), 0o700))
+		failedInstaller, err := New(Options{Paths: paths, ExpectedImage: image, Revision019InitScript: initScript, DockerBin: failingDocker})
+		require.NoError(t, err)
+		require.ErrorContains(t, failedInstaller.Install(ctx), failure.message)
+		require.NoFileExists(t, filepath.Join(paths.Root, "leapview.env"))
+		require.NoFileExists(t, filepath.Join(paths.Root, installMarkerName))
+		require.NoDirExists(t, filepath.Join(paths.Root, "predecessor-provider-tls"))
+		require.NoDirExists(t, filepath.Join(paths.Root, "predecessor-pool"))
+		require.FileExists(t, filepath.Join(paths.Root, revision019BindingName))
+		volumes, err := exec.CommandContext(ctx, "docker", "volume", "ls", "--filter", "name=^"+project+"_predecessor-postgres-data$", "--format", "{{.Name}}").Output()
+		require.NoError(t, err)
+		require.Empty(t, strings.TrimSpace(string(volumes)))
+	}
 	installer, err := New(Options{Paths: paths, ExpectedImage: image, Revision019InitScript: initScript})
 	require.NoError(t, err)
 	require.NoError(t, installer.Install(ctx))
