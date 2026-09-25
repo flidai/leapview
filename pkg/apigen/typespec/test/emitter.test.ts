@@ -142,26 +142,19 @@ describe("APIGen TypeSpec emitter", () => {
   it("preserves authored model examples in schema IR", async () => {
     const doc = await compileSource(`
       using Http;
-
       @service(#{ title: "Example API" })
       namespace ExampleAPI;
-
       @example(#{scope: "resource", projectId: "project:analytics"})
       model PermissionTarget {
         scope: string;
         projectId?: string;
         instanceId?: string;
       }
-
       @route("/permission-target")
       @get
       op getPermissionTarget(): PermissionTarget;
     `);
-
-    expect(doc.schemas.PermissionTarget.example).toEqual({
-      scope: "resource",
-      projectId: "project:analytics",
-    });
+    expect(doc.schemas.PermissionTarget.example).toEqual({ scope: "resource", projectId: "project:analytics" });
   });
 
   it("emits inherited scalar patterns and constrained map names", async () => {
