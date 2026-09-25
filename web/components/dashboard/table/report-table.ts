@@ -155,6 +155,8 @@ export class ReportTable extends LitElement {
   private jumpTimer = 0
   private pendingJumpStart = 0
   private expectedBlocks = new Map<BlockID, ExpectedBlockRequest>()
+  private windowRetryDelay = 2500
+  private windowRetryTimers = new Map<number, number>()
   private latestAcceptedSeq = new Map<BlockID, number>()
   private blockCache: Record<BlockID, TableBlock> = emptyBlocks()
   private bodyViewportRef: Ref<HTMLDivElement> = createRef()
@@ -1032,6 +1034,7 @@ export class ReportTable extends LitElement {
     }
     this.clearResizeGuide()
     this.clearJumpTimer()
+    this.clearWindowRetryTimers()
     super.disconnectedCallback()
   }
 
@@ -1045,6 +1048,7 @@ export class ReportTable extends LitElement {
       this.blockCache = emptyBlocks()
       this.shouldResetScroll = true
       this.expectedBlocks.clear()
+      this.clearWindowRetryTimers()
       this.latestAcceptedSeq.clear()
       this.clearJumpTimer()
       this.clearLocalSelection()
@@ -1747,6 +1751,36 @@ export class ReportTable extends LitElement {
     this.jumpTimer = 0
   }
 
+  private scheduleWindowRetry(requestSeq: number): void {
+    const timer = window.setTimeout(() => {
+      this.windowRetryTimers.delete(requestSeq)
+      let expired = false
+      for (const [id, request] of this.expectedBlocks) {
+        if (request.requestSeq !== requestSeq) continue
+        this.expectedBlocks.delete(id)
+        expired = true
+      }
+      if (!expired) return
+      this.requestUpdate()
+      this.scheduleEnsureBlocksForScroll()
+    }, this.windowRetryDelay)
+    this.windowRetryTimers.set(requestSeq, timer)
+  }
+
+  private clearSettledWindowRetryTimers(): void {
+    const pendingSequences = new Set([...this.expectedBlocks.values()].map((request) => request.requestSeq))
+    for (const [requestSeq, timer] of this.windowRetryTimers) {
+      if (pendingSequences.has(requestSeq)) continue
+      clearTimeout(timer)
+      this.windowRetryTimers.delete(requestSeq)
+    }
+  }
+
+  private clearWindowRetryTimers(): void {
+    for (const timer of this.windowRetryTimers.values()) clearTimeout(timer)
+    this.windowRetryTimers.clear()
+  }
+
   private desiredStarts(currentStart: number): number[] {
     return this.virtualizationController.desiredStarts(currentStart, this.availableRows, this.chunkSize)
   }
@@ -1762,6 +1796,7 @@ export class ReportTable extends LitElement {
     const count = this.chunkSize
     const requestSeq = ++this.requestSeq
     if (block === 'all') {
+      this.clearWindowRetryTimers()
       this.expectedBlocks.clear()
       const starts = this.allBlockStarts(start)
       blockIDs.forEach((id, index) => {
@@ -1773,6 +1808,7 @@ export class ReportTable extends LitElement {
     } else {
       this.expectedBlocks.set(block, { start, requestSeq, resetVersion, sort })
     }
+    this.scheduleWindowRetry(requestSeq)
     this.requestUpdate()
     this.dispatchEvent(new CustomEvent<VisualWindowCommand>('lv-visual-window-change', {
       bubbles: true,
@@ -1820,6 +1856,7 @@ export class ReportTable extends LitElement {
         this.expectedBlocks.delete(id)
       }
     }
+    this.clearSettledWindowRetryTimers()
   }
 
   private shouldAcceptBlock(id: BlockID, incoming: TableBlock): boolean {
