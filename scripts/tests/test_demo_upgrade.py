@@ -1,4 +1,5 @@
 """Read-only classification of immutable demo upgrade candidates."""
+import hashlib
 import importlib.util
 import pathlib
 import unittest
@@ -74,6 +75,42 @@ def write_compatibility(root):
 
 
 class SourceTransitionTests(unittest.TestCase):
+    def test_only_top_level_embedded_sql_enters_source_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_compatibility(root)
+            def git(*args):
+                return subprocess.check_output(['git', *args], cwd=root, stderr=subprocess.PIPE)
+            git('init', '-q')
+            git('config', 'user.name', 'Test')
+            git('config', 'user.email', 'test@example.invalid')
+            migrations = root / plan.MIGRATIONS
+            fixtures = migrations / 'testdata'
+            fixtures.mkdir(parents=True)
+            (migrations/'goose.go').write_text('const (\n CurrentRevision int64 = 2\n)\n')
+            expected = {}
+            for name, sql in [('001_initial.sql', 'initial SQL'), ('002_next.sql', 'next SQL')]:
+                (migrations/name).write_text(sql)
+                expected[name] = hashlib.sha256(sql.encode()).hexdigest()
+            # Neither a distinct historical lineage nor a matching basename is
+            # embedded by Goose's top-level //go:embed *.sql declaration.
+            (fixtures/'001_alternate_history.sql').write_text('historical fixture')
+            (fixtures/'002_next.sql').write_text('fixture with colliding basename')
+            git('add', '.')
+            git('commit', '-qm', 'predecessor with SQL fixtures')
+            previous = git('rev-parse', 'HEAD').decode().strip()
+            (fixtures/'003_future.sql').write_text('future migration fixture only')
+            git('add', '.')
+            git('commit', '-qm', 'test fixture only')
+            candidate = git('rev-parse', 'HEAD').decode().strip()
+            with patch.object(plan, 'git', side_effect=git):
+                result = plan.inspect_transition(previous, candidate)
+            for source in ('sourceBefore', 'sourceAfter'):
+                self.assertEqual(result[source]['migrations'], expected)
+                self.assertEqual(len(result[source]['migrations']), result[source]['schema'])
+            self.assertEqual(result['mode'], 'image-only')
+            self.assertEqual(result['pendingMigrations'], [])
+
     def test_sources_are_read_from_exact_commits_not_worktree(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
