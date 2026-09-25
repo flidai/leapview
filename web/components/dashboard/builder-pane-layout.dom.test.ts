@@ -161,6 +161,7 @@ test('builder agent uses the compact main-agent welcome layout and starter promp
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    await page.waitForLoadState('networkidle')
     await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agent: { transcript: [], status: { enabled: true, running: false }, composer: { value: '', disabled: false } }, agentContext: { pageTitle: 'Overview' } })
@@ -211,6 +212,7 @@ test('unrelated builder clicks neither open nor refocus the Agent', async () => 
   try {
     await page.goto(baseURL, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    await page.waitForLoadState('networkidle')
     await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agent: { transcript: [], status: { enabled: true, running: false }, composer: { value: '', disabled: false } } })
