@@ -169,7 +169,6 @@ class ChatDrawer extends DatastarLit(LitElement) {
     .welcome p { margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-body); }
     .prompts { display: grid; gap: var(--lv-space-sm); }
     .prompt { width: 100%; height: auto; min-height: var(--control-large-size); padding: var(--lv-space-md); text-align: left; justify-content: start; border: var(--lv-border-muted); background: var(--lv-bg-panel); color: var(--lv-fg-default); font: inherit; }
-    .context-hint { color: var(--lv-fg-muted); }
     button:focus-visible, a:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-line-accent); outline-offset: var(--lv-space-2xs); }
 
     .close-action {
@@ -187,6 +186,15 @@ class ChatDrawer extends DatastarLit(LitElement) {
 
     :host([embedded]) .header {
       padding-block-start: var(--lv-space-sm);
+    }
+
+    :host([embedded]) .text-action {
+      width: var(--control-medium-size);
+      padding-inline: 0;
+    }
+
+    :host([embedded]) .text-action span {
+      display: none;
     }
 
     .context {
@@ -399,7 +407,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
           <section class="context" aria-label="Included dashboard context">
             <div class="context-line">
               <span class="page-context">${context?.pageTitle || 'Current page'}</span>
-              ${controls || selections ? html`<span class="context-separator" aria-hidden="true">·</span><span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>` : html`<span class="context-hint">· Page included</span>`}
+              ${controls || selections ? html`<span class="context-separator" aria-hidden="true">·</span><span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>` : null}
             </div>
             ${this.referenceLimitMessage ? html`
               <div class="reference-limit-status" data-reference-limit-status role="status" aria-live="polite">${this.referenceLimitMessage}</div>
@@ -408,12 +416,12 @@ class ChatDrawer extends DatastarLit(LitElement) {
         </header>
         ${showWelcome ? html`
           <section class="welcome" aria-label="Start a dashboard conversation">
-            <h2>What would you like to understand?</h2>
-            <p>Ask about ${context?.exploration ? 'this data' : context?.dashboardTitle || 'this dashboard'}. Your current page, filters, and selections are included.</p>
+            <h2>${this.embedded ? 'What should I change?' : 'What would you like to understand?'}</h2>
+            <p>${this.embedded ? 'Ask me to add, change, move, or resize a chart on this page.' : `Ask about ${context?.exploration ? 'this data' : context?.dashboardTitle || 'this dashboard'}. Your current page, filters, and selections are included.`}</p>
             <div class="prompts">
-              ${['Summarize the key takeaways on this page.', 'Explain how the main metrics are calculated.', 'Which results stand out, and why?'].map(prompt => html`<button class="prompt" @click=${() => this.fillPrompt(prompt)}>${prompt}</button>`)}
+              ${(this.embedded ? ['Add a chart for the main metric by category.', 'Change a chart to a bar chart.', 'Move a chart to a different position.'] : ['Summarize the key takeaways on this page.', 'Explain how the main metrics are calculated.', 'Which results stand out, and why?']).map(prompt => html`<button class="prompt" @click=${() => this.fillPrompt(prompt)}>${prompt}</button>`)}
             </div>
-            <p>Choose a question to edit, or use @ to attach a specific chart.</p>
+            <p>Choose a prompt to edit, or use @ to attach a specific chart.</p>
           </section>
         ` : null}
         <lv-chat-thread ?hidden=${showWelcome}

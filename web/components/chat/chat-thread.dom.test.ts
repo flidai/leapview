@@ -358,6 +358,16 @@ test('chat thread renders visual artifacts with dashboard web components', async
   expect(rendered.artifactBackground).toBe('rgb(1, 2, 3)')
   expect(rendered.artifactBorderTopWidth).toBe('2px')
 
+  const drawer = await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
+    thread.surface = 'drawer'
+    await thread.updateComplete
+    return {
+      toolRows: thread.shadowRoot.querySelectorAll('.tool-call').length,
+      artifacts: thread.shadowRoot.querySelectorAll('lv-visual-artifact').length,
+    }
+  })
+  expect(drawer).toEqual({ toolRows: 0, artifacts: 2 })
+
   await page.close()
 })
 
@@ -448,6 +458,37 @@ test('chat thread renders tool activity with accessible expandable details', asy
   expect(details.errorText).toBeUndefined()
   expect(details.detailsText[2]).toContain('dashboard:sales')
   await page.close()
+})
+
+test('drawer keeps answers and failures but hides routine tool activity', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
+      thread.surface = 'drawer'
+      thread.status = { enabled: true, running: true }
+      thread.transcript = [
+        { id: 'user', kind: 'user', text: 'Add a chart.' },
+        { id: 'running', kind: 'tool', name: 'catalog_search', status: 'running' },
+        { id: 'complete', kind: 'tool', name: 'catalog_get', status: 'complete' },
+        { id: 'failed', kind: 'tool', name: 'edit_dashboard_source', status: 'error', error: 'Could not edit dashboard.' },
+        { id: 'answer', kind: 'assistant', markdown: 'I could not add the chart.' },
+      ]
+      await thread.updateComplete
+    })
+    const state = await page.locator('lv-chat-thread').evaluate((thread: any) => ({
+      tools: [...thread.shadowRoot.querySelectorAll('.tool-trigger')].map((node: Element) => node.textContent?.replace(/\s+/g, ' ').trim()),
+      working: Boolean(thread.shadowRoot.querySelector('.working')),
+      answer: thread.shadowRoot.querySelector('.agent-markdown')?.value,
+      user: thread.shadowRoot.querySelector('.message.user')?.textContent?.trim(),
+    }))
+    expect(state.tools).toEqual(['Edit Dashboard Source Failed'])
+    expect(state.working).toBe(true)
+    expect(state.answer).toBe('I could not add the chart.')
+    expect(state.user).toContain('Add a chart.')
+  } finally {
+    await page.close()
+  }
 })
 
 test('tool failure keeps a distinct error message when its result has no error details', async () => {
