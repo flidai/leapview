@@ -5,7 +5,7 @@ import re
 import subprocess
 
 MIGRATIONS = 'internal/platform/postgres/migrations'
-SCHEMA_PATHS = ['internal/platform/postgres', 'internal/analytics/duckdb',
+SCHEMA_PATHS = ['internal/platform/postgres', 'internal/app/postgresbaseline', 'internal/analytics/duckdb',
                 'internal/analytics/ducklake', 'go.mod', 'go.sum']
 
 

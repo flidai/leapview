@@ -99,6 +99,30 @@ class SourceTransitionTests(unittest.TestCase):
                              ['029_agent_configuration.sql', '030_browser_session_client_label.sql'])
             self.assertEqual(result['candidateRevision'], candidate)
 
+    def test_product_role_policy_changes_require_review_without_schema_bump(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            def git(*args):
+                return subprocess.check_output(['git', *args], cwd=root, stderr=subprocess.PIPE)
+            git('init', '-q')
+            git('config', 'user.name', 'Test')
+            git('config', 'user.email', 'test@example.invalid')
+            migrations = root / plan.MIGRATIONS
+            migrations.mkdir(parents=True)
+            (migrations/'goose.go').write_text('const (\n CurrentRevision int64 = 30\n)\n')
+            policy = root/'internal/app/postgresbaseline/baseline.go'
+            policy.parent.mkdir(parents=True)
+            policy.write_text('old role policy')
+            git('add', '.'); git('commit', '-qm', 'predecessor')
+            previous = git('rev-parse', 'HEAD').decode().strip()
+            policy.write_text('new role policy requiring database reconciliation')
+            git('add', '.'); git('commit', '-qm', 'candidate')
+            candidate = git('rev-parse', 'HEAD').decode().strip()
+            with patch.object(plan, 'git', side_effect=git):
+                result = plan.inspect_transition(previous, candidate)
+            self.assertEqual(result['mode'], 'review-required')
+            self.assertFalse(result['imageOnlyEligible'])
+
     def test_mutable_revision_rejected_before_git(self):
         with patch.object(plan, 'git') as git:
             with self.assertRaises(ValueError): plan.source_schema('main')

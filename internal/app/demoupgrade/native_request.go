@@ -96,7 +96,7 @@ func (r NativeRequest) Identity() (Identity, error) {
 	// under postgres are the candidate's tested embedded migrator and immutable
 	// SQL set; the runner separately rejects rewritten historical SQL.
 	for _, path := range p.ChangedCompatibilityPaths {
-		if strings.HasPrefix(path, "internal/platform/postgres/") {
+		if strings.HasPrefix(path, "internal/platform/postgres/") || strings.HasPrefix(path, "internal/app/postgresbaseline/") {
 			continue
 		}
 		if strings.HasSuffix(path, "_test.go") && (strings.HasPrefix(path, "internal/analytics/duckdb/") || strings.HasPrefix(path, "internal/analytics/ducklake/")) {

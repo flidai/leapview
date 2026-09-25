@@ -30,6 +30,7 @@ func nativeRequestFixture(t *testing.T) NativeRequest {
 }
 func TestNativeRequestBindsQualifiedDigestSourceAndReviewedSQL(t *testing.T) {
 	r := nativeRequestFixture(t)
+	r.Plan.ChangedCompatibilityPaths = []string{"internal/app/postgresbaseline/baseline.go", "internal/platform/postgres/migrations/goose.go"}
 	id, err := r.Identity()
 	if err != nil {
 		t.Fatal(err)
