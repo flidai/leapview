@@ -3648,6 +3648,12 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_QA_STORAGE_STATE": {
+      "description": "Private Playwright browser-session file used by authenticated route and visual QA.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "ui-qa"
+    },
     "LEAPVIEW_QUALIFICATION_REQUIRED": {
       "default": "false",
       "description": "Make missing qualification prerequisites fail the released-artifact gate.",
