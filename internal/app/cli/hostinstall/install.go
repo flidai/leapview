@@ -57,13 +57,17 @@ type Options struct {
 	Stdin            io.Reader
 	Stdout           io.Writer
 	Stderr           io.Writer
+	// Revision019InitScript enables the disposable predecessor provider setup.
+	// Ordinary installation never enters this path.
+	Revision019InitScript string
 }
 
 type Installer struct {
-	paths            Paths
-	lifecycleFactory LifecycleFactory
-	run              RunFunc
-	expectedImage    string
+	paths                 Paths
+	lifecycleFactory      LifecycleFactory
+	run                   RunFunc
+	expectedImage         string
+	revision019InitScript string
 }
 
 func DefaultPaths(payload, config string) Paths {
@@ -115,7 +119,8 @@ func New(options Options) (*Installer, error) {
 	}
 	return &Installer{
 		paths: paths, lifecycleFactory: factory, run: run,
-		expectedImage: strings.TrimSpace(options.ExpectedImage),
+		expectedImage:         strings.TrimSpace(options.ExpectedImage),
+		revision019InitScript: strings.TrimSpace(options.Revision019InitScript),
 	}, nil
 }
 
@@ -146,6 +151,14 @@ func (i *Installer) Install(ctx context.Context) error {
 	if installed != nil && !configsEqual(*installed, config) {
 		return fmt.Errorf("bootstrap configuration does not match the installed instance; use leapviewctl lifecycle commands for changes")
 	}
+	if i.revision019InitScript != "" {
+		if normalized.Image != revision019PredecessorImage || config.TargetID != "" {
+			return fmt.Errorf("predecessor provider setup requires the exact revision-019 legacy configuration")
+		}
+		if err := verifyPreparedRevision019Binding(i.paths.Root, config); err != nil {
+			return err
+		}
+	}
 	generation, err := stageGeneration(i.paths, normalized.Image, payload)
 	if err != nil {
 		return fmt.Errorf("stage deployment generation: %w", err)
@@ -164,16 +177,65 @@ func (i *Installer) Install(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var bootstrap composectl.Revision019BootstrapHandle
+	if installed == nil && i.revision019InitScript != "" {
+		preparer, ok := lifecycle.(interface {
+			PrepareRevision019(context.Context, string, string, string) (composectl.Revision019BootstrapHandle, error)
+		})
+		if !ok {
+			return fmt.Errorf("host lifecycle does not support revision-019 provider preparation")
+		}
+		bootstrap, err = preparer.PrepareRevision019(ctx, i.paths.Payload, i.revision019InitScript, normalized.Image)
+		if err != nil {
+			return fmt.Errorf("prepare revision-019 provider and pool identity: %w", err)
+		}
+	}
 	if installed == nil {
-		if err := lifecycle.Initialize(ctx, composectl.InitOptions{
+		initOptions := composectl.InitOptions{
 			AdminEmail: normalized.AdminEmail, Domain: normalized.Domain,
 			Environment: normalized.Environment, Image: normalized.Image,
 			NoHTTPS: !*config.HTTPS,
-		}); err != nil {
+		}
+		if bootstrap != nil {
+			initializer, ok := lifecycle.(interface {
+				InitializeRevision019FromPayload(context.Context, string, composectl.InitOptions) error
+			})
+			if !ok {
+				return fmt.Errorf("host lifecycle does not support predecessor-owned initialization")
+			}
+			err = initializer.InitializeRevision019FromPayload(ctx, i.paths.Payload, initOptions)
+		} else {
+			err = lifecycle.Initialize(ctx, initOptions)
+		}
+		if err != nil {
 			return fmt.Errorf("initialize LeapView: %w", err)
 		}
+		if bootstrap != nil {
+			if err := bootstrap.Apply(ctx); err != nil {
+				return fmt.Errorf("admit revision-019 physical pool: %w", err)
+			}
+		}
 	}
-	if err := lifecycle.Start(ctx); err != nil {
+	if i.revision019InitScript != "" {
+		verifier, ok := lifecycle.(interface {
+			VerifyRevision019Prerequisites(context.Context, string) error
+		})
+		if !ok {
+			return fmt.Errorf("host lifecycle does not support revision-019 provider verification")
+		}
+		if err := verifier.VerifyRevision019Prerequisites(ctx, normalized.Image); err != nil {
+			return fmt.Errorf("verify revision-019 provider and pool before start: %w", err)
+		}
+		starter, ok := lifecycle.(interface {
+			StartRevision019Bootstrap(context.Context, bool) error
+		})
+		if !ok {
+			return fmt.Errorf("host lifecycle does not support revision-019 bootstrap start")
+		}
+		if err := starter.StartRevision019Bootstrap(ctx, !*config.HTTPS); err != nil {
+			return fmt.Errorf("start revision-019 bootstrap: %w", err)
+		}
+	} else if err := lifecycle.Start(ctx); err != nil {
 		return fmt.Errorf("start LeapView: %w", err)
 	}
 	marker, err := json.MarshalIndent(config, "", "  ")

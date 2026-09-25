@@ -183,7 +183,34 @@ func TestRevision019CannotRebindExistingUnboundInstallation(t *testing.T) {
 func TestCurrentInstallerKeepsItsConfiguration(t *testing.T) {
 	bootstrap := read(t, "bootstrap-linux.sh")
 	if !strings.Contains(bootstrap, `install_config="$config_file"`) ||
-		strings.Count(bootstrap, `if [[ "$leapview_image" == "$revision019_image" ]]`) != 3 {
+		!strings.Contains(bootstrap, `installer="$payload_dir/leapviewctl"`) ||
+		!strings.Contains(bootstrap, `--config "$install_config"`) ||
+		!strings.Contains(bootstrap, `installer="$controller_dir/leapviewctl"`) {
 		t.Fatal("current installers must receive the unmodified current configuration")
+	}
+}
+
+func TestActualRevision019ExecutableAcceptsTranslatedConfiguration(t *testing.T) {
+	if os.Getenv("LEAPVIEW_TEST_REV019_EXECUTABLE") != "1" {
+		t.Skip("set LEAPVIEW_TEST_REV019_EXECUTABLE=1 to exercise the immutable predecessor image")
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("Docker is unavailable")
+	}
+	directory := t.TempDir()
+	config := filepath.Join(directory, "current.json")
+	translated := filepath.Join(directory, "revision019.json")
+	binding := filepath.Join(directory, "binding.json")
+	writePrivateJSON(t, config, revision019Config())
+	runRevision019Compat(t, true, "prepare", "--config", config, "--image", revision019Image,
+		"--translated", translated, "--binding", binding, "--marker", filepath.Join(directory, "marker.json"))
+	command := exec.Command("docker", "run", "--rm", "--user", "0",
+		"--entrypoint", "/usr/local/share/leapview/deployment/leapviewctl",
+		"--mount", "type=bind,src="+translated+",dst=/run/revision019.json,readonly",
+		revision019Image, "host", "install", "--config", "/run/revision019.json",
+		"--payload", "/absent-payload", "--source-image", revision019Image)
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "validate host installation payload") {
+		t.Fatalf("revision-019 executable did not accept translated config before rejecting absent payload: %v: %s", err, output)
 	}
 }

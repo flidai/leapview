@@ -16,6 +16,14 @@ locals {
     targetId      = var.target_id
     https         = true
   }
+  bootstrap_cloud_init = templatefile("${path.module}/../host/cloud-init.yaml.tftpl", {
+    bootstrap_b64                  = base64encode(file("${path.module}/../host/bootstrap-linux.sh"))
+    revision019_compat_b64         = var.leapview_image == "ghcr.io/flidai/leapview@sha256:4a4455ff0048704acf0df1a9308a39a09b4c786f801fe7f3a383ada089d21368" ? base64encode(file("${path.module}/../host/revision019-config-compat.py")) : ""
+    revision019_postgres_init_b64  = var.leapview_image == "ghcr.io/flidai/leapview@sha256:4a4455ff0048704acf0df1a9308a39a09b4c786f801fe7f3a383ada089d21368" ? base64encode(file("${path.module}/../postgres/init.sh")) : ""
+    bootstrap_controller_image_b64 = var.leapview_image == "ghcr.io/flidai/leapview@sha256:4a4455ff0048704acf0df1a9308a39a09b4c786f801fe7f3a383ada089d21368" ? base64encode("${var.bootstrap_controller_image}\n") : ""
+    config_b64                     = base64encode(jsonencode(local.bootstrap_config))
+    image_b64                      = base64encode("${var.leapview_image}\n")
+  })
 }
 
 resource "hcloud_primary_ip" "leapview" {
@@ -85,10 +93,12 @@ resource "hcloud_server" "leapview" {
     ipv6_enabled = true
   }
 
-  user_data = templatefile("${path.module}/../host/cloud-init.yaml.tftpl", {
-    bootstrap_b64          = base64encode(file("${path.module}/../host/bootstrap-linux.sh"))
-    revision019_compat_b64 = var.leapview_image == "ghcr.io/flidai/leapview@sha256:4a4455ff0048704acf0df1a9308a39a09b4c786f801fe7f3a383ada089d21368" ? base64encode(file("${path.module}/../host/revision019-config-compat.py")) : ""
-    config_b64             = base64encode(jsonencode(local.bootstrap_config))
-    image_b64              = base64encode("${var.leapview_image}\n")
-  })
+  user_data = local.bootstrap_cloud_init
+
+  lifecycle {
+    precondition {
+      condition     = var.leapview_image != "ghcr.io/flidai/leapview@sha256:4a4455ff0048704acf0df1a9308a39a09b4c786f801fe7f3a383ada089d21368" || (var.bootstrap_controller_image != "" && var.bootstrap_controller_image != var.leapview_image)
+      error_message = "the exact revision-019 predecessor requires a distinct immutable bootstrap_controller_image"
+    }
+  }
 }
