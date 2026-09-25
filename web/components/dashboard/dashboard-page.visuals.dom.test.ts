@@ -152,6 +152,165 @@ for (const emptyResponse of [false, true]) test(`windowed table reconciles cache
   } finally { await page.close() }
 })
 
+test('windowed table retries a dropped deep-scroll request', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean([...((document.querySelector('lv-dashboard-page') as any)?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])].find((host: any) => host.envelope?.visualID === 'orders')?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport')))
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const host = [...(dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')].find((item: any) => item.envelope?.visualID === 'orders') as any
+      const table = (host.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
+      await table.updateComplete
+      const base = table.table
+      const seed = base.blocks.a.rows[0] ?? {}
+      const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...seed, order_id: `retry-${start + offset}` }))
+      const block = (start: number, requestSeq = 0) => ({ ...base.blocks.a, start, requestSeq, resetVersion: base.resetVersion, rows: rows(start) })
+      table.clearJumpTimer()
+      table.windowRetryController.clear()
+      table.expectedBlocks.clear()
+      table.windowRetryController.delay = 50
+      table.table = {
+        ...base,
+        availableRows: 1000,
+        rowCap: 10000,
+        chunkSize: 100,
+        cardinality: { kind: 'exact', value: 1000 },
+        blocks: { a: block(0), b: block(100), c: block(200) },
+        loadingBlock: '',
+        error: '',
+      }
+      await table.updateComplete
+      const requests: any[] = []
+      table.addEventListener('lv-visualization-window-request', (event: CustomEvent) => {
+        requests.push(event.detail)
+        event.stopImmediatePropagation()
+      }, { capture: true })
+      table.viewportTop = 500 * table.rowHeight
+      table.virtualizationController.setViewport(table.viewportTop, table.viewportHeight)
+      table.emitBlock('all', 500)
+      const deadline = Date.now() + 4000
+      while (requests.filter((request) => request.start === 500).length < 2) {
+        if (Date.now() > deadline) throw new Error('Dropped window request was not retried')
+        await new Promise((resolve) => window.setTimeout(resolve, 10))
+      }
+      const retry = requests.filter((request) => request.start === 500).at(-1)
+      table.table = {
+        ...table.table,
+        blocks: { a: block(400, retry.requestSeq), b: block(500, retry.requestSeq), c: block(600, retry.requestSeq) },
+      }
+      await table.updateComplete
+      await new Promise((resolve) => window.setTimeout(resolve, 70))
+      const successful = {
+        requests: requests.filter((request) => request.start === 500),
+        pending: table.expectedBlocks.size,
+        skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length,
+      }
+      requests.length = 0
+      table.viewportTop = 800 * table.rowHeight
+      table.virtualizationController.setViewport(table.viewportTop, table.viewportHeight)
+      table.emitBlock('all', 800)
+      const exhaustionDeadline = Date.now() + 4000
+      while (requests.filter((request) => request.start === 800).length < 2) {
+        if (Date.now() > exhaustionDeadline) throw new Error('Dropped window request was not retried once')
+        await new Promise((resolve) => window.setTimeout(resolve, 10))
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 130))
+      return {
+        successful,
+        exhaustedRequests: requests.filter((request) => request.start === 800),
+        pending: table.expectedBlocks.size,
+        retryTimers: table.windowRetryController.size,
+        suppressed: table.windowRetryController.blocked,
+      }
+    })
+    expect(result.successful.requests).toHaveLength(2)
+    expect(result.successful.requests.map((request: any) => [request.blockID, request.start, request.limit])).toEqual([
+      ['all', 500, 100],
+      ['all', 500, 100],
+    ])
+    expect(result.successful.requests[1].requestSeq).toBeGreaterThan(result.successful.requests[0].requestSeq)
+    expect(result.successful.pending).toBe(0)
+    expect(result.successful.skeletons).toBe(0)
+    expect(result.exhaustedRequests).toHaveLength(2)
+    expect(result.pending).toBe(0)
+    expect(result.retryTimers).toBe(0)
+    expect(result.suppressed).toBe(true)
+  } finally { await page.close() }
+})
+
+for (const outcome of ['slow', 'error'] as const) test(`windowed table does not retry an acknowledged ${outcome} request`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean([...((document.querySelector('lv-dashboard-page') as any)?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])].find((host: any) => host.envelope?.visualID === 'orders')?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport')))
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any, outcome: 'slow' | 'error') => {
+      const host = [...(dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')].find((item: any) => item.envelope?.visualID === 'orders') as any
+      const table = (host.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
+      await table.updateComplete
+      const base = table.table
+      const seed = base.blocks.a.rows[0] ?? {}
+      const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...seed, order_id: `${outcome}-${start + offset}` }))
+      const block = (start: number, requestSeq = 0) => ({ ...base.blocks.a, start, requestSeq, resetVersion: base.resetVersion, rows: rows(start) })
+      table.clearJumpTimer()
+      table.windowRetryController.clear()
+      table.expectedBlocks.clear()
+      table.windowRetryController.delay = 50
+      table.table = {
+        ...base,
+        availableRows: 1000,
+        rowCap: 10000,
+        chunkSize: 100,
+        cardinality: { kind: 'exact', value: 1000 },
+        blocks: { a: block(0), b: block(100), c: block(200) },
+        loadingBlock: '',
+        error: '',
+      }
+      await table.updateComplete
+      const requests: any[] = []
+      table.addEventListener('lv-visualization-window-request', (event: CustomEvent) => {
+        requests.push(event.detail)
+        event.stopImmediatePropagation()
+      }, { capture: true })
+      table.viewportTop = 500 * table.rowHeight
+      table.virtualizationController.setViewport(table.viewportTop, table.viewportHeight)
+      table.emitBlock('all', 500)
+      const request = requests[0]
+      table.table = { ...table.table, loadingBlock: outcome === 'slow' ? 'all' : '', error: outcome === 'error' ? 'query failed' : '' }
+      await table.updateComplete
+      const acknowledged = { error: table.table.error, pending: table.expectedBlocks.size, retryTimers: table.windowRetryController.size, requests: requests.filter((candidate) => candidate.start === 500).length, suppressed: table.windowRetryController.blocked }
+      await new Promise((resolve) => window.setTimeout(resolve, 130))
+      const requestsAfterTimeout = requests.filter((candidate) => candidate.start === 500).length
+      if (outcome === 'slow') {
+        table.table = {
+          ...table.table,
+          blocks: { a: block(400, request.requestSeq), b: block(500, request.requestSeq), c: block(600, request.requestSeq) },
+          loadingBlock: '',
+        }
+        await table.updateComplete
+        await new Promise((resolve) => window.setTimeout(resolve, 70))
+      }
+      return {
+        acknowledged,
+        requestsAfterTimeout,
+        requests: requests.filter((candidate) => candidate.start === 500).length,
+        pending: table.expectedBlocks.size,
+        retryTimers: table.windowRetryController.size,
+        suppressed: table.windowRetryController.blocked,
+        skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length,
+      }
+    }, outcome)
+    expect(result.acknowledged).toEqual(outcome === 'error'
+      ? { error: 'query failed', pending: 0, retryTimers: 0, requests: 1, suppressed: true }
+      : { error: '', pending: 3, retryTimers: 1, requests: 1, suppressed: false })
+    expect(result.suppressed).toBe(outcome === 'error')
+    expect(result.requestsAfterTimeout).toBe(1)
+    expect(result.requests).toBe(1)
+    expect(result.pending).toBe(0)
+    expect(result.retryTimers).toBe(0)
+    if (outcome === 'slow') expect(result.skeletons).toBe(0)
+  } finally { await page.close() }
+})
+
 test('windowed table only shows loading for missing visible rows', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
