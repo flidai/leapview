@@ -43,7 +43,7 @@ test('ECharts responsive patch is deterministic and preserves stable option iden
   expect(responsiveEChartsPatch(option, 0, 240)).toEqual({})
 })
 
-test('ECharts responsive patch leaves proportional geometry and legend bands to ECharts', () => {
+test('ECharts responsive patch keeps proportional geometry stable while adapting outside labels', () => {
   for (const mark of ['pie', 'donut', 'funnel'] as const) {
     const envelope = proportionalFixture(mark) as any
     envelope.spec.presentation.legend = 'bottom'
@@ -54,7 +54,26 @@ test('ECharts responsive patch leaves proportional geometry and legend bands to 
     }]
     const option = echartsOption(envelope, defaultRendererContext) as Record<string, any>
     const before = JSON.stringify(option)
-    expect(responsiveEChartsPatch(option, 320, 240)).toEqual({})
+    const compact = responsiveEChartsPatch(option, 320, 240)
+    const expanded = responsiveEChartsPatch(option, 1200, 720)
+    if (mark === 'funnel') {
+      expect(compact).toEqual({})
+      expect(expanded).toEqual({})
+    } else {
+      expect(compact.series[0]).toMatchObject({
+        id: `series:primary:${mark}`,
+        bottom: '12%',
+        label: { alignTo: 'edge' },
+      })
+      expect(expanded.series[0]).toMatchObject({
+        id: `series:primary:${mark}`,
+        bottom: '12%',
+        label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+        labelLine: { length: 58, length2: 42 },
+      })
+      expect(compact.series[0].radius).toEqual(option.series[0].radius)
+      expect(expanded.series[0].radius).toEqual(option.series[0].radius)
+    }
     expect(option.series[0].id).toBe(`series:primary:${mark}`)
     expect(JSON.stringify(option)).toBe(before)
   }
@@ -134,7 +153,7 @@ test('ECharts handle reapplies compact layout after updates and restores desktop
   expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
 })
 
-test('ECharts handle leaves proportional resize geometry to the native chart', () => {
+test('ECharts handle reapplies width-sensitive legends and switches proportional labels across responsive breakpoints', () => {
   const calls: Record<string, any>[] = []
   const chart = {
     on() {}, off() {}, resize() {}, dispose() {},
@@ -149,14 +168,45 @@ test('ECharts handle leaves proportional resize geometry to the native chart', (
   }]
   const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
   handle.mount(envelope, defaultRendererContext)
-  handle.resize(320, 240)
+  handle.resize(320, 300)
   const first = calls.at(-1)!.series[0]
   const count = calls.length
-  handle.resize(420, 240)
-  expect(calls.length).toBe(count)
+  handle.resize(360, 300)
+  expect(calls.length).toBe(count + 1)
+  expect(calls.at(-1)!.legend).toMatchObject({ type: 'scroll', width: expect.any(Number) })
   expect(first.radius).toEqual(['54%', '76%'])
   expect(first.left).toBeUndefined()
   expect(first.right).toBeUndefined()
+  expect(first.label.alignTo).toBe('edge')
+
+  handle.resize(435, 420)
+  expect(calls.at(-1)!.series[0]).toMatchObject({
+    id: 'series:primary:donut', label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+  })
+
+  handle.resize(1200, 720)
+  expect(calls.at(-1)!.series[0]).toMatchObject({
+    id: 'series:primary:donut',
+    label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+    labelLine: { length: 58, length2: 42 },
+  })
+  expect(calls.at(-1)!.series[0].radius).toEqual(['54%', '76%'])
+
+  const roomyCount = calls.length
+  handle.resize(900, 500)
+  expect(calls.length).toBe(roomyCount + 1)
+  expect(calls.at(-1)!.series[0].labelLine).toMatchObject({ length: 40, length2: 32 })
+
+  handle.resize(320, 300)
+  expect(calls.at(-1)!.series[0]).toMatchObject({ id: 'series:primary:donut', label: { alignTo: 'edge' } })
+
+  const inside = structuredClone(envelope)
+  inside.spec.presentation.labelPosition = 'inside'
+  handle.update(inside, Change.Spec, defaultRendererContext)
+  handle.resize(535, 420)
+  expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 11, padding: 0 })
+  handle.resize(700, 500)
+  expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 12, padding: 3 })
 })
 
 function legendHandle() {

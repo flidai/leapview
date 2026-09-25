@@ -73,7 +73,7 @@ surfaces:
     scanners: [trivy]
     images:
       - gcr.io/distroless/cc-debian12:debug-nonroot@sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc
-      - golang:1.27.1-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b
+      - golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195
       - node:26-bookworm@sha256:e7bc1a4cd2419953c91f9a6f7bb6efb3737773093fb4ded0b1c77a0a5831fac4
       - oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895
   - path: Dockerfile.site
@@ -82,26 +82,26 @@ surfaces:
     scanners: [trivy]
     images:
       - gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
-      - golang:1.27.1-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b
+      - golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195
       - node:26-bookworm@sha256:e7bc1a4cd2419953c91f9a6f7bb6efb3737773093fb4ded0b1c77a0a5831fac4
       - oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895
   - path: deploy/compose/qualification/Dockerfile.authoring-client
     kind: dockerfile
     updater: {ecosystem: docker, directory: /deploy/compose/qualification}
     scanners: [trivy]
-    images: ["${LEAPVIEW_IMAGE}", "debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171"]
+    images: ["${LEAPVIEW_IMAGE}", "debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251"]
   - path: deploy/postgres/ha/Dockerfile
     kind: dockerfile
     updater: {ecosystem: docker, directory: /deploy/postgres/ha}
     scanners: [trivy]
     images:
-      - docker.io/library/postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+      - docker.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
   - path: internal/platform/testminio/Dockerfile
     kind: dockerfile
     updater: {ecosystem: docker, directory: /internal/platform/testminio}
     scanners: [trivy]
     images:
-      - golang:1.24.6-bookworm@sha256:ab1d1823abb55a9504d2e3e003b75b36dbeb1cbcc4c92593d85a84ee46becc6c
+      - golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195
   - path: internal/app/testing/maliciousinstance/electron/Dockerfile.linux
     kind: dockerfile
     updater: {ecosystem: docker, directory: /internal/app/testing/maliciousinstance/electron}
