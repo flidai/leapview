@@ -1,8 +1,8 @@
 import { expect, type Browser } from '@playwright/test'
 import { uuidv7 } from '../web/components/shared/command'
 
-export async function verifyDashboardCopyBuilder(browser: Browser, baseURL: string): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+export async function verifyDashboardCopyBuilder(browser: Browser, baseURL: string, storageState?: string): Promise<void> {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, ...(storageState ? { storageState } : {}) })
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   try {

@@ -20,6 +20,7 @@ export default defineConfig({
   ],
   use: {
     baseURL: process.env.LEAPVIEW_BASE_URL ?? 'http://localhost:8195',
+    storageState: process.env.LEAPVIEW_QA_STORAGE_STATE || undefined,
     browserName: 'chromium',
     colorScheme: 'light',
     contextOptions: {

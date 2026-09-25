@@ -39,6 +39,22 @@ test('UI framework QA seeds managed data for its first publication', async () =>
   expect(source).not.toContain("const command = ['task', 'dev:publish']")
 })
 
+test('UI framework QA signs in for protected routes without masking the login page', async () => {
+  const [runner, routes, visual, copy] = await Promise.all([
+    readFile('scripts/qa_ui_framework.ts', 'utf8'),
+    readFile('scripts/datastar_lit_route_qa.ts', 'utf8'),
+    readFile('scripts/playwright.visual.config.ts', 'utf8'),
+    readFile('scripts/dashboard_copy_builder_qa.ts', 'utf8'),
+  ])
+
+  expect(runner).toContain('Continue as Local Developer')
+  expect(runner).toContain('LEAPVIEW_QA_STORAGE_STATE')
+  expect(routes).toContain("route.path !== '/login'")
+  expect(routes).toContain('LEAPVIEW_QA_STORAGE_STATE')
+  expect(visual).toContain('LEAPVIEW_QA_STORAGE_STATE')
+  expect(copy).toContain('storageState')
+})
+
 test('development startup reuses the bounded CI fixture supply', async () => {
   const source = await readFile('scripts/dev-server.sh', 'utf8')
 
