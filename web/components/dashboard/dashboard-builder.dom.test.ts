@@ -1574,7 +1574,7 @@ test('dashboard builder resizes a selected widget from its left edge', async () 
     const command = await element.evaluate((builder: any) => (window as any).__builderPlacementCommands.at(-1))
     const placement = command?.placements?.[0]?.placement
     expect(placement).toBeDefined()
-    expect(command.compact).toBe(true)
+    expect(command.compact).toBe(false)
     expect(placement.column).toBeGreaterThan(initial.column)
     expect(placement.columnSpan).toBeLessThan(initial.columnSpan)
   } finally {
@@ -1653,12 +1653,13 @@ test('dashboard builder supports keyboard move and resize through the same atomi
       await new Promise((resolve) => setTimeout(resolve, 20))
       return received.map((item) => ({
         action: item.action,
+        compact: item.compact,
         placement: (item.placements as any[])?.[0]?.placement,
       }))
     })
     expect(commands).toEqual([
-      { action: 'set_placements', placement: { column: 2, row: 1, columnSpan: 6, rowSpan: 5 } },
-      { action: 'set_placements', placement: { column: 2, row: 1, columnSpan: 7, rowSpan: 5 } },
+      { action: 'set_placements', compact: false, placement: { column: 2, row: 1, columnSpan: 6, rowSpan: 5 } },
+      { action: 'set_placements', compact: false, placement: { column: 2, row: 1, columnSpan: 7, rowSpan: 5 } },
     ])
   } finally {
     await page.close()

@@ -199,7 +199,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private gridLayoutKey = ''
   private gridIsMobile = false
   private gridCommitQueued = false
-  private gridCompactPending = false
   private viewportMediaQuery: MediaQueryList | null = null
   private canvasResizeObserver: ResizeObserver | null = null
   private canvasViewportElement: HTMLElement | null = null
@@ -2704,7 +2703,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       if (this.gridStack) {
         syncGridStackNodesToCanonical(this.gridStack, this.shadowRoot, this.pagePlacedComponents(page))
         this.gridStack.on('dragstart resizestart', (event: Event) => {
-          this.gridCompactPending = event.type === 'resizestart'
           this.gridInteracting = true
           if (event.type === 'resizestart') this.setPreviewResizeSuspended(true)
           if (event.type === 'dragstart') queueMicrotask(() => styleBuilderGridPlaceholder(this.shadowRoot))
@@ -2731,7 +2729,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.gridElement = null
     this.gridLayoutKey = ''
     this.gridCommitQueued = false
-    this.gridCompactPending = false
   }
 
   private setGridEditingEnabled(enabled: boolean): void {
@@ -2740,14 +2737,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.gridStack.enableResize(enabled)
   }
 
-  private onGridInteractionStop(_element: GridItemHTMLElement, compact: boolean): void {
-    this.gridCompactPending = compact
+  private onGridInteractionStop(_element: GridItemHTMLElement, resized: boolean): void {
     this.gridInteracting = false
     this.syncCanvasViewport(this.canvasPage)
     // The server may adjust neighboring placements before acknowledging the
     // save. Keep the charts paused until that final geometry is in the DOM so
     // one gesture cannot trigger two expensive renderer resizes in succession.
-    this.gridResizeSavePending = compact
+    this.gridResizeSavePending = resized
     this.gridInteractionMessage = 'Layout updated.'
     this.scheduleGridCommit()
   }
@@ -2876,14 +2872,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       }
     })
     if (placements.every((placement, index) => this.placementEqual(placement, components[index].placement))) {
-      this.gridCompactPending = false
       this.resumeGridPreviewAfterSave()
       return
     }
     if (!this.gridInteractionMessage) this.gridInteractionMessage = 'Layout updated.'
-    const compact = this.gridCompactPending
-    this.gridCompactPending = false
-    this.emitCommand('set_placements', { pageId: page.id, placements, compact })
+    // A manually placed or resized tile is authoritative. Page-wide packing
+    // here would move unrelated tiles and resize their renderers after release.
+    this.emitCommand('set_placements', { pageId: page.id, placements, compact: false })
   }
 
   private placementEqual(left: GridPlacement, right: DashboardBuilderVisualSignal['placement']): boolean {
@@ -5808,7 +5803,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     const element = this.gridStack?.getGridItems().find((item) => (item.gridstackNode?.id || item.getAttribute('gs-id')) === componentID)
     if (this.gridStack && element) {
-      this.gridCompactPending = resize
       this.gridStack.update(element, { x: next.col - 1, y: next.row - 1, w: next.colSpan, h: next.rowSpan })
     }
     const direction = key.replace('Arrow', '').toLowerCase()
