@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,7 +75,7 @@ func (e *NativeEffects) cleanupClone(ctx context.Context) error {
 	}
 	return err
 }
-func (e *NativeEffects) clone(ctx context.Context, name, alias string, original dockerInspection, volumes map[string]string, port string) error {
+func (e *NativeEffects) clone(ctx context.Context, name, alias string, original dockerInspection, volumes map[string]string) error {
 	envFile := filepath.Join(e.operation, name+".env")
 	for _, value := range original.Config.Env {
 		if strings.ContainsAny(value, "\n\r") {
@@ -85,9 +86,6 @@ func (e *NativeEffects) clone(ctx context.Context, name, alias string, original 
 		return err
 	}
 	args := []string{"run", "-d", "--name", name, "--network", e.clonePrefix(), "--network-alias", alias, "--restart=no", "--env-file", envFile}
-	if port != "" {
-		args = append(args, "-p", port)
-	}
 	for _, mount := range original.Mounts {
 		switch mount.Type {
 		case "tmpfs":
@@ -193,21 +191,41 @@ func (e *NativeEffects) CaptureAndVerify(ctx context.Context, id Identity) (dige
 	if _, err = e.docker(ctx, "network", "create", "--internal", prefix); err != nil {
 		return "", err
 	}
-	if err = e.clone(ctx, prefix+"-pg", nativePG, e.original.Postgres, volumes, ""); err != nil {
+	if err = e.clone(ctx, prefix+"-pg", nativePG, e.original.Postgres, volumes); err != nil {
 		return "", err
 	}
 	if err = e.waitPG(ctx, prefix+"-pg", 28); err != nil {
 		return "", err
 	}
-	if err = e.clone(ctx, prefix+"-app", "leapview", e.original.App, volumes, ""); err != nil {
+	if err = e.clone(ctx, prefix+"-app", "leapview", e.original.App, volumes); err != nil {
 		return "", err
 	}
 	if err = e.waitApp(ctx, prefix+"-app", id.Predecessor, e.request.PredecessorRevision); err != nil {
 		return "", err
 	}
-	if err = e.clone(ctx, prefix+"-caddy", "caddy", e.original.Caddy, volumes, "127.0.0.1:8444:443"); err != nil {
+	if err = e.clone(ctx, prefix+"-caddy", "caddy", e.original.Caddy, volumes); err != nil {
 		return "", err
 	}
+	// An internal network has no published Docker ports. Reach its private
+	// bridge IP from a loopback-only host relay; never attach the clone to the
+	// live network merely to make the browser check reachable.
+	cloneCaddy, err := e.inspect(ctx, prefix+"-caddy")
+	if err != nil {
+		return "", err
+	}
+	var endpoint struct{ IPAddress string }
+	if err = json.Unmarshal(cloneCaddy.NetworkSettings.Networks[prefix], &endpoint); err != nil {
+		return "", err
+	}
+	ip := net.ParseIP(endpoint.IPAddress)
+	if ip == nil || !ip.IsPrivate() {
+		return "", errors.New("invalid isolated Caddy bridge address")
+	}
+	_, closeRelay, err := e.relay(ctx, "127.0.0.1:8444", net.JoinHostPort(endpoint.IPAddress, "443"))
+	if err != nil {
+		return "", err
+	}
+	defer closeRelay()
 	if err = e.awaitBrowser(ctx, "AWAITING_RECOVERY_BROWSER_VALIDATION"); err != nil {
 		return "", err
 	}

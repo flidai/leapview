@@ -70,7 +70,7 @@ func nativeEffectsFixture(t *testing.T) *NativeEffects {
 			t.Fatal(err)
 		}
 	}
-	return &NativeEffects{root: root, provider: provider, operation: operation, id: id, request: r}
+	return &NativeEffects{relay: func(context.Context, string, string) (string, func(), error) { return "", func() {}, nil }, root: root, provider: provider, operation: operation, id: id, request: r}
 }
 func TestPrivateTrafficConfigurationCannotExposePublicBindings(t *testing.T) {
 	e := nativeEffectsFixture(t)
@@ -243,6 +243,7 @@ func TestNativeFailedCandidateRestoresPairedFilesAndConfiguration(t *testing.T) 
 		case "inspect":
 			info := dockerInspection{}
 			info.State.Running = running[args[1]]
+			info.NetworkSettings.Networks = map[string]json.RawMessage{e.clonePrefix(): json.RawMessage(`{"IPAddress":"172.25.0.2"}`)}
 			info.Config.Image = images[args[1]]
 			raw, _ := json.Marshal([]dockerInspection{info})
 			return string(raw), nil

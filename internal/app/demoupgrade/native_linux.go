@@ -68,6 +68,7 @@ type nativeOriginal struct {
 // profile. It must never be used for external tablespaces, S3 roots, a different
 // PostgreSQL image, a clustered target, or a different schema transition.
 type NativeEffects struct {
+	relay          func(context.Context, string, string) (string, func(), error)
 	root, provider string
 	execute        func(context.Context, ...string) (string, error)
 	reader         *bufio.Reader
@@ -104,7 +105,7 @@ func NewNativeEffects(request NativeRequest, stdin io.Reader, stdout io.Writer) 
 	if err != nil {
 		return nil, err
 	}
-	e := &NativeEffects{root: nativeRoot, provider: nativeProvider, reader: bufio.NewReader(stdin), request: request, id: id, operation: operation, stdin: stdin, stdout: stdout, log: log}
+	e := &NativeEffects{relay: startTCPRelay, root: nativeRoot, provider: nativeProvider, reader: bufio.NewReader(stdin), request: request, id: id, operation: operation, stdin: stdin, stdout: stdout, log: log}
 	if raw, err := securefs.ReadPrivateFile(filepath.Join(operation, "original.json")); err == nil {
 		if err = json.Unmarshal(raw, &e.original); err != nil {
 			log.Close()

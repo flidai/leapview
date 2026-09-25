@@ -156,7 +156,7 @@ The sequence is:
    application home/managed files, and Caddy state. Hash and retain a private
    manifest. Restore all volumes into independent directories on an internal
    Docker network. Start the exact predecessor and validate all four CFO pages
-   (27 visuals) through pinned SSH, retaining the real HTTPS origin and certificate
+   (27 visuals) through a loopback-only host relay and pinned SSH, retaining the real HTTPS origin and certificate
    verification. Listing a backup is never treated as restore proof.
 5. Persist migration intent outside restored volumes. Run only the candidate's
    embedded migrations 029 and 030 with the control migrator credential under the
@@ -168,6 +168,11 @@ The sequence is:
 7. Persist the commit boundary **before** restoring public bindings. Verify the
    public source and CFO pages, then mark the runtime deployment successful.
    Publication follows this successful record; it never advances on a failed check.
+
+The cold-copy boundary follows [PostgreSQL file-system backup requirements](https://www.postgresql.org/docs/18/backup-file.html).
+The rehearsal uses a [Docker internal network](https://docs.docker.com/reference/cli/docker/network/create/#internal);
+because it does not publish ports, a loopback-only host relay reaches the cloned
+Caddy bridge address without attaching it to the live network or terminating TLS.
 
 The private journal is `/etc/leapview-provider-cfo/upgrade-operation.json`.
 Snapshots, original configuration, request evidence, and restricted operator logs

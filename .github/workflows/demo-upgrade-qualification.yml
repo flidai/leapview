@@ -45,4 +45,4 @@ jobs:
       - name: Rehearse physical recovery on disposable PostgreSQL and files
         env:
           LEAPVIEW_DEMO_UPGRADE_QUALIFICATION: '1'
-        run: go test ./internal/app/demoupgrade -run '^TestColdPostgreSQLPairRecovery$' -count=1 -timeout=6m -v
+        run: go test ./internal/app/demoupgrade -run '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay)$' -count=1 -timeout=6m -v
