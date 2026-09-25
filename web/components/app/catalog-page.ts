@@ -11,6 +11,7 @@ import { catalogColumns } from './catalog-columns'
 import { dashboardIsPinned, nextDashboardPins, scopedCatalogPinsStorageKey, syncPinnedDashboardLinks } from './catalog-pins'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
+import { showToast } from '../shared/toast'
 
 interface CreateDraftModel {
   id: string
@@ -38,7 +39,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @state() private copyDraftIdempotencyKey = ''
   @state() private actionMenu: { dashboardID: string, top: number, left: number } | null = null
   @state() private detailsDashboardID = ''
-  @state() private copyLinkMessage = ''
   private autoOpenChecked = false
   private copyAutoOpenChecked = false
   private createDraftTrigger: HTMLAnchorElement | null = null
@@ -173,7 +173,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     .catalog-action-danger { color: var(--lv-fg-danger, var(--lv-fg-default)) !important; }
     .catalog-action-danger svg { color: inherit; }
     .catalog-action-form { margin: 0; }
-    .catalog-copy-status { position: fixed; z-index: 40; right: var(--base-size-24); bottom: var(--base-size-24); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-fg-default); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-8) var(--base-size-12); font: var(--lv-type-body-compact); }
 
     .catalog-details-drawer {
       position: fixed;
@@ -550,12 +549,11 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     const href = new URL(dashboard.href, window.location.origin).toString()
     try {
       await navigator.clipboard.writeText(href)
-      this.copyLinkMessage = 'Dashboard link copied'
+      showToast({ message: 'Dashboard link copied', tone: 'success' })
     } catch {
-      this.copyLinkMessage = 'Could not copy dashboard link'
+      showToast({ message: 'Could not copy dashboard link', tone: 'error', durationMs: 0 })
     }
     this.actionMenu = null
-    window.setTimeout(() => { this.copyLinkMessage = '' }, 2_000)
     const trigger = this.actionMenuTrigger
     this.actionMenuTrigger = null
     queueMicrotask(() => trigger?.focus({ preventScroll: true }))

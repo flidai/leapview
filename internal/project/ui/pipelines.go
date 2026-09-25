@@ -37,13 +37,27 @@ type PipelineMonitorPipeline struct {
 }
 
 type PipelineMonitorState struct {
-	Environment   string
-	CSRFToken     string
-	Capacity      PipelineMonitorCapacity
-	Pipelines     []PipelineMonitorPipeline
-	RunCommand    uicommand.Binding
-	CancelCommand uicommand.Binding
-	RunMonitor    *PipelineRunMonitor
+	Environment    string
+	CSRFToken      string
+	Capacity       PipelineMonitorCapacity
+	Pipelines      []PipelineMonitorPipeline
+	WaitingIntents []PipelineWaitingIntent
+	RunCommand     uicommand.Binding
+	CancelCommand  uicommand.Binding
+	RunMonitor     *PipelineRunMonitor
+}
+
+// PipelineWaitingIntent is a committed manual request that has not yet become
+// an immutable execution run. RunID is set only after the request attaches.
+type PipelineWaitingIntent struct {
+	IntentID      string
+	PipelineID    string
+	Status        string
+	CreatedAt     string
+	Reason        string
+	QueuePosition int64
+	RunID         string
+	CancelAllowed bool
 }
 
 type PipelineRunMonitor struct {
@@ -71,7 +85,7 @@ func PipelinesPage(nav catalog.Catalog, state PipelineMonitorState, activeTab, r
 			commandURL += "?" + values.Encode()
 		}
 		command := "$pipelineCommand = evt.detail; $pipelineCommandStatus = {loading: true, error: '', message: ''}; " + uiactions.CommandPostSwitch("evt.detail.action", map[string]uicommand.Binding{
-			"run": state.RunCommand, "cancel": state.CancelCommand,
+			"run": state.RunCommand, "cancel": state.CancelCommand, "cancel-intent": state.CancelCommand,
 		}, commandURL, "pipelineCommand")
 		attrs = append(attrs, g.Attr("data-on:lv-pipeline-command", command))
 	}
@@ -140,6 +154,7 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 			Running:           status == "queued" || status == "running" || status == "prepared",
 			Status:            status,
 			PublicationStatus: firstNonEmpty(pipeline.PublicationStatus, "none"),
+			RecentRuns:        pipelineRecentRuns(pipeline.Asset.ID, pipeline.Refresh),
 			LatestRunHref:     uisignals.Optional(pipelineRunHref(pipeline.Asset.ID, pipeline.Refresh.Latest.ID)),
 			Duration:          uisignals.Optional(refreshRunDuration(pipeline.Refresh.Latest)),
 			LastSuccessful: uisignals.Optional(
@@ -163,14 +178,16 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 	}
 
 	capacity := state.Capacity
+	runsTable := pipelineRunsTable(pipelines)
 	page := uisignals.PipelinePageSignal{
-		Kind:        uisignals.RouteKindPipelines,
-		Title:       "Pipelines",
-		Description: "Browse refresh pipelines and their schedules.",
-		Environment: state.Environment,
-		ActiveTab:   activeTab,
-		Pipelines:   items,
-		RunsTable:   pipelineRunsTable(pipelines),
+		Kind:           uisignals.RouteKindPipelines,
+		Title:          "Pipelines",
+		Description:    "Browse refresh pipelines and their schedules.",
+		Environment:    state.Environment,
+		ActiveTab:      activeTab,
+		Pipelines:      items,
+		WaitingIntents: pipelineWaitingIntentSignals(state.WaitingIntents, runsTable.Rows),
+		RunsTable:      runsTable,
 	}
 	if activeTab == "runs" {
 		page.Title = "Runs"
@@ -190,6 +207,7 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 				monitorRows = append(monitorRows, pipeline)
 			}
 			page.RunsTable = pipelineRunsTable(monitorRows)
+			page.WaitingIntents = pipelineWaitingIntentSignals(state.WaitingIntents, page.RunsTable.Rows)
 			page.RunMonitor = &uisignals.PipelineRunMonitorSignal{Query: monitor.Query, Range: monitor.Range, Pipeline: monitor.Pipeline, Status: monitor.Status, Trigger: monitor.Trigger,
 				Page: monitor.Page, PageSize: monitor.PageSize, Total: monitor.Total}
 			page.Metrics = []uisignals.PipelineMetricSignal{
@@ -199,13 +217,105 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 			}
 		} else {
 			page.Metrics = []uisignals.PipelineMetricSignal{
-				{Label: "Running", Value: fmt.Sprint(capacity.Running), Detail: uisignals.Pointer("Refresh jobs executing now"), Tone: uisignals.Pointer("accent")},
+				{Label: "Running", Value: fmt.Sprint(capacity.Running + capacity.Prepared), Detail: uisignals.Pointer("Refresh jobs executing or publishing now"), Tone: uisignals.Pointer("accent")},
 				{Label: "Queued", Value: fmt.Sprint(capacity.Queued), Detail: uisignals.Pointer("Waiting for shared capacity"), Tone: uisignals.Pointer("attention")},
-				{Label: "Prepared", Value: fmt.Sprint(capacity.Prepared), Detail: uisignals.Pointer("Preparing a result for publication"), Tone: uisignals.Pointer("attention")},
 			}
 		}
 	}
 	return page
+}
+
+func pipelineWaitingIntentSignals(intents []PipelineWaitingIntent, rows []map[string]any) []uisignals.PipelineWaitingIntentSignal {
+	visibleRuns := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		pipelineID, _ := row["pipeline_id"].(string)
+		runID, _ := row["run_id"].(string)
+		pipelineID = strings.TrimSpace(pipelineID)
+		runID = strings.TrimSpace(runID)
+		if pipelineID != "" && runID != "" {
+			visibleRuns[pipelineID+"\x00"+runID] = struct{}{}
+		}
+	}
+
+	result := make([]uisignals.PipelineWaitingIntentSignal, 0, len(intents))
+	for _, intent := range intents {
+		intentID := strings.TrimSpace(intent.IntentID)
+		pipelineID := strings.TrimSpace(intent.PipelineID)
+		if intentID == "" || pipelineID == "" {
+			continue
+		}
+		runID := strings.TrimSpace(intent.RunID)
+		status := strings.ToLower(strings.TrimSpace(intent.Status))
+		if status != "waiting" && status != "claimed" && status != "attached" && status != "stale" {
+			continue
+		}
+		if status == "attached" && runID != "" {
+			if _, found := visibleRuns[pipelineID+"\x00"+runID]; found {
+				continue
+			}
+		}
+		signal := uisignals.PipelineWaitingIntentSignal{
+			IntentID: intentID, PipelineID: pipelineID, Status: status, CreatedAt: strings.TrimSpace(intent.CreatedAt), Reason: uisignals.Optional(strings.TrimSpace(intent.Reason)),
+			RunID: uisignals.Optional(runID), CancelAllowed: intent.CancelAllowed,
+		}
+		if status == "stale" && signal.Reason == nil {
+			signal.Reason = uisignals.Optional("Pipeline definition changed while waiting; start a new request")
+		}
+		if intent.QueuePosition > 0 {
+			signal.QueuePosition = uisignals.Optional(intent.QueuePosition)
+		}
+		result = append(result, signal)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		left, right := result[i], result[j]
+		if left.QueuePosition != nil && right.QueuePosition != nil && *left.QueuePosition != *right.QueuePosition {
+			return *left.QueuePosition < *right.QueuePosition
+		}
+		if left.QueuePosition != nil && right.QueuePosition == nil {
+			return true
+		}
+		if left.QueuePosition == nil && right.QueuePosition != nil {
+			return false
+		}
+		if left.CreatedAt != right.CreatedAt {
+			return left.CreatedAt < right.CreatedAt
+		}
+		return left.IntentID < right.IntentID
+	})
+	return result
+}
+
+func pipelineRecentRuns(pipelineID string, refresh AssetRefreshState) []uisignals.PipelineDetailRunSignal {
+	runs := append([]AssetRefreshRun(nil), refresh.Runs...)
+	if refresh.Latest.ID != "" {
+		found := false
+		for _, run := range runs {
+			if run.ID == refresh.Latest.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			runs = append(runs, refresh.Latest)
+		}
+	}
+	sort.SliceStable(runs, func(i, j int) bool {
+		return firstNonEmpty(runs[i].StartedAt, runs[i].CreatedAt) > firstNonEmpty(runs[j].StartedAt, runs[j].CreatedAt)
+	})
+	recent := make([]uisignals.PipelineDetailRunSignal, 0, 5)
+	for _, run := range runs {
+		if run.ID == "" || run.ParentRunID != "" {
+			continue
+		}
+		recent = append(recent, uisignals.PipelineDetailRunSignal{
+			ID: run.ID, Status: firstNonEmpty(strings.ToLower(strings.TrimSpace(run.Status)), "unknown"), Href: pipelineRunHref(pipelineID, run.ID),
+			StartedAt: uisignals.Optional(firstNonEmpty(run.StartedAt, run.CreatedAt)),
+		})
+		if len(recent) == 5 {
+			break
+		}
+	}
+	return recent
 }
 
 func pipelineSemanticModelDisplayName(value string) string {
@@ -280,8 +390,6 @@ func pipelineRunsTable(pipelines []PipelineMonitorPipeline) recordTable {
 			actions := []map[string]any{{"label": "View run details", "action": "detail", "icon": "details"}}
 			if status == "queued" && pipeline.CanCancel {
 				actions = append(actions, map[string]any{"label": "Cancel run", "action": "cancel", "icon": "cancel"})
-			} else if status != "" && status != "queued" && status != "running" && pipeline.CanRun {
-				actions = append(actions, map[string]any{"label": "Run again", "action": "run", "icon": "refresh"})
 			}
 			semanticModel := firstNonEmpty(run.ModelID, metaString(pipeline.Asset.Payload, "SemanticModel", "semanticModel"))
 			all = append(all, runRow{started: started, row: map[string]any{

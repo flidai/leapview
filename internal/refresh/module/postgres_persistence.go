@@ -1232,6 +1232,19 @@ func (p *postgresRunPersistence) CheckScheduledInvocationAdmission(ctx context.C
 	if p == nil || p.repository == nil {
 		return errors.New("refresh PostgreSQL run persistence is unavailable")
 	}
+	stored := refreshpostgres.Occurrence{
+		OccurrenceID: occurrence.OccurrenceID, ProjectID: occurrence.Identity.ProjectID.String(),
+		Environment: occurrence.Identity.Environment, GenerationID: occurrence.Identity.GenerationID,
+		PipelineID: occurrence.PipelineID.String(), LeaseOwner: occurrence.LeaseOwner,
+		FenceGeneration: occurrence.LeaseRevision,
+	}
+	denied, err := p.repository.DenyScheduledOccurrenceForExternalActiveRoot(ctx, stored)
+	if err != nil {
+		return err
+	}
+	if denied {
+		return refreshschedule.ErrOccurrenceSkipped
+	}
 	return p.repository.CheckScheduledInvocationAdmission(ctx, refreshpostgres.Scope{ProjectID: occurrence.Identity.ProjectID.String(), Environment: occurrence.Identity.Environment}, occurrence.PipelineID.String())
 }
 

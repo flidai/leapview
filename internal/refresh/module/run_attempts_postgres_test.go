@@ -102,10 +102,8 @@ func TestPostgresRunAttemptDetailReadsPersistedFailureAndLifecycle(t *testing.T)
 	module.service = refreshrun.Service{
 		Runs: persistence.Runs,
 		CanonicalExecutor: func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error) {
-			// ExecuteClaimedJob records prepared before entering the executor.
-			// Read it through the scoped repository so this integration test
-			// proves the persisted queued → running → prepared → failed path.
-			readStatus(refreshrun.RunStatusPrepared)
+			// A build failure must still be running, never publishing.
+			readStatus(refreshrun.RunStatusRunning)
 			return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageBuild, errors.New("warehouse password=do-not-persist private SQL"))
 		},
 		Publication: persistence.Publication,

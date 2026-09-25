@@ -1,16 +1,23 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
-import type { AssetLineageGraphSignal, PipelineCommandStatusSignal, PipelineDetailPageSignal } from '../../generated/signals'
+import type { AssetLineageGraphSignal, PipelineCommandSignal, PipelineCommandStatusSignal, PipelineDetailPageSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { breadcrumbStyles, renderAssetBreadcrumbGlyph, renderBreadcrumb } from '../shared/breadcrumb'
 import { projectBaseStyles } from './project-page-base.styles'
 import { renderAssetPageShell } from './asset-page-shell'
 import { renderAssetConfiguration } from './asset-configuration'
+import { hasLiveRunDuration } from './live-run-duration'
+import { showPipelineCommandToast } from './pipeline-command-toast'
+import './live-run-duration-element'
 import './pipeline-runs-list'
 
 class PipelineDetailPage extends DatastarLit(LitElement) {
   @state() private fullDependencyGraph = false
+  @state() private streamState: 'live' | 'reconnecting' | 'lost' = 'live'
+  private pendingToastAction = ''
+  private commandMessageAtDispatch = ''
+  private commandSawLoading = false
 
   static styles = [projectBaseStyles, breadcrumbStyles, css`
     .pipeline-overview { display: grid; min-width: 0; gap: var(--base-size-16); }
@@ -33,6 +40,8 @@ class PipelineDetailPage extends DatastarLit(LitElement) {
     .summary-label { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .summary-value { min-width: 0; overflow-wrap: anywhere; font: var(--lv-type-body); }
     .summary-value a { color: var(--lv-fg-accent); }
+    .latest-run-value { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--base-size-8); row-gap: var(--base-size-4); }
+    .latest-run-duration { white-space: nowrap; }
     .panel-heading { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: var(--base-size-12); }
     .panel-heading p { margin: 0; text-align: right; }
     .fact-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--base-size-12); margin: 0; }
@@ -40,7 +49,8 @@ class PipelineDetailPage extends DatastarLit(LitElement) {
     .fact dt { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .fact dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font: var(--lv-type-body); }
     .status { display: inline-flex; align-items: center; width: fit-content; border: var(--lv-border-muted); border-radius: 999px; padding: var(--base-size-4) var(--base-size-8); font: var(--lv-type-caption); text-transform: capitalize; }
-    .status.is-failed, .status.is-error { color: var(--lv-fg-danger); }
+    .status.is-queued, .status.is-running, .status.is-prepared { color: var(--lv-fg-warning); }
+    .status.is-failed, .status.is-error, .status.is-cancelled { color: var(--lv-fg-danger); }
     .status.is-succeeded { color: var(--lv-fg-success, var(--lv-fg-default)); }
     .consumer a, .fact a { color: var(--lv-fg-accent); overflow-wrap: anywhere; }
     .consumer-list { display: grid; gap: var(--base-size-8); }
@@ -74,8 +84,33 @@ class PipelineDetailPage extends DatastarLit(LitElement) {
     return this.signal<PipelineCommandStatusSignal>('pipelineCommandStatus', { loading: false, error: '', message: '' })
   }
 
+  get command(): PipelineCommandSignal {
+    return this.signal<PipelineCommandSignal>('pipelineCommand', { action: '', assetId: '', intentId: '', pipelineId: '', runId: '' })
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('datastar-fetch', this.handleStreamFetch)
+    document.addEventListener('datastar-signal-patch', this.handleStreamPatch)
+  }
+
+  override disconnectedCallback(): void {
+    document.removeEventListener('datastar-fetch', this.handleStreamFetch)
+    document.removeEventListener('datastar-signal-patch', this.handleStreamPatch)
+    super.disconnectedCallback()
+  }
+
   updated(): void {
-    checkSignalContract('pipeline detail', this.page, { kind: 'required', graph: 'required', asset: 'required', tabs: 'required' })
+    checkSignalContract('pipeline detail', this.page, { kind: 'required', graph: 'required', asset: 'required', tabs: 'required', waitingIntents: 'required' })
+    if (this.pendingToastAction) {
+      const status = this.commandStatus
+      if (status.loading) this.commandSawLoading = true
+      else if (status.error) this.pendingToastAction = ''
+      else if (status.message && (this.commandSawLoading || status.message !== this.commandMessageAtDispatch)) {
+        showPipelineCommandToast(this.pendingToastAction)
+        this.pendingToastAction = ''
+      }
+    }
   }
 
   render() {
@@ -87,7 +122,8 @@ class PipelineDetailPage extends DatastarLit(LitElement) {
       actions: page.canRun ? html`<button class="action-link run-action" type="button" ?disabled=${this.commandStatus.loading} @click=${this.runNow}>${this.commandStatus.loading ? 'Queuing…' : 'Run now'}</button>` : nothing,
       tabs: page.tabs,
       bodyClass: page.activeTab === 'definition' ? 'section-body definition-body' : 'section-body',
-      body: html`${this.commandStatus.error ? html`<p class="command-feedback is-error" role="alert">${this.commandStatus.error}</p>` : this.commandStatus.message ? html`<p class="command-feedback" role="status">${this.commandStatus.message}</p>` : nothing}
+      body: html`${this.commandStatus.error ? html`<p class="command-feedback is-error" role="alert">${this.commandStatus.error}</p>` : nothing}
+        ${this.streamState !== 'live' && page.activeTab !== 'definition' ? html`<p class="command-feedback is-error" role="alert">${this.streamState === 'reconnecting' ? 'Reconnecting to pipeline updates; live duration paused.' : 'Pipeline updates disconnected; live duration paused. Reload to see the latest state.'}</p>` : nothing}
         ${page.activeTab === 'runs' ? this.renderRuns(page) : page.activeTab === 'definition' ? this.renderDefinition(page) : html`<div class="pipeline-overview">${page.asset.description ? html`<p class="asset-description">${page.asset.description}</p>` : nothing}${this.renderOverview(page)}</div>`}`,
     })
   }
@@ -95,14 +131,18 @@ class PipelineDetailPage extends DatastarLit(LitElement) {
   private runNow = (): void => {
     const page = this.page
     if (!page?.canRun || this.commandStatus.loading) return
+    this.pendingToastAction = 'run'
+    this.commandMessageAtDispatch = this.commandStatus.message
+    this.commandSawLoading = false
     this.dispatchEvent(new CustomEvent('lv-pipeline-command', {
       bubbles: true,
       composed: true,
-      detail: { action: 'run', pipelineId: page.asset.id, assetId: page.asset.id, runId: '' },
+      detail: { action: 'run', pipelineId: page.asset.id, assetId: page.asset.id, intentId: '', runId: '' },
     }))
   }
 
   private renderOverview(page: PipelineDetailPageSignal) {
+    const latestRunCounting = page.latestRun && hasLiveRunDuration(page.latestRun.status, page.latestRun.startedAt, page.latestRun.finishedAt)
     return html`
       <section class="overview-summary" aria-label="Pipeline summary">
         <div class="summary-item">
@@ -112,11 +152,17 @@ class PipelineDetailPage extends DatastarLit(LitElement) {
         <div class="summary-item">
           <span class="summary-label">Schedule</span>
           <strong class="summary-value">${page.schedules.length ? page.schedules.map((schedule) => schedule.cron).join(' · ') : 'Manual'}</strong>
-          ${page.schedules.length ? html`<span class="muted">${page.timezone || 'UTC'} · ${page.nextRunAt ? `Next ${formatDateTime(page.nextRunAt, page.timezone)}` : 'Next run unavailable'}</span>` : nothing}
+          ${page.schedules.length ? html`<span class="muted">${page.nextRunAt ? `Next ${formatDateTime(page.nextRunAt, page.timezone)}` : `${page.timezone || 'UTC'} · Next run unavailable`}</span>` : nothing}
         </div>
         <div class="summary-item">
           <span class="summary-label">Latest run</span>
-          <strong class="summary-value">${page.latestRun ? html`<a href=${page.latestRun.href}><span class=${`status is-${page.latestRun.status}`}>${pipelineStatusLabel(page.latestRun.status)}</span> · ${page.latestRun.duration || 'Duration unavailable'} · ${formatDateTime(page.latestRun.startedAt, page.timezone)}</a>` : 'Never run'}</strong>
+          <strong class="summary-value latest-run-value">${page.latestRun ? html`
+            <span class=${`status is-${page.latestRun.status}`}>${pipelineStatusLabel(page.latestRun.status)}</span>
+            ${latestRunCounting
+              ? html`<lv-live-run-duration class="latest-run-duration" .status=${page.latestRun.status} .startedAt=${page.latestRun.startedAt || ''} .finishedAt=${page.latestRun.finishedAt || ''} .recordedDuration=${page.latestRun.duration || ''} .live=${this.streamState === 'live'}></lv-live-run-duration>`
+              : page.latestRun.duration ? html`<span class="latest-run-duration">${page.latestRun.duration}</span>` : nothing}
+            <a href=${page.latestRun.href}>${page.latestRun.startedAt ? formatDateTime(page.latestRun.startedAt, page.timezone) : 'View run'}</a>
+          ` : 'Never run'}</strong>
         </div>
         <div class="summary-item">
           <span class="summary-label">Last published</span>
@@ -179,8 +225,24 @@ class PipelineDetailPage extends DatastarLit(LitElement) {
   private renderRuns(page: PipelineDetailPageSignal) {
     const baseHref = page.tabs.find((tab) => tab.id === 'runs')?.href || `/pipelines/${encodeURIComponent(page.asset.id)}/runs`
     return html`<section aria-label="Pipeline runs">
-      <lv-pipeline-runs-list .monitor=${page.runMonitor ?? null} .table=${page.runsTable ?? { columns: [], rows: [], empty: 'No runs match these filters.' }} .baseHref=${baseHref} .fixedPipelineId=${page.asset.id}></lv-pipeline-runs-list>
+      <lv-pipeline-runs-list
+        .monitor=${page.runMonitor ?? null}
+        .table=${page.runsTable ?? { columns: [], rows: [], empty: 'No runs match these filters.' }}
+        .waitingIntents=${page.waitingIntents ?? []}
+        .pendingCommand=${this.commandStatus.loading ? this.command : null}
+        .baseHref=${baseHref}
+        .fixedPipelineId=${page.asset.id}
+        .live=${this.streamState === 'live'}
+        @lv-pipeline-command=${this.captureChildCommand}
+      ></lv-pipeline-runs-list>
     </section>`
+  }
+
+  private captureChildCommand = (event: CustomEvent<PipelineCommandSignal>): void => {
+    if (event.detail.action !== 'cancel-intent') return
+    this.pendingToastAction = event.detail.action
+    this.commandMessageAtDispatch = this.commandStatus.message
+    this.commandSawLoading = false
   }
 
   private handleGraphScopeChange = (event: Event): void => {
@@ -205,6 +267,20 @@ class PipelineDetailPage extends DatastarLit(LitElement) {
     </section>`
   }
 
+  private readonly handleStreamFetch = (event: Event): void => {
+    const detail = (event as CustomEvent<{ type?: string, el?: Element }>).detail
+    if (!detail || detail.el !== document.querySelector('main[data-init]')) return
+    if (detail.type === 'retrying') this.streamState = 'reconnecting'
+    else if (detail.type === 'retries-failed' || detail.type === 'finished' || detail.type === 'error') this.streamState = 'lost'
+  }
+
+  private readonly handleStreamPatch = (event: Event): void => {
+    const patch = (event as CustomEvent<Record<string, unknown>>).detail
+    const runtime = patch?.runtime
+    const newStream = runtime && typeof runtime === 'object' && Object.hasOwn(runtime, 'streamInstanceId')
+    if (this.page && patch && (Object.hasOwn(patch, 'page') || newStream)) this.streamState = 'live'
+  }
+
 }
 
 if (!customElements.get('lv-pipeline-detail-page')) customElements.define('lv-pipeline-detail-page', PipelineDetailPage)
@@ -216,15 +292,15 @@ function formatDateTime(value: string | undefined, timezone: string): string {
   const displayTimezone = timezone || 'UTC'
   try {
     const formatted = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: displayTimezone }).format(date)
-    return `${formatted} · ${displayTimezone}`
+    return `${formatted} ${displayTimezone}`
   } catch {
     const formatted = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(date)
-    return `${formatted} · UTC`
+    return `${formatted} UTC`
   }
 }
 
 function pipelineStatusLabel(status: string): string {
-  if (status === 'prepared') return 'Finalizing'
+  if (status === 'prepared') return 'Running'
   if (!status) return 'Unknown'
   return status.charAt(0).toUpperCase() + status.slice(1)
 }

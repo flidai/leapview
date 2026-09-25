@@ -766,6 +766,7 @@ model PipelineListItemSignal {
   `latestRunHref`?: string;
   `lastPublishedAt`?: string;
   `publicationStatus`: "confirmed" | "none" | "unavailable";
+  `recentRuns`: PipelineDetailRunSignal[];
   `nextRun`?: string;
   `pipelineId`: string;
   `running`: boolean;
@@ -775,11 +776,25 @@ model PipelineListItemSignal {
   `title`: string;
 }
 
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "pipelines", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
+model PipelineWaitingIntentSignal {
+  `intentId`: string;
+  `pipelineId`: string;
+  `status`: string;
+  `createdAt`: string;
+  `reason`?: string;
+  `queuePosition`?: int64;
+  `runId`?: string;
+  `cancelAllowed`: boolean;
+}
+
 @apigen.contract(#{ kind: "ui-signal", tags: #["project", "pipelines", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "pipelines" })
 model PipelineCommandSignal {
   `action`: string;
   `assetId`: string;
+  `intentId`: string;
   `pipelineId`: string;
   `runId`: string;
 }
@@ -818,6 +833,7 @@ model PipelinePageSignal {
   `kind`: RouteKind;
   `metrics`: PipelineMetricSignal[];
   `pipelines`: PipelineListItemSignal[];
+  `waitingIntents`: PipelineWaitingIntentSignal[];
   `runsTable`: RecordTableSignal;
   `runMonitor`?: PipelineRunMonitorSignal;
   `title`: string;
@@ -874,6 +890,7 @@ model PipelineDetailPageSignal {
   `startingDeadlineSeconds`: int64;
   `latestRun`?: PipelineDetailRunSignal;
   `recentRuns`: PipelineDetailRunSignal[];
+  `waitingIntents`: PipelineWaitingIntentSignal[];
   `runsTable`?: RecordTableSignal;
   `runMonitor`?: PipelineRunMonitorSignal;
   `publication`?: PipelineDetailPublicationSignal;

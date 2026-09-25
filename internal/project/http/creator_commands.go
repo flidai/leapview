@@ -12,6 +12,7 @@ import (
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/connectionadmin"
 	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -277,19 +278,19 @@ func (h *BrowserHandler) PipelineCommand(w stdhttp.ResponseWriter, r *stdhttp.Re
 		return
 	}
 	operation := h.PipelineRunCommand.OperationID()
-	if command.Action == "cancel" {
+	if command.Action == "cancel" || command.Action == "cancel-intent" {
 		operation = h.PipelineCancelCommand.OperationID()
 	}
 	if operation == "" || uicommand.VerifyClaim(uicommand.OperationClaims(r), operation) != nil {
 		h.pipelineCommandPatch(w, r, command, "The pipeline command is invalid.")
 		return
 	}
-	if command.Action != "run" && command.Action != "retry" && command.Action != "cancel" {
+	if command.Action != "run" && command.Action != "retry" && command.Action != "cancel" && command.Action != "cancel-intent" {
 		h.pipelineCommandPatch(w, r, command, "The pipeline command is invalid.")
 		return
 	}
 	principal, ok := h.currentPrincipal(r)
-	if !ok || (h.RunPipeline == nil && h.CancelPipeline == nil) {
+	if !ok || (h.RunPipeline == nil && h.CancelPipeline == nil && h.CancelPipelineIntent == nil) {
 		h.pipelineCommandPatch(w, r, command, "Pipeline operations are unavailable.")
 		return
 	}
@@ -316,7 +317,13 @@ func (h *BrowserHandler) PipelineCommand(w stdhttp.ResponseWriter, r *stdhttp.Re
 	}
 	r = started
 	var operationErr error
-	if command.Action == "cancel" {
+	if command.Action == "cancel-intent" {
+		if h.CancelPipelineIntent == nil || strings.TrimSpace(command.IntentID) == "" {
+			operationErr = errors.New("waiting request cancellation is unavailable")
+		} else {
+			operationErr = h.CancelPipelineIntent(r.Context(), command.PipelineID, command.IntentID, principal.ID, "ui:"+strings.TrimSpace(r.Header.Get("X-Request-ID")))
+		}
+	} else if command.Action == "cancel" {
 		if h.CancelPipeline == nil {
 			operationErr = errors.New("pipeline cancellation is unavailable")
 		} else {
@@ -329,14 +336,19 @@ func (h *BrowserHandler) PipelineCommand(w stdhttp.ResponseWriter, r *stdhttp.Re
 		if command.Action == "retry" {
 			retryOf = command.RunID
 		}
-		operationErr = h.RunPipeline(r.Context(), command.PipelineID, principal.ID, retryOf)
+		operationErr = h.RunPipeline(r.Context(), command.PipelineID, principal.ID, retryOf, "ui:"+strings.TrimSpace(r.Header.Get("X-Request-ID")))
 	}
 	if operationErr != nil {
-		message := publicPipelineError(operationErr)
+		message := publicPipelineError(operationErr, command.Action)
 		h.pipelineCommandPatch(w, r, command, message)
 		return
 	}
 	message := "Pipeline command accepted."
+	if command.Action == "run" || command.Action == "retry" {
+		message = "Pipeline request queued."
+	} else if command.Action == "cancel-intent" {
+		message = "Waiting request cancelled."
+	}
 	h.pipelineCommandSuccess(w, r, command, message)
 }
 
@@ -349,21 +361,10 @@ func (h *BrowserHandler) pipelineCommandSuccess(w stdhttp.ResponseWriter, r *std
 		h.pipelineAssetCommandSuccess(w, r, command, message)
 		return
 	}
-	// The mutation has already committed. Resolve the refreshed projection
-	// against a sink so a read-side outage cannot turn that successful write
-	// into a 5xx response that the durable idempotency layer would abandon.
-	// The browser can safely reload the authoritative state later.
-	projectID, assets, _, err := h.loadAssets(r)
-	if err != nil {
-		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
-		return
-	}
-	state, err := h.pipelineMonitorState(r, projectID, assets)
-	if err != nil {
-		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
-		return
-	}
-	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"page": projectui.PipelinesPagePatch(state, r.URL.Query().Get("view")), "pipelineCommand": command, "pipelineCommandStatus": projectsignals.PipelineCommandStatusSignal{Message: message}})
+	// The durable command protocol stores the response for replay and bounds its
+	// size. Run history can make the page projection larger than that bound, so
+	// acknowledge only the mutation here. The live page stream owns refreshes.
+	h.pipelineCommandAcknowledgement(w, r, command, message)
 }
 
 func (h *BrowserHandler) pipelineDetailCommandSuccess(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.PipelineCommandSignal, message string) {
@@ -372,55 +373,23 @@ func (h *BrowserHandler) pipelineDetailCommandSuccess(w stdhttp.ResponseWriter, 
 		h.pipelineCommandPatch(w, r, command, "Pipeline command target is invalid.")
 		return
 	}
-	section := strings.TrimSpace(r.URL.Query().Get("section"))
-	if !pipelineDetailSectionValid(section) {
-		section = projectui.PipelineDetailOverview
-	}
-	nav, state, err := h.pipelineDetailPageState(r, assetID, section)
-	if err != nil {
-		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
-		return
-	}
-	page := projectui.PipelineDetailBootstrapSignals(nav, state, "", h.layout(r))["page"]
-	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"page": page, "pipelineCommand": command, "pipelineCommandStatus": projectsignals.PipelineCommandStatusSignal{Message: message}})
+	h.pipelineCommandAcknowledgement(w, r, command, message)
 }
 
-// pipelineAssetCommandSuccess refreshes the detail projection that initiated
-// a pipeline command. The list projection used by /pipelines is a different
-// signal contract and must never replace a ResourceAssetPageSignal mounted by
-// an asset-detail route.
+// pipelineAssetCommandSuccess acknowledges the command without replacing the
+// asset page with a pipeline collection projection. The live stream refreshes
+// the mounted asset page independently.
 func (h *BrowserHandler) pipelineAssetCommandSuccess(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.PipelineCommandSignal, message string) {
 	assetID := strings.TrimSpace(r.URL.Query().Get("asset"))
 	if assetID == "" || assetID != strings.TrimSpace(command.AssetID) {
 		h.pipelineCommandPatch(w, r, command, "Pipeline command target is invalid.")
 		return
 	}
-	projectID, assets, edges, err := h.loadAssets(r)
-	if err != nil {
-		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
-		return
-	}
-	asset, found := projectview.AssetByID(assets, assetID)
-	if !found || (asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != "pipeline") {
-		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
-		return
-	}
-	section := strings.TrimSpace(r.URL.Query().Get("section"))
-	if !projectui.ValidProjectAssetSection(asset.Type, section) {
-		section = "details"
-	}
-	projection, err := h.assetPageState(r, projectID, assets, edges, assetID, section)
-	if err != nil {
-		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
-		return
-	}
-	detailPatch := projectui.ProjectAssetBootstrapSignalsForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.layout(r))
-	page, found := detailPatch["page"]
-	if !found {
-		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
-		return
-	}
-	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"page": page, "pipelineCommand": command, "pipelineCommandStatus": projectsignals.PipelineCommandStatusSignal{Message: message}})
+	h.pipelineCommandAcknowledgement(w, r, command, message)
+}
+
+func (h *BrowserHandler) pipelineCommandAcknowledgement(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.PipelineCommandSignal, message string) {
+	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"pipelineCommand": command, "pipelineCommandStatus": projectsignals.PipelineCommandStatusSignal{Message: message}})
 }
 
 func (h *BrowserHandler) pipelineCommandPatch(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.PipelineCommandSignal, message string) {
@@ -605,7 +574,17 @@ func publicConnectionError(err error) string {
 	return "Connection operation failed."
 }
 
-func publicPipelineError(error) string {
+func publicPipelineError(err error, action string) string {
+	if action == "cancel-intent" {
+		if kind, ok := apigenfailure.KindOf(err); ok && kind == "conflict" {
+			return "This request has already started. Reload to see its run."
+		}
+	}
+	if action == "cancel" {
+		if kind, ok := apigenfailure.KindOf(err); ok && kind == "not_cancellable" {
+			return "This run has already started and cannot be cancelled. Reload to see its current status."
+		}
+	}
 	return "Pipeline operation failed; review the run history and try again."
 }
 

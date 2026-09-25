@@ -456,7 +456,11 @@ func pipelineRunModelsFrom(modelOrder []string, root refreshrun.RunRecord, child
 		model := projectsignals.PipelineRunModelSignal{ModelID: modelID, Attempts: []projectsignals.PipelineRunAttemptSignal{}}
 		if child, ok := byModel[modelID]; ok {
 			model.Status = projectsignals.Optional(child.Status)
-			model.StatusLabel = projectsignals.Optional(pipelineRunStatusLabel(child.Status))
+			label := pipelineRunStatusLabel(child.Status)
+			if child.Status == refreshrun.RunStatusPrepared {
+				label = "Ready to publish"
+			}
+			model.StatusLabel = projectsignals.Optional(label)
 			model.Error = optionalPipelineRunValue(child.Error)
 			if duration := pipelineRunDuration(child.StartedAt, child.FinishedAt); duration != "" {
 				model.Duration = projectsignals.Optional(duration)
@@ -511,7 +515,7 @@ func pipelineRunStatusLabel(status string) string {
 	case refreshrun.RunStatusRunning:
 		return "Running"
 	case refreshrun.RunStatusPrepared:
-		return "Finalizing"
+		return "Running"
 	case refreshrun.RunStatusSucceeded:
 		return "Succeeded"
 	case refreshrun.RunStatusFailed:

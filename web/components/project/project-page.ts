@@ -787,7 +787,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
           @click=${() => this.dispatchEvent(new CustomEvent('lv-run-refresh-pipeline', {
             bubbles: true,
             composed: true,
-            detail: { action: 'run', assetId: page.assetId, pipelineId: page.assetId, runId: '' },
+            detail: { action: 'run', assetId: page.assetId, intentId: '', pipelineId: page.assetId, runId: '' },
           }))}
         >
           ${page.refresh?.running ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : lucideIcon(RefreshCw)}
