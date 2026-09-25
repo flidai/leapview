@@ -59,8 +59,10 @@ def source_schema(revision):
     if len(matches) != 1:
         raise ValueError('Cannot resolve the source schema revision')
     files = git('ls-tree', '-r', '--name-only', revision, '--', MIGRATIONS).decode().splitlines()
+    # Match the runtime's //go:embed *.sql boundary. Nested test fixtures are
+    # historical examples, not applied SQL; their basenames can also collide.
     migrations = {path.rsplit('/', 1)[-1]: hashlib.sha256(git('show', revision+':'+path)).hexdigest()
-                  for path in files if re.fullmatch(r'\d+_[^/]+\.sql', path.rsplit('/', 1)[-1])}
+                  for path in files if re.fullmatch(re.escape(MIGRATIONS) + r'/\d+_[^/]+\.sql', path)}
     return int(matches[0]), migrations
 
 
