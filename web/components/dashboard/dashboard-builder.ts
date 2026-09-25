@@ -2995,9 +2995,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         filters: collapsed.has('filters'),
         visuals: collapsed.has('visuals'),
         data: collapsed.has('data'),
-        // The agent pane did not exist in the legacy array format. Introduce
-        // it collapsed so upgrading does not unexpectedly shrink the canvas.
-        agent: legacy ? true : collapsed.has('agent'),
+        // Agent is an explicit, transient action. A builder command can refresh
+        // this route; restoring an open Agent then steals focus and canvas space
+        // even though the user clicked a visual, filter, or toolbar control.
+        agent: true,
       }
     } catch {
       this.collapsedPanes = { ...defaultCollapsedPanes }
@@ -3007,7 +3008,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private persistCollapsedPanes(): void {
     if (typeof window === 'undefined') return
     try {
-      const collapsed = (Object.keys(this.collapsedPanes) as BuilderPane[]).filter((pane) => this.collapsedPanes[pane])
+      const collapsed = (Object.keys(this.collapsedPanes) as BuilderPane[]).filter((pane) => pane === 'agent' || this.collapsedPanes[pane])
       window.localStorage.setItem(builderPaneStorageKey, JSON.stringify({ version: 2, collapsed }))
     } catch {
       // Storage can be unavailable in hardened browser contexts. The current

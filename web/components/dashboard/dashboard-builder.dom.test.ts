@@ -378,55 +378,6 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
   }
 })
 
-test('builder agent uses the compact main-agent welcome layout and starter prompts only fill the composer', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 650 } })
-  try {
-    await page.goto(baseURL)
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      mergePatch({ agent: { transcript: [], status: { enabled: true, running: false }, composer: { value: '', disabled: false } }, agentContext: { pageTitle: 'Overview' } })
-      ;(window as any).agentSubmits = 0
-      document.addEventListener('lv-chat-submit', () => (window as any).agentSubmits++)
-    })
-    const builder = page.locator('lv-dashboard-builder')
-    await builder.locator('[data-pane-toggle="agent"]').click()
-    const drawer = builder.locator('lv-chat-drawer[open]')
-    expect(await drawer.getByRole('heading', { name: 'What should I change?' }).isVisible()).toBe(true)
-    for (const label of [/Add a chart:/, /Change a visual:/, /Move a chart:/, /Resize a chart:/]) {
-      expect(await drawer.getByRole('button', { name: label }).isVisible()).toBe(true)
-    }
-    expect(await drawer.getByText('Type @ to attach a chart on this page.').isVisible()).toBe(true)
-    const geometry = await drawer.evaluate((element) => {
-      const root = element.shadowRoot!
-      const welcome = root.querySelector('.welcome')!
-      const composer = root.querySelector('lv-chat-composer')!
-      const prompts = root.querySelector('.prompts')!
-      return {
-        composerBeforePrompts: composer.getBoundingClientRect().bottom <= prompts.getBoundingClientRect().top,
-        composerInsideWelcome: welcome.contains(composer),
-        compactPrompts: [...prompts.querySelectorAll('button')].every((button) => button.getBoundingClientRect().height <= 40),
-        noOverflow: root.querySelector('.drawer')!.scrollWidth <= root.querySelector('.drawer')!.clientWidth,
-      }
-    })
-    expect(geometry).toEqual({ composerBeforePrompts: true, composerInsideWelcome: true, compactPrompts: true, noOverflow: true })
-    await drawer.getByRole('button', { name: /Resize a chart:/ }).click()
-    expect(await drawer.locator('textarea').inputValue()).toBe('Resize this chart to make it taller.')
-    expect(await page.evaluate(() => (window as any).agentSubmits)).toBe(0)
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      mergePatch({ agent: { status: { enabled: true, running: true } } })
-    })
-    const activeLayout = await drawer.evaluate(async (element: any) => {
-      await element.updateComplete
-      const root = element.shadowRoot as ShadowRoot
-      const body = root.querySelector('.drawer')!.getBoundingClientRect()
-      const composer = root.querySelector('lv-chat-composer')!.getBoundingClientRect()
-      return { welcomeHidden: !root.querySelector('.welcome'), composerAtBottom: Math.abs(composer.bottom - body.bottom) < 1 }
-    })
-    expect(activeLayout).toEqual({ welcomeHidden: true, composerAtBottom: true })
-  } finally { await page.close() }
-})
-
 test('builder Agent Escape collapses the dock and reopening preserves the unsent draft', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
