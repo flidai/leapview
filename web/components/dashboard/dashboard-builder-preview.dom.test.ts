@@ -75,7 +75,7 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
-test('native resize handles suspend chart rendering until release and grid teardown resumes it', async () => {
+test('native resize handles suspend chart rendering until the placement save finishes', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -95,6 +95,10 @@ test('native resize handles suspend chart rendering until release and grid teard
     await page.mouse.move(box.x + 40, box.y + 60, { steps: 8 })
     expect(await host.evaluate((element: any) => element.resizeSuspended)).toBe(true)
     await page.mouse.up()
+    expect(await host.evaluate((element: any) => element.resizeSuspended)).toBe(true)
+    await builder.evaluate((element: any) => document.dispatchEvent(new CustomEvent('datastar-fetch', {
+      detail: { type: 'finished', el: element },
+    })))
     expect(await host.evaluate((element: any) => element.resizeSuspended)).toBe(false)
     const resumed = await builder.evaluate((element: any) => {
       const host = element.shadowRoot.querySelector('lv-visualization-host')
@@ -103,6 +107,25 @@ test('native resize handles suspend chart rendering until release and grid teard
       return host.resizeSuspended
     })
     expect(resumed).toBe(false)
+  } finally { await page.close() }
+})
+
+test('failed placement saves release suspended previews', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const resumed = await page.locator('lv-dashboard-builder').evaluate((element: any) => {
+      element.gridResizeSavePending = true
+      element.setPreviewResizeSuspended(true)
+      element.commandPending = true
+      element.activeCommandAction = 'set_placements'
+      document.dispatchEvent(new CustomEvent('datastar-fetch', {
+        detail: { type: 'error', argsRaw: { status: 409 }, el: element },
+      }))
+      return !element.gridResizeSavePending && !element.previewResizeSuspended && !element.commandPending
+    })
+    expect(resumed).toBe(true)
   } finally { await page.close() }
 })
 

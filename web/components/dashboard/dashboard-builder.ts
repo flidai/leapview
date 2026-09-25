@@ -175,6 +175,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private readonly visualizationDecoder = new BuilderVisualizationState()
   private gridInteracting = false
   private previewResizeSuspended = false
+  private gridResizeSavePending = false
   private updatingBuilder = false
   private builderUpdateSnapshot: DashboardBuilderSignal | null | undefined
   private builderVisualUpdateSnapshot?: Record<string, VisualizationEnvelope>
@@ -1283,8 +1284,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .canvas {
+      --builder-grid-offset: 0px;
       position: absolute;
-      inset: var(--builder-grid-offset, 0px) auto auto var(--builder-grid-offset, 0px);
+      inset: var(--builder-grid-offset) auto auto var(--builder-grid-offset);
       box-sizing: border-box;
       width: var(--builder-grid-width, ${builderCanvasDesktopWidth}px);
       min-height: ${builderCanvasMinimumHeight}px;
@@ -2721,6 +2723,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private destroyGridStack(): void {
+    this.gridResizeSavePending = false
     this.setPreviewResizeSuspended(false)
     this.gridInteracting = false
     if (this.gridStack) this.gridStack.destroy(false)
@@ -2741,9 +2744,18 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.gridCompactPending = compact
     this.gridInteracting = false
     this.syncCanvasViewport(this.canvasPage)
-    this.setPreviewResizeSuspended(false)
+    // The server may adjust neighboring placements before acknowledging the
+    // save. Keep the charts paused until that final geometry is in the DOM so
+    // one gesture cannot trigger two expensive renderer resizes in succession.
+    this.gridResizeSavePending = compact
     this.gridInteractionMessage = 'Layout updated.'
     this.scheduleGridCommit()
+  }
+
+  private resumeGridPreviewAfterSave(): void {
+    if (!this.gridResizeSavePending) return
+    this.gridResizeSavePending = false
+    this.setPreviewResizeSuspended(false)
   }
 
   private setPreviewResizeSuspended(suspended: boolean): void {
@@ -2795,14 +2807,19 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const inset = Math.min(padding, Math.max(0, (Math.min(logicalWidth, logicalHeight) - 1) / 2))
     const gridWidth = Math.max(1, logicalWidth - inset * 2)
     const innerHeight = Math.max(1, logicalHeight - inset * 2)
-    fit.style.setProperty('--builder-canvas-fitted-width', `${logicalWidth * scale}px`)
-    fit.style.setProperty('--builder-canvas-fitted-height', `${logicalHeight * scale}px`)
-    canvas.style.setProperty('--builder-canvas-scale', String(scale))
-    canvas.style.setProperty('--builder-grid-offset', `${inset * scale}px`)
-    canvas.style.setProperty('--builder-grid-width', `${gridWidth}px`)
-    canvas.style.setProperty('--builder-grid-columns', String(Math.max(1, page.grid.columns || 12)))
-    canvas.style.setProperty('--builder-grid-row-pitch', `${rowHeight + gap}px`)
-    canvas.style.minHeight = canvas.style.height = `${innerHeight}px`
+    const setStyle = (element: HTMLElement, name: string, value: string): void => {
+      if (element.style.getPropertyValue(name) !== value) element.style.setProperty(name, value)
+    }
+    setStyle(fit, '--builder-canvas-fitted-width', `${logicalWidth * scale}px`)
+    setStyle(fit, '--builder-canvas-fitted-height', `${logicalHeight * scale}px`)
+    setStyle(canvas, '--builder-canvas-scale', String(scale))
+    setStyle(canvas, '--builder-grid-offset', `${inset * scale}px`)
+    setStyle(canvas, '--builder-grid-width', `${gridWidth}px`)
+    setStyle(canvas, '--builder-grid-columns', String(Math.max(1, page.grid.columns || 12)))
+    setStyle(canvas, '--builder-grid-row-pitch', `${rowHeight + gap}px`)
+    const height = `${innerHeight}px`
+    if (canvas.style.minHeight !== height) canvas.style.minHeight = height
+    if (canvas.style.height !== height) canvas.style.height = height
     if (Math.abs(this.canvasScale - scale) > 0.0001) this.canvasScale = scale
   }
 
@@ -2823,7 +2840,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private scheduleGridCommit(): void {
-    if (this.gridCommitQueued || !this.gridStack || this.isMobileViewport() || this.commandPending || !this.builder?.capabilities.canEdit) return
+    if (this.gridCommitQueued) return
+    if (!this.gridStack || this.isMobileViewport() || !this.builder?.capabilities.canEdit) {
+      this.resumeGridPreviewAfterSave()
+      return
+    }
+    if (this.commandPending) return
     this.gridCommitQueued = true
     queueMicrotask(() => {
       this.gridCommitQueued = false
@@ -2834,7 +2856,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private commitGridPlacements(): void {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
-    if (!builder || !page || !this.gridStack || this.isMobileViewport() || this.commandPending || !builder.capabilities.canEdit) return
+    if (this.commandPending) return
+    if (!builder || !page || !this.gridStack || this.isMobileViewport() || !builder.capabilities.canEdit) {
+      this.resumeGridPreviewAfterSave()
+      return
+    }
     const nodes = new Map(this.gridStack.getGridItems().map((item) => [item.gridstackNode?.id || item.getAttribute('gs-id') || '', item.gridstackNode]))
     const components = this.pageEditableComponents(page)
     const placements: GridPlacement[] = components.map((component) => {
@@ -2851,6 +2877,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     })
     if (placements.every((placement, index) => this.placementEqual(placement, components[index].placement))) {
       this.gridCompactPending = false
+      this.resumeGridPreviewAfterSave()
       return
     }
     if (!this.gridInteractionMessage) this.gridInteractionMessage = 'Layout updated.'
@@ -3220,6 +3247,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     if (!this.commandPending) return
     if (detail?.type === 'finished') {
+      this.resumeGridPreviewAfterSave()
       this.selectPendingAddedVisual(this.builder, true)
       this.commandPending = false
       this.activeCommandAction = ''
@@ -3261,6 +3289,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     } else {
       this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
     }
+    this.resumeGridPreviewAfterSave()
     this.terminalFailure = commandFailure
     this.requestUpdate()
   }
