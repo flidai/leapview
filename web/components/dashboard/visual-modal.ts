@@ -85,7 +85,7 @@ export class VisualModal extends LitElement {
     }
 
     .data-dialog.is-compact lv-record-table .record-table {
-      margin-inline: auto;
+      margin-inline: 0;
       table-layout: auto;
     }
 
@@ -334,8 +334,8 @@ export class VisualModal extends LitElement {
               })),
               rows,
               empty: 'No visual data',
-              width: compactColumns ? 'max-content' : '',
-              minWidth: compactColumns ? 'min(20rem, 100%)' : columns.length > 4 ? `${columns.length * 160}px` : '0',
+              width: compactColumns ? '100%' : '',
+              minWidth: compactColumns ? '100%' : columns.length > 4 ? `${columns.length * 160}px` : '0',
               density: 'tight',
               columnDividers: compactColumns,
             }}
