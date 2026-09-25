@@ -178,16 +178,17 @@ func TestResolveVisualTypeFieldBindingsForMapPrefersNumericLatitudeAndLongitude(
 func TestResolveVisualTypeFieldBindingsForMapStaysEmptyWithoutCoordinatePair(t *testing.T) {
 	model := &semanticmodel.Model{
 		Dimensions: map[string]semanticmodel.SemanticDimension{
-			"country": {Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"stores": {Field: "stores.country"}}},
-			"revenue": {Datatype: semanticmodel.DataTypeDecimal, Bindings: map[string]semanticmodel.DimensionBinding{"stores": {Field: "stores.revenue"}}},
+			"country":  {Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"stores": {Field: "stores.country"}}},
+			"revenue":  {Datatype: semanticmodel.DataTypeDecimal, Bindings: map[string]semanticmodel.DimensionBinding{"stores": {Field: "stores.revenue"}}},
+			"latitude": {Datatype: semanticmodel.DataTypeFloat, Bindings: map[string]semanticmodel.DimensionBinding{"other_dataset": {Field: "other_dataset.latitude"}}},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"store_count": {Dataset: "stores"},
 		},
 	}
-	country, revenue, storeCount := "country", "revenue", "store_count"
+	country, revenue, latitude, storeCount := "country", "revenue", "latitude", "store_count"
 	visual := document.DashboardVisual{Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
-		Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: &country}, {String: &revenue}}, Metrics: []document.DashboardMetricSelection{{String: &storeCount}},
+		Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: &country}, {String: &revenue}, {String: &latitude}}, Metrics: []document.DashboardMetricSelection{{String: &storeCount}},
 	}}}
 
 	got := resolveVisualTypeFieldBindingsForTarget(model, visual, document.DashboardVisualTypeMap)

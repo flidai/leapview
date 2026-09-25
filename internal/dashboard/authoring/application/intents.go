@@ -359,12 +359,12 @@ func mapDimensionPriority(model *semanticmodel.Model, dataset, id string) int {
 }
 
 func isNumericMapDimension(model *semanticmodel.Model, dataset string, dimension semanticmodel.SemanticDimension) bool {
-	if dimension.Datatype != "" {
-		return numericLogicalDatatype(dimension.Datatype)
-	}
 	binding, ok := dimension.Bindings[dataset]
 	if !ok {
 		return false
+	}
+	if dimension.Datatype != "" {
+		return numericLogicalDatatype(dimension.Datatype)
 	}
 	field := strings.TrimSpace(binding.Field)
 	parts := strings.SplitN(field, ".", 2)
