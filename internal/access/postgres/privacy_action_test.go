@@ -68,7 +68,12 @@ func TestPrivacyActionPostgresScopeAndDryRun(t *testing.T) {
 	if _, err := executor.repo.CreateSession(ctx, graph.PrincipalID, time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executor.repo.CreateAPIToken(ctx, graph.PrincipalID, "privacy-test"); err != nil {
+	if _, _, err := executor.repo.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
+		PrincipalID: graph.PrincipalID,
+		Name:        "privacy-test",
+		Permissions: []access.PermissionPair{},
+		ExpiresAt:   time.Now().Add(time.Hour),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	manifest := privacyDryRun(t, executor, graph)
@@ -151,8 +156,8 @@ func TestPrivacyActionPostgresExecutionResumeAndIsolation(t *testing.T) {
 	if _, err := db.runtime.Exec(ctx, `INSERT INTO access.oauth_session(kind,signature,request_id,request_json) VALUES ('access_token','synthetic-secret-token','synthetic-request',jsonb_build_object('session',jsonb_build_object('subject',$1::text)))`, graph.PrincipalID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.runtime.Exec(ctx, `INSERT INTO access.authoring_session(id,kind,client_id,principal_id,target_id,project_id,capabilities,expires_at)
-		VALUES ('synthetic-authoring-session','human_cli','synthetic-client',$1,'target','project','[]'::jsonb,clock_timestamp()+interval '1 hour')`, graph.PrincipalID); err != nil {
+	if _, err := db.runtime.Exec(ctx, `INSERT INTO access.authoring_session(id,kind,client_id,principal_id,target_id,project_id,permission_profile,permissions,expires_at)
+		VALUES ('synthetic-authoring-session','human_cli','synthetic-client',$1,'target','project','leapview.permissions/v1','[]'::jsonb,clock_timestamp()+interval '1 hour')`, graph.PrincipalID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.runtime.Exec(ctx, `INSERT INTO access.authoring_credential(id,session_id,access_token_hash,access_expires_at)
