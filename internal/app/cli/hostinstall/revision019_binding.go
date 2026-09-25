@@ -32,27 +32,50 @@ func readUpgradeInstallation(root string) (Config, composectl.InitOptions, error
 	if err != nil || installed.TargetID != "" || installed.Image != revision019PredecessorImage {
 		return installed, normalized, err
 	}
+	binding, err := readRevision019Binding(root)
+	if err != nil {
+		return Config{}, composectl.InitOptions{}, err
+	}
+	if err := validateRevision019Binding(binding, installed); err != nil {
+		return Config{}, composectl.InitOptions{}, err
+	}
+	installed.TargetID = binding.TargetID
+	return installed, normalized, nil
+}
+
+func verifyPreparedRevision019Binding(root string, config Config) error {
+	binding, err := readRevision019Binding(root)
+	if err != nil {
+		return err
+	}
+	return validateRevision019Binding(binding, config)
+}
+
+func readRevision019Binding(root string) (revision019Binding, error) {
 	contents, err := securefs.ReadPrivateFile(filepath.Join(root, revision019BindingName))
 	if err != nil {
-		return Config{}, composectl.InitOptions{}, fmt.Errorf("read revision-019 provisioned target binding: %w", err)
+		return revision019Binding{}, fmt.Errorf("read revision-019 provisioned target binding: %w", err)
 	}
 	var binding revision019Binding
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&binding); err != nil {
-		return Config{}, composectl.InitOptions{}, fmt.Errorf("parse revision-019 target binding: %w", err)
+		return revision019Binding{}, fmt.Errorf("parse revision-019 target binding: %w", err)
 	}
 	if decoder.Decode(&struct{}{}) != io.EOF {
-		return Config{}, composectl.InitOptions{}, fmt.Errorf("revision-019 target binding must contain exactly one object")
+		return revision019Binding{}, fmt.Errorf("revision-019 target binding must contain exactly one object")
 	}
+	return binding, nil
+}
+
+func validateRevision019Binding(binding revision019Binding, installed Config) error {
 	if binding.SchemaVersion != 1 || binding.Image != revision019PredecessorImage ||
 		binding.TargetID == "" || len(binding.TargetID) > 512 ||
 		binding.TargetID != strings.TrimSpace(binding.TargetID) ||
 		strings.IndexFunc(binding.TargetID, func(character rune) bool { return character < 32 }) >= 0 ||
 		binding.LegacyConfig.TargetID != "" ||
 		!configsEqual(binding.LegacyConfig, installed) {
-		return Config{}, composectl.InitOptions{}, fmt.Errorf("revision-019 target binding does not match the installed predecessor")
+		return fmt.Errorf("revision-019 target binding does not match the installed predecessor")
 	}
-	installed.TargetID = binding.TargetID
-	return installed, normalized, nil
+	return nil
 }

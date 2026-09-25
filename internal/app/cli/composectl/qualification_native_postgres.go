@@ -55,6 +55,10 @@ type qualificationNativePostgresTopologyOptions struct {
 	// packaging checks. Installed bundles default to qualification/postgres-init.sh.
 	InitScript    string
 	ContainerName string
+	// PersistentDataVolume and CertificateDir are used only by disposable
+	// host bootstrap. Ordinary qualification retains its tmpfs lifecycle.
+	PersistentDataVolume string
+	CertificateDir       string
 }
 
 // qualificationNativePostgresOptions is retained as a concise alias for
@@ -155,7 +159,13 @@ func newQualificationNativePostgresTopology(
 	if err := validateQualificationNativePostgresIdentifier(containerName, "qualification PostgreSQL container name"); err != nil {
 		return nil, err
 	}
-	secretDir, tlsFiles, err := createQualificationNativePostgresTLSFiles(containerName)
+	var secretDir string
+	var tlsFiles qualificationNativePostgresTLSFiles
+	if options.CertificateDir != "" {
+		secretDir, tlsFiles, err = createQualificationNativePostgresTLSFilesAt(containerName, options.CertificateDir)
+	} else {
+		secretDir, tlsFiles, err = createQualificationNativePostgresTLSFiles(containerName)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -210,6 +220,17 @@ func newQualificationNativePostgresTopology(
 		Entrypoint: []string{"sh"},
 		Command:    []string{"-ec", qualificationNativePostgresEntrypointScript},
 		NoHealth:   true,
+	}
+	if options.PersistentDataVolume != "" {
+		if err := validateQualificationNativePostgresIdentifier(options.PersistentDataVolume, "predecessor PostgreSQL data volume"); err != nil {
+			_ = topology.Remove(context.Background())
+			return nil, err
+		}
+		request.Volumes = append(request.Volumes, qualificationContainerVolume{
+			Source: options.PersistentDataVolume, Target: "/var/lib/postgresql",
+		})
+		request.Tmpfs = []string{"/tmp:rw,nosuid,nodev,mode=1777,size=64m"}
+		request.RestartPolicy = "unless-stopped"
 	}
 	container, err := runtime.Start(ctx, request)
 	if err != nil {
@@ -523,6 +544,17 @@ func createQualificationNativePostgresTLSFiles(serverHost string) (string, quali
 	if err != nil {
 		return "", qualificationNativePostgresTLSFiles{}, fmt.Errorf("create qualification PostgreSQL TLS directory: %w", err)
 	}
+	return writeQualificationNativePostgresTLSFiles(serverHost, dir)
+}
+
+func createQualificationNativePostgresTLSFilesAt(serverHost, dir string) (string, qualificationNativePostgresTLSFiles, error) {
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		return "", qualificationNativePostgresTLSFiles{}, fmt.Errorf("create predecessor PostgreSQL TLS directory: %w", err)
+	}
+	return writeQualificationNativePostgresTLSFiles(serverHost, dir)
+}
+
+func writeQualificationNativePostgresTLSFiles(serverHost, dir string) (string, qualificationNativePostgresTLSFiles, error) {
 	removeOnError := func(err error) (string, qualificationNativePostgresTLSFiles, error) {
 		_ = os.RemoveAll(dir)
 		return "", qualificationNativePostgresTLSFiles{}, err
