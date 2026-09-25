@@ -357,7 +357,12 @@ func (e *NativeEffects) migrateOn(ctx context.Context, id Identity, digest, netw
 		"--mount", "type=bind,src=" + filepath.Join(e.operation, "request.json") + ",dst=/upgrade/request.json,readonly",
 		"--mount", "type=bind,src=" + secret + ",dst=/upgrade/migrator.url,readonly",
 		"--mount", "type=bind,src=" + journalPath + ",dst=/upgrade-journal.json,readonly"}
-	tlsMounts, err := migrationTLSMounts(dsn, e.original.App)
+	home := e.original.Volumes["home"]
+	tlsHome := home
+	if rehearsal {
+		tlsHome = filepath.Join(e.operation, "rehearsal", "home")
+	}
+	tlsMounts, err := migrationTLSMounts(dsn, e.original.App, map[string]string{home: tlsHome})
 	if err != nil {
 		return err
 	}
@@ -595,8 +600,9 @@ func (e *NativeEffects) migratorURL(app dockerInspection) (string, error) {
 
 // Mount only the TLS files explicitly named by the migrator URL, preserving
 // their container paths. Never copy the application's environment or whole
-// secret directories into the one-shot migrator.
-func migrationTLSMounts(dsn string, app dockerInspection) ([]string, error) {
+// secret directories into the one-shot migrator. volumeSources maps inventoried
+// application volume roots to live or restored roots for this operation.
+func migrationTLSMounts(dsn string, app dockerInspection, volumeSources map[string]string) ([]string, error) {
 	u, err := url.Parse(dsn)
 	if err != nil {
 		return nil, errors.New("invalid migrator URL")
@@ -611,23 +617,41 @@ func migrationTLSMounts(dsn string, app dockerInspection) ([]string, error) {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, ",\r\n") {
 			return nil, errors.New("TLS material must use canonical container paths")
 		}
+		// Respect the most specific container mount, including unsupported
+		// nested mounts which shadow a certificate in the application volume.
+		selected := -1
+		for i, mount := range app.Mounts {
+			if path == mount.Destination || strings.HasPrefix(path, mount.Destination+"/") {
+				if selected < 0 || len(mount.Destination) > len(app.Mounts[selected].Destination) {
+					selected = i
+				}
+			}
+		}
 		source := ""
-		for _, mount := range app.Mounts {
-			if mount.Type != "bind" || mount.RW {
-				continue
-			}
-			if path == mount.Destination {
-				source = mount.Source
-				break
-			}
-			if strings.HasPrefix(path, mount.Destination+"/") {
-				source = filepath.Join(mount.Source, strings.TrimPrefix(path, mount.Destination+"/"))
-				break
+		if selected >= 0 {
+			mount := app.Mounts[selected]
+			relative := strings.TrimPrefix(strings.TrimPrefix(path, mount.Destination), "/")
+			switch {
+			case mount.Type == "bind" && !mount.RW:
+				source = filepath.Join(mount.Source, relative)
+			case mount.Type == "volume" && mount.Name != "" && volumeSources[mount.Source] != "":
+				// Only the inventoried home volume is supplied by the caller.
+				// Rehearsal substitutes its restored root; never mount the whole
+				// volume or read TLS material from live data during rehearsal.
+				root, resolveErr := filepath.EvalSymlinks(volumeSources[mount.Source])
+				if resolveErr != nil {
+					return nil, fmt.Errorf("resolve TLS volume: %w", resolveErr)
+				}
+				resolved, resolveErr := filepath.EvalSymlinks(filepath.Join(root, relative))
+				if resolveErr != nil || !strings.HasPrefix(resolved, root+string(filepath.Separator)) {
+					return nil, errors.New("TLS file must remain inside the tracked application volume")
+				}
+				source = resolved
 			}
 		}
 		info, statErr := os.Lstat(source)
 		if source == "" || strings.ContainsAny(source, ",\r\n") || statErr != nil || !info.Mode().IsRegular() {
-			return nil, errors.New("migrator TLS material must be an existing read-only application bind file")
+			return nil, errors.New("migrator TLS material must be a regular file in a read-only bind or tracked application volume")
 		}
 		args = append(args, "--mount", "type=bind,src="+source+",dst="+path+",readonly")
 		seen[path] = true

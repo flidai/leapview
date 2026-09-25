@@ -49,4 +49,4 @@ jobs:
       - name: Rehearse physical recovery on disposable PostgreSQL and files
         env:
           LEAPVIEW_HOST_UPGRADE_QUALIFICATION: '1'
-        run: go test ./internal/app/cli/hostinstall -run '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay)$' -count=1 -timeout=6m -v
+        run: go test ./internal/app/cli/hostinstall -run '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification)$' -count=1 -timeout=6m -v
