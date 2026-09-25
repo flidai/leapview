@@ -7,7 +7,7 @@ import { keyed } from 'lit/directives/keyed.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { dashboardBuilderToolbarStyles } from './dashboard-builder-toolbar-styles'
 import { dashboardBuilderFilterStyles } from './dashboard-builder-filter-styles'
-import { hasCompiledBuilderPreview } from './builder-preview-readiness'
+import { hasCompiledBuilderPreview, isBuilderVisualTypeSwitchPending } from './builder-preview-readiness'
 import { buildSemanticCatalog, builderFieldCatalogGroup, type BuilderCatalogField } from './builder-field-catalog'
 import { canRequireFilter, filterControlChoices, filterControlLabel } from './builder-filter-settings'
 import { applyCanonicalGridAttributes, builderGridOccupiedRows, setBuilderPreviewResizeSuspended, syncGridStackNodesToCanonical } from './builder-grid-sync'
@@ -2995,10 +2995,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         filters: collapsed.has('filters'),
         visuals: collapsed.has('visuals'),
         data: collapsed.has('data'),
-        // Agent is an explicit, transient action. A builder command can refresh
-        // this route; restoring an open Agent then steals focus and canvas space
-        // even though the user clicked a visual, filter, or toolbar control.
-        agent: true,
+        agent: legacy ? true : collapsed.has('agent'),
       }
     } catch {
       this.collapsedPanes = { ...defaultCollapsedPanes }
@@ -3008,7 +3005,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private persistCollapsedPanes(): void {
     if (typeof window === 'undefined') return
     try {
-      const collapsed = (Object.keys(this.collapsedPanes) as BuilderPane[]).filter((pane) => pane === 'agent' || this.collapsedPanes[pane])
+      const collapsed = (Object.keys(this.collapsedPanes) as BuilderPane[]).filter((pane) => this.collapsedPanes[pane])
       window.localStorage.setItem(builderPaneStorageKey, JSON.stringify({ version: 2, collapsed }))
     } catch {
       // Storage can be unavailable in hardened browser contexts. The current
@@ -3792,19 +3789,20 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const selected = visual.id === this.effectiveVisualID(this.builder, page)
     const visualType = this.visualTypeForRender(visual)
     const previewCandidate = previews[this.visualSignalID(visual)]
+    const visualTypeSwitchPending = isBuilderVisualTypeSwitchPending(this.commandPending, this.activeCommandAction, this.pendingVisualTypeSwitch, page.id, visual, visualType)
     const mobileOrder = this.mobileVisualOrder(visual, page)
     const draggedField = this.draggedFieldFromBuilder(this.builder)
     const fieldDrop = draggedField ? (this.fieldCompatibleWithVisual(draggedField, visual) ? 'compatible' : 'incompatible') : ''
-    const requirementMessages = this.visualRequirementMessages(visual)
+    const requirementMessages = visualTypeSwitchPending ? [] : this.visualRequirementMessages(visual)
     const suggestedMeasure = visualType === 'gauge' && !visual.slots.some((slot) => this.slotRole(slot) === 'metric')
       && this.builder?.capabilities.canEdit && !this.commandPending
       ? this.defaultGaugeMeasure(this.builder)
       : undefined
-    const previewIssue = this.visualPreviewErrorMessage(visual)
-    const previewUnavailable = requirementMessages.length > 0 || Boolean(previewIssue) || Boolean(this.builder?.preview.error && !this.builder.preview.active)
+    const previewIssue = visualTypeSwitchPending ? '' : this.visualPreviewErrorMessage(visual)
+    const previewUnavailable = visualTypeSwitchPending || requirementMessages.length > 0 || Boolean(previewIssue) || Boolean(this.builder?.preview.error && !this.builder.preview.active)
     const preview = previewUnavailable ? undefined : previewCandidate
     const previewHasHeader = preview ? this.visualPreviewHasHeader(preview) : false
-    const previewLoading = Boolean(this.builder?.preview.loading)
+    const previewLoading = visualTypeSwitchPending || Boolean(this.builder?.preview.loading)
     const fallbackMessage = this.builder?.preview.error ? 'Preview unavailable. Try again after the draft is valid.' : 'Add fields to preview.'
     return html`
       <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${styleMap({ '--mobile-order': mobileOrder })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectVisualFromPointer(visual.id) }} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
@@ -3939,7 +3937,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                 ${slicerActive
                   ? this.renderSlicerFieldWell(slicerFilter)
                   : visual
-                    ? html`${this.renderFieldWells(visual)}${this.renderVisualQueryControls(visual)}${this.renderVisualFormatControls(visual)}${this.renderInteractionEditor(builder, page, visual)}`
+                    ? html`${this.renderFieldWells(visual, page?.id ?? '')}${this.renderVisualQueryControls(visual)}${this.renderVisualFormatControls(visual)}${this.renderInteractionEditor(builder, page, visual)}`
                     : page ? html`<div class="inline-page-properties">${this.renderPageProperties(page)}</div>` : nothing}
               </section>`}
           ${this.renderInspectorDetails(builder)}
@@ -4007,18 +4005,19 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return this.visualCatalogEntry(type, builder)?.label ?? this.titleCase(type)
   }
 
-  private renderFieldWells(visual: DashboardBuilderVisualSignal) {
+  private renderFieldWells(visual: DashboardBuilderVisualSignal, pageID: string) {
     const entry = this.visualCatalogEntry(this.visualTypeForRender(visual))
     const roles = this.hasCompiledPreview(visual)
       ? [...new Set(visual.slots.map(slot => this.slotRole(slot)))]
       : (entry?.roles ?? ['dimension', 'metric']).filter((role): role is BuilderFieldRole => role === 'dimension' || role === 'metric' || role === 'detail')
-    const requirements = this.visualRequirementMessages(visual)
-    const previewIssue = this.visualPreviewErrorMessage(visual)
-    const ready = requirements.length === 0 && !previewIssue
+    const visualTypeSwitchPending = isBuilderVisualTypeSwitchPending(this.commandPending, this.activeCommandAction, this.pendingVisualTypeSwitch, pageID, visual, this.visualTypeForRender(visual))
+    const requirements = visualTypeSwitchPending ? [] : this.visualRequirementMessages(visual)
+    const previewIssue = visualTypeSwitchPending ? '' : this.visualPreviewErrorMessage(visual)
+    const ready = !visualTypeSwitchPending && requirements.length === 0 && !previewIssue
     return html`
       <section class="property-group" aria-label="Field wells">
         <div class="property-heading"><span class="property-label">Fields</span></div>
-        ${ready ? nothing : html`<div class="visual-requirements" role="status"><span>${requirements.length > 0 ? this.visualRequirementSummary(requirements) : previewIssue}</span></div>`}
+        ${ready ? nothing : html`<div class="visual-requirements" role="status"><span>${visualTypeSwitchPending ? `Updating ${this.visualLabel(this.visualTypeForRender(visual)).toLowerCase()} preview…` : requirements.length > 0 ? this.visualRequirementSummary(requirements) : previewIssue}</span></div>`}
         <div class="field-wells">${roles.map((role) => this.renderFieldWell(visual, role))}</div>
       </section>
     `
@@ -4616,7 +4615,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       const count = visual.slots.filter((slot) => this.slotRole(slot) === requirement.role).length
       if (count < requirement.minimum) {
         const missing = requirement.minimum - count
-        messages.push(`Add ${missing} ${this.requirementRoleLabel(visual, requirement.role, missing)} to preview.`)
+        messages.push(this.visualTypeForRender(visual) === 'map' && requirement.role === 'dimension' ? 'Choose numeric latitude and longitude fields to preview this map.' : `Add ${missing} ${this.requirementRoleLabel(visual, requirement.role, missing)} to preview.`)
       }
       if (requirement.maximum > 0 && count > requirement.maximum) {
         const extra = count - requirement.maximum

@@ -60,7 +60,6 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 		g.Attr("slot", "page"),
 		g.Attr("dashboard-id", builder.DashboardID),
 		g.Attr("draft-id", builder.DraftID),
-		g.Attr("data-indicator", "agentTurnPending"),
 		builderCommandAction(actions),
 		builderFilterCommandAction(actions),
 		builderFilterOptionsAction(actions),
@@ -70,10 +69,6 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 	if agentEnabled {
 		attrs = append(attrs,
 			g.Attr("data-on:lv-builder-agent-run-complete", dashboardBuilderAgentCompletionAction(updates+"&snapshot=1")),
-			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; $agentContext.filters = $builderFilterState; $agentContext.generation = $status.generation; "+uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{actions.AgentCommands.CreateRun}, actions.AgentCommands.Workflow(), "/chats/turns", "agent", "agentContext")),
-			g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(actions.AgentCommands.CancelRun, "/chats/stop", "agent", "agentContext")),
-			g.Attr("data-on:lv-chat-restore", "$agent.activeConversationId = evt.detail.conversationId; "+uiactions.Get("/chats/restore", "agent")),
-			g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
 		)
 	}
 	for name, value := range map[string]string{
@@ -94,13 +89,28 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 			g.Attr("data-on:lv-chat-reference-search__debounce.200ms", "$agentReferenceSearch.query = evt.detail.query; $agentReferenceSearch.requestId = evt.detail.requestId; "+uiactions.Get("/chats/references/search", "agentReferenceSearch", "agentContext")),
 		)
 	}
+	content := g.Node(g.El("lv-dashboard-builder", attrs...))
+	if agentEnabled {
+		// Agent busy state must only reflect chat requests. Keeping the
+		// indicator on lv-dashboard-builder also counted its authoring POSTs,
+		// making ChatDrawer render as if an agent turn were running after every
+		// visual, page, or filter edit.
+		content = g.El("div",
+			g.Attr("data-indicator", "agentTurnPending"),
+			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; $agentContext.filters = $builderFilterState; $agentContext.generation = $status.generation; "+uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{actions.AgentCommands.CreateRun}, actions.AgentCommands.Workflow(), "/chats/turns", "agent", "agentContext")),
+			g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(actions.AgentCommands.CancelRun, "/chats/stop", "agent", "agentContext")),
+			g.Attr("data-on:lv-chat-restore", "$agent.activeConversationId = evt.detail.conversationId; "+uiactions.Get("/chats/restore", "agent")),
+			g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
+			content,
+		)
+	}
 	return webpage.Render(layout, webpage.Spec{
 		Title: builder.Title, CSRFToken: csrfToken,
 		Scripts:      []string{"/static/dashboard-builder.js"},
 		MainAttrs:    []g.Node{h.ID("dashboard-builder"), h.Class(webpage.RootClass)},
 		UpdatesURL:   updates,
 		ContentAttrs: contentAttrs,
-		Content:      g.El("lv-dashboard-builder", attrs...),
+		Content:      content,
 	})
 }
 

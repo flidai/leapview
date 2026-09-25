@@ -67,6 +67,26 @@ func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 			t.Fatalf("builder shell embedded authored payload %q:\n%s", forbidden, output)
 		}
 	}
+	componentStart := strings.Index(output, "<lv-dashboard-builder")
+	componentTagEnd := strings.Index(output[componentStart:], ">") + componentStart
+	componentTag := output[componentStart:componentTagEnd]
+	if strings.Contains(componentTag, `data-indicator="agentTurnPending"`) || strings.Contains(componentTag, `data-on:lv-chat-submit=`) {
+		t.Fatalf("builder commands and Agent turn requests share one action element: %s", componentTag)
+	}
+	indicatorStart := strings.LastIndex(output[:componentStart], `<div data-indicator="agentTurnPending"`)
+	if indicatorStart < 0 {
+		t.Fatalf("builder shell is missing the Agent request indicator wrapper:\n%s", output)
+	}
+	indicatorTagEnd := strings.Index(output[indicatorStart:], ">") + indicatorStart
+	indicatorTag := output[indicatorStart:indicatorTagEnd]
+	for _, want := range []string{"data-on:lv-chat-submit=", "data-on:lv-chat-stop=", "data-on:lv-chat-restore="} {
+		if !strings.Contains(indicatorTag, want) {
+			t.Fatalf("Agent indicator wrapper missing %q: %s", want, indicatorTag)
+		}
+	}
+	if strings.Contains(indicatorTag, "data-on:lv-builder-command=") {
+		t.Fatalf("builder mutation handler shares the Agent indicator wrapper: %s", indicatorTag)
+	}
 }
 
 func TestDashboardBuilderUpdatesURLCarriesSelectedPage(t *testing.T) {

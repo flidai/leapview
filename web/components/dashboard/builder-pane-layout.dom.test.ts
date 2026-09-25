@@ -245,7 +245,67 @@ test('unrelated builder clicks neither open nor refocus the Agent', async () => 
   } finally { await page.close() }
 })
 
-test('builder reload does not reopen the Agent just because it was open previously', async () => {
+test('builder mutations do not set the Agent turn indicator, while chat requests do', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    await page.evaluate(() => {
+      const builder = document.querySelector('lv-dashboard-builder') as HTMLElement
+      const wrapper = document.createElement('div')
+      wrapper.id = 'agent-action-wrapper'
+      wrapper.setAttribute('data-indicator', 'agentTurnPending')
+      wrapper.setAttribute('data-on:lv-chat-submit', "@post('/agent-turn')")
+      builder.id = 'builder-command-root'
+      builder.setAttribute('data-on:lv-builder-command', "@post('/builder-command')")
+      builder.parentElement!.replaceChild(wrapper, builder)
+      wrapper.append(builder)
+
+      const monitor = document.createElement('output')
+      monitor.id = 'agent-indicator-state'
+      monitor.setAttribute('data-text', "$agentTurnPending ? 'true' : 'false'")
+      document.body.append(monitor)
+
+      ;(window as any).__lvRequestHolds = []
+      ;(window as any).__lvFetchLifecycle = []
+      window.fetch = ((input: RequestInfo | URL) => new Promise<Response>((resolve) => {
+        ;(window as any).__lvRequestHolds.push({
+          url: String(input),
+          finish: () => resolve(new Response(null, { status: 204 })),
+        })
+      })) as typeof window.fetch
+      document.addEventListener('datastar-fetch', (event) => {
+        const detail = (event as CustomEvent).detail
+        ;(window as any).__lvFetchLifecycle.push({ type: detail.type, elementId: detail.el.id })
+      })
+    })
+
+    const indicator = page.locator('#agent-indicator-state')
+    const waitForIndicator = (value: 'true' | 'false') => page.waitForFunction((expected) => document.querySelector('#agent-indicator-state')?.textContent === expected, value)
+    await waitForIndicator('false')
+    expect(await indicator.textContent()).toBe('false')
+    const builder = page.locator('#builder-command-root')
+    await builder.evaluate((element) => element.dispatchEvent(new CustomEvent('lv-builder-command', { bubbles: true, composed: true })))
+    await page.waitForFunction(() => (window as any).__lvRequestHolds.length === 1)
+    await waitForIndicator('false')
+    expect(await indicator.textContent()).toBe('false')
+    await page.evaluate(() => (window as any).__lvRequestHolds[0].finish())
+    await page.waitForFunction(() => (window as any).__lvFetchLifecycle.some((event: any) => event.type === 'finished' && event.elementId === 'builder-command-root'))
+
+    await builder.evaluate((element) => element.dispatchEvent(new CustomEvent('lv-chat-submit', { bubbles: true, composed: true })))
+    await page.waitForFunction(() => (window as any).__lvRequestHolds.length === 2)
+    await waitForIndicator('true')
+    expect(await indicator.textContent()).toBe('true')
+    await page.evaluate(() => (window as any).__lvRequestHolds[1].finish())
+    await page.waitForFunction(() => (window as any).__lvFetchLifecycle.some((event: any) => event.type === 'finished' && event.elementId === 'agent-action-wrapper'))
+    await waitForIndicator('false')
+    expect(await indicator.textContent()).toBe('false')
+  } finally {
+    await page.close()
+  }
+})
+
+test('builder reload preserves the Agent pane preference without submitting a chat on visual edits', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(baseURL)
@@ -272,6 +332,6 @@ test('builder reload does not reopen the Agent just because it was open previous
         agentSubmits: (window as any).unexpectedAgentSubmits,
       }
     })
-    expect(state).toEqual({ agentCollapsed: 'true', agentDrawerOpen: false, filtersCollapsed: 'false', agentSubmits: 0 })
+    expect(state).toEqual({ agentCollapsed: 'false', agentDrawerOpen: true, filtersCollapsed: 'false', agentSubmits: 0 })
   } finally { await page.close() }
 })
