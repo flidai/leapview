@@ -200,6 +200,7 @@ class SiteMobileMenu extends LitElement {
     return html`<button type="button" aria-label=${label} aria-controls="site-mobile-navigation" aria-expanded=${String(this.open)} @click=${this.toggle}>${lucideIcon(this.open ? X : Menu, { size: 20, strokeWidth: 2 })}</button>
       <nav id="site-mobile-navigation" aria-label="Site navigation" ?hidden=${!this.open}>
         <a href="/docs" @click=${this.close}>Docs</a>
+        <a href="/compliance" @click=${this.close}>Compliance</a>
         <a href="/docs/search" @click=${this.close}>Search</a>
         ${this.showcase ? html`<a href="/showcase" @click=${this.close}>Live demo</a>` : null}
       </nav>`

@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -69,11 +70,12 @@ type Role struct {
 // database, and close application pools before t.Cleanup runs so DROP
 // DATABASE can be deterministic.
 type Harness struct {
-	container *tcpostgres.PostgresContainer
-	adminURL  string
-	rootCert  string
-	admin     *pgxpool.Pool
-	shared    *sharedTestState
+	container       *tcpostgres.PostgresContainer
+	adminURL        string
+	rootCert        string
+	privateEndpoint string
+	admin           *pgxpool.Pool
+	shared          *sharedTestState
 
 	mu    sync.Mutex
 	roles map[string]Role
@@ -206,6 +208,7 @@ func start(t *testing.T, tls bool) *Harness {
 	defer cancel()
 	var container *tcpostgres.PostgresContainer
 	var rootCert, adminURL, packageToken string
+	var privateListener net.Listener
 	if packageURL, supplied := os.LookupEnv(PackageServerURLEnv); supplied && !tls {
 		if strings.TrimSpace(packageURL) == "" {
 			t.Fatalf("%s must not be empty", PackageServerURLEnv)
@@ -221,7 +224,9 @@ func start(t *testing.T, tls bool) *Harness {
 		}
 		containerOptions := postgresContainerOptions(log.TestLogger(t))
 		if tls {
-			caCert, cert, key := tlsCertificateFiles(t)
+			var privateIP net.IP
+			privateListener, privateIP = newPrivateTLSListener(t)
+			caCert, cert, key := tlsCertificateFiles(t, privateIP)
 			rootCert = caCert
 			containerOptions = append(containerOptions,
 				tcpostgres.WithSSLCert(caCert, cert, key),
@@ -261,6 +266,14 @@ func start(t *testing.T, tls bool) *Harness {
 		}
 	}
 	h := &Harness{container: container, adminURL: adminURL, rootCert: rootCert, admin: admin, roles: make(map[string]Role)}
+	if privateListener != nil {
+		parsed, parseErr := url.Parse(adminURL)
+		if parseErr != nil || parsed.Host == "" {
+			t.Fatal("parse disposable PostgreSQL relay target")
+		}
+		h.privateEndpoint = privateListener.Addr().String()
+		servePrivateTLSRelay(privateListener, parsed.Host)
+	}
 	t.Cleanup(func() { admin.Close() })
 	if container == nil {
 		h.shared = sharedStateFor(t, admin)
@@ -330,7 +343,7 @@ func (h *Harness) RootCertPath() string {
 	return h.rootCert
 }
 
-func tlsCertificateFiles(t *testing.T) (caCert, cert, key string) {
+func tlsCertificateFiles(t *testing.T, privateIPs ...net.IP) (caCert, cert, key string) {
 	t.Helper()
 	dir := t.TempDir()
 	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -346,7 +359,7 @@ func tlsCertificateFiles(t *testing.T) (caCert, cert, key string) {
 	if err != nil {
 		t.Fatalf("generate PostgreSQL conformance server key: %v", err)
 	}
-	serverTemplate := &x509.Certificate{SerialNumber: bigSerial(t), Subject: pkix.Name{CommonName: "localhost"}, DNSNames: []string{"localhost"}, IPAddresses: nil, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	serverTemplate := &x509.Certificate{SerialNumber: bigSerial(t), Subject: pkix.Name{CommonName: "localhost"}, DNSNames: []string{"localhost"}, IPAddresses: privateIPs, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caTemplate, &serverKey.PublicKey, caKey)
 	if err != nil {
 		t.Fatalf("create PostgreSQL conformance server certificate: %v", err)
@@ -624,6 +637,21 @@ func (d *Database) URL(role Role) string {
 		return ""
 	}
 	return d.h.urlFor(d.Name, role.Name, role.Password)
+}
+
+// PrivateURL reaches the same disposable TLS server through a test-owned
+// private-interface relay. It lets production-admission tests keep the real
+// outbound policy, including its unconditional loopback denial.
+func (d *Database) PrivateURL(role Role) string {
+	if d == nil || d.h == nil || d.h.privateEndpoint == "" {
+		return ""
+	}
+	parsed, err := url.Parse(d.URL(role))
+	if err != nil {
+		return ""
+	}
+	parsed.Host = d.h.privateEndpoint
+	return parsed.String()
 }
 
 // CreateSchema creates an isolated schema in this database and grants the

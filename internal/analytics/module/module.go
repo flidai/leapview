@@ -16,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/extension"
+	"github.com/flidai/leapview/internal/platform/outbound"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -142,6 +143,7 @@ type Module struct {
 	connectionPools              *connectionbinding.PoolDirectory
 	candidateRuntimeBindings     candidateRuntimeBindingRegistry
 	activeRuntimeBindingEvidence ActiveRuntimeBindingEvidenceSource
+	egressProxy                  *outbound.Proxy
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
@@ -205,7 +207,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	var environment *analyticsducklake.Environment
 	if !config.DisableProcessEnvironment {
 		environment, err = analyticsducklake.Open(ctx, analyticsducklake.Config{
-			RootDir: config.RootDir, CatalogPath: config.CatalogPath, DataPath: config.DataPath,
+			GuardOutbound: config.Production,
+			RootDir:       config.RootDir, CatalogPath: config.CatalogPath, DataPath: config.DataPath,
 			MaxConnections: config.MaxConnections, MemoryMaxBytes: config.MemoryMaxBytes,
 			TempMaxBytes: config.TempMaxBytes, MaxThreads: config.MaxThreads, TempDir: config.TempDir, ExtensionAdmission: config.ExtensionAdmission,
 		})
@@ -241,6 +244,22 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if maxThreads <= 0 {
 		maxThreads = 1
 	}
+	var destinationPolicy *outbound.Policy
+	var egressProxy *outbound.Proxy
+	var egressProxyURL, egressProxyUser, egressProxyPassword string
+	if config.Production {
+		destinationPolicy = outbound.New(outbound.ExplicitPrivate, outbound.Options{})
+		egressProxy, err = outbound.StartProxy(destinationPolicy)
+		if err != nil {
+			_ = cache.Close()
+			if environment != nil {
+				_ = environment.Close()
+			}
+			return nil, err
+		}
+		egressProxyURL = egressProxy.URL()
+		egressProxyUser, egressProxyPassword = egressProxy.Credentials()
+	}
 	connectionFactory, err := analyticsduckdb.NewTargetRuntimePoolFactory(
 		analyticsduckdb.TargetRuntimePoolFactoryConfig{
 			Open: analyticsduckdb.NewIsolatedTargetRuntimeOpener(),
@@ -249,9 +268,16 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			},
 			RequireTLS:         targetClass == connectionbinding.TargetProduction,
 			ExtensionAdmission: config.ExtensionAdmission,
+			DestinationPolicy:  destinationPolicy,
+			HTTPProxyURL:       egressProxyURL,
+			HTTPProxyUser:      egressProxyUser,
+			HTTPProxyPassword:  egressProxyPassword,
 		},
 	)
 	if err != nil {
+		if egressProxy != nil {
+			_ = egressProxy.Close()
+		}
 		_ = cache.Close()
 		if environment != nil {
 			_ = environment.Close()
@@ -263,7 +289,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		connectionBindings: connectionBindings,
 		credentials:        credentials, targetResolvers: targetResolvers,
 		targetID: config.CredentialTargetID, targetEnvironment: config.CredentialEnvironment,
-		targetClass: targetClass, connectionFactory: connectionFactory,
+		targetClass: targetClass, connectionFactory: connectionFactory, egressProxy: egressProxy,
 	}, nil
 }
 
@@ -527,6 +553,9 @@ func (m *Module) Close() error {
 	}
 	if m.environment != nil {
 		errs = append(errs, m.environment.Close())
+	}
+	if m.egressProxy != nil {
+		errs = append(errs, m.egressProxy.Close())
 	}
 	return errors.Join(errs...)
 }

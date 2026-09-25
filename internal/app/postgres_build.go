@@ -546,6 +546,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	// DuckLake environment opened by the sealed runtime factory. The dashboard
 	// runtime implementation remains behind the app/runtimefactory seam.
 	postgresFactory := appruntimefactory.NewPostgresSealedFactory(appruntimefactory.PostgresSealedFactoryConfig{
+		GuardOutbound:    cfg.Production,
 		Base:             appruntimefactory.FactoryConfig{DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), ActivationEvidence: activeRuntimeEvidence},
 		ServingArtifacts: nativeProjectSource.Objects,
 		Resolve:          appruntimefactory.NewPostgresSealedRootResolver(instanceID, graph.DeploymentRepository, graph.PhysicalPool, graph.Lineage), SnapshotLeases: graph.ServingState, RuntimeAttachChecker: attachChecker,
@@ -724,6 +725,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 			return ducklake.Config{}, "", err
 		}
 		return ducklake.Config{
+			GuardOutbound:       cfg.Production,
 			RootDir:             cfg.RuntimeDir(),
 			PhysicalPoolID:      contract.PhysicalPoolID,
 			SharedPool:          true,
