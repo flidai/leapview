@@ -16,7 +16,9 @@ CREATE TABLE IF NOT EXISTS refresh.manual_intent (
     idempotency_key text NOT NULL,
     request_digest text NOT NULL,
     audit_intent jsonb NOT NULL DEFAULT '{}'::jsonb,
+    authority_envelope jsonb NOT NULL DEFAULT '{}'::jsonb,
     status text NOT NULL DEFAULT 'waiting',
+    stale_reason text NOT NULL DEFAULT '',
     lease_owner text NOT NULL DEFAULT '',
     lease_expires_at timestamptz,
     fence_generation bigint NOT NULL DEFAULT 0,
@@ -36,7 +38,9 @@ CREATE TABLE IF NOT EXISTS refresh.manual_intent (
     CHECK (idempotency_key = btrim(idempotency_key) AND length(idempotency_key) BETWEEN 1 AND 256),
     CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
     CHECK (jsonb_typeof(audit_intent) = 'object' AND octet_length(audit_intent::text) <= 65536),
+    CHECK (jsonb_typeof(authority_envelope) = 'object' AND octet_length(authority_envelope::text) <= 65536),
     CHECK (status IN ('waiting','claimed','attached','cancelled','stale')),
+    CHECK ((status = 'stale' AND length(stale_reason) BETWEEN 1 AND 256) OR (status <> 'stale' AND stale_reason = '')),
     CHECK (fence_generation >= 0),
     CHECK ((status = 'claimed' AND lease_owner <> '' AND lease_expires_at IS NOT NULL) OR (status <> 'claimed' AND lease_owner = '' AND lease_expires_at IS NULL)),
     CHECK ((status = 'attached' AND attached_run_id = reserved_run_id) OR (status <> 'attached' AND attached_run_id IS NULL))
@@ -53,7 +57,7 @@ CREATE INDEX IF NOT EXISTS manual_intent_pipeline_idx
 CREATE OR REPLACE FUNCTION refresh.guard_manual_intent_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, refresh AS $$
 BEGIN
-    IF NEW.status <> 'waiting' OR NEW.lease_owner <> '' OR NEW.lease_expires_at IS NOT NULL OR NEW.fence_generation <> 0 OR NEW.claimed_at IS NOT NULL OR NEW.attached_run_id IS NOT NULL THEN
+    IF NEW.status <> 'waiting' OR NEW.stale_reason <> '' OR NEW.lease_owner <> '' OR NEW.lease_expires_at IS NOT NULL OR NEW.fence_generation <> 0 OR NEW.claimed_at IS NOT NULL OR NEW.attached_run_id IS NOT NULL THEN
         RAISE EXCEPTION 'manual intent inserts must begin waiting and unclaimed';
     END IF;
     NEW.created_at := clock_timestamp();
@@ -74,7 +78,8 @@ BEGIN
        OR NEW.pipeline_id IS DISTINCT FROM OLD.pipeline_id OR NEW.target_id IS DISTINCT FROM OLD.target_id
        OR NEW.principal_id IS DISTINCT FROM OLD.principal_id OR NEW.source_digest IS DISTINCT FROM OLD.source_digest
        OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key OR NEW.request_digest IS DISTINCT FROM OLD.request_digest
-       OR NEW.audit_intent IS DISTINCT FROM OLD.audit_intent OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+       OR NEW.audit_intent IS DISTINCT FROM OLD.audit_intent OR NEW.authority_envelope IS DISTINCT FROM OLD.authority_envelope
+       OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
         RAISE EXCEPTION 'manual intent identity is immutable';
     END IF;
     IF OLD.status IN ('attached','cancelled','stale') AND NEW IS DISTINCT FROM OLD THEN

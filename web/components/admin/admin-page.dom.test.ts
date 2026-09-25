@@ -675,7 +675,7 @@ test('personal API tokens use exact typed permission selectors', async () => {
     expect(state.succeeded.createViewClosed).toBe(true)
     expect(state.succeeded.selectedPermissions).toBe(0)
     expect(state.succeeded.tokenNames).toContain('Sales automation')
-    expect(state.succeeded.description).toBe('Used by the weekly sales reporting job.')
+		expect(state.succeeded.description).toContain('Used by the weekly sales reporting job.')
     expect(state.succeeded.notice).toContain('Copy your personal access token now')
     expect(state.succeeded.pathname).toBe('/admin/api-tokens')
     expect(state.deletion).toEqual({

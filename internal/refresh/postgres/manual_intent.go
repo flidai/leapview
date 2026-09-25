@@ -9,6 +9,7 @@ import (
 
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	refreshdb "github.com/flidai/leapview/internal/refresh/postgres/internal/db"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -34,6 +35,7 @@ type ManualIntentInput struct {
 	ProjectID, Environment, PipelineID  string
 	TargetID, PrincipalID, SourceDigest string
 	AuditIntentJSON                     json.RawMessage
+	AuthorityJSON                       json.RawMessage
 }
 
 // ManualIntent is durable acceptance and dispatch state. It remains separate
@@ -45,6 +47,7 @@ type ManualIntent struct {
 	FenceGeneration           int64
 	LeaseExpiresAt, ClaimedAt time.Time
 	AttachedRunID             string
+	StaleReason               string
 	CreatedAt, UpdatedAt      time.Time
 }
 
@@ -107,7 +110,7 @@ func (r *Repository) CreateManualIntentTx(ctx context.Context, tx Tx, in ManualI
 		IntentID: in.IntentID, ReservedRunID: in.ReservedRunID, ProjectID: in.ProjectID,
 		Environment: in.Environment, PipelineID: in.PipelineID, TargetID: in.TargetID,
 		PrincipalID: in.PrincipalID, SourceDigest: in.SourceDigest, IdempotencyKey: in.IdempotencyKey,
-		RequestDigest: in.RequestDigest, AuditIntent: []byte(in.AuditIntentJSON),
+		RequestDigest: in.RequestDigest, AuditIntent: []byte(in.AuditIntentJSON), AuthorityEnvelope: []byte(in.AuthorityJSON),
 	})
 	if err == nil {
 		out := manualIntentFromDB(inserted)
@@ -220,15 +223,22 @@ func (r *Repository) ReleaseManualIntentTx(ctx context.Context, tx Tx, intentID,
 
 // MarkManualIntentStaleTx marks a claimed intent stale when its pinned source
 // digest no longer matches the serving source. Only the live fence may do so.
-func (r *Repository) MarkManualIntentStaleTx(ctx context.Context, tx Tx, intentID, owner string, fence int64) error {
-	return transitionManualIntentClaimTx(ctx, tx, intentID, owner, fence, ManualIntentStale)
+func (r *Repository) MarkManualIntentStaleTx(ctx context.Context, tx Tx, intentID, owner string, fence int64, reason string) error {
+	if reason == "" || len(reason) > 256 {
+		return ErrInvalid
+	}
+	return transitionManualIntentClaimTx(ctx, tx, intentID, owner, fence, ManualIntentStale, reason)
 }
 
-func transitionManualIntentClaimTx(ctx context.Context, tx Tx, intentID, owner string, fence int64, status string) error {
+func transitionManualIntentClaimTx(ctx context.Context, tx Tx, intentID, owner string, fence int64, status string, staleReason ...string) error {
 	if tx == nil || canonicalUUIDv7("intent id", intentID) != nil || canonicalID("owner id", owner, 256) != nil || fence <= 0 {
 		return ErrInvalid
 	}
-	rows, err := refreshdb.New(tx).TransitionManualIntentClaim(ctx, refreshdb.TransitionManualIntentClaimParams{IntentID: intentID, LeaseOwner: owner, FenceGeneration: fence, Status: status})
+	reason := ""
+	if len(staleReason) > 0 {
+		reason = staleReason[0]
+	}
+	rows, err := refreshdb.New(tx).TransitionManualIntentClaim(ctx, refreshdb.TransitionManualIntentClaimParams{IntentID: intentID, LeaseOwner: owner, FenceGeneration: fence, Status: status, StaleReason: reason})
 	if err != nil {
 		return err
 	}
@@ -448,6 +458,14 @@ func normalizeManualIntentInput(in ManualIntentInput) (ManualIntentInput, error)
 		return ManualIntentInput{}, fmt.Errorf("audit intent: %w", err)
 	}
 	in.AuditIntentJSON = auditJSON
+	authorityJSON, err := boundedObject(in.AuthorityJSON, maxAuditIntentBytes)
+	if err != nil {
+		return ManualIntentInput{}, fmt.Errorf("authority envelope: %w", err)
+	}
+	if _, err := jobs.UnmarshalAuthority(authorityJSON); err != nil {
+		return ManualIntentInput{}, fmt.Errorf("authority envelope: %w", err)
+	}
+	in.AuthorityJSON = authorityJSON
 	if in.IntentID == "" {
 		in.IntentID, err = NewUUIDv7()
 		if err != nil {
@@ -498,9 +516,11 @@ func manualIntentFromDB(row refreshdb.RefreshManualIntent) ManualIntent {
 			TargetID: row.TargetID, PrincipalID: row.PrincipalID, SourceDigest: row.SourceDigest,
 			IdempotencyKey: row.IdempotencyKey, RequestDigest: row.RequestDigest,
 			AuditIntentJSON: append(json.RawMessage(nil), row.AuditIntent...),
+			AuthorityJSON:   append(json.RawMessage(nil), row.AuthorityEnvelope...),
 		},
 		Status: row.Status, LeaseOwner: row.LeaseOwner, FenceGeneration: row.FenceGeneration,
-		CreatedAt: row.CreatedAt.UTC(), UpdatedAt: row.UpdatedAt.UTC(),
+		StaleReason: row.StaleReason,
+		CreatedAt:   row.CreatedAt.UTC(), UpdatedAt: row.UpdatedAt.UTC(),
 	}
 	if row.LeaseExpiresAt.Valid {
 		out.LeaseExpiresAt = row.LeaseExpiresAt.Time.UTC()

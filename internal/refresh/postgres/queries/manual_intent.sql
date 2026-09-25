@@ -13,8 +13,8 @@ WHERE project_id=sqlc.arg(project_id) AND environment=sqlc.arg(environment) AND 
 
 -- name: InsertManualIntent :one
 INSERT INTO refresh.manual_intent
- (intent_id,reserved_run_id,project_id,environment,pipeline_id,target_id,principal_id,source_digest,idempotency_key,request_digest,audit_intent)
-VALUES (sqlc.arg(intent_id),sqlc.arg(reserved_run_id),sqlc.arg(project_id),sqlc.arg(environment),sqlc.arg(pipeline_id),sqlc.arg(target_id),sqlc.arg(principal_id),sqlc.arg(source_digest),sqlc.arg(idempotency_key),sqlc.arg(request_digest),sqlc.arg(audit_intent)::jsonb)
+ (intent_id,reserved_run_id,project_id,environment,pipeline_id,target_id,principal_id,source_digest,idempotency_key,request_digest,audit_intent,authority_envelope)
+VALUES (sqlc.arg(intent_id),sqlc.arg(reserved_run_id),sqlc.arg(project_id),sqlc.arg(environment),sqlc.arg(pipeline_id),sqlc.arg(target_id),sqlc.arg(principal_id),sqlc.arg(source_digest),sqlc.arg(idempotency_key),sqlc.arg(request_digest),sqlc.arg(audit_intent)::jsonb,sqlc.arg(authority_envelope)::jsonb)
 ON CONFLICT (project_id,environment,principal_id,idempotency_key) DO NOTHING
 RETURNING *;
 
@@ -58,7 +58,7 @@ WHERE i.intent_id=sqlc.arg(intent_id) AND i.reserved_run_id=sqlc.arg(run_id)
 
 -- name: TransitionManualIntentClaim :execrows
 UPDATE refresh.manual_intent
-SET status=sqlc.arg(status),attached_run_id=NULL,lease_owner='',lease_expires_at=NULL
+SET status=sqlc.arg(status),stale_reason=sqlc.arg(stale_reason),attached_run_id=NULL,lease_owner='',lease_expires_at=NULL
 WHERE intent_id=sqlc.arg(intent_id) AND status='claimed' AND lease_owner=sqlc.arg(lease_owner)
   AND fence_generation=sqlc.arg(fence_generation) AND lease_expires_at>clock_timestamp();
 

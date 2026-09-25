@@ -610,8 +610,15 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 	if err := s.revalidateBoundary(ctx, job, "prepare"); err != nil {
 		return err
 	}
-	if _, err := s.Runs.MarkRunPrepared(ctx, job); err != nil {
+	// A claimed run stays Running while its models build. Check the live worker
+	// fence here; only transition to Prepared once execution has produced a
+	// canonical result and publication can begin.
+	claimCurrent, err := s.Runs.RunMayPublish(ctx, job)
+	if err != nil {
 		return err
+	}
+	if !claimCurrent {
+		return ErrLeaseLost
 	}
 	if err := s.revalidateBoundary(ctx, job, "execute"); err != nil {
 		return err
