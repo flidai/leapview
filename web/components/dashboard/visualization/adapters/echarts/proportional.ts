@@ -97,7 +97,9 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
       series.right = '44%'
     }
     if (presentation.align !== undefined) series.funnelAlign = presentation.align
-    series.sort = presentation.sort === 'ascending' ? 'ascending' : presentation.sort === 'descending' ? 'descending' : 'none'
+    // A funnel without an authored sort must taper by value. Preserving the
+    // query's category order can put a wider stage below a narrower one.
+    series.sort = presentation.sort === 'ascending' ? 'ascending' : 'descending'
   }
   const centerText = proportionalCenterText(envelope, context)
   const center = centerText === undefined ? {} : {
