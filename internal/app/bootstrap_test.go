@@ -299,7 +299,7 @@ func TestBootstrapAPIGenDecisionDeliveryReadsUseActiveRuntimeWhenReady(t *testin
 	project := bootstrapProject(t, "project_demo")
 	runtime := tusRuntime{project: project, lease: tusLease{}}
 	claims := bootstrapClaimStoreFake{err: errors.New("claim must not be read while runtime is active")}
-	for _, operation := range []string{"getDeliveryCandidateStatus", "getDeliveryPlanPreview"} {
+	for _, operation := range []string{"getDeliveryCandidateStatus", "getDeliveryPlanPreview", "getDeliveryPublicationEvidence", "getDeliveryOperatorSnapshot"} {
 		t.Run(operation, func(t *testing.T) {
 			got, err := bootstrapAPIGenDecision(context.Background(), runtime, nil, claims, "prod", operation, project, nil, "")
 			if err != nil {
@@ -316,7 +316,7 @@ func TestBootstrapAPIGenDecisionDeliveryReadsUseExactClaimDuringRuntimeWarmup(t 
 	project := bootstrapProject(t, "project_demo")
 	runtime := tusRuntime{project: project, err: errors.New("runtime is still warming up")}
 	claims := bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: "prod"}}
-	for _, operation := range []string{"getDeliveryCandidateStatus", "getDeliveryPlanPreview"} {
+	for _, operation := range []string{"getDeliveryCandidateStatus", "getDeliveryPlanPreview", "getDeliveryPublicationEvidence", "getDeliveryOperatorSnapshot"} {
 		t.Run(operation, func(t *testing.T) {
 			got, err := bootstrapAPIGenDecision(context.Background(), runtime, nil, claims, "prod", operation, project, nil, "")
 			if err != nil {
@@ -333,7 +333,7 @@ func TestBootstrapAPIGenDecisionDeliveryReadsRemainFailClosedWithoutClaim(t *tes
 	project := bootstrapProject(t, "project_demo")
 	runtime := tusRuntime{project: project, err: errors.New("runtime is still warming up")}
 	claims := bootstrapClaimStoreFake{err: deployment.ErrProjectClaimNotFound}
-	for _, operation := range []string{"getDeliveryCandidateStatus", "getDeliveryPlanPreview"} {
+	for _, operation := range []string{"getDeliveryCandidateStatus", "getDeliveryPlanPreview", "getDeliveryPublicationEvidence", "getDeliveryOperatorSnapshot"} {
 		t.Run(operation, func(t *testing.T) {
 			got, err := bootstrapAPIGenDecision(context.Background(), runtime, nil, claims, "prod", operation, project, nil, "")
 			if err != nil {
@@ -356,7 +356,7 @@ func TestBootstrapAPIGenDecisionDeliveryPlanResolutionReadsUseExactClaimDuringRu
 		Environment:        "prod",
 		ActiveGenerationID: "generation_active",
 	}}
-	for _, operation := range []string{"getDeliveryCandidateStatus", "getDeliveryPlanPreview"} {
+	for _, operation := range []string{"getDeliveryCandidateStatus", "getDeliveryPlanPreview", "getDeliveryPublicationEvidence", "getDeliveryOperatorSnapshot"} {
 		t.Run(operation, func(t *testing.T) {
 			got, err := bootstrapAPIGenDecision(context.Background(), runtime, nil, claims, "prod", operation, project, targets, "target_demo")
 			if err != nil {

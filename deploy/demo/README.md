@@ -21,26 +21,73 @@ This directory contains only the publication contract, never secret values.
 
 ## Delivery
 
-After `Main artifacts` builds and qualifies the `main` revision,
-`.github/workflows/demo-deploy.yml`:
+Merging a PR does not change the public demo. Both operations in **Hosted demo
+deployment** are manual and run on `main`, using one shared concurrency group:
 
-1. downloads the selected pinned public dataset and synchronizes it as
-   managed data;
-2. authenticates to `/api/v1/capabilities` and admits the running runtime only
-   when it reports API v1, native PostgreSQL delivery, a clean production
-   build, and a canonical immutable build revision;
-3. publishes the selected project source root through the normal candidate,
-   approval, and activation APIs; and
-4. verifies publication activation and public readiness.
+- **deploy** replaces the application image on `app-leapview-demo-02` at
+  `89.58.13.145`. Supply `image` as `ghcr.io/flidai/leapview@sha256:<digest>` and
+  `qualification_run` as the successful **Main artifacts** run ID for that exact
+  digest. The run must contain `production-image-qualification-<attempt>`; older
+  runs without a receipt are not admissible. First qualify an image with the
+  updated workflow. Mutable tags, PR candidates, foreign workflows, stale run
+  attempts and mismatched digests fail before SSH. OCI admission independently
+  verifies provenance, SBOM and vulnerability policy again.
+- **publish** synchronizes and activates CFO/Olist project content using the
+  source revision of the last successful runtime deployment. It does not
+  replace the application container.
 
-This is deliberately a content-only workflow. The `leapview-demo` platform
-operators own runtime image rollout outside this repository workflow, using an
-immutable image that has passed the repository's [release qualification](../../.github/workflows/release.yml)
-and [installed-candidate qualification](../../.github/workflows/installed-candidate.yml).
-The publication records both the selected source revision and the authenticated
-running build revision in its job output; they must match, and the runtime
-must satisfy the compatibility contract above. No SSH host rollout or tracked SSH
-identity is part of the supported path.
+The runtime transaction uses the existing Compose installation at `/opt/leapview`,
+container `leapview-cfo-leapview-1`, state volume `leapview-cfo_leapview-state`, and
+PostgreSQL container `demo02-postgres-cfo`. SSH must match the pinned demo-02 host
+key. It does not mutate Hetzner firewalls, DNS, the old VPS, or agent credentials.
+It checks the actual database bindings and available backup space before stopping
+writes. Control DB, DuckLake DB, globals, application state and configuration are
+backed up together under `/etc/leapview-provider-cfo/compose-backup-*`.
+Dump/tar readability is checked; this is not a full restore rehearsal.
+
+Only image updates with unchanged schema/engine dependencies and Compose payloads
+are admitted. Before creating a runtime deployment record, the workflow inspects
+both immutable source revisions and reports their schema revisions, pending SQL
+migrations, and changed schema/engine paths in the run summary. Modified or
+removed historical migrations, missing forward migrations, and downgrades are
+rejected. This source comparison is diagnostic, not migration admission or
+proof of recoverability. The runner repeats it immediately before rollout.
+
+Schema changes remain blocked: this workflow never applies or reverses migrations.
+The existing `host upgrade` command implements fenced staging, activation, and
+restart phases; it requires an already admitted operation whose migrations have
+completed. It is not a standalone database upgrade or provider restore command.
+A schema upgrade needs an independently verified coordinated recovery frontier,
+an explicit migration executor, and paired state recovery before the old image
+can be restarted. Do not bypass the guard or run a destructive down migration.
+Preflight rejection creates no runtime deployment record, leaving the existing
+publication pin unchanged.
+Image payloads are extracted into a separate temporary directory before validation.
+Same-image retries reuse an existing release only when its contents match the image;
+they never overwrite the active release or its local configuration.
+A host lock protects against overlapping operators. After replacement, the remote
+transaction waits up to five minutes for the runner's authenticated shared-viewer
+check of all four CFO pages (27 visuals). Readiness failure, failed browser checks,
+SSH EOF, or timeout restores the predecessor image and configuration. Existing
+CFO data and credentials are preserved. The host receipt is
+`/etc/leapview-provider-cfo/compose-deployment.json`.
+
+The runner reads **only** the shared viewer login over pinned SSH from the existing
+root-protected `jacob-cutover-secrets.json` handoff. It masks those values and keeps
+them only in the browser subprocess environment. It does not import the Infisical
+human-access folder or retrieve the administrator login. Keep that protected
+handoff's viewer values synchronized when rotating the shared login.
+
+A successful GitHub deployment record (`task=demo-compose-runtime`, environment
+`leapview-demo-runtime`) is the runtime pin. The workflow token has only the
+additional `deployments: write` permission; no variable-write PAT is required.
+`DEMO_RUNTIME_REVISION` is a **bootstrap fallback only**, used before the first
+runtime deployment record. After that, deployment records take precedence.
+A failed/in-progress record blocks publication until an operator reconciles the
+host and re-runs deployment successfully. If recording success fails after the
+host commits, the image may already be live: inspect the host receipt and re-run
+the same qualified image; do not change the pin manually to hide the failure.
+The retired stage/prepare/systemd entrypoints exit without changing infrastructure.
 
 The `leapview-demo` GitHub environment authenticates to Infisical through
 GitHub OIDC. The Infisical `prod:/demo/deployment` path supplies the
@@ -61,16 +108,6 @@ project authoring, and release publication. The release principal is restricted
 to viewing, approving, and activating the demo project environment, plus
 managing the public dashboard publications declared by the canonical showcase.
 
-For an operator-qualified replacement runtime, set `DEMO_RUNTIME_REVISION` in
-the `leapview-demo` GitHub environment to the exact source revision reported by
-that immutable image. Set it together with the new project and principal IDs
-only after cutover. Then dispatch the `publish` action to validate the new
-credentials and publish matching source. While this override is set, unrelated
-main artifact builds do not republish the pinned source automatically. An unset
-override preserves the legacy tracked revision for the existing demo. The
-legacy `stage`, `prepare`, and `deploy` actions target the old installation;
-do not use them for the new Compose-managed host.
-
 The `leapview-demo` environment variable `DEMO_PROJECT_ID` stores the target's
 durable `ProjectUID`. Content publication must use that issuer-owned identity;
 the source bundle does not provide or replace it.
@@ -80,6 +117,100 @@ pre-existing project grant. This is essential on the first deployment,
 because the project graph is not active until its exact candidate is
 activated. The subsequent authoring, ingestion, publication, approval, and
 activation calls remain protected by the canonical project grants.
+
+## Database upgrades and interrupted-operation recovery
+
+The demo workflow is a transport adapter for the shared **operator-authorized
+single-host** `leapviewctl host upgrade` commands. Its installation profile is
+`deploy/demo/host-upgrade.json`; it contains no secrets. The workflow validates
+that profile against the host, installed image, Compose services, storage and
+public origin. Other equivalent installations supply their own private profile
+in the request and their own authenticated application validator.
+
+Select `deploy` for compatible image-only changes, `upgrade` for supported forward
+control-schema/permission-policy changes, and `recover` for an interrupted
+operation. Supply the immutable image and its successful main-push Main artifacts
+qualification run. The controller is extracted from that exact candidate. No
+migration is run during serving startup or by the Python transport.
+
+Preflight compares immutable SQL history, relevant River/DuckDB dependencies,
+product role policy and the actual packaged extension supply. Unrelated module
+changes do not block deployment. Historical SQL changes, downgrade, changed
+River/DuckLake/engine supply, external storage, unaccounted writers and unsupported
+topology fail closed. The local provider supports PostgreSQL 18 at the existing
+installation's exact digest, local managed data, and the canonical Compose
+application/proxy payload. It does not upgrade the PostgreSQL engine.
+
+This command uses protected Actions and pinned root SSH as operator authority.
+It does not create release-owner records or change the existing authoritative
+`host upgrade --phase` contract. Goose remains the sole schema version store and
+migration engine. Pending versions are derived from the candidate, not hardcoded
+as a particular release pair.
+
+The maintenance sequence is:
+
+1. Validate qualification/admission and source compatibility before recording a
+   runtime deployment. Validate the current viewer, host inventory and capacity.
+2. Acquire the shared installation lifecycle lock and persist maintenance intent.
+   Ordinary start/install/update commands reject an unfinished journal, even
+   after reboot. Close public bindings, disable restarts and stop every writer.
+3. Copy the whole stopped PostgreSQL cluster, application/managed files and proxy
+   state. Retain original configuration outside all restored volumes.
+4. Restore an independent writable copy on an internal Docker network. Validate
+   the predecessor, then run the candidate's actual migration/configuration and
+   validate the candidate on that copy. All four CFO pages/27 visuals must pass.
+   The copy has no production-network membership or external integration access.
+5. Persist live migration intent. Run embedded Goose migrations with the control
+   migrator under the canonical fence and reconcile product permissions. Keep
+   River unchanged. Preserve the agent credential encryption key, generating a
+   missing key once per operation without rotating an existing key.
+6. Start and validate the live candidate through loopback bindings. Persist commit
+   before reopening public traffic. Public image/source and CFO checks must pass
+   before the workflow advances the runtime record.
+
+This operation requires downtime throughout capture, rehearsal and live upgrade.
+A fresh-install image qualification does not replace the restored-data rehearsal.
+The [PostgreSQL cold-copy requirements](https://www.postgresql.org/docs/18/backup-file.html)
+require stopping the cluster and copying it as a whole. The isolated Docker
+network uses a loopback TCP relay and pinned SSH for normal HTTPS validation.
+Each validation acknowledgment binds the operation digest and named checkpoint.
+
+For demo-02 the durable journal is `/opt/leapview/upgrade-operation.json` and the
+shared lifecycle lock is `/opt/leapview/.leapviewctl.lock`. Private backups,
+request evidence, original configuration, generated key and logs remain under
+`/etc/leapview-provider-cfo/upgrade-operations/<request-digest>/`. Keep these paths
+outside restored volumes. They are not automatically pruned.
+
+On precommit failure the controller stops all writers and restores the previous
+application, database/files and configuration together, then verifies readiness
+before reopening. A rehearsal failure does not migrate live data. A failed
+recovery leaves traffic closed. After commit, retries finalize the candidate and
+never restore old data over new public writes. Never run down migrations or
+manually start the application through an unfinished maintenance window.
+
+For an interrupted Actions run, choose `recover` with the same candidate and
+qualification run. The transport loads the original persisted request. An
+operator on the host can also use the retained candidate controller:
+
+```sh
+sudo /etc/leapview-provider-cfo/upgrade-controllers/<candidate-digest>/leapviewctl \
+  host upgrade status --request /etc/leapview-provider-cfo/upgrade-operations/<request-digest>/request.json
+sudo /etc/leapview-provider-cfo/upgrade-controllers/<candidate-digest>/leapviewctl \
+  host upgrade recover --request /etc/leapview-provider-cfo/upgrade-operations/<request-digest>/request.json
+```
+
+`plan` validates a private admitted request and image engine compatibility without
+starting maintenance. `apply` performs the full operation. `status` reports the
+persisted state. `recover` restores precommit state or finalizes a committed
+candidate. The `migrate`/`rehearse` subcommands are guarded internal container
+entrypoints, not a standalone bypass for operators.
+
+CI exercises migration preservation, partial failure, a synthetic future revision,
+physical recovery, two installation profiles, private validation failure and
+ordinary-start exclusion. These disposable fixtures are not a live demo backup.
+After merge, qualify the final main image and explicitly schedule the first live
+upgrade. No host, database, runtime pin or DNS change is performed by opening or
+merging this PR.
 
 ## Human access
 
@@ -117,17 +248,21 @@ absence of a project role must not be treated as a blanket denial of those pages
 
 ### Agent provider
 
-The legacy hosted-demo rollout receives `DEEPSEEK_API_KEY` from the protected
-Infisical `prod:/demo/deployment` path and passes it directly to
-`scripts/rollout_demo_runtime.sh`. The rollout step must not override that
-injected value with an unset GitHub environment secret.
-The checked rollout maps it to `LEAPVIEW_AGENT_API_KEY`, sets
-`LEAPVIEW_AGENT_BASE_URL` and `LEAPVIEW_AGENT_MODEL`, and writes those values
-only to the release's private mode-0600 `runtime.env`. The provider key is never committed.
-Every replacement runtime inherits these variables from the running
-predecessor, while an operator-triggered prepare or deploy refreshes the key
-from the deployment secret. Provider configuration enables the runtime while
-access policy continues to control which resources its tools can reach.
+LeapView platform admins select, test, and save the chatbot provider and model
+in **Admin → Agent**. Ordinary chatbot users cannot change these settings.
+Legacy provider environment values remain in use until an admin saves the first
+configuration; subsequent image deployments do not override the saved selection.
+
+The operator provisions `LEAPVIEW_AGENT_CREDENTIAL_KEY` once in the private
+`/opt/leapview/leapview.env`. It must be 64 hexadecimal characters representing
+32 random bytes. Preserve it across releases and back it up separately from the
+database: saved provider credentials are encrypted with this key. The Compose
+rollout preserves the environment file byte-for-byte and does not rotate keys.
+
+Introducing admin configuration adds a database migration. Use the explicit `upgrade` action above for supported control-schema changes;
+the phased `host upgrade` command alone does not provide the native recovery
+orchestration. After upgrading, an admin tests
+and saves the provider configuration before verifying a chatbot conversation.
 
 Treat the shared credential as public. To rotate it, reset the local password,
 revoke every existing session for the principal, complete the forced password
@@ -143,5 +278,5 @@ a new target-policy revision; publish and activate a candidate containing that
 revision before expecting serving access to change. The portable source bundle
 does not contain these target-owned grants.
 
-Manual recovery is available from the workflow dispatch control. It republishes
-the selected `main` revision through the identical project-content path.
+After runtime deployment, dispatch `publish` when the PR changes project content.
+It uses the deployed revision, not an unrelated newer main revision.

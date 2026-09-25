@@ -6,6 +6,7 @@ import { settingsFieldStyles } from '../shared/settings-field-styles'
 import { tabBarStyles } from '../shared/tab-bar.styles'
 import './agent-prompt-editor'
 import './agent-tools'
+import './agent-provider-settings'
 
 type AgentSettingsTab = 'instructions' | 'tools'
 
@@ -189,10 +190,12 @@ export class AgentSettings extends LitElement {
           </div>
         ` })}
 
+        <lv-agent-provider-settings .agent=${agent}></lv-agent-provider-settings>
+
         ${!agent.canWrite ? html`
           <div class="notice" role="note">
-            <strong>Deployment managed.</strong>
-            <span>Agent instructions are controlled by deployment configuration and cannot be changed here.</span>
+            <strong>Read-only.</strong>
+            <span>Only a LeapView platform admin can change agent configuration.</span>
           </div>
         ` : ''}
 
@@ -243,7 +246,7 @@ function normalizeAgentStatus(value: string | undefined, enabled: boolean): 'ena
 
 function formatReasoningEffort(value?: string): string {
   const effort = value?.trim().toLowerCase()
-  if (!effort) return 'Not configured'
+  if (!effort) return 'Provider default'
   return effort === 'xhigh' ? 'Extra high' : effort[0].toUpperCase() + effort.slice(1)
 }
 

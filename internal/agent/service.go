@@ -53,13 +53,14 @@ type ToolProvider func(scope Scope) []agentcore.ToolDefinition
 type SystemPromptProvider func(ctx context.Context) (string, error)
 
 type Service struct {
-	repo         Repository
-	pending      *pendingConversationLifecycle
-	runtime      atomic.Pointer[agentRuntime]
-	health       atomic.Pointer[agentRuntimeHealth]
-	reloadMu     sync.Mutex
-	modelFactory func(Config) agentcore.Model
-	initialModel agentcore.Model
+	configuration *ConfigurationManager
+	repo          Repository
+	pending       *pendingConversationLifecycle
+	runtime       atomic.Pointer[agentRuntime]
+	health        atomic.Pointer[agentRuntimeHealth]
+	reloadMu      sync.Mutex
+	modelFactory  func(Config) agentcore.Model
+	initialModel  agentcore.Model
 
 	toolProviders        []ToolProvider
 	systemPromptProvider SystemPromptProvider
@@ -266,28 +267,46 @@ func (s *Service) Configured() bool {
 }
 
 func (s *Service) ApplyRuntimeConfig(config Config, enabled bool) error {
+	next, err := s.prepareRuntimeConfig(config, enabled)
+	if err != nil {
+		return err
+	}
+	s.installRuntimeConfig(next)
+	return nil
+}
+
+// Preparation may fail; installation is a single pointer replacement. Admin
+// saves prepare before committing their durable revision.
+func (s *Service) prepareRuntimeConfig(config Config, enabled bool) (*agentRuntime, error) {
 	if s == nil {
-		return fmt.Errorf("agent service is unavailable")
+		return nil, fmt.Errorf("agent service is unavailable")
 	}
 	if err := config.Validate(enabled); err != nil {
-		return err
+		return nil, err
 	}
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()
 	var model agentcore.Model
 	if config.Enabled() {
 		if s.modelFactory == nil {
-			return fmt.Errorf("agent model factory is unavailable")
+			return nil, fmt.Errorf("agent model factory is unavailable")
 		}
 		model = s.modelFactory(config)
 		if model == nil {
-			return fmt.Errorf("agent model factory returned no model")
+			return nil, fmt.Errorf("agent model factory returned no model")
 		}
 	}
 	next := &agentRuntime{config: config, enabled: enabled}
 	next.model = s.observeModel(model, next)
+	return next, nil
+}
+func (s *Service) installRuntimeConfig(next *agentRuntime) {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+	if current := s.runtime.Load(); current != nil && current.config.Revision > next.config.Revision {
+		return
+	}
 	s.runtime.Store(next)
-	return nil
 }
 
 func (s *Service) ReportRuntimeConfigError() {

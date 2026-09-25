@@ -114,29 +114,29 @@ func TestTypedPermissionValidationMigrationUpgradesRevisionTwentyFourWithContrac
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = migrationDB.Close() })
-	typedMigration, err := fs.ReadFile(MigrationFS(), "030_typed_api_token_permissions.sql")
+	typedMigration, err := fs.ReadFile(MigrationFS(), "034_typed_api_token_permissions.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	hardeningMigration, err := fs.ReadFile(MigrationFS(), "032_typed_permission_validation_hardening.sql")
+	hardeningMigration, err := fs.ReadFile(MigrationFS(), "036_typed_permission_validation_hardening.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	previous := fstest.MapFS{
 		"001_permission_fixture.sql":          {Data: permissionValidationFixtureBaseline()},
-		"030_typed_api_token_permissions.sql": {Data: typedMigration},
+		"034_typed_api_token_permissions.sql": {Data: typedMigration},
 	}
 	provider, err := newProvider(migrationDB, previous)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 30); err != nil {
-		t.Fatalf("apply revision 30 fixture: %v", err)
+	if _, err := provider.UpTo(ctx, 34); err != nil {
+		t.Fatalf("apply revision 34 fixture: %v", err)
 	}
 	if current, _, err := provider.GetVersions(ctx); err != nil {
 		t.Fatal(err)
-	} else if current != 30 {
-		t.Fatalf("pre-hardening revision = %d, want 30", current)
+	} else if current != 34 {
+		t.Fatalf("pre-hardening revision = %d, want 34", current)
 	}
 
 	fixtures := readPermissionPairContractFixtures(t)
@@ -166,21 +166,21 @@ func TestTypedPermissionValidationMigrationUpgradesRevisionTwentyFourWithContrac
 
 	upgrade := fstest.MapFS{
 		"001_permission_fixture.sql":                    {Data: permissionValidationFixtureBaseline()},
-		"030_typed_api_token_permissions.sql":           {Data: typedMigration},
-		"031_noop.sql":                                  {Data: []byte("-- +goose Up\n-- +goose Down\n")},
-		"032_typed_permission_validation_hardening.sql": {Data: hardeningMigration},
+		"034_typed_api_token_permissions.sql":           {Data: typedMigration},
+		"035_noop.sql":                                  {Data: []byte("-- +goose Up\n-- +goose Down\n")},
+		"036_typed_permission_validation_hardening.sql": {Data: hardeningMigration},
 	}
 	provider, err = newProvider(migrationDB, upgrade)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 32); err != nil {
-		t.Fatalf("upgrade revision 30 fixture through revision 32: %v", err)
+	if _, err := provider.UpTo(ctx, 36); err != nil {
+		t.Fatalf("upgrade revision 34 fixture through revision 36: %v", err)
 	}
 	if current, _, err := provider.GetVersions(ctx); err != nil {
 		t.Fatal(err)
-	} else if current != 32 {
-		t.Fatalf("post-hardening revision = %d, want 32", current)
+	} else if current != 36 {
+		t.Fatalf("post-hardening revision = %d, want 36", current)
 	}
 
 	for _, fixture := range fixtures {

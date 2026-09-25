@@ -896,6 +896,13 @@ func (r *Repository) setPasswordCredential(ctx context.Context, pid, current, ne
 }
 
 func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Duration) (string, error) {
+	return r.CreateSessionWithClientLabel(ctx, pid, ttl, "")
+}
+
+// CreateSessionWithClientLabel creates a browser session with a bounded,
+// display-safe client label. Callers classify the request user agent before it
+// reaches the repository so raw user-agent strings are never persisted.
+func (r *Repository) CreateSessionWithClientLabel(ctx context.Context, pid string, ttl time.Duration, clientLabel string) (string, error) {
 	db, err := r.requireDB()
 	if err != nil {
 		return "", err
@@ -906,6 +913,10 @@ func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Dur
 	}
 	if ttl <= 0 || ttl > maxSessionTTL {
 		return "", fmt.Errorf("session ttl must be between 0 and %s", maxSessionTTL)
+	}
+	clientLabel = strings.TrimSpace(clientLabel)
+	if len(clientLabel) > 255 {
+		return "", fmt.Errorf("session client label must not exceed 255 bytes")
 	}
 	token, err := tokenSecret("lv_sess_")
 	if err != nil {
@@ -928,7 +939,7 @@ func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Dur
 		return "", err
 	}
 	tag, err := accessdb.New(db).CreateBrowserSession(ctx, accessdb.CreateBrowserSessionParams{ID: parsedID, PrincipalID: principalID,
-		TokenFingerprint: r.secretFingerprint(token), Verifier: ver, Ttl: pgInterval(ttl)})
+		TokenFingerprint: r.secretFingerprint(token), Verifier: ver, Ttl: pgInterval(ttl), ClientLabel: clientLabel})
 	if err != nil {
 		return "", err
 	}
@@ -992,7 +1003,7 @@ func (r *Repository) ListSessions(ctx context.Context, pid string) ([]access.Ses
 	out := make([]access.Session, 0, len(rows))
 	for _, row := range rows {
 		s := access.Session{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Kind: access.SessionKind(row.Kind),
-			InstanceID: row.InstanceID, ProfileID: row.ProfileID, ClientID: row.ClientID,
+			InstanceID: row.InstanceID, ProfileID: row.ProfileID, ClientID: row.ClientID, ClientLabel: row.ClientLabel,
 			ExpiresAt: principalTimestamp(row.ExpiresAt), AbsoluteExpiresAt: principalTimestamp(row.AbsoluteExpiresAt),
 			CreatedAt: principalTimestamp(row.CreatedAt), LastSeenAt: principalTimestamp(row.LastSeenAt), RevokedAt: principalTimestamp(row.RevokedAt)}
 		out = append(out, s)

@@ -62,6 +62,13 @@ type AdminPublication struct {
 }
 
 type AdminAgentData struct {
+	BaseURL                string
+	APIMode                string
+	ConfigurationRevision  int64
+	AdminManaged           bool
+	CredentialConfigured   bool
+	ConfigurationAvailable bool
+
 	Configured      bool
 	Enabled         bool
 	Status          string
@@ -222,6 +229,9 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 		adminAttrs = append(adminAttrs,
 			g.Attr("data-on:lv-service-account-command", "$adminServiceAccountCommand = evt.detail; evt.detail.action == 'select' ? ("+serviceAccountSelect+") : ("+serviceAccountMutation+")"),
 		)
+	}
+	if active == "agent" {
+		adminAttrs = append(adminAttrs, g.Attr("data-on:lv-agent-config-command", "$adminAgentCommand = evt.detail; "+uiactions.CommandPatchWithRevision(data.AgentConfigCommand, "/admin/agent/config", "$page.agent.revision", "adminAgentCommand")))
 	}
 	if active == "access" || active == "principals" || active == "groups" || active == "principal-detail" || active == "group-detail" || active == "service-accounts" || active == "service-accounts-detail" || active == "service-accounts-new" {
 		accessCommands := map[string]uicommand.Binding{
@@ -627,6 +637,7 @@ func adminAgentSignal(data AdminAgentData) uisignals.AdminAgentSignal {
 		})
 	}
 	return uisignals.AdminAgentSignal{
+		BaseURL: uisignals.Optional(data.BaseURL), APIMode: uisignals.Optional(data.APIMode), ConfigurationRevision: uisignals.Pointer(data.ConfigurationRevision), AdminManaged: uisignals.Pointer(data.AdminManaged), CredentialConfigured: uisignals.Pointer(data.CredentialConfigured), ConfigurationAvailable: uisignals.Pointer(data.ConfigurationAvailable),
 		Configured:      data.Configured,
 		Enabled:         data.Enabled,
 		Status:          data.Status,

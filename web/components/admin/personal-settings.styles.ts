@@ -33,7 +33,7 @@ export const personalSettingsStyles = css`
     .security-password-row { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-16); border-top: var(--lv-border-muted); border-bottom: var(--lv-border-muted); padding: var(--base-size-16) 0; }
     .security-password-copy { display: grid; min-width: 0; gap: var(--base-size-4); }
     .security-password-state { color: var(--lv-fg-default); font-weight: var(--base-text-weight-semibold); }
-    .security-session-table-wrap { min-width: 0; overflow-x: auto; border-top: var(--lv-border-muted); }
+    .security-session-table-wrap { min-width: 0; overflow-x: auto; border-top: var(--lv-border-muted); container-type: inline-size; }
     .security-session-table { width: 100%; min-width: 46rem; border-collapse: collapse; table-layout: fixed; }
     .security-session-table th { padding: var(--base-size-8) var(--base-size-12); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-normal); text-align: left; }
     .security-session-table th:first-child, .security-session-table td:first-child { width: 28%; padding-left: 0; }
@@ -41,13 +41,13 @@ export const personalSettingsStyles = css`
     .security-session-table th:nth-child(3), .security-session-table td:nth-child(3) { width: 17%; }
     .security-session-table th:nth-child(4), .security-session-table td:nth-child(4) { width: 18%; }
     .security-session-table th:last-child, .security-session-table td:last-child { width: 15%; padding-right: 0; text-align: right; }
-    .security-session-table td { min-width: 0; padding: var(--lv-space-control) var(--base-size-12); border-top: var(--lv-border-muted); color: var(--lv-fg-default); vertical-align: middle; }
+    .security-session-table td { min-width: 0; padding: var(--base-size-8) var(--base-size-12); border-top: var(--lv-border-muted); color: var(--lv-fg-default); vertical-align: middle; }
     .security-session-table time, .security-session-access { color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
-    .security-session-device { display: grid; width: 100%; min-width: 0; min-height: var(--base-size-40); grid-template-columns: var(--base-size-32) minmax(0, 1fr); align-items: center; gap: var(--lv-space-control); border-color: transparent; background: transparent; padding: 0; text-align: left; }
+    .security-session-device { display: grid; width: 100%; min-width: 0; min-height: var(--base-size-40); grid-template-columns: var(--base-size-32) minmax(0, 1fr); align-items: center; column-gap: var(--base-size-16); border-color: transparent; background: transparent; padding: 0; text-align: left; }
     .security-session-device:hover, .security-session-device:focus-visible { background: var(--lv-bg-control-hover); outline: 0; }
     .security-session-icon { display: grid; width: var(--base-size-32); height: var(--base-size-32); place-items: center; border-radius: var(--lv-radius-full); color: var(--lv-fg-muted); background: var(--lv-bg-control); }
     .security-session-icon svg { width: var(--base-size-16); height: var(--base-size-16); }
-    .security-session-device-copy { display: grid; min-width: 0; gap: var(--base-size-2); }
+    .security-session-device-copy { display: grid; min-width: 0; gap: var(--base-size-4); }
     .security-session-title { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--base-size-8); }
     .security-session-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .security-session-kind { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
@@ -237,5 +237,12 @@ export const personalSettingsStyles = css`
       .permission-scope-backdrop { position: fixed; z-index: var(--z-index-dropdown); inset: 0; display: block; background: var(--lv-modal-backdrop); }
       .permission-scope-menu { position: fixed; z-index: var(--z-index-modal); top: auto; right: var(--base-size-16); bottom: var(--base-size-16); left: var(--base-size-16); width: auto; max-height: calc(100svh - var(--base-size-32)); }
       .token-confirm-permissions li { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
+    }
+    @container (max-width: 46rem) {
+      .security-session-table { min-width: 0; }
+      .security-session-table th:nth-child(3), .security-session-table td:nth-child(3), .security-session-table th:nth-child(4), .security-session-table td:nth-child(4) { display: none; }
+      .security-session-table th:first-child, .security-session-table td:first-child { width: 58%; }
+      .security-session-table th:nth-child(2), .security-session-table td:nth-child(2) { width: 22%; }
+      .security-session-table th:last-child, .security-session-table td:last-child { width: 20%; }
     }
 `

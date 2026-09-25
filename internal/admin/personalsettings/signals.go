@@ -45,9 +45,12 @@ func signalFromPrincipal(principal access.Principal, identity access.PrincipalId
 }
 
 func sessionSignal(value access.Session, currentSessionID string) SessionSignal {
-	label := "Browser"
+	label := strings.TrimSpace(value.ClientLabel)
+	if label == "" {
+		label = "Browser"
+	}
 	if value.Kind == access.SessionKindDesktop {
-		label = strings.TrimSpace(value.ClientID)
+		label = displayClientName(value.ClientID)
 		if label == "" {
 			label = "Desktop app"
 		}
@@ -67,12 +70,24 @@ func authoringSessionSignal(value access.AuthoringSession) AuthoringSessionSigna
 		permissions = append(permissions, permissionPairSignal(permission))
 	}
 	return AuthoringSessionSignal{
-		ID: value.ID, Kind: string(value.Kind), ClientID: value.ClientID,
+		ID: value.ID, Kind: string(value.Kind), ClientID: displayClientName(value.ClientID),
 		TargetID: value.Scope.TargetID, ProjectID: value.Scope.ProjectID.String(),
 		PermissionProfile: access.PermissionCatalogProfile, Permissions: permissions,
 		CreatedAt:  formatTime(value.CreatedAt),
 		LastUsedAt: formatTime(value.LastUsedAt), ExpiresAt: formatTime(value.ExpiresAt),
 		RevokedAt: formatTime(value.RevokedAt),
+	}
+}
+
+func displayClientName(value string) string {
+	value = strings.TrimSpace(value)
+	switch value {
+	case "leapview-desktop":
+		return "LeapView Desktop"
+	case access.AuthoringCLIClientID:
+		return "LeapView CLI"
+	default:
+		return value
 	}
 }
 

@@ -47,8 +47,12 @@ func TestStageDeclaredDevelopmentInputsPlansBeforeSyncing(t *testing.T) {
 		ProjectID:       target.ProjectID,
 	}
 
-	if err := stageDeclaredDevelopmentInputsWithDependencies(context.Background(), credentials, target, dependencies); err != nil {
+	inputDigest, err := stageDeclaredDevelopmentInputsWithDependencies(context.Background(), credentials, target, dependencies)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if inputDigest == "" {
+		t.Fatal("staged input has no revision identity")
 	}
 	if len(requests) != 1 {
 		t.Fatalf("sync requests = %d, want 1", len(requests))
@@ -88,8 +92,12 @@ func TestStageDeclaredDevelopmentInputsSkipsProjectsWithoutManifest(t *testing.T
 		Origin: "http://127.0.0.1:7090", Output: io.Discard,
 	}
 	credentials := cliapi.Credentials{Target: target.Origin, CanonicalOrigin: target.Origin, Token: "private-test-token", ProjectID: target.ProjectID}
-	if err := stageDeclaredDevelopmentInputsWithDependencies(context.Background(), credentials, target, dependencies); err != nil {
+	inputDigest, err := stageDeclaredDevelopmentInputsWithDependencies(context.Background(), credentials, target, dependencies)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if inputDigest != "" {
+		t.Fatalf("empty manifest produced input revision %q", inputDigest)
 	}
 	if called {
 		t.Fatal("project without a development-input manifest attempted staging")

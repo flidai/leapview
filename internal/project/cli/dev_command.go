@@ -49,6 +49,12 @@ type DevRemoteFactory interface {
 type DevSessionBinding struct {
 	Store developmentsession.Store
 	Key   developmentsession.Key
+	// AppURL is the ordinary local product URL, reported only after the
+	// candidate has been activated into this checkout's local target.
+	AppURL string
+	// OpenAppBrowser performs the loopback authenticated browser handoff after
+	// the first successful synchronization. Remote sessions leave it nil.
+	OpenAppBrowser func(context.Context) error
 }
 
 type DevSessionProvider interface {
@@ -73,7 +79,7 @@ func DevCommand(
 	}
 	command := &cobra.Command{
 		Use:   "dev [source-root]",
-		Short: "Synchronize a source root into your private target candidate",
+		Short: "Watch analytics sources and update the local app or a private target candidate",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			if len(args) == 1 {
@@ -135,7 +141,7 @@ func DevCommand(
 		&values.NoBrowser,
 		"no-browser",
 		false,
-		"print the private preview URL without opening a system browser",
+		"print local app and private preview URLs without opening a system browser",
 	)
 	command.Flags().StringVar(
 		&values.CandidateKey,
@@ -187,6 +193,7 @@ type DevResult struct {
 	ProvenanceDigest  string `json:"provenanceDigest"`
 	PreviewURL        string `json:"previewUrl"`
 	SessionPreviewURL string `json:"sessionPreviewUrl,omitempty"`
+	AppURL            string `json:"appUrl,omitempty"`
 	PlanID            string `json:"planId,omitempty"`
 	PlanDigest        string `json:"planDigest,omitempty"`
 	ExecutionDigest   string `json:"executionDigest,omitempty"`
@@ -360,6 +367,7 @@ func RunDev(
 				ProvenanceDigest:  candidate.ProvenanceDigest,
 				PreviewURL:        candidate.PreviewURL,
 				SessionPreviewURL: stableSessionPreviewURL,
+				AppURL:            sessionAppURL(sessionBinding),
 				PlanID:            checkpoint.PlanID,
 				PlanDigest:        checkpoint.PlanDigest,
 				ExecutionDigest:   checkpoint.ExecutionDigest,
@@ -384,6 +392,9 @@ func RunDev(
 			}
 			if sessionBinding != nil && stableSessionPreviewURL != "" && stableSessionPreviewURL != lastPreviewURL {
 				fmt.Fprintf(out, "session-preview %s\n", stableSessionPreviewURL)
+				if sessionBinding.AppURL != "" {
+					fmt.Fprintf(out, "app %s\n", sessionBinding.AppURL)
+				}
 			}
 		}
 		if sessionBinding != nil {
@@ -391,13 +402,23 @@ func RunDev(
 			// exact candidate URL remains in every machine-readable result and is
 			// printed separately for review/debugging.
 			if stableSessionPreviewURL != "" && stableSessionPreviewURL != lastPreviewURL {
-				if !options.NoBrowser && openBrowser != nil {
-					if err := openBrowser(stableSessionPreviewURL); err != nil {
+				if !options.NoBrowser {
+					var err error
+					manualURL := stableSessionPreviewURL
+					if sessionBinding.AppURL != "" {
+						manualURL = sessionBinding.AppURL
+					}
+					if sessionBinding.OpenAppBrowser != nil {
+						err = sessionBinding.OpenAppBrowser(ctx)
+					} else if openBrowser != nil {
+						err = openBrowser(stableSessionPreviewURL)
+					}
+					if err != nil {
 						fmt.Fprintf(
 							errOut,
-							"could not open preview in the system browser: %v; open %s manually\n",
+							"could not open local app in the system browser: %v; open %s manually\n",
 							err,
-							stableSessionPreviewURL,
+							manualURL,
 						)
 					}
 				}
@@ -451,6 +472,13 @@ func RunDev(
 			fmt.Fprintln(errOut, err)
 		}
 	})
+}
+
+func sessionAppURL(binding *DevSessionBinding) string {
+	if binding == nil {
+		return ""
+	}
+	return binding.AppURL
 }
 
 func validateCandidatePreviewURL(

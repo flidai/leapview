@@ -515,6 +515,16 @@ func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capab
 	return nil
 }
 
+// Local dashboard rendering and the browser event route must see the same
+// session authority during composition. Installing it after dashboard Build
+// leaves the ordinary page without the event subscription marker.
+func validateLocalDevelopmentSessionComposition(capabilities capabilityAssemblyInputs, runtimeConfig runtimeAssemblyInputs) error {
+	if runtimeConfig.LocalCheckoutID != "" && capabilities.DevelopmentSessions == nil {
+		return errors.New("local development composition requires a development session store before dashboard assembly")
+	}
+	return nil
+}
+
 // validateDashboardAssemblyInputs is the runtime-router admission gate for
 // native dashboard composition. The native path is deliberately all-or-
 // nothing: it requires the complete opaque persistence bundle, the exact
@@ -579,6 +589,9 @@ func buildApplicationSurfaces(
 		return nil, nil, nil, nil, err
 	}
 	if err := validateProductionRuntimeInputs(data, capabilities, runtimeConfig); err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if err := validateLocalDevelopmentSessionComposition(capabilities, runtimeConfig); err != nil {
 		return nil, nil, nil, nil, err
 	}
 	if data.RequireNativeDashboard && data.RefreshPersistence == nil {
@@ -1317,6 +1330,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			RequirePublication:       persistence.requireNativeDashboard,
 			Authoring:                routes.dashboardAuthoring,
 			HTTP: dashboardmodule.HTTPConfig{
+				LocalDevelopmentSession:    runtime.developmentSessions != nil && runtime.checkoutID != "" && runtime.worktreeID != "" && runtime.developmentProjectIDResolver != nil,
 				Metrics:                    runtime.metrics,
 				ProjectID:                  runtime.projectID,
 				ResolveProjectID:           runtime.resolveProjectID,
@@ -1709,7 +1723,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		var err error
 		routes.adminModule, err = adminmodule.Build(ctx, adminmodule.Config{
-			Access: accessReader,
+			PlatformAdmin: routes.accessModule.IsPlatformAdmin,
+			Access:        accessReader,
 			AgentDetails: func(ctx context.Context) (agentmodule.AdminAgentResponse, error) {
 				return routes.agentModule.HTTP().AdminDetails(ctx)
 			},
@@ -1754,7 +1769,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			AuthorizeTypedDashboardAction: func(ctx context.Context, principalID string, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, error) {
 				return authorizeTypedDashboardAction(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, dashboardID, action)
 			},
-			PlatformAdmin:        routes.accessModule.IsPlatformAdmin,
 			CurrentProjectID:     runtime.resolveProjectID,
 			Publications:         routes.dashboardModule,
 			AgentConfigCommand:   routes.agentModule.UICommandBindings().UpdateConfig,

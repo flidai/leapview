@@ -38,7 +38,8 @@ sql:
       - "internal/access/postgres/schema.sql"
       - "internal/project/postgres/schema.sql"
       - "internal/project/postgres/resource_uid_schema.sql"
-      - "internal/platform/postgres/migrations/034_durable_authority_grants.sql"
+      - "internal/platform/postgres/migrations/038_durable_authority_grants.sql"
+      - "internal/platform/bootstrap/postgres/schema.sql"
     gen:
       go:
         package: "db"

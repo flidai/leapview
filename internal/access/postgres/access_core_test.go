@@ -154,6 +154,20 @@ func TestAccessCorePostgreSQL18PrincipalCredentialsAndRevocation(t *testing.T) {
 	if _, err := repo.PrincipalForToken(t.Context(), token); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("revoked session = %v", err)
 	}
+	labeledToken, err := repo.CreateSessionWithClientLabel(t.Context(), p.Principal.ID, time.Hour, "Chrome on Windows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.PrincipalForToken(t.Context(), labeledToken); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := repo.ListSessions(t.Context(), p.Principal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) == 0 || sessions[0].ClientLabel != "Chrome on Windows" {
+		t.Fatalf("labeled browser session = %#v", sessions)
+	}
 
 	resource, err := access.NewResourceRef("core-test-model", projectgraph.KindSemanticModel)
 	if err != nil {

@@ -35,9 +35,10 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		"016_migration_capability_authority.sql", "017_target_authorization_policy.sql", "018_refresh_run_notifications.sql", "019_refresh_schedule_notifications.sql",
 		"020_release_transition_operation.sql", "021_api_token_descriptions.sql", "022_approval_resource_uid_restore.sql", "023_recovery_qualification_ledger.sql",
 		"024_schema_23_convergence.sql", "025_profile_application.sql", "026_development_session.sql", "027_authorization_policy_grants.sql", "028_dashboard_authoring_delete.sql",
-		"029_platform_admin_token_capability.sql", "030_typed_api_token_permissions.sql", "031_job_authority_envelope.sql",
-		"032_typed_permission_validation_hardening.sql", "033_typed_authorization_assignments.sql", "034_durable_authority_grants.sql",
-		"035_resource_share_no_onward_delegation.sql", "036_reject_active_legacy_api_tokens.sql", "037_typed_authoring_permissions.sql", "038_edit_api_tokens.sql",
+		"029_agent_configuration.sql", "030_browser_session_client_label.sql", "031_privacy_action_execution.sql", "032_restore_lifecycle_actions.sql",
+		"033_platform_admin_token_capability.sql", "034_typed_api_token_permissions.sql", "035_job_authority_envelope.sql",
+		"036_typed_permission_validation_hardening.sql", "037_typed_authorization_assignments.sql", "038_durable_authority_grants.sql",
+		"039_resource_share_no_onward_delegation.sql", "040_reject_active_legacy_api_tokens.sql", "041_typed_authoring_permissions.sql", "042_edit_api_tokens.sql",
 	}, ","); got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
@@ -63,7 +64,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 }
 
 func TestTypedPermissionValidationHardeningMigrationIsExactAndImmutable(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "032_typed_permission_validation_hardening.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "036_typed_permission_validation_hardening.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +97,7 @@ func TestTypedPermissionValidationHardeningMigrationIsExactAndImmutable(t *testi
 }
 
 func TestJobAuthorityEnvelopeMigrationMakesEvidenceImmutable(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "031_job_authority_envelope.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "035_job_authority_envelope.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestJobAuthorityEnvelopeMigrationMakesEvidenceImmutable(t *testing.T) {
 }
 
 func TestTypedTokenPermissionMigrationRevokesUnscopedLegacyCredentials(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "030_typed_api_token_permissions.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "034_typed_api_token_permissions.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestTypedTokenPermissionMigrationRevokesUnscopedLegacyCredentials(t *testin
 }
 
 func TestActiveAPITokenScopeHardeningIsForwardOnly(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "036_reject_active_legacy_api_tokens.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "040_reject_active_legacy_api_tokens.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +166,7 @@ func TestActiveAPITokenScopeHardeningIsForwardOnly(t *testing.T) {
 }
 
 func TestEditableAPITokenMigrationPreservesCredentialIdentity(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "038_edit_api_tokens.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "042_edit_api_tokens.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestEditableAPITokenMigrationPreservesCredentialIdentity(t *testing.T) {
 }
 
 func TestTypedAuthoringPermissionMigrationRetiresLegacyCredentials(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "037_typed_authoring_permissions.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "041_typed_authoring_permissions.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

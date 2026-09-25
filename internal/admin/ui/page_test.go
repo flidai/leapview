@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
+	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	appshell "github.com/flidai/leapview/internal/app/shell"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 )
@@ -228,6 +229,19 @@ func TestServiceAccountDetailPageKeepsSelectedIDInUpdatesURL(t *testing.T) {
 	for _, expected := range []string{`section="service-accounts-detail"`, `/updates?route=admin&section=service-accounts-detail&serviceAccount=service-1`} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("service account detail page is missing %q:\n%s", expected, rendered)
+		}
+	}
+}
+
+func TestAgentConfigurationUsesPatchWithLiveRevision(t *testing.T) {
+	var output strings.Builder
+	if err := AdminPage("agent", AdminData{AgentConfigCommand: agentgen.GenUIActionUpdateAgentConfig()}, nil).Render(&output); err != nil {
+		t.Fatal(err)
+	}
+	rendered := html.UnescapeString(output.String())
+	for _, want := range []string{"@patch('/admin/agent/config'", "headers('updateAgentConfig', $page.agent.revision)"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("missing %s in agent command binding", want)
 		}
 	}
 }

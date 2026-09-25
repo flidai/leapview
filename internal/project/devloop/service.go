@@ -39,10 +39,13 @@ type Snapshot struct {
 	// GraphDigest is the whole compiled graph identity observed from the same
 	// immutable source capture as Digest. It is local orchestration evidence
 	// and is not substituted for the source artifact digest on transport.
-	GraphDigest    string
-	Artifacts      []Artifact
-	SourceRevision *SourceRevision
-	CandidateKey   string
+	GraphDigest string
+	// ConnectionCatalogDigest is the local profile binding contract, which
+	// remains stable across ordinary dashboard and model edits.
+	ConnectionCatalogDigest string
+	Artifacts               []Artifact
+	SourceRevision          *SourceRevision
+	CandidateKey            string
 }
 
 type Candidate struct {
@@ -317,6 +320,7 @@ func normalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
 	snapshot.CandidateKey = strings.TrimSpace(snapshot.CandidateKey)
 	snapshot.Digest = strings.TrimSpace(snapshot.Digest)
 	snapshot.GraphDigest = strings.TrimSpace(snapshot.GraphDigest)
+	snapshot.ConnectionCatalogDigest = strings.TrimSpace(snapshot.ConnectionCatalogDigest)
 	if err := snapshot.ProjectID.Validate(); err != nil || len(snapshot.Artifacts) == 0 {
 		return Snapshot{}, fmt.Errorf("project snapshot requires target Project identity and artifacts")
 	}
@@ -326,6 +330,11 @@ func normalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
 	if snapshot.GraphDigest != "" {
 		if err := digest.ValidateSHA256Identity(snapshot.GraphDigest); err != nil {
 			return Snapshot{}, fmt.Errorf("project snapshot graph digest is invalid: %w", err)
+		}
+	}
+	if snapshot.ConnectionCatalogDigest != "" {
+		if err := digest.ValidateSHA256Identity(snapshot.ConnectionCatalogDigest); err != nil {
+			return Snapshot{}, fmt.Errorf("project snapshot connection catalog digest is invalid: %w", err)
 		}
 	}
 	seen := make(map[string]struct{}, len(snapshot.Artifacts))
@@ -417,7 +426,8 @@ func normalizeCandidate(candidate Candidate, snapshot Snapshot) (Candidate, erro
 func cloneSnapshot(snapshot Snapshot) Snapshot {
 	out := Snapshot{
 		ProjectID: snapshot.ProjectID,
-		Digest:    snapshot.Digest, GraphDigest: snapshot.GraphDigest, Artifacts: make([]Artifact, len(snapshot.Artifacts)),
+		Digest:    snapshot.Digest, GraphDigest: snapshot.GraphDigest,
+		ConnectionCatalogDigest: snapshot.ConnectionCatalogDigest, Artifacts: make([]Artifact, len(snapshot.Artifacts)),
 		CandidateKey: snapshot.CandidateKey,
 	}
 	if snapshot.SourceRevision != nil {

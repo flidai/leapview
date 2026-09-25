@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
 	"github.com/flidai/leapview/internal/admin/storage"
@@ -44,6 +43,7 @@ type AvatarReader interface {
 }
 
 type ReadModel struct {
+	PlatformAdmin                func(context.Context, string) (bool, error)
 	Access                       AccessReader
 	Avatars                      AvatarReader
 	AgentDetails                 AgentDetailsProvider
@@ -194,7 +194,8 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 		return ui.AdminAgentData{}, err
 	}
 	data := ui.AdminAgentData{
-		Configured:      details.Configured,
+		Configured: details.Configured,
+		BaseURL:    details.BaseURL, APIMode: details.APIMode, ConfigurationRevision: details.ConfigurationRevision, AdminManaged: details.AdminManaged, CredentialConfigured: details.CredentialConfigured, ConfigurationAvailable: details.ConfigurationAvailable,
 		Enabled:         details.Enabled,
 		Status:          details.Status,
 		StatusDetail:    details.StatusDetail,
@@ -205,7 +206,7 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 		UpdatePath:      "/admin/agent/config",
 		CanWrite:        !m.AuthConfigured,
 	}
-	data.Revision, err = apigencommand.RevisionToken(details)
+	data.Revision, err = api.AgentConfigRevision(details)
 	if err != nil {
 		return ui.AdminAgentData{}, err
 	}
@@ -220,8 +221,19 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 			Tags:         append([]string(nil), tool.Tags...),
 		})
 	}
-	// Authenticated write authority must come from typed effective permissions.
-	// Until this read model receives that projection, keep CanWrite fail-closed.
+	if !m.AuthConfigured {
+		return data, nil
+	}
+	principal, ok := m.currentPrincipal(r)
+	if !ok || principal.DevBypass {
+		return data, nil
+	}
+	if m.PlatformAdmin != nil {
+		data.CanWrite, err = m.PlatformAdmin(r.Context(), principal.ID)
+		if err != nil {
+			return data, err
+		}
+	}
 	return data, nil
 }
 

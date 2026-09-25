@@ -354,6 +354,14 @@ enum PopularityLevel {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminAgentSignal {
+ `baseUrl`?: string;
+ `apiMode`?: string;
+ `configurationRevision`?: int64;
+ `adminManaged`?: boolean;
+ `credentialConfigured`?: boolean;
+ `configurationAvailable`?: boolean;
+ `testToken`?: string;
+ `testMessage`?: string;
   `canWrite`: boolean;
   `configured`: boolean;
   `enabled`: boolean;
@@ -489,7 +497,23 @@ model AdminPageEnvelope {
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
+model AdminAgentProviderInput {
+ enabled: boolean;
+ `model`: string;
+ baseUrl: string;
+ apiMode: string;
+ reasoningEffort: string;
+ apiKey?: string;
+ removeKey?: boolean;
+}
+@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminAgentCommandSignal {
+ `restoreRevision`?: int64;
+ `provider`?: AdminAgentProviderInput;
+ `action`?: string;
+ `expectedRevision`?: int64;
+ `testToken`?: string;
   `systemPrompt`?: string;
 }
 

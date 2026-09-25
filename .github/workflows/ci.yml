@@ -32,6 +32,8 @@ jobs:
       docs_validation: ${{ steps.plan.outputs.docs_validation }}
       quality_validation: ${{ steps.plan.outputs.quality_validation }}
       frontend_matrix: ${{ steps.plan.outputs.frontend_matrix }}
+      plan_attempt: ${{ steps.plan.outputs.plan_attempt }}
+      plan_artifact_id: ${{ steps.plan-artifact.outputs.artifact-id }}
 
     steps:
       - name: Check out the exact candidate and full history
@@ -58,6 +60,7 @@ jobs:
             --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
             --github-output "$GITHUB_OUTPUT" --github-summary "$GITHUB_STEP_SUMMARY"
       - name: Publish versioned selection evidence
+        id: plan-artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-plan
@@ -386,7 +389,12 @@ jobs:
       - name: Require successful planning
         env:
           PREPARE_RESULT: ${{ needs.prepare.result }}
-        run: test "$PREPARE_RESULT" = success
+          PLAN_ATTEMPT: ${{ needs.prepare.outputs.plan_attempt }}
+          PLAN_ARTIFACT_ID: ${{ needs.prepare.outputs.plan_artifact_id }}
+        run: |
+          test "$PREPARE_RESULT" = success
+          [[ "$PLAN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PLAN_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
       - name: Check out the gate contract
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up gate Go toolchain
@@ -397,7 +405,8 @@ jobs:
       - name: Read the exact plan artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: ci-plan
+          artifact-ids: ${{ needs.prepare.outputs.plan_artifact_id }}
+          merge-multiple: true
       - name: Require every planned validation result
         env:
           PREPARE_RESULT: ${{ needs.prepare.result }}
@@ -411,6 +420,8 @@ jobs:
           DOCS_RESULT: ${{ needs.docs-validation.result }}
           QUALITY_RESULT: ${{ needs.quality-validation.result }}
           FRONTEND_MATRIX: ${{ needs.prepare.outputs.frontend_matrix }}
+          # Partial reruns retain the successful planning job's outputs/artifact.
+          PLAN_ATTEMPT: ${{ needs.prepare.outputs.plan_attempt }}
         run: |
           jq -n '{
             "prepare": env.PREPARE_RESULT,
@@ -426,5 +437,5 @@ jobs:
           }' > ci-results.json
           go run ./internal/app/tools/ciplan gate --plan ci-plan.json --results ci-results.json \
             --expected-head "$GITHUB_SHA" --expected-run-id "$GITHUB_RUN_ID" \
-            --expected-attempt "$GITHUB_RUN_ATTEMPT" --expected-deferred="$DEFERRED" \
+            --expected-attempt "$PLAN_ATTEMPT" --expected-deferred="$DEFERRED" \
             --frontend-matrix "$FRONTEND_MATRIX" --github-summary "$GITHUB_STEP_SUMMARY"

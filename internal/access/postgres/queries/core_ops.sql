@@ -196,9 +196,9 @@ SET verifier = sqlc.arg(verifier), must_change = sqlc.arg(must_change),
 WHERE principal_id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL;
 
 -- name: CreateBrowserSession :execresult
-INSERT INTO access.session(id, principal_id, token_fingerprint, verifier, expires_at, kind)
+INSERT INTO access.session(id, principal_id, token_fingerprint, verifier, expires_at, kind, client_label)
 SELECT sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, sqlc.arg(token_fingerprint),
-       sqlc.arg(verifier), clock_timestamp() + sqlc.arg(ttl)::interval, 'browser'
+       sqlc.arg(verifier), clock_timestamp() + sqlc.arg(ttl)::interval, 'browser', sqlc.arg(client_label)
 WHERE EXISTS (
     SELECT 1 FROM access.principal
     WHERE id = sqlc.arg(principal_id)::uuid AND status = 'active'
@@ -223,7 +223,7 @@ UPDATE access.session SET revoked_at = clock_timestamp()
 WHERE token_fingerprint = sqlc.arg(token_fingerprint) AND revoked_at IS NULL;
 
 -- name: ListSessions :many
-SELECT id, principal_id, kind, instance_id, profile_id, client_id,
+SELECT id, principal_id, kind, instance_id, profile_id, client_id, client_label,
        expires_at, absolute_expires_at, created_at, last_seen_at, revoked_at
 FROM access.session
 WHERE principal_id = sqlc.arg(principal_id)::uuid

@@ -80,6 +80,10 @@ type sessionManager interface {
 	DeleteSession(ctx context.Context, token string) error
 }
 
+type labeledSessionManager interface {
+	CreateSessionWithClientLabel(ctx context.Context, principalID string, ttl time.Duration, clientLabel string) (string, error)
+}
+
 type principalSessionRevoker interface {
 	RevokeSessionsForPrincipal(ctx context.Context, principalID string) error
 }
@@ -370,7 +374,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 			Provider: "oidc", TenantID: issuer, Subject: stableSubject(claims.Subject, email), Email: email, DisplayName: oidcDisplayName(claims),
 		})
 		if mutationErr == nil {
-			token, mutationErr = txRepo.CreateSession(r.Context(), principal.ID, a.sessionTTL)
+			token, mutationErr = createBrowserSession(r, txRepo, principal.ID, a.sessionTTL)
 		}
 		return authAuditInput(r, "session.created", principal.ID, "session", "", "", "success", map[string]any{"provider": provider}), mutationErr
 	})
@@ -508,7 +512,7 @@ func (a *Auth) createBrowserSession(r *http.Request, principalID, provider strin
 	var token string
 	err := runAuthAuditedMutation(r, a.repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
 		var mutationErr error
-		token, mutationErr = txRepo.CreateSession(r.Context(), principalID, a.sessionTTL)
+		token, mutationErr = createBrowserSession(r, txRepo, principalID, a.sessionTTL)
 		return authAuditInput(r, "session.created", principalID, "session", "", "", "success", map[string]any{"provider": provider}), mutationErr
 	})
 	if err != nil {
@@ -516,6 +520,55 @@ func (a *Auth) createBrowserSession(r *http.Request, principalID, provider strin
 	}
 	recordAccessAudit(r, a.repo, "sign_in", principalID, "principal", principalID, "", "success", map[string]any{"provider": provider})
 	return token, nil
+}
+
+func createBrowserSession(r *http.Request, repository access.Repository, principalID string, ttl time.Duration) (string, error) {
+	if labeled, ok := repository.(labeledSessionManager); ok {
+		return labeled.CreateSessionWithClientLabel(r.Context(), principalID, ttl, browserClientLabel(r.UserAgent()))
+	}
+	return repository.CreateSession(r.Context(), principalID, ttl)
+}
+
+// browserClientLabel intentionally retains only a coarse browser and OS name.
+// Versions, device models, and the raw user-agent are excluded from durable
+// session metadata.
+func browserClientLabel(userAgent string) string {
+	lower := strings.ToLower(userAgent)
+	browser := ""
+	switch {
+	case strings.Contains(lower, "edg/") || strings.Contains(lower, "edgios/") || strings.Contains(lower, "edga/"):
+		browser = "Edge"
+	case strings.Contains(lower, "opr/") || strings.Contains(lower, "opera/"):
+		browser = "Opera"
+	case strings.Contains(lower, "firefox/") || strings.Contains(lower, "fxios/"):
+		browser = "Firefox"
+	case strings.Contains(lower, "crios/") || strings.Contains(lower, "chrome/"):
+		browser = "Chrome"
+	case strings.Contains(lower, "safari/") && strings.Contains(lower, "version/"):
+		browser = "Safari"
+	}
+	osName := ""
+	switch {
+	case strings.Contains(lower, "windows"):
+		osName = "Windows"
+	case strings.Contains(lower, "android"):
+		osName = "Android"
+	case strings.Contains(lower, "cros"):
+		osName = "ChromeOS"
+	case strings.Contains(lower, "iphone") || strings.Contains(lower, "ipad") || strings.Contains(lower, "ipod"):
+		osName = "iOS"
+	case strings.Contains(lower, "macintosh") || strings.Contains(lower, "mac os x"):
+		osName = "macOS"
+	case strings.Contains(lower, "linux"):
+		osName = "Linux"
+	}
+	if browser != "" && osName != "" {
+		return browser + " on " + osName
+	}
+	if browser != "" {
+		return browser
+	}
+	return "Browser"
 }
 
 func (a *Auth) LocalPassword(w http.ResponseWriter, r *http.Request) {

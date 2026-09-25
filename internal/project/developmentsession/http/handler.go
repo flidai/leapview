@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/project/developmentsession"
@@ -27,6 +28,10 @@ type Config struct {
 	Environment       string
 	Enabled           bool
 	ValidateCandidate CandidateValidator
+	// ActiveViewReady is used only by the ordinary local dashboard stream. It
+	// waits until the in-process serving runtime has caught up with the durable
+	// activation before announcing a new last-valid candidate to the browser.
+	ActiveViewReady func(context.Context) (bool, error)
 }
 
 // CandidateValidation is proof returned by the candidate authority before a
@@ -66,7 +71,7 @@ func (h *Handler) Mount(r chi.Router) {
 		session.Get("/", h.resolve)
 		session.Get("/candidate", h.candidate)
 		session.Get("/candidate/redirect", h.preview)
-		session.Get("/events", h.events)
+		session.Get("/events", h.Events)
 		session.Put("/", h.update)
 		session.Patch("/", h.update)
 	})
@@ -283,7 +288,7 @@ func (h *Handler) MarkCandidateExpired(r *http.Request) {
 	}
 }
 
-func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) events(w http.ResponseWriter, r *http.Request, activeView bool) {
 	key, ok := h.withScope(w, r)
 	if !ok {
 		return
@@ -328,6 +333,9 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	if latest.Revision > record.Revision {
 		record = latest
 	}
+	if activeView && !h.waitForActiveView(r.Context(), record) {
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -344,6 +352,9 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 			if !open {
 				return
 			}
+			if activeView && !h.waitForActiveView(r.Context(), updated) {
+				return
+			}
 			writeSessionEvent(w, updated)
 			flusher.Flush()
 			return // reconnect resolves the newest revision after a CAS
@@ -355,7 +366,45 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 // preview route. The bearer API mount uses the private handler directly; the
 // two transports therefore have distinct paths but identical replay semantics.
 func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
-	h.events(w, r)
+	h.events(w, r, false)
+}
+
+// ActiveProjectEvents exposes the same owner-scoped revision stream to the
+// ordinary local application without accepting a browser-selected project or
+// target. App composition mounts this only for an enabled development runtime.
+func (h *Handler) ActiveProjectEvents(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.config.ResolveProjectID == nil || strings.TrimSpace(h.config.TargetID) == "" {
+		transport.WriteProblem(w, r, http.StatusServiceUnavailable, "DEVELOPMENT_SESSION_UNAVAILABLE", "Development sessions are unavailable", nil)
+		return
+	}
+	projectID, err := h.config.ResolveProjectID(r.Context())
+	if err != nil || strings.TrimSpace(projectID.String()) == "" {
+		transport.WriteProblem(w, r, http.StatusServiceUnavailable, "DEVELOPMENT_SESSION_UNAVAILABLE", "The active development project is unavailable", nil)
+		return
+	}
+	params := chi.NewRouteContext()
+	params.URLParams.Add("project", projectID.String())
+	params.URLParams.Add("target", h.config.TargetID)
+	h.events(w, r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, params)), true)
+}
+
+func (h *Handler) waitForActiveView(ctx context.Context, record developmentsession.Record) bool {
+	if record.LastValid.CandidateID == "" || h.config.ActiveViewReady == nil {
+		return true
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		ready, err := h.config.ActiveViewReady(ctx)
+		if err == nil && ready {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
 }
 
 func writeSessionEvent(w http.ResponseWriter, record developmentsession.Record) {

@@ -59,7 +59,7 @@ func installDurableGrantMigration(t *testing.T, db auditDatabase) {
 		t.Fatalf("seed resource UID fixture: %v", err)
 	}
 	parts := make([]string, 0, 2)
-	for _, migrationName := range []string{"034_durable_authority_grants.sql", "035_resource_share_no_onward_delegation.sql"} {
+	for _, migrationName := range []string{"038_durable_authority_grants.sql", "039_resource_share_no_onward_delegation.sql"} {
 		contents, readErr := fs.ReadFile(platformmigrations.MigrationFS(), migrationName)
 		if readErr != nil {
 			t.Fatalf("read %s: %v", migrationName, readErr)

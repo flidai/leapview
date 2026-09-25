@@ -53,11 +53,6 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 	root := filepath.Join("..", "..")
 	workflow := read(t, filepath.Join(root, ".github", "workflows", "demo-deploy.yml"))
 	for _, required := range []string{
-		"workflow_run:",
-		"Main artifacts",
-		"types: [completed]",
-		"github.event.workflow_run.conclusion == 'success'",
-		"github.event.workflow_run.head_branch == 'main'",
 		"environment: leapview-demo",
 		"id-token: write",
 		"Infisical/secrets-action@",
@@ -152,46 +147,24 @@ func TestDemoHumanCredentialsStayOutOfDeploymentAutomation(t *testing.T) {
 	}
 }
 
-func TestHostedDemoRequiresPrivateAgentProviderConfiguration(t *testing.T) {
+func TestHostedDemoPreservesPrivateRuntimeConfiguration(t *testing.T) {
 	root := filepath.Join("..", "..")
-	runbook := read(t, filepath.Join(root, "deploy", "demo", "README.md"))
 	workflow := read(t, filepath.Join(root, ".github", "workflows", "demo-deploy.yml"))
-	rollout := read(t, filepath.Join(root, "scripts", "rollout_demo_runtime.sh"))
-	runtime := read(t, filepath.Join(root, "scripts", "rollout_demo_runtime.py"))
-	for _, required := range []string{
-		"LEAPVIEW_AGENT_API_KEY",
-		"LEAPVIEW_AGENT_BASE_URL",
-		"LEAPVIEW_AGENT_MODEL",
-		"runtime.env",
-		"scripts/rollout_demo_runtime.sh",
-		"never committed",
-	} {
-		require.Contains(t, runbook, required)
-	}
+	runtime := read(t, filepath.Join(root, "scripts", "demo_compose_runtime.py"))
 	require.Contains(t, workflow, "secret-path: /demo/deployment")
-	require.NotContains(t, workflow, "DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}")
-	for _, required := range []string{
-		"DEEPSEEK_API_KEY",
-		"leapview-demo-agent-api-key",
-		"unset agent_api_key DEEPSEEK_API_KEY",
-	} {
-		require.Contains(t, rollout, required)
-	}
-	cleanupArmed := strings.Index(rollout, "agent_key_uploaded=true")
-	uploadAttempt := strings.Index(rollout, `printf '%s' "$agent_api_key"`)
-	require.NotEqual(t, -1, cleanupArmed)
-	require.NotEqual(t, -1, uploadAttempt)
-	require.Less(t, cleanupArmed, uploadAttempt, "temporary-key cleanup must be armed before upload")
-	for _, required := range []string{
-		"LEAPVIEW_AGENT_API_KEY",
-		"LEAPVIEW_AGENT_BASE_URL",
-		"https://api.deepseek.com",
-		"LEAPVIEW_AGENT_MODEL",
-		"deepseek-v4-flash",
-	} {
-		require.Contains(t, runtime, required)
-	}
-	require.NotContains(t, runbook, "Keep the agent unconfigured on the shared demo instance.")
+	require.NotContains(t, workflow, "secret-path: /demo/access")
+	require.NotContains(t, workflow, "/hetzner-qualification/infrastructure")
+	require.NotContains(t, workflow, "scripts/stage_demo_runtime.sh")
+	require.Contains(t, runtime, "Runtime configuration changed")
+	require.NotContains(t, runtime, "DEEPSEEK_API_KEY")
+}
+
+func TestDemoDeploymentBehavior(t *testing.T) {
+	command := exec.Command("python3", "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_demo*.py")
+	command.Dir = filepath.Join("..", "..")
+	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
 }
 
 func TestDemoDeploymentRequiresSourceRevisionBeforeChangingInfrastructure(t *testing.T) {
