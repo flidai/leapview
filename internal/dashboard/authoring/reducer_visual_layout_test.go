@@ -80,7 +80,41 @@ func TestCanonicalVisualTypeSwitchAppliesTargetFootprint(t *testing.T) {
 	}
 }
 
-func TestCanonicalVisualTypeSwitchPacksPageWithoutVisualGaps(t *testing.T) {
+func TestCanonicalVisualTypeSwitchPreservesAnotherManuallyResizedVisual(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	page := &revision.Document.Spec.Pages[0]
+	page.Components = append(page.Components, canonicalTestVisualComponent("second", "second-visual", document.DashboardPlacement{Column: 7, Row: 1, ColumnSpan: 6, RowSpan: 4}))
+	revision.Document.Spec.Visuals["second-visual"] = defaultCanonicalVisual("bar", "Second")
+	first, err := page.Components[0].Base()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setCanonicalPlacements(&revision.Document, SetPlacementsPayload{
+		PageID: "overview", Placements: []PlacementUpdate{{
+			ComponentID: "base-component",
+			Placement:   document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 8},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{
+		PageID: "overview", VisualID: "second", Type: document.DashboardVisualTypeTree,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := first.Placement.RowSpan; got != 8 {
+		t.Fatalf("first visual's manually resized height = %d, want 8", got)
+	}
+	second, err := page.Components[1].Base()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := second.Placement; got.ColumnSpan != 6 || got.RowSpan != 6 {
+		t.Fatalf("changed visual's tree footprint = %#v, want 6x6", got)
+	}
+}
+
+func TestCanonicalVisualTypeSwitchPacksPageWithoutChangingSiblingSizes(t *testing.T) {
 	_, revision := canonicalReducerFixture(t)
 	page := &revision.Document.Spec.Pages[0]
 	base, err := page.Components[0].Base()
@@ -104,10 +138,10 @@ func TestCanonicalVisualTypeSwitchPacksPageWithoutVisualGaps(t *testing.T) {
 	}
 
 	want := map[string]document.DashboardPlacement{
-		"base-component": {Column: 1, Row: 5, ColumnSpan: 6, RowSpan: 6},
+		"base-component": {Column: 7, Row: 4, ColumnSpan: 6, RowSpan: 6},
 		"left":           {Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4},
-		"collider":       {Column: 7, Row: 1, ColumnSpan: 6, RowSpan: 4},
-		"below":          {Column: 7, Row: 5, ColumnSpan: 6, RowSpan: 4},
+		"collider":       {Column: 7, Row: 1, ColumnSpan: 3, RowSpan: 3},
+		"below":          {Column: 1, Row: 5, ColumnSpan: 6, RowSpan: 4},
 	}
 	for _, component := range page.Components {
 		placed, err := component.Base()
@@ -162,13 +196,13 @@ func TestCanonicalVisualTypeSwitchPacksCFOLayoutAroundFixedFilters(t *testing.T)
 		"reporting-period": {Column: 1, Row: 1, ColumnSpan: 4, RowSpan: 2},
 		"country":          {Column: 5, Row: 1, ColumnSpan: 4, RowSpan: 2},
 		"segment":          {Column: 9, Row: 1, ColumnSpan: 4, RowSpan: 2},
-		"net-revenue":      {Column: 1, Row: 3, ColumnSpan: 4, RowSpan: 3},
-		"gross-margin":     {Column: 5, Row: 3, ColumnSpan: 4, RowSpan: 3},
-		"ebitda":           {Column: 9, Row: 3, ColumnSpan: 4, RowSpan: 3},
-		"current-cash":     {Column: 1, Row: 6, ColumnSpan: 6, RowSpan: 4},
-		"performance":      {Column: 7, Row: 6, ColumnSpan: 6, RowSpan: 4},
-		"variance":         {Column: 1, Row: 10, ColumnSpan: 6, RowSpan: 5},
-		"scorecard":        {Column: 7, Row: 10, ColumnSpan: 6, RowSpan: 5},
+		"net-revenue":      {Column: 1, Row: 3, ColumnSpan: 3, RowSpan: 3},
+		"gross-margin":     {Column: 4, Row: 3, ColumnSpan: 3, RowSpan: 3},
+		"current-cash":     {Column: 7, Row: 3, ColumnSpan: 6, RowSpan: 4},
+		"ebitda":           {Column: 1, Row: 6, ColumnSpan: 3, RowSpan: 3},
+		"performance":      {Column: 4, Row: 7, ColumnSpan: 8, RowSpan: 6},
+		"variance":         {Column: 1, Row: 13, ColumnSpan: 4, RowSpan: 6},
+		"scorecard":        {Column: 1, Row: 19, ColumnSpan: 12, RowSpan: 6},
 	}
 	for _, component := range page.Components {
 		placed, err := component.Base()
