@@ -30,6 +30,15 @@ test('UI framework QA waits for asynchronous publication activation', async () =
   expect(source).toContain("new URL('/explore', baseURL)")
 })
 
+test('UI framework QA seeds managed data for its first publication', async () => {
+  const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
+
+  expect(source).toContain("const command = ['./scripts/dev-server.sh', 'publish']")
+  expect(source).toContain("...qaPostgresEnv, ...qaRuntimeEnv, LEAPVIEW_DEV_SKIP_DATA_SYNC: '0'")
+  expect(source).toContain("LEAPVIEW_DEV_SKIP_DATA_SYNC: '0'")
+  expect(source).not.toContain("const command = ['task', 'dev:publish']")
+})
+
 test('development startup reuses the bounded CI fixture supply', async () => {
   const source = await readFile('scripts/dev-server.sh', 'utf8')
 
@@ -57,6 +66,8 @@ test('development readiness files are published only after PostgreSQL bootstrap'
   const readiness = source.lastIndexOf('echo "$port" > "$PORT_FILE"')
   expect(bootstrap).toBeGreaterThanOrEqual(0)
   expect(readiness).toBeGreaterThan(bootstrap)
+  const credentialPreparation = source.lastIndexOf('if ! prepare_dev_auth; then')
+  expect(readiness).toBeGreaterThan(credentialPreparation)
   expect(source).toContain('Publish the readiness contract only after the final server')
 })
 

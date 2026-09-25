@@ -7,6 +7,11 @@ const qaPostgresEnv = {
   LEAPVIEW_POSTGRES_TEST_MODE: '1',
   LEAPVIEW_POSTGRES_DEV_ENV_FILE: `${qaHome}/postgres-dev.env`,
 }
+const qaRuntimeEnv = {
+  LEAPVIEW_HOME: qaHome,
+  LEAPVIEW_MANAGED_DATA_DIR: `${qaHome}/managed-data`,
+  LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES: '67108864',
+}
 const managedServerReadyAttempts = 1800
 let startedServer = false
 let cleanedUp = false
@@ -65,12 +70,10 @@ async function resolveBaseURL(): Promise<string> {
   await prepareManagedHome()
   devTask = spawn(['task', 'dev'], {
     ...qaPostgresEnv,
+    ...qaRuntimeEnv,
     LEAPVIEW_DEV_LOG_LINES: '0',
     LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts),
     LEAPVIEW_DEV_SKIP_PUBLISH: '1',
-    LEAPVIEW_HOME: qaHome,
-    LEAPVIEW_MANAGED_DATA_DIR: `${qaHome}/managed-data`,
-    LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES: '67108864',
   }, 'ignore')
   void devTask.exited.then((code) => {
     devTaskExitCode = code
@@ -99,11 +102,13 @@ async function removeManagedHome(): Promise<void> {
 }
 
 async function deployManagedProject(): Promise<void> {
-  const command = ['task', 'dev:publish']
+  // A disposable QA database has no pinned managed-data revision yet. The
+  // ordinary dev:publish task skips data sync and is only safe after seeding.
+  const command = ['./scripts/dev-server.sh', 'publish']
   let lastError: unknown
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await run(command, qaPostgresEnv)
+      await run(command, { ...qaPostgresEnv, ...qaRuntimeEnv, LEAPVIEW_DEV_SKIP_DATA_SYNC: '0' })
       return
     } catch (error) {
       lastError = error

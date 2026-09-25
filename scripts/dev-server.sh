@@ -747,17 +747,17 @@ start() {
     fi
   fi
 
-  # Publish the readiness contract only after the final server (with its
-  # admitted physical-pool identity) has passed health checks.
-  echo "$port" > "$PORT_FILE"
-  echo "$pid" > "$PID_FILE"
-  echo "$port" > "$PREFERRED_PORT_FILE"
-  auth_mode > "$AUTH_MODE_FILE"
-
 	if ! prepare_dev_auth; then
 		stop_pid "$pid" "LeapView dev server (credential preparation failed)"
 		exit 1
 	fi
+	# Publish the readiness contract only after the final server and its
+	# credentials are ready. QA may start publishing as soon as it sees the
+	# port file, so exposing it earlier races credential provisioning.
+	echo "$port" > "$PORT_FILE"
+	echo "$pid" > "$PID_FILE"
+	echo "$port" > "$PREFERRED_PORT_FILE"
+	auth_mode > "$AUTH_MODE_FILE"
 	if ! publish_project "$port" "$source_root" "$connection" "$from"; then
     stop_pid "$pid" "LeapView dev server"
     exit 1
