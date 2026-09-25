@@ -238,7 +238,8 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 		return result, err
 	}
 	environment, err := ducklake.Open(ctx, ducklake.Config{
-		RootDir: cfg.RuntimeDir(), DataPath: dataPath,
+		GuardOutbound: cfg.Production,
+		RootDir:       cfg.RuntimeDir(), DataPath: dataPath,
 		PhysicalPoolID: createdPool.ID.String(), SharedPool: true,
 		Compatibility: createdAdmission.Compatibility, PoolContract: contract,
 		CredentialBootstrap: credentialBootstrap, ExtensionAdmission: extensionSupply, MaxConnections: 1,

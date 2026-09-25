@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsenvironment "github.com/flidai/leapview/internal/analytics/environment"
 	"github.com/flidai/leapview/internal/analytics/infisical"
+	"github.com/flidai/leapview/internal/platform/outbound"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -39,7 +40,10 @@ func buildTargetResolvers(config TargetCredentialConfig) (connectionbinding.Reso
 	if !config.configured() {
 		return connectionbinding.ResolverSet{}, nil
 	}
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := outbound.New(outbound.ExplicitPrivate, outbound.Options{}).HTTPClient(
+		&http.Client{Timeout: 15 * time.Second},
+		outbound.HTTPConfig{AllowedSchemes: []string{"https"}, MaxRedirects: 0},
+	)
 	var scopes []struct {
 		ProjectID        string `json:"projectId"`
 		Environment      string `json:"environment"`

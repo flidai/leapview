@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flidai/leapview/internal/platform/outbound"
 	platformdb "github.com/flidai/leapview/internal/platform/postgres/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -51,6 +52,10 @@ const (
 // them.
 type Config struct {
 	URL string
+	// DestinationPolicy is installed on the pgx socket dial boundary. It is
+	// supplied by managed application composition; local development may omit
+	// it to retain the explicitly supported loopback database profile.
+	DestinationPolicy *outbound.Policy
 
 	// ExpectedMajor defaults to 18 when omitted. A value other than the
 	// server's major version fails pool startup.
@@ -544,6 +549,9 @@ func Open(ctx context.Context, cfg Config) (*Pool, error) {
 	}
 	if err := ConfigurePool(poolConfig, cfg); err != nil {
 		return nil, err
+	}
+	if cfg.DestinationPolicy != nil {
+		poolConfig.ConnConfig.DialFunc = cfg.DestinationPolicy.DialContext
 	}
 	poolConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		return Validate(ctx, conn, cfg)
