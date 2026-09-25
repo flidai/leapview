@@ -934,6 +934,14 @@ test('KPI documentation automatically demonstrates every valid layout from one v
       const examples = [...document.querySelectorAll('lv-site-visual-example[type="kpi"]')]
       return examples.length === 9 && examples.every((example) => example.shadowRoot?.querySelectorAll('[data-layout-preview]').length === 2)
     })
+    await page.waitForFunction(() => {
+      const example = document.querySelector('lv-site-visual-example[example-id="revenue_kpi_favorable"]')
+      const previews = [...(example?.shadowRoot?.querySelectorAll('[data-layout-preview]') ?? [])]
+      return previews.length === 2 && previews.every((preview) => {
+        const renderer = preview.querySelector('lv-visualization-host')?.shadowRoot?.querySelector<HTMLElement>('.renderer')
+        return renderer?.dataset.layoutFit === 'fit' && renderer.querySelector('.lv-kpi-sparkline')
+      })
+    })
     const favorable = page.locator('lv-site-visual-example[example-id="revenue_kpi_favorable"]')
     const previews = await favorable.evaluate((example) =>
       [...example.shadowRoot!.querySelectorAll<HTMLElement>('[data-layout-preview]')].map((preview) => {

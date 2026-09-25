@@ -203,6 +203,15 @@ test('dashboard agent drawer carries page context and explicit visual references
     })
     expect(initial).toEqual({ hasToggle: true, toggleHasVisibleSurface: true, open: false, drawerWidth: 0 })
 
+    await page.waitForFunction(() => {
+      const root = document.querySelector('lv-dashboard-page')?.shadowRoot
+      return Boolean(
+        root?.querySelector('[data-visual-id="orders_chart"] lv-visualization-host')
+        && root.querySelector('[data-visual-id="orders_kpi"] lv-visualization-host')
+        && root.querySelector('[data-visual-id="orders"] lv-visualization-host')?.shadowRoot?.querySelector('lv-report-table'),
+      )
+    })
+
     const visualActionsAtRest = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const root = element.shadowRoot
       const frame = root.querySelector('[data-visual-id="orders_chart"]') as any
