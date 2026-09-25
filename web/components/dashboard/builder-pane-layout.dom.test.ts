@@ -160,6 +160,7 @@ test('builder agent uses the compact main-agent welcome layout and starter promp
   const page = await browser.newPage({ viewport: { width: 1280, height: 650 } })
   try {
     await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agent: { transcript: [], status: { enabled: true, running: false }, composer: { value: '', disabled: false } }, agentContext: { pageTitle: 'Overview' } })
