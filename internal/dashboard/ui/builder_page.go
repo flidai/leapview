@@ -60,7 +60,6 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 		g.Attr("slot", "page"),
 		g.Attr("dashboard-id", builder.DashboardID),
 		g.Attr("draft-id", builder.DraftID),
-		g.Attr("data-indicator", "agentTurnPending"),
 		builderCommandAction(actions),
 		builderFilterCommandAction(actions),
 		builderFilterOptionsAction(actions),
@@ -69,10 +68,7 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 	agentEnabled := strings.TrimSpace(actions.AgentCommands.CreateConversation.OperationID()) != "" && strings.TrimSpace(actions.AgentCommands.CreateRun.OperationID()) != ""
 	if agentEnabled {
 		attrs = append(attrs,
-			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; $agentContext.filters = $builderFilterState; $agentContext.generation = $status.generation; "+uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{actions.AgentCommands.CreateRun}, actions.AgentCommands.Workflow(), "/chats/turns", "agent", "agentContext")),
-			g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(actions.AgentCommands.CancelRun, "/chats/stop", "agent", "agentContext")),
-			g.Attr("data-on:lv-chat-restore", "$agent.activeConversationId = evt.detail.conversationId; "+uiactions.Get("/chats/restore", "agent")),
-			g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
+			g.Attr("data-on:lv-builder-agent-run-complete", dashboardBuilderAgentCompletionAction(updates+"&snapshot=1")),
 		)
 	}
 	for name, value := range map[string]string{
@@ -93,13 +89,28 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 			g.Attr("data-on:lv-chat-reference-search__debounce.200ms", "$agentReferenceSearch.query = evt.detail.query; $agentReferenceSearch.requestId = evt.detail.requestId; "+uiactions.Get("/chats/references/search", "agentReferenceSearch", "agentContext")),
 		)
 	}
+	content := g.Node(g.El("lv-dashboard-builder", attrs...))
+	if agentEnabled {
+		// Agent busy state must only reflect chat requests. Keeping the
+		// indicator on lv-dashboard-builder also counted its authoring POSTs,
+		// making ChatDrawer render as if an agent turn were running after every
+		// visual, page, or filter edit.
+		content = g.El("div",
+			g.Attr("data-indicator", "agentTurnPending"),
+			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; $agentContext.filters = $builderFilterState; $agentContext.generation = $status.generation; "+uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{actions.AgentCommands.CreateRun}, actions.AgentCommands.Workflow(), "/chats/turns", "agent", "agentContext")),
+			g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(actions.AgentCommands.CancelRun, "/chats/stop", "agent", "agentContext")),
+			g.Attr("data-on:lv-chat-restore", "$agent.activeConversationId = evt.detail.conversationId; "+uiactions.Get("/chats/restore", "agent")),
+			g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
+			content,
+		)
+	}
 	return webpage.Render(layout, webpage.Spec{
 		Title: builder.Title, CSRFToken: csrfToken,
 		Scripts:      []string{"/static/dashboard-builder.js"},
 		MainAttrs:    []g.Node{h.ID("dashboard-builder"), h.Class(webpage.RootClass)},
 		UpdatesURL:   updates,
 		ContentAttrs: contentAttrs,
-		Content:      g.El("lv-dashboard-builder", attrs...),
+		Content:      content,
 	})
 }
 
@@ -158,11 +169,17 @@ func DashboardBuilderBootstrapSignals(envelope uisignals.DashboardBuilderEnvelop
 			},
 			Composer: uisignals.ComposerSignal{Disabled: true, Placeholder: "Agent is not configured"},
 		},
-		"agentContext":               agentContext,
-		"agentReferenceSearch":       uisignals.AgentReferenceSearchSignal{Results: []uisignals.AgentReferenceSignal{}},
-		"agentVisuals":               map[string]visualizationir.VisualizationEnvelope{},
-		"interactionSelections":      []uisignals.DashboardInteractionSelection{},
-		"builder":                    envelope.Builder,
+		"agentContext":          agentContext,
+		"agentReferenceSearch":  uisignals.AgentReferenceSearchSignal{Results: []uisignals.AgentReferenceSignal{}},
+		"agentVisuals":          map[string]visualizationir.VisualizationEnvelope{},
+		"interactionSelections": []uisignals.DashboardInteractionSelection{},
+		"builder":               envelope.Builder,
+		"builderWindowContext": map[string]any{
+			"draftId":             envelope.Builder.DraftID,
+			"revisionId":          envelope.Builder.Revision.ID,
+			"revisionNumber":      envelope.Builder.Revision.Number,
+			"revisionContentHash": envelope.Builder.Revision.ContentHash,
+		},
 		"builderVisuals":             envelope.BuilderVisuals,
 		"runtime":                    envelope.Runtime,
 		"status":                     envelope.Status,
@@ -192,9 +209,10 @@ func DashboardBuilderAgentContext(envelope uisignals.DashboardBuilderEnvelope) u
 		}
 	}
 	return uisignals.AgentContextSignal{
-		Surface:        "dashboard",
+		Surface:        "dashboard_builder",
 		DashboardID:    builder.DashboardID,
 		DashboardTitle: builder.Title,
+		DraftID:        uisignals.Optional(builder.DraftID),
 		PageID:         pageID,
 		PageTitle:      pageTitle,
 		ModelID:        builder.SemanticModel.ID,
@@ -220,7 +238,7 @@ func dashboardBuilderUpdatesURL(builder uisignals.DashboardBuilderSignal) string
 }
 
 func builderCommandAction(actions DashboardBuilderActionBindings) g.Node {
-	value := "$builderCommand = evt.detail;"
+	value := "el._lvBuilderAgentRefreshController?.abort(); $builderCommand = evt.detail;"
 	if strings.TrimSpace(actions.CommandPath) != "" {
 		// Include runtime identity with durable builder intents so the command
 		// response can preserve the same client/stream/page context in its
@@ -231,11 +249,18 @@ func builderCommandAction(actions DashboardBuilderActionBindings) g.Node {
 }
 
 func builderFilterCommandAction(actions DashboardBuilderActionBindings) g.Node {
-	value := "$builderFilterCommand = evt.detail;"
+	value := "el._lvBuilderAgentRefreshController?.abort(); $builderFilterCommand = evt.detail;"
 	if strings.TrimSpace(actions.FilterCommandPath) != "" {
 		value += " " + uiactions.EventPost(actions.FilterCommandPath, "builder", "runtime", "builderFilterCommand")
 	}
 	return g.Attr("data-on:lv-builder-filter-command", value)
+}
+
+func dashboardBuilderAgentCompletionAction(path string) string {
+	request := uiactions.Get(path, "builderRefresh", "runtime")
+	request = strings.TrimSuffix(request, "})") + ", requestCancellation: el._lvBuilderAgentRefreshController})"
+	return "el._lvBuilderAgentRefreshController?.abort(); el._lvBuilderAgentRefreshController = new AbortController(); " +
+		"$builderRefresh = { dashboardId: $builder.dashboardId, pageId: $builder.selectedPageId, visualId: $builder.selectedVisualId }; " + request
 }
 
 func builderFilterOptionsAction(actions DashboardBuilderActionBindings) g.Node {
@@ -247,9 +272,13 @@ func builderFilterOptionsAction(actions DashboardBuilderActionBindings) g.Node {
 }
 
 func builderVisualWindowAction(actions DashboardBuilderActionBindings) g.Node {
-	value := "$visualWindowCommand = evt.detail;"
+	// A builder projection includes the full semantic field catalog and can be
+	// hundreds of kilobytes. Window reads only need the exact draft revision;
+	// derive that bounded identity at dispatch time so scrolling never uploads
+	// the complete authoring model.
+	value := "$visualWindowCommand = evt.detail; $builderWindowContext = {draftId: $builder.draftId, revisionId: $builder.revision.id, revisionNumber: $builder.revision.number, revisionContentHash: $builder.revision.contentHash};"
 	if strings.TrimSpace(actions.VisualWindowPath) != "" {
-		value += " " + uiactions.ConcurrentEventPost(actions.VisualWindowPath, "builder", "runtime", "builderFilterState", "visualWindowCommand")
+		value += " " + uiactions.ConcurrentEventPost(actions.VisualWindowPath, "builderWindowContext", "runtime", "builderFilterState", "visualWindowCommand")
 	}
 	return g.Attr("data-on:lv-visualization-window-request", value)
 }

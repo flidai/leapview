@@ -872,6 +872,7 @@ model AgentContextSignal {
   `surface`: string;
   `dashboardId`: string;
   `dashboardTitle`: string;
+  `draftId`?: string;
   `pageId`: string;
   `pageTitle`: string;
   `modelId`: string;

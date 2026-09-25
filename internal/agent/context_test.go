@@ -78,3 +78,18 @@ func TestTurnContextRejectsClientProjectSelector(t *testing.T) {
 		t.Fatal("client project selector was accepted")
 	}
 }
+
+func TestBuilderTurnContextIsIncludedForAgentPrompt(t *testing.T) {
+	items := turnContextItems(&TurnContext{Surface: "dashboard_builder", DashboardID: "dashboard_sales", DraftID: "draft_1", DraftRevision: &DraftRevision{RevisionID: "revision_7", Number: 7, ContentHash: "sha256:abc"}})
+	if len(items) != 2 {
+		t.Fatalf("builder context items = %#v", items)
+	}
+	context, ok := items[0].Value.(TurnContext)
+	if !ok || context.DraftRevision == nil || context.DraftRevision.RevisionID != "revision_7" {
+		t.Fatalf("builder prompt context = %#v", items[0].Value)
+	}
+	policy, _ := items[1].Value.(string)
+	if items[1].Key != "leapview_builder_v1_policy" || !strings.Contains(policy, "do not claim the Builder chart failed") {
+		t.Fatalf("builder policy context = %#v", items[1])
+	}
+}

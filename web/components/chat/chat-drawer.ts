@@ -1,6 +1,6 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ExternalLink, Plus, X } from 'lucide'
+import { ChartColumn, CircleHelp, ExternalLink, LayoutDashboard, Maximize2, Move, Plus, RefreshCw, TrendingUp, X, type IconNode } from 'lucide'
 import type {
   AgentContextSignal,
 	DashboardInteractionSelection,
@@ -44,6 +44,19 @@ const emptyDashboardFilters: NonNullable<AgentContextSignal['filters']> = {
 }
 const emptyDashboardSelections: DashboardInteractionSelection[] = []
 const emptyReferenceSearch: AgentReferenceSearchSignal = { query: '', requestId: 0, results: [] }
+
+const builderPrompts: Array<{ label: string; prompt: string; icon: IconNode }> = [
+  { label: 'Add a chart', prompt: 'Add a chart for the main metric by category.', icon: ChartColumn },
+  { label: 'Change a visual', prompt: 'Change this chart to a bar chart.', icon: RefreshCw },
+  { label: 'Move a chart', prompt: 'Move this chart to a different position.', icon: Move },
+  { label: 'Resize a chart', prompt: 'Resize this chart to make it taller.', icon: Maximize2 },
+]
+
+const dashboardPrompts: Array<{ label: string; prompt: string; icon: IconNode }> = [
+  { label: 'Summarize', prompt: 'Summarize the key takeaways on this page.', icon: LayoutDashboard },
+  { label: 'Explain metrics', prompt: 'Explain how the main metrics are calculated.', icon: CircleHelp },
+  { label: 'Find insights', prompt: 'Which results stand out, and why?', icon: TrendingUp },
+]
 
 class ChatDrawer extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) open = false
@@ -91,6 +104,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
       grid-template-rows: auto minmax(0, 1fr) auto;
       background: var(--lv-bg-app);
     }
+
+    .drawer.welcome-mode { grid-template-rows: auto minmax(0, 1fr); }
 
     .header {
       display: grid;
@@ -164,12 +179,18 @@ class ChatDrawer extends DatastarLit(LitElement) {
     }
 
     .text-action { font: var(--lv-type-caption); width: auto; display: inline-flex; gap: var(--lv-space-xs); padding-inline: var(--lv-space-sm); }
-    .welcome { min-height: 0; overflow: auto; padding: var(--lv-space-lg); display: flex; flex-direction: column; justify-content: center; gap: var(--lv-space-md); }
+    .welcome { box-sizing: border-box; min-width: 0; min-height: 0; overflow: auto; padding: var(--lv-space-lg) var(--lv-space-sm); display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: var(--lv-space-md); }
+    .welcome-heading { display: flex; align-items: center; justify-content: center; gap: var(--lv-space-sm); text-align: center; }
+    .welcome-heading .agent-mark { display: grid; place-items: center; color: var(--lv-accent); }
+    .welcome-heading .agent-mark svg { width: var(--base-size-20); height: var(--base-size-20); }
     .welcome h2 { margin: 0; font: var(--lv-type-section-title); }
-    .welcome p { margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-body); }
-    .prompts { display: grid; gap: var(--lv-space-sm); }
-    .prompt { width: 100%; height: auto; min-height: var(--control-large-size); padding: var(--lv-space-md); text-align: left; justify-content: start; border: var(--lv-border-muted); background: var(--lv-bg-panel); color: var(--lv-fg-default); font: inherit; }
-    .context-hint { color: var(--lv-fg-muted); }
+    .welcome lv-chat-composer { width: 100%; flex: 0 0 auto; }
+    .prompts { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--lv-space-sm); padding-inline: var(--lv-space-sm); }
+    .prompt { display: inline-flex; width: auto; height: auto; min-height: var(--lv-control-medium); align-items: center; gap: var(--lv-space-xs); padding: 0 var(--lv-space-md); border: var(--lv-border-muted); border-radius: var(--lv-radius-full); background: var(--lv-bg-panel); color: var(--lv-fg-default); font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-medium); white-space: nowrap; }
+    .prompt:hover { border-color: var(--lv-line-accent-muted); }
+    .prompt svg { width: var(--base-size-16); height: var(--base-size-16); color: var(--lv-accent); }
+    .welcome-hint { margin: 0; padding-inline: var(--lv-space-md); color: var(--lv-fg-muted); text-align: center; font: var(--lv-type-caption); }
+    .welcome-hint kbd { display: inline-grid; min-width: 20px; height: 20px; place-items: center; border: var(--lv-border-muted); border-radius: var(--lv-radius-tight); background: var(--lv-bg-control); color: var(--lv-fg-default); font: inherit; }
     button:focus-visible, a:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-line-accent); outline-offset: var(--lv-space-2xs); }
 
     .close-action {
@@ -187,6 +208,15 @@ class ChatDrawer extends DatastarLit(LitElement) {
 
     :host([embedded]) .header {
       padding-block-start: var(--lv-space-sm);
+    }
+
+    :host([embedded]) .text-action {
+      width: var(--control-medium-size);
+      padding-inline: 0;
+    }
+
+    :host([embedded]) .text-action span {
+      display: none;
     }
 
     .context {
@@ -385,8 +415,28 @@ class ChatDrawer extends DatastarLit(LitElement) {
       : '/chats/new'
     const agentEnabled = Boolean(agent.status?.enabled)
     const showWelcome = agentEnabled && !this.pending && !agent.status.error && !(agent.transcript?.length)
+    const composer = html`<lv-chat-composer
+      .value=${agent.composer.value ?? ''}
+      .disabled=${this.pending || agent.composer.disabled || !agentEnabled}
+      .pending=${this.pending}
+      .running=${Boolean(agent.status.running)}
+      .runId=${agent.status.runId ?? ''}
+      .canContinue=${Boolean(agent.status.canContinue)}
+      .placeholder=${agentEnabled ? this.embedded ? 'Ask to change this dashboard…' : context?.exploration ? 'Ask about this data…' : 'Ask about this dashboard…' : 'Agent is not configured'}
+      .references=${this.references}
+      .referenceLimit=${context?.referenceLimit ?? defaultAgentReferenceLimit}
+      .pinnedSuggestions=${pinnedSuggestions}
+      .suggestions=${catalogSuggestions}
+      .suggestionQuery=${this.referenceSearch.query}
+      .suggestionRequestId=${this.referenceSearch.requestId}
+      .acceptedRunId=${latestAcceptedRunId(agent.transcript ?? [])}
+      .editMessageId=${this.editMessageId}
+      .editing=${Boolean(this.editMessageId)}
+      @lv-chat-references-change=${this.referencesChanged}
+      @lv-chat-edit-cancel=${this.cancelEdit}
+    ></lv-chat-composer>`
     return html`
-		<aside class="drawer" role="dialog" aria-modal="false" aria-label="Dashboard agent" aria-hidden=${String(!this.open)} ?inert=${!this.open} @keydown=${this.handleKeydown}>
+		<aside class=${showWelcome ? 'drawer welcome-mode' : 'drawer'} role="dialog" aria-modal="false" aria-label="Dashboard agent" aria-hidden=${String(!this.open)} ?inert=${!this.open} @keydown=${this.handleKeydown}>
         <header class="header">
           <div class="toolbar">
             <div class="title">${agentIcon()}<span>Dashboard agent</span></div>
@@ -399,7 +449,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
           <section class="context" aria-label="Included dashboard context">
             <div class="context-line">
               <span class="page-context">${context?.pageTitle || 'Current page'}</span>
-              ${controls || selections ? html`<span class="context-separator" aria-hidden="true">·</span><span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>` : html`<span class="context-hint">· Page included</span>`}
+              ${controls || selections ? html`<span class="context-separator" aria-hidden="true">·</span><span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>` : null}
             </div>
             ${this.referenceLimitMessage ? html`
               <div class="reference-limit-status" data-reference-limit-status role="status" aria-live="polite">${this.referenceLimitMessage}</div>
@@ -408,12 +458,12 @@ class ChatDrawer extends DatastarLit(LitElement) {
         </header>
         ${showWelcome ? html`
           <section class="welcome" aria-label="Start a dashboard conversation">
-            <h2>What would you like to understand?</h2>
-            <p>Ask about ${context?.exploration ? 'this data' : context?.dashboardTitle || 'this dashboard'}. Your current page, filters, and selections are included.</p>
+            <div class="welcome-heading"><span class="agent-mark" aria-hidden="true">${agentIcon()}</span><h2>${this.embedded ? 'What should I change?' : 'What would you like to understand?'}</h2></div>
+            ${composer}
             <div class="prompts">
-              ${['Summarize the key takeaways on this page.', 'Explain how the main metrics are calculated.', 'Which results stand out, and why?'].map(prompt => html`<button class="prompt" @click=${() => this.fillPrompt(prompt)}>${prompt}</button>`)}
+              ${(this.embedded ? builderPrompts : dashboardPrompts).map(({ label, prompt, icon }) => html`<button class="prompt" type="button" title=${prompt} aria-label=${`${label}: ${prompt}`} @click=${() => this.fillPrompt(prompt)}>${lucideIcon(icon, { size: 16, strokeWidth: 2 })}<span>${label}</span></button>`)}
             </div>
-            <p>Choose a question to edit, or use @ to attach a specific chart.</p>
+            <p class="welcome-hint">Type <kbd>@</kbd> to attach ${this.embedded ? 'a chart on this page.' : 'a dashboard, metric, model, page, or visual.'}</p>
           </section>
         ` : null}
         <lv-chat-thread ?hidden=${showWelcome}
@@ -424,26 +474,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
           conversation-id=${agent.activeConversationId ?? ''}
           @lv-chat-reuse=${this.reuseDraft}
         ></lv-chat-thread>
-        <lv-chat-composer
-          .value=${agent.composer.value ?? ''}
-          .disabled=${this.pending || agent.composer.disabled || !agentEnabled}
-          .pending=${this.pending}
-          .running=${Boolean(agent.status.running)}
-          .runId=${agent.status.runId ?? ''}
-          .canContinue=${Boolean(agent.status.canContinue)}
-          .placeholder=${agentEnabled ? context?.exploration ? 'Ask about this data…' : 'Ask about this dashboard…' : 'Agent is not configured'}
-          .references=${this.references}
-          .referenceLimit=${context?.referenceLimit ?? defaultAgentReferenceLimit}
-          .pinnedSuggestions=${pinnedSuggestions}
-          .suggestions=${catalogSuggestions}
-          .suggestionQuery=${this.referenceSearch.query}
-          .suggestionRequestId=${this.referenceSearch.requestId}
-			.acceptedRunId=${latestAcceptedRunId(agent.transcript ?? [])}
-			.editMessageId=${this.editMessageId}
-			.editing=${Boolean(this.editMessageId)}
-          @lv-chat-references-change=${this.referencesChanged}
-			@lv-chat-edit-cancel=${this.cancelEdit}
-        ></lv-chat-composer>
+        ${showWelcome ? null : composer}
       </aside>
     `
   }

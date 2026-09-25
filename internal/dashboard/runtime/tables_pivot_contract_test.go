@@ -167,6 +167,62 @@ func TestPivotExecutionWindowsRowAxisBeyondCellCap(t *testing.T) {
 	}
 }
 
+type matrixTopNDataRuntime struct {
+	pivotWindowDataRuntime
+}
+
+func (r *matrixTopNDataRuntime) Query(_ context.Context, query reportdef.AggregateQuery) (reportdef.QueryRows, error) {
+	r.queries = append(r.queries, query)
+	rows := make(reportdef.QueryRows, query.Limit)
+	for index := range rows {
+		rows[index] = reportdef.QueryRow{"row": index, "group_a": "A", "group_b": "B", "value": index}
+	}
+	return rows, nil
+}
+
+func TestMatrixLimitCapsRenderedRowsAndQueriesOneSentinel(t *testing.T) {
+	fields := []visualizationir.VisualizationField{
+		{ID: "row", Label: "Row", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeInteger},
+		{ID: "group_a", Label: "Group A", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString},
+		{ID: "group_b", Label: "Group B", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString},
+		{ID: "value", Label: "Value", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeInteger},
+	}
+	base := visualizationir.VisualizationSpecBase{Kind: "matrix", Title: "Matrix", Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: fields}}, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 100}, Accessibility: visualizationir.VisualizationAccessibility{Title: "Matrix", Description: "Matrix"}}
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.MatrixVisualizationSpec{
+		VisualizationSpecBase: base, Kind: "matrix",
+		Rows:    []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "row"}},
+		Columns: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "group_a"}, {Dataset: "primary", Field: "group_b"}},
+		Metrics: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "value"}},
+	}}
+	definition, err := visualizationdefinition.New("matrix", spec, visualizationdefinition.QueryBinding{
+		Kind: visualizationdefinition.QueryMatrix, ResultShape: visualizationdefinition.ResultMatrixWindow, ModelID: "model", DatasetID: "primary",
+		Matrix: &visualizationdefinition.MatrixQueryBinding{
+			TableID: "orders", Rows: []visualizationdefinition.FieldBinding{{FieldID: "row", Alias: "row"}},
+			Columns: []visualizationdefinition.FieldBinding{{FieldID: "group_a", Alias: "group_a"}, {FieldID: "group_b", Alias: "group_b"}},
+			Metrics: []visualizationdefinition.FieldBinding{{FieldID: "value", Alias: "value"}}, Limit: 5,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &matrixTopNDataRuntime{}
+	runtime := &modelRuntime{model: &semanticmodel.Model{}, data: fake}
+	service := &VisualizationDataService{filters: &FilterService{}}
+	table, err := service.queryAggregateTable(context.Background(), runtime, &dashboarddefinition.Definition{}, dashboard.TableRequest{Table: "matrix"}, definition, dashboard.Filters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.queries) != 1 || fake.queries[0].Limit != 6 {
+		t.Fatalf("matrix query = %#v, want limit=6 (Top N plus one sentinel)", fake.queries)
+	}
+	if table.AvailableRows != 5 || !table.IsCapped || len(table.Blocks["a"].Rows) != 5 {
+		t.Fatalf("matrix Top N output = available=%d capped=%v rows=%d, want 5/true/5", table.AvailableRows, table.IsCapped, len(table.Blocks["a"].Rows))
+	}
+	if table.Cardinality.Kind != dashboard.CardinalityLowerBound || table.Cardinality.Value != 6 {
+		t.Fatalf("matrix cardinality = %#v, want lower bound 6", table.Cardinality)
+	}
+}
+
 func TestPivotTupleIdentityPreservesTypesAndNulls(t *testing.T) {
 	if typedTupleIdentity([]any{int64(1)}) == typedTupleIdentity([]any{float64(1)}) {
 		t.Fatal("integer and float tuple identities collided")

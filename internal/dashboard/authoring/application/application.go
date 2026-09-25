@@ -263,6 +263,28 @@ func (a *Application) Preview(ctx context.Context, request preview.PreviewReques
 	return service.Preview(ctx, request)
 }
 
+// PreviewWindow compiles, resolves exact-revision filter state, and queries a
+// builder table window through one runtime lease.
+func (a *Application) PreviewWindow(ctx context.Context, request preview.PreviewRequest, resolve preview.WindowFilterResolver) (preview.Preview, error) {
+	if err := a.validate(); err != nil {
+		return preview.Preview{}, err
+	}
+	projectID, err := projectID(request.ProjectID)
+	if err != nil {
+		return preview.Preview{}, err
+	}
+	service, err := preview.NewService(preview.Options{
+		Repository: a.repository,
+		Authorizer: a.authorizer,
+		Provider:   projectProvider{projectID: projectID, acquire: a.acquireRuntime},
+	})
+	if err != nil {
+		return preview.Preview{}, err
+	}
+	request.ProjectID = projectID
+	return service.PreviewWindow(ctx, request, resolve)
+}
+
 // Compile strictly compiles one exact draft revision without executing a
 // dashboard page. Filter-option loading uses this path so a failing visual
 // query cannot hide an otherwise valid governed filter contract.

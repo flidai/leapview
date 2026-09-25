@@ -89,8 +89,8 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 	if len(listResponse.Result.Tools) != len(builtIn) {
 		t.Fatalf("MCP tool count = %d, built-in count = %d", len(listResponse.Result.Tools), len(builtIn))
 	}
-	if len(listResponse.Result.Tools) != 22 {
-		t.Fatalf("MCP tool count = %d, want 22", len(listResponse.Result.Tools))
+	if len(listResponse.Result.Tools) != 11 {
+		t.Fatalf("MCP tool count = %d, want 11", len(listResponse.Result.Tools))
 	}
 	foundVisual := false
 	foundNames := map[string]bool{}
@@ -123,9 +123,14 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 	if !foundVisual {
 		t.Fatalf("tools/list omitted query_visual: %s", listed.Body.String())
 	}
-	for _, name := range []string{"catalog_search", "catalog_list", "catalog_get", "query_semantic_model", "query_dashboard_visual", "query_visual", "docs_search", "docs_read", "list_dashboards", "get_dashboard", "get_dashboard_draft", "read_dashboard_source", "edit_dashboard_source", "create_dashboard_draft", "execute_dashboard_command", "fork_dashboard", "preview_dashboard_draft", "export_dashboard_yaml", "set_dashboard_visibility", "add_dashboard_page", "add_dashboard_visual", "assign_dashboard_field"} {
+	for _, name := range []string{"catalog_search", "catalog_list", "catalog_get", "query_semantic_model", "query_dashboard_visual", "query_visual", "docs_search", "docs_read", "list_dashboards", "get_dashboard", "export_dashboard_yaml"} {
 		if !foundNames[name] {
 			t.Fatalf("tools/list omitted %s: %s", name, listed.Body.String())
+		}
+	}
+	for _, name := range []string{"create_dashboard_draft", "fork_dashboard", "execute_dashboard_command", "set_dashboard_visibility", "edit_dashboard_source", "add_dashboard_visual", "assign_dashboard_field"} {
+		if foundNames[name] {
+			t.Fatalf("MCP exposed Builder-only or unsupported authoring tool %s", name)
 		}
 	}
 	for _, legacy := range []string{"list_workspaces", "search", "describe_dashboard", "query_dashboard_page"} {

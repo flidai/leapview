@@ -1,6 +1,7 @@
 package authoring
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
@@ -70,8 +71,8 @@ func canonicalVisualSwitchQuery(target document.DashboardQuery, visualType docum
 		}
 		query.Fields = visualSwitchRecordSelections(details)
 	case *document.PivotDashboardQuery:
-		query.Rows = nil
-		query.Columns = nil
+		query.Rows = []document.DashboardDimensionSelection{}
+		query.Columns = []document.DashboardDimensionSelection{}
 		if len(dimensions) > 0 {
 			query.Rows = visualSwitchDimensionSelections(dimensions[:1])
 		}
@@ -96,11 +97,16 @@ func canonicalVisualSwitchQuery(target document.DashboardQuery, visualType docum
 
 func boundedVisualSwitchFields(fields []string, visualType document.DashboardVisualType, role FieldRole) []string {
 	maximum := int32(0)
+	found := false
 	for _, limit := range CanonicalVisualRoleLimits(visualType) {
 		if limit.Role == string(role) {
 			maximum = limit.Maximum
+			found = true
 			break
 		}
+	}
+	if !found {
+		return nil
 	}
 	result := make([]string, 0, len(fields))
 	seen := make(map[string]struct{}, len(fields))
@@ -160,6 +166,9 @@ func configureTargetPresentationBindings(visual *document.DashboardVisual) {
 	if !ok {
 		return
 	}
+	presentation.Identity = []string{"pending_identity"}
+	presentation.X = "pending_x"
+	presentation.Y = "pending_y"
 	if len(query.Dimensions) > 0 {
 		_, alias := canonicalDimensionSelection(query.Dimensions[0])
 		if alias != "" {
@@ -180,15 +189,49 @@ func configureTargetPresentationBindings(visual *document.DashboardVisual) {
 	}
 }
 
-func mergeCartesianPresentation(target, source *document.CartesianDashboardPresentation) {
-	if target == nil || source == nil {
-		return
+func mergeCompatiblePresentation(target *document.DashboardVisual, source document.DashboardPresentation) error {
+	raw, err := presentationObject(target.Presentation)
+	if err != nil {
+		return err
 	}
-	// The Cartesian presentation is one generated union member. Copy the whole
-	// member so newly-added compatible controls (tooltip, axes, references,
-	// series intent, and legend metadata) survive a same-family mark switch.
-	// Keep the target discriminator supplied by defaultCanonicalVisual.
-	targetType := target.Type
-	*target = *source
-	target.Type = targetType
+	prior, err := presentationObject(source)
+	if err != nil {
+		return err
+	}
+	// Gauge domains require an authored minimum and maximum together. Radar
+	// supports only maximum, so carry the pair across only when both bounds
+	// were explicitly present on the source presentation.
+	if target.Type == document.DashboardVisualTypeGauge && (prior["minimum"] == nil || prior["maximum"] == nil) {
+		delete(prior, "minimum")
+		delete(prior, "maximum")
+	}
+	// Sharing a generated presentation family does not make every option
+	// compatible (for example, even rose:false is invalid on a Funnel).
+	// Keep family-wide fields outside the bounded applicability registry,
+	// and retain target defaults when the source did not author a value.
+	for field, value := range prior {
+		known := false
+		for _, visual := range canonicalVisualCatalog {
+			if document.SupportsPresentationField(visual.Type, field) {
+				known = true
+				break
+			}
+		}
+		if !known || document.SupportsPresentationField(target.Type, field) {
+			raw[field] = value
+		}
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(encoded, &target.Presentation); err != nil {
+		return err
+	}
+	base, err := target.Presentation.Base()
+	if err != nil {
+		return err
+	}
+	base.Type, err = target.Presentation.Type()
+	return err
 }

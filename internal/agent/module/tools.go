@@ -53,6 +53,7 @@ func (m *Module) ToolDefinitions(scope agentcap.Scope) []agentcore.ToolDefinitio
 		APIGen:    m.APIGenToolProvider(),
 		Authoring: m.DashboardAuthoringToolProvider(),
 	}).Definitions(toolScope)
+	definitions = scopedBuilderAuthoringTools(definitions, scope)
 	return wrapToolContext(definitions, m.toolContext, scope)
 }
 

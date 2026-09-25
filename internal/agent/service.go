@@ -38,6 +38,10 @@ type Scope struct {
 	ConversationID string
 	Credential     CredentialScope
 	DevAuthBypass  bool
+	// BuilderDashboardID and BuilderDraftID are set only after the server
+	// resolves an open Builder surface; they are never accepted from tool input.
+	BuilderDashboardID string
+	BuilderDraftID     string
 }
 
 type CredentialScope struct {

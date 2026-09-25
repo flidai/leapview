@@ -10,6 +10,7 @@ import (
 
 const (
 	dashboardTurnContextSurface = "dashboard"
+	builderTurnContextSurface   = "dashboard_builder"
 	dataTurnContextSurface      = "data"
 )
 
@@ -22,6 +23,8 @@ type TurnContext struct {
 	Surface        string           `json:"surface"`
 	DashboardID    string           `json:"dashboardId,omitempty"`
 	DashboardTitle string           `json:"dashboardTitle,omitempty"`
+	DraftID        string           `json:"draftId,omitempty"`
+	DraftRevision  *DraftRevision   `json:"draftRevision,omitempty"`
 	PageID         string           `json:"pageId,omitempty"`
 	PageTitle      string           `json:"pageTitle,omitempty"`
 	ModelID        string           `json:"modelId,omitempty"`
@@ -30,6 +33,13 @@ type TurnContext struct {
 	Generation     int64            `json:"generation,omitempty"`
 	Filters        map[string]any   `json:"filters,omitempty"`
 	References     []TurnReference  `json:"references,omitempty"`
+}
+
+// DraftRevision is server-resolved concurrency evidence for authoring tools.
+type DraftRevision struct {
+	RevisionID  string `json:"revisionId"`
+	Number      int64  `json:"number"`
+	ContentHash string `json:"contentHash"`
 }
 
 // UnmarshalJSON rejects the former client-selectable project field instead
@@ -129,6 +139,11 @@ func (c TurnContext) normalized() TurnContext {
 	c.Surface = strings.ToLower(strings.TrimSpace(c.Surface))
 	c.DashboardID = strings.TrimSpace(c.DashboardID)
 	c.DashboardTitle = strings.TrimSpace(c.DashboardTitle)
+	c.DraftID = strings.TrimSpace(c.DraftID)
+	if c.DraftRevision != nil {
+		c.DraftRevision.RevisionID = strings.TrimSpace(c.DraftRevision.RevisionID)
+		c.DraftRevision.ContentHash = strings.TrimSpace(c.DraftRevision.ContentHash)
+	}
 	c.PageID = strings.TrimSpace(c.PageID)
 	c.PageTitle = strings.TrimSpace(c.PageTitle)
 	c.ModelID = strings.TrimSpace(c.ModelID)
@@ -189,10 +204,14 @@ func turnContextItems(context *TurnContext) []agentcore.ContextItem {
 		return nil
 	}
 	normalized := context.normalized()
-	if normalized.Surface != dashboardTurnContextSurface && normalized.Surface != dataTurnContextSurface && (normalized.Surface != "chat" || len(normalized.References) == 0) {
+	if normalized.Surface != dashboardTurnContextSurface && normalized.Surface != builderTurnContextSurface && normalized.Surface != dataTurnContextSurface && (normalized.Surface != "chat" || len(normalized.References) == 0) {
 		return nil
 	}
-	return []agentcore.ContextItem{{Key: "leapview_context", Value: normalized}}
+	items := []agentcore.ContextItem{{Key: "leapview_context", Value: normalized}}
+	if normalized.Surface == builderTurnContextSurface {
+		items = append(items, agentcore.ContextItem{Key: "leapview_builder_v1_policy", Value: "Edit only this open dashboard draft. Creating, forking, deleting, publishing, archiving, or changing visibility is not available through the agent. Ask the user to create a dashboard and select its semantic model in the UI first. A tool preview query can be blocked independently of the live Builder preview; do not claim the Builder chart failed unless its own status confirms that."})
+	}
+	return items
 }
 
 func normalizeDataExploration(value DataExploration) *DataExploration {

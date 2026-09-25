@@ -13,7 +13,10 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/dashboard"
+	"github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -29,6 +32,8 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 	switch strings.ToLower(strings.TrimSpace(candidate.Surface)) {
 	case "dashboard":
 		return m.resolveDashboardTurnContext(r.Context(), scope, candidate)
+	case "dashboard_builder":
+		return m.resolveBuilderTurnContext(r.Context(), scope, candidate)
 	case "data":
 		return m.resolveDataTurnContext(r.Context(), scope, candidate)
 	case "chat":
@@ -64,6 +69,61 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 	default:
 		return agent.TurnContext{}, errors.New("unsupported agent context surface")
 	}
+}
+
+func (m *Module) resolveBuilderTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
+	projectID, err := m.activeProjectID(ctx)
+	if err != nil {
+		return agent.TurnContext{}, err
+	}
+	if m.dashboardAuthoring == nil || strings.TrimSpace(scope.PrincipalID) == "" {
+		return agent.TurnContext{}, errors.New("dashboard authoring is unavailable")
+	}
+	dashboardID := strings.TrimSpace(candidate.DashboardID)
+	draftID := strings.TrimSpace(candidate.DraftID)
+	if dashboardID == "" || draftID == "" {
+		return agent.TurnContext{}, errors.New("builder context requires dashboard and draft")
+	}
+	if !CredentialAllowsResource(contextModuleScope(scope, projectID), projectgraph.ResourceID(dashboardID), projectgraph.KindDashboard, access.CapabilityResourceEdit) {
+		return agent.TurnContext{}, errors.New("credential cannot edit this dashboard")
+	}
+	builder, err := m.dashboardAuthoring.Builder(ctx, builderview.Request{
+		ProjectID: projectgraph.ResourceID(projectID), ActorID: scope.PrincipalID,
+		DashboardID: authoring.DashboardID(dashboardID), SelectedPageID: strings.TrimSpace(candidate.PageID),
+	})
+	if err != nil {
+		return agent.TurnContext{}, err
+	}
+	return resolvedBuilderTurnContext(candidate, builder)
+}
+
+func resolvedBuilderTurnContext(candidate agent.TurnContext, builder uisignals.DashboardBuilderSignal) (agent.TurnContext, error) {
+	draftID := strings.TrimSpace(candidate.DraftID)
+	if builder.DashboardID != strings.TrimSpace(candidate.DashboardID) || builder.DraftID != draftID {
+		return agent.TurnContext{}, errors.New("dashboard draft changed; reload the builder")
+	}
+	pageID := strings.TrimSpace(candidate.PageID)
+	if pageID == "" && builder.SelectedPageID != nil {
+		pageID = strings.TrimSpace(*builder.SelectedPageID)
+	}
+	pageTitle, found := "", false
+	for _, page := range builder.Pages {
+		if page.ID == pageID {
+			pageTitle = page.Title
+			found = true
+			break
+		}
+	}
+	if pageID == "" || !found {
+		return agent.TurnContext{}, errors.New("dashboard draft page is unavailable")
+	}
+	return agent.TurnContext{
+		Surface: "dashboard_builder", DashboardID: builder.DashboardID, DashboardTitle: builder.Title,
+		DraftID: builder.DraftID, DraftRevision: &agent.DraftRevision{
+			RevisionID: builder.Revision.ID, Number: builder.Revision.Number, ContentHash: builder.Revision.ContentHash,
+		},
+		PageID: pageID, PageTitle: pageTitle, ModelID: builder.SemanticModel.ID,
+	}, nil
 }
 
 func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, candidate agent.TurnContext) (agent.TurnContext, error) {
@@ -259,8 +319,12 @@ func (m *Module) resolveContextResource(ctx context.Context, scope agent.Scope, 
 	if err != nil {
 		return "", err
 	}
-	return m.resolveResource(ctx, Scope{
-		ProjectID: projectID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
+	return m.resolveResource(ctx, contextModuleScope(scope, projectID), id, kind, capability)
+}
+
+func contextModuleScope(scope agent.Scope, projectID string) Scope {
+	return Scope{
+		ProjectID: projectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: CredentialScope{
 			ProjectID:         scope.Credential.ProjectID,
@@ -269,7 +333,7 @@ func (m *Module) resolveContextResource(ctx context.Context, scope agent.Scope, 
 			Permissions:       clonePermissionPairs(scope.Credential.Permissions),
 			Restricted:        scope.Credential.Restricted,
 		},
-	}, id, kind, capability)
+	}
 }
 
 func dashboardFiltersFromTurnContext(raw map[string]any) (dashboard.Filters, error) {

@@ -3,6 +3,7 @@ import * as echarts from 'echarts'
 
 import { defaultRendererContext } from '../host-controller'
 import { echartsOption, responsiveEChartsPatch } from './echarts'
+import { responsiveEChartsLayoutKey } from './echarts/view-state'
 import { proportionalFixture } from './echarts-test-fixtures'
 
 function proportionalWithIconFormat(mark: 'pie' | 'donut' | 'funnel' = 'donut') {
@@ -73,6 +74,21 @@ test('proportional labels use formatted category and value text with normal dens
   }
 })
 
+test('outside funnel labels preserve the formatted value when a category uses the label budget', () => {
+  const envelope = proportionalWithIconFormat('funnel')
+  if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected proportional fixture')
+  envelope.spec.datasets[0]!.fields[1]!.format = { kind: 'currency', currency: 'USD' }
+  envelope.dataState.datasets[0]!.rows = [['United States of America', 1_980_000]]
+
+  const label = (echartsOption(envelope, defaultRendererContext) as any).series[0].label.formatter({
+    value: envelope.dataState.datasets[0]!.rows[0],
+  })
+
+  expect(label).toBe('United States o…: $1.98M')
+  expect(label).toContain('$1.98M')
+  expect([...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(label)]).toHaveLength(24)
+})
+
 test('proportional responsive sizing keeps authored radii and the bottom legend band', () => {
   const envelope = proportionalWithIconFormat('donut')
   if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
@@ -110,8 +126,8 @@ test('proportional responsive helper keeps compact labels bounded and expanded l
     const compact = responsiveEChartsPatch(option, 320, 240)
     const expanded = responsiveEChartsPatch(option, 1200, 720)
     if (mark === 'funnel') {
-      expect(compact).toEqual({})
-      expect(expanded).toEqual({})
+      expect(compact.series[0].label.formatter({ value: ['United States of America', 1] })).toBe('United States of Ame…:\n1')
+      expect(expanded.series[0].label.formatter({ value: ['United States of America', 1] })).toBe('United States of Ame…: 1')
     } else {
       expect(compact.series[0].label.alignTo).toBe('edge')
       expect(expanded.series[0].label.alignTo).toBe('labelLine')
@@ -119,6 +135,41 @@ test('proportional responsive helper keeps compact labels bounded and expanded l
       expect(expanded.series[0].id).toBe(`series:primary:${mark}`)
     }
     expect(option.series[0].id).toBe(`series:primary:${mark}`)
+  }
+})
+
+test('compact funnel labels wrap long category and value text inside the chart bounds', () => {
+  const envelope = proportionalWithIconFormat('funnel')
+  if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected proportional fixture')
+  envelope.spec.datasets[0]!.fields[1]!.format = { kind: 'currency', currency: 'USD' }
+  envelope.dataState.datasets[0]!.rows = [
+    ['Canada', 2_070_000], ['France', 2_020_000], ['Germany', 1_950_000], ['Mexico', 1_740_000],
+    ['United States of America', 1_740_000],
+  ]
+  const source = echartsOption(envelope, defaultRendererContext) as any
+  expect(responsiveEChartsLayoutKey(envelope, 320, 240)).not.toBe(responsiveEChartsLayoutKey(envelope, 260, 240))
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 320, height: 240 })
+  try {
+    chart.setOption({ ...source, ...responsiveEChartsPatch(source, 320, 240), animation: false })
+    chart.renderToSVGString()
+    const labels = chart.getZr().storage.getDisplayList()
+      .filter((item: any) => item.type === 'tspan' && ['United States o…:', '$1.74M'].includes(String(item.style?.text)))
+    expect(labels.map((item: any) => item.style.text)).toContain('United States o…:')
+    expect(labels.map((item: any) => item.style.text)).toContain('$1.74M')
+    expect(labels).toHaveLength(2)
+    for (const item of labels) {
+      const bounds = item.getBoundingRect().clone()
+      const transform = item.getComputedTransform?.() ?? item.transform
+      if (transform) bounds.applyTransform(transform)
+      expect(bounds.x, `${item.style.text} should not clip on the left`).toBeGreaterThanOrEqual(0)
+      expect(bounds.x + bounds.width, `${item.style.text} should not clip on the right`).toBeLessThanOrEqual(320)
+    }
+
+    chart.resize({ width: 620, height: 400 })
+    chart.setOption(responsiveEChartsPatch(source, 620, 400))
+    expect((chart as any).getModel().getSeriesByIndex(0).getFormattedLabel(4)).toBe('United States o…: $1.74M')
+  } finally {
+    chart.dispose()
   }
 })
 

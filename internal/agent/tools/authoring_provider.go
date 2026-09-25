@@ -261,10 +261,14 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if !ok {
 				return result
 			}
+			ctx, invocationID, err := agentAuthoringAuditContext(ctx, project, scope, call, "executeDashboardAuthoringCommand", id.String(), input.DraftID.String(), access.CapabilityResourceEdit)
+			if err != nil {
+				return authoringToolError(err)
+			}
 			value, err := p.Application.EditSource(ctx, authoringapplication.SourceEditRequest{
 				ProjectID: project, ActorID: scope.PrincipalID, DashboardID: id,
 				DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, Edits: input.Edits,
-				CommandID:  dashboardauthoring.CommandID(strings.TrimSpace(call.ID)),
+				CommandID:  dashboardauthoring.CommandID(invocationID),
 				Provenance: dashboardauthoring.Provenance{Origin: dashboardauthoring.OriginAgent, ActorID: scope.PrincipalID, ConversationID: scope.ConversationID, ToolCallID: call.ID},
 			})
 			if err != nil {
@@ -317,7 +321,11 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if !ok {
 				return result
 			}
-			value, err := p.Application.Create(ctx, authoringservice.CreateRequest{ProjectID: project, ActorID: scope.PrincipalID, DashboardID: dashboardauthoring.DashboardID(strings.TrimSpace(input.DashboardID)), Title: input.Title, Slug: input.Slug, SemanticModel: semanticModel, Visibility: dashboardauthoring.VisibilityPrivate, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: call.ID})
+			ctx, invocationID, err := agentAuthoringAuditContext(ctx, project, scope, call, "createDashboardAuthoringDraft", input.DashboardID, "", access.CapabilityResourceEdit)
+			if err != nil {
+				return authoringToolError(err)
+			}
+			value, err := p.Application.Create(ctx, authoringservice.CreateRequest{ProjectID: project, ActorID: scope.PrincipalID, DashboardID: dashboardauthoring.DashboardID(strings.TrimSpace(input.DashboardID)), Title: input.Title, Slug: input.Slug, SemanticModel: semanticModel, Visibility: dashboardauthoring.VisibilityPrivate, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: invocationID})
 			if err != nil {
 				return authoringToolError(err)
 			}
@@ -344,7 +352,11 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 				return result
 			}
 			input.Command.DashboardID = id
-			input.Command.ID = dashboardauthoring.CommandID(strings.TrimSpace(call.ID))
+			ctx, invocationID, err := agentAuthoringAuditContext(ctx, project, scope, call, "executeDashboardAuthoringCommand", id.String(), input.Command.DraftID.String(), agentAuthoringCapability(input.Command))
+			if err != nil {
+				return authoringToolError(err)
+			}
+			input.Command.ID = dashboardauthoring.CommandID(invocationID)
 			input.Command.Provenance = dashboardauthoring.Provenance{Origin: dashboardauthoring.OriginAgent, ActorID: scope.PrincipalID, ConversationID: scope.ConversationID, ToolCallID: call.ID}
 			value, err := p.Application.Execute(ctx, project, input.Command)
 			if err != nil {
@@ -372,7 +384,11 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 				}
 				sourceID = dashboardauthoring.DashboardID(resolved.String())
 			}
-			value, err := p.Application.Fork(ctx, sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, ProjectID: project, DashboardID: sourceID}, TargetProjectID: project, ActorID: scope.PrincipalID, Title: input.Title, Slug: input.Slug, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: call.ID})
+			ctx, invocationID, err := agentAuthoringAuditContext(ctx, project, scope, call, "forkDashboardAuthoringDraft", "", "", access.CapabilityResourceEdit)
+			if err != nil {
+				return authoringToolError(err)
+			}
+			value, err := p.Application.Fork(ctx, sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, ProjectID: project, DashboardID: sourceID}, TargetProjectID: project, ActorID: scope.PrincipalID, Title: input.Title, Slug: input.Slug, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: invocationID})
 			if err != nil {
 				return authoringToolError(err)
 			}
@@ -500,7 +516,11 @@ func (p DashboardAuthoringProvider) executeIntent(ctx context.Context, scope Sco
 		return result
 	}
 	command.DashboardID = id
-	command.ID = dashboardauthoring.CommandID(strings.TrimSpace(call.ID))
+	ctx, invocationID, err := agentAuthoringAuditContext(ctx, project, scope, call, "executeDashboardAuthoringCommand", id.String(), command.DraftID.String(), agentAuthoringCapability(command))
+	if err != nil {
+		return authoringToolError(err)
+	}
+	command.ID = dashboardauthoring.CommandID(invocationID)
 	command.Provenance = dashboardauthoring.Provenance{Origin: dashboardauthoring.OriginAgent, ActorID: scope.PrincipalID, ConversationID: scope.ConversationID, ToolCallID: call.ID}
 	value, err := p.Application.ExecuteIntent(ctx, authoringapplication.IntentRequest{ProjectID: project, ActorID: scope.PrincipalID, Command: command})
 	if err != nil {
