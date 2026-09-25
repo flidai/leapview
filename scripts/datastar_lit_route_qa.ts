@@ -62,7 +62,11 @@ try {
     await verifyKeyboardAccessibilityJourney()
     await verifyEChartsFirstNavigation()
     await verifyDashboardCommandDoesNotReopenUpdates()
-    await verifyDashboardCopyBuilder(browser, baseURL, storageState)
+    // The copy intentionally persists until the QA runner destroys its own
+    // database. Do not create test dashboards on a developer's live server.
+    if (Bun.env.LEAPVIEW_QA_DISPOSABLE === '1') {
+      await verifyDashboardCopyBuilder(browser, baseURL, storageState)
+    }
     await verifyDataExplorerRecoveryActions()
     await verifyTableShowcase()
     await verifyFilterShowcase()

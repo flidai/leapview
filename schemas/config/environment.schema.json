@@ -3648,6 +3648,14 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_QA_DISPOSABLE": {
+      "default": "false",
+      "description": "Marks the isolated QA server whose database is destroyed after browser mutation checks.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "ui-qa"
+    },
     "LEAPVIEW_QA_STORAGE_STATE": {
       "description": "Private Playwright browser-session file used by authenticated route and visual QA.",
       "type": "string",

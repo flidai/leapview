@@ -643,7 +643,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		return fail(err)
 	}
 	authoring, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{Persistence: graph.DashboardPersistence, AuthorizeTypedResource: func(ctx context.Context, principal string, project projectgraph.ResourceID, resource access.ResourceRef, action access.Action) (bool, bool, error) {
-		return authorizeTypedResourceAction(ctx, accessBundle.Module, runtimeHost, principal, project, []access.ResourceRef{resource}, action)
+		return authorizeTypedResourceActionWithDraft(ctx, accessBundle.Module, runtimeHost, principal, project, []access.ResourceRef{resource}, action, allowsUnpublishedDashboardAuthoringAction(resource, action))
 	}, AuthorizeTypedProject: func(ctx context.Context, principal string, project projectgraph.ResourceID, action access.Action) (bool, bool, error) {
 		return authorizeTypedAuthoringProjectAction(ctx, accessBundle.Module, runtimeHost, principal, project, action)
 	}, AcquireRuntime: runtimeHost.Acquire})

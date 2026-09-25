@@ -41,6 +41,7 @@ async function main(): Promise<void> {
     const browserEnv = {
       LEAPVIEW_BASE_URL: baseURL,
       ...(storageState ? { LEAPVIEW_QA_STORAGE_STATE: storageState } : {}),
+      LEAPVIEW_QA_DISPOSABLE: startedServer ? '1' : '0',
     }
     const qaScope = Bun.env.LEAPVIEW_UI_QA_SCOPE?.trim() || 'all'
     if (qaScope !== 'all' && qaScope !== 'visual') {

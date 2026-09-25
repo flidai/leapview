@@ -156,7 +156,7 @@ func authorizeTypedDashboardAction(
 	if err != nil {
 		return false, err
 	}
-	typed, allowed, err := authorizeTypedResourceAction(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, action)
+	typed, allowed, err := authorizeTypedResourceActionWithDraft(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, action, allowsUnpublishedDashboardAuthoringAction(resource, action))
 	if err != nil {
 		return false, err
 	}
@@ -232,6 +232,22 @@ func authorizeTypedResourceActionWithDraft(
 	}, snapshot, subjects, allowUnpublishedDashboard)
 }
 
+// Repository-backed authoring can address a draft before it appears in the
+// active serving graph. Only dashboard mutations may cross that graph boundary;
+// the caller must still establish the lifecycle and its project identity, and
+// the principal (and any token) must hold the exact typed action.
+func allowsUnpublishedDashboardAuthoringAction(resource access.ResourceRef, action access.Action) bool {
+	if resource.Kind() != projectgraph.KindDashboard {
+		return false
+	}
+	switch action {
+	case access.ActionDashboardUpdate, access.ActionDashboardDelete, access.ActionDashboardPublish:
+		return true
+	default:
+		return false
+	}
+}
+
 func authorizeTypedAuthoringResourceAction(
 	ctx context.Context,
 	accessModule canonicalAccessModule,
@@ -245,7 +261,7 @@ func authorizeTypedAuthoringResourceAction(
 	if err != nil {
 		return false, false, err
 	}
-	return authorizeTypedResourceAction(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, typedAction)
+	return authorizeTypedResourceActionWithDraft(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, typedAction, allowsUnpublishedDashboardAuthoringAction(resource, typedAction))
 }
 
 func authorizeTypedAuthoringProjectAction(

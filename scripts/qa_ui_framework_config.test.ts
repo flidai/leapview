@@ -53,6 +53,9 @@ test('UI framework QA signs in for protected routes without masking the login pa
   expect(routes).toContain('LEAPVIEW_QA_STORAGE_STATE')
   expect(visual).toContain('LEAPVIEW_QA_STORAGE_STATE')
   expect(copy).toContain('storageState')
+  expect(runner).toContain("LEAPVIEW_QA_DISPOSABLE: startedServer ? '1' : '0'")
+  expect(routes).toContain("Bun.env.LEAPVIEW_QA_DISPOSABLE === '1'")
+  expect(copy).not.toContain('copied dashboard cleanup')
 })
 
 test('development startup reuses the bounded CI fixture supply', async () => {

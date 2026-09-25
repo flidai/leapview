@@ -91,6 +91,49 @@ func TestTypedPermissionDecisionForSnapshotRequiresExactViewerPair(t *testing.T)
 	}
 }
 
+func TestTypedDashboardDraftMutationUsesFutureResourceAuthority(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project_1", "dev", "generation_draft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "dashboard_published", Kind: projectgraph.KindDashboard, Name: "published"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := access.NewResourceRef("dashboard_draft", projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "editor"}
+	binding, err := access.NewTypedRoleBinding("editor-role", "editor", subject, access.PermissionRoleEditor, identity.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{binding}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(action access.Action, allowDraft bool) bool {
+		t.Helper()
+		_, allowed, err := typedPermissionDecisionForSnapshotWithDraft(t.Context(), subject.ID, identity.ProjectID, []access.ResourceRef{draft}, func(access.ResourceRef) (access.Action, bool) {
+			return action, true
+		}, snapshot, []access.SubjectRef{subject}, allowDraft)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return allowed
+	}
+	if check(access.ActionDashboardUpdate, false) {
+		t.Fatal("ordinary serving authorization admitted an unpublished dashboard")
+	}
+	if !allowsUnpublishedDashboardAuthoringAction(draft, access.ActionDashboardUpdate) || !check(access.ActionDashboardUpdate, true) {
+		t.Fatal("editor's future-dashboard update authority did not admit an authored draft")
+	}
+	if allowsUnpublishedDashboardAuthoringAction(draft, access.ActionDashboardRead) || check(access.ActionDashboardDelete, true) {
+		t.Fatal("draft exception admitted read or ungranted delete authority")
+	}
+}
+
 func TestTypedDashboardAuthoringActionsDoNotCrossAuthorize(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_1")
 	identity, err := projectgraph.NewServingIdentity("project_1", "prod", "generation_typed_actions")

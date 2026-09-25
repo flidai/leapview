@@ -1,5 +1,4 @@
 import { expect, type Browser } from '@playwright/test'
-import { uuidv7 } from '../web/components/shared/command'
 
 export async function verifyDashboardCopyBuilder(browser: Browser, baseURL: string, storageState?: string): Promise<void> {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, ...(storageState ? { storageState } : {}) })
@@ -10,31 +9,23 @@ export async function verifyDashboardCopyBuilder(browser: Browser, baseURL: stri
     if (!response?.ok()) throw new Error(`dashboard copy form: status ${response?.status() ?? 'unknown'}`)
     await page.locator('form input[name="title"]').fill('QA dashboard copy')
     await page.locator('form input[name="slug"]').fill(`qa-dashboard-copy-${Date.now()}`)
-    const stream = page.waitForResponse((reply) => {
+    let streamStatus: number | undefined
+    page.on('response', (reply) => {
       const url = new URL(reply.url())
-      return url.pathname === '/updates' && url.searchParams.get('route') === 'dashboard_builder'
-    }, { timeout: 20_000 })
+      if (url.pathname === '/updates' && url.searchParams.get('route') === 'dashboard_builder') streamStatus = reply.status()
+    })
+    const editResponse = page.waitForResponse((reply) =>
+      reply.request().method() === 'GET' && /^\/dashboards\/[^/]+\/edit$/.test(new URL(reply.url()).pathname),
+    { timeout: 20_000 })
     await page.locator('form button[type="submit"]').click()
+    const edit = await editResponse
+    if (!edit.ok()) throw new Error(`copied dashboard edit: status ${edit.status()}`)
     await page.waitForURL(/\/dashboards\/[^/]+\/edit\?draft=/, { timeout: 20_000 })
-    const reply = await stream
-    if (reply.status() !== 200) throw new Error(`copied dashboard builder stream: status ${reply.status()}`)
+    await expect.poll(() => streamStatus, { timeout: 20_000 }).toBe(200)
     await expect(page.getByText('Loading dashboard builder...')).toBeHidden({ timeout: 20_000 })
     await expect(page.locator('lv-dashboard-builder')).toBeVisible()
     if (errors.length) throw new Error(`dashboard copy builder page errors: ${errors.join('; ')}`)
   } finally {
-    try {
-      const match = new URL(page.url()).pathname.match(/^\/dashboards\/([^/]+)\/edit$/)
-      if (match) {
-        const csrfToken = await page.locator('meta[name="csrf-token"]').getAttribute('content')
-        if (!csrfToken) throw new Error('copied dashboard cleanup: missing CSRF token')
-        const deletion = await page.context().request.post(new URL(`/dashboards/${match[1]}/delete`, baseURL).toString(), {
-          form: { 'gorilla.csrf.Token': csrfToken, idempotencyKey: uuidv7() },
-          maxRedirects: 0,
-        })
-        if (deletion.status() !== 303) throw new Error(`copied dashboard cleanup: status ${deletion.status()}`)
-      }
-    } finally {
-      await page.close()
-    }
+    await page.close()
   }
 }
