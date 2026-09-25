@@ -40,6 +40,12 @@ if [[ ! -s "$config_file" ]]; then
   printf 'LeapView bootstrap configuration is missing\n' >&2
   exit 1
 fi
+readonly revision019_image='ghcr.io/flidai/leapview@sha256:4a4455ff0048704acf0df1a9308a39a09b4c786f801fe7f3a383ada089d21368'
+install_config="$config_file"
+if [[ "$leapview_image" == "$revision019_image" ]]; then
+  extra_packages+=(python3)
+  install_config=/run/leapview/bootstrap-revision019.json
+fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
@@ -50,6 +56,13 @@ apt-get install -y --no-install-recommends \
 systemctl enable --now docker
 docker version >/dev/null
 docker compose version >/dev/null
+
+if [[ "$leapview_image" == "$revision019_image" ]]; then
+  /usr/local/libexec/leapview-revision019-config-compat prepare \
+    --config "$config_file" --image "$leapview_image" --translated "$install_config" \
+    --binding /opt/leapview/.host-target-binding.json \
+    --marker /opt/leapview/.host-install.json
+fi
 
 docker pull "$leapview_image"
 payload_container="$(docker create "$leapview_image")"
@@ -63,6 +76,12 @@ trap cleanup EXIT
 docker cp "$payload_container:/usr/local/share/leapview/deployment/." "$payload_dir"
 test -x "$payload_dir/leapviewctl"
 "$payload_dir/leapviewctl" host install \
-  --config "$config_file" \
+  --config "$install_config" \
   --payload "$payload_dir" \
   --source-image "$leapview_image"
+if [[ "$leapview_image" == "$revision019_image" ]]; then
+  /usr/local/libexec/leapview-revision019-config-compat verify \
+    --config "$config_file" --image "$leapview_image" --translated "$install_config" \
+    --binding /opt/leapview/.host-target-binding.json \
+    --marker /opt/leapview/.host-install.json
+fi
