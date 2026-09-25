@@ -409,17 +409,17 @@ func TestMigratorGetsOnlyRequiredReadOnlyTLSFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	dsn := "postgresql://migrator@postgres/control?sslmode=verify-full&sslrootcert=/run/tls/ca.pem"
-	args, err := migrationTLSMounts(dsn, app)
+	args, err := migrationTLSMounts(dsn, app, nil)
 	if err != nil || len(args) != 2 || args[1] != "type=bind,src="+ca+",dst=/run/tls/ca.pem,readonly" {
 		t.Fatalf("%v %v", args, err)
 	}
 	app.Mounts[0].RW = true
-	if _, err := migrationTLSMounts(dsn, app); err == nil {
+	if _, err := migrationTLSMounts(dsn, app, nil); err == nil {
 		t.Fatal("writable TLS bind accepted")
 	}
 	app.Mounts[0].RW = false
 	for _, path := range []string{"/run/tls/missing.pem", "/run/tls/../password", "/run/unknown.pem"} {
-		if _, err := migrationTLSMounts("postgresql://migrator@postgres/control?sslrootcert="+path, app); err == nil {
+		if _, err := migrationTLSMounts("postgresql://migrator@postgres/control?sslrootcert="+path, app, nil); err == nil {
 			t.Fatalf("unavailable TLS file accepted: %s", path)
 		}
 	}
@@ -457,5 +457,106 @@ func TestPrivateContainersHaveRestartDisabledAtCreation(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("container creation not exercised")
+	}
+}
+
+func TestNativeMigratorUsesOnlyTrackedTLSFileFromLiveOrRestoredHome(t *testing.T) {
+	for _, rehearsal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rehearsal=%t", rehearsal), func(t *testing.T) {
+			e := nativeEffectsFixture(t)
+			live := t.TempDir()
+			restored := filepath.Join(e.operation, "rehearsal", "home")
+			for _, root := range []string{live, restored} {
+				if err := os.MkdirAll(filepath.Join(root, "home"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, "home", "postgres-root.crt"), []byte(root), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e.original.Volumes = map[string]string{"home": live}
+			raw, _ := json.Marshal(map[string]any{"Mounts": []map[string]any{{"Type": "volume", "Name": e.request.Profile.Volumes["home"], "Source": live, "Destination": "/var/lib/leapview", "RW": true}}})
+			if err := json.Unmarshal(raw, &e.original.App); err != nil {
+				t.Fatal(err)
+			}
+			e.original.App.Config.Env = []string{"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=postgresql://migrator@postgres/control?sslmode=verify-full&sslrootcert=/var/lib/leapview/home/postgres-root.crt"}
+			called := false
+			e.execute = func(_ context.Context, args ...string) (string, error) {
+				called = true
+				root := live
+				if rehearsal {
+					root = restored
+				}
+				want := "type=bind,src=" + filepath.Join(root, "home", "postgres-root.crt") + ",dst=/var/lib/leapview/home/postgres-root.crt,readonly"
+				if !slices.Contains(args, want) {
+					t.Fatalf("missing isolated read-only certificate mount: %v", args)
+				}
+				for _, arg := range args {
+					if strings.Contains(arg, "dst=/var/lib/leapview,") {
+						t.Fatal("whole application volume mounted into migrator")
+					}
+				}
+				return "", nil
+			}
+			if err := e.migrateOn(context.Background(), e.id, "sha256:"+hex64('a'), "test-network", rehearsal); err != nil {
+				t.Fatal(err)
+			}
+			if !called {
+				t.Fatal("migration container not invoked")
+			}
+			if rehearsal {
+				if err := os.Remove(filepath.Join(restored, "home", "postgres-root.crt")); err != nil {
+					t.Fatal(err)
+				}
+				called = false
+				if err := e.migrateOn(context.Background(), e.id, "sha256:"+hex64('a'), "test-network", true); err == nil || called {
+					t.Fatal("missing restored TLS file fell back to live volume")
+				}
+			}
+		})
+	}
+}
+
+func TestVolumeTLSRejectsUntrackedMissingEscapingAndShadowedFiles(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	for _, name := range []string{filepath.Join(root, "ca.pem"), filepath.Join(outside, "ca.pem")} {
+		if err := os.WriteFile(name, []byte("test CA"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, path        string
+		untracked, shadow bool
+	}{
+		{name: "untracked", path: "/state/ca.pem", untracked: true},
+		{name: "missing", path: "/state/missing.pem"},
+		{name: "directory", path: "/state"},
+		{name: "escape", path: "/state/escape/ca.pem"},
+		{name: "traversal", path: "/state/../ca.pem"},
+		{name: "sibling", path: "/state-other/ca.pem"},
+		{name: "shadow", path: "/state/ca.pem", shadow: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mounts := []map[string]any{{"Type": "volume", "Name": "home", "Source": root, "Destination": "/state", "RW": true}}
+			if tc.shadow {
+				mounts = append(mounts, map[string]any{"Type": "tmpfs", "Destination": "/state/ca.pem", "RW": true})
+			}
+			raw, _ := json.Marshal(map[string]any{"Mounts": mounts})
+			var app dockerInspection
+			if err := json.Unmarshal(raw, &app); err != nil {
+				t.Fatal(err)
+			}
+			tracked := map[string]string{root: root}
+			if tc.untracked {
+				tracked = nil
+			}
+			if _, err := migrationTLSMounts("postgresql://migrator@postgres/control?sslrootcert="+tc.path, app, tracked); err == nil {
+				t.Fatal("unsupported TLS material accepted")
+			}
+		})
 	}
 }
