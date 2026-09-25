@@ -62,6 +62,7 @@ export class VisualModal extends LitElement {
     .dialog {
       display: grid;
       width: min(1120px, 100%);
+      box-sizing: border-box;
       max-height: min(760px, calc(100vh - 56px));
       min-height: min(420px, calc(100vh - 56px));
       grid-template-rows: auto minmax(0, 1fr);
@@ -326,6 +327,7 @@ export class VisualModal extends LitElement {
         <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
         <div class="data-scroll">
           <lv-record-table
+            variant="data"
             .table=${{
               columns: columns.map((column) => ({
                 id: column.key,
@@ -337,8 +339,6 @@ export class VisualModal extends LitElement {
               width: compactColumns ? '100%' : '',
               minWidth: compactColumns ? '100%' : columns.length > 4 ? `${columns.length * 160}px` : '0',
               density: 'tight',
-              columnDividers: compactColumns,
-              rowDividers: compactColumns,
             }}
           ></lv-record-table>
         </div>

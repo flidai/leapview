@@ -249,7 +249,7 @@ test('show-data balances small result tables and preserves scrolling for wide re
   const page = await setupPage()
   try {
     await page.setViewportSize({ width: 1280, height: 640 })
-    await page.addStyleTag({ content: ':root { --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --lv-type-body: 400 14px/1.5 system-ui; --lv-type-caption: 400 12px/1.25 system-ui; }' })
+    await page.addStyleTag({ content: ':root { --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --control-small-size: 32px; --lv-bg-app: #ffffff; --lv-bg-panel: #ffffff; --lv-bg-panel-muted: #f6f8fa; --lv-border-muted: 1px solid #d0d7de; --lv-border-default: 1px solid #afb8c1; --lv-type-body: 400 14px/1.5 system-ui; --lv-type-caption: 400 12px/1.25 system-ui; }' })
     await page.evaluate(() => {
       const source = document.getElementById('first')!
       source.dispatchEvent(new CustomEvent('lv-visual-action', {
@@ -277,6 +277,7 @@ test('show-data balances small result tables and preserves scrolling for wide re
     const state = await page.locator('lv-visual-modal').evaluate((modal: any) => {
       const scroll = modal.shadowRoot.querySelector('.data-scroll') as HTMLElement
       const row = modal.shadowRoot.querySelector('lv-record-table tbody tr') as HTMLElement
+      const secondRow = modal.shadowRoot.querySelector('lv-record-table tbody tr:nth-child(2)') as HTMLElement
       const firstCell = row.querySelector('td') as HTMLElement
       const lastCell = modal.shadowRoot.querySelector('lv-record-table tbody tr:last-child td') as HTMLElement
       const table = modal.shadowRoot.querySelector('lv-record-table table') as HTMLTableElement
@@ -289,6 +290,8 @@ test('show-data balances small result tables and preserves scrolling for wide re
       const scrollBounds = scroll.getBoundingClientRect()
       return {
         rowHeight: row.getBoundingClientRect().height,
+        rowBackground: getComputedStyle(row).backgroundColor,
+        secondRowBackground: getComputedStyle(secondRow).backgroundColor,
         rowDividerWidth: Number.parseFloat(getComputedStyle(firstCell).borderBottomWidth),
         rowDividerStyle: getComputedStyle(firstCell).borderBottomStyle,
         lastRowDividerWidth: Number.parseFloat(getComputedStyle(lastCell).borderBottomWidth),
@@ -301,10 +304,11 @@ test('show-data balances small result tables and preserves scrolling for wide re
         tableRightGap: Math.round(scrollBounds.right - tableBounds.right),
         columnWidths: headers.map((header) => Math.round(header.getBoundingClientRect().width)),
         revenueAlignment: getComputedStyle(headers[1]).textAlign,
+        headerTextTransform: firstHeaderStyle.textTransform,
         firstColumnRightPadding: Number.parseFloat(firstHeaderStyle.paddingRight),
         revenueLeftPadding: Number.parseFloat(revenueHeaderStyle.paddingLeft),
-        revenueDividerWidth: Number.parseFloat(revenueHeaderStyle.borderLeftWidth),
-        revenueDividerStyle: revenueHeaderStyle.borderLeftStyle,
+        columnDividerWidth: Number.parseFloat(firstHeaderStyle.borderRightWidth),
+        columnDividerStyle: firstHeaderStyle.borderRightStyle,
         revenueHeaderRightGap: Math.round(
           headers[1].getBoundingClientRect().right
           - Number.parseFloat(revenueHeaderStyle.paddingRight)
@@ -314,7 +318,8 @@ test('show-data balances small result tables and preserves scrolling for wide re
         dialogBottom: dialog.getBoundingClientRect().bottom,
       }
     })
-    expect(state.rowHeight).toBeLessThanOrEqual(32)
+    expect(state.rowHeight).toBe(32)
+    expect(state.rowBackground).not.toBe(state.secondRowBackground)
     expect(state.rowDividerWidth).toBe(1)
     expect(state.rowDividerStyle).toBe('solid')
     expect(state.lastRowDividerWidth).toBe(0)
@@ -324,10 +329,11 @@ test('show-data balances small result tables and preserves scrolling for wide re
     expect(state.tableLeftGap).toBe(0)
     expect(state.tableRightGap).toBe(0)
     expect(state.revenueAlignment).toBe('right')
-    expect(state.firstColumnRightPadding).toBe(16)
-    expect(state.revenueLeftPadding).toBe(16)
-    expect(state.revenueDividerWidth).toBe(1)
-    expect(state.revenueDividerStyle).toBe('solid')
+    expect(state.headerTextTransform).toBe('uppercase')
+    expect(state.firstColumnRightPadding).toBe(8)
+    expect(state.revenueLeftPadding).toBe(8)
+    expect(state.columnDividerWidth).toBe(1)
+    expect(state.columnDividerStyle).toBe('solid')
     expect(state.revenueHeaderRightGap).toBe(0)
     expect(state.dialogWidth).toBe(480)
     expect(state.dialogBottom).toBeLessThanOrEqual(640 - 28)
