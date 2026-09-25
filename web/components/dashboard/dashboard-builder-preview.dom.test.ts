@@ -96,12 +96,14 @@ test('native resize handles suspend chart rendering until the placement save fin
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    await page.waitForFunction(() => {
+      const element = document.querySelector('lv-dashboard-builder') as any
+      return Boolean(element?.builder?.pages?.length && !element.isUpdatePending)
+    })
     const builder = page.locator('lv-dashboard-builder')
     await builder.evaluate(async (element: any, preview) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ builder: { preview: { active: true } }, builderVisuals: { 'sales-chart': preview } })
-      await element.updateComplete
     }, governedBarPreviewEnvelope('rev-7'))
     const host = builder.locator('lv-visualization-host')
     await host.waitFor()
