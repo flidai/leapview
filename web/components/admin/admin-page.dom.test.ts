@@ -420,54 +420,56 @@ test('personal API tokens use exact typed permission selectors', async () => {
         listOverflowY: getComputedStyle(permissionList).overflowY,
         width: Math.round(menuRect.width),
         searchHeight: Math.round(search.getBoundingClientRect().height),
-        optionRowsLargeEnough: Array.from(root.querySelectorAll<HTMLElement>('.permission-option')).every((option) => option.getBoundingClientRect().height >= 48),
+        optionRowsLargeEnough: Array.from(root.querySelectorAll<HTMLElement>('.permission-option')).every((option) => option.getBoundingClientRect().height >= 32),
       }
       const searchFocused = root.activeElement === search
       const menuHeader = {
         title: menuTitle.textContent?.trim(),
         labelledByTitle: menu.getAttribute('aria-labelledby') === menuTitle.id,
-        selectedCount: root.querySelector('.permission-menu-count')?.textContent?.replace(/\s+/g, ' ').trim(),
-        help: root.querySelector('.permission-menu-help')?.textContent?.replace(/\s+/g, ' ').trim(),
+        checkboxCount: root.querySelectorAll('.permission-option input[type="checkbox"]').length,
         categorySummaries: Array.from(root.querySelectorAll('.permission-category')).map((category) => category.textContent?.replace(/\s+/g, ' ').trim()),
       }
       search.value = 'view dashboard'
       search.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await personal.updateComplete
-      const filteredPermissions = Array.from(root.querySelectorAll('.permission-option .settings-label')).map((label) => label.textContent?.trim())
+      const filteredPermissions = Array.from(root.querySelectorAll('.permission-option span')).map((label) => label.textContent?.trim())
       ;(root.querySelector('.permission-option') as HTMLButtonElement).click()
       await personal.updateComplete
       const actionMenuClosedAfterSelection = !root.querySelector('.permission-menu')
       const scopeConfiguration = {
         title: root.querySelector('.permission-policy-header .settings-label')?.textContent?.trim(),
-        scopeOptions: Array.from(root.querySelectorAll('.permission-scope-option .settings-label')).map((label) => label.textContent?.trim()),
-        defaultScope: (root.querySelector('.permission-policy input[type="radio"]:checked') as HTMLInputElement)?.value,
-        incompleteStatus: root.querySelector('.permission-policy-status')?.textContent?.trim(),
+        defaultScope: root.querySelector('.permission-scope-trigger')?.textContent?.trim(),
+        configured: root.querySelector('.permission-policy')?.getAttribute('data-configured'),
         createDisabled: (root.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
-      ;(root.querySelector('.permission-policy input[type="radio"][value="current"]') as HTMLInputElement).click()
+      ;(root.querySelector('.permission-scope-trigger') as HTMLButtonElement).click()
+      const picker = root.querySelector('lv-personal-token-permission-picker') as any
+      await picker.updateComplete
+      const scopeOptions = [...Array.from(root.querySelectorAll('.permission-scope-option span')).map((option) => option.textContent?.trim()), root.querySelector('.permission-scope-specific')?.textContent?.trim()]
+      ;(root.querySelector('.permission-scope-option input[value="current"]') as HTMLInputElement).click()
+      await picker.updateComplete
       await personal.updateComplete
-      const allCurrentExactCount = root.querySelectorAll('.permission-technical-row').length
-      ;(root.querySelector('.permission-policy input[type="radio"][value="specific"]') as HTMLInputElement).click()
-      await personal.updateComplete
-      ;(root.querySelector('.permission-resource-trigger') as HTMLButtonElement).click()
-      await personal.updateComplete
-      await (root.querySelector('lv-personal-token-permission-picker') as any).updateComplete
+      const allCurrentExactCount = personal.tokenSelectedPermissions.length
+      ;(root.querySelector('.permission-scope-trigger') as HTMLButtonElement).click()
+      await picker.updateComplete
       const resourcePicker = {
         resources: Array.from(root.querySelectorAll('.permission-resource-option span')).map((label) => label.textContent?.trim()),
         initiallySelected: root.querySelectorAll('.permission-resource-option input:checked').length,
-        searchFocused: root.activeElement === root.querySelector('.permission-resource-menu .permission-search input'),
+        oneMenu: root.querySelectorAll('.permission-scope-menu').length === 1 && !root.querySelector('.permission-resource-trigger'),
       }
-      const salesResource = Array.from(root.querySelectorAll<HTMLElement>('.permission-resource-option')).find((option) => option.textContent?.includes('Sales overview'))
-      ;(salesResource?.querySelector('input[type="checkbox"]') as HTMLInputElement).click()
-      const financeResource = Array.from(root.querySelectorAll<HTMLElement>('.permission-resource-option')).find((option) => option.textContent?.includes('Finance'))
-      ;(financeResource?.querySelector('input[type="checkbox"]') as HTMLInputElement).click()
-      await personal.updateComplete
-      ;(root.querySelector('.permission-resource-menu-footer .primary') as HTMLButtonElement).click()
+      const resourceSearch = root.querySelector('.permission-scope-menu input[type="search"]') as HTMLInputElement
+      resourceSearch.value = 'operations'
+      resourceSearch.dispatchEvent(new Event('input', { bubbles: true }))
+      await picker.updateComplete
+      const filteredResources = Array.from(root.querySelectorAll('.permission-resource-option span')).map((label) => label.textContent?.trim())
+      const operationsResource = Array.from(root.querySelectorAll<HTMLElement>('.permission-resource-option')).find((option) => option.textContent?.includes('Operations'))
+      ;(operationsResource?.querySelector('input[type="checkbox"]') as HTMLInputElement).click()
+      await picker.updateComplete
       await personal.updateComplete
       add.click()
       await personal.updateComplete
       const selectedMenuState = {
-        count: root.querySelector('.permission-menu-count')?.textContent?.replace(/\s+/g, ' ').trim(),
+        count: root.querySelector('.permissions-title .count')?.textContent?.trim(),
         selected: root.querySelector('.permission-option')?.getAttribute('data-selected'),
         categorySummary: root.querySelector('.permission-category')?.textContent?.replace(/\s+/g, ' ').trim(),
       }
@@ -475,13 +477,10 @@ test('personal API tokens use exact typed permission selectors', async () => {
       await personal.updateComplete
       await Promise.resolve()
       const selectedPermissions = Array.from(root.querySelectorAll('.permission-policy-header > .settings-field > .settings-label')).map((label) => label.textContent?.trim())
-      const technicalDetails = root.querySelector('.permission-technical-details') as HTMLDetailsElement
       const selectedPresentation = {
-        fixedPermissionVisible: Boolean(root.querySelector('.permission-access-fixed')),
-        technicalOpen: technicalDetails.open,
-        technicalSummary: technicalDetails.querySelector('summary')?.textContent?.replace(/\s+/g, ' ').trim(),
-        technicalAction: technicalDetails.querySelector('code')?.textContent?.trim(),
-        technicalTarget: technicalDetails.querySelector('.permission-technical-row span')?.textContent?.replace(/\s+/g, ' ').trim(),
+        fixedPermissionVisible: Boolean(root.querySelector('.permission-scope-fixed')),
+        scope: root.querySelector('.permission-scope-trigger')?.textContent?.trim(),
+        technicalFooterVisible: Boolean(root.querySelector('.permission-technical-details')),
       }
       const triggerFocused = root.activeElement === add
       let command: any = null
@@ -490,6 +489,7 @@ test('personal API tokens use exact typed permission selectors', async () => {
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
       await personal.updateComplete
       const confirmation = root.querySelector('[data-token-confirm-dialog]') as HTMLDialogElement
+      if (!confirmation) throw new Error(JSON.stringify({ resourcePicker, selectedMenuState, selectedPermissions, incomplete: personal.tokenPermissionsIncomplete, permissions: personal.tokenSelectedPermissions, canCreate: !(root.querySelector('.token-actions button[type="submit"]') as HTMLButtonElement).disabled }))
       const confirmationText = confirmation.textContent?.replace(/\s+/g, ' ').trim()
       const confirmationPermission = {
         action: confirmation.querySelector('.token-confirm-permissions li strong')?.textContent?.trim(),
@@ -520,14 +520,16 @@ test('personal API tokens use exact typed permission selectors', async () => {
       const succeeded = {
         createViewClosed: !root.querySelector('#token-name'),
         selectedPermissions: root.querySelectorAll('.permission-policy[data-configured="true"]').length,
-        tokenNames: Array.from(root.querySelectorAll('.token-name')).map((element) => element.textContent?.trim()),
-        description: root.querySelector('.token-description')?.textContent?.trim(),
+        tokenNames: Array.from(root.querySelectorAll('lv-entity-list .entity-list-title')).map((element) => element.textContent?.trim()),
+        description: root.querySelector('lv-entity-list tbody tr td:nth-child(2)')?.textContent?.trim(),
         notice: root.querySelector('lv-one-time-secret')?.shadowRoot?.querySelector('[role="status"]')?.textContent?.trim(),
         pathname: window.location.pathname,
       }
       let deleteCommand: any = null
       personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { deleteCommand = event.detail }, { once: true })
-      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === 'Delete') as HTMLButtonElement).click()
+      const tokenList = root.querySelector('lv-entity-list') as any
+      await tokenList.updateComplete
+      ;(tokenList.querySelector('.entity-list-row-action') as HTMLButtonElement).click()
       await personal.updateComplete
       const deleteDialog = root.querySelector('[data-token-delete-dialog]') as HTMLDialogElement
       const deletion = {
@@ -550,8 +552,10 @@ test('personal API tokens use exact typed permission selectors', async () => {
         filteredPermissions,
         actionMenuClosedAfterSelection,
         scopeConfiguration,
+        scopeOptions,
         allCurrentExactCount,
         resourcePicker,
+        filteredResources,
         selectedMenuState,
         selectedPermissions,
         selectedPresentation,
@@ -616,39 +620,37 @@ test('personal API tokens use exact typed permission selectors', async () => {
     expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
     expect(state.menuLayout.listScrollable).toBe(false)
     expect(state.menuLayout.listOverflowY).toBe('auto')
-    expect(state.menuLayout.width).toBeGreaterThanOrEqual(400)
-    expect(state.menuLayout.searchHeight).toBeGreaterThanOrEqual(40)
+    expect(state.menuLayout.width).toBe(320)
+    expect(state.menuLayout.searchHeight).toBeGreaterThanOrEqual(32)
     expect(state.menuLayout.optionRowsLargeEnough).toBe(true)
     expect(state.menuHeader).toEqual({
-      title: 'Add token permission',
+      title: 'Add permission',
       labelledByTitle: true,
-      selectedCount: '0 selected',
-      help: 'Choose an action. Its resource scope will appear in the form.',
-      categorySummaries: ['Dashboards 0 selected', 'Project administration 0 selected'],
+      checkboxCount: 2,
+      categorySummaries: ['Dashboards', 'Project administration'],
     })
     expect(state.filteredPermissions).toEqual(['View dashboard'])
-    expect(state.actionMenuClosedAfterSelection).toBe(true)
+    expect(state.actionMenuClosedAfterSelection).toBe(false)
     expect(state.scopeConfiguration).toEqual({
       title: 'View dashboard',
-      scopeOptions: ['Specific dashboards', 'All current dashboards', 'All current and future dashboards'],
-      defaultScope: 'specific',
-      incompleteStatus: 'Needs scope',
+      defaultScope: 'Choose scope',
+      configured: 'false',
       createDisabled: true,
     })
+    expect(state.scopeOptions).toEqual(['All current dashboards', 'Current and future dashboards', 'Specific dashboards'])
     expect(state.allCurrentExactCount).toBe(3)
     expect(state.resourcePicker).toEqual({
       resources: ['Sales overview', 'Operations', 'Finance'],
-      initiallySelected: 3,
-      searchFocused: true,
+      initiallySelected: 0,
+      oneMenu: true,
     })
-    expect(state.selectedMenuState).toEqual({ count: '1 selected', selected: 'true', categorySummary: 'Dashboards 1 selected' })
+    expect(state.filteredResources).toEqual(['Operations'])
+    expect(state.selectedMenuState).toEqual({ count: '1', selected: 'true', categorySummary: 'Dashboards' })
     expect(state.selectedPermissions).toEqual(['View dashboard'])
     expect(state.selectedPresentation).toEqual({
       fixedPermissionVisible: false,
-      technicalOpen: false,
-      technicalSummary: 'Technical details 1 exact permission',
-      technicalAction: 'dashboard.read',
-      technicalTarget: 'dashboard dashboard-operations · project project_1',
+      scope: 'Specific: Operations',
+      technicalFooterVisible: false,
     })
     expect(state.menuClosed).toBe(true)
     expect(state.searchFocused).toBe(true)

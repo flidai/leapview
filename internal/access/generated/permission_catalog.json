@@ -3,6 +3,7 @@
   "actions": [
     {
       "action": "dashboard.read",
+      "displayName": "View dashboard",
       "family": "Dashboard",
       "description": "View an approved dashboard definition and shell.",
       "scope": "resource",
@@ -18,6 +19,7 @@
     },
     {
       "action": "dashboard.create",
+      "displayName": "Create dashboards",
       "family": "Dashboard",
       "description": "Create a dashboard in the bound Project.",
       "scope": "project",
@@ -33,6 +35,7 @@
     },
     {
       "action": "dashboard.update",
+      "displayName": "Edit dashboard",
       "family": "Dashboard",
       "description": "Edit an existing dashboard definition.",
       "scope": "resource",
@@ -48,6 +51,7 @@
     },
     {
       "action": "dashboard.delete",
+      "displayName": "Delete dashboard",
       "family": "Dashboard",
       "description": "Delete or archive an existing dashboard.",
       "scope": "resource",
@@ -63,6 +67,7 @@
     },
     {
       "action": "dashboard.publish",
+      "displayName": "Publish dashboard",
       "family": "Dashboard",
       "description": "Publish an approved dashboard revision.",
       "scope": "resource",
@@ -78,6 +83,7 @@
     },
     {
       "action": "semantic.read",
+      "displayName": "Discover metadata",
       "family": "Semantic consumption",
       "description": "Discover governed semantic metadata.",
       "scope": "resource",
@@ -93,6 +99,7 @@
     },
     {
       "action": "semantic.query",
+      "displayName": "Build queries",
       "family": "Semantic consumption",
       "description": "Construct an arbitrary governed semantic query.",
       "scope": "resource",
@@ -110,6 +117,7 @@
     },
     {
       "action": "semantic.consume",
+      "displayName": "Use governed data",
       "family": "Semantic consumption",
       "description": "Consume governed data from an exact SemanticModel.",
       "scope": "resource",
@@ -125,6 +133,7 @@
     },
     {
       "action": "semantic.create",
+      "displayName": "Create semantic models",
       "family": "Development",
       "description": "Create a SemanticModel definition in the bound Project.",
       "scope": "project",
@@ -140,6 +149,7 @@
     },
     {
       "action": "semantic.update",
+      "displayName": "Edit semantic model",
       "family": "Development",
       "description": "Update a SemanticModel definition.",
       "scope": "resource",
@@ -155,6 +165,7 @@
     },
     {
       "action": "semantic.delete",
+      "displayName": "Delete semantic model",
       "family": "Development",
       "description": "Delete a SemanticModel definition.",
       "scope": "resource",
@@ -170,6 +181,7 @@
     },
     {
       "action": "source.read",
+      "displayName": "View source",
       "family": "Development",
       "description": "Read a Source definition.",
       "scope": "resource",
@@ -185,6 +197,7 @@
     },
     {
       "action": "source.create",
+      "displayName": "Create sources",
       "family": "Development",
       "description": "Create a Source definition in the bound Project.",
       "scope": "project",
@@ -200,6 +213,7 @@
     },
     {
       "action": "source.update",
+      "displayName": "Edit source",
       "family": "Development",
       "description": "Update a Source definition.",
       "scope": "resource",
@@ -215,6 +229,7 @@
     },
     {
       "action": "source.delete",
+      "displayName": "Delete source",
       "family": "Development",
       "description": "Delete a Source definition.",
       "scope": "resource",
@@ -230,6 +245,7 @@
     },
     {
       "action": "model.read",
+      "displayName": "View model",
       "family": "Development",
       "description": "Read a Model definition.",
       "scope": "resource",
@@ -245,6 +261,7 @@
     },
     {
       "action": "model.create",
+      "displayName": "Create models",
       "family": "Development",
       "description": "Create a Model definition in the bound Project.",
       "scope": "project",
@@ -260,6 +277,7 @@
     },
     {
       "action": "model.update",
+      "displayName": "Edit model",
       "family": "Development",
       "description": "Update a Model definition.",
       "scope": "resource",
@@ -275,6 +293,7 @@
     },
     {
       "action": "model.delete",
+      "displayName": "Delete model",
       "family": "Development",
       "description": "Delete a Model definition.",
       "scope": "resource",
@@ -290,6 +309,7 @@
     },
     {
       "action": "pipeline.read",
+      "displayName": "View pipeline",
       "family": "Pipeline",
       "description": "Read a Pipeline definition and bounded operational status.",
       "scope": "resource",
@@ -305,6 +325,7 @@
     },
     {
       "action": "pipeline.create",
+      "displayName": "Create pipelines",
       "family": "Pipeline",
       "description": "Create a Pipeline in the bound Project.",
       "scope": "project",
@@ -320,6 +341,7 @@
     },
     {
       "action": "pipeline.run",
+      "displayName": "Run pipeline",
       "family": "Pipeline",
       "description": "Trigger an approved Pipeline revision.",
       "scope": "resource",
@@ -335,6 +357,7 @@
     },
     {
       "action": "pipeline.update",
+      "displayName": "Edit pipeline",
       "family": "Pipeline",
       "description": "Update a Pipeline definition.",
       "scope": "resource",
@@ -350,6 +373,7 @@
     },
     {
       "action": "pipeline.delete",
+      "displayName": "Delete pipeline",
       "family": "Pipeline",
       "description": "Delete a Pipeline definition.",
       "scope": "resource",
@@ -365,6 +389,7 @@
     },
     {
       "action": "connection.read",
+      "displayName": "View connection details",
       "family": "Connection",
       "description": "Read redacted Connection metadata.",
       "scope": "resource",
@@ -380,6 +405,7 @@
     },
     {
       "action": "connection.create",
+      "displayName": "Create connections",
       "family": "Connection",
       "description": "Create a Connection in the bound Project.",
       "scope": "project",
@@ -395,6 +421,7 @@
     },
     {
       "action": "connection.use",
+      "displayName": "Use connection",
       "family": "Connection",
       "description": "Execute through an approved Connection binding without revealing credentials.",
       "scope": "resource",
@@ -410,6 +437,7 @@
     },
     {
       "action": "connection.manage",
+      "displayName": "Manage connection",
       "family": "Connection",
       "description": "Update, rotate, test, or delete a Connection.",
       "scope": "resource",
@@ -425,6 +453,7 @@
     },
     {
       "action": "resource.share",
+      "displayName": "Share resource",
       "family": "Sharing",
       "description": "Issue a bounded independent grant on an exact supported resource.",
       "scope": "resource",
@@ -450,6 +479,7 @@
     },
     {
       "action": "delivery.read",
+      "displayName": "View releases",
       "family": "Delivery",
       "description": "Inspect delivery plans and retained evidence.",
       "scope": "project",
@@ -465,6 +495,7 @@
     },
     {
       "action": "delivery.plan",
+      "displayName": "Plan releases",
       "family": "Delivery",
       "description": "Persist an exact delivery plan.",
       "scope": "project",
@@ -480,6 +511,7 @@
     },
     {
       "action": "delivery.build",
+      "displayName": "Build releases",
       "family": "Delivery",
       "description": "Build an approved delivery candidate.",
       "scope": "project",
@@ -495,6 +527,7 @@
     },
     {
       "action": "delivery.publish",
+      "displayName": "Publish releases",
       "family": "Delivery",
       "description": "Publish a built delivery candidate.",
       "scope": "project",
@@ -510,6 +543,7 @@
     },
     {
       "action": "delivery.approve",
+      "displayName": "Approve releases",
       "family": "Delivery",
       "description": "Approve a protected delivery candidate.",
       "scope": "project",
@@ -525,6 +559,7 @@
     },
     {
       "action": "delivery.activate",
+      "displayName": "Activate releases",
       "family": "Delivery",
       "description": "Activate an approved delivery publication.",
       "scope": "project",
@@ -540,6 +575,7 @@
     },
     {
       "action": "delivery.rollback",
+      "displayName": "Roll back releases",
       "family": "Delivery",
       "description": "Rollback to eligible retained delivery evidence.",
       "scope": "project",
@@ -555,6 +591,7 @@
     },
     {
       "action": "project.settings.read",
+      "displayName": "View project settings",
       "family": "Project administration",
       "description": "Read Project settings.",
       "scope": "project",
@@ -570,6 +607,7 @@
     },
     {
       "action": "project.settings.update",
+      "displayName": "Update project settings",
       "family": "Project administration",
       "description": "Update Project settings.",
       "scope": "project",
@@ -585,6 +623,7 @@
     },
     {
       "action": "project.access.read",
+      "displayName": "View project access",
       "family": "Project administration",
       "description": "Inspect Project access assignments.",
       "scope": "project",
@@ -600,6 +639,7 @@
     },
     {
       "action": "project.access.manage",
+      "displayName": "Manage project access",
       "family": "Project administration",
       "description": "Maintain Project access without unbounded privilege issuance.",
       "scope": "project",
@@ -615,6 +655,7 @@
     },
     {
       "action": "project.access.delegate",
+      "displayName": "Delegate project access",
       "family": "Project administration",
       "description": "Issue authority within an explicit grant-administration envelope.",
       "scope": "project",
@@ -630,6 +671,7 @@
     },
     {
       "action": "audit.read",
+      "displayName": "View audit log",
       "family": "Project administration",
       "description": "Read authorized Project audit evidence.",
       "scope": "project",
@@ -645,6 +687,7 @@
     },
     {
       "action": "workload.delegate",
+      "displayName": "Delegate workload",
       "family": "Workload delegation",
       "description": "Issue a bounded execution grant for an exact Pipeline and workload principal.",
       "scope": "resource",
@@ -660,6 +703,7 @@
     },
     {
       "action": "platform.settings.read",
+      "displayName": "View platform settings",
       "family": "Platform administration",
       "description": "Read instance settings.",
       "scope": "instance",
@@ -671,6 +715,7 @@
     },
     {
       "action": "platform.settings.update",
+      "displayName": "Update platform settings",
       "family": "Platform administration",
       "description": "Update instance settings.",
       "scope": "instance",
@@ -682,6 +727,7 @@
     },
     {
       "action": "platform.access.read",
+      "displayName": "View platform access",
       "family": "Platform administration",
       "description": "Inspect instance access assignments.",
       "scope": "instance",
@@ -693,6 +739,7 @@
     },
     {
       "action": "platform.access.manage",
+      "displayName": "Manage platform access",
       "family": "Platform administration",
       "description": "Manage instance access assignments.",
       "scope": "instance",
@@ -704,6 +751,7 @@
     },
     {
       "action": "platform.audit.read",
+      "displayName": "View platform audit log",
       "family": "Platform administration",
       "description": "Read authorized instance audit evidence.",
       "scope": "instance",
@@ -715,6 +763,7 @@
     },
     {
       "action": "instance.project.claim",
+      "displayName": "Claim first project",
       "family": "Instance bootstrap",
       "description": "Establish the first Project claim for this instance.",
       "scope": "instance",

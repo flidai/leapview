@@ -57,6 +57,20 @@ is offered only when the caller already holds the matching typed future-resource
 authority. A review summary precedes issuance and the exact persisted pairs
 remain available as technical details.
 
+Token metadata, expiry, and exact typed permission pairs are editable in place,
+subject to the owner's current authority and a `modifiedAt` concurrency check.
+The bearer secret, fingerprint, token ID, and principal binding remain fixed.
+An explicit rotation creates a replacement credential and revokes the old one
+atomically; for deployments requiring overlap, issue a second token first and
+revoke the original after consumers have migrated.
+
+The token form may also offer project-wide read and edit presets. Choosing one
+explicitly selects its authorized current-and-future resource selectors and
+fixed Project creation pairs without a separate scope step. A preset is
+unavailable when any required pair is absent; it never broadens exact-resource
+authority or includes delete, share, publish, delivery, or administration
+actions by implication. Custom selection keeps the action-and-scope picker.
+
 Typed project assignments capture the exact, profile-pinned expansion of a
 role at issuance time. New role-binding API and bootstrap writes use that
 form; historical capability bindings are retained only as migration and audit

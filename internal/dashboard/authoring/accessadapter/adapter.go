@@ -149,6 +149,7 @@ func typedActionForAuthorization(action authoring.AuthorizationAction) (access.A
 		return access.ActionDashboardUpdate, nil
 	case authoring.AuthorizationActionPublish:
 		return access.ActionDashboardPublish, nil
+	case authoring.AuthorizationActionArchive:
 		return access.ActionDashboardDelete, nil
 	case authoring.AuthorizationActionDelete:
 		return access.ActionDashboardDelete, nil

@@ -19,6 +19,9 @@ type DevelopmentCredentials struct {
 	BootstrapToken          string    `json:"bootstrapToken"`
 	PublisherToken          string    `json:"publisherToken"`
 	PublisherTokenExpiresAt time.Time `json:"publisherTokenExpiresAt"`
+	ClaimedProjectUID       string    `json:"claimedProjectUid,omitempty"`
+	ClaimCredentialID       string    `json:"claimCredentialId,omitempty"`
+	ClaimAcknowledged       bool      `json:"claimAcknowledged,omitempty"`
 }
 
 // ProvisionDevelopmentOperator attaches a real local login and a bounded
@@ -68,7 +71,7 @@ func (r *Repository) ProvisionDevelopmentOperator(ctx context.Context, principal
 		}
 		expires := time.Now().UTC().Add(30 * 24 * time.Hour).Truncate(time.Second)
 		bootstrap, bootstrapMetadata, err := tx.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
-			PrincipalID: principalID, Name: "development-bootstrap", Permissions: bootstrapPermissions, ExpiresAt: expires,
+			PrincipalID: principalID, Name: access.APITokenNameInitialProjectClaim, Permissions: bootstrapPermissions, ExpiresAt: expires,
 		})
 		if err != nil {
 			return nil, err
@@ -95,6 +98,33 @@ func (r *Repository) ProvisionDevelopmentOperator(ctx context.Context, principal
 		return DevelopmentCredentials{}, err
 	}
 	return result, nil
+}
+
+// RestoreDevelopmentLogin explicitly re-synchronizes a local development
+// principal with its existing private credential bundle. It does not issue a
+// new password, change roles, or rotate API tokens. As with any password reset,
+// existing browser sessions are revoked.
+func (r *Repository) RestoreDevelopmentLogin(ctx context.Context, principalID, password string) error {
+	if err := access.ValidateLocalPassword(password); err != nil {
+		return err
+	}
+	return r.RunAuditedMutationBatch(ctx, func(tx access.Repository) ([]access.AuditEventInput, error) {
+		principal, err := tx.PrincipalByID(ctx, principalID)
+		if err != nil {
+			return nil, err
+		}
+		if principal.Kind != access.PrincipalKindUser || principal.AccessDisabled() {
+			return nil, errors.New("development login requires an active user principal")
+		}
+		temporary, err := tx.ResetLocalPassword(ctx, principalID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ChangeLocalPassword(ctx, principalID, temporary.Password, password); err != nil {
+			return nil, err
+		}
+		return []access.AuditEventInput{{PrincipalID: principalID, Action: "principal.local_credential.dev_restored", ResourceKind: "principal", ResourceID: principalID, Status: "success"}}, nil
+	})
 }
 
 func (r *Repository) ProvisionDevelopmentPublisherToken(ctx context.Context, principalID string, permissions []access.PermissionPair, replaceID string, prepare func(string) error) error {
@@ -133,7 +163,7 @@ func (r *Repository) ProvisionDevelopmentBootstrapToken(ctx context.Context, pri
 			return nil, errors.New("development credential transaction is unavailable")
 		}
 		secret, metadata, err := tx.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
-			PrincipalID: principalID, Name: "development-bootstrap", Permissions: permissions,
+			PrincipalID: principalID, Name: access.APITokenNameInitialProjectClaim, Permissions: permissions,
 			ExpiresAt: time.Now().UTC().Add(30 * 24 * time.Hour).Truncate(time.Second),
 		})
 		if err != nil {

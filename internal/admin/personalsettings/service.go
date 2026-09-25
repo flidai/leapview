@@ -289,6 +289,105 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 		return nil, ErrTokenPrincipal
 	}
 	switch strings.TrimSpace(command.Action) {
+	case "rotate":
+		if strings.TrimSpace(command.TokenID) == "" {
+			return nil, fmt.Errorf("%w: token id is required", ErrCommandInvalid)
+		}
+		expectedModifiedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(command.ExpectedModifiedAt))
+		if err != nil {
+			return nil, fmt.Errorf("valid token modification time is required")
+		}
+		reader, ok := s.Repository.(access.APITokenAuthorityEvidenceReader)
+		if !ok {
+			return nil, fmt.Errorf("typed API token evidence is unavailable")
+		}
+		old, err := reader.APITokenAuthorityEvidence(ctx, principalID, command.TokenID, s.now())
+		if err != nil {
+			return nil, err
+		}
+		if old.ModifiedAt != expectedModifiedAt.UTC().Format(time.RFC3339Nano) {
+			return nil, fmt.Errorf("token has changed; reload before rotating")
+		}
+		if len(old.Permissions) > 0 {
+			if s.CurrentEffectivePermissionOptions == nil {
+				return nil, fmt.Errorf("effective typed permission authority is unavailable")
+			}
+			authority, authorityErr := s.CurrentEffectivePermissionOptions(ctx, principalID)
+			if authorityErr != nil {
+				return nil, authorityErr
+			}
+			if err := access.ValidatePermissionPairsAgainstAuthority(authority, old.Permissions); err != nil {
+				return nil, err
+			}
+		}
+		var secret string
+		err = s.runAudited(ctx, func(repository Repository) (access.AuditEventInput, error) {
+			rotator, ok := repository.(access.RotatableAPITokenRepository)
+			if !ok {
+				return access.AuditEventInput{}, fmt.Errorf("typed API token rotator is unavailable")
+			}
+			var rotated access.APIToken
+			var rotateErr error
+			secret, rotated, rotateErr = rotator.RotateScopedAPITokenForPrincipal(ctx, access.ScopedAPITokenRotation{
+				PrincipalID: principalID, TokenID: command.TokenID, ExpectedModifiedAt: expectedModifiedAt,
+			})
+			return access.AuditEventInput{PrincipalID: principalID, Action: "api_token.rotated", ResourceKind: "api_token", ResourceID: rotated.ID, Status: "success", MetadataJSON: metadataJSON(map[string]string{"replacedTokenId": command.TokenID})}, rotateErr
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &secret, nil
+	case "update":
+		name := strings.TrimSpace(command.Name)
+		if name == "" || len(name) > 200 {
+			return nil, fmt.Errorf("token name must contain between 1 and 200 bytes")
+		}
+		description := strings.TrimSpace(command.Description)
+		if len(description) > 1024 {
+			return nil, fmt.Errorf("token description must not exceed 1024 bytes")
+		}
+		if strings.TrimSpace(command.TokenID) == "" || command.Permissions == nil {
+			return nil, access.ErrTokenPermissionsNeeded
+		}
+		permissions := make([]access.PermissionPair, 0, len(command.Permissions))
+		for _, permission := range command.Permissions {
+			permissions = append(permissions, permissionPairFromSignal(permission))
+		}
+		if err := access.ValidatePermissionPairs(permissions); err != nil {
+			return nil, err
+		}
+		if len(permissions) > 0 {
+			if s.CurrentEffectivePermissionOptions == nil {
+				return nil, fmt.Errorf("effective typed permission authority is unavailable")
+			}
+			authority, authorityErr := s.CurrentEffectivePermissionOptions(ctx, principalID)
+			if authorityErr != nil {
+				return nil, authorityErr
+			}
+			if err := access.ValidatePermissionPairsAgainstAuthority(authority, permissions); err != nil {
+				return nil, err
+			}
+		}
+		expiresAt, err := time.Parse(time.RFC3339, strings.TrimSpace(command.ExpiresAt))
+		if err != nil || !expiresAt.After(s.now()) {
+			return nil, fmt.Errorf("token expiry must be in the future")
+		}
+		expectedModifiedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(command.ExpectedModifiedAt))
+		if err != nil {
+			return nil, fmt.Errorf("valid token modification time is required")
+		}
+		err = s.runAudited(ctx, func(repository Repository) (access.AuditEventInput, error) {
+			editor, ok := repository.(access.EditableAPITokenRepository)
+			if !ok {
+				return access.AuditEventInput{}, fmt.Errorf("typed API token editor is unavailable")
+			}
+			token, updateErr := editor.UpdateScopedAPITokenForPrincipal(ctx, access.ScopedAPITokenUpdate{
+				PrincipalID: principalID, TokenID: command.TokenID, Name: name, Description: description,
+				Permissions: permissions, ExpiresAt: expiresAt, ExpectedModifiedAt: expectedModifiedAt,
+			})
+			return access.AuditEventInput{PrincipalID: principalID, Action: "api_token.updated", ResourceKind: "api_token", ResourceID: command.TokenID, Status: "success", MetadataJSON: metadataJSON(map[string]string{"name": token.Name, "permissionCount": fmt.Sprint(len(permissions))})}, updateErr
+		})
+		return nil, err
 	case "revoke":
 		if strings.TrimSpace(command.TokenID) == "" {
 			return nil, fmt.Errorf("%w: token id is required", ErrCommandInvalid)

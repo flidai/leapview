@@ -8,15 +8,20 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/go-chi/chi/v5"
 )
 
 type scopedTokenHTTPRepository struct {
 	access.Repository
-	input      access.ScopedAPITokenInput
-	auditEvent access.AuditEventInput
+	input        access.ScopedAPITokenInput
+	auditEvent   access.AuditEventInput
+	updatedInput access.ScopedAPITokenUpdate
+	rotatedInput access.ScopedAPITokenRotation
+	evidence     access.APIToken
 }
 
 func (r *scopedTokenHTTPRepository) RunAuditedMutation(_ context.Context, mutation func(access.Repository) (access.AuditEventInput, error)) error {
@@ -31,6 +36,17 @@ func (r *scopedTokenHTTPRepository) CreateScopedAPITokenWithMetadata(_ context.C
 		ID: "token_1", PrincipalID: input.PrincipalID, Name: input.Name,
 		PermissionProfile: access.PermissionCatalogProfile, Permissions: input.Permissions,
 	}, nil
+}
+func (r *scopedTokenHTTPRepository) UpdateScopedAPITokenForPrincipal(_ context.Context, input access.ScopedAPITokenUpdate) (access.APIToken, error) {
+	r.updatedInput = input
+	return access.APIToken{ID: input.TokenID, PrincipalID: input.PrincipalID, Name: input.Name, Description: input.Description, PermissionProfile: access.PermissionCatalogProfile, Permissions: input.Permissions, ModifiedAt: input.ExpectedModifiedAt.Add(time.Second).Format(time.RFC3339Nano)}, nil
+}
+func (r *scopedTokenHTTPRepository) APITokenAuthorityEvidence(context.Context, string, string, time.Time) (access.APIToken, error) {
+	return r.evidence, nil
+}
+func (r *scopedTokenHTTPRepository) RotateScopedAPITokenForPrincipal(_ context.Context, input access.ScopedAPITokenRotation) (string, access.APIToken, error) {
+	r.rotatedInput = input
+	return "new-secret", access.APIToken{ID: "replacement", PrincipalID: input.PrincipalID, Name: r.evidence.Name, PermissionProfile: access.PermissionCatalogProfile, Permissions: r.evidence.Permissions}, nil
 }
 
 func TestAPITokenDTOEmitsExplicitEmptyCapabilities(t *testing.T) {
@@ -87,6 +103,55 @@ func TestAPITokenDTOEmitsEmptyTypedPermissionsForLegacyRows(t *testing.T) {
 	}
 	if got := dto["permissionProfile"]; got != nil {
 		t.Fatalf("permissionProfile = %#v, want nil for legacy row", got)
+	}
+}
+
+func TestUpdateCurrentAPITokenRequiresMatchingRevisionAndAudits(t *testing.T) {
+	modifiedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+	repository := &scopedTokenHTTPRepository{}
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentPrincipal: func(*nethttp.Request) (Principal, bool) {
+		return Principal{ID: "principal_1", Kind: access.PrincipalKindUser}, true
+	}}
+	body, err := json.Marshal(map[string]any{"name": "renamed", "description": "updated", "permissions": []access.PermissionPair{}, "expiresAt": time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano), "expectedModifiedAt": modifiedAt.Format(time.RFC3339Nano)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(nethttp.MethodPatch, "/api/v1/me/api-tokens/token_1", strings.NewReader(string(body)))
+	request.Header.Set("Content-Type", "application/json")
+	ctx := chi.NewRouteContext()
+	ctx.URLParams.Add("token", "token_1")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, ctx))
+	response := httptest.NewRecorder()
+	handler.UpdateCurrentAPIToken(response, request)
+	if response.Code != nethttp.StatusBadRequest || repository.updatedInput.TokenID != "" {
+		t.Fatalf("missing revision status = %d, input = %#v", response.Code, repository.updatedInput)
+	}
+	request = httptest.NewRequest(nethttp.MethodPatch, "/api/v1/me/api-tokens/token_1", strings.NewReader(string(body))).WithContext(context.WithValue(context.Background(), chi.RouteCtxKey, ctx))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("If-Match", `"`+modifiedAt.Format(time.RFC3339Nano)+`"`)
+	response = httptest.NewRecorder()
+	handler.UpdateCurrentAPIToken(response, request)
+	if response.Code != nethttp.StatusOK || repository.updatedInput.TokenID != "token_1" || repository.auditEvent.Action != "api_token.updated" {
+		t.Fatalf("update status = %d, input = %#v, audit = %#v, body = %s", response.Code, repository.updatedInput, repository.auditEvent, response.Body.String())
+	}
+}
+
+func TestRotateCurrentAPITokenReturnsOneTimeReplacement(t *testing.T) {
+	modifiedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+	repository := &scopedTokenHTTPRepository{evidence: access.APIToken{ID: "token_1", PrincipalID: "principal_1", Name: "automation", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{}, ModifiedAt: modifiedAt.Format(time.RFC3339Nano)}}
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentPrincipal: func(*nethttp.Request) (Principal, bool) {
+		return Principal{ID: "principal_1", Kind: access.PrincipalKindUser}, true
+	}}
+	request := httptest.NewRequest(nethttp.MethodPost, "/api/v1/me/api-tokens/token_1/rotate", strings.NewReader(`{"expectedModifiedAt":"`+modifiedAt.Format(time.RFC3339Nano)+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("If-Match", `"`+modifiedAt.Format(time.RFC3339Nano)+`"`)
+	ctx := chi.NewRouteContext()
+	ctx.URLParams.Add("token", "token_1")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, ctx))
+	response := httptest.NewRecorder()
+	handler.RotateCurrentAPIToken(response, request)
+	if response.Code != nethttp.StatusCreated || repository.rotatedInput.TokenID != "token_1" || repository.auditEvent.Action != "api_token.rotated" || !strings.Contains(response.Body.String(), "new-secret") {
+		t.Fatalf("rotate status = %d, input = %#v, audit = %#v, body = %s", response.Code, repository.rotatedInput, repository.auditEvent, response.Body.String())
 	}
 }
 

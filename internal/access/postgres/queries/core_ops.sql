@@ -259,9 +259,29 @@ WHERE sqlc.arg(expires_at)::timestamptz > clock_timestamp()
 
 -- name: GetAPIToken :one
 SELECT id, principal_id, name, description, token_fingerprint, capabilities, permission_profile, permissions,
-       expires_at, created_at, last_used_at, revoked_at
+       expires_at, created_at, modified_at, last_used_at, revoked_at
 FROM access.api_token
 WHERE id = sqlc.arg(id)::uuid;
+
+-- name: UpdateScopedAPITokenForPrincipal :execresult
+UPDATE access.api_token
+SET name = sqlc.arg(name), description = sqlc.arg(description),
+    permissions = sqlc.arg(permissions)::jsonb, expires_at = sqlc.arg(expires_at),
+    modified_at = GREATEST(clock_timestamp(), modified_at + interval '1 microsecond')
+WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
+  AND permission_profile = 'leapview.permissions/v1' AND revoked_at IS NULL
+  AND expires_at > clock_timestamp()
+  AND modified_at = sqlc.arg(expected_modified_at)::timestamptz
+  AND sqlc.arg(expires_at)::timestamptz > clock_timestamp()
+  AND sqlc.arg(expires_at)::timestamptz <= created_at + interval '365 days';
+
+-- name: RevokeScopedAPITokenForRotation :execresult
+UPDATE access.api_token
+SET revoked_at = clock_timestamp(), modified_at = GREATEST(clock_timestamp(), modified_at + interval '1 microsecond')
+WHERE id = sqlc.arg(id)::uuid AND principal_id = sqlc.arg(principal_id)::uuid
+  AND permission_profile = 'leapview.permissions/v1' AND revoked_at IS NULL
+  AND expires_at > clock_timestamp()
+  AND modified_at = sqlc.arg(expected_modified_at)::timestamptz;
 
 -- name: FindAPITokenByFingerprint :one
 SELECT t.id, t.verifier

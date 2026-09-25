@@ -194,6 +194,13 @@ func TestAdminUsesUserTerminologyForHumanPrincipalPages(t *testing.T) {
 	}
 }
 
+func TestAdminAccessPageIsRolesAndPermissionsCatalogue(t *testing.T) {
+	page := adminPageSignal("access", AdminData{})
+	if page.Title != "Roles & permissions" || page.HeaderTitle != "Roles & permissions" || page.HeaderDetail != "Inspect built-in roles and the exact permissions they contain." {
+		t.Fatalf("roles and permissions page = %#v", page)
+	}
+}
+
 func TestAdminPageRendersAdminRouteShell(t *testing.T) {
 	var output strings.Builder
 	provider := appshell.Provider(appshell.Config{Presentation: webpage.Presentation{ProductName: "LeapView"}})
@@ -209,5 +216,18 @@ func TestAdminPageRendersAdminRouteShell(t *testing.T) {
 	}
 	if strings.Contains(html, "data-signals=") {
 		t.Fatalf("admin page embedded bootstrap signals:\n%s", html)
+	}
+}
+
+func TestServiceAccountDetailPageKeepsSelectedIDInUpdatesURL(t *testing.T) {
+	var output strings.Builder
+	if err := AdminPage("service-accounts-detail", AdminData{SelectedServiceAccountID: "service-1"}, nil).Render(&output); err != nil {
+		t.Fatal(err)
+	}
+	rendered := html.UnescapeString(output.String())
+	for _, expected := range []string{`section="service-accounts-detail"`, `/updates?route=admin&section=service-accounts-detail&serviceAccount=service-1`} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("service account detail page is missing %q:\n%s", expected, rendered)
+		}
 	}
 }

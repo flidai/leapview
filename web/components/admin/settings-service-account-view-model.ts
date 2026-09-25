@@ -6,6 +6,7 @@ export type ServiceSecretExpirationPreset = '30' | '60' | '90' | 'custom'
 export function serviceAccountListItems(accounts: ServiceAccountSignal[], busy: boolean): EntityListItem[] {
   return accounts.map((account) => ({
     id: account.id,
+    href: `/admin/service-accounts/${encodeURIComponent(account.id)}`,
     title: account.displayName || account.id,
     description: account.id,
     icon: 'application',

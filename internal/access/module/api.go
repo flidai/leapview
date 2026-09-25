@@ -21,6 +21,10 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.ListCurrentAPITokens(w, r)
 	case "createCurrentAPIToken":
 		m.handler.CreateCurrentAPIToken(w, r)
+	case "updateCurrentAPIToken":
+		m.handler.UpdateCurrentAPIToken(w, r)
+	case "rotateCurrentAPIToken":
+		m.handler.RotateCurrentAPIToken(w, r)
 	case "revokeCurrentAPIToken":
 		m.handler.RevokeCurrentAPIToken(w, r)
 	case "listCurrentSessions":

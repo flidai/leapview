@@ -33,6 +33,7 @@ import {
   Star,
   Table2,
   TableProperties,
+  Trash2,
   UsersRound,
   UserRound,
   Waypoints,
@@ -74,7 +75,7 @@ export type EntityListItem = {
 export type EntityListRowAction = {
   label: string
   action: string
-  icon?: 'play' | 'refresh' | 'details' | 'cancel' | 'more'
+  icon?: 'play' | 'refresh' | 'details' | 'cancel' | 'more' | 'trash'
   disabled?: boolean
 }
 
@@ -314,6 +315,12 @@ const entityListStyles = `
     height: var(--control-medium-size);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
+  }
+
+  .entity-list.is-catalog-table .entity-list-table thead th:first-child,
+  .entity-list.is-catalog-table .entity-list-table tbody th[scope='row'] {
+    color: var(--lv-fg-default);
+    text-transform: none;
   }
 
   .entity-list-sort-button {
@@ -918,6 +925,7 @@ class EntityList extends LitElement {
   @property({ attribute: 'group-icon' }) groupIcon = ''
   @property({ type: Boolean }) compact = false
   @property({ attribute: 'title-emphasis' }) titleEmphasis: 'strong' | 'normal' = 'strong'
+  @property({ type: Boolean, attribute: 'catalog-table' }) catalogTable = false
   @property({ attribute: 'row-action' }) rowAction = ''
   @property({ attribute: 'min-width' }) minWidth = ''
   @property({ type: Boolean, attribute: 'client-filter' }) clientFilter = false
@@ -952,7 +960,7 @@ class EntityList extends LitElement {
     const columns = this.resolvedColumns()
     return html`
       <style>${entityListStyles}</style>
-      <section class=${`entity-list ${this.compact ? 'is-compact' : ''} ${this.titleEmphasis === 'normal' ? 'is-title-normal' : ''} ${this.stickyIdentity ? 'has-sticky-identity' : ''} ${this.hoverSortIndicators ? 'has-hover-sort-indicators' : ''}`} aria-label=${this.listLabel}>
+      <section class=${`entity-list ${this.compact ? 'is-compact' : ''} ${this.titleEmphasis === 'normal' ? 'is-title-normal' : ''} ${this.catalogTable ? 'is-catalog-table' : ''} ${this.stickyIdentity ? 'has-sticky-identity' : ''} ${this.hoverSortIndicators ? 'has-hover-sort-indicators' : ''}`} aria-label=${this.listLabel}>
         ${this.showToolbar ? html`<div class="entity-toolbar">
           <form class="entity-search" @submit=${this.preventSubmit}>
             ${lucideIcon(Search, { size: 16, strokeWidth: 1.8 })}
@@ -1142,7 +1150,7 @@ class EntityList extends LitElement {
   private renderItem(item: EntityListItem, columns: EntityListColumn[]) {
     const badgesColumn = columns.some((column) => column.render === 'badges')
     return html`
-      <tr class=${`entity-list-table-row ${this.rowAction ? 'is-actionable' : ''}`} @click=${() => this.emitItemAction(item)}>
+      <tr class=${`entity-list-table-row ${this.rowAction ? 'is-actionable' : ''}`} tabindex=${this.rowAction ? '0' : nothing} @click=${() => this.emitItemAction(item)} @keydown=${(event: KeyboardEvent) => this.handleItemKeyDown(event, item)}>
         ${columns.map((column) => column.id === 'name'
           ? this.renderIdentityCell(item, badgesColumn)
           : this.renderDataCell(item, column))}
@@ -1388,6 +1396,12 @@ class EntityList extends LitElement {
     }))
   }
 
+  private handleItemKeyDown(event: KeyboardEvent, item: EntityListItem): void {
+    if (!this.rowAction || event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+    event.preventDefault()
+    this.emitItemAction(item)
+  }
+
   private toggleSort(columnId: string): void {
     if (this.sortColumnId === columnId) {
       this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc'
@@ -1462,6 +1476,7 @@ function entityActionIcon(type: EntityListRowAction['icon']): IconNode {
     case 'refresh': return RefreshCw
     case 'details': return FileText
     case 'cancel': return XCircle
+    case 'trash': return Trash2
     default: return Play
   }
 }

@@ -25,9 +25,9 @@ func CommandAttributes(path string) []g.Node {
 		g.Attr("data-on:lv-personal-password-command", "$personalPasswordCommand = evt.detail; "+uiactions.CommandPost(accessgen.GenUIActionChangeCurrentPassword(), path, "personalPasswordCommand")),
 		g.Attr("data-on:lv-personal-session-command", "$personalSessionCommand = evt.detail; "+uiactions.CommandPost(accessgen.GenUIActionRevokeCurrentSession(), path, "personalSessionCommand")),
 		g.Attr("data-on:lv-personal-authoring-session-command", "$personalAuthoringSessionCommand = evt.detail; "+uiactions.CommandPost(accessgen.GenUIActionRevokeCurrentAuthoringSession(), path, "personalAuthoringSessionCommand")),
-		g.Attr("data-on:lv-personal-token-command", "$personalTokenCommand = evt.detail; "+uiactions.CommandPostSwitch("evt.detail.action", map[string]uicommand.Binding{
-			"create": accessgen.GenUIActionCreateCurrentAPIToken(), "revoke": accessgen.GenUIActionRevokeCurrentAPIToken(),
-		}, path, "personalTokenCommand")),
+		g.Attr("data-on:lv-personal-token-command", "$personalTokenCommand = evt.detail; "+uiactions.CommandPostSwitchWithRevision("evt.detail.action", map[string]uicommand.Binding{
+			"create": accessgen.GenUIActionCreateCurrentAPIToken(), "update": accessgen.GenUIActionUpdateCurrentAPIToken(), "rotate": accessgen.GenUIActionRotateCurrentAPIToken(), "revoke": accessgen.GenUIActionRevokeCurrentAPIToken(),
+		}, path, `(evt.detail.action == 'update' || evt.detail.action == 'rotate') ? '"' + evt.detail.expectedModifiedAt + '"' : ''`, "personalTokenCommand")),
 	}
 }
 

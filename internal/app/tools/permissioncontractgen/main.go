@@ -32,6 +32,7 @@ type contract struct {
 
 type actionContract struct {
 	Action        string   `json:"action"`
+	DisplayName   string   `json:"displayName"`
 	Family        string   `json:"family"`
 	Description   string   `json:"description"`
 	Scope         string   `json:"scope"`
@@ -132,6 +133,7 @@ func loadContract() (contract, error) {
 	for _, definition := range definitions {
 		value.Actions = append(value.Actions, actionContract{
 			Action:        string(definition.Action),
+			DisplayName:   definition.DisplayName,
 			Family:        definition.Family,
 			Description:   definition.Description,
 			Scope:         string(definition.Scope),

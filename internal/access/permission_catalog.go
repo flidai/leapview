@@ -107,6 +107,7 @@ const (
 // make possession of the action sufficient to issue a grant.
 type PermissionDefinition struct {
 	Action        Action              `json:"action"`
+	DisplayName   string              `json:"displayName"`
 	Family        string              `json:"family"`
 	Description   string              `json:"description"`
 	Scope         PermissionScope     `json:"scope"`
@@ -118,71 +119,71 @@ type PermissionDefinition struct {
 }
 
 var permissionCatalog = []PermissionDefinition{
-	resourcePermission(ActionDashboardRead, "Dashboard", "View an approved dashboard definition and shell.", projectgraph.KindDashboard, true),
-	createPermission(ActionDashboardCreate, "Dashboard", "Create a dashboard in the bound Project."),
-	resourcePermission(ActionDashboardUpdate, "Dashboard", "Edit an existing dashboard definition.", projectgraph.KindDashboard, true),
-	resourcePermission(ActionDashboardDelete, "Dashboard", "Delete or archive an existing dashboard.", projectgraph.KindDashboard, false),
-	resourcePermission(ActionDashboardPublish, "Dashboard", "Publish an approved dashboard revision.", projectgraph.KindDashboard, false),
+	resourcePermission(ActionDashboardRead, "View dashboard", "Dashboard", "View an approved dashboard definition and shell.", projectgraph.KindDashboard, true),
+	createPermission(ActionDashboardCreate, "Create dashboards", "Dashboard", "Create a dashboard in the bound Project."),
+	resourcePermission(ActionDashboardUpdate, "Edit dashboard", "Dashboard", "Edit an existing dashboard definition.", projectgraph.KindDashboard, true),
+	resourcePermission(ActionDashboardDelete, "Delete dashboard", "Dashboard", "Delete or archive an existing dashboard.", projectgraph.KindDashboard, false),
+	resourcePermission(ActionDashboardPublish, "Publish dashboard", "Dashboard", "Publish an approved dashboard revision.", projectgraph.KindDashboard, false),
 
-	resourcePermission(ActionSemanticRead, "Semantic consumption", "Discover governed semantic metadata.", projectgraph.KindSemanticModel, true),
-	withPrerequisites(resourcePermission(ActionSemanticQuery, "Semantic consumption", "Construct an arbitrary governed semantic query.", projectgraph.KindSemanticModel, true), ActionSemanticConsume),
-	resourcePermission(ActionSemanticConsume, "Semantic consumption", "Consume governed data from an exact SemanticModel.", projectgraph.KindSemanticModel, true),
-	createPermissionFor(ActionSemanticCreate, "Development", "Create a SemanticModel definition in the bound Project.", projectgraph.KindSemanticModel),
-	resourcePermission(ActionSemanticUpdate, "Development", "Update a SemanticModel definition.", projectgraph.KindSemanticModel, true),
-	resourcePermission(ActionSemanticDelete, "Development", "Delete a SemanticModel definition.", projectgraph.KindSemanticModel, false),
+	resourcePermission(ActionSemanticRead, "Discover metadata", "Semantic consumption", "Discover governed semantic metadata.", projectgraph.KindSemanticModel, true),
+	withPrerequisites(resourcePermission(ActionSemanticQuery, "Build queries", "Semantic consumption", "Construct an arbitrary governed semantic query.", projectgraph.KindSemanticModel, true), ActionSemanticConsume),
+	resourcePermission(ActionSemanticConsume, "Use governed data", "Semantic consumption", "Consume governed data from an exact SemanticModel.", projectgraph.KindSemanticModel, true),
+	createPermissionFor(ActionSemanticCreate, "Create semantic models", "Development", "Create a SemanticModel definition in the bound Project.", projectgraph.KindSemanticModel),
+	resourcePermission(ActionSemanticUpdate, "Edit semantic model", "Development", "Update a SemanticModel definition.", projectgraph.KindSemanticModel, true),
+	resourcePermission(ActionSemanticDelete, "Delete semantic model", "Development", "Delete a SemanticModel definition.", projectgraph.KindSemanticModel, false),
 
-	resourcePermission(ActionSourceRead, "Development", "Read a Source definition.", projectgraph.KindSource, true),
-	createPermissionFor(ActionSourceCreate, "Development", "Create a Source definition in the bound Project.", projectgraph.KindSource),
-	resourcePermission(ActionSourceUpdate, "Development", "Update a Source definition.", projectgraph.KindSource, true),
-	resourcePermission(ActionSourceDelete, "Development", "Delete a Source definition.", projectgraph.KindSource, false),
+	resourcePermission(ActionSourceRead, "View source", "Development", "Read a Source definition.", projectgraph.KindSource, true),
+	createPermissionFor(ActionSourceCreate, "Create sources", "Development", "Create a Source definition in the bound Project.", projectgraph.KindSource),
+	resourcePermission(ActionSourceUpdate, "Edit source", "Development", "Update a Source definition.", projectgraph.KindSource, true),
+	resourcePermission(ActionSourceDelete, "Delete source", "Development", "Delete a Source definition.", projectgraph.KindSource, false),
 
-	resourcePermission(ActionModelRead, "Development", "Read a Model definition.", projectgraph.KindModel, true),
-	createPermissionFor(ActionModelCreate, "Development", "Create a Model definition in the bound Project.", projectgraph.KindModel),
-	resourcePermission(ActionModelUpdate, "Development", "Update a Model definition.", projectgraph.KindModel, true),
-	resourcePermission(ActionModelDelete, "Development", "Delete a Model definition.", projectgraph.KindModel, false),
+	resourcePermission(ActionModelRead, "View model", "Development", "Read a Model definition.", projectgraph.KindModel, true),
+	createPermissionFor(ActionModelCreate, "Create models", "Development", "Create a Model definition in the bound Project.", projectgraph.KindModel),
+	resourcePermission(ActionModelUpdate, "Edit model", "Development", "Update a Model definition.", projectgraph.KindModel, true),
+	resourcePermission(ActionModelDelete, "Delete model", "Development", "Delete a Model definition.", projectgraph.KindModel, false),
 
-	resourcePermission(ActionPipelineRead, "Pipeline", "Read a Pipeline definition and bounded operational status.", projectgraph.KindPipeline, true),
-	createPermissionFor(ActionPipelineCreate, "Pipeline", "Create a Pipeline in the bound Project.", projectgraph.KindPipeline),
-	resourcePermission(ActionPipelineRun, "Pipeline", "Trigger an approved Pipeline revision.", projectgraph.KindPipeline, true),
-	resourcePermission(ActionPipelineUpdate, "Pipeline", "Update a Pipeline definition.", projectgraph.KindPipeline, true),
-	resourcePermission(ActionPipelineDelete, "Pipeline", "Delete a Pipeline definition.", projectgraph.KindPipeline, false),
+	resourcePermission(ActionPipelineRead, "View pipeline", "Pipeline", "Read a Pipeline definition and bounded operational status.", projectgraph.KindPipeline, true),
+	createPermissionFor(ActionPipelineCreate, "Create pipelines", "Pipeline", "Create a Pipeline in the bound Project.", projectgraph.KindPipeline),
+	resourcePermission(ActionPipelineRun, "Run pipeline", "Pipeline", "Trigger an approved Pipeline revision.", projectgraph.KindPipeline, true),
+	resourcePermission(ActionPipelineUpdate, "Edit pipeline", "Pipeline", "Update a Pipeline definition.", projectgraph.KindPipeline, true),
+	resourcePermission(ActionPipelineDelete, "Delete pipeline", "Pipeline", "Delete a Pipeline definition.", projectgraph.KindPipeline, false),
 
-	resourcePermission(ActionConnectionRead, "Connection", "Read redacted Connection metadata.", projectgraph.KindConnection, true),
-	createPermissionFor(ActionConnectionCreate, "Connection", "Create a Connection in the bound Project.", projectgraph.KindConnection),
-	resourcePermission(ActionConnectionUse, "Connection", "Execute through an approved Connection binding without revealing credentials.", projectgraph.KindConnection, true),
-	resourcePermission(ActionConnectionManage, "Connection", "Update, rotate, test, or delete a Connection.", projectgraph.KindConnection, false),
+	resourcePermission(ActionConnectionRead, "View connection details", "Connection", "Read redacted Connection metadata.", projectgraph.KindConnection, true),
+	createPermissionFor(ActionConnectionCreate, "Create connections", "Connection", "Create a Connection in the bound Project.", projectgraph.KindConnection),
+	resourcePermission(ActionConnectionUse, "Use connection", "Connection", "Execute through an approved Connection binding without revealing credentials.", projectgraph.KindConnection, true),
+	resourcePermission(ActionConnectionManage, "Manage connection", "Connection", "Update, rotate, test, or delete a Connection.", projectgraph.KindConnection, false),
 
 	{
-		Action: ActionResourceShare, Family: "Sharing", Description: "Issue a bounded independent grant on an exact supported resource.",
+		Action: ActionResourceShare, DisplayName: "Share resource", Family: "Sharing", Description: "Issue a bounded independent grant on an exact supported resource.",
 		Scope:         PermissionScopeResource,
 		ResourceKinds: []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindDashboard},
 		CheckKinds:    []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindDashboard},
 		UISelectable:  true,
 	},
 
-	projectPermission(ActionDeliveryRead, "Delivery", "Inspect delivery plans and retained evidence.", true),
-	projectPermission(ActionDeliveryPlan, "Delivery", "Persist an exact delivery plan.", true),
-	projectPermission(ActionDeliveryBuild, "Delivery", "Build an approved delivery candidate.", true),
-	projectPermission(ActionDeliveryPublish, "Delivery", "Publish a built delivery candidate.", true),
-	projectPermission(ActionDeliveryApprove, "Delivery", "Approve a protected delivery candidate.", false),
-	projectPermission(ActionDeliveryActivate, "Delivery", "Activate an approved delivery publication.", false),
-	projectPermission(ActionDeliveryRollback, "Delivery", "Rollback to eligible retained delivery evidence.", false),
+	projectPermission(ActionDeliveryRead, "View releases", "Delivery", "Inspect delivery plans and retained evidence.", true),
+	projectPermission(ActionDeliveryPlan, "Plan releases", "Delivery", "Persist an exact delivery plan.", true),
+	projectPermission(ActionDeliveryBuild, "Build releases", "Delivery", "Build an approved delivery candidate.", true),
+	projectPermission(ActionDeliveryPublish, "Publish releases", "Delivery", "Publish a built delivery candidate.", true),
+	projectPermission(ActionDeliveryApprove, "Approve releases", "Delivery", "Approve a protected delivery candidate.", false),
+	projectPermission(ActionDeliveryActivate, "Activate releases", "Delivery", "Activate an approved delivery publication.", false),
+	projectPermission(ActionDeliveryRollback, "Roll back releases", "Delivery", "Rollback to eligible retained delivery evidence.", false),
 
-	projectPermission(ActionProjectSettingsRead, "Project administration", "Read Project settings.", true),
-	projectPermission(ActionProjectSettingsUpdate, "Project administration", "Update Project settings.", false),
-	projectPermission(ActionProjectAccessRead, "Project administration", "Inspect Project access assignments.", true),
-	projectPermission(ActionProjectAccessManage, "Project administration", "Maintain Project access without unbounded privilege issuance.", false),
-	projectPermission(ActionProjectAccessDelegate, "Project administration", "Issue authority within an explicit grant-administration envelope.", false),
-	projectPermission(ActionAuditRead, "Project administration", "Read authorized Project audit evidence.", true),
+	projectPermission(ActionProjectSettingsRead, "View project settings", "Project administration", "Read Project settings.", true),
+	projectPermission(ActionProjectSettingsUpdate, "Update project settings", "Project administration", "Update Project settings.", false),
+	projectPermission(ActionProjectAccessRead, "View project access", "Project administration", "Inspect Project access assignments.", true),
+	projectPermission(ActionProjectAccessManage, "Manage project access", "Project administration", "Maintain Project access without unbounded privilege issuance.", false),
+	projectPermission(ActionProjectAccessDelegate, "Delegate project access", "Project administration", "Issue authority within an explicit grant-administration envelope.", false),
+	projectPermission(ActionAuditRead, "View audit log", "Project administration", "Read authorized Project audit evidence.", true),
 
-	resourcePermission(ActionWorkloadDelegate, "Workload delegation", "Issue a bounded execution grant for an exact Pipeline and workload principal.", projectgraph.KindPipeline, false),
+	resourcePermission(ActionWorkloadDelegate, "Delegate workload", "Workload delegation", "Issue a bounded execution grant for an exact Pipeline and workload principal.", projectgraph.KindPipeline, false),
 
-	instancePermission(ActionPlatformSettingsRead, "Platform administration", "Read instance settings."),
-	instancePermission(ActionPlatformSettingsUpdate, "Platform administration", "Update instance settings."),
-	instancePermission(ActionPlatformAccessRead, "Platform administration", "Inspect instance access assignments."),
-	instancePermission(ActionPlatformAccessManage, "Platform administration", "Manage instance access assignments."),
-	instancePermission(ActionPlatformAuditRead, "Platform administration", "Read authorized instance audit evidence."),
-	{Action: ActionInstanceProjectClaim, Family: "Instance bootstrap", Description: "Establish the first Project claim for this instance.", Scope: PermissionScopeInstance},
+	instancePermission(ActionPlatformSettingsRead, "View platform settings", "Platform administration", "Read instance settings."),
+	instancePermission(ActionPlatformSettingsUpdate, "Update platform settings", "Platform administration", "Update instance settings."),
+	instancePermission(ActionPlatformAccessRead, "View platform access", "Platform administration", "Inspect instance access assignments."),
+	instancePermission(ActionPlatformAccessManage, "Manage platform access", "Platform administration", "Manage instance access assignments."),
+	instancePermission(ActionPlatformAuditRead, "View platform audit log", "Platform administration", "Read authorized instance audit evidence."),
+	{Action: ActionInstanceProjectClaim, DisplayName: "Claim first project", Family: "Instance bootstrap", Description: "Establish the first Project claim for this instance.", Scope: PermissionScopeInstance},
 }
 
 var permissionMechanicsCatalog = mustCompilePermissionMechanicsCatalog(permissionCatalog)
@@ -217,36 +218,36 @@ func permissionMechanicsKinds(kinds []projectgraph.Kind) []permissions.Kind {
 	return result
 }
 
-func resourcePermission(action Action, family, description string, kind projectgraph.Kind, delegable bool) PermissionDefinition {
+func resourcePermission(action Action, displayName, family, description string, kind projectgraph.Kind, delegable bool) PermissionDefinition {
 	return PermissionDefinition{
-		Action: action, Family: family, Description: description, Scope: PermissionScopeResource,
+		Action: action, DisplayName: displayName, Family: family, Description: description, Scope: PermissionScopeResource,
 		ResourceKinds: []projectgraph.Kind{kind}, CheckKinds: []projectgraph.Kind{kind},
 		Delegable: delegable, UISelectable: true,
 	}
 }
 
-func createPermission(action Action, family, description string) PermissionDefinition {
-	return createPermissionFor(action, family, description, projectgraph.KindDashboard)
+func createPermission(action Action, displayName, family, description string) PermissionDefinition {
+	return createPermissionFor(action, displayName, family, description, projectgraph.KindDashboard)
 }
 
-func createPermissionFor(action Action, family, description string, kind projectgraph.Kind) PermissionDefinition {
+func createPermissionFor(action Action, displayName, family, description string, kind projectgraph.Kind) PermissionDefinition {
 	return PermissionDefinition{
-		Action: action, Family: family, Description: description, Scope: PermissionScopeProject,
+		Action: action, DisplayName: displayName, Family: family, Description: description, Scope: PermissionScopeProject,
 		ResourceKinds: []projectgraph.Kind{kind}, CheckKinds: []projectgraph.Kind{projectgraph.KindProjectNamespace},
 		Delegable: true, UISelectable: true,
 	}
 }
 
-func projectPermission(action Action, family, description string, delegable bool) PermissionDefinition {
+func projectPermission(action Action, displayName, family, description string, delegable bool) PermissionDefinition {
 	return PermissionDefinition{
-		Action: action, Family: family, Description: description, Scope: PermissionScopeProject,
+		Action: action, DisplayName: displayName, Family: family, Description: description, Scope: PermissionScopeProject,
 		ResourceKinds: []projectgraph.Kind{projectgraph.KindProjectNamespace}, CheckKinds: []projectgraph.Kind{projectgraph.KindProjectNamespace},
 		Delegable: delegable, UISelectable: true,
 	}
 }
 
-func instancePermission(action Action, family, description string) PermissionDefinition {
-	return PermissionDefinition{Action: action, Family: family, Description: description, Scope: PermissionScopeInstance, UISelectable: true}
+func instancePermission(action Action, displayName, family, description string) PermissionDefinition {
+	return PermissionDefinition{Action: action, DisplayName: displayName, Family: family, Description: description, Scope: PermissionScopeInstance, UISelectable: true}
 }
 
 func withPrerequisites(definition PermissionDefinition, prerequisites ...Action) PermissionDefinition {
@@ -307,7 +308,7 @@ func ValidateActionForKind(action Action, kind projectgraph.Kind) error {
 // Callers must still separately validate operation coverage and migration.
 func ValidatePermissionCatalog(definitions []PermissionDefinition) error {
 	for _, definition := range definitions {
-		if strings.TrimSpace(definition.Family) == "" || strings.TrimSpace(definition.Description) == "" {
+		if strings.TrimSpace(definition.DisplayName) == "" || strings.TrimSpace(definition.Family) == "" || strings.TrimSpace(definition.Description) == "" {
 			return fmt.Errorf("%w: action %q lacks presentation metadata", ErrInvalidPermissionCatalog, definition.Action)
 		}
 		for _, kind := range definition.ResourceKinds {

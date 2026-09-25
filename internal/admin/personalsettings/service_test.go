@@ -35,6 +35,7 @@ type fakeRepository struct {
 	passwordChanged bool
 	createdToken    bool
 	scopedInput     access.ScopedAPITokenInput
+	updatedInput    access.ScopedAPITokenUpdate
 	theme           access.ThemeMode
 	themeChanged    bool
 }
@@ -91,6 +92,41 @@ func (f *fakeRepository) RevokeAPITokenForPrincipal(_ context.Context, _, id str
 		}
 	}
 	return errors.New("missing token")
+}
+func (f *fakeRepository) UpdateScopedAPITokenForPrincipal(_ context.Context, input access.ScopedAPITokenUpdate) (access.APIToken, error) {
+	f.updatedInput = input
+	for i := range f.tokens {
+		if f.tokens[i].ID == input.TokenID && f.tokens[i].PrincipalID == input.PrincipalID && f.tokens[i].ModifiedAt == input.ExpectedModifiedAt.UTC().Format(time.RFC3339Nano) {
+			f.tokens[i].Name = input.Name
+			f.tokens[i].Description = input.Description
+			f.tokens[i].Permissions = input.Permissions
+			f.tokens[i].ExpiresAt = input.ExpiresAt.UTC().Format(time.RFC3339Nano)
+			f.tokens[i].ModifiedAt = input.ExpectedModifiedAt.Add(time.Second).UTC().Format(time.RFC3339Nano)
+			return f.tokens[i], nil
+		}
+	}
+	return access.APIToken{}, errors.New("token not found or stale")
+}
+func (f *fakeRepository) APITokenAuthorityEvidence(_ context.Context, principalID, tokenID string, now time.Time) (access.APIToken, error) {
+	for _, token := range f.tokens {
+		if token.ID == tokenID && token.PrincipalID == principalID && token.RevokedAt == "" && token.PermissionProfile == access.PermissionCatalogProfile && token.Permissions != nil {
+			return token, nil
+		}
+	}
+	return access.APIToken{}, errors.New("token not found")
+}
+func (f *fakeRepository) RotateScopedAPITokenForPrincipal(_ context.Context, input access.ScopedAPITokenRotation) (string, access.APIToken, error) {
+	for i := range f.tokens {
+		if f.tokens[i].ID == input.TokenID && f.tokens[i].PrincipalID == input.PrincipalID && f.tokens[i].ModifiedAt == input.ExpectedModifiedAt.UTC().Format(time.RFC3339Nano) {
+			f.tokens[i].RevokedAt = "now"
+			replacement := f.tokens[i]
+			replacement.ID = "replacement"
+			replacement.RevokedAt = ""
+			f.tokens = append(f.tokens, replacement)
+			return "new-secret", replacement, nil
+		}
+	}
+	return "", access.APIToken{}, errors.New("token not found or stale")
 }
 func (f *fakeRepository) RecordAuditEvent(_ context.Context, event access.AuditEventInput) error {
 	f.audits = append(f.audits, event)
@@ -263,6 +299,78 @@ func TestServiceTypedTokenAllowsDurableExactPermissionAuthority(t *testing.T) {
 	}
 	if len(repo.scopedInput.Permissions) != 1 || repo.scopedInput.Permissions[0] != pair {
 		t.Fatalf("persisted typed permissions = %#v, want %#v", repo.scopedInput.Permissions, []access.PermissionPair{pair})
+	}
+}
+
+func TestServiceUpdatesTypedTokenWithinCurrentAuthority(t *testing.T) {
+	principalID := "principal-1"
+	modifiedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+	pair, err := access.NewProjectPermissionPair(access.ActionProjectSettingsRead, "project-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &fakeRepository{principal: access.Principal{ID: principalID, Kind: access.PrincipalKindUser}, tokens: []access.APIToken{{
+		ID: "token-1", PrincipalID: principalID, Name: "old", PermissionProfile: access.PermissionCatalogProfile,
+		ModifiedAt: modifiedAt.Format(time.RFC3339Nano), Permissions: []access.PermissionPair{},
+	}}}
+	service := testService(t, repo)
+	service.CurrentEffectivePermissionOptions = func(context.Context, string) ([]access.PermissionPair, error) {
+		return []access.PermissionPair{pair}, nil
+	}
+	command := TokenCommand{Action: "update", TokenID: "token-1", Name: "new", Description: "automation",
+		Permissions: []PermissionPairSignal{permissionPairSignal(pair)}, ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339),
+		ExpectedModifiedAt: modifiedAt.Format(time.RFC3339Nano)}
+	if _, err := service.ApplyToken(context.Background(), principalID, command); err != nil {
+		t.Fatal(err)
+	}
+	if repo.tokens[0].Name != "new" || len(repo.tokens[0].Permissions) != 1 || repo.tokens[0].Permissions[0] != pair || repo.updatedInput.PrincipalID != principalID {
+		t.Fatalf("token update = %#v, scope = %#v", repo.tokens[0], repo.updatedInput)
+	}
+	if len(repo.audits) != 1 || repo.audits[0].Action != "api_token.updated" {
+		t.Fatalf("audit events = %#v", repo.audits)
+	}
+	command.ExpectedModifiedAt = modifiedAt.Format(time.RFC3339Nano)
+	if _, err := service.ApplyToken(context.Background(), principalID, command); err == nil {
+		t.Fatal("stale token update succeeded")
+	}
+	command.TokenID = "token-1"
+	command.Permissions = []PermissionPairSignal{permissionPairSignal(pair)}
+	service.CurrentEffectivePermissionOptions = func(context.Context, string) ([]access.PermissionPair, error) { return nil, nil }
+	if _, err := service.ApplyToken(context.Background(), principalID, command); !errors.Is(err, access.ErrTokenPermissionNotAllowed) {
+		t.Fatalf("unauthorized token update = %v", err)
+	}
+}
+
+func TestServiceRotatesTypedTokenWithoutReusingSecret(t *testing.T) {
+	modifiedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+	pair, err := access.NewProjectPermissionPair(access.ActionProjectSettingsRead, "project-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &fakeRepository{principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser}, tokens: []access.APIToken{{
+		ID: "old", PrincipalID: "principal-1", Name: "automation", PermissionProfile: access.PermissionCatalogProfile,
+		Permissions: []access.PermissionPair{pair}, ModifiedAt: modifiedAt.Format(time.RFC3339Nano),
+	}}}
+	service := testService(t, repo)
+	service.CurrentEffectivePermissionOptions = func(context.Context, string) ([]access.PermissionPair, error) { return nil, nil }
+	if _, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "rotate", TokenID: "old", ExpectedModifiedAt: modifiedAt.Format(time.RFC3339Nano)}); !errors.Is(err, access.ErrTokenPermissionNotAllowed) {
+		t.Fatalf("rotation outside current authority = %v", err)
+	}
+	service.CurrentEffectivePermissionOptions = func(context.Context, string) ([]access.PermissionPair, error) {
+		return []access.PermissionPair{pair}, nil
+	}
+	secret, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "rotate", TokenID: "old", ExpectedModifiedAt: modifiedAt.Format(time.RFC3339Nano)})
+	if err != nil || secret == nil || *secret != "new-secret" {
+		t.Fatalf("rotated secret = %v, %v", secret, err)
+	}
+	if len(repo.tokens) != 2 || repo.tokens[0].RevokedAt == "" || repo.tokens[1].RevokedAt != "" || repo.tokens[1].ID == "old" {
+		t.Fatalf("rotation rows = %#v", repo.tokens)
+	}
+	if len(repo.audits) != 1 || repo.audits[0].Action != "api_token.rotated" {
+		t.Fatalf("rotation audit = %#v", repo.audits)
+	}
+	if _, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "rotate", TokenID: "old", ExpectedModifiedAt: modifiedAt.Format(time.RFC3339Nano)}); err == nil {
+		t.Fatal("revoked token rotated again")
 	}
 }
 

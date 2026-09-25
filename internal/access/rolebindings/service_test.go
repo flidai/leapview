@@ -126,6 +126,73 @@ func TestApplyIssuesEnvelopeBeforeAuditedPolicyTransaction(t *testing.T) {
 	}
 }
 
+func TestApplyGrantsProjectAdminWhenDelegateIsInRoleExpansion(t *testing.T) {
+	mutation, authority, repo := roleBindingFixture(t)
+	projectID := projectgraph.ResourceID(mutation.Scope.ProjectID)
+	binding, err := access.NewTypedRoleBinding(
+		"binding-admin", "Project admin",
+		access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "recipient-1"},
+		access.PermissionRoleProjectAdmin, projectID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation.Binding = binding
+	mutation.GrantAdminEnvelopeID = repo.envelope.ID
+	repo.envelope.Permissions = binding.Permissions
+	repo.envelope.RecipientSelector = "principal:recipient-1"
+	repo.envelope.RoleVersion = access.PermissionRoleVersion(access.PermissionRoleProjectAdmin)
+	// The principal's effective authority is a unique pair set. The selected
+	// role already supplies project.access.delegate, which the grant path also
+	// requires independently as delegation authority.
+	authority.Permissions = binding.Permissions
+
+	_, err = Apply(context.Background(), repo, mutation, access.RoleBindingAdministrationPorts{
+		ResolveCurrentAuthority: func(context.Context, string) (access.RoleBindingAdministrationAuthority, error) {
+			return authority, nil
+		},
+	}, func(apply func(access.Repository) (access.AuditEventInput, error)) error {
+		_, err := apply(repo)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("grant project_admin role: %v", err)
+	}
+	if repo.upserts != 1 || repo.upsertInput.Binding.PermissionRole != access.PermissionRoleProjectAdmin {
+		t.Fatalf("upserts=%d binding=%#v", repo.upserts, repo.upsertInput.Binding)
+	}
+}
+
+func TestAuthorizeGrantAllowsProjectAdminDelegateOverlapForAPIToken(t *testing.T) {
+	mutation, authority, repo := roleBindingFixture(t)
+	projectID := projectgraph.ResourceID(mutation.Scope.ProjectID)
+	binding, err := access.NewTypedRoleBinding(
+		"binding-admin", "Project admin",
+		access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "recipient-1"},
+		access.PermissionRoleProjectAdmin, projectID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const fingerprint = "fingerprint-token-1234"
+	authority.Permissions = binding.Permissions
+	authority.Credential = access.RoleBindingAdministrationCredential{
+		Class: access.GrantCredentialClassAPIToken, ID: "token-1", Fingerprint: fingerprint,
+		PrincipalID: mutation.ActorID, PermissionProfile: access.PermissionCatalogProfile,
+		TokenPermissions: binding.Permissions,
+	}
+	repo.envelope.Issuer.Credential = access.GrantCredentialEvidence{
+		Class: access.GrantCredentialClassAPIToken, ID: "token-1", Fingerprint: fingerprint,
+	}
+	repo.envelope.Permissions = binding.Permissions
+	repo.envelope.RecipientSelector = "principal:recipient-1"
+	repo.envelope.RoleVersion = access.PermissionRoleVersion(access.PermissionRoleProjectAdmin)
+
+	if err := authorizeGrant(authority, repo.envelope, mutation.Scope, binding.Permissions); err != nil {
+		t.Fatalf("authorize project_admin role for API token: %v", err)
+	}
+}
+
 func TestApplyPreservesCanonicalBootstrapEnvelopeException(t *testing.T) {
 	mutation, _, repo := roleBindingFixture(t)
 	binding, err := access.NewTypedRoleBinding(access.BootstrapOwnerBindingID, access.BootstrapOwnerBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: mutation.ActorID}, access.PermissionRoleProjectAdmin, projectgraph.ResourceID(mutation.Scope.ProjectID))

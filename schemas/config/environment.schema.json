@@ -2643,6 +2643,14 @@
       "x-lifecycle": "development",
       "x-scope": "dev server"
     },
+    "LEAPVIEW_DEV_RESET_LOGIN": {
+      "default": "false",
+      "description": "Explicitly restore the private local development login during credential preparation.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
     "LEAPVIEW_DEV_RESTART": {
       "default": "false",
       "description": "Force the managed development server to restart.",

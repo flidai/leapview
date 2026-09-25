@@ -58,6 +58,12 @@ func (d *APIGenDispatcher) ListCurrentAPITokens(w stdhttp.ResponseWriter, r *std
 func (d *APIGenDispatcher) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenCreateCurrentAPITokenHeaders) {
 	d.handler.CreateCurrentAPIToken(w, r)
 }
+func (d *APIGenDispatcher) UpdateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenUpdateCurrentAPITokenHeaders) {
+	d.handler.UpdateCurrentAPIToken(w, r)
+}
+func (d *APIGenDispatcher) RotateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenRotateCurrentAPITokenHeaders) {
+	d.handler.RotateCurrentAPIToken(w, r)
+}
 func (d *APIGenDispatcher) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
 	d.handler.RevokeCurrentAPIToken(w, r)
 }

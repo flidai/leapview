@@ -78,7 +78,7 @@ func TestDevelopmentLoginCreatesOrdinaryDurableBrowserSession(t *testing.T) {
 	response := httptest.NewRecorder()
 	auth.DevelopmentLogin(response, request)
 
-	if response.Code != http.StatusFound || response.Header().Get("Location") != "/admin" {
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "/" {
 		t.Fatalf("development login response = %d location=%q body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
 	}
 	cookies := response.Result().Cookies()

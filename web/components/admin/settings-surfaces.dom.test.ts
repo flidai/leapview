@@ -16,7 +16,7 @@ beforeAll(async () => {
   if (!result.success) throw new Error('settings surface bundle failed')
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/') {
+    if (url.pathname === '/' || url.pathname === '/admin/service-accounts' || url.pathname === '/admin/service-accounts/new' || url.pathname.startsWith('/admin/service-accounts/')) {
       response.setHeader('content-type', 'text/html')
       response.end('<!doctype html><main><lv-admin-page data-on:lv-service-account-command="service-account-command" data-on:lv-audit-log-command="audit-log-command"><lv-project-registry></lv-project-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration></lv-admin-page><script type="module" src="/settings-surfaces.js"></script></main>')
       return
@@ -37,7 +37,7 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 })
 
-test('settings surfaces render typed signals and emit commands', async () => {
+test('service-account list renders shared rows with stable detail links', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
@@ -48,8 +48,6 @@ test('settings surfaces render typed signals and emit commands', async () => {
       const element = document.querySelector('lv-service-accounts') as any
       element.requestUpdate()
       await element.updateComplete
-      let detail: unknown = null
-      element.addEventListener('lv-service-account-command', (event: CustomEvent) => { detail = event.detail })
       const root = element.shadowRoot as ShadowRoot
       const sharedList = root.querySelector('lv-entity-list')
       ;(root.querySelector('.entity-action') as HTMLButtonElement).click()
@@ -57,22 +55,69 @@ test('settings surfaces render typed signals and emit commands', async () => {
       const displayNameLabel = root.querySelector('input[name="displayName"]')?.getAttribute('aria-label')
       ;(root.querySelector('[data-service-account-dialog="create"] .modal-close') as HTMLButtonElement).click()
       await element.updateComplete
-      ;(root.querySelector('.entity-list-row-action') as HTMLButtonElement).click()
       return {
         text: root.textContent?.replace(/\s+/g, ' ').trim(),
-        detail,
         displayNameLabel,
         hasSharedList: Boolean(sharedList),
         customTableCount: root.querySelectorAll(':scope > .table-wrap').length,
         pageHeading: root.querySelector('.page-header h1')?.textContent?.trim(),
+        accountHref: root.querySelector<HTMLAnchorElement>('.entity-list-identity[href]')?.getAttribute('href'),
+        rowAction: sharedList?.getAttribute('row-action'),
       }
     })
     expect(result.text).toContain('CI')
-    expect(result.detail).toEqual({ action: 'select', accountId: 'svc-1' })
     expect(result.displayNameLabel).toBe('Display name')
     expect(result.hasSharedList).toBe(true)
     expect(result.customTableCount).toBe(0)
     expect(result.pageHeading).toBe('Service accounts')
+    expect(result.accountHref).toBe('/admin/service-accounts/svc-1')
+    expect(result.rowAction).toBe('select')
+  } finally { await page.close() }
+})
+
+test('clicking a service-account row navigates to its durable detail URL', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-service-accounts'))
+    await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state = { items: [{ id: 'svc-row', displayName: 'Row target', kind: 'service_principal' }], secrets: [] }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminServiceAccounts: state }, getPath: (path: string) => path === 'adminServiceAccounts' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-service-accounts') as any
+      element.requestUpdate()
+      await element.updateComplete
+      ;(element.shadowRoot.querySelector('tr.entity-list-table-row') as HTMLTableRowElement).click()
+    })
+    await page.waitForURL(`${baseURL}/admin/service-accounts/svc-row`)
+    expect(page.url()).toBe(`${baseURL}/admin/service-accounts/svc-row`)
+  } finally { await page.close() }
+})
+
+test('creating a service account moves to its durable detail URL', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/admin/service-accounts/new`)
+    await page.waitForFunction(() => customElements.get('lv-service-accounts'))
+    await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const signals: Record<string, any> = { adminServiceAccounts: { items: [], secrets: [], selectedId: '' } }
+      runtime.setDatastarLitRuntimeForTests?.({ root: signals, getPath: (path: string) => signals[path], effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-service-accounts') as any
+      element.requestUpdate(); await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      ;(root.querySelector('.entity-action') as HTMLButtonElement).click()
+      await element.updateComplete
+      const form = root.querySelector('[data-service-account-dialog="create"] form') as HTMLFormElement
+      ;(form.elements.namedItem('displayName') as HTMLInputElement).value = 'Created service account'
+      form.requestSubmit()
+      await element.updateComplete
+      signals.adminServiceAccounts = { items: [{ id: 'svc-created', displayName: 'Created service account', kind: 'service_principal' }], secrets: [], selectedId: 'svc-created' }
+      runtime.setDatastarLitRuntimeForTests?.({ root: signals, getPath: (path: string) => signals[path], effect: (fn: () => void) => { fn(); return () => {} } })
+      element.requestUpdate(); await element.updateComplete
+    })
+    await page.waitForURL(`${baseURL}/admin/service-accounts/svc-created`)
+    expect(page.url()).toBe(`${baseURL}/admin/service-accounts/svc-created`)
   } finally { await page.close() }
 })
 
@@ -89,7 +134,16 @@ test('service account detail uses shared lists and focused credential confirmati
         secrets: [{ id: 'secret-1', servicePrincipalId: 'svc-1', name: 'CI pipeline', createdAt: '2026-08-03T12:00:00Z', expiresAt: '2026-11-01T23:59:59Z' }],
         createdSecret: 'lv_service_secret_once', loading: false, hasMore: false,
       }
-      runtime.setDatastarLitRuntimeForTests?.({ root: { adminServiceAccounts: state }, getPath: (path: string) => path === 'adminServiceAccounts' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const signals: Record<string, any> = {
+        adminServiceAccounts: state,
+        adminAccess: {
+          principals: [{ id: 'svc-1', kind: 'service_principal', displayName: 'Production deploy', email: '', groups: [], capabilities: {} }],
+          groups: [], projects: [], sessions: [], rolePresets: [], policyRevision: 8, activity: [], loading: false,
+          roleAssignments: [{ bindingId: 'binding-1', projectId: 'project-1', role: 'project_admin', capabilities: [], permissions: ['dashboard.read', 'model.query'], status: 'Active', sourceType: 'principal', sourceId: 'svc-1', sourceName: 'Production deploy', subjectType: 'principal', subjectId: 'svc-1', subjectName: 'Production deploy', policyRevision: 8 }],
+          message: 'Role assigned. New authority becomes active with the next authorized release.',
+        },
+      }
+      runtime.setDatastarLitRuntimeForTests?.({ root: signals, getPath: (path: string) => signals[path], effect: (fn: () => void) => { fn(); return () => {} } })
       const element = document.querySelector('lv-service-accounts') as any
       element.requestUpdate(); await element.updateComplete
       const root = element.shadowRoot as ShadowRoot
@@ -100,9 +154,14 @@ test('service account detail uses shared lists and focused credential confirmati
         sharedCredentialList: Boolean(root.querySelector('lv-entity-list')),
         ownTableCount: root.querySelectorAll(':scope > .table-wrap').length,
         headings: Array.from(root.querySelectorAll('h2')).map((heading) => heading.textContent?.trim()),
+        projectRoles: root.querySelector('[aria-label="Access"]')?.textContent?.replace(/\s+/g, ' ').trim(),
         secretNotice: root.querySelector('lv-one-time-secret')?.shadowRoot?.querySelector('[role="status"]')?.textContent?.replace(/\s+/g, ' ').trim(),
         backHref: root.querySelector('.back-link')?.getAttribute('href'),
       }
+
+      signals.adminAccess = { ...signals.adminAccess, roleAssignments: [], message: '', error: 'Project role assignment failed.' }
+      element.requestUpdate(); await element.updateComplete
+      const roleError = root.querySelector('[aria-label="Access"] [role="alert"]')?.textContent?.trim()
 
       ;(Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Create credential')) as HTMLButtonElement).click()
       await element.updateComplete
@@ -139,6 +198,7 @@ test('service account detail uses shared lists and focused credential confirmati
       await element.updateComplete
       return {
         initial,
+        roleError,
         expirationLabel: (expiration.shadowRoot as ShadowRoot).querySelector('.value')?.textContent?.trim(),
         expirationOptions,
         customExpirationRange,
@@ -151,10 +211,14 @@ test('service account detail uses shared lists and focused credential confirmati
       sharedDetail: true,
       sharedCredentialList: true,
       ownTableCount: 0,
-      headings: ['Overview', 'Credentials'],
+      headings: ['Overview', 'Access', 'Credentials'],
+      projectRoles: expect.stringContaining('Project admin'),
       secretNotice: expect.stringContaining('Copy this credential now'),
       backHref: '/admin/service-accounts',
     })
+    expect(result.initial.projectRoles).toContain('Project admin')
+    expect(result.initial.projectRoles).toContain('Role assigned. New authority becomes active')
+    expect(result.roleError).toBe('Project role assignment failed.')
     expect(result.expirationLabel).toMatch(/^90 days \(.+\)$/)
     expect(result.expirationOptions).toContain('Custom date')
     expect(result.expirationOptions).not.toContain('No expiration')
@@ -189,9 +253,14 @@ test('service account and audit controls unlock when a no-op command finishes', 
       const audit = document.querySelector('lv-audit-log') as any
       accounts.requestUpdate(); audit.requestUpdate()
       await accounts.updateComplete; await audit.updateComplete
-      ;((accounts.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).click()
+      ;((accounts.shadowRoot as ShadowRoot).querySelector('.entity-action') as HTMLButtonElement).click()
       await accounts.updateComplete
-      const accountDisabled = ((accounts.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).disabled
+      const createForm = (accounts.shadowRoot as ShadowRoot).querySelector('[data-service-account-dialog="create"] form') as HTMLFormElement
+      ;(createForm.elements.namedItem('displayName') as HTMLInputElement).value = 'QA account'
+      createForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await accounts.updateComplete
+      const accountSubmit = () => (accounts.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('[data-service-account-dialog="create"] button[type="submit"]')!
+      const accountDisabled = accountSubmit().disabled
       ;((audit.shadowRoot as ShadowRoot).querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await audit.updateComplete
       const auditDisabled = ((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled
@@ -199,7 +268,7 @@ test('service account and audit controls unlock when a no-op command finishes', 
       const unrelatedOwner = document.createElement('lv-other-page')
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: unrelatedOwner } }))
       await accounts.updateComplete; await audit.updateComplete
-      const accountStillDisabled = ((accounts.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).disabled
+      const accountStillDisabled = accountSubmit().disabled
       const auditStillDisabled = ((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled
       const owner = document.querySelector('lv-admin-page') as Element
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: owner } }))
@@ -210,7 +279,7 @@ test('service account and audit controls unlock when a no-op command finishes', 
         accountStillDisabled,
         auditStillDisabled,
         auditLabels,
-        accountUnlocked: !((accounts.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).disabled,
+        accountUnlocked: !accounts.busy && !accounts.createAccountOpen,
         auditUnlocked: !((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
     })
@@ -456,8 +525,8 @@ test('principal administration exposes local controls and keeps external profile
         groups: [], projects: [{ id: 'sales', name: 'Sales' }],
         sessions: [{ id: 'session-1', kind: 'browser', createdAt: '2026-08-03T10:00:00Z', lastSeenAt: '2026-08-03T12:00:00Z', expiresAt: '2026-08-10T10:00:00Z' }],
         roleAssignments: [
-          { projectId: 'sales', resourceKind: 'project', role: 'viewer', capabilities: [], sourceType: 'direct', sourceId: 'local-1', sourceName: 'Local User' },
-          { projectId: 'sales', resourceKind: 'project', role: 'editor', capabilities: [], sourceType: 'group', sourceId: 'group-1', sourceName: 'Analysts' },
+          { bindingId: 'binding-1', projectId: 'sales', role: 'viewer', capabilities: [], permissions: ['dashboard.read'], subjectType: 'principal', subjectId: 'local-1', subjectName: 'Local User' },
+          { bindingId: 'binding-2', projectId: 'sales', role: 'editor', capabilities: [], permissions: ['dashboard.read', 'dashboard.update'], subjectType: 'group', subjectId: 'group-1', subjectName: 'Analysts' },
         ],
         activity: [{ id: 'event-1', action: 'principal.updated', actorId: 'admin-1', actorName: 'Admin User', status: 'success', createdAt: '2026-08-02T11:00:00Z' }],
         selectedPrincipalId: 'local-1', loading: false,
@@ -476,6 +545,7 @@ test('principal administration exposes local controls and keeps external profile
       const localText = (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim()
       const local = {
         headings: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('h2')).map((heading: Element) => heading.textContent?.trim()),
+        roleHeaders: Array.from(((element.shadowRoot as ShadowRoot).querySelector('[aria-labelledby="user-access-title"] .detail-subsection table') as HTMLTableElement).querySelectorAll('thead th')).map((heading) => heading.textContent?.trim()),
         buttons: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button, summary')).map((button: Element) => button.textContent?.replace(/\s+/g, ' ').trim()),
         status: (element.shadowRoot as ShadowRoot).querySelector('[data-user-status]')?.textContent?.trim(),
         sharedLayout: Boolean((element.shadowRoot as ShadowRoot).querySelector('.detail-surface .detail-sections')),
@@ -492,7 +562,8 @@ test('principal administration exposes local controls and keeps external profile
     ])
     expect(result.localText).toContain('Reset password')
     expect(result.localText).toContain('Principal ID')
-    expect(result.localText).toContain('Sales')
+    expect(result.localText).toContain('Viewer')
+    expect(result.local.roleHeaders).toEqual(['Role', 'Granted through', ''])
     expect(result.localText).toContain('Via Analysts')
     expect(result.localText).toContain('Admin User updated the user profile')
     expect(result.local.headings).toEqual(['Overview', 'Access', 'Security', 'Recent activity'])
@@ -554,7 +625,7 @@ test('group administration makes synchronized membership read-only', async () =>
     const result = await page.evaluate(async () => {
       const runtime = await import('/settings-surfaces.js') as any
       const state = {
-        principals: [], sessions: [], selectedGroupId: 'scim-1', loading: false,
+        principals: [], sessions: [], roleAssignments: [], selectedGroupId: 'scim-1', loading: false,
         groups: [{ id: 'scim-1', name: 'Directory Team', provider: 'scim', externalId: 'team-42', members: [{ id: 'p1', email: 'user@example.com', displayName: 'User' }], capabilities: { canUpdate: false, canDelete: false, canManageMembers: false } }],
       }
       runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccess: state }, getPath: (path: string) => path === 'adminAccess' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
@@ -570,8 +641,8 @@ test('group administration makes synchronized membership read-only', async () =>
     })
     expect(result.text).toContain('SCIM owns this group')
     expect(result.text).toContain('synchronized and read-only')
-    expect(result.buttons).toEqual([])
-    expect(result.headings).toEqual(['Overview', 'Members'])
+    expect(result.buttons).toEqual(['Grant role'])
+    expect(result.headings).toEqual(['Overview', 'Access', 'Members'])
     expect(result.sharedLayout).toBe(true)
     expect(result.backHref).toBe('/admin/groups')
   } finally { await page.close() }
@@ -590,7 +661,7 @@ test('local group detail moves rename and add member into focused modals', async
           { id: 'candidate-1', kind: 'user', email: 'candidate@example.com', displayName: 'Candidate User', groups: [], capabilities: {} },
           { id: 'candidate-2', kind: 'user', email: 'second@example.com', displayName: 'Second Candidate', groups: [], capabilities: {} },
         ],
-        sessions: [], selectedGroupId: 'group-1', loading: false,
+        sessions: [], roleAssignments: [], selectedGroupId: 'group-1', loading: false,
         projects: [{ id: 'sales', name: 'Sales' }],
         groups: [{
           id: 'group-1', name: 'Analysts', provider: 'local', externalId: 'analysts', revision: 'rev-1',
@@ -633,6 +704,8 @@ test('local group detail moves rename and add member into focused modals', async
       const submitLabel = memberForm.querySelector<HTMLButtonElement>('button[type="submit"]')?.textContent?.trim()
       memberForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await element.updateComplete
+      window.confirm = () => true
+      ;((element.shadowRoot as ShadowRoot).querySelector('.member-table button') as HTMLButtonElement).click()
 
       return {
         initial,
@@ -657,7 +730,83 @@ test('local group detail moves rename and add member into focused modals', async
     expect(result.commands).toEqual([
       { action: 'update_group', groupId: 'group-1', displayName: 'Revenue Analysts', revision: 'rev-1' },
       { action: 'add_group_member', groupId: 'group-1', principalIds: ['candidate-1', 'candidate-2'] },
+      { action: 'remove_group_member', groupId: 'group-1', principalId: 'member-1' },
     ])
+  } finally { await page.close() }
+})
+
+test('group role management emits grant and revoke commands and shows command feedback', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-group-administration') && customElements.get('lv-role-grant-dialog'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state: any = {
+        principals: [], sessions: [], roleAssignments: [], policyRevision: 4,
+        rolePresets: [{ role: 'viewer', name: 'Viewer', description: 'View approved dashboards.', permissions: ['dashboard.read'] }],
+        selectedGroupId: 'group-1', loading: false,
+        groups: [{ id: 'group-1', name: 'Analysts', provider: 'local', members: [], capabilities: { canUpdate: true, canDelete: true, canManageMembers: true } }],
+      }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccess: state }, getPath: (path: string) => path === 'adminAccess' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-group-administration') as any
+      element.requestUpdate(); await element.updateComplete
+      const commands: unknown[] = []
+      element.addEventListener('lv-access-admin-command', (event: CustomEvent) => { commands.push(event.detail) })
+      const root = element.shadowRoot as ShadowRoot
+
+      ;(root.querySelector('[aria-labelledby="group-access-title"] .section-action') as HTMLButtonElement).click()
+      await element.updateComplete
+      const grant = root.querySelector('lv-role-grant-dialog') as any
+      await grant.updateComplete
+      const grantRoot = grant.shadowRoot as ShadowRoot
+      ;(grantRoot.querySelector('input[value="viewer"]') as HTMLInputElement).click()
+      ;(grantRoot.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await grant.updateComplete
+      await element.updateComplete
+
+      state.roleAssignments = [{ bindingId: 'binding-1', projectId: 'sales', role: 'viewer', subjectType: 'group', subjectId: 'group-1', subjectName: 'Analysts', permissions: ['dashboard.read'], status: 'Active' }]
+      state.policyRevision = 5
+      state.message = 'Role assigned.'
+      element.requestUpdate(); await element.updateComplete
+      const grantFeedback = root.querySelector('[role="status"]')?.textContent?.trim()
+      window.confirm = () => true
+      ;(root.querySelector('[aria-labelledby="group-access-title"] button.danger') as HTMLButtonElement).click()
+
+      state.error = 'The access policy changed; refresh and try again.'
+      state.message = ''
+      element.requestUpdate(); await element.updateComplete
+      const errorFeedback = root.querySelector('[role="alert"]')?.textContent?.trim()
+
+      state.error = ''
+      state.message = 'Role removed.'
+      state.roleMutationUnavailableReason = 'Role changes are unavailable in this session.'
+      element.requestUpdate(); await element.updateComplete
+      const revokeDisabled = (root.querySelector('[aria-labelledby="group-access-title"] button.danger') as HTMLButtonElement).disabled
+      ;(root.querySelector('[aria-labelledby="group-access-title"] .section-action') as HTMLButtonElement).click()
+      await element.updateComplete
+      const blockedGrant = root.querySelector('lv-role-grant-dialog') as any
+      await blockedGrant.updateComplete
+      const grantDisabled = (blockedGrant.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled
+
+      return {
+        commands,
+        grantFeedback,
+        errorFeedback,
+        successFeedback: root.querySelector('[role="status"]')?.textContent?.trim(),
+        revokeDisabled,
+        grantDisabled,
+      }
+    })
+    expect(result.commands).toEqual([
+      { action: 'grant_role', subjectType: 'group', subjectId: 'group-1', role: 'viewer', expectedRevision: 4 },
+      { action: 'revoke_role', bindingId: 'binding-1', subjectId: 'group-1', expectedRevision: 5 },
+    ])
+    expect(result.grantFeedback).toBe('Role assigned.')
+    expect(result.errorFeedback).toBe('The access policy changed; refresh and try again.')
+    expect(result.successFeedback).toBe('Role removed.')
+    expect(result.revokeDisabled).toBe(true)
+    expect(result.grantDisabled).toBe(true)
   } finally { await page.close() }
 })
 

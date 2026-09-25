@@ -70,7 +70,7 @@ func authoringSessionSignal(value access.AuthoringSession) AuthoringSessionSigna
 		ID: value.ID, Kind: string(value.Kind), ClientID: value.ClientID,
 		TargetID: value.Scope.TargetID, ProjectID: value.Scope.ProjectID.String(),
 		PermissionProfile: access.PermissionCatalogProfile, Permissions: permissions,
-		CreatedAt: formatTime(value.CreatedAt),
+		CreatedAt:  formatTime(value.CreatedAt),
 		LastUsedAt: formatTime(value.LastUsedAt), ExpiresAt: formatTime(value.ExpiresAt),
 		RevokedAt: formatTime(value.RevokedAt),
 	}
@@ -92,7 +92,7 @@ func tokenSignal(value access.APIToken) TokenSignal {
 	}
 	return TokenSignal{
 		ID: value.ID, Name: value.Name, Description: value.Description, PermissionProfile: profile, Permissions: permissions,
-		Capabilities: capabilities, CreatedAt: value.CreatedAt, LastUsedAt: value.LastUsedAt,
+		Capabilities: capabilities, CreatedAt: value.CreatedAt, ModifiedAt: value.ModifiedAt, LastUsedAt: value.LastUsedAt,
 		ExpiresAt: value.ExpiresAt, RevokedAt: value.RevokedAt,
 	}
 }

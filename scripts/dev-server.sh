@@ -44,6 +44,9 @@ prepare_dev_auth() {
   if [[ "${LEAPVIEW_DEV_ROTATE_PUBLISHER:-}" == "1" ]]; then
     credential_args+=(--rotate-publisher)
   fi
+  if [[ "${LEAPVIEW_DEV_RESET_LOGIN:-}" == "1" ]]; then
+    credential_args+=(--reset-login)
+  fi
   go run ./internal/app/tools/devcredentials "${credential_args[@]}" || return 1
   local token bootstrap_token
   token="$(jq -er '.publisherToken | strings | select(startswith("lv_pat_"))' "$CREDENTIAL_FILE")" || return 1
@@ -421,6 +424,69 @@ bootstrap_local_physical_pool() {
   export LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST="$compatibility_digest"
 }
 
+persist_development_claim_publisher() {
+  local bootstrap_output="$1"
+  local updated="${CREDENTIAL_FILE}.tmp.$$"
+  umask 077
+  if ! printf '%s\n' "$bootstrap_output" | jq -s -e '
+    if length == 2 and
+       (.[1].projectUid | type == "string" and length > 0) and
+       (.[1].claimCredentialId | type == "string" and length > 0) and
+       (.[1].publisherToken | type == "string" and startswith("lv_pat_")) and
+       (.[1].publisherTokenExpiresAt | type == "string" and length > 0)
+    then .[0] + {
+      publisherToken: .[1].publisherToken,
+      publisherTokenExpiresAt: .[1].publisherTokenExpiresAt,
+      claimedProjectUid: .[1].projectUid,
+      claimCredentialId: .[1].claimCredentialId,
+      claimAcknowledged: false
+    }
+    else error("incomplete development Project-claim publisher handoff") end
+  ' "$CREDENTIAL_FILE" - >"$updated"; then
+    rm -f -- "$updated"
+    return 1
+  fi
+  chmod 600 "$updated"
+  mv -- "$updated" "$CREDENTIAL_FILE"
+}
+
+acknowledge_development_claim_publisher() {
+  local target="$1"
+  local project_id claim_id publisher_token updated
+  project_id="$(jq -er '.claimedProjectUid | strings | select(length > 0)' "$CREDENTIAL_FILE")" || return 1
+  claim_id="$(jq -er '.claimCredentialId | strings | select(length > 0)' "$CREDENTIAL_FILE")" || return 1
+  publisher_token="$(jq -er '.publisherToken | strings | select(startswith("lv_pat_"))' "$CREDENTIAL_FILE")" || return 1
+  go run ./cmd/leapview acknowledge-project-claim-publisher "$target" "$project_id" \
+    --claim-credential-id "$claim_id" --token "$publisher_token" || return 1
+  updated="${CREDENTIAL_FILE}.tmp.$$"
+  umask 077
+  if ! jq -e '.claimAcknowledged = true' "$CREDENTIAL_FILE" >"$updated"; then
+    rm -f -- "$updated"
+    return 1
+  fi
+  chmod 600 "$updated"
+  mv -- "$updated" "$CREDENTIAL_FILE"
+}
+
+active_project_ready() {
+  local port="$1"
+  curl -fsS "http://localhost:${port}/readyz" 2>/dev/null | jq -e '.checks.runtime == "ok"' >/dev/null 2>&1
+}
+
+wait_active_project() {
+  local port="$1"
+  local attempts=600
+  local interval=0.5
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if active_project_ready "$port"; then
+      return 0
+    fi
+    sleep "$interval"
+  done
+  echo "Published Project did not become active on http://localhost:${port}" >&2
+  return 1
+}
+
 publish_project() {
 	local port="$1"
 	local source_root="${2:-${LEAPVIEW_DEV_SOURCE_ROOT:-dashboards}}"
@@ -434,18 +500,33 @@ publish_project() {
   fi
 	# Issuance belongs to the CLI's durable local state, not to source files or
 	# the target. Bootstrap must succeed before data staging or source planning.
-	local bootstrap_output
-	local bootstrap_args=(bootstrap-project "http://localhost:${port}" --token "${LEAPVIEW_DEV_BOOTSTRAP_TOKEN:-$token}" --format json)
-	if [[ -n "$project_id" ]]; then
-		bootstrap_args+=(--project-uid "$project_id")
+	local claimed_project_id bootstrap_output
+	claimed_project_id="$(jq -r '.claimedProjectUid // empty' "$CREDENTIAL_FILE")" || return 1
+	if [[ -n "$claimed_project_id" ]]; then
+		if [[ -n "$project_id" && "$project_id" != "$claimed_project_id" ]]; then
+			echo "Development Project selector conflicts with the acknowledged Project claim" >&2
+			return 1
+		fi
+		project_id="$claimed_project_id"
+	else
+		local bootstrap_args=(bootstrap-project "http://localhost:${port}" --token "${LEAPVIEW_DEV_BOOTSTRAP_TOKEN:-$token}" --format json)
+		if [[ -n "$project_id" ]]; then
+			bootstrap_args+=(--project-uid "$project_id")
+		fi
+		bootstrap_output="$(go run ./cmd/leapview "${bootstrap_args[@]}")" || return 1
+		persist_development_claim_publisher "$bootstrap_output" || return 1
+		project_id="$(jq -er '.claimedProjectUid | strings | select(length > 0)' "$CREDENTIAL_FILE")" || return 1
 	fi
-	bootstrap_output="$(go run ./cmd/leapview "${bootstrap_args[@]}")" || return 1
-	project_id="$(jq -er '.projectUid | strings | select(length > 0)' <<<"$bootstrap_output")" || return 1
+	if [[ "$(jq -r '.claimAcknowledged // false' "$CREDENTIAL_FILE")" != "true" ]]; then
+		acknowledge_development_claim_publisher "http://localhost:${port}" || return 1
+	fi
+	token="$(jq -er '.publisherToken | strings | select(startswith("lv_pat_"))' "$CREDENTIAL_FILE")" || return 1
+	export LEAPVIEW_DEV_API_TOKEN="$token"
 	if [[ "$source_root" == "dashboards" ]]; then
 		connection="${connection:-olist}"
 		from="${from:-.data/olist}"
 	fi
-	if [[ -n "$connection" && "${LEAPVIEW_DEV_SKIP_DATA_SYNC:-}" != "1" ]]; then
+	if [[ -n "$connection" && "${LEAPVIEW_DEV_SKIP_DATA_SYNC:-}" != "1" ]] && ! active_project_ready "$port"; then
 		[[ -n "$from" ]] || {
 			echo "source-root is required when a managed data connection is provided." >&2
 			return 1
@@ -473,6 +554,7 @@ publish_project() {
 		return 1
 	}
 	go run ./cmd/leapview publish "$candidate_id" --token "$token" || return 1
+	wait_active_project "$port" || return 1
 	if [[ "$(auth_mode)" == "bypass" ]]; then
 		mcp_smoke "$port"
 	else

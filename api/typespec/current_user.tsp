@@ -17,6 +17,20 @@ model APITokenCreateRequest {
   expiresAt?: utcDateTime;
 }
 
+model APITokenUpdateRequest {
+  name: string;
+  description?: string;
+  permissions: PermissionPair[];
+  expiresAt: utcDateTime;
+  @doc("The modifiedAt value returned by the most recent read; stale edits are rejected.")
+  expectedModifiedAt: utcDateTime;
+}
+
+model APITokenRotateRequest {
+  @doc("The modifiedAt value returned by the most recent read; stale rotations are rejected.")
+  expectedModifiedAt: utcDateTime;
+}
+
 model APITokenResponse {
   id: string;
   name: string;
@@ -30,6 +44,7 @@ model APITokenResponse {
   expiresAt?: utcDateTime;
   revokedAt?: utcDateTime;
   createdAt: utcDateTime;
+  modifiedAt: utcDateTime;
   lastUsedAt?: utcDateTime;
 }
 
@@ -265,6 +280,26 @@ interface CurrentAPITokens {
   @apigen.command(#{ auditAction: "api_token.created" })
   @apigen.ui("current-user.api-token.create")
   createCurrentAPIToken(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: APITokenCreateRequest): CreateCurrentAPITokenCreated | CommonErrors;
+
+  @summary("Update current API token")
+  @route("/{token}")
+  @patch
+  @extension("x-leapview-object-scope", "principal")
+  @apigen.failsWith(APITokenInvalidFailure)
+  @apigen.failsWith(APITokenNotFoundFailure)
+  @apigen.command(#{ auditAction: "api_token.updated" })
+  @apigen.ui("current-user.api-token.update")
+  updateCurrentAPIToken(@path @apigen.target token: string, @header("If-Match") ifMatch: string, @body body: APITokenUpdateRequest): OkJson<APITokenResponse> | CommonErrors;
+
+  @summary("Rotate current API token")
+  @route("/{token}/rotate")
+  @post
+  @extension("x-leapview-object-scope", "principal")
+  @apigen.failsWith(APITokenInvalidFailure)
+  @apigen.failsWith(APITokenNotFoundFailure)
+  @apigen.command(#{ auditAction: "api_token.rotated" })
+  @apigen.ui("current-user.api-token.rotate")
+  rotateCurrentAPIToken(@path @apigen.target token: string, @header("If-Match") ifMatch: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: APITokenRotateRequest): CreatedJson<APITokenCreateResponse> | CommonErrors;
 
   @summary("Revoke current API token")
   @route("/{token}")

@@ -60,16 +60,20 @@ func TestPermissionOptionsSignalPreservesExactActionTargets(t *testing.T) {
 		if got := [4]string{option.ActionLabel, option.Label, option.Description, option.Category}; !reflect.DeepEqual(got, want) {
 			t.Errorf("presentation for %q = %#v, want %#v", pair.Action, got, want)
 		}
+		definition, _ := access.Permission(access.Action(pair.Action))
+		if option.ActionDescription == nil || *option.ActionDescription != definition.Description {
+			t.Errorf("action description for %q = %v, want %q", pair.Action, option.ActionDescription, definition.Description)
+		}
 	}
 }
 
-func TestPermissionActionLabelsCoverSelectableCatalog(t *testing.T) {
+func TestPermissionPickerUsesCanonicalDisplayNames(t *testing.T) {
 	for _, definition := range access.PermissionCatalog() {
 		if !definition.UISelectable {
 			continue
 		}
-		if got := permissionActionLabel(definition.Action); got == "Use permission" {
-			t.Errorf("selectable action %q has no human-facing label", definition.Action)
+		if got, _, _ := permissionOptionPresentation(definition, access.PermissionPair{Action: definition.Action}); got != definition.DisplayName {
+			t.Errorf("picker action label for %q = %q, want %q", definition.Action, got, definition.DisplayName)
 		}
 	}
 }

@@ -13,13 +13,15 @@ import { emptyStateStyles, renderEmptyState } from '../shared/empty-state'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/one-time-secret'
 import '../shared/select-menu'
+import '../shared/entity-list'
+import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
 import type { SelectMenu } from '../shared/select-menu'
 import { renderSettingsActions, renderSettingsRow, renderSettingsSection, settingsLayoutStyles } from '../shared/settings-layout'
 import { submitAuthForm } from '../shared/auth-form'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import { avatarResponseError } from './avatar-response'
-import { formatDate, humanizeCapability, humanizeSessionKind, sessionFact } from './personal-settings-format'
-import { formatPermissionPair, permissionLabelsByPair, permissionPairKey, tokenPermissionPolicies, uniquePermissionPairs } from './personal-settings-permissions'
+import { formatDate, humanizeSessionKind, sessionFact } from './personal-settings-format'
+import { permissionPairKey, tokenPermissionPolicies, uniquePermissionPairs } from './personal-settings-permissions'
 import type { TokenPermissionPolicy } from './personal-settings-permissions'
 import { renderAuthoringSessionRow, renderBrowserSessionRow, type PendingSessionRevocation, type SelectedSession } from './personal-settings-session-rows'
 import { personalSettingsStyles } from './personal-settings.styles'
@@ -58,6 +60,51 @@ const themeOptions: readonly ThemeOption[] = [
 
 const themeGroups: readonly ThemeOption['group'][] = ['Automatic', 'Standard', 'Accessibility']
 
+const tokenListColumns: EntityListColumn[] = [
+  { id: 'name', label: 'Token', width: '16%' },
+  { id: 'description', label: 'Description', width: '15%' },
+  { id: 'permissions', label: 'Permissions', width: '12%' },
+  { id: 'lastUsed', label: 'Last used', width: '13%', render: 'datetime' },
+  { id: 'created', label: 'Created', width: '13%', render: 'datetime' },
+  { id: 'modified', label: 'Last modified', width: '13%', render: 'datetime' },
+  { id: 'status', label: 'Status', width: '12%', render: 'status' },
+  { id: 'actions', label: 'Actions', width: '6%', render: 'actions', align: 'center' },
+]
+
+function tokenStatus(token: PersonalTokenSignal): string {
+  return token.revokedAt ? 'Revoked' : token.expiresAt && Date.parse(token.expiresAt) <= Date.now() ? 'Expired' : 'Active'
+}
+
+function tokenListItem(token: PersonalTokenSignal): EntityListItem {
+  const count = token.permissionProfile ? token.permissions.length : token.capabilities.length
+  const modifiedAt = token.revokedAt || token.modifiedAt || token.createdAt
+  return {
+    id: token.id,
+    title: token.name,
+    href: `/admin/api-tokens/${encodeURIComponent(token.id)}/edit`,
+    icon: 'key',
+    actions: token.revokedAt ? [] : [{ label: `Delete ${token.name}`, action: 'delete', icon: 'trash' }],
+    columns: {
+      description: token.description || '—',
+      permissions: count ? `${count} ${count === 1 ? 'permission' : 'permissions'}` : 'No permissions',
+      lastUsed: token.lastUsedAt ? formatDateOnly(token.lastUsedAt) : 'Never',
+      created: formatDateOnly(token.createdAt),
+      modified: formatDateOnly(modifiedAt),
+      status: tokenStatus(token),
+    },
+    columnTitles: {
+      lastUsed: token.lastUsedAt ? formatDate(token.lastUsedAt) : '',
+      created: formatDate(token.createdAt),
+      modified: formatDate(modifiedAt),
+    },
+    sortValues: {
+      lastUsed: token.lastUsedAt || '',
+      created: token.createdAt,
+      modified: modifiedAt,
+    },
+  }
+}
+
 class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private profileName = ''
   @state() private profileTitle = ''
@@ -70,13 +117,21 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private tokenExpirationPreset: TokenExpirationPreset = '30'
   @state() private tokenCustomExpiration = ''
   @state() private tokenPendingDeletion: PersonalTokenSignal | null = null
+  @state() private tokenPendingRotation: PersonalTokenSignal | null = null
   @state() private pendingSessionRevocation: PendingSessionRevocation | null = null
   @state() private selectedSession: SelectedSession | null = null
   @state() private passwordDialogOpen = false
   @state() private logoutAllDialogOpen = false
-  @property({ attribute: 'token-view' }) tokenView: 'list' | 'create' = 'list'
+  @property({ attribute: 'token-view' }) tokenView: 'list' | 'create' | 'edit' = 'list'
   @state() private tokenConfirmationOpen = false
   @state() private tokenCreatePending = false
+  @state() private tokenEditPending = false
+  @state() private tokenRotatePending = false
+  @state() private tokenEditUnavailable = false
+  private tokenEditLoadedId = ''
+  private tokenEditExpectedModifiedAt = ''
+  private tokenEditOriginalExpiresAt = ''
+  private tokenEditExpirationTouched = false
   @state() private tokenPermissionMenuOpen = false
   @state() private tokenPermissionsIncomplete = false
   @state() private message = ''
@@ -92,6 +147,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @query('.theme-trigger') private themeTrigger?: HTMLButtonElement
   @query('[data-token-confirm-dialog]') private tokenConfirmationDialog?: HTMLDialogElement
   @query('[data-token-delete-dialog]') private tokenDeleteDialog?: HTMLDialogElement
+  @query('[data-token-rotate-dialog]') private tokenRotateDialog?: HTMLDialogElement
   @query('[data-session-revoke-dialog]') private sessionRevokeDialog?: HTMLDialogElement
   @query('[data-password-dialog]') private passwordDialog?: HTMLDialogElement
   @query('[data-logout-all-dialog]') private logoutAllDialog?: HTMLDialogElement
@@ -126,7 +182,27 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
 
   override updated(): void {
     const settings = this.settings
-    this.reconcileTokenPermissionState(settings.tokens.capabilities)
+    if (this.tokenView === 'edit') {
+      const tokenID = window.location.pathname.match(/^\/admin\/api-tokens\/([^/]+)\/edit$/)?.[1] ?? ''
+      const token = settings.tokens.items.find((item) => item.id === tokenID)
+      if (token && settings.tokens.permissionOptionsReady && token.id !== this.tokenEditLoadedId) {
+        this.tokenEditLoadedId = token.id
+        this.tokenEditExpectedModifiedAt = token.modifiedAt || token.createdAt
+        this.tokenEditOriginalExpiresAt = token.expiresAt
+        this.tokenEditExpirationTouched = false
+        this.tokenName = token.name
+        this.tokenDescription = token.description
+        this.tokenExpirationPreset = 'custom'
+        this.tokenCustomExpiration = token.expiresAt.slice(0, 10)
+        this.tokenSelectedPermissions = this.authorizedSelectedPermissions(token.permissions, settings.tokens.capabilities)
+        this.tokenEditUnavailable = this.tokenSelectedPermissions.length !== uniquePermissionPairs(token.permissions).length
+      } else if (token && this.tokenEditPending && token.modifiedAt && token.modifiedAt !== this.tokenEditExpectedModifiedAt) {
+        window.location.assign('/admin/api-tokens')
+        return
+      }
+    } else {
+      this.reconcileTokenPermissionState(settings.tokens.capabilities)
+    }
     if (settings.profile.id && settings.profile.id !== this.observedProfileID) {
       this.observedProfileID = settings.profile.id
       this.profileTitle = ''
@@ -144,9 +220,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     }
     const newToken = settings.tokens.newToken ?? ''
     if (newToken && newToken !== this.handledNewToken) {
-      const navigateToTokenList = this.tokenView === 'create' && window.location.pathname === '/admin/api-tokens/new'
+      const navigateToTokenList = this.tokenView === 'create' || this.tokenView === 'edit'
       this.handledNewToken = newToken
       this.tokenCreatePending = false
+      this.tokenRotatePending = false
       this.tokenView = 'list'
       this.tokenConfirmationOpen = false
       this.tokenName = ''
@@ -163,6 +240,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (this.tokenConfirmationOpen && confirmation && !confirmation.open) confirmation.showModal()
     const deletion = this.tokenDeleteDialog
     if (this.tokenPendingDeletion && deletion && !deletion.open) deletion.showModal()
+    const rotation = this.tokenRotateDialog
+    if (this.tokenPendingRotation && rotation && !rotation.open) rotation.showModal()
     const sessionRevocation = this.sessionRevokeDialog
     if (this.pendingSessionRevocation && sessionRevocation && !sessionRevocation.open) sessionRevocation.showModal()
     const password = this.passwordDialog
@@ -426,26 +505,35 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
 
   private renderTokens(tokens: PersonalSettingsSignal['tokens']) {
     if (this.tokenView === 'list') return this.renderTokenList(tokens)
+    const editing = this.tokenView === 'edit'
+    const tokenID = editing ? window.location.pathname.match(/^\/admin\/api-tokens\/([^/]+)\/edit$/)?.[1] ?? '' : ''
+    const editedToken = editing ? tokens.items.find((item) => item.id === tokenID) : undefined
+    if (editing && tokens.permissionOptionsReady && (!editedToken || tokenStatus(editedToken) !== 'Active')) return renderEmptyState({
+      icon: lucideIcon(KeyRound, { size: 28, strokeWidth: 1.8 }),
+      title: 'Token not available',
+      description: 'This token was deleted or cannot be edited.',
+    })
     const policies = tokenPermissionPolicies(tokens.capabilities)
     const expirationOptions = tokenExpirationOptions()
-    const canCreate = Boolean(this.tokenName.trim() && this.tokenExpirationIsValid() && !this.tokenCreatePending && !this.tokenPermissionsIncomplete)
+    const canCreate = Boolean(this.tokenName.trim() && this.tokenExpirationIsValid() && !this.tokenCreatePending && !this.tokenEditPending && !this.tokenPermissionsIncomplete && !this.tokenEditUnavailable && (!editing || this.tokenEditLoadedId === tokenID))
     return html`
-      <section class="token-page" aria-label="Create personal access token">
+      <section class="token-page" aria-label=${editing ? 'Edit personal access token' : 'Create personal access token'}>
         <div class="token-create-header">
           <a class="token-back" href="/admin/api-tokens" aria-label="Back to personal access tokens">${lucideIcon(ArrowLeft, { size: 16, strokeWidth: 2 })}</a>
-          <div class="token-page-heading"><h2>New personal access token</h2></div>
+          <div class="token-page-heading"><h2>${editing ? 'Edit personal access token' : 'New personal access token'}</h2></div>
         </div>
         <form class="token-form" @submit=${this.requestTokenCreation}>
-          <p class="token-page-intro">Create a scoped token suitable for personal API, CLI, and automation access.</p>
+          <p class="token-page-intro">${editing ? 'Update the token without changing its secret. Changes to access take effect immediately.' : 'Create a scoped token suitable for personal API, CLI, and automation access.'}</p>
+          ${this.tokenEditUnavailable ? html`<p class="error" role="alert">This token contains permissions no longer available in your current authority. It cannot be edited here without losing them. Ask an administrator to review access, or create a replacement token.</p>` : nothing}
           <div class="token-details">
             <label class="token-field" for="token-name">
               <span class="settings-label">Token name *</span>
-              <input id="token-name" required autocomplete="off" placeholder="For example, Sales reporting" .value=${this.tokenName} @input=${this.onTokenNameInput}>
+              <input id="token-name" required autocomplete="off" .value=${this.tokenName} @input=${this.onTokenNameInput}>
               <span class="settings-description">A unique name for this token. It may be visible to administrators.</span>
             </label>
             <label class="token-field" for="token-description">
               <span class="settings-label">Description <span class="muted">(optional)</span></span>
-              <textarea id="token-description" maxlength="1024" placeholder="What will this token be used for?" .value=${this.tokenDescription} @input=${this.onTokenDescriptionInput}></textarea>
+              <textarea id="token-description" maxlength="1024" .value=${this.tokenDescription} @input=${this.onTokenDescriptionInput}></textarea>
               <span class="settings-description">Explain what this token will be used for so you can identify it later.</span>
             </label>
             <div class="token-field token-expiration-field">
@@ -460,14 +548,14 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
               >
                 <span slot="leading">${lucideIcon(CalendarDays, { size: 16, strokeWidth: 2 })}</span>
               </lv-select-menu>
-              ${this.tokenExpirationPreset === 'custom' ? html`<input class="custom-expiration" id="token-custom-expiration" type="date" min=${dateInputValueInDays(1)} max=${dateInputValueInDays(90)} .value=${this.tokenCustomExpiration} @input=${this.onTokenCustomExpirationInput} required>` : nothing}
+              ${this.tokenExpirationPreset === 'custom' ? html`<input class="custom-expiration" id="token-custom-expiration" type="date" min=${dateInputValueInDays(editing ? 0 : 1)} max=${editing && this.tokenEditOriginalExpiresAt.slice(0, 10) > dateInputValueInDays(90) ? this.tokenEditOriginalExpiresAt.slice(0, 10) : dateInputValueInDays(90)} .value=${this.tokenCustomExpiration} @input=${this.onTokenCustomExpirationInput} required>` : nothing}
               <span class="settings-description">The token will expire on the selected date. Maximum lifetime is 90 days.</span>
             </div>
           </div>
           <div class="permissions">
             <div class="permissions-heading">
               <h3>Permissions</h3>
-              <p class="token-page-intro">Choose only what this token needs. Each selection grants one exact permission for a specific scope or resource.</p>
+              <p class="token-page-intro">Choose only the permissions and resource scopes this token needs.</p>
             </div>
             <div class="permissions-card">
               <lv-personal-token-permission-picker
@@ -482,9 +570,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
               ></lv-personal-token-permission-picker>
             </div>
           </div>
-          <div class="actions token-actions"><button class="primary" type="submit" ?disabled=${!canCreate}>Generate token</button><a class="button-link" href="/admin/api-tokens">Cancel</a></div>
+          <div class="actions token-actions"><button class="primary" type="submit" ?disabled=${!canCreate}>${editing ? this.tokenEditPending ? 'Saving…' : 'Save changes' : 'Generate token'}</button>${editing ? html`<button type="button" ?disabled=${this.tokenEditUnavailable || this.tokenEditPending || this.tokenRotatePending} @click=${() => { if (editedToken) this.tokenPendingRotation = editedToken }}>Rotate secret</button>` : nothing}<a class="button-link" href="/admin/api-tokens">Cancel</a></div>
         </form>
         ${this.tokenConfirmationOpen ? this.renderTokenConfirmation() : nothing}
+        ${this.tokenPendingRotation ? this.renderTokenRotateConfirmation(this.tokenPendingRotation) : nothing}
       </section>
     `
   }
@@ -497,7 +586,17 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
           <a class="button-link primary" href="/admin/api-tokens/new">Generate new token</a>
         </div>
         <p class="token-page-intro">Tokens are scoped credentials for API, CLI, and automation access. Keep them secret and delete any you no longer use.</p>
-        ${tokens.items.length ? html`<div class="card token-list">${tokens.items.map((token, index) => this.renderToken(token, tokens.capabilities, index === 0 ? tokens.newToken : undefined))}</div>` : renderEmptyState({
+        ${tokens.newToken && tokens.items[0] ? html`<div class="token-new-secret"><strong>New token: ${tokens.items[0].name}</strong><lv-one-time-secret secret=${tokens.newToken} message="Copy your personal access token now. You won’t be able to see it again." copy-label="Copy personal access token"></lv-one-time-secret></div>` : nothing}
+        ${tokens.items.length ? html`<lv-entity-list
+          .items=${tokens.items.map(tokenListItem)}
+          .columns=${tokenListColumns}
+          row-action="open"
+          client-filter
+          min-width="64rem"
+          list-label="Personal access tokens"
+          search-placeholder="Search tokens"
+          @lv-entity-list-row-action=${(event: CustomEvent<{ action: string, item: EntityListItem }>) => this.handleTokenListAction(event, tokens.items)}
+        ></lv-entity-list>` : renderEmptyState({
           icon: lucideIcon(KeyRound, { size: 28, strokeWidth: 1.8 }),
           title: 'No personal access tokens yet',
           description: 'Generate a token when a tool or script needs to access LeapView.',
@@ -549,25 +648,24 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     `
   }
 
-  private renderToken(token: PersonalTokenSignal, capabilities: PersonalCapabilityOptionSignal[], newToken?: string) {
-    const options = new Map(capabilities.map((capability) => [capability.value, capability.label]))
-    const permissionLabels = permissionLabelsByPair(capabilities)
-    const labels = token.permissionProfile
-      ? token.permissions.map((permission) => permissionLabels.get(permissionPairKey(permission)) ?? formatPermissionPair(permission))
-      : token.capabilities.map((capability) => options.get(capability) ?? humanizeCapability(capability))
-    const usage = token.lastUsedAt ? `Last used ${formatDateOnly(token.lastUsedAt)}` : 'Never used'
-    return html`
-      <div class="token-row">
-        <span class="token-row-icon" aria-hidden="true">${lucideIcon(KeyRound, { size: 16, strokeWidth: 2 })}</span>
-        <div class="token-row-content">
-          <span class="token-name">${token.name}</span>
-          ${token.description ? html`<span class="token-description">${token.description}</span>` : nothing}
-          <span class="token-meta">${usage}${token.expiresAt ? ` · Expires ${formatDateOnly(token.expiresAt)}` : ''} · ${labels.join(', ') || 'No project or resource authority'}</span>
-          ${newToken ? html`<lv-one-time-secret secret=${newToken} message="Copy your personal access token now. You won’t be able to see it again." copy-label="Copy personal access token"></lv-one-time-secret>` : nothing}
-        </div>
-        ${token.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.requestTokenDeletion(token)}>Delete</button>`}
-      </div>
-    `
+  private renderTokenRotateConfirmation(token: PersonalTokenSignal) {
+    return html`<dialog data-token-rotate-dialog aria-labelledby="token-rotate-title" @cancel=${this.cancelTokenRotation} @click=${this.closeTokenRotationOnBackdrop}>
+      <section class="token-confirm">
+        <header class="token-confirm-header"><h2 id="token-rotate-title">Rotate this token?</h2><button class="token-confirm-close" type="button" aria-label="Close token rotation confirmation" @click=${this.cancelTokenRotation}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button></header>
+        <div class="token-delete-warning"><p>A new secret will replace <strong>${token.name}</strong>. The old secret stops working immediately; update every application that uses it. The new secret is shown only once.</p></div>
+        <div class="token-delete-actions"><button class="primary" type="button" ?disabled=${this.tokenRotatePending} @click=${this.confirmTokenRotation}>Rotate token</button></div>
+      </section>
+    </dialog>`
+  }
+
+  private handleTokenListAction(event: CustomEvent<{ action: string, item: EntityListItem }>, tokens: PersonalTokenSignal[]): void {
+    const { action, item } = event.detail
+    if (action === 'delete') {
+      const token = tokens.find((candidate) => candidate.id === item.id)
+      if (token && !token.revokedAt) this.requestTokenDeletion(token)
+      return
+    }
+    if (action === 'open' && item.href) window.location.assign(item.href)
   }
 
   private saveProfile = (event: Event): void => { event.preventDefault(); this.send('lv-personal-profile-command', { action: 'save', displayName: this.profileName.trim() }) }
@@ -640,8 +738,23 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
   private requestTokenCreation = (event: Event): void => {
     event.preventDefault()
-    if (!this.tokenName.trim() || !this.tokenExpirationIsValid()) return
+    if (!this.tokenName.trim() || !this.tokenExpirationIsValid() || this.tokenPermissionsIncomplete || this.tokenEditUnavailable) return
+    if (this.tokenView === 'edit') {
+      this.saveTokenEdits()
+      return
+    }
     this.tokenConfirmationOpen = true
+  }
+  private saveTokenEdits(): void {
+    if (!this.tokenEditLoadedId || !this.tokenEditExpectedModifiedAt || this.tokenEditPending) return
+    this.tokenEditPending = true
+    this.send('lv-personal-token-command', {
+      action: 'update', tokenId: this.tokenEditLoadedId,
+      expectedModifiedAt: this.tokenEditExpectedModifiedAt,
+      name: this.tokenName.trim(), description: this.tokenDescription.trim(),
+      expiresAt: this.tokenEditExpirationTouched ? this.tokenExpirationDate().toISOString() : this.tokenEditOriginalExpiresAt,
+      permissions: this.selectedTokenPermissions(),
+    })
   }
   private cancelTokenConfirmation = (event?: Event): void => {
     event?.preventDefault()
@@ -652,7 +765,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (event.target === event.currentTarget) this.cancelTokenConfirmation(event)
   }
   private createToken = (): void => {
-    if (!this.tokenName.trim() || !this.tokenExpirationIsValid() || this.tokenCreatePending) return
+    if (!this.tokenName.trim() || !this.tokenExpirationIsValid() || this.tokenCreatePending || this.tokenPermissionsIncomplete) return
     const command: Record<string, unknown> = {
       action: 'create',
       name: this.tokenName.trim(),
@@ -672,6 +785,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
   private tokenExpirationIsValid(): boolean {
     const expiration = this.tokenExpirationDate()
+    if (this.tokenView === 'edit' && !this.tokenEditExpirationTouched) return Date.parse(this.tokenEditOriginalExpiresAt) > Date.now()
     return !Number.isNaN(expiration.valueOf()) && expiration.valueOf() > Date.now() && expiration.valueOf() <= endOfDayInDays(90).valueOf()
   }
   private requestTokenDeletion(token: PersonalTokenSignal): void {
@@ -689,6 +803,15 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (!token) return
     this.tokenPendingDeletion = null
     this.send('lv-personal-token-command', { action: 'revoke', tokenId: token.id })
+  }
+  private cancelTokenRotation = (event?: Event): void => { event?.preventDefault(); this.tokenPendingRotation = null }
+  private closeTokenRotationOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.cancelTokenRotation(event) }
+  private confirmTokenRotation = (): void => {
+    const token = this.tokenPendingRotation
+    if (!token || this.tokenRotatePending) return
+    this.tokenPendingRotation = null
+    this.tokenRotatePending = true
+    this.send('lv-personal-token-command', { action: 'rotate', tokenId: token.id, expectedModifiedAt: token.modifiedAt || token.createdAt })
   }
   private requestSessionRevocation(session: PendingSessionRevocation): void {
     this.pendingSessionRevocation = session
@@ -783,10 +906,12 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     }
   }
   private handleDatastarFetch = (event: Event): void => {
-    if (!this.tokenCreatePending) return
-    const failure = browserCommandFailure(event, 'Token creation')
+    if (!this.tokenCreatePending && !this.tokenEditPending && !this.tokenRotatePending) return
+    const failure = browserCommandFailure(event, this.tokenEditPending ? 'Token update' : this.tokenRotatePending ? 'Token rotation' : 'Token creation')
     if (!failure) return
     this.tokenCreatePending = false
+    this.tokenEditPending = false
+    this.tokenRotatePending = false
     this.error = failure.message
   }
   private uploadAvatar = async (event: Event): Promise<void> => {
@@ -826,9 +951,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private onNewPasswordInput = (event: Event): void => { this.newPassword = (event.currentTarget as HTMLInputElement).value }
   private onTokenNameInput = (event: Event): void => { this.tokenName = (event.currentTarget as HTMLInputElement).value }
   private onTokenDescriptionInput = (event: Event): void => { this.tokenDescription = (event.currentTarget as HTMLTextAreaElement).value }
-  private onTokenCustomExpirationInput = (event: Event): void => { this.tokenCustomExpiration = (event.currentTarget as HTMLInputElement).value }
+  private onTokenCustomExpirationInput = (event: Event): void => { this.tokenCustomExpiration = (event.currentTarget as HTMLInputElement).value; this.tokenEditExpirationTouched = true }
   private chooseExpirationPreset = (event: CustomEvent<{ value: TokenExpirationPreset }>): void => {
     this.tokenExpirationPreset = event.detail.value
+    this.tokenEditExpirationTouched = true
     if (event.detail.value !== 'custom') this.tokenCustomExpiration = ''
   }
   private handleExpirationMenuToggle = (event: CustomEvent<{ open: boolean }>): void => {

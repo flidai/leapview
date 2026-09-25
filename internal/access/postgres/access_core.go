@@ -1080,7 +1080,7 @@ func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, 
 		return access.APIToken{}, err
 	}
 	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name, Description: row.Description, TokenFingerprint: hex.EncodeToString(row.TokenFingerprint),
-		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt),
+		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), ModifiedAt: principalTimestamp(row.ModifiedAt),
 		LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
 	if row.PermissionProfile != nil {
 		if *row.PermissionProfile != access.PermissionCatalogProfile || row.Permissions == nil {

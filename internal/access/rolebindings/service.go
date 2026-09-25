@@ -212,10 +212,16 @@ func authorizeGrant(authority access.RoleBindingAdministrationAuthority, envelop
 	if err != nil {
 		return fmt.Errorf("%w: delegate pair: %v", access.ErrGrantAdminEnvelopeMismatch, err)
 	}
-	required := make([]access.PermissionPair, 0, len(permissions)+1)
-	required = append(required, delegate)
-	required = append(required, permissions...)
-	if err := ValidatePermissionCeiling(authority.Permissions, required); err != nil {
+	// Check the delegation prerequisite independently from the selected role.
+	// Project admin itself contains project.access.delegate, and a permission
+	// set must not become invalid merely because those two requirements overlap.
+	validateCeiling := func(ceiling []access.PermissionPair) error {
+		if err := ValidatePermissionCeiling(ceiling, permissions); err != nil {
+			return err
+		}
+		return ValidatePermissionCeiling(ceiling, []access.PermissionPair{delegate})
+	}
+	if err := validateCeiling(authority.Permissions); err != nil {
 		return fmt.Errorf("%w: current authority: %v", access.ErrGrantAdminEnvelopeMismatch, err)
 	}
 	credential := authority.Credential
@@ -230,7 +236,7 @@ func authorizeGrant(authority access.RoleBindingAdministrationAuthority, envelop
 		if credential.PermissionProfile != access.PermissionCatalogProfile || credential.TokenPermissions == nil {
 			return fmt.Errorf("%w: %v", access.ErrGrantAdminEnvelopeMismatch, access.ErrTokenPermissionAttenuationNeeded)
 		}
-		if err := ValidatePermissionCeiling(credential.TokenPermissions, required); err != nil {
+		if err := validateCeiling(credential.TokenPermissions); err != nil {
 			return fmt.Errorf("%w: %v", access.ErrGrantAdminEnvelopeMismatch, err)
 		}
 		return nil

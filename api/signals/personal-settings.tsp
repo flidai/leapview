@@ -99,6 +99,8 @@ model PersonalCapabilityOptionSignal {
   `value`: string;
   /** Human-facing action name used to group resource targets into one policy block. */
   `actionLabel`: string;
+  /** Catalog description of the action, independent of any target label or scope. */
+  `actionDescription`?: string;
   `label`: string;
   `description`: string;
   `category`: string;
@@ -117,6 +119,7 @@ model PersonalTokenSignal {
   /** Legacy capability rows remain readable during migration; new issuance uses permissions. */
   `capabilities`: string[];
   `createdAt`: string;
+  `modifiedAt`: string;
   `lastUsedAt`: string;
   `expiresAt`: string;
   `revokedAt`: string;
@@ -162,6 +165,7 @@ model PersonalAuthoringSessionCommand {
 model PersonalTokenCommand {
   `action`: string;
   `tokenId`: string;
+  `expectedModifiedAt`: string;
   `name`: string;
   `description`: string;
   `permissions`: PersonalPermissionPairSignal[];

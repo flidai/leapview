@@ -108,6 +108,29 @@ func TestRoleBindingAdministrationStateDistinguishesConfiguredAndActiveRoles(t *
 	require.Equal(t, "Pending activation", known.Assignments[1].Status)
 }
 
+func TestRoleBindingAdministrationStateProjectsCanonicalRoleDetails(t *testing.T) {
+	state := RoleBindingAdministrationStateFromAccess(access.RoleBindingAdministrationState{
+		Scope: access.AuthorizationPolicyScope{ProjectID: "project-demo"},
+		RolePresets: []access.PermissionRolePreset{{
+			Role: access.PermissionRoleViewer, Profile: access.PermissionCatalogProfile,
+			Description: "View approved dashboards.", Actions: []access.Action{access.ActionDashboardRead},
+		}},
+	})
+	require.Len(t, state.RolePresets, 1)
+	require.Equal(t, access.PermissionCatalogProfile, state.RolePresets[0].Profile)
+	require.Equal(t, []AccessRolePermissionDetailSignal{{
+		Action: "dashboard.read", DisplayName: "View dashboard", Family: "Dashboard", Scope: "resource",
+		ResourceKinds: []string{"dashboard"}, Description: "View an approved dashboard definition and shell.",
+	}}, state.RolePresets[0].Details)
+	require.Len(t, state.PermissionCatalog, len(access.PermissionCatalog()))
+	require.Equal(t, state.RolePresets[0].Details[0], state.PermissionCatalog[0])
+	require.Contains(t, state.PermissionCatalog, AccessRolePermissionDetailSignal{
+		Action: "dashboard.create", DisplayName: "Create dashboards", Family: "Dashboard", Scope: "project",
+		ResourceKinds: []string{"dashboard"},
+		Description:   "Create a dashboard in the bound Project.",
+	})
+}
+
 func TestApplyAccessAdministrationCommandRevokesAllPrincipalSessions(t *testing.T) {
 	ctx := context.Background()
 	repository := openAccessAdministrationRepository(t, ctx)

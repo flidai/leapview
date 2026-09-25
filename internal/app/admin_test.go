@@ -125,6 +125,7 @@ func TestAdminRoutesExposeOnlyPersonalSettingsToViewer(t *testing.T) {
 		{method: http.MethodGet, path: "/admin/security", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/api-tokens", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/api-tokens/new", status: http.StatusOK},
+		{method: http.MethodGet, path: "/admin/api-tokens/00000000-0000-7000-8000-000000000001/edit", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/agent", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/admin/storage", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/admin/storage/tables/model/orders", status: http.StatusForbidden},
@@ -155,6 +156,10 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 	if err := repo.AddGroupMember(ctx, group.ID, analyst.ID); err != nil {
 		t.Fatalf("seed group member: %v", err)
 	}
+	serviceAccount, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: "Build automation"})
+	if err != nil {
+		t.Fatalf("seed service account: %v", err)
+	}
 	browser := testAdminBrowserSession(t, ctx, store, owner)
 	auth := browser.auth
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "fake-model"})}))
@@ -171,6 +176,8 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`, "/admin/access/command", "resetPrincipalPassword"}},
 		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`, "/admin/access/command", "createGroup"}},
 		{path: "/admin/groups/" + group.ID, want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=` + group.ID + `&amp;route=admin&amp;section=group-detail`, "/admin/access/command", "addGroupMember"}},
+		{path: "/admin/service-accounts/" + serviceAccount.ID, want: []string{"<lv-admin-page", `section="service-accounts-detail"`, `/updates?route=admin&amp;section=service-accounts-detail&amp;serviceAccount=` + serviceAccount.ID, "/admin/access/command"}},
+		{path: "/admin/service-accounts/00000000-0000-0000-0000-000000000000", status: http.StatusNotFound},
 		{path: "/admin/agent", want: []string{"<lv-admin-page", `section="agent"`, `/updates?route=admin&amp;section=agent`}},
 		{path: "/admin/storage", want: []string{"<lv-admin-page", `section="storage"`, `/updates?route=admin&amp;section=storage`}},
 		{path: "/admin/queries", want: []string{"<lv-admin-page", `section="queries"`, `/updates?route=admin&amp;section=queries`, "/admin/queries/command"}},
@@ -775,7 +782,7 @@ func TestAdminQueryHistoryUpdatesForwardsPatches(t *testing.T) {
 	}
 }
 
-func TestAdminAccessRouteRendersOverview(t *testing.T) {
+func TestAdminAccessRouteRendersCatalogue(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
@@ -789,7 +796,7 @@ func TestAdminAccessRouteRendersOverview(t *testing.T) {
 	server.Routes().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `section="access"`) {
-		t.Fatalf("status = %d, want access overview body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("status = %d, want roles and permissions body=%s", rec.Code, rec.Body.String())
 	}
 }
 

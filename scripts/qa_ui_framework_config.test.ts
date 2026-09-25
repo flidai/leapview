@@ -68,6 +68,17 @@ test('development publication can seed a healthy server before a project is acti
   expect(publishRunning).not.toContain('"http://localhost:${port}/"')
 })
 
+test('managed development waits for the published Project before handing over the UI', async () => {
+  const [server, taskfile] = await Promise.all([
+    readFile('scripts/dev-server.sh', 'utf8'),
+    readFile('Taskfile.yml', 'utf8'),
+  ])
+
+  expect(server).toContain('.checks.runtime == "ok"')
+  expect(server).toContain('wait_active_project "$port" || return 1')
+  expect(taskfile).toContain('      - ./scripts/dev-server.sh start')
+})
+
 test('maintained headless workflows use the managed PostgreSQL dev lifecycle', async () => {
   const [agent, capture, taskfile] = await Promise.all([
     readFile('scripts/agent_e2e.sh', 'utf8'),

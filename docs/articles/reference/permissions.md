@@ -10,57 +10,57 @@ Catalog presence defines stable vocabulary, not blanket runtime availability. `U
 
 ## Actions
 
-| Action | Family | Scope | Resource kinds | Check kinds | Prerequisites | Delegable | UI selectable | Description |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `dashboard.read` | Dashboard | `resource` | `dashboard` | `dashboard` | — | yes | yes | View an approved dashboard definition and shell. |
-| `dashboard.create` | Dashboard | `project` | `dashboard` | `project` | — | yes | yes | Create a dashboard in the bound Project. |
-| `dashboard.update` | Dashboard | `resource` | `dashboard` | `dashboard` | — | yes | yes | Edit an existing dashboard definition. |
-| `dashboard.delete` | Dashboard | `resource` | `dashboard` | `dashboard` | — | no | yes | Delete or archive an existing dashboard. |
-| `dashboard.publish` | Dashboard | `resource` | `dashboard` | `dashboard` | — | no | yes | Publish an approved dashboard revision. |
-| `semantic.read` | Semantic consumption | `resource` | `semantic_model` | `semantic_model` | — | yes | yes | Discover governed semantic metadata. |
-| `semantic.query` | Semantic consumption | `resource` | `semantic_model` | `semantic_model` | `semantic.consume` | yes | yes | Construct an arbitrary governed semantic query. |
-| `semantic.consume` | Semantic consumption | `resource` | `semantic_model` | `semantic_model` | — | yes | yes | Consume governed data from an exact SemanticModel. |
-| `semantic.create` | Development | `project` | `semantic_model` | `project` | — | yes | yes | Create a SemanticModel definition in the bound Project. |
-| `semantic.update` | Development | `resource` | `semantic_model` | `semantic_model` | — | yes | yes | Update a SemanticModel definition. |
-| `semantic.delete` | Development | `resource` | `semantic_model` | `semantic_model` | — | no | yes | Delete a SemanticModel definition. |
-| `source.read` | Development | `resource` | `source` | `source` | — | yes | yes | Read a Source definition. |
-| `source.create` | Development | `project` | `source` | `project` | — | yes | yes | Create a Source definition in the bound Project. |
-| `source.update` | Development | `resource` | `source` | `source` | — | yes | yes | Update a Source definition. |
-| `source.delete` | Development | `resource` | `source` | `source` | — | no | yes | Delete a Source definition. |
-| `model.read` | Development | `resource` | `model` | `model` | — | yes | yes | Read a Model definition. |
-| `model.create` | Development | `project` | `model` | `project` | — | yes | yes | Create a Model definition in the bound Project. |
-| `model.update` | Development | `resource` | `model` | `model` | — | yes | yes | Update a Model definition. |
-| `model.delete` | Development | `resource` | `model` | `model` | — | no | yes | Delete a Model definition. |
-| `pipeline.read` | Pipeline | `resource` | `pipeline` | `pipeline` | — | yes | yes | Read a Pipeline definition and bounded operational status. |
-| `pipeline.create` | Pipeline | `project` | `pipeline` | `project` | — | yes | yes | Create a Pipeline in the bound Project. |
-| `pipeline.run` | Pipeline | `resource` | `pipeline` | `pipeline` | — | yes | yes | Trigger an approved Pipeline revision. |
-| `pipeline.update` | Pipeline | `resource` | `pipeline` | `pipeline` | — | yes | yes | Update a Pipeline definition. |
-| `pipeline.delete` | Pipeline | `resource` | `pipeline` | `pipeline` | — | no | yes | Delete a Pipeline definition. |
-| `connection.read` | Connection | `resource` | `connection` | `connection` | — | yes | yes | Read redacted Connection metadata. |
-| `connection.create` | Connection | `project` | `connection` | `project` | — | yes | yes | Create a Connection in the bound Project. |
-| `connection.use` | Connection | `resource` | `connection` | `connection` | — | yes | yes | Execute through an approved Connection binding without revealing credentials. |
-| `connection.manage` | Connection | `resource` | `connection` | `connection` | — | no | yes | Update, rotate, test, or delete a Connection. |
-| `resource.share` | Sharing | `resource` | `connection`, `source`, `model`, `semantic_model`, `pipeline`, `dashboard` | `connection`, `source`, `model`, `semantic_model`, `pipeline`, `dashboard` | — | no | yes | Issue a bounded independent grant on an exact supported resource. |
-| `delivery.read` | Delivery | `project` | `project` | `project` | — | yes | yes | Inspect delivery plans and retained evidence. |
-| `delivery.plan` | Delivery | `project` | `project` | `project` | — | yes | yes | Persist an exact delivery plan. |
-| `delivery.build` | Delivery | `project` | `project` | `project` | — | yes | yes | Build an approved delivery candidate. |
-| `delivery.publish` | Delivery | `project` | `project` | `project` | — | yes | yes | Publish a built delivery candidate. |
-| `delivery.approve` | Delivery | `project` | `project` | `project` | — | no | yes | Approve a protected delivery candidate. |
-| `delivery.activate` | Delivery | `project` | `project` | `project` | — | no | yes | Activate an approved delivery publication. |
-| `delivery.rollback` | Delivery | `project` | `project` | `project` | — | no | yes | Rollback to eligible retained delivery evidence. |
-| `project.settings.read` | Project administration | `project` | `project` | `project` | — | yes | yes | Read Project settings. |
-| `project.settings.update` | Project administration | `project` | `project` | `project` | — | no | yes | Update Project settings. |
-| `project.access.read` | Project administration | `project` | `project` | `project` | — | yes | yes | Inspect Project access assignments. |
-| `project.access.manage` | Project administration | `project` | `project` | `project` | — | no | yes | Maintain Project access without unbounded privilege issuance. |
-| `project.access.delegate` | Project administration | `project` | `project` | `project` | — | no | yes | Issue authority within an explicit grant-administration envelope. |
-| `audit.read` | Project administration | `project` | `project` | `project` | — | yes | yes | Read authorized Project audit evidence. |
-| `workload.delegate` | Workload delegation | `resource` | `pipeline` | `pipeline` | — | no | yes | Issue a bounded execution grant for an exact Pipeline and workload principal. |
-| `platform.settings.read` | Platform administration | `instance` | — | — | — | no | yes | Read instance settings. |
-| `platform.settings.update` | Platform administration | `instance` | — | — | — | no | yes | Update instance settings. |
-| `platform.access.read` | Platform administration | `instance` | — | — | — | no | yes | Inspect instance access assignments. |
-| `platform.access.manage` | Platform administration | `instance` | — | — | — | no | yes | Manage instance access assignments. |
-| `platform.audit.read` | Platform administration | `instance` | — | — | — | no | yes | Read authorized instance audit evidence. |
-| `instance.project.claim` | Instance bootstrap | `instance` | — | — | — | no | no | Establish the first Project claim for this instance. |
+| Action | Display name | Family | Scope | Resource kinds | Check kinds | Prerequisites | Delegable | UI selectable | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `dashboard.read` | View dashboard | Dashboard | `resource` | `dashboard` | `dashboard` | — | yes | yes | View an approved dashboard definition and shell. |
+| `dashboard.create` | Create dashboards | Dashboard | `project` | `dashboard` | `project` | — | yes | yes | Create a dashboard in the bound Project. |
+| `dashboard.update` | Edit dashboard | Dashboard | `resource` | `dashboard` | `dashboard` | — | yes | yes | Edit an existing dashboard definition. |
+| `dashboard.delete` | Delete dashboard | Dashboard | `resource` | `dashboard` | `dashboard` | — | no | yes | Delete or archive an existing dashboard. |
+| `dashboard.publish` | Publish dashboard | Dashboard | `resource` | `dashboard` | `dashboard` | — | no | yes | Publish an approved dashboard revision. |
+| `semantic.read` | Discover metadata | Semantic consumption | `resource` | `semantic_model` | `semantic_model` | — | yes | yes | Discover governed semantic metadata. |
+| `semantic.query` | Build queries | Semantic consumption | `resource` | `semantic_model` | `semantic_model` | `semantic.consume` | yes | yes | Construct an arbitrary governed semantic query. |
+| `semantic.consume` | Use governed data | Semantic consumption | `resource` | `semantic_model` | `semantic_model` | — | yes | yes | Consume governed data from an exact SemanticModel. |
+| `semantic.create` | Create semantic models | Development | `project` | `semantic_model` | `project` | — | yes | yes | Create a SemanticModel definition in the bound Project. |
+| `semantic.update` | Edit semantic model | Development | `resource` | `semantic_model` | `semantic_model` | — | yes | yes | Update a SemanticModel definition. |
+| `semantic.delete` | Delete semantic model | Development | `resource` | `semantic_model` | `semantic_model` | — | no | yes | Delete a SemanticModel definition. |
+| `source.read` | View source | Development | `resource` | `source` | `source` | — | yes | yes | Read a Source definition. |
+| `source.create` | Create sources | Development | `project` | `source` | `project` | — | yes | yes | Create a Source definition in the bound Project. |
+| `source.update` | Edit source | Development | `resource` | `source` | `source` | — | yes | yes | Update a Source definition. |
+| `source.delete` | Delete source | Development | `resource` | `source` | `source` | — | no | yes | Delete a Source definition. |
+| `model.read` | View model | Development | `resource` | `model` | `model` | — | yes | yes | Read a Model definition. |
+| `model.create` | Create models | Development | `project` | `model` | `project` | — | yes | yes | Create a Model definition in the bound Project. |
+| `model.update` | Edit model | Development | `resource` | `model` | `model` | — | yes | yes | Update a Model definition. |
+| `model.delete` | Delete model | Development | `resource` | `model` | `model` | — | no | yes | Delete a Model definition. |
+| `pipeline.read` | View pipeline | Pipeline | `resource` | `pipeline` | `pipeline` | — | yes | yes | Read a Pipeline definition and bounded operational status. |
+| `pipeline.create` | Create pipelines | Pipeline | `project` | `pipeline` | `project` | — | yes | yes | Create a Pipeline in the bound Project. |
+| `pipeline.run` | Run pipeline | Pipeline | `resource` | `pipeline` | `pipeline` | — | yes | yes | Trigger an approved Pipeline revision. |
+| `pipeline.update` | Edit pipeline | Pipeline | `resource` | `pipeline` | `pipeline` | — | yes | yes | Update a Pipeline definition. |
+| `pipeline.delete` | Delete pipeline | Pipeline | `resource` | `pipeline` | `pipeline` | — | no | yes | Delete a Pipeline definition. |
+| `connection.read` | View connection details | Connection | `resource` | `connection` | `connection` | — | yes | yes | Read redacted Connection metadata. |
+| `connection.create` | Create connections | Connection | `project` | `connection` | `project` | — | yes | yes | Create a Connection in the bound Project. |
+| `connection.use` | Use connection | Connection | `resource` | `connection` | `connection` | — | yes | yes | Execute through an approved Connection binding without revealing credentials. |
+| `connection.manage` | Manage connection | Connection | `resource` | `connection` | `connection` | — | no | yes | Update, rotate, test, or delete a Connection. |
+| `resource.share` | Share resource | Sharing | `resource` | `connection`, `source`, `model`, `semantic_model`, `pipeline`, `dashboard` | `connection`, `source`, `model`, `semantic_model`, `pipeline`, `dashboard` | — | no | yes | Issue a bounded independent grant on an exact supported resource. |
+| `delivery.read` | View releases | Delivery | `project` | `project` | `project` | — | yes | yes | Inspect delivery plans and retained evidence. |
+| `delivery.plan` | Plan releases | Delivery | `project` | `project` | `project` | — | yes | yes | Persist an exact delivery plan. |
+| `delivery.build` | Build releases | Delivery | `project` | `project` | `project` | — | yes | yes | Build an approved delivery candidate. |
+| `delivery.publish` | Publish releases | Delivery | `project` | `project` | `project` | — | yes | yes | Publish a built delivery candidate. |
+| `delivery.approve` | Approve releases | Delivery | `project` | `project` | `project` | — | no | yes | Approve a protected delivery candidate. |
+| `delivery.activate` | Activate releases | Delivery | `project` | `project` | `project` | — | no | yes | Activate an approved delivery publication. |
+| `delivery.rollback` | Roll back releases | Delivery | `project` | `project` | `project` | — | no | yes | Rollback to eligible retained delivery evidence. |
+| `project.settings.read` | View project settings | Project administration | `project` | `project` | `project` | — | yes | yes | Read Project settings. |
+| `project.settings.update` | Update project settings | Project administration | `project` | `project` | `project` | — | no | yes | Update Project settings. |
+| `project.access.read` | View project access | Project administration | `project` | `project` | `project` | — | yes | yes | Inspect Project access assignments. |
+| `project.access.manage` | Manage project access | Project administration | `project` | `project` | `project` | — | no | yes | Maintain Project access without unbounded privilege issuance. |
+| `project.access.delegate` | Delegate project access | Project administration | `project` | `project` | `project` | — | no | yes | Issue authority within an explicit grant-administration envelope. |
+| `audit.read` | View audit log | Project administration | `project` | `project` | `project` | — | yes | yes | Read authorized Project audit evidence. |
+| `workload.delegate` | Delegate workload | Workload delegation | `resource` | `pipeline` | `pipeline` | — | no | yes | Issue a bounded execution grant for an exact Pipeline and workload principal. |
+| `platform.settings.read` | View platform settings | Platform administration | `instance` | — | — | — | no | yes | Read instance settings. |
+| `platform.settings.update` | Update platform settings | Platform administration | `instance` | — | — | — | no | yes | Update instance settings. |
+| `platform.access.read` | View platform access | Platform administration | `instance` | — | — | — | no | yes | Inspect instance access assignments. |
+| `platform.access.manage` | Manage platform access | Platform administration | `instance` | — | — | — | no | yes | Manage instance access assignments. |
+| `platform.audit.read` | View platform audit log | Platform administration | `instance` | — | — | — | no | yes | Read authorized instance audit evidence. |
+| `instance.project.claim` | Claim first project | Instance bootstrap | `instance` | — | — | — | no | no | Establish the first Project claim for this instance. |
 
 ## Versioned role expansions
 

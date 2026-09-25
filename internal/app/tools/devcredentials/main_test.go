@@ -45,7 +45,26 @@ func TestDevelopmentCredentialBundleIsPrivateAndPublisherIsBounded(t *testing.T)
 	if err != nil || len(pairs) == 0 || !samePermissions(pairs, append([]access.PermissionPair(nil), pairs...)) {
 		t.Fatalf("publisher permissions = %#v, err=%v", pairs, err)
 	}
+	want, err := access.InitialProjectPublisherPermissions(projectgraph.ResourceID("project_demo"))
+	if err != nil || !samePermissions(pairs, want) {
+		t.Fatalf("publisher permissions = %#v, want initial publisher permissions %#v, err=%v", pairs, want, err)
+	}
 	if samePermissions(pairs, pairs[:len(pairs)-1]) {
 		t.Fatal("incomplete publisher permissions were accepted")
+	}
+}
+
+func TestDevelopmentBootstrapUsesExactInitialClaimPermission(t *testing.T) {
+	const instanceID = "instance_development"
+	pairs, err := developmentBootstrapPermissions(instanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := access.InitialProjectClaimPermissions(instanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !samePermissions(pairs, want) || len(pairs) != 1 {
+		t.Fatalf("development bootstrap permissions = %#v, want exact claim permission %#v", pairs, want)
 	}
 }

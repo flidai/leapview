@@ -501,7 +501,7 @@ func (a *Auth) DevelopmentLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, a.sessionCookie(token, time.Now().Add(a.sessionTTL)))
-	http.Redirect(w, r, a.authenticationRedirectTarget(w, r, "/admin"), http.StatusFound)
+	http.Redirect(w, r, a.authenticationRedirectTarget(w, r, "/"), http.StatusFound)
 }
 
 func (a *Auth) createBrowserSession(r *http.Request, principalID, provider string) (string, error) {

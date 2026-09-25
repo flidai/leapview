@@ -38,7 +38,7 @@ export function tokenPermissionPolicies(capabilities: PersonalCapabilityOptionSi
     const resourceKind = target.resourceKind ?? ''
     const key = JSON.stringify([pair.profile, pair.action, targetScope, target.projectId ?? '', target.instanceId ?? '', resourceKind])
     const actionLabel = capability.actionLabel?.trim() || capability.label
-    const description = resourcePolicy ? capability.category : capability.description
+    const description = capability.actionDescription?.trim() || capability.description
     const policy = policies.get(key) ?? {
       id: key,
       label: actionLabel,
@@ -104,15 +104,6 @@ export function permissionLabelsByPair(capabilities: PersonalCapabilityOptionSig
     }
   }
   return labels
-}
-
-export function formatTechnicalPermissionTarget(permission: PersonalPermissionPairSignal): string {
-  const target = permission.target
-  if (target.resourceId) return `${target.resourceKind ?? 'resource'} ${target.resourceId} · project ${target.projectId ?? 'unknown'}`
-  if (target.includeFuture) return `${target.resourceKind ?? 'resource'} · current and future resources · project ${target.projectId ?? 'unknown'}`
-  if (target.projectId) return `project ${target.projectId}`
-  if (target.instanceId) return `instance ${target.instanceId}`
-  return target.scope
 }
 
 export function formatPermissionPair(permission: PersonalPermissionPairSignal): string {

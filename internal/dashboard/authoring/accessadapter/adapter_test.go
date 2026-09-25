@@ -54,6 +54,7 @@ func TestProjectDashboardMapsEveryActionToExactTypedResourcePair(t *testing.T) {
 		{authoring.AuthorizationActionEdit, access.ActionDashboardUpdate},
 		{authoring.AuthorizationActionPublish, access.ActionDashboardPublish},
 		{authoring.AuthorizationActionArchive, access.ActionDashboardDelete},
+		{authoring.AuthorizationActionDelete, access.ActionDashboardDelete},
 	}
 	for _, test := range tests {
 		t.Run(string(test.action), func(t *testing.T) {

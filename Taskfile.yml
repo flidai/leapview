@@ -12,7 +12,12 @@ tasks:
       - task: build
       - task: bootstrap
       - task: map-assets:install
-      - LEAPVIEW_DEV_SKIP_PUBLISH=1 ./scripts/dev-server.sh start
+      - ./scripts/dev-server.sh start
+
+  dev:reset-login:
+    desc: Explicitly restore the private local development login and restart the managed server
+    cmds:
+      - LEAPVIEW_DEV_RESET_LOGIN=1 LEAPVIEW_DEV_RESTART=1 task dev
 
   dev:bypass:
     desc: Start the managed dev server with explicit local authentication bypass

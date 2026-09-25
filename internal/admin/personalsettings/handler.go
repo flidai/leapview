@@ -194,6 +194,26 @@ func beginPersonalSettingsInvocation(r *http.Request, signals commandSignals) (*
 			})
 			return ctx, err
 		})
+	case signals.Token.Action == "update":
+		if r.Header.Get("If-Match") != `"`+strings.TrimSpace(signals.Token.ExpectedModifiedAt)+`"` {
+			return r, ErrCommandInvalid
+		}
+		return begin(accessgen.GenUIActionUpdateCurrentAPIToken(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenUpdateCurrentAPITokenCommand(r.Context(), accessgen.GenUpdateCurrentAPITokenCommandInvocation{
+				Surface: apigencommand.SurfaceUI, Token: strings.TrimSpace(signals.Token.TokenID), ConcurrencyToken: r.Header.Get("If-Match"), RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
+	case signals.Token.Action == "rotate":
+		if r.Header.Get("If-Match") != `"`+strings.TrimSpace(signals.Token.ExpectedModifiedAt)+`"` {
+			return r, ErrCommandInvalid
+		}
+		return begin(accessgen.GenUIActionRotateCurrentAPIToken(), func() (context.Context, error) {
+			ctx, _, err := accessgen.BeginGenRotateCurrentAPITokenCommand(r.Context(), accessgen.GenRotateCurrentAPITokenCommandInvocation{
+				Surface: apigencommand.SurfaceUI, Token: strings.TrimSpace(signals.Token.TokenID), ConcurrencyToken: r.Header.Get("If-Match"), IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID,
+			})
+			return ctx, err
+		})
 	case signals.Token.Action == "revoke":
 		return begin(accessgen.GenUIActionRevokeCurrentAPIToken(), func() (context.Context, error) {
 			ctx, _, err := accessgen.BeginGenRevokeCurrentAPITokenCommand(r.Context(), accessgen.GenRevokeCurrentAPITokenCommandInvocation{
@@ -220,7 +240,7 @@ func (h Handler) load(r *http.Request, principalID string) (Signal, error) {
 		currentSessionID, _ = h.CurrentSession(r)
 	}
 	active := strings.TrimSpace(r.URL.Query().Get("section"))
-	tokensActive := active == "api-tokens" || active == "api-token-new"
+	tokensActive := active == "api-tokens" || active == "api-token-new" || active == "api-token-edit"
 	state, err := h.Service.Load(r.Context(), principalID, currentSessionID, tokensActive)
 	if tokensActive {
 		state.Active = "api-tokens"

@@ -37,7 +37,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		"024_schema_23_convergence.sql", "025_profile_application.sql", "026_development_session.sql", "027_authorization_policy_grants.sql", "028_dashboard_authoring_delete.sql",
 		"029_platform_admin_token_capability.sql", "030_typed_api_token_permissions.sql", "031_job_authority_envelope.sql",
 		"032_typed_permission_validation_hardening.sql", "033_typed_authorization_assignments.sql", "034_durable_authority_grants.sql",
-		"035_resource_share_no_onward_delegation.sql", "036_reject_active_legacy_api_tokens.sql", "037_typed_authoring_permissions.sql",
+		"035_resource_share_no_onward_delegation.sql", "036_reject_active_legacy_api_tokens.sql", "037_typed_authoring_permissions.sql", "038_edit_api_tokens.sql",
 	}, ","); got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
@@ -161,6 +161,31 @@ func TestActiveAPITokenScopeHardeningIsForwardOnly(t *testing.T) {
 		if !strings.Contains(migration, required) {
 			t.Errorf("active typed API token migration missing %q", required)
 		}
+	}
+}
+
+func TestEditableAPITokenMigrationPreservesCredentialIdentity(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "038_edit_api_tokens.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"ADD COLUMN modified_at", "UPDATE access.api_token SET modified_at = created_at",
+		"CREATE OR REPLACE FUNCTION access.reject_token_identity_rewrite",
+		"OLD.token_fingerprint<>NEW.token_fingerprint", "OLD.verifier<>NEW.verifier",
+		"OLD.principal_id<>NEW.principal_id", "OLD.permission_profile IS DISTINCT FROM NEW.permission_profile",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("editable API token migration missing %q", required)
+		}
+	}
+	up := migration[:strings.Index(migration, "-- +goose Down")]
+	if !strings.HasSuffix(strings.TrimSpace(up), "RESET ROLE;") {
+		t.Error("editable API token migration must restore the migrator role")
+	}
+	if !strings.Contains(migration, "editable API token migration is forward-only") {
+		t.Error("editable API token migration must refuse rollback")
 	}
 }
 

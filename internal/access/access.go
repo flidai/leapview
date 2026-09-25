@@ -478,6 +478,22 @@ type ScopedAPITokenInput struct {
 	ExpiresAt   time.Time
 }
 
+type ScopedAPITokenUpdate struct {
+	PrincipalID        string
+	TokenID            string
+	Name               string
+	Description        string
+	Permissions        []PermissionPair
+	ExpiresAt          time.Time
+	ExpectedModifiedAt time.Time
+}
+
+type ScopedAPITokenRotation struct {
+	PrincipalID        string
+	TokenID            string
+	ExpectedModifiedAt time.Time
+}
+
 const APITokenNameInitialProjectClaim = "initial-project-claim"
 
 type APIToken struct {
@@ -494,6 +510,7 @@ type APIToken struct {
 	Permissions       []PermissionPair
 	ExpiresAt         string
 	CreatedAt         string
+	ModifiedAt        string
 	LastUsedAt        string
 	RevokedAt         string
 }
@@ -518,6 +535,14 @@ type SessionAuthorityEvidenceReader interface {
 // production credential contract while it is being removed.
 type ScopedAPITokenRepository interface {
 	CreateScopedAPITokenWithMetadata(context.Context, ScopedAPITokenInput) (string, APIToken, error)
+}
+
+type EditableAPITokenRepository interface {
+	UpdateScopedAPITokenForPrincipal(context.Context, ScopedAPITokenUpdate) (APIToken, error)
+}
+
+type RotatableAPITokenRepository interface {
+	RotateScopedAPITokenForPrincipal(context.Context, ScopedAPITokenRotation) (string, APIToken, error)
 }
 
 type APICredential struct {

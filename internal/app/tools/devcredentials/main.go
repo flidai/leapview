@@ -29,15 +29,16 @@ import (
 func main() {
 	out := flag.String("out", ".tmp/dev-auth/credentials.json", "private worktree-local credential bundle")
 	rotatePublisher := flag.Bool("rotate-publisher", false, "revoke and replace the current development publisher token")
+	resetLogin := flag.Bool("reset-login", false, "explicitly restore the private development login in local PostgreSQL")
 	flag.Parse()
-	if err := run(context.Background(), *out, *rotatePublisher); err != nil {
+	if err := run(context.Background(), *out, *rotatePublisher, *resetLogin); err != nil {
 		fmt.Fprintln(os.Stderr, "prepare development credentials:", err)
 		os.Exit(1)
 	}
 	fmt.Println("Development login and publisher credentials are stored privately at", *out)
 }
 
-func run(ctx context.Context, path string, rotatePublisher bool) error {
+func run(ctx context.Context, path string, rotatePublisher, resetLogin bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -88,7 +89,7 @@ func run(ctx context.Context, path string, rotatePublisher bool) error {
 	if err != nil {
 		return err
 	}
-	bootstrapPermissions, err := developmentBootstrapPermissions(instanceID, projectgraph.ResourceID(authority.ProjectUID))
+	bootstrapPermissions, err := developmentBootstrapPermissions(instanceID)
 	if err != nil {
 		return err
 	}
@@ -113,11 +114,30 @@ func run(ctx context.Context, path string, rotatePublisher bool) error {
 		return errors.New("private development credential bundle is incomplete or does not match the principal")
 	}
 	verified, _, err := repo.VerifyLocalPassword(ctx, credentials.Email, credentials.Password)
+	if resetLogin && errors.Is(err, pgx.ErrNoRows) {
+		if err := repo.RestoreDevelopmentLogin(ctx, principalID, credentials.Password); err != nil {
+			return fmt.Errorf("restore private development login: %w", err)
+		}
+		verified, _, err = repo.VerifyLocalPassword(ctx, credentials.Email, credentials.Password)
+	}
 	if err != nil || verified.ID != principalID {
 		return errors.New("private development login no longer matches the stored credential; reset it explicitly")
 	}
+	if credentials.ClaimedProjectUID != "" {
+		claim, err := platformbootstrap.New(pool).GetProjectClaim(ctx)
+		if err != nil || claim.ProjectID != authority.ProjectUID || claim.ClaimedBy != principalID || credentials.ClaimedProjectUID != claim.ProjectID || credentials.ClaimCredentialID == "" {
+			return errors.New("private development publisher does not match the durable Project claim")
+		}
+		if !credentials.ClaimAcknowledged && rotatePublisher {
+			return errors.New("development publisher cannot rotate before the Project claim is acknowledged")
+		}
+		if !credentials.ClaimAcknowledged {
+			return validateDevelopmentPublisher(ctx, repo, credentials.PublisherToken, principalID, publisherPermissions)
+		}
+		return ensureDevelopmentPublisher(ctx, repo, path, credentials, principalID, publisherPermissions, rotatePublisher)
+	}
 	bootstrap, err := repo.CredentialForAPIToken(ctx, credentials.BootstrapToken)
-	if err != nil || bootstrap.Principal.ID != principalID || bootstrap.Token.PermissionProfile != access.PermissionCatalogProfile || !samePermissions(bootstrap.Token.Permissions, bootstrapPermissions) || !tokenValidForDay(bootstrap.Token.ExpiresAt) {
+	if err != nil || bootstrap.Principal.ID != principalID || bootstrap.Token.Name != access.APITokenNameInitialProjectClaim || bootstrap.Token.PermissionProfile != access.PermissionCatalogProfile || !samePermissions(bootstrap.Token.Permissions, bootstrapPermissions) || !tokenValidForDay(bootstrap.Token.ExpiresAt) {
 		replaceID := ""
 		if err == nil && bootstrap.Principal.ID == principalID {
 			replaceID = bootstrap.Token.ID
@@ -129,50 +149,39 @@ func run(ctx context.Context, path string, rotatePublisher bool) error {
 			return err
 		}
 	}
+	return ensureDevelopmentPublisher(ctx, repo, path, credentials, principalID, publisherPermissions, rotatePublisher)
+}
+
+func validateDevelopmentPublisher(ctx context.Context, repo *accesspostgres.Repository, secret, principalID string, permissions []access.PermissionPair) error {
+	current, err := repo.CredentialForAPIToken(ctx, secret)
+	if err != nil || current.Principal.ID != principalID || current.Token.PermissionProfile != access.PermissionCatalogProfile || !tokenValidForDay(current.Token.ExpiresAt) || !samePermissions(current.Token.Permissions, permissions) {
+		return errors.New("private development publisher credential is unavailable or does not match the Project claim")
+	}
+	return nil
+}
+
+func ensureDevelopmentPublisher(ctx context.Context, repo *accesspostgres.Repository, path string, credentials accesspostgres.DevelopmentCredentials, principalID string, permissions []access.PermissionPair, rotatePublisher bool) error {
 	current, err := repo.CredentialForAPIToken(ctx, credentials.PublisherToken)
-	if !rotatePublisher && err == nil && current.Principal.ID == principalID && current.Token.PermissionProfile == access.PermissionCatalogProfile && tokenValidForDay(current.Token.ExpiresAt) && samePermissions(current.Token.Permissions, publisherPermissions) {
+	if !rotatePublisher && err == nil && current.Principal.ID == principalID && current.Token.PermissionProfile == access.PermissionCatalogProfile && tokenValidForDay(current.Token.ExpiresAt) && samePermissions(current.Token.Permissions, permissions) {
 		return nil
 	}
 	replaceID := ""
 	if err == nil && current.Principal.ID == principalID {
 		replaceID = current.Token.ID
 	}
-	return repo.ProvisionDevelopmentPublisherToken(ctx, principalID, publisherPermissions, replaceID, func(secret string) error {
+	return repo.ProvisionDevelopmentPublisherToken(ctx, principalID, permissions, replaceID, func(secret string) error {
 		credentials.PublisherToken = secret
 		credentials.PublisherTokenExpiresAt = time.Now().UTC().Add(30 * 24 * time.Hour).Truncate(time.Second)
 		return writeCredentials(path, credentials)
 	})
 }
 
-func developmentBootstrapPermissions(instanceID string, projectID projectgraph.ResourceID) ([]access.PermissionPair, error) {
-	instance, err := access.NewInstancePermissionPair(access.ActionPlatformAccessManage, instanceID)
-	if err != nil {
-		return nil, err
-	}
-	result := []access.PermissionPair{instance}
-	for _, action := range []access.Action{access.ActionProjectAccessRead, access.ActionProjectAccessManage, access.ActionProjectAccessDelegate} {
-		pair, err := access.NewProjectPermissionPair(action, projectID)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, pair)
-	}
-	return result, nil
+func developmentBootstrapPermissions(instanceID string) ([]access.PermissionPair, error) {
+	return access.InitialProjectClaimPermissions(instanceID)
 }
 
 func developmentPublisherPermissions(projectID projectgraph.ResourceID) ([]access.PermissionPair, error) {
-	result := make([]access.PermissionPair, 0, 5)
-	for _, action := range []access.Action{
-		access.ActionDeliveryRead, access.ActionDeliveryPlan, access.ActionDeliveryBuild,
-		access.ActionDeliveryPublish, access.ActionDeliveryActivate,
-	} {
-		pair, err := access.NewProjectPermissionPair(action, projectID)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, pair)
-	}
-	return result, nil
+	return access.InitialProjectPublisherPermissions(projectID)
 }
 
 func samePermissions(got, want []access.PermissionPair) bool {

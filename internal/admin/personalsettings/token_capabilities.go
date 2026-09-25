@@ -33,7 +33,8 @@ func permissionOptionsSignal(permissionPairs []access.PermissionPair) []Capabili
 		label, description, category := permissionOptionPresentation(definition, pair)
 		options = append(options, CapabilityOptionSignal{
 			Value:       key,
-			ActionLabel: permissionActionLabel(pair.Action),
+			ActionLabel: definition.DisplayName,
+			ActionDescription: &definition.Description,
 			Label:       label,
 			Description: description,
 			Category:    category,
@@ -50,7 +51,7 @@ func permissionPairOptionKey(pair access.PermissionPair) string {
 }
 
 func permissionOptionPresentation(definition access.PermissionDefinition, pair access.PermissionPair) (string, string, string) {
-	actionLabel := permissionActionLabel(pair.Action)
+	actionLabel := definition.DisplayName
 	switch pair.Target.Scope {
 	case access.PermissionScopeResource:
 		kind := permissionResourceKindLabel(pair.Target.ResourceKind)
@@ -106,62 +107,4 @@ func permissionResourceKindCategory(kind projectgraph.Kind) string {
 		return "Semantic models"
 	}
 	return permissionResourceKindLabel(kind) + "s"
-}
-
-var permissionActionLabels = map[access.Action]string{
-	access.ActionDashboardRead:          "View dashboard",
-	access.ActionDashboardCreate:        "Create dashboards",
-	access.ActionDashboardUpdate:        "Edit dashboard",
-	access.ActionDashboardDelete:        "Delete dashboard",
-	access.ActionDashboardPublish:       "Publish dashboard",
-	access.ActionSemanticRead:           "Discover metadata",
-	access.ActionSemanticQuery:          "Build queries",
-	access.ActionSemanticConsume:        "Use governed data",
-	access.ActionSemanticCreate:         "Create semantic models",
-	access.ActionSemanticUpdate:         "Edit semantic model",
-	access.ActionSemanticDelete:         "Delete semantic model",
-	access.ActionSourceRead:             "View source",
-	access.ActionSourceCreate:           "Create sources",
-	access.ActionSourceUpdate:           "Edit source",
-	access.ActionSourceDelete:           "Delete source",
-	access.ActionModelRead:              "View model",
-	access.ActionModelCreate:            "Create models",
-	access.ActionModelUpdate:            "Edit model",
-	access.ActionModelDelete:            "Delete model",
-	access.ActionPipelineRead:           "View pipeline",
-	access.ActionPipelineCreate:         "Create pipelines",
-	access.ActionPipelineRun:            "Run pipeline",
-	access.ActionPipelineUpdate:         "Edit pipeline",
-	access.ActionPipelineDelete:         "Delete pipeline",
-	access.ActionConnectionRead:         "View connection details",
-	access.ActionConnectionCreate:       "Create connections",
-	access.ActionConnectionUse:          "Use connection",
-	access.ActionConnectionManage:       "Manage connection",
-	access.ActionResourceShare:          "Share resource",
-	access.ActionDeliveryRead:           "View releases",
-	access.ActionDeliveryPlan:           "Plan releases",
-	access.ActionDeliveryBuild:          "Build releases",
-	access.ActionDeliveryPublish:        "Publish releases",
-	access.ActionDeliveryApprove:        "Approve releases",
-	access.ActionDeliveryActivate:       "Activate releases",
-	access.ActionDeliveryRollback:       "Roll back releases",
-	access.ActionProjectSettingsRead:    "View project settings",
-	access.ActionProjectSettingsUpdate:  "Update project settings",
-	access.ActionProjectAccessRead:      "View project access",
-	access.ActionProjectAccessManage:    "Manage project access",
-	access.ActionProjectAccessDelegate:  "Delegate permissions",
-	access.ActionAuditRead:              "View audit log",
-	access.ActionWorkloadDelegate:       "Delegate workload",
-	access.ActionPlatformSettingsRead:   "View platform settings",
-	access.ActionPlatformSettingsUpdate: "Update platform settings",
-	access.ActionPlatformAccessRead:     "View platform access",
-	access.ActionPlatformAccessManage:   "Manage platform access",
-	access.ActionPlatformAuditRead:      "View platform audit log",
-}
-
-func permissionActionLabel(action access.Action) string {
-	if label := permissionActionLabels[action]; label != "" {
-		return label
-	}
-	return "Use permission"
 }

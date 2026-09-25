@@ -85,17 +85,18 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     if (!page) return html`<slot></slot>`
     const mainClass = [
       'main',
-      page.active === 'access' || page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'projects-admin' || page.active === 'service-accounts' || page.active === 'service-accounts-new' || page.active === 'storage' || page.active === 'storage-detail' || page.active === 'publications' ? 'main-directory' : '',
+      page.active === 'access' || page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'projects-admin' || page.active === 'service-accounts' || page.active === 'service-accounts-detail' || page.active === 'service-accounts-new' || page.active === 'storage' || page.active === 'storage-detail' || page.active === 'publications' ? 'main-directory' : '',
       isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
       page.active === 'profile' ? 'main-profile' : '',
       page.active === 'security' ? 'main-security' : '',
+      page.active === 'api-tokens' ? 'main-token-list' : '',
     ].filter(Boolean).join(' ')
     return html`
       <div class="route">
         <section class=${mainClass} aria-label="Admin">
-          ${page.active === 'access' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'storage-detail' || page.active === 'service-accounts' || page.active === 'service-accounts-new' || page.active === 'api-tokens' || page.active === 'api-token-new' ? nothing : renderPageHeader(page.headerTitle || page.title, page.headerDetail)}
+          ${page.active === 'access' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'storage-detail' || page.active === 'service-accounts' || page.active === 'service-accounts-detail' || page.active === 'service-accounts-new' || page.active === 'api-tokens' || page.active === 'api-token-new' || page.active === 'api-token-edit' ? nothing : renderPageHeader(page.headerTitle || page.title, page.headerDetail)}
           ${page.empty && page.active !== 'publications' && page.active !== 'storage' ? html`<div class="panel"><div class="empty">${page.empty}</div></div>` : nothing}
-          ${page.metrics?.length && page.active !== 'agent' && page.active !== 'queries' && page.active !== 'principal-detail' && page.active !== 'group-detail' && page.active !== 'storage-detail' && !(page.active === 'storage' && page.storage?.status?.trim()) ? html`
+          ${page.metrics?.length && page.active !== 'agent' && page.active !== 'queries' && page.active !== 'principal-detail' && page.active !== 'group-detail' && page.active !== 'service-accounts-detail' && page.active !== 'storage-detail' && !(page.active === 'storage' && page.storage?.status?.trim()) ? html`
             <div class="metrics">
               ${page.metrics.map((metric) => html`
                 <div class="metric">
@@ -125,10 +126,10 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
               ? html`<lv-entity-list .items=${adminGroupListItems(page)} .columns=${adminGroupListColumns()} .filters=${adminGroupListFilters(page)} .actions=${[{ id: 'create-group', label: 'Create group', emphasis: 'primary' }]} initial-query=${page.listQuery ?? ''} active-filter=${page.listFilter ?? 'all'} search-placeholder="Search groups by name or ID" empty-text="No groups found." export-filename="groups.csv" @lv-entity-list-action=${this.handleEntityListAction}></lv-entity-list>`
             : page.active === 'access' ? html`<lv-access-overview></lv-access-overview>`
               : page.active === 'archived-chats' ? html`<lv-archived-chats></lv-archived-chats>`
-              : isPersonalSettings(page.active) ? html`<lv-personal-settings token-view=${page.active === 'api-token-new' ? 'create' : 'list'}></lv-personal-settings>`
+              : isPersonalSettings(page.active) ? html`<lv-personal-settings token-view=${page.active === 'api-token-new' ? 'create' : page.active === 'api-token-edit' ? 'edit' : 'list'}></lv-personal-settings>`
                 : isProductSettings(page.active) ? html`<lv-product-settings></lv-product-settings>`
                 : page.active === 'projects-admin' ? html`<lv-project-registry></lv-project-registry>`
-                  : page.active === 'service-accounts' || page.active === 'service-accounts-new' ? html`<lv-service-accounts .createAccountOpen=${page.active === 'service-accounts-new'}></lv-service-accounts>`
+                  : page.active === 'service-accounts' || page.active === 'service-accounts-detail' || page.active === 'service-accounts-new' ? html`<lv-service-accounts .createAccountOpen=${page.active === 'service-accounts-new'}></lv-service-accounts>`
                     : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
                       : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-detail' ? this.renderStorageDetail(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map((section) => renderSection(section))}
         </section>

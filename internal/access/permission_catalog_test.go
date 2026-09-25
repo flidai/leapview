@@ -21,7 +21,7 @@ func TestPermissionCatalogIsValidAndDefensive(t *testing.T) {
 	if !ok {
 		t.Fatal("dashboard.read is absent")
 	}
-	if definition.Action != ActionDashboardRead || len(definition.CheckKinds) != 1 || definition.CheckKinds[0] != projectgraph.KindDashboard {
+	if definition.Action != ActionDashboardRead || definition.DisplayName != "View dashboard" || len(definition.CheckKinds) != 1 || definition.CheckKinds[0] != projectgraph.KindDashboard {
 		t.Fatalf("package catalog mutated through defensive result: %#v", definition)
 	}
 }
@@ -73,7 +73,7 @@ func TestSemanticQueryHasExplicitConsumptionPrerequisite(t *testing.T) {
 
 func TestPermissionCatalogRejectsUnknownPrerequisitesAndCycles(t *testing.T) {
 	base := PermissionDefinition{
-		Action: Action("test.read"), Family: "Test", Description: "Read test data.", Scope: PermissionScopeResource,
+		Action: Action("test.read"), DisplayName: "View test data", Family: "Test", Description: "Read test data.", Scope: PermissionScopeResource,
 		ResourceKinds: []projectgraph.Kind{projectgraph.KindModel}, CheckKinds: []projectgraph.Kind{projectgraph.KindModel},
 	}
 	unknown := clonePermissionDefinition(base)
@@ -94,13 +94,13 @@ func TestPermissionCatalogRejectsUnknownPrerequisitesAndCycles(t *testing.T) {
 
 func TestPermissionCatalogRejectsInvalidKindsAndInstanceGraphKinds(t *testing.T) {
 	invalidKind := PermissionDefinition{
-		Action: "test.read", Family: "Test", Description: "Read test data.", Scope: PermissionScopeResource,
+		Action: "test.read", DisplayName: "View test data", Family: "Test", Description: "Read test data.", Scope: PermissionScopeResource,
 		ResourceKinds: []projectgraph.Kind{"unknown"}, CheckKinds: []projectgraph.Kind{"unknown"},
 	}
 	if err := ValidatePermissionCatalog([]PermissionDefinition{invalidKind}); !errors.Is(err, ErrInvalidPermissionCatalog) {
 		t.Fatalf("invalid kind error = %v", err)
 	}
-	instance := instancePermission("test.read", "Test", "Read test data.")
+	instance := instancePermission("test.read", "View test data", "Test", "Read test data.")
 	instance.CheckKinds = []projectgraph.Kind{projectgraph.KindProjectNamespace}
 	if err := ValidatePermissionCatalog([]PermissionDefinition{instance}); !errors.Is(err, ErrInvalidPermissionCatalog) {
 		t.Fatalf("instance graph kind error = %v", err)
@@ -108,7 +108,7 @@ func TestPermissionCatalogRejectsInvalidKindsAndInstanceGraphKinds(t *testing.T)
 }
 
 func TestPermissionCatalogRejectsMalformedOrDuplicateActions(t *testing.T) {
-	definition := resourcePermission("test.read", "Test", "Read test data.", projectgraph.KindModel, true)
+	definition := resourcePermission("test.read", "View test data", "Test", "Read test data.", projectgraph.KindModel, true)
 	duplicate := clonePermissionDefinition(definition)
 	if err := ValidatePermissionCatalog([]PermissionDefinition{definition, duplicate}); !errors.Is(err, ErrInvalidPermissionCatalog) {
 		t.Fatalf("duplicate action error = %v", err)
@@ -120,8 +120,13 @@ func TestPermissionCatalogRejectsMalformedOrDuplicateActions(t *testing.T) {
 }
 
 func TestPermissionCatalogRequiresPresentationMetadata(t *testing.T) {
-	definition := resourcePermission("test.read", " ", "Read test data.", projectgraph.KindModel, true)
+	definition := resourcePermission("test.read", "View test data", " ", "Read test data.", projectgraph.KindModel, true)
 	if err := ValidatePermissionCatalog([]PermissionDefinition{definition}); !errors.Is(err, ErrInvalidPermissionCatalog) {
 		t.Fatalf("missing family metadata error = %v", err)
+	}
+	definition.Family = "Test"
+	definition.DisplayName = " "
+	if err := ValidatePermissionCatalog([]PermissionDefinition{definition}); !errors.Is(err, ErrInvalidPermissionCatalog) {
+		t.Fatalf("missing display name error = %v", err)
 	}
 }

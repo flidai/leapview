@@ -64,11 +64,12 @@ func renderPermissions(catalog []access.PermissionDefinition, presets []access.P
 	out.WriteString("Catalog profile: `" + access.PermissionCatalogProfile + "`. Persisted credentials and assignments must retain this profile when they adopt typed permission pairs.\n\n")
 	out.WriteString("Catalog presence defines stable vocabulary, not blanket runtime availability. `UI selectable` means a picker may offer the action only when its current authority provider supplies a matching target pair; unsupported or unqualified operations remain unavailable.\n\n")
 	out.WriteString("## Actions\n\n")
-	out.WriteString("| Action | Family | Scope | Resource kinds | Check kinds | Prerequisites | Delegable | UI selectable | Description |\n")
-	out.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	out.WriteString("| Action | Display name | Family | Scope | Resource kinds | Check kinds | Prerequisites | Delegable | UI selectable | Description |\n")
+	out.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, definition := range catalog {
-		fmt.Fprintf(&out, "| `%s` | %s | `%s` | %s | %s | %s | %s | %s | %s |\n",
+		fmt.Fprintf(&out, "| `%s` | %s | %s | `%s` | %s | %s | %s | %s | %s | %s |\n",
 			definition.Action,
+			escapeTable(definition.DisplayName),
 			escapeTable(definition.Family),
 			definition.Scope,
 			formatKinds(definition.ResourceKinds),
