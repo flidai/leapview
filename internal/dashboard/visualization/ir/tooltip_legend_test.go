@@ -61,11 +61,15 @@ func TestValidateSpecAcceptsExplicitlyEmptyTooltipItems(t *testing.T) {
 	}
 	layerEmpty := []VisualizationTooltipItem{}
 	layerBase.TooltipItems = &layerEmpty
+	geographic.Datasets[0].Fields = append(geographic.Datasets[0].Fields,
+		VisualizationField{ID: "latitude", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Latitude"},
+		VisualizationField{ID: "longitude", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Longitude"},
+	)
 	geographic.Layers[0].Value = &VisualizationPathLayer{
 		VisualizationGeographicLayerBase: *layerBase,
 		Kind:                             "path",
-		Latitude:                         VisualizationFieldRef{Dataset: "primary", Field: "label"},
-		Longitude:                        VisualizationFieldRef{Dataset: "primary", Field: "label"},
+		Latitude:                         VisualizationFieldRef{Dataset: "primary", Field: "latitude"},
+		Longitude:                        VisualizationFieldRef{Dataset: "primary", Field: "longitude"},
 		Path:                             VisualizationFieldRef{Dataset: "primary", Field: "label"},
 		Order:                            VisualizationFieldRef{Dataset: "primary", Field: "label"},
 	}

@@ -4694,12 +4694,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private visualPreviewErrorMessage(visual: DashboardBuilderVisualSignal): string {
     const message = visual.previewError?.trim() ?? ''
     if (!message) return ''
-    const marker = `visual "${this.visualSignalID(visual)}":`
+    const marker = `visual "${this.visualSignalID(visual)}"`
     const markerIndex = message.indexOf(marker)
     const detail = (markerIndex >= 0 ? message.slice(markerIndex + marker.length) : message)
-      .replace(/^\s*(query|presentation|references|result aliases|interactions|geographic delivery|calculations|IR|definition):\s*/i, '')
+      .replace(/^\s*:?\s*(query|presentation|references|result aliases|interactions|geographic delivery|calculations|IR|definition):\s*/i, '')
       .trim()
     if (!detail) return 'Preview unavailable for this field combination.'
+    if (this.visualTypeForRender(visual) === 'map' && /(?:latitude|longitude) field must be numeric/i.test(detail)) {
+      return 'Choose numeric latitude and longitude fields to preview this map.'
+    }
     const bounded = detail.length > 180 ? `${detail.slice(0, 177)}…` : detail
     return bounded.charAt(0).toUpperCase() + bounded.slice(1)
   }

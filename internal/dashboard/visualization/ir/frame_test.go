@@ -181,6 +181,17 @@ func TestValidateSpecEnforcesGeographicLayerRequirements(t *testing.T) {
 	if err := ValidateSpec(point); err != nil {
 		t.Fatalf("point layer: %v", err)
 	}
+	fields := point.Value.(*GeographicVisualizationSpec).Datasets[0].Fields
+	fields[0].DataType = VisualizationDataTypeString
+	if err := ValidateSpec(point); err == nil || !strings.Contains(err.Error(), "latitude field must be numeric") {
+		t.Fatalf("text latitude error = %v, want numeric coordinate requirement", err)
+	}
+	fields[0].DataType = VisualizationDataTypeDecimal
+	fields[1].DataType = VisualizationDataTypeString
+	if err := ValidateSpec(point); err == nil || !strings.Contains(err.Error(), "longitude field must be numeric") {
+		t.Fatalf("text longitude error = %v, want numeric coordinate requirement", err)
+	}
+	fields[1].DataType = VisualizationDataTypeDecimal
 	for _, radius := range []int32{0, 1, 512, 513} {
 		point.Value.(*GeographicVisualizationSpec).Layers[0].Value.(*VisualizationPointLayer).Cluster.Radius = radius
 		err := ValidateSpec(point)

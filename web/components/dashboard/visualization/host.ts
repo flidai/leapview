@@ -437,6 +437,7 @@ export class VisualizationHost extends LitElement {
       locale: normalizeRendererLocale(document.documentElement.lang || 'en'),
       theme,
       echartsRenderer: builderPreview ? 'svg' : 'canvas',
+      authoringPreview: builderPreview,
       reducedMotion: this.reducedMotionMedia?.matches ?? true,
       devicePixelRatio: window.devicePixelRatio || 1,
       fontFamily: styles.fontFamily || defaultRendererContext.fontFamily,

@@ -21,6 +21,8 @@ export type RendererContext = Readonly<{
   theme: RendererTheme
   /** Authoring previews use SVG to avoid GPU canvas allocations during grid edits. */
   echartsRenderer?: 'canvas' | 'svg'
+  /** Authoring previews trade pixel density for stable, bounded map rendering. */
+  authoringPreview?: boolean
   reducedMotion: boolean
   devicePixelRatio: number
   fontFamily: string
