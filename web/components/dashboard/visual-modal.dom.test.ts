@@ -279,7 +279,9 @@ test('show-data balances small result tables and preserves scrolling for wide re
       const row = modal.shadowRoot.querySelector('lv-record-table tbody tr') as HTMLElement
       const table = modal.shadowRoot.querySelector('lv-record-table table') as HTMLTableElement
       const headers = Array.from(table.querySelectorAll('th')) as HTMLElement[]
+      const revenueHeaderLabel = headers[1].querySelector('.record-table-sort > span:first-child') as HTMLElement
       const dialog = modal.shadowRoot.querySelector('[role="dialog"]') as HTMLElement
+      const revenueHeaderStyle = getComputedStyle(headers[1])
       return {
         rowHeight: row.getBoundingClientRect().height,
         scrollHeight: scroll.scrollHeight,
@@ -289,6 +291,11 @@ test('show-data balances small result tables and preserves scrolling for wide re
         tableLayout: getComputedStyle(table).tableLayout,
         columnWidths: headers.map((header) => Math.round(header.getBoundingClientRect().width)),
         revenueAlignment: getComputedStyle(headers[1]).textAlign,
+        revenueHeaderRightGap: Math.round(
+          headers[1].getBoundingClientRect().right
+          - Number.parseFloat(revenueHeaderStyle.paddingRight)
+          - revenueHeaderLabel.getBoundingClientRect().right,
+        ),
         dialogWidth: dialog.getBoundingClientRect().width,
         dialogBottom: dialog.getBoundingClientRect().bottom,
       }
@@ -299,6 +306,7 @@ test('show-data balances small result tables and preserves scrolling for wide re
     expect(Math.round(state.tableWidth)).toBe(Math.round(state.availableWidth))
     expect(state.columnWidths[0]).toBe(state.columnWidths[1])
     expect(state.revenueAlignment).toBe('right')
+    expect(state.revenueHeaderRightGap).toBe(0)
     expect(state.dialogWidth).toBe(608)
     expect(state.dialogBottom).toBeLessThanOrEqual(640 - 28)
 

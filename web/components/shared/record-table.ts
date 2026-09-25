@@ -1004,6 +1004,18 @@ const recordTableStyles = `
     text-align: right;
   }
 
+  lv-record-table .record-table th.is-right .record-table-sort {
+    justify-content: flex-end;
+  }
+
+  lv-record-table .record-table th.is-right .record-table-sort > span:first-child {
+    order: 2;
+  }
+
+  lv-record-table .record-table th.is-right .record-table-sort-indicator {
+    order: 1;
+  }
+
   lv-record-table .record-table th.is-center,
   lv-record-table .record-table td.is-center { text-align: center; }
   lv-record-table .record-table th.is-center .record-table-sort { justify-content: center; }
