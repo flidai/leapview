@@ -152,6 +152,7 @@ export class ReportTable extends LitElement {
   private shouldReconcileViewport = false
   private requestSeq = 0
   private scrollFrame = 0
+  private suppressWindowRequests = false
   private jumpTimer = 0
   private pendingJumpStart = 0
   private expectedBlocks = new Map<BlockID, ExpectedBlockRequest>()
@@ -1057,6 +1058,18 @@ export class ReportTable extends LitElement {
     // that transition once; already-missing empty results must not retry forever.
     const wasVisibleLoading = this.visibleLoading
     this.mergeIncomingBlocks()
+    if (this.table.error && previousTable && !(previousTable as TableSignal).error && this.expectedBlocks.size > 0) {
+      this.suppressWindowRequests = true
+      this.expectedBlocks.clear()
+      this.clearWindowRetryTimers()
+      this.clearJumpTimer()
+      if (this.scrollFrame) {
+        cancelAnimationFrame(this.scrollFrame)
+        this.scrollFrame = 0
+      }
+    } else if (!this.table.error) {
+      this.suppressWindowRequests = false
+    }
     this.shouldReconcileViewport = changedProperties.has('table') && !wasVisibleLoading && this.visibleLoading
     if (changedProperties.has('table')) {
       this.syncSelectedRowFromTableSelection()
@@ -1245,6 +1258,7 @@ export class ReportTable extends LitElement {
     this.viewportTop = target.scrollTop
     this.viewportHeight = target.clientHeight
     this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
+    this.suppressWindowRequests = false
     this.scheduleEnsureBlocksForScroll()
   }
 
@@ -1725,7 +1739,7 @@ export class ReportTable extends LitElement {
   }
 
   private scheduleEnsureBlocksForScroll(): void {
-    if (this.scrollFrame) return
+    if (this.suppressWindowRequests || this.scrollFrame) return
     this.scrollFrame = requestAnimationFrame(() => {
       this.scrollFrame = 0
       this.ensureBlocksForScroll()
@@ -1754,6 +1768,15 @@ export class ReportTable extends LitElement {
   private scheduleWindowRetry(requestSeq: number): void {
     const timer = window.setTimeout(() => {
       this.windowRetryTimers.delete(requestSeq)
+      const pending = [...this.expectedBlocks.values()].some((request) => request.requestSeq === requestSeq)
+      if (!pending) return
+      // The server publishes loading as soon as it accepts a window command.
+      // Keep waiting for accepted work so a retry cannot supersede and cancel a
+      // legitimately slow query generation.
+      if (this.table.loadingBlock) {
+        this.scheduleWindowRetry(requestSeq)
+        return
+      }
       let expired = false
       for (const [id, request] of this.expectedBlocks) {
         if (request.requestSeq !== requestSeq) continue
@@ -1793,6 +1816,7 @@ export class ReportTable extends LitElement {
   private emitBlock(block: BlockID | 'all', start: number, sort = this.table.sort, resetVersion = this.table.resetVersion): void {
     const tableId = this.resolvedTableId()
     if (!tableId) return
+    this.suppressWindowRequests = false
     const count = this.chunkSize
     const requestSeq = ++this.requestSeq
     if (block === 'all') {
