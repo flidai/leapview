@@ -5,6 +5,7 @@ export const visualizationRegistry = new RendererRegistry()
 visualizationRegistry.register({
   id: 'echarts', version: '6.1.0', schemaVersion: currentVisualizationSchemaVersion, kinds: ['cartesian', 'point', 'proportional', 'hierarchy', 'polar'],
   capabilities: { snapshot: true, windowed: false, interactive: true },
+  mountKey: (envelope) => envelope.spec.kind === 'proportional' && envelope.spec.mark === 'funnel' ? 'svg' : 'canvas',
   load: async () => (await import('./adapters/echarts')).adapter,
 })
 visualizationRegistry.register({

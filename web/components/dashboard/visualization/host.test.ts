@@ -86,6 +86,31 @@ test('controller mounts lazily, rejects stale revisions, and disposes determinis
   expect(observations).toContain('dispose')
 })
 
+test('controller remounts when a renderer changes its backing mode', async () => {
+  const mounts: string[] = []
+  let disposals = 0
+  const registry = new RendererRegistry()
+  registry.register({
+    id: 'test', version: '1.0.0', schemaVersion: currentVisualizationSchemaVersion, kinds: ['kpi'],
+    capabilities: { snapshot: true, windowed: false, interactive: false },
+    mountKey: (value) => value.spec.title,
+    load: async () => ({ mount: (_container, value) => {
+      mounts.push(value.spec.title)
+      return { update: () => {}, resize: () => {}, snapshot: async () => new Blob(), dispose: () => { disposals++ } }
+    } }),
+  })
+  const controller = new VisualizationController(registry, {} as HTMLElement)
+  const first = envelope(1)
+  const second = { ...envelope(1, 'sha256:second'), spec: { ...first.spec, title: 'Profit' } } as VisualizationEnvelope
+
+  await controller.apply(first)
+  await controller.apply(second)
+  expect(mounts).toEqual(['Revenue', 'Profit'])
+  expect(disposals).toBe(1)
+  controller.dispose()
+  expect(disposals).toBe(2)
+})
+
 test('controller coalesces resize and applies the latest size after a lazy mount', async () => {
   const sizes: number[][] = []
   let release!: (adapter: { mount: () => RendererHandle }) => void

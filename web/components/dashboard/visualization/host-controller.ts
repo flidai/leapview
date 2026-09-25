@@ -97,6 +97,8 @@ export type RendererRegistration = Readonly<{
   schemaVersion: VisualizationEnvelope['schemaVersion']
   kinds: readonly VisualizationSpec['kind'][]
   capabilities: RendererCapabilities
+  /** A changed mount key requires a fresh renderer instance for the new spec. */
+  mountKey?(envelope: VisualizationEnvelope): string
   load(): Promise<RendererAdapter>
 }>
 
@@ -196,7 +198,7 @@ export class VisualizationController {
     const change = changes(previous, next) | (sameJSON(this.#context, context) ? Change.None : Change.Context)
     if (change === Change.None) return false
 
-    if (!this.#handle || previous?.rendererID !== next.rendererID) {
+    if (!this.#handle || previous?.rendererID !== next.rendererID || (previous && registration.mountKey?.(previous) !== registration.mountKey?.(next))) {
       this.#handle?.dispose()
       this.#handle = undefined
       const generation = ++this.#loadGeneration
