@@ -75,6 +75,37 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('native resize handles suspend chart rendering until release and grid teardown resumes it', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const builder = page.locator('lv-dashboard-builder')
+    await builder.evaluate(async (element: any, preview) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { preview: { active: true } }, builderVisuals: { 'sales-chart': preview } })
+      await element.updateComplete
+    }, governedBarPreviewEnvelope('rev-7'))
+    const host = builder.locator('lv-visualization-host')
+    await host.waitFor()
+    const handle = builder.locator('.visual > .ui-resizable-se')
+    const box = (await handle.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + 40, box.y + 60, { steps: 8 })
+    expect(await host.evaluate((element: any) => element.resizeSuspended)).toBe(true)
+    await page.mouse.up()
+    expect(await host.evaluate((element: any) => element.resizeSuspended)).toBe(false)
+    const resumed = await builder.evaluate((element: any) => {
+      const host = element.shadowRoot.querySelector('lv-visualization-host')
+      element.setPreviewResizeSuspended(true)
+      element.destroyGridStack()
+      return host.resizeSuspended
+    })
+    expect(resumed).toBe(false)
+  } finally { await page.close() }
+})
+
 test('late window patches leave the current draft preview intact', async () => {
   const page = await browser.newPage()
   try {

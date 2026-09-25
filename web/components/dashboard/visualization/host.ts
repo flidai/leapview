@@ -23,6 +23,7 @@ export const visualizationNearViewportRootMargin = '600px 0px'
 
 export class VisualizationHost extends LitElement {
   private envelopeValue?: VisualizationEnvelope
+  private resizeSuspendedValue = false
   @property({ attribute: false })
   get envelope(): VisualizationEnvelope | undefined { return this.envelopeValue }
   set envelope(value: VisualizationEnvelope | undefined) {
@@ -38,6 +39,14 @@ export class VisualizationHost extends LitElement {
     if (Object.is(previous, value)) return
     this.envelopeValue = value
     this.requestUpdate('envelope', previous)
+  }
+  /** Keep observing layout, but defer expensive renderer resizing until release. */
+  get resizeSuspended(): boolean { return this.resizeSuspendedValue }
+  set resizeSuspended(value: boolean) {
+    const suspended = value === true
+    if (this.resizeSuspendedValue === suspended) return
+    this.resizeSuspendedValue = suspended
+    this.controller?.setResizeSuspended(suspended)
   }
   @property({ attribute: false }) openVisualFocus?: (source: HTMLElement, detail: VisualActionDetail) => void
   @property({ type: Boolean, attribute: 'defer-mount', reflect: true }) deferMount = false
@@ -123,6 +132,7 @@ export class VisualizationHost extends LitElement {
       (value): value is VisualizationEnvelope => validateGeneratedEnvelope(value) && validateEnvelopeBoundary(value),
       (detail) => this.dispatchEvent(new CustomEvent('lv-visualization-observation', { bubbles: true, composed: true, detail })),
     )
+    this.controller.setResizeSuspended(this.resizeSuspendedValue)
     this.connectContextListeners()
     if (typeof ResizeObserver !== 'function') return
     try {

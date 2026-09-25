@@ -1,7 +1,11 @@
 package authoring
 
 import (
+	"errors"
+	"reflect"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
 )
@@ -224,6 +228,94 @@ func TestCanonicalPlacementResizeCompactsCFOLayoutWithoutChangingChosenSize(t *t
 		if placed.Placement != want[placed.ID] {
 			t.Errorf("%s placement = %#v, want %#v", placed.ID, placed.Placement, want[placed.ID])
 		}
+	}
+}
+
+func TestCanonicalManualPlacementPreservesDroppedPositionAndUnmovedSiblings(t *testing.T) {
+	lifecycle, current := canonicalReducerFixture(t)
+	apply := func(payload authoringPayload) error {
+		t.Helper()
+		command := Command{
+			ID: CommandID("manual-layout-" + strconv.FormatUint(current.Number, 10)), DashboardID: current.DashboardID,
+			DraftID: lifecycle.Draft.ID, ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance(),
+		}
+		nextLifecycle, nextRevision, err := ApplyEdit(
+			lifecycle, current, canonicalReducerCommandWithPayload(command, payload),
+			RevisionID("manual-layout-rev-"+strconv.FormatUint(current.Number+1, 10)), current.Number+1,
+			time.Date(2026, 9, 25, 12, 0, int(current.Number), 0, time.UTC),
+		)
+		if err != nil {
+			return err
+		}
+		lifecycle, current = nextLifecycle, nextRevision
+		return nil
+	}
+	placements := func(revision Revision) map[string]document.DashboardPlacement {
+		t.Helper()
+		result := make(map[string]document.DashboardPlacement)
+		for _, component := range revision.Document.Spec.Pages[0].Components {
+			base, err := component.Base()
+			if err != nil {
+				t.Fatal(err)
+			}
+			result[base.ID] = base.Placement
+		}
+		return result
+	}
+
+	for _, addition := range []struct{ visualID, componentID, title string }{
+		{visualID: "secondary", componentID: "secondary-component", title: "Secondary"},
+		{visualID: "tertiary", componentID: "tertiary-component", title: "Tertiary"},
+	} {
+		if err := apply(&AddVisualPayload{PageID: "overview", VisualID: addition.visualID, ComponentID: addition.componentID, Type: "bar", Title: addition.title}); err != nil {
+			t.Fatalf("add %s visual: %v", addition.componentID, err)
+		}
+	}
+	initial := map[string]document.DashboardPlacement{
+		"base-component":      {Column: 1, Row: 1, ColumnSpan: 3, RowSpan: 3},
+		"secondary-component": {Column: 6, Row: 2, ColumnSpan: 3, RowSpan: 3},
+		"tertiary-component":  {Column: 10, Row: 8, ColumnSpan: 3, RowSpan: 4},
+	}
+	initialUpdates := make([]PlacementUpdate, 0, len(initial))
+	for componentID, placement := range initial {
+		initialUpdates = append(initialUpdates, PlacementUpdate{ComponentID: componentID, Placement: placement})
+	}
+	if err := apply(&SetPlacementsPayload{PageID: "overview", Compact: false, Placements: initialUpdates}); err != nil {
+		t.Fatalf("save gapped starting layout: %v", err)
+	}
+	if got := placements(current); !reflect.DeepEqual(got, initial) {
+		t.Fatalf("starting placements = %#v, want %#v", got, initial)
+	}
+
+	dropped := document.DashboardPlacement{Column: 3, Row: 6, ColumnSpan: 3, RowSpan: 3}
+	if err := apply(&SetPlacementsPayload{PageID: "overview", Compact: false, Placements: []PlacementUpdate{{ComponentID: "base-component", Placement: dropped}}}); err != nil {
+		t.Fatalf("save manual drop: %v", err)
+	}
+	want := map[string]document.DashboardPlacement{
+		"base-component":      dropped,
+		"secondary-component": initial["secondary-component"],
+		"tertiary-component":  initial["tertiary-component"],
+	}
+	if got := placements(current); !reflect.DeepEqual(got, want) {
+		t.Fatalf("saved manual placements = %#v, want exact dropped position, intentional gaps, and unmoved siblings %#v", got, want)
+	}
+	if current.Number != 5 || current.Token() != lifecycle.Draft.Revision {
+		t.Fatalf("manual drop was not saved as the selected revision: revision=%#v draft=%#v", current.Token(), lifecycle.Draft.Revision)
+	}
+
+	beforeOverlap := placements(current)
+	command := Command{
+		ID: "manual-layout-overlap", DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID,
+		ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance(),
+		SetPlacements: &SetPlacementsPayload{PageID: "overview", Compact: false, Placements: []PlacementUpdate{{
+			ComponentID: "base-component", Placement: document.DashboardPlacement{Column: 7, Row: 3, ColumnSpan: 3, RowSpan: 3},
+		}}},
+	}
+	if _, _, err := ApplyEdit(lifecycle, current, command, "manual-layout-overlap-rev", current.Number+1, time.Date(2026, 9, 25, 12, 1, 0, 0, time.UTC)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("overlapping manual placement error = %v, want ErrConflict", err)
+	}
+	if got := placements(current); !reflect.DeepEqual(got, beforeOverlap) {
+		t.Fatalf("rejected overlapping drop mutated saved revision: got %#v, want %#v", got, beforeOverlap)
 	}
 }
 

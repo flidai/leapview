@@ -161,6 +161,8 @@ export class VisualizationController {
   #pendingResize?: readonly [number, number, number]
   #pendingViewState?: { value: unknown }
   #resizeFrame?: number
+  #resizeGeneration = 0
+  #resizeSuspended = false
   #applyQueue: Promise<void> = Promise.resolve()
 
   constructor(registry: RendererRegistry, container: HTMLElement, validate: EnvelopeValidator = validateEnvelopeBoundary, observe?: VisualizationObserver) {
@@ -263,12 +265,39 @@ export class VisualizationController {
   resize(width: number, height: number, devicePixelRatio = 1): void {
     if (width < 0 || height < 0 || !Number.isFinite(devicePixelRatio) || devicePixelRatio <= 0) return
     this.#pendingResize = [width, height, devicePixelRatio]
-    if (this.#resizeFrame !== undefined) return
+    if (!this.#resizeSuspended) this.#scheduleResize()
+  }
+
+  setResizeSuspended(suspended: boolean): void {
+    if (this.#disposed || this.#resizeSuspended === suspended) return
+    this.#resizeSuspended = suspended
+    if (suspended) {
+      this.#resizeGeneration++
+      if (this.#resizeFrame !== undefined && this.#resizeFrame >= 0 && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(this.#resizeFrame)
+      }
+      this.#resizeFrame = undefined
+      return
+    }
+    this.#scheduleResize()
+  }
+
+  #scheduleResize(): void {
+    if (this.#disposed || this.#resizeSuspended || this.#resizeFrame !== undefined || !this.#pendingResize) return
+    const generation = ++this.#resizeGeneration
     if (typeof requestAnimationFrame === 'function') {
-      this.#resizeFrame = requestAnimationFrame(() => { this.#resizeFrame = undefined; this.#flushResize() })
+      this.#resizeFrame = requestAnimationFrame(() => {
+        if (generation !== this.#resizeGeneration) return
+        this.#resizeFrame = undefined
+        this.#flushResize()
+      })
     } else {
-      queueMicrotask(() => { this.#resizeFrame = undefined; this.#flushResize() })
       this.#resizeFrame = -1
+      queueMicrotask(() => {
+        if (generation !== this.#resizeGeneration) return
+        this.#resizeFrame = undefined
+        this.#flushResize()
+      })
     }
   }
 
@@ -290,6 +319,7 @@ export class VisualizationController {
     if (this.#disposed) return
     this.#disposed = true
     this.#loadGeneration++
+    this.#resizeGeneration++
     if (this.#resizeFrame !== undefined && this.#resizeFrame >= 0 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this.#resizeFrame)
     this.#resizeFrame = undefined
     this.#pendingResize = undefined
@@ -303,7 +333,7 @@ export class VisualizationController {
   }
 
   #flushResize(): void {
-    if (!this.#handle || !this.#pendingResize) return
+    if (this.#disposed || this.#resizeSuspended || !this.#handle || !this.#pendingResize) return
     const [width, height, devicePixelRatio] = this.#pendingResize
     this.#pendingResize = undefined
     const started = now()

@@ -44,6 +44,7 @@ import { checkSignalContract } from '../shared/signal-contract'
 import { emptyDashboardStatus } from '../shared/signal-defaults'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import './visualization/host'
+import type { VisualizationHost } from './visualization/host'
 import { BuilderVisualizationState } from './builder-visualization-state'
 import { renderVisualTypeIcon } from './visual-type-icon'
 import './filters/filter-control'
@@ -174,6 +175,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private copiedVisual: BuilderClipboard | null = null
   private readonly visualizationDecoder = new BuilderVisualizationState()
   private gridInteracting = false
+  private previewResizeSuspended = false
   private updatingBuilder = false
   private builderUpdateSnapshot: DashboardBuilderSignal | null | undefined
   private builderVisualUpdateSnapshot?: Record<string, VisualizationEnvelope>
@@ -2703,10 +2705,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         this.gridStack.on('dragstart resizestart', (event: Event) => {
           this.gridCompactPending = event.type === 'resizestart'
           this.gridInteracting = true
+          if (event.type === 'resizestart') this.setPreviewResizeSuspended(true)
           if (event.type === 'dragstart') queueMicrotask(() => styleBuilderGridPlaceholder(this.shadowRoot))
           this.syncCanvasViewport(page)
         })
-        this.gridStack.on('dragstop resizestop', (_event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element, true))
+        this.gridStack.on('dragstop resizestop', (event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element, event.type === 'resizestop'))
         this.gridStack.on('drag', () => this.syncCanvasViewport(page))
         this.gridStack.on('resize', () => this.syncCanvasViewport(page))
         this.gridStack.on('change', (event: Event, nodes: GridStackNode[]) => this.onGridChange(event, nodes))
@@ -2719,6 +2722,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private destroyGridStack(): void {
+    this.setPreviewResizeSuspended(false)
     this.gridInteracting = false
     if (this.gridStack) this.gridStack.destroy(false)
     this.gridStack = null
@@ -2738,8 +2742,18 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.gridCompactPending = compact
     this.gridInteracting = false
     this.syncCanvasViewport(this.canvasPage)
+    this.setPreviewResizeSuspended(false)
     this.gridInteractionMessage = 'Layout updated.'
     this.scheduleGridCommit()
+  }
+
+  private setPreviewResizeSuspended(suspended: boolean): void {
+    this.previewResizeSuspended = suspended
+    // Move the grid outline live, but do not reallocate chart backing stores at
+    // every pointer pixel. The hosts retain the latest size and paint on release.
+    for (const host of this.shadowRoot?.querySelectorAll<VisualizationHost>('.canvas lv-visualization-host') ?? []) {
+      host.resizeSuspended = suspended
+    }
   }
 
   private onGridChange(_event: Event, _nodes: GridStackNode[]): void {
@@ -3786,7 +3800,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${styleMap({ '--mobile-order': mobileOrder })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectVisualFromPointer(visual.id) }} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
         <div class="grid-stack-item-content">
           ${preview
-            ? keyed(preview.dataState.kind === 'windowed' ? `${visual.id}:${preview.specRevision}:${this.builderFilterState.revision}` : visual.id, html`<span class="visual-preview"><lv-visualization-host ?authoring=${previewHasHeader} .envelope=${preview}>${previewHasHeader ? html`<span slot="authoring-drag-handle" class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span>` : nothing}</lv-visualization-host>${previewHasHeader ? nothing : this.renderComponentDragGrip(visual.title, () => this.selectVisualFromPointer(visual.id))}</span>`)
+            ? keyed(preview.dataState.kind === 'windowed' ? `${visual.id}:${preview.specRevision}:${this.builderFilterState.revision}` : visual.id, html`<span class="visual-preview"><lv-visualization-host .resizeSuspended=${this.previewResizeSuspended} ?authoring=${previewHasHeader} .envelope=${preview}>${previewHasHeader ? html`<span slot="authoring-drag-handle" class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span>` : nothing}</lv-visualization-host>${previewHasHeader ? nothing : this.renderComponentDragGrip(visual.title, () => this.selectVisualFromPointer(visual.id))}</span>`)
             : html`<span class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span><span class="visual-preview-empty" role="status"><strong>${previewLoading ? `Loading ${this.visualLabel(visualType).toLowerCase()}…` : `${this.visualLabel(visualType)} preview unavailable`}</strong>${previewLoading ? nothing : requirementMessages.length > 0 ? requirementMessages.map((message) => html`<span>${message}</span>`) : html`<span>${previewIssue || fallbackMessage}</span>`}</span><span class="visual-type">${visualType} · ${visual.slots.length} field slots</span>`}
         </div>
       </div>
