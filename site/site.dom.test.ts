@@ -2203,6 +2203,12 @@ test('visual showcase renders every supported visual type', async () => {
       return showcase?.shadowRoot?.querySelectorAll('.table-card lv-visualization-host').length === 3
     })
     await page.waitForFunction(() => Array.from(document.querySelector('lv-site-visual-showcase')?.shadowRoot?.querySelectorAll('.table-card lv-visualization-host') ?? []).every((host: any) => Boolean(host.envelope?.spec?.title) && !host.shadowRoot?.querySelector('[role="alert"]')))
+    await page.waitForFunction(() => {
+      const hosts = Array.from(document.querySelector('lv-site-visual-showcase')?.shadowRoot?.querySelectorAll('.table-card lv-visualization-host') ?? []) as any[]
+      const aggregates = hosts.filter((host) => host.envelope?.spec?.kind !== 'table')
+      return aggregates.length > 0 && aggregates.every((host) =>
+        Boolean(host.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('[role="cell"]')))
+    })
     const tables = await page.locator('lv-site-visual-showcase').evaluate((element) => ({
       cards: element.shadowRoot?.querySelectorAll('.table-card').length,
       tables: element.shadowRoot?.querySelectorAll('.table-card lv-visualization-host').length,
