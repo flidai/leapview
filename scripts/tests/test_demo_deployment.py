@@ -82,6 +82,46 @@ class PreflightTests(unittest.TestCase):
                 finally:
                     os.umask(previous_umask)
 
+class UpgradeGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = load('demo_compose_runtime')
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.runtime.PROVIDER = pathlib.Path(self.directory.name)
+        self.journal = self.runtime.PROVIDER/'upgrade-operation.json'
+
+    def write(self, phase, version=1):
+        self.journal.write_text(json.dumps({'version':version, 'state':{'phase':phase}}))
+        self.journal.chmod(0o600)
+
+    def test_incomplete_upgrade_blocks_image_only_deploy(self):
+        for phase in ['prepared','quiescing','capturing','verified','migrating','starting',
+                      'validating','committed','restoring','reopening','unknown']:
+            with self.subTest(phase=phase):
+                self.write(phase)
+                with self.assertRaisesRegex(RuntimeError, 'Unfinished schema upgrade'):
+                    with self.runtime.upgrade_guard(): self.fail('entered image rollout')
+
+    def test_no_journal_or_terminal_upgrade_allows_image_only_path(self):
+        with self.runtime.upgrade_guard(): pass
+        for phase in ['succeeded','recovered']:
+            self.write(phase)
+            with self.runtime.upgrade_guard(): pass
+
+    def test_competing_operator_is_rejected(self):
+        with self.runtime.upgrade_guard():
+            with self.assertRaises(BlockingIOError):
+                with self.runtime.upgrade_guard(): self.fail('concurrent operator entered')
+
+    def test_unknown_journal_version_and_permissions_rejected(self):
+        self.write('succeeded', version=2)
+        with self.assertRaises(RuntimeError):
+            with self.runtime.upgrade_guard(): self.fail('accepted future version')
+        self.write('succeeded')
+        self.journal.chmod(0o644)
+        with self.assertRaises(RuntimeError):
+            with self.runtime.upgrade_guard(): self.fail('accepted writable journal')
+
 class RolloutTests(unittest.TestCase):
     def setUp(self):
         self.rollout = load('demo_compose_runtime')
