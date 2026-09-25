@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -97,6 +98,56 @@ func TestPipelineRunDetailKeepsValidationOutcomeSeparateFromMissingTiming(t *tes
 	}
 	if len(data.Page.Execution.Models[0].Attempts) != 0 {
 		t.Fatalf("model attempts = %#v, want empty because no persisted child attempt was supplied", data.Page.Execution.Models[0].Attempts)
+	}
+}
+
+func TestPipelineRunDetailDoesNotExposeRestrictedModelEvidence(t *testing.T) {
+	identity := projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "dev", GenerationID: "generation:one"}
+	run := refreshrun.RunRecord{
+		ID: "run:one", Identity: identity, SemanticModelID: "semantic-model:sales", PipelineID: "pipeline:sales",
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline:sales", Status: refreshrun.RunStatusFailed,
+		PlanDigest: "plan-digest", MaterializationScope: []string{"model:public", "model:private"}, Error: "refresh execution failed",
+	}
+	private := refreshrun.RunRecord{
+		ID: "child:private", ParentRunID: run.ID, Identity: identity, PipelineID: run.PipelineID,
+		TargetType: refreshrun.TargetModel, TargetID: "model:private", Status: refreshrun.RunStatusFailed, Error: "private model failed",
+	}
+	h := &BrowserHandler{
+		RunDetailReader: pipelineRunDetailReaderStub{run: run, childRuns: []refreshrun.RunRecord{private}, attempts: map[string]refreshrun.RunAttemptPage{
+			private.ID: {Attempts: []refreshrun.RunAttemptRecord{{Number: 1, Status: "failed", ClaimedAt: "2026-09-21T13:00:00Z", Error: "private attempt failed"}}},
+		}},
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return identity.ProjectID, nil },
+		Environment:      identity.Environment,
+		CurrentUser:      func(*http.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
+		Catalog:          pipelineRunCatalogStub{denied: "model:private"},
+		AuthorizePipeline: func(_ *http.Request, id string, capability access.Capability) (bool, error) {
+			return id == run.PipelineID.String() && capability == access.CapabilityResourceRead, nil
+		},
+	}
+	data, err := h.pipelineRunDocumentData(httptest.NewRequest(http.MethodGet, "/?asset=pipeline:sales&run=run:one", nil))
+	if err != nil {
+		t.Fatalf("pipelineRunDocumentData() error = %v", err)
+	}
+	if len(data.Page.Execution.Models) != 1 || data.Page.Execution.Models[0].ModelID != "model:public" || data.Page.Execution.ModelsUnavailable == nil || !*data.Page.Execution.ModelsUnavailable {
+		t.Fatalf("visible model evidence = %#v", data.Page.Execution)
+	}
+	if len(data.Page.Details.MaterializationScope) != 1 || data.Page.Details.MaterializationScope[0] != "model:public" {
+		t.Fatalf("visible materialization scope = %#v", data.Page.Details.MaterializationScope)
+	}
+	encoded, err := json.Marshal(data.Page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "model:private") || strings.Contains(string(encoded), "private model failed") || strings.Contains(string(encoded), "private attempt failed") {
+		t.Fatalf("restricted model evidence was serialized: %s", encoded)
+	}
+	h.Catalog = pipelineRunCatalogStub{denied: "semantic-model:sales"}
+	data, err = h.pipelineRunDocumentData(httptest.NewRequest(http.MethodGet, "/?asset=pipeline:sales&run=run:one", nil))
+	if err != nil {
+		t.Fatalf("pipelineRunDocumentData() with restricted semantic model: %v", err)
+	}
+	if data.Page.Details.SemanticModelID != "" {
+		t.Fatalf("restricted semantic model ID = %q", data.Page.Details.SemanticModelID)
 	}
 }
 
@@ -337,10 +388,14 @@ func (s pipelineRunPublicationReaderStub) RunPublication(context.Context, refres
 	return s.evidence, s.found, s.err
 }
 
-func TestAuthorizedHistoricalGraphHidesGraphWhenAnyHistoricalAssetIsFiltered(t *testing.T) {
+func TestAuthorizedHistoricalGraphHidesGraphWhenDependencyIsFiltered(t *testing.T) {
 	graph := servingstate.AssetGraph{Assets: []servingstate.Asset{
 		{ID: "pipeline:sales", ProjectID: "project:test", ServingStateID: "generation:old", Type: "refresh_pipeline", Key: "sales", Title: "Sales"},
+		{ID: "semantic:sales", ProjectID: "project:test", ServingStateID: "generation:old", Type: "semantic_model", Key: "sales", Title: "Sales semantic model"},
 		{ID: "model:private", ProjectID: "project:test", ServingStateID: "generation:old", Type: "model", Key: "private", Title: "Private model"},
+	}, Edges: []servingstate.AssetEdge{
+		{ID: "pipeline-semantic", ProjectID: "project:test", ServingStateID: "generation:old", FromAssetID: "pipeline:sales", ToAssetID: "semantic:sales", Type: "refreshes"},
+		{ID: "semantic-private", ProjectID: "project:test", ServingStateID: "generation:old", FromAssetID: "semantic:sales", ToAssetID: "model:private", Type: "uses_model"},
 	}}
 	h := &BrowserHandler{
 		HistoricalGraph: pipelineRunHistoricalGraphStub{graph: graph},
@@ -352,6 +407,34 @@ func TestAuthorizedHistoricalGraphHidesGraphWhenAnyHistoricalAssetIsFiltered(t *
 	lineage, available, _, reason := h.historicalPipelineGraph(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil), identity.ProjectID, refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, root, "pipeline:sales")
 	if available || len(lineage.Nodes) != 0 || reason == "" || !strings.Contains(reason, "cannot access") {
 		t.Fatalf("filtered historical graph = %#v, available %v, reason %q", lineage, available, reason)
+	}
+}
+
+func TestAuthorizedHistoricalGraphIgnoresUnrelatedRestrictedAsset(t *testing.T) {
+	graph := servingstate.AssetGraph{Assets: []servingstate.Asset{
+		{ID: "pipeline:sales", ProjectID: "project:test", ServingStateID: "generation:old", Type: "refresh_pipeline", Key: "sales", Title: "Sales"},
+		{ID: "semantic:sales", ProjectID: "project:test", ServingStateID: "generation:old", Type: "semantic_model", Key: "sales", Title: "Sales semantic model"},
+		{ID: "model:public", ProjectID: "project:test", ServingStateID: "generation:old", Type: "model", Key: "public", Title: "Public model"},
+		{ID: "model:private", ProjectID: "project:test", ServingStateID: "generation:old", Type: "model", Key: "private", Title: "Unrelated private model"},
+	}, Edges: []servingstate.AssetEdge{
+		{ID: "pipeline-semantic", ProjectID: "project:test", ServingStateID: "generation:old", FromAssetID: "pipeline:sales", ToAssetID: "semantic:sales", Type: "refreshes"},
+		{ID: "semantic-public", ProjectID: "project:test", ServingStateID: "generation:old", FromAssetID: "semantic:sales", ToAssetID: "model:public", Type: "uses_model"},
+	}}
+	h := &BrowserHandler{
+		HistoricalGraph: pipelineRunHistoricalGraphStub{graph: graph},
+		CurrentUser:     func(*http.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
+		Catalog:         pipelineRunCatalogStub{denied: "model:private"},
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "dev", GenerationID: "generation:old"}
+	root := refreshrun.RunRecord{Identity: identity, PipelineID: "pipeline:sales"}
+	lineage, available, _, reason := h.historicalPipelineGraph(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil), identity.ProjectID, refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, root, "pipeline:sales")
+	if !available || reason != "" || len(lineage.Nodes) != 2 {
+		t.Fatalf("unrelated denial hid the run lineage: %#v, available %v, reason %q", lineage, available, reason)
+	}
+	for _, node := range lineage.Nodes {
+		if node.ID == "model:private" {
+			t.Fatalf("unrelated restricted model appears in run lineage: %#v", lineage.Nodes)
+		}
 	}
 }
 
