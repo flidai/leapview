@@ -12,6 +12,7 @@ type AgentContextSignal struct {
 	Surface        string                         `json:"surface" yaml:"surface"`
 	DashboardID    string                         `json:"dashboardId" yaml:"dashboardId"`
 	DashboardTitle string                         `json:"dashboardTitle" yaml:"dashboardTitle"`
+	DraftID        *string                        `json:"draftId,omitempty" yaml:"draftId,omitempty"`
 	PageID         string                         `json:"pageId" yaml:"pageId"`
 	PageTitle      string                         `json:"pageTitle" yaml:"pageTitle"`
 	ModelID        string                         `json:"modelId" yaml:"modelId"`

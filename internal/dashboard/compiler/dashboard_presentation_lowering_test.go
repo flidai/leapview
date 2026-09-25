@@ -513,6 +513,57 @@ func TestLowerCanonicalPolarPresentationSupportsGaugeAndRadarOptions(t *testing.
 	}
 }
 
+func TestLowerCanonicalGaugePresentationAllowsOnlyUnannotatedAutoDomain(t *testing.T) {
+	lowered, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar"}}, document.DashboardVisualTypeGauge)
+	if err != nil {
+		t.Fatalf("lower auto-domain gauge: %v", err)
+	}
+	presentation := lowered.(visualizationir.PolarVisualizationPresentation)
+	if presentation.Minimum != nil || presentation.Maximum != nil {
+		t.Fatalf("auto-domain gauge range = (%v, %v), want both omitted", presentation.Minimum, presentation.Maximum)
+	}
+
+	minimum, maximum, target := 0.0, 100.0, 80.0
+	for _, test := range []struct {
+		name         string
+		presentation *document.PolarDashboardPresentation
+		want         string
+	}{
+		{
+			name:         "partial range",
+			presentation: &document.PolarDashboardPresentation{Type: "polar", Maximum: &maximum},
+			want:         "presentation.minimum and presentation.maximum must both be set",
+		},
+		{
+			name:         "target without authored range",
+			presentation: &document.PolarDashboardPresentation{Type: "polar", Target: &target},
+			want:         "required when gauge targets or thresholds are configured",
+		},
+		{
+			name:         "thresholds without authored range",
+			presentation: &document.PolarDashboardPresentation{Type: "polar", Thresholds: &[]visualizationir.VisualizationThreshold{{Value: 50, Tone: visualizationir.VisualizationToneWarning}}},
+			want:         "required when gauge targets or thresholds are configured",
+		},
+		{
+			name:         "explicit range remains accepted",
+			presentation: &document.PolarDashboardPresentation{Type: "polar", Minimum: &minimum, Maximum: &maximum},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := LowerCanonicalDashboardPresentation(document.DashboardPresentation{Value: test.presentation}, document.DashboardVisualTypeGauge)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("lower explicit-domain gauge: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestLowerCanonicalPolarPresentationRejectsInapplicableAndInvalidOptions(t *testing.T) {
 	falseValue := false
 	zero := 0.0
@@ -549,8 +600,8 @@ func TestLowerCanonicalPolarPresentationRejectsInapplicableAndInvalidOptions(t *
 		set  func(*document.PolarDashboardPresentation)
 		want string
 	}{
-		{name: "missing minimum", set: func(value *document.PolarDashboardPresentation) { value.Maximum = &maximum }, want: "presentation.minimum and presentation.maximum are required"},
-		{name: "missing maximum", set: func(value *document.PolarDashboardPresentation) { value.Minimum = &minimum }, want: "presentation.minimum and presentation.maximum are required"},
+		{name: "missing minimum", set: func(value *document.PolarDashboardPresentation) { value.Maximum = &maximum }, want: "presentation.minimum and presentation.maximum must both be set"},
+		{name: "missing maximum", set: func(value *document.PolarDashboardPresentation) { value.Minimum = &minimum }, want: "presentation.minimum and presentation.maximum must both be set"},
 		{name: "non-finite minimum", set: func(value *document.PolarDashboardPresentation) {
 			value.Minimum, value.Maximum = floatPointer(math.NaN()), &maximum
 		}, want: "presentation.minimum must be finite"},

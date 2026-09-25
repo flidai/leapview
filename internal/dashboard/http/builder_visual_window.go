@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	nethttp "net/http"
@@ -16,13 +17,25 @@ import (
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/pkg/pagestream"
+	"github.com/go-chi/chi/v5"
 )
 
+type builderVisualWindowContext struct {
+	DraftID             string `json:"draftId"`
+	RevisionID          string `json:"revisionId"`
+	RevisionNumber      int64  `json:"revisionNumber"`
+	RevisionContentHash string `json:"revisionContentHash"`
+}
+
 type builderVisualWindowSignals struct {
-	Builder             uisignals.DashboardBuilderSignal           `json:"builder"`
-	Runtime             uisignals.RouteRuntimeSignal               `json:"runtime"`
-	BuilderFilterState  uisignals.DashboardFilterState             `json:"builderFilterState"`
-	VisualWindowCommand visualizationir.VisualizationWindowRequest `json:"visualWindowCommand"`
+	BuilderWindowContext builderVisualWindowContext                 `json:"builderWindowContext"`
+	Runtime              uisignals.RouteRuntimeSignal               `json:"runtime"`
+	BuilderFilterState   uisignals.DashboardFilterState             `json:"builderFilterState"`
+	VisualWindowCommand  visualizationir.VisualizationWindowRequest `json:"visualWindowCommand"`
+}
+
+type builderVisualWindowPreviewer interface {
+	PreviewWindow(context.Context, preview.PreviewRequest, preview.WindowFilterResolver) (preview.Preview, error)
 }
 
 // DashboardBuilderVisualWindow queries one window of one visual from the
@@ -40,7 +53,7 @@ func (h Handler) DashboardBuilderVisualWindow(w nethttp.ResponseWriter, r *netht
 		nethttp.Error(w, "dashboard builder visual window requires a visual ID", nethttp.StatusBadRequest)
 		return
 	}
-	request, err := h.builderFilterRequest(r, builderFilterSignals{Builder: signals.Builder, Runtime: signals.Runtime})
+	request, err := h.builderVisualWindowRequest(r, signals)
 	if err != nil {
 		writeBuilderVisualWindowError(w, err)
 		return
@@ -50,50 +63,56 @@ func (h Handler) DashboardBuilderVisualWindow(w nethttp.ResponseWriter, r *netht
 		return
 	}
 
-	compiled, err := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
+	var generation string
+	var state dashboardfilter.State
+	resolveFilters := func(compiled preview.Compilation) (dashboard.Filters, error) {
+		generation = strings.TrimSpace(compiled.SemanticEvidence.Identity.GenerationID)
+		if generation == "" {
+			return dashboard.Filters{}, errors.New("dashboard builder visual window requires an active serving generation")
+		}
+		var err error
+		request.Key.ServingStateID, err = builderActiveServingStateID(request.Builder, generation, optionalRuntimeValue(signals.Runtime.ServingStateID))
+		if err != nil {
+			return dashboard.Filters{}, err
+		}
+		if err := validateBuilderVisualWindow(compiled.Definition, request.PageID, signals.VisualWindowCommand); err != nil {
+			return dashboard.Filters{}, err
+		}
+		record, err := h.ensureBuilderFilterSession(r.Context(), request.Key, request.PageID, compiled.Definition)
+		if err != nil {
+			return dashboard.Filters{}, err
+		}
+		if _, err := dashboardfilter.RestoreMachine(compiled.Definition.FilterApplication.WithDefaults().Mode, compiled.Definition.FilterBindingSpecs(), record.State.Filters); err != nil {
+			return dashboard.Filters{}, authoring.ErrStaleRevision
+		}
+		state = record.State.Filters.State
+		if err := validateBuilderFilterRevision(signals.BuilderFilterState.Revision, state.Revision); err != nil {
+			return dashboard.Filters{}, err
+		}
+		return dashboard.Filters{CompiledState: &state, ActivePageID: request.PageID, ServingStateID: request.Key.ServingStateID}, nil
+	}
+	previewRequest := preview.PreviewRequest{
 		ProjectID: request.ProjectID, ActorID: request.ActorID,
 		DashboardID: authoring.DashboardID(request.DashboardID), DraftID: authoring.DraftID(request.Builder.DraftID),
-		ExpectedRevision: request.Revision,
-	})
-	if err != nil {
-		writeBuilderVisualWindowError(w, err)
-		return
-	}
-	generation := strings.TrimSpace(compiled.SemanticEvidence.Identity.GenerationID)
-	if generation == "" {
-		writeBuilderVisualWindowError(w, errors.New("dashboard builder visual window requires an active serving generation"))
-		return
-	}
-	request.Key.ServingStateID = builderServingStateIDForGeneration(request.Builder, generation)
-	if request.Key.ServingStateID == "" {
-		writeBuilderVisualWindowError(w, fmt.Errorf("%w: complete builder draft revision is required", authoring.ErrInvalidPayload))
-		return
-	}
-	if supplied := strings.TrimSpace(optionalRuntimeValue(signals.Runtime.ServingStateID)); supplied != "" && supplied != request.Key.ServingStateID {
-		writeBuilderVisualWindowError(w, authoring.ErrStaleRevision)
-		return
-	}
-	if err := validateBuilderVisualWindow(compiled.Definition, request.PageID, signals.VisualWindowCommand); err != nil {
-		writeBuilderVisualWindowError(w, err)
-		return
-	}
-	record, err := h.ensureBuilderFilterSession(r.Context(), request.Key, request.PageID, compiled.Definition)
-	if err != nil {
-		writeBuilderVisualWindowError(w, err)
-		return
-	}
-	state := record.State.Filters.State
-	if err := validateBuilderFilterRevision(signals.BuilderFilterState.Revision, state.Revision); err != nil {
-		writeBuilderVisualWindowError(w, err)
-		return
-	}
-	filters := dashboard.Filters{CompiledState: &state, ActivePageID: request.PageID, ServingStateID: request.Key.ServingStateID}
-	previewResult, err := h.Authoring.Preview(h.analyticalContext(r.Context()), preview.PreviewRequest{
-		ProjectID: request.ProjectID, ActorID: request.ActorID,
-		DashboardID: authoring.DashboardID(request.DashboardID), DraftID: authoring.DraftID(request.Builder.DraftID),
-		ExpectedRevision: request.Revision, PageID: request.PageID, Filters: filters,
+		ExpectedRevision: request.Revision, PageID: request.PageID,
 		Window: &signals.VisualWindowCommand, BestEffortVisuals: true,
-	})
+	}
+	analyticalContext := h.analyticalContext(r.Context())
+	var previewResult preview.Preview
+	if optimized, ok := h.Authoring.(builderVisualWindowPreviewer); ok {
+		previewResult, err = optimized.PreviewWindow(analyticalContext, previewRequest, resolveFilters)
+	} else {
+		compiled, compileErr := h.Authoring.Compile(analyticalContext, preview.CompileRequest{
+			ProjectID: request.ProjectID, ActorID: request.ActorID,
+			DashboardID: authoring.DashboardID(request.DashboardID), DraftID: authoring.DraftID(request.Builder.DraftID),
+			ExpectedRevision: request.Revision,
+		})
+		if compileErr != nil {
+			err = compileErr
+		} else if previewRequest.Filters, err = resolveFilters(compiled); err == nil {
+			previewResult, err = h.Authoring.Preview(analyticalContext, previewRequest)
+		}
+	}
 	if err != nil {
 		writeBuilderVisualWindowError(w, err)
 		return
@@ -121,11 +140,30 @@ func (h Handler) DashboardBuilderVisualWindow(w nethttp.ResponseWriter, r *netht
 		writeBuilderVisualWindowError(w, fmt.Errorf("dashboard builder visual window response omitted visual %q", visualID))
 		return
 	}
+	envelope.ServingStateID = request.Key.ServingStateID
 	// Keep window results separate from the base preview. Otherwise an old
 	// response can erase a new preview before the browser has rendered it.
 	// Full preview replacement clears these bounded, per-context window slots.
 	windowKey := fmt.Sprintf("window:%s:%s:%d:%s", request.Key.ServingStateID, request.PageID, state.Revision, visualID)
 	writeJSON(w, nethttp.StatusOK, map[string]any{"builderVisuals": map[string]uisignals.DashboardVisualizationSignal{windowKey: envelope}})
+}
+
+func (h Handler) builderVisualWindowRequest(r *nethttp.Request, signals builderVisualWindowSignals) (builderFilterRequest, error) {
+	dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
+	pageID := strings.TrimSpace(optionalRuntimeValue(signals.Runtime.PageID))
+	builder := uisignals.DashboardBuilderSignal{
+		DashboardID: dashboardID,
+		DraftID:     signals.BuilderWindowContext.DraftID,
+		Revision: uisignals.DashboardBuilderRevisionSignal{
+			ID:          signals.BuilderWindowContext.RevisionID,
+			Number:      signals.BuilderWindowContext.RevisionNumber,
+			ContentHash: signals.BuilderWindowContext.RevisionContentHash,
+		},
+	}
+	if pageID != "" {
+		builder.SelectedPageID = &pageID
+	}
+	return h.builderFilterRequest(r, builderFilterSignals{Builder: builder, Runtime: signals.Runtime})
 }
 
 func validateBuilderFilterRevision(posted int64, current uint64) error {

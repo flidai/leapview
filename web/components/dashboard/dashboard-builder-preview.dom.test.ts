@@ -11,6 +11,195 @@ let browser: Browser
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/dashboard-builder-test')
 
+test('dashboard builder refreshes once after a successful agent draft mutation, including when a later tool fails', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const result = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      let completions = 0
+      element.addEventListener('lv-builder-agent-run-complete', () => completions++)
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const waitForUpdate = () => new Promise((resolve) => setTimeout(resolve, 25))
+      mergePatch({ agent: { activeConversationId: 'conversation-1', status: { running: true, runId: 'run-read-only' }, transcript: [] } })
+      await waitForUpdate()
+      mergePatch({ agent: { status: { running: false }, transcript: [
+        { id: 'tool-read-only', runId: 'run-read-only', kind: 'tool', name: 'get_dashboard_draft', status: 'complete' },
+      ] } })
+      await waitForUpdate()
+      const afterReadOnlyCompletion = completions
+
+      mergePatch({ agent: { status: { running: true, runId: 'run-1' } } })
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      const whileRunning = completions
+      mergePatch({ agent: { status: { running: false }, transcript: [
+        { id: 'tool-write', runId: 'run-1', kind: 'tool', name: 'add_dashboard_visual', status: 'complete' },
+        { id: 'tool-after-write', runId: 'run-1', kind: 'tool', name: 'assign_dashboard_field', status: 'error', error: 'stale revision' },
+      ] } })
+      await waitForUpdate()
+      const afterMutationCompletion = completions
+      mergePatch({ builder: { title: 'Refreshed draft' } })
+      await waitForUpdate()
+      const afterUnrelatedPatch = completions
+      mergePatch({ agent: { status: { running: true, runId: 'run-read-only-after-write' } } })
+      await waitForUpdate()
+      mergePatch({ agent: { status: { running: false }, transcript: [
+        { id: 'tool-write', runId: 'run-1', kind: 'tool', name: 'add_dashboard_visual', status: 'complete' },
+        { id: 'tool-after-write', runId: 'run-1', kind: 'tool', name: 'assign_dashboard_field', status: 'error', error: 'stale revision' },
+        { id: 'tool-read-only-after-write', runId: 'run-read-only-after-write', kind: 'tool', name: 'preview_dashboard_draft', status: 'complete' },
+      ] } })
+      await waitForUpdate()
+      return { afterReadOnlyCompletion, whileRunning, afterMutationCompletion, afterUnrelatedPatch, afterSubsequentReadOnlyCompletion: completions }
+    })
+    expect(result).toEqual({ afterReadOnlyCompletion: 0, whileRunning: 0, afterMutationCompletion: 1, afterUnrelatedPatch: 1, afterSubsequentReadOnlyCompletion: 1 })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder does not refresh after a failed or unrelated agent tool', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const completions = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      let count = 0
+      element.addEventListener('lv-builder-agent-run-complete', () => count++)
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const waitForUpdate = () => new Promise((resolve) => setTimeout(resolve, 25))
+      mergePatch({ agent: { status: { running: true, runId: 'run-failed-write' }, transcript: [] } })
+      await waitForUpdate()
+      mergePatch({ agent: { status: { running: false }, transcript: [
+        { id: 'tool-failed-write', runId: 'run-failed-write', kind: 'tool', name: 'add_dashboard_page', status: 'error', error: 'stale revision' },
+      ] } })
+      await waitForUpdate()
+      mergePatch({ agent: { status: { running: true, runId: 'run-unrelated-tool' } } })
+      await waitForUpdate()
+      mergePatch({ agent: { status: { running: false }, transcript: [
+        { id: 'tool-unrelated', runId: 'run-unrelated-tool', kind: 'tool', name: 'query_semantic_model', status: 'complete' },
+      ] } })
+      await waitForUpdate()
+      return count
+    })
+    expect(completions).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard appearance picker only offers canonical colors', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const colors = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      ;(element.shadowRoot.querySelector('[data-builder-action="appearance"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const picker = element.shadowRoot.querySelector('lv-dashboard-icon-picker') as any
+      await picker.updateComplete
+      return [...picker.shadowRoot.querySelectorAll('.colors button')].map((button: Element) => button.getAttribute('aria-label'))
+    })
+    expect(colors).toEqual(['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('pivot-backed field wells describe their row and column roles', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const labels = await page.locator('lv-dashboard-builder').evaluate((element: any) => ['matrix', 'pivot'].map((type) => [
+      element.fieldWellLabel({ type }, 'dimension'),
+      element.fieldWellLabel({ type }, 'metric'),
+    ]))
+    expect(labels).toEqual([['Rows / Columns', 'Values'], ['Rows / Columns', 'Values']])
+  } finally {
+    await page.close()
+  }
+})
+
+test('a new Gauge starts with an available governed measure', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const command = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await element.updateComplete
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      ;(element.shadowRoot.querySelector('[data-visual-picker-type="gauge"]') as HTMLButtonElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return command
+    })
+    expect(command).toMatchObject({ action: 'add_visual', pageId: 'overview', type: 'gauge', title: 'Total', fieldId: 'orders.total', role: 'metric' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('an existing empty Gauge offers a one-click measure repair', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const pages = structuredClone(element.builder.pages)
+      pages[0].visuals[0].type = 'gauge'
+      pages[0].visuals[0].slots = []
+      mergePatch({ builder: { pages } })
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const button = root.querySelector('.visual-preview-empty button') as HTMLButtonElement
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      button.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { label: button.textContent?.trim(), command }
+    })
+    expect(state.label).toBe('Use Total measure')
+    expect(state.command).toMatchObject({ action: 'assign_field', pageId: 'overview', visualId: 'sales-chart', fieldId: 'orders.total', role: 'metric' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('an existing Gauge can explicitly restore automatic range', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const command = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const pages = structuredClone(element.builder.pages)
+      pages[0].visuals[0].type = 'gauge'
+      pages[0].visuals[0].formatOptions = [
+        { key: 'minimum', label: 'Minimum', section: 'Scale', control: 'number', value: '0', choices: [] },
+        { key: 'maximum', label: 'Maximum', section: 'Scale', control: 'number', value: '100', choices: [] },
+      ]
+      mergePatch({ builder: { pages } })
+      await element.updateComplete
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      ;(element.shadowRoot.querySelector('[data-format-section="Scale"] button') as HTMLButtonElement).click()
+      await new Promise(resolve => setTimeout(resolve, 20))
+      return command
+    })
+    expect(command).toMatchObject({ action: 'update_visual_format', pageId: 'overview', visualId: 'sales-chart', formatKey: 'autoRange', formatValue: 'true' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('filter settings prevent invalid requirements and visibly restore a blank label', async () => {
   const page = await browser.newPage()
   try {
@@ -74,6 +263,192 @@ afterAll(async () => {
   await browser?.close()
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
+
+test('dashboard builder explains invalid map coordinates without exposing compiler IDs', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const message = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const source = element.builder.pages[0].visuals[0]
+      mergePatch({ builder: { pages: [{ ...element.builder.pages[0], visuals: [{ ...source, type: 'map', previewError: 'visual "sales-chart" IR: geographic layer "points": latitude field must be numeric' }] }, element.builder.pages[1]] } })
+      await element.updateComplete
+      return element.shadowRoot.querySelector('.visual-preview-empty')?.textContent?.trim()
+    })
+    expect(message).toContain('Choose numeric latitude and longitude fields to preview this map.')
+    expect(message).not.toContain('sales-chart')
+  } finally { await page.close() }
+})
+
+test('a new Map asks for numeric coordinate dimensions without inventing fields', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const catalog = structuredClone(element.builder.visualCatalog)
+      const map = catalog.find((entry: any) => entry.type === 'map')
+      map.roles = ['dimension', 'metric']
+      map.roleLimits = [{ role: 'dimension', minimum: 2, maximum: 2 }, { role: 'metric', minimum: 0, maximum: 1 }]
+      mergePatch({ builder: { visualCatalog: catalog } })
+      await element.updateComplete
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await element.updateComplete
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      ;(element.shadowRoot.querySelector('[data-visual-picker-type="map"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const page = structuredClone(element.builder.pages[0])
+      const visual = { ...page.visuals[0], id: 'visual_map', visualId: 'visual_map', type: 'map', title: 'Map', slots: [] }
+      page.visuals = [...page.visuals, visual]
+      mergePatch({ builder: {
+        revision: { id: 'rev-8', number: 8, contentHash: 'sha256:map' },
+        pages: [page, element.builder.pages[1]], selectedVisualId: 'visual_map',
+      } })
+      await element.updateComplete
+      return {
+        command,
+        canvas: element.shadowRoot.querySelector('.visual[data-visual-type="map"] .visual-preview-empty')?.textContent?.replace(/\s+/g, ' ').trim(),
+        slotLabel: element.shadowRoot.querySelector('.visual[data-visual-type="map"] .visual-type')?.textContent?.trim(),
+        useButtons: element.shadowRoot.querySelectorAll('.visual[data-visual-type="map"] .visual-preview-empty button').length,
+        previewHosts: element.shadowRoot.querySelectorAll('.visual[data-visual-type="map"] .visual-preview lv-visualization-host').length,
+      }
+    })
+    expect(state.command).toMatchObject({ action: 'add_visual', type: 'map' })
+    expect(state.command).not.toHaveProperty('fieldId')
+    expect(state.command).not.toHaveProperty('role')
+    expect(state.canvas).toContain('Map preview unavailable')
+    expect(state.canvas).toContain('Choose numeric latitude and longitude fields to preview this map.')
+    expect(state.slotLabel).toBe('map · 0 field slots')
+    expect(state.useButtons).toBe(0)
+    expect(state.previewHosts).toBe(0)
+  } finally { await page.close() }
+})
+
+test('pending visual type changes show loading until the server refreshes the visual fields', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const pages = structuredClone(element.builder.pages)
+      pages[0].visuals[0].type = 'kpi'
+      pages[0].visuals[0].slots = [{ id: 'metric-0', label: 'Total', kind: 'metric', fieldId: 'orders.total' }]
+      const catalog = structuredClone(element.builder.visualCatalog)
+      const line = catalog.find((entry: any) => entry.type === 'line')
+      line.roleLimits = [{ role: 'dimension', minimum: 1, maximum: 1 }, { role: 'metric', minimum: 1, maximum: 0 }]
+      mergePatch({ builder: { pages, visualCatalog: catalog } })
+      await element.updateComplete
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      ;(element.shadowRoot.querySelector('[data-visual-picker-type="line"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      return {
+        command,
+        canvas: element.shadowRoot.querySelector('.visual-preview-empty')?.textContent?.replace(/\s+/g, ' ').trim(),
+        requirements: element.shadowRoot.querySelector('.visual-requirements')?.textContent?.replace(/\s+/g, ' ').trim(),
+      }
+    })
+    expect(state.command).toMatchObject({ action: 'set_visual_type', type: 'line' })
+    expect(state.canvas).toContain('Loading line chart…')
+    expect(state.canvas).not.toContain('Add 1 dimension')
+    expect(state.canvas).not.toContain('preview unavailable')
+    expect(state.requirements).toBe('Updating line chart preview…')
+  } finally { await page.close() }
+})
+
+test('canvas selection does not open visual focus; the explicit expand action does', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any, preview) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { preview: { active: true } }, builderVisuals: { 'sales-chart': preview } })
+      await element.updateComplete
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await element.updateComplete
+      element.shadowRoot.querySelector('.visual')?.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }))
+      await element.updateComplete
+      const modal = element.shadowRoot.querySelector('lv-visual-modal') as any
+      const afterSelection = modal.shadowRoot.querySelector('[role="dialog"]') !== null
+      const host = element.shadowRoot.querySelector('lv-visualization-host') as any
+      host.shadowRoot.querySelector('[data-visualization-expand]')?.click()
+      await modal.updateComplete
+      await modal.updateComplete
+      return { afterSelection, afterExpand: modal.shadowRoot.querySelector('[role="dialog"]') !== null }
+    }, governedBarPreviewEnvelope('rev-7'))
+    expect(state).toEqual({ afterSelection: false, afterExpand: true })
+  } finally { await page.close() }
+})
+
+test('native resize handles suspend chart rendering until the placement save finishes', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => {
+      const element = document.querySelector('lv-dashboard-builder') as any
+      return Boolean(element?.builder?.pages?.length && !element.isUpdatePending)
+    })
+    const builder = page.locator('lv-dashboard-builder')
+    await builder.evaluate(async (element: any, preview) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { preview: { active: true } }, builderVisuals: { 'sales-chart': preview } })
+    }, governedBarPreviewEnvelope('rev-7'))
+    const host = builder.locator('lv-visualization-host')
+    await host.waitFor()
+    await page.waitForFunction(() => {
+      const builder = document.querySelector('lv-dashboard-builder') as any
+      const host = builder?.shadowRoot?.querySelector('lv-visualization-host') as any
+      return Boolean(host?.controller?.envelope)
+    })
+    expect(await host.evaluate((element: any) => Boolean(element.shadowRoot.querySelector('.renderer svg')))).toBe(true)
+    expect(await host.evaluate((element: any) => element.shadowRoot.querySelectorAll('.renderer canvas').length)).toBe(0)
+    const handle = builder.locator('.visual > .ui-resizable-se')
+    const box = (await handle.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + 40, box.y + 60, { steps: 8 })
+    expect(await host.evaluate((element: any) => element.resizeSuspended)).toBe(true)
+    await page.mouse.up()
+    expect(await host.evaluate((element: any) => element.resizeSuspended)).toBe(true)
+    await builder.evaluate((element: any) => document.dispatchEvent(new CustomEvent('datastar-fetch', {
+      detail: { type: 'finished', el: element },
+    })))
+    expect(await host.evaluate((element: any) => element.resizeSuspended)).toBe(false)
+    const resumed = await builder.evaluate((element: any) => {
+      const host = element.shadowRoot.querySelector('lv-visualization-host')
+      element.setPreviewResizeSuspended(true)
+      element.destroyGridStack()
+      return host.resizeSuspended
+    })
+    expect(resumed).toBe(false)
+  } finally { await page.close() }
+})
+
+test('failed placement saves release suspended previews', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const resumed = await page.locator('lv-dashboard-builder').evaluate((element: any) => {
+      element.gridResizeSavePending = true
+      element.setPreviewResizeSuspended(true)
+      element.commandPending = true
+      element.activeCommandAction = 'set_placements'
+      document.dispatchEvent(new CustomEvent('datastar-fetch', {
+        detail: { type: 'error', argsRaw: { status: 409 }, el: element },
+      }))
+      return !element.gridResizeSavePending && !element.previewResizeSuspended && !element.commandPending
+    })
+    expect(resumed).toBe(true)
+  } finally { await page.close() }
+})
 
 test('late window patches leave the current draft preview intact', async () => {
   const page = await browser.newPage()
@@ -511,5 +886,40 @@ test('coalesced table windows retain the newer sort and rendered rows', async ()
         rows: table.visibleRows.filter((slot: any) => slot.kind === 'row').map((slot: any) => slot.row.category) }
     })
     expect(result).toEqual({ reset: 2, sort: 'asc', rows: ['A', 'B', 'C'] })
+  } finally { await page.close() }
+})
+
+test('an unrelated draft revision keeps an existing windowed visual mounted', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const preserved = await page.locator('lv-dashboard-builder').evaluate(async (element: any, source) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const schema = source.spec.datasets[0]
+      const spec = {
+        kind: 'table', title: 'Orders', datasets: [schema],
+        accessibility: source.spec.accessibility, dataBudget: source.spec.dataBudget, interactions: [],
+        columns: [{ field: { dataset: 'primary', field: 'category' }, label: 'Status', width: 160, formatting: [] }],
+        presentation: { rowHeight: 32, showHeader: true, striped: false },
+      }
+      const data = {
+        kind: 'windowed', specRevision: source.specRevision, dataRevision: source.dataRevision, generation: 1,
+        schema, cardinality: { kind: 'exact', count: 1 }, availableRows: 1, rowCap: 100, chunkSize: 1,
+        resetVersion: 1, sort: [], blocks: { a: { id: 'a', start: 0, rows: [['Open', 1]], requestSeq: 1, resetVersion: 1, sort: [] } },
+      }
+      const table = { ...source, rendererID: 'tanstack', spec,
+        dataState: { ...source.dataState, kind: 'windowed', payload: JSON.stringify(data) } }
+      const builder = element.builder
+      mergePatch({ builder: { preview: { active: true }, pages: [{ ...builder.pages[0], visuals: [{
+        ...builder.pages[0].visuals[0], type: 'table', slots: [{ id: 'detail', label: 'Status', kind: 'detail', fieldId: 'orders.status', required: true }],
+      }] }, builder.pages[1]] }, builderVisuals: { 'sales-chart': table } })
+      await element.updateComplete
+      const host = element.shadowRoot.querySelector('lv-visualization-host')
+      mergePatch({ builder: { revision: { id: 'rev-unrelated', number: 8 } } })
+      await element.updateComplete
+      return host === element.shadowRoot.querySelector('lv-visualization-host')
+    }, governedBarPreviewEnvelope('sha256:window-preserve'))
+    expect(preserved).toBe(true)
   } finally { await page.close() }
 })

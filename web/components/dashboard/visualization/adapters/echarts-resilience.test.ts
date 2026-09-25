@@ -3,7 +3,8 @@ import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { Change, defaultRendererContext } from '../host-controller'
-import { captureEChartsViewState, echartsNavigationDefaults, echartsOption, EChartsHandle, preservesEChartsViewState, responsiveEChartsPatch } from './echarts'
+import { captureEChartsViewState, echartsNavigationDefaults, echartsOption, EChartsHandle, preservesEChartsViewState } from './echarts'
+import { responsiveEChartsLayoutKey, responsiveEChartsPatch } from './echarts/view-state'
 import { CategoryColorRegistry } from './echarts/category-colors'
 import { proportionalFixture } from './echarts-test-fixtures'
 
@@ -43,6 +44,42 @@ test('ECharts responsive patch is deterministic and preserves stable option iden
   expect(responsiveEChartsPatch(option, 0, 240)).toEqual({})
 })
 
+test('compact gauges hide crowded scale ticks and restore them when the tile grows', () => {
+  const envelope = { spec: { kind: 'polar', mark: 'gauge' } } as unknown as VisualizationEnvelope
+  const option = {
+    series: [
+      { id: 'series:polar:gauge', type: 'gauge', min: 0, max: 200, splitNumber: 5, axisLabel: { formatter: (value: number) => String(value) }, axisTick: { lineStyle: {} }, splitLine: { lineStyle: {} } },
+      { id: 'series:polar:gauge:target', type: 'gauge', silent: true, axisLabel: { show: false }, axisTick: { show: false }, splitLine: { show: false } },
+    ],
+  }
+  const compact = responsiveEChartsPatch(option, 427, 174)
+  expect(responsiveEChartsLayoutKey(envelope, 427, 174)).toBe('compact:gauge-quiet')
+  expect(compact.series[0]).toMatchObject({ splitNumber: 3, axisLabel: { show: false }, axisTick: { show: false }, splitLine: { show: false } })
+  expect(compact.series[1]).toEqual(option.series[1])
+
+  const tallerCompact = responsiveEChartsPatch(option, 427, 240)
+  expect(responsiveEChartsLayoutKey(envelope, 427, 240)).toBe('compact:gauge-labeled')
+  expect(tallerCompact.series[0]).toMatchObject({ splitNumber: 5, axisLabel: { show: true }, axisTick: { show: true }, splitLine: { show: true } })
+
+  const roomy = responsiveEChartsPatch(option, 800, 500)
+  expect(responsiveEChartsLayoutKey(envelope, 800, 500)).toBe('roomy:gauge-labeled')
+  expect(roomy.series[0]).toMatchObject({ axisLabel: { show: true }, axisTick: { show: true }, splitLine: { show: true } })
+  expect(option.series[0].axisLabel).not.toHaveProperty('show')
+})
+
+test('compact gauge domain diagnostics wrap to the available card width', () => {
+  const message = 'Value $25,346,402.80 is outside configured gauge domain $0.00–$100.00'
+  const option = { series: [], graphic: [{ type: 'text', left: 'center', top: 'middle', style: { text: message, fontSize: 12 } }] }
+  const compact = responsiveEChartsPatch(option, 256, 105)
+  const rendered = compact.graphic[0].style.text as string
+  const lines = rendered.split('\n')
+  expect(lines.length).toBeGreaterThan(1)
+  expect(lines.join(' ')).toBe(message)
+  expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(42)
+  expect(compact.graphic[0].style).toMatchObject({ width: 232, fontSize: 10, overflow: 'break' })
+  expect(option.graphic[0].style.text).toBe(message)
+})
+
 test('ECharts responsive patch keeps proportional geometry stable while adapting outside labels', () => {
   for (const mark of ['pie', 'donut', 'funnel'] as const) {
     const envelope = proportionalFixture(mark) as any
@@ -57,8 +94,9 @@ test('ECharts responsive patch keeps proportional geometry stable while adapting
     const compact = responsiveEChartsPatch(option, 320, 240)
     const expanded = responsiveEChartsPatch(option, 1200, 720)
     if (mark === 'funnel') {
-      expect(compact).toEqual({})
-      expect(expanded).toEqual({})
+      expect(compact.series[0]).toMatchObject({ id: 'series:primary:funnel' })
+      expect(compact.series[0].label.formatter({ value: ['United States of America', 10] })).toBe('United States of Am…:\n10')
+      expect(expanded.series[0].label.formatter({ value: ['United States of America', 10] })).toBe('United States of Am…: 10')
     } else {
       expect(compact.series[0]).toMatchObject({
         id: `series:primary:${mark}`,

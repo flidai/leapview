@@ -134,7 +134,8 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
   // and cleared frames still need a valid chart so the next data frame can
   // render; omit the tree series until there are hierarchy nodes to lay out.
   if (spec.mark === 'tree' && roots.length === 0) return { legend: legend(spec.presentation.legend, context), series: [] }
-  const data = spec.mark === 'tree' && roots.length > 1 && dataset
+  const flatSingleRoot = roots.length === 1 && !roots[0]?.children?.length
+  const data = spec.mark === 'tree' && dataset && (roots.length > 1 || flatSingleRoot)
     ? [{ name: 'All', __lv_dataset: dataset.id, __lv_row_index: -1, __lv_synthetic: true, children: roots }]
     : roots
   const common: EChartsTranslation = {

@@ -16,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/google/uuid"
 )
 
 func TestDashboardAuthoringRequiresAuthenticatedPrincipalAndResolver(t *testing.T) {
@@ -31,6 +32,36 @@ func TestDashboardAuthoringRequiresAuthenticatedPrincipalAndResolver(t *testing.
 	result, err = definition.Handler.Run(context.Background(), agentcore.ToolCall{ID: "missing-resolver", Arguments: json.RawMessage(`{"title":"Sales","semanticModelId":"semantic_sales"}`)})
 	if err != nil || !result.IsError || toolErrorCode(result) != "catalog_unavailable" {
 		t.Fatalf("missing resolver result=%#v err=%v", result, err)
+	}
+}
+
+func TestDashboardAuthoringCreateCarriesStableTransactionalAuditIntent(t *testing.T) {
+	app := &projectAuthoringFake{}
+	provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest(), Resolve: (&projectResolverFake{}).Resolve}
+	create := definitionByName(provider.Definitions(Scope{PrincipalID: "principal", ConversationID: "conversation"}), CreateDashboardDraftToolName)
+	call := agentcore.ToolCall{ID: "provider-call-id", Arguments: json.RawMessage(`{"title":"Agent Local Smoke Test","semanticModelId":"semantic_sales"}`)}
+	firstEventID := ""
+	for attempt := 0; attempt < 2; attempt++ {
+		result, err := create.Handler.Run(t.Context(), call)
+		if err != nil || result.IsError {
+			t.Fatalf("attempt %d: result=%#v err=%v", attempt, result, err)
+		}
+		intent, ok := dashboardauthoring.AuditIntentFromContext(app.createContext)
+		if !ok {
+			t.Fatal("agent create did not bind an authoring audit intent")
+		}
+		id, err := uuid.Parse(intent.EventID)
+		if err != nil || id.Version() != 7 {
+			t.Fatalf("audit event ID %q is not UUIDv7: %v", intent.EventID, err)
+		}
+		if intent.Operation != "createDashboardAuthoringDraft" || intent.PrincipalID != "principal" || intent.Capability != access.CapabilityResourceEdit || app.create.IdempotencyKey != intent.EventID || app.create.ToolCallID != call.ID {
+			t.Fatalf("audit intent=%#v create=%#v", intent, app.create)
+		}
+		if attempt == 0 {
+			firstEventID = intent.EventID
+		} else if intent.EventID != firstEventID {
+			t.Fatalf("retry audit ID %q differs from first %q", intent.EventID, firstEventID)
+		}
 	}
 }
 
@@ -109,6 +140,10 @@ func TestDashboardAuthoringResolvesCreateForkAndLifecycleCapabilities(t *testing
 		if app.fork.Source.Kind != kind || app.fork.Source.ProjectID != projectIDForTest() {
 			t.Fatalf("fork source=%#v, want kind %s and fixed project", app.fork.Source, kind)
 		}
+		intent, ok := dashboardauthoring.AuditIntentFromContext(app.forkContext)
+		if !ok || intent.Operation != "forkDashboardAuthoringDraft" || intent.EventID != app.fork.IdempotencyKey {
+			t.Fatalf("fork audit intent=%#v present=%t", intent, ok)
+		}
 	}
 	lifecycle := definitionByName(definitions, ExecuteDashboardCommandToolName)
 	for _, payload := range []struct {
@@ -125,6 +160,10 @@ func TestDashboardAuthoringResolvesCreateForkAndLifecycleCapabilities(t *testing
 		}
 		if app.command.Provenance.ActorID != scope.PrincipalID || app.command.Provenance.ConversationID != scope.ConversationID || app.command.Provenance.ToolCallID != payload.name {
 			t.Fatalf("%s provenance=%#v", payload.name, app.command.Provenance)
+		}
+		intent, ok := dashboardauthoring.AuditIntentFromContext(app.executeContext)
+		if !ok || intent.Operation != "executeDashboardAuthoringCommand" || intent.Capability != payload.cap || intent.EventID != app.command.ID.String() {
+			t.Fatalf("%s audit intent=%#v present=%t", payload.name, intent, ok)
 		}
 	}
 	if resolver.capabilityFor("dashboard_sales") != access.CapabilityResourceRead {
@@ -180,9 +219,27 @@ func TestDashboardAuthoringSourceToolsReadAndEditExactDraftYAML(t *testing.T) {
 	if app.editSource.Provenance.ActorID != "principal" || app.editSource.Provenance.ConversationID != "conversation" || app.editSource.Provenance.ToolCallID != "edit-source" {
 		t.Fatalf("edit provenance = %#v", app.editSource.Provenance)
 	}
+	intent, ok := dashboardauthoring.AuditIntentFromContext(app.editSourceContext)
+	if !ok || intent.EventID != app.editSource.CommandID.String() || intent.Operation != "executeDashboardAuthoringCommand" {
+		t.Fatalf("source edit audit intent=%#v present=%t", intent, ok)
+	}
 	display, ok = result.DisplayContent.(map[string]any)
 	if !ok || display["language"] != "diff" || display["content"] != app.editSourceResult.Diff {
 		t.Fatalf("edit display = %#v", result.DisplayContent)
+	}
+}
+
+func TestDashboardAuthoringVisualIntentCarriesTransactionalAuditIntent(t *testing.T) {
+	app := &projectAuthoringFake{}
+	provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest()}
+	add := definitionByName(provider.Definitions(Scope{PrincipalID: "principal", ConversationID: "conversation"}), AddDashboardVisualToolName)
+	result, err := add.Handler.Run(t.Context(), agentcore.ToolCall{ID: "add-visual", Arguments: json.RawMessage(`{"dashboardId":"dashboard_sales","draftId":"draft_1","expectedRevision":{"revisionId":"revision_1","number":1,"contentHash":"hash"},"pageId":"overview","type":"kpi","title":"Revenue"}`)})
+	if err != nil || result.IsError {
+		t.Fatalf("add visual result=%#v err=%v", result, err)
+	}
+	intent, ok := dashboardauthoring.AuditIntentFromContext(app.intentContext)
+	if !ok || intent.EventID != app.intentCommand.ID.String() || intent.Operation != "executeDashboardAuthoringCommand" || intent.Capability != access.CapabilityResourceEdit {
+		t.Fatalf("visual audit intent=%#v present=%t command=%#v", intent, ok, app.intentCommand)
 	}
 }
 
@@ -225,15 +282,21 @@ func (f *projectResolverFake) capabilityFor(id string) access.Capability {
 }
 
 type projectAuthoringFake struct {
-	list             catalog.ListResult
-	listRequest      catalog.ListRequest
-	getRequest       catalog.GetRequest
-	create           authoringservice.CreateRequest
-	fork             sourceadapter.ForkRequest
-	command          dashboardauthoring.Command
-	source           authoringapplication.SourceRead
-	editSource       authoringapplication.SourceEditRequest
-	editSourceResult authoringapplication.SourceEditResult
+	createContext     context.Context
+	executeContext    context.Context
+	intentContext     context.Context
+	forkContext       context.Context
+	editSourceContext context.Context
+	intentCommand     dashboardauthoring.Command
+	list              catalog.ListResult
+	listRequest       catalog.ListRequest
+	getRequest        catalog.GetRequest
+	create            authoringservice.CreateRequest
+	fork              sourceadapter.ForkRequest
+	command           dashboardauthoring.Command
+	source            authoringapplication.SourceRead
+	editSource        authoringapplication.SourceEditRequest
+	editSourceResult  authoringapplication.SourceEditResult
 }
 
 func (f *projectAuthoringFake) List(_ context.Context, request catalog.ListRequest) (catalog.ListResult, error) {
@@ -247,18 +310,23 @@ func (f *projectAuthoringFake) Get(_ context.Context, request catalog.GetRequest
 func (f *projectAuthoringFake) Draft(context.Context, authoringapplication.DraftRequest) (authoringapplication.DraftRead, error) {
 	return authoringapplication.DraftRead{}, nil
 }
-func (f *projectAuthoringFake) Create(_ context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
+func (f *projectAuthoringFake) Create(ctx context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
+	f.createContext = ctx
 	f.create = request
 	return authoringservice.Result{}, nil
 }
-func (f *projectAuthoringFake) Execute(_ context.Context, _ projectgraph.ResourceID, command dashboardauthoring.Command) (authoringservice.Result, error) {
+func (f *projectAuthoringFake) Execute(ctx context.Context, _ projectgraph.ResourceID, command dashboardauthoring.Command) (authoringservice.Result, error) {
+	f.executeContext = ctx
 	f.command = command
 	return authoringservice.Result{}, nil
 }
-func (f *projectAuthoringFake) ExecuteIntent(context.Context, authoringapplication.IntentRequest) (authoringservice.Result, error) {
+func (f *projectAuthoringFake) ExecuteIntent(ctx context.Context, request authoringapplication.IntentRequest) (authoringservice.Result, error) {
+	f.intentContext = ctx
+	f.intentCommand = request.Command
 	return authoringservice.Result{}, nil
 }
-func (f *projectAuthoringFake) Fork(_ context.Context, request sourceadapter.ForkRequest) (authoringservice.Result, error) {
+func (f *projectAuthoringFake) Fork(ctx context.Context, request sourceadapter.ForkRequest) (authoringservice.Result, error) {
+	f.forkContext = ctx
 	f.fork = request
 	return authoringservice.Result{}, nil
 }
@@ -271,7 +339,8 @@ func (f *projectAuthoringFake) ExportYAML(context.Context, sourceadapter.ExportR
 func (f *projectAuthoringFake) ReadSource(context.Context, authoringapplication.DraftRequest) (authoringapplication.SourceRead, error) {
 	return f.source, nil
 }
-func (f *projectAuthoringFake) EditSource(_ context.Context, request authoringapplication.SourceEditRequest) (authoringapplication.SourceEditResult, error) {
+func (f *projectAuthoringFake) EditSource(ctx context.Context, request authoringapplication.SourceEditRequest) (authoringapplication.SourceEditResult, error) {
+	f.editSourceContext = ctx
 	f.editSource = request
 	return f.editSourceResult, nil
 }

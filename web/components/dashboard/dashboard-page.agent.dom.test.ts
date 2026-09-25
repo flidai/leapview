@@ -203,6 +203,15 @@ test('dashboard agent drawer carries page context and explicit visual references
     })
     expect(initial).toEqual({ hasToggle: true, toggleHasVisibleSurface: true, open: false, drawerWidth: 0 })
 
+    await page.waitForFunction(() => {
+      const root = document.querySelector('lv-dashboard-page')?.shadowRoot
+      return Boolean(
+        root?.querySelector('[data-visual-id="orders_chart"] lv-visualization-host')
+        && root.querySelector('[data-visual-id="orders_kpi"] lv-visualization-host')
+        && root.querySelector('[data-visual-id="orders"] lv-visualization-host')?.shadowRoot?.querySelector('lv-report-table'),
+      )
+    })
+
     const visualActionsAtRest = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const root = element.shadowRoot
       const frame = root.querySelector('[data-visual-id="orders_chart"]') as any
@@ -727,7 +736,7 @@ test('side agent keeps the composer visible and starter prompts never submit aut
     })
     await page.locator('.agent-toggle').click()
     const drawer = page.locator('lv-chat-drawer[open]')
-    await drawer.getByRole('button', { name: 'Summarize the key takeaways on this page.', exact: true }).click()
+    await drawer.getByRole('button', { name: 'Summarize: Summarize the key takeaways on this page.', exact: true }).click()
     expect(await drawer.locator('textarea').inputValue()).toBe('Summarize the key takeaways on this page.')
     expect(await page.evaluate(() => (window as any).sideSubmits)).toBe(0)
     const geometry = await drawer.evaluate(element => ({ bottom: element.getBoundingClientRect().bottom, composerBottom: element.shadowRoot!.querySelector('lv-chat-composer')!.getBoundingClientRect().bottom, viewport: innerHeight }))

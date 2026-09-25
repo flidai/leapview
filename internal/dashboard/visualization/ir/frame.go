@@ -406,7 +406,7 @@ func validateSpecification(spec VisualizationSpec, base VisualizationSpecBase) (
 	if err := validatePointSpecification(spec, schemas); err != nil {
 		return nil, err
 	}
-	if err := validateGeographicSpecification(spec); err != nil {
+	if err := validateGeographicSpecification(spec, schemas); err != nil {
 		return nil, err
 	}
 	for _, interaction := range base.Interactions {
@@ -2313,7 +2313,7 @@ func validVisualizationReferenceReducer(reducer VisualizationReferenceReducer) b
 	}
 }
 
-func validateGeographicSpecification(spec VisualizationSpec) error {
+func validateGeographicSpecification(spec VisualizationSpec, schemas map[string]VisualizationDatasetSchema) error {
 	value, ok := spec.Value.(*GeographicVisualizationSpec)
 	if !ok {
 		return nil
@@ -2339,6 +2339,9 @@ func validateGeographicSpecification(spec VisualizationSpec) error {
 		seen[base.ID] = struct{}{}
 		if base.Visibility.MinimumZoom < 0 || base.Visibility.MaximumZoom <= base.Visibility.MinimumZoom {
 			return fmt.Errorf("geographic layer %q has invalid visibility", base.ID)
+		}
+		if err := validateGeographicCoordinates(layer, schemas); err != nil {
+			return fmt.Errorf("geographic layer %q: %w", base.ID, err)
 		}
 		switch typed := layer.Value.(type) {
 		case *VisualizationChoroplethLayer:
@@ -2369,6 +2372,32 @@ func validateGeographicSpecification(spec VisualizationSpec) error {
 		asset := value.Presentation.Basemap
 		if asset.ID == "" || asset.StyleURL == "" || asset.ArchiveURL == "" || len(asset.StyleDigest) != 71 || len(asset.ArchiveDigest) != 71 || asset.Attribution == "" {
 			return fmt.Errorf("geographic basemap has incomplete provenance")
+		}
+	}
+	return nil
+}
+
+func validateGeographicCoordinates(layer VisualizationGeographicLayer, schemas map[string]VisualizationDatasetSchema) error {
+	var latitude, longitude VisualizationFieldRef
+	switch typed := layer.Value.(type) {
+	case *VisualizationPointLayer:
+		latitude, longitude = typed.Latitude, typed.Longitude
+	case *VisualizationHeatLayer:
+		latitude, longitude = typed.Latitude, typed.Longitude
+	case *VisualizationDensityLayer:
+		latitude, longitude = typed.Latitude, typed.Longitude
+	case *VisualizationPathLayer:
+		latitude, longitude = typed.Latitude, typed.Longitude
+	default:
+		return nil
+	}
+	for _, coordinate := range []struct {
+		name string
+		ref  VisualizationFieldRef
+	}{{"latitude", latitude}, {"longitude", longitude}} {
+		field, ok := visualizationField(coordinate.ref, schemas)
+		if !ok || !numericVisualizationField(field) {
+			return fmt.Errorf("%s field must be numeric", coordinate.name)
 		}
 	}
 	return nil

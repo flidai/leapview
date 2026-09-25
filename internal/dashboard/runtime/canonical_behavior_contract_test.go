@@ -29,6 +29,22 @@ type canonicalDataRuntime struct {
 	planner    *semanticquery.Planner
 }
 
+type canonicalWindowDataRuntime struct {
+	*canonicalDataRuntime
+}
+
+func (r *canonicalWindowDataRuntime) ExecuteDataQuery(ctx context.Context, query dataquery.Query) (dataquery.Result, error) {
+	result, err := r.canonicalDataRuntime.ExecuteDataQuery(ctx, query)
+	if err != nil || query.IncludeTotal || (query.Kind != dataquery.KindModelRows && query.Kind != dataquery.KindSemanticRows) {
+		return result, err
+	}
+	start := min(max(0, query.Offset), len(result.Rows))
+	end := min(len(result.Rows), start+query.Limit)
+	result.Rows = result.Rows[start:end]
+	result.RowsReturned = len(result.Rows)
+	return result, nil
+}
+
 type canonicalVerifyingRuntime struct {
 	canonicalDataRuntime
 	verifyErr error
@@ -184,8 +200,9 @@ func canonicalHeatmap(t *testing.T, id string) visualizationdefinition.Definitio
 func canonicalTable(t *testing.T) visualizationdefinition.Definition {
 	fields := []visualizationir.VisualizationField{{ID: "order_id", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "Order"}, {ID: "status", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "Status"}}
 	base := canonicalBase("table", "Orders", fields)
+	base.DataBudget.MaxRows = dashboard.TableInteractiveRowCap + 5
 	spec := visualizationir.VisualizationSpec{Value: &visualizationir.TableVisualizationSpec{VisualizationSpecBase: base, Kind: "table", Columns: []visualizationir.TableVisualizationColumn{{Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "order_id"}, Label: "Order", Formatting: []visualizationir.TableVisualizationFormattingRule{}}, {Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "status"}, Label: "Status", Formatting: []visualizationir.TableVisualizationFormattingRule{}}}, Presentation: visualizationir.GridVisualizationPresentation{RowHeight: 28, ShowHeader: true}}}
-	definition, err := visualizationdefinition.New("orders", spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryDetail, ResultShape: visualizationdefinition.ResultDetailWindow, ModelID: "model_1", DatasetID: "primary", Detail: &visualizationdefinition.DetailQueryBinding{TableID: "orders", Fields: []visualizationdefinition.FieldBinding{{FieldID: "order_id", Alias: "order_id"}, {FieldID: "status", Alias: "status"}}, Limit: 100}})
+	definition, err := visualizationdefinition.New("orders", spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryDetail, ResultShape: visualizationdefinition.ResultDetailWindow, ModelID: "model_1", DatasetID: "primary", Detail: &visualizationdefinition.DetailQueryBinding{TableID: "orders", Fields: []visualizationdefinition.FieldBinding{{FieldID: "order_id", Alias: "order_id"}, {FieldID: "status", Alias: "status"}}, Limit: dashboard.TableInteractiveRowCap + 5}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,6 +405,43 @@ func TestCanonicalTableRowsRespectInteractiveCap(t *testing.T) {
 	}
 	if !table.IsCapped || table.AvailableRows != dashboard.TableInteractiveRowCap || table.RowCap != dashboard.TableInteractiveRowCap {
 		t.Fatalf("table cap = %#v", table)
+	}
+}
+
+func TestCanonicalTableTopNBoundsWindowsWithoutChangingTotalCardinality(t *testing.T) {
+	project, compiled := canonicalBehaviorDefinition(t, true)
+	table := compiled.Visualizations["orders"]
+	table.Query.Detail.Limit = 5
+	compiled.Visualizations["orders"] = table
+	project, err := NewProjectDefinition("project_1", "Project", "", project.Models(), map[graph.ResourceID]dashboarddefinition.Definition{"dashboard_1": compiled})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := make([]dataquery.Row, 12)
+	for index := range rows {
+		rows[index] = dataquery.Row{"order_id": fmt.Sprintf("o%d", index), "status": "delivered"}
+	}
+	var queries []dataquery.Query
+	data := &canonicalWindowDataRuntime{canonicalDataRuntime: &canonicalDataRuntime{rows: rows, queries: &queries}}
+	service := canonicalBehaviorRuntime(t, project, data, nil)
+	defer service.Close()
+
+	tableState, err := service.queries.visualizations.queryTablePage(context.Background(), "dashboard_1", "overview", dashboard.Filters{}, dashboard.TableRequest{Table: "orders", Block: "all", RequestSeq: 1}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tableState.AvailableRows != 5 || tableState.IsCapped != true {
+		t.Fatalf("Top N window = available %d capped %v, want 5 rows capped", tableState.AvailableRows, tableState.IsCapped)
+	}
+	if total, ok := tableState.Cardinality.ExactValue(); !ok || total != 12 {
+		t.Fatalf("source cardinality = %#v, want exact 12", tableState.Cardinality)
+	}
+	if got := len(tableState.Blocks["a"].Rows) + len(tableState.Blocks["b"].Rows) + len(tableState.Blocks["c"].Rows); got != 5 {
+		t.Fatalf("rows returned across visible blocks = %d, want 5", got)
+	}
+	if len(queries) == 0 || queries[0].Limit != 5 {
+		t.Fatalf("first window query = %#v, want row limit 5", queries)
 	}
 }
 

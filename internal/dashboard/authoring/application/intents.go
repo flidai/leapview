@@ -80,6 +80,12 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 			return a.prepareVisualTypeSwitch(ctx, project, request.Command, lifecycle, visual)
 		}
 	}
+	if request.Command.AddSlicer != nil {
+		slicer := request.Command.AddSlicer
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			return a.prepareSlicerTargets(ctx, project, request.Command, lifecycle, slicer)
+		}
+	}
 	return a.authoring.ExecuteValidated(ctx, project, request.Command, validator)
 }
 
@@ -96,7 +102,7 @@ func (a *Application) prepareVisualTypeSwitch(ctx context.Context, project proje
 	if err != nil {
 		return err
 	}
-	bindings := resolveVisualTypeFieldBindings(model, visual)
+	bindings := resolveVisualTypeFieldBindingsForTarget(model, visual, patch.Type)
 	patch.ResolvedBindings = &bindings
 	return nil
 }
@@ -224,6 +230,183 @@ func resolveVisualTypeFieldBindings(model *semanticmodel.Model, visual document.
 		bindings.Details = append(bindings.Details, recordsByDataset[bindings.Dataset]...)
 	}
 	return bindings
+}
+
+// resolveVisualTypeFieldBindingsForTarget keeps the user's current governed
+// fields first, then fills only the target visual's missing required roles
+// from the same semantic dataset. A visual-type click should produce a usable
+// draft when the active dataset has compatible fields; it must never reach
+// across datasets merely to satisfy a renderer's cardinality. Record columns
+// require exact source-query equivalents rather than arbitrary defaults.
+func resolveVisualTypeFieldBindingsForTarget(model *semanticmodel.Model, visual document.DashboardVisual, target document.DashboardVisualType) authoring.VisualTypeFieldBindings {
+	bindings := resolveVisualTypeFieldBindings(model, visual)
+	if model == nil {
+		return bindings
+	}
+	dataset := strings.TrimSpace(bindings.Dataset)
+	if dataset == "" {
+		for _, metricID := range bindings.Metrics {
+			if metric, ok := model.Metrics[metricID]; ok && strings.TrimSpace(metric.Dataset) != "" {
+				dataset = strings.TrimSpace(metric.Dataset)
+				break
+			}
+		}
+	}
+	if dataset == "" {
+		for _, dimensionID := range bindings.Dimensions {
+			dimension, ok := model.Dimensions[dimensionID]
+			if !ok {
+				continue
+			}
+			datasets := make([]string, 0, len(dimension.Bindings))
+			for candidate := range dimension.Bindings {
+				if strings.TrimSpace(candidate) != "" {
+					datasets = append(datasets, candidate)
+				}
+			}
+			sort.Strings(datasets)
+			if len(datasets) > 0 {
+				dataset = datasets[0]
+				break
+			}
+		}
+	}
+	if dataset == "" {
+		return bindings
+	}
+	bindings.Dataset = dataset
+
+	minimums := map[authoring.FieldRole]int32{}
+	for _, limit := range authoring.CanonicalVisualRoleLimits(target) {
+		minimums[authoring.FieldRole(limit.Role)] = limit.Minimum
+	}
+
+	dimensionIDs := make([]string, 0, len(model.Dimensions))
+	for id, dimension := range model.Dimensions {
+		// The binding map key is the governed query dataset. Its physical field
+		// may live on a related table (for example cash_scenarios.scenario),
+		// which is precisely what the semantic relationship path resolves.
+		if _, ok := dimension.Bindings[dataset]; ok {
+			dimensionIDs = append(dimensionIDs, id)
+		}
+	}
+	sort.Strings(dimensionIDs)
+	if target == document.DashboardVisualTypeMap {
+		bindings.Dimensions = mapCoordinateDimensions(model, dataset, bindings.Dimensions, dimensionIDs)
+	} else {
+		for _, id := range dimensionIDs {
+			if int32(len(bindings.Dimensions)) >= minimums[authoring.FieldRoleDimension] {
+				break
+			}
+			bindings.Dimensions = appendUniqueVisualSwitchField(bindings.Dimensions, id)
+		}
+	}
+
+	metricIDs := make([]string, 0, len(model.Metrics))
+	for id, metric := range model.Metrics {
+		if strings.TrimSpace(metric.Dataset) == dataset && !metric.Hidden {
+			metricIDs = append(metricIDs, id)
+		}
+	}
+	sort.Strings(metricIDs)
+	for _, id := range metricIDs {
+		if int32(len(bindings.Metrics)) >= minimums[authoring.FieldRoleMetric] {
+			break
+		}
+		bindings.Metrics = appendUniqueVisualSwitchField(bindings.Metrics, id)
+	}
+
+	// Raw columns must come from exact source-query equivalents. Choosing an
+	// arbitrary column would replace the visual's meaning while retaining its
+	// title (for example, revenue variance becoming a table of budget COGS).
+	return bindings
+}
+
+func mapCoordinateDimensions(model *semanticmodel.Model, dataset string, current, candidates []string) []string {
+	latitude, longitude := "", ""
+	consider := func(id string) {
+		if latitude != "" && longitude != "" {
+			return
+		}
+		switch mapDimensionPriority(model, dataset, id) {
+		case 0:
+			if latitude == "" {
+				latitude = id
+			}
+		case 1:
+			if longitude == "" {
+				longitude = id
+			}
+		}
+	}
+	for _, id := range current {
+		consider(id)
+	}
+	for _, id := range candidates {
+		consider(id)
+	}
+	if latitude == "" || longitude == "" {
+		return nil
+	}
+	return []string{latitude, longitude}
+}
+
+func mapDimensionPriority(model *semanticmodel.Model, dataset, id string) int {
+	dimension, ok := model.Dimensions[id]
+	if !ok || !isNumericMapDimension(model, dataset, dimension) {
+		return 2
+	}
+	if binding, ok := dimension.Bindings[dataset]; ok {
+		if candidate := mapCoordinateNamePriority(unqualifiedVisualSwitchField(dataset, binding.Field)); candidate < 2 {
+			return candidate
+		}
+	}
+	return mapCoordinateNamePriority(id)
+}
+
+func isNumericMapDimension(model *semanticmodel.Model, dataset string, dimension semanticmodel.SemanticDimension) bool {
+	binding, ok := dimension.Bindings[dataset]
+	if !ok {
+		return false
+	}
+	if dimension.Datatype != "" {
+		return numericLogicalDatatype(dimension.Datatype)
+	}
+	field := strings.TrimSpace(binding.Field)
+	parts := strings.SplitN(field, ".", 2)
+	tableID := dataset
+	if len(parts) == 2 {
+		tableID, field = parts[0], parts[1]
+	}
+	table, ok := model.Tables[tableID]
+	if !ok {
+		return false
+	}
+	physical, ok := table.Dimensions[field]
+	return ok && numericLogicalDatatype(physical.Datatype)
+}
+
+func numericLogicalDatatype(datatype semanticmodel.LogicalDataType) bool {
+	switch datatype {
+	case semanticmodel.DataTypeInteger, semanticmodel.DataTypeDecimal, semanticmodel.DataTypeFloat:
+		return true
+	default:
+		return false
+	}
+}
+
+func mapCoordinateNamePriority(name string) int {
+	for _, token := range strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	}) {
+		switch token {
+		case "lat", "latitude":
+			return 0
+		case "lon", "long", "longitude":
+			return 1
+		}
+	}
+	return 2
 }
 
 func uniqueSemanticDimensionForRecord(model *semanticmodel.Model, dataset, field string) string {
@@ -395,8 +578,15 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	// the exact unqualified field ID required by the reducer.
 	validationField := *field
 	validationField.FieldID = recordDetailFieldIDForValidation(revision.Document, componentVisual, validationField.FieldID, validationField.Role)
-	field.ResolvedTable, err = a.validateFieldAgainstRuntime(ctx, project, revision, validationField)
-	return err
+	model, err := a.semanticModelForRevision(ctx, revision)
+	if err != nil {
+		return err
+	}
+	if err := validateGovernedField(model, validationField.FieldID, validationField.Role); err != nil {
+		return err
+	}
+	field.ResolvedTable = resolvedTableForField(model, validationField)
+	return validateAssignedFieldFilterCompatibility(lifecycle, revision, command, model)
 }
 
 func recordDetailFieldIDForValidation(doc document.DashboardDocument, visualID, fieldID string, role authoring.FieldRole) string {

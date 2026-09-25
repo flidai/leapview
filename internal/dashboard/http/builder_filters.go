@@ -2,8 +2,8 @@ package http
 
 // This file is the dashboard-builder filter transport boundary. Builder
 // filters deliberately do not use the published dashboard session routes or
-// state: every request is bound to an authoring draft revision and browser
-// identity, then compiled through the read-only preview service.
+// state: every request compiles the current authoring draft revision and is
+// bound to the browser's draft preview identity.
 
 import (
 	"context"
@@ -67,7 +67,7 @@ func (h Handler) DashboardBuilderFilterCommand(w nethttp.ResponseWriter, r *neth
 		return
 	}
 
-	// Compile the exact revision before creating state. This prevents a client
+	// Compile the current revision before creating state. This prevents a client
 	// from manufacturing a filter contract or binding set for another draft.
 	compiled, err := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
 		ProjectID: request.ProjectID, ActorID: request.ActorID,
@@ -78,18 +78,18 @@ func (h Handler) DashboardBuilderFilterCommand(w nethttp.ResponseWriter, r *neth
 		writeBuilderFilterError(w, err)
 		return
 	}
-	request.Key.ServingStateID = builderServingStateIDForGeneration(request.Builder, compiled.SemanticEvidence.Identity.GenerationID)
-	if request.Key.ServingStateID == "" {
-		writeBuilderFilterError(w, fmt.Errorf("%w: complete builder draft revision is required", authoring.ErrInvalidPayload))
-		return
-	}
-	if supplied := strings.TrimSpace(optionalRuntimeValue(signals.Runtime.ServingStateID)); supplied != "" && supplied != request.Key.ServingStateID {
-		writeBuilderFilterError(w, authoring.ErrStaleRevision)
+	request.Key.ServingStateID, err = builderActiveServingStateID(request.Builder, compiled.SemanticEvidence.Identity.GenerationID, optionalRuntimeValue(signals.Runtime.ServingStateID))
+	if err != nil {
+		writeBuilderFilterError(w, err)
 		return
 	}
 	record, err := h.ensureBuilderFilterSession(r.Context(), request.Key, request.PageID, compiled.Definition)
 	if err != nil {
 		writeBuilderFilterError(w, err)
+		return
+	}
+	if _, err := dashboardfilter.RestoreMachine(compiled.Definition.FilterApplication.WithDefaults().Mode, compiled.Definition.FilterBindingSpecs(), record.State.Filters); err != nil {
+		writeBuilderFilterError(w, authoring.ErrStaleRevision)
 		return
 	}
 	if err := validateFilterCommandPageScope(compiled.Definition, request.PageID, signals.BuilderFilterCommand); err != nil {
@@ -128,7 +128,12 @@ func (h Handler) DashboardBuilderFilterCommand(w nethttp.ResponseWriter, r *neth
 		}
 	}
 	response := builderFilterValidationResponse(previewResult.Definition, state, true, "", signals.BuilderFilterCommand.ClientMutationID)
-	response["builderVisuals"] = dashboardBuilderPreviewVisuals(request.Builder, previewResult)
+	visuals := dashboardBuilderPreviewVisuals(request.Builder, previewResult)
+	for visualID, signal := range visuals {
+		signal.ServingStateID = request.Key.ServingStateID
+		visuals[visualID] = signal
+	}
+	response["builderVisuals"] = visuals
 	writeJSON(w, nethttp.StatusOK, response)
 }
 
@@ -150,7 +155,7 @@ func (h Handler) DashboardBuilderFilterOptions(w nethttp.ResponseWriter, r *neth
 		nethttp.Error(w, "dashboard builder filter session is unavailable", nethttp.StatusServiceUnavailable)
 		return
 	}
-	// Compile first, then ensure the exact-revision state exists. The builder
+	// Compile first, then ensure the active preview's state exists. The builder
 	// may request options immediately after bootstrap, before any mutation has
 	// created its ephemeral session record.
 	compiled, err := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
@@ -162,12 +167,8 @@ func (h Handler) DashboardBuilderFilterOptions(w nethttp.ResponseWriter, r *neth
 		writeBuilderFilterError(w, err)
 		return
 	}
-	request.Key.ServingStateID = builderServingStateIDForGeneration(request.Builder, compiled.SemanticEvidence.Identity.GenerationID)
-	if request.Key.ServingStateID == "" {
-		writeBuilderFilterError(w, fmt.Errorf("%w: complete builder draft revision is required", authoring.ErrInvalidPayload))
-		return
-	}
-	if supplied := strings.TrimSpace(optionalRuntimeValue(signals.Runtime.ServingStateID)); supplied != "" && supplied != request.Key.ServingStateID {
+	request.Key.ServingStateID, err = builderActiveServingStateID(request.Builder, compiled.SemanticEvidence.Identity.GenerationID, optionalRuntimeValue(signals.Runtime.ServingStateID))
+	if err != nil {
 		// A runtime identity from a prior semantic generation must not create
 		// or read options from the newly active draft session.
 		writeJSON(w, nethttp.StatusOK, map[string]any{"builderFilterOptionPages": map[string]any{}})
@@ -187,6 +188,10 @@ func (h Handler) DashboardBuilderFilterOptions(w nethttp.ResponseWriter, r *neth
 	record, err := h.ensureBuilderFilterSession(r.Context(), request.Key, request.PageID, compiled.Definition)
 	if err != nil {
 		writeBuilderFilterError(w, err)
+		return
+	}
+	if _, err := dashboardfilter.RestoreMachine(compiled.Definition.FilterApplication.WithDefaults().Mode, compiled.Definition.FilterBindingSpecs(), record.State.Filters); err != nil {
+		writeJSON(w, nethttp.StatusOK, map[string]any{"builderFilterOptionPages": map[string]any{}})
 		return
 	}
 	state := record.State.Filters.State
@@ -227,6 +232,29 @@ func optionalRuntimeValue(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// Layout edits and targeted type changes retain the browser's existing visual
+// results. Their session identity therefore remains on the prior revision,
+// even though every request must still compile the current authored revision.
+// Never carry it across a draft or semantic-generation boundary.
+func builderActiveServingStateID(builder uisignals.DashboardBuilderSignal, generation, supplied string) (string, error) {
+	current := builderServingStateIDForGeneration(builder, generation)
+	if current == "" {
+		return "", fmt.Errorf("%w: complete builder draft revision is required", authoring.ErrInvalidPayload)
+	}
+	supplied = strings.TrimSpace(supplied)
+	if supplied == "" || supplied == current {
+		return current, nil
+	}
+	prefix := "builder:" + strings.TrimSpace(builder.DraftID) + ":"
+	suffix := ":generation:" + strings.TrimSpace(generation)
+	inner := strings.TrimSuffix(strings.TrimPrefix(supplied, prefix), suffix)
+	parts := strings.SplitN(inner, ":sha256:", 2)
+	if generation == "" || !strings.HasPrefix(supplied, prefix) || !strings.HasSuffix(supplied, suffix) || len(parts) != 2 || parts[0] == "" || len(parts[1]) != 64 {
+		return "", authoring.ErrStaleRevision
+	}
+	return supplied, nil
 }
 
 func (h Handler) builderFilterRequest(r *nethttp.Request, signals builderFilterSignals) (builderFilterRequest, error) {

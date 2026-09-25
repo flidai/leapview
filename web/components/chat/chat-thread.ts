@@ -54,9 +54,16 @@ class ChatThread extends LitElement {
 
   render() {
     const transcript = this.resolvedTranscript
+    const visibleTranscript = this.surface === 'drawer'
+      ? transcript.filter((item) => {
+        if (item.kind !== 'tool') return true
+        const status = this.toolStatus(item)
+        return status === 'error' || (status === 'complete' && Boolean(item.artifact))
+      })
+      : transcript
     const unavailable = !this.status.enabled && transcript.length === 0
-    const empty = transcript.length === 0 && !this.status.running
-    const showWorking = this.status.running && !transcript.some((item) => item.kind === 'tool' && this.toolStatus(item) === 'running')
+    const empty = visibleTranscript.length === 0 && !this.status.running
+    const showWorking = this.status.running && (this.surface === 'drawer' || !transcript.some((item) => item.kind === 'tool' && this.toolStatus(item) === 'running'))
 
     return html`
       <div class="thread">
@@ -66,7 +73,7 @@ class ChatThread extends LitElement {
             ${unavailable ? this.renderEmptyState('Agent unavailable', this.status.error || 'Agent is not configured.') : nothing}
             ${!unavailable && this.status.error ? html`<div class="alert" role="alert">${this.status.error}</div>` : nothing}
             ${empty && !unavailable ? this.renderEmptyState('Start a conversation') : nothing}
-            ${groupTranscript(transcript).map((unit) => this.renderUnit(unit))}
+            ${groupTranscript(visibleTranscript).map((unit) => this.renderUnit(unit))}
             ${showWorking ? html`
               <div class="working" role="status" aria-label="Working" aria-live="polite">
                 <span class="working-dots" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -240,6 +247,7 @@ class ChatThread extends LitElement {
 
   private renderTool(item: ChatTranscriptItemSignal) {
     const status = this.toolStatus(item)
+    if (this.surface === 'drawer' && status === 'complete' && item.artifact) return this.renderArtifact(item.artifact)
     const label = toolCallLabel(item)
     const key = toolCallKey(item)
     const detailsID = toolDetailsID(key)

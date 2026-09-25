@@ -634,17 +634,18 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 			ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1",
 			Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-2", Number: 2, ContentHash: revisionHash},
 			Pages:    []uisignals.DashboardBuilderPageSignal{{ID: selectedPage}}, SelectedPageID: &selectedPage,
+			Preview: uisignals.DashboardBuilderPreviewStateSignal{Active: false, Loading: false, Error: uisignals.Pointer("unrelated incomplete visual")},
 		},
-		compilation: preview.Compilation{SemanticEvidence: preview.SemanticServingStateEvidence{Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation-4"}}},
+		compileErr: errors.New("unrelated incomplete visual"),
 	}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
 	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
 		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": revisionHash,
-		"pageId": "overview", "action": "set_placements", "placements": []map[string]any{
+		"pageId": "overview", "action": "set_placements", "compact": true, "placements": []map[string]any{
 			{"componentId": "orders-component", "column": 1, "row": 1, "columnSpan": 6, "rowSpan": 4},
 			{"visualId": "summary-component", "col": 7, "row": 1, "colSpan": 6, "rowSpan": 4},
 		},
-	}})
+	}, "runtime": map[string]any{"servingStateId": "retained-preview-state"}})
 	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
 	req.Header.Set("X-Request-ID", "placement-1")
 	rec := httptest.NewRecorder()
@@ -656,11 +657,14 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 		t.Fatalf("builder dispatch calls=%d/%d command=%#v", fake.intentCalls, fake.executeCalls, fake.executed)
 	}
 	placements := fake.executed.SetPlacements.Placements
+	if !fake.executed.SetPlacements.Compact {
+		t.Fatal("translated placement command did not preserve compact-after-resize intent")
+	}
 	if len(placements) != 2 || placements[0].ComponentID != "orders-component" || placements[0].Placement.ColumnSpan != 6 || placements[1].ComponentID != "summary-component" || placements[1].Placement.Column != 7 {
 		t.Fatalf("translated placements = %#v", placements)
 	}
-	if fake.previewCalls != 0 || fake.compileCalls != 1 {
-		t.Fatalf("layout projection calls preview=%d compile=%d, want 0/1", fake.previewCalls, fake.compileCalls)
+	if fake.previewCalls != 0 || fake.compileCalls != 0 {
+		t.Fatalf("layout projection calls preview=%d compile=%d, want 0/0", fake.previewCalls, fake.compileCalls)
 	}
 	patches := ssetest.PatchSignals(t, rec.Body.String())
 	if len(patches) != 1 {
@@ -669,8 +673,16 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 	if _, ok := patches[0]["builderVisuals"]; ok {
 		t.Fatalf("layout-only patch replaced builder visuals: %#v", patches[0])
 	}
+	builder, ok := patches[0]["builder"].(map[string]any)
+	if !ok {
+		t.Fatalf("layout builder patch = %#v", patches[0]["builder"])
+	}
+	previewState, ok := builder["preview"].(map[string]any)
+	if !ok || previewState["active"] != true || previewState["loading"] != false || previewState["error"] != "" {
+		t.Fatalf("layout preview state = %#v, want retained previews active", builder["preview"])
+	}
 	runtime, ok := patches[0]["runtime"].(map[string]any)
-	if !ok || runtime["servingStateId"] != "builder:draft-1:revision-2:"+revisionHash+":generation:generation-4" {
+	if !ok || runtime["servingStateId"] != "retained-preview-state" {
 		t.Fatalf("layout runtime = %#v", patches[0]["runtime"])
 	}
 }

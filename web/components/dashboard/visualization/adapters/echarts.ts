@@ -86,7 +86,10 @@ export const adapter: RendererAdapter = {
   async mount(container, envelope, context) {
     const echarts = await import('echarts')
     const frame = createEChartsRendererFrame(container)
-    const chart = echarts.getInstanceByDom(frame) ?? echarts.init(frame, undefined, { renderer: 'canvas', devicePixelRatio: context.devicePixelRatio })
+    // Builder grid edits can resize several mounted charts at once. Use SVG in
+    // authoring so none of those previews allocates a GPU canvas backing store.
+    const renderer = context.echartsRenderer === 'svg' || (envelope.spec.kind === 'proportional' && envelope.spec.mark === 'funnel') ? 'svg' : 'canvas'
+    const chart = echarts.getInstanceByDom(frame) ?? echarts.init(frame, undefined, { renderer, devicePixelRatio: context.devicePixelRatio })
     const handle = new EChartsHandle(container, frame, chart, categoryColorRegistryFor(container))
     try {
       handle.mount(envelope, context)
@@ -228,7 +231,20 @@ export class EChartsHandle implements RendererHandle {
   }
 
   async snapshot(): Promise<Blob> {
-    const response = await fetch(this.chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: 'transparent' }))
+    const dataURL = this.chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: 'transparent' })
+    // SVG renderers return an SVG data URL even when the requested type is
+    // PNG. Fetching that URL can be blocked by the page's CSP, so decode it
+    // locally and preserve its actual media type.
+    if (dataURL.startsWith('data:image/svg+xml')) {
+      const comma = dataURL.indexOf(',')
+      if (comma < 0) throw new Error('invalid ECharts SVG snapshot')
+      const payload = dataURL.slice(comma + 1)
+      const bytes = dataURL.slice(0, comma).includes(';base64')
+        ? Uint8Array.from(atob(payload), (character) => character.charCodeAt(0))
+        : decodeURIComponent(payload)
+      return new Blob([bytes], { type: 'image/svg+xml' })
+    }
+    const response = await fetch(dataURL)
     return response.blob()
   }
 

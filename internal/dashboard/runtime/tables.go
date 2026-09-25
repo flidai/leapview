@@ -49,6 +49,7 @@ func newTablePlan(definition visualizationdefinition.Definition) (tablePlan, err
 	case visualizationdefinition.QueryDetail:
 		query := definition.Query.Detail
 		plan.Kind, plan.Table, plan.DataColumns = "data_table", query.TableID, query.Fields
+		plan.Limit = query.Limit
 		if len(query.DefaultSort) > 0 {
 			plan.DefaultSort = dashboard.TableSort{Key: query.DefaultSort[0].FieldID, Direction: query.DefaultSort[0].Direction}
 		}
@@ -66,6 +67,14 @@ func newTablePlan(definition visualizationdefinition.Definition) (tablePlan, err
 		return tablePlan{}, fmt.Errorf("visualization %q query kind %q is not a grid query", definition.ID, definition.Query.Kind)
 	}
 	return plan, nil
+}
+
+func effectiveTableRowLimit(configured int64) int {
+	limit := dashboard.TableInteractiveRowCap
+	if configured > 0 && configured < int64(limit) {
+		limit = int(configured)
+	}
+	return limit
 }
 
 func (s *VisualizationDataService) queryAggregateTable(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, request dashboard.TableRequest, definition visualizationdefinition.Definition, filters dashboard.Filters) (dashboard.Table, error) {
@@ -91,9 +100,13 @@ func (s *VisualizationDataService) queryAggregateTable(ctx context.Context, runt
 		return dashboard.EmptyTable(request, queryErr), nil
 	}
 	totalRows := len(rows)
-	isCapped := totalRows > dashboard.TableInteractiveRowCap || calculationIncomplete
+	rowLimit := dashboard.TableInteractiveRowCap
+	if table.Kind == "matrix_table" {
+		rowLimit = effectiveTableRowLimit(table.Limit)
+	}
+	isCapped := totalRows > rowLimit || calculationIncomplete
 	if isCapped {
-		rows = rows[:min(len(rows), dashboard.TableInteractiveRowCap)]
+		rows = rows[:min(len(rows), rowLimit)]
 	}
 	chunkSize := max(dashboard.TableChunkSize, len(rows))
 	style := table.Style.WithDefaults()
@@ -161,24 +174,30 @@ func (s *VisualizationDataService) matrixTableRows(ctx context.Context, runtime 
 	if request.Sort.Key != "" && tableHasColumn(columns, request.Sort.Key) {
 		sorts = []reportdef.QuerySort{{Field: request.Sort.Key, Direction: request.Sort.Direction}}
 	}
+	rowLimit := effectiveTableRowLimit(table.Limit)
+	queryLimit := rowLimit + 1
 	rows, err := runtime.data.Query(ctx, reportdef.AggregateQuery{
 		Dataset:    table.Table,
 		Dimensions: dimensions,
 		Metrics:    metrics,
 		Filters:    queryFilters,
 		Sort:       sorts,
-		Limit:      dashboard.TableInteractiveRowCap + 1,
+		Limit:      queryLimit,
 	})
 	if err != nil {
 		return nil, nil, false, err
 	}
 	records := tableRowsFromAnalytics(rows)
+	incomplete := len(records) >= queryLimit
+	if len(records) > queryLimit {
+		records = records[:queryLimit]
+	}
 	base, err := visualizationir.SpecificationBase(table.Definition.Spec)
 	if err != nil {
 		return nil, nil, false, err
 	}
 	if base.Calculations != nil && len(*base.Calculations) > 0 {
-		completeness := boundedFrameCompleteness(len(records), dashboard.TableInteractiveRowCap+1)
+		completeness := boundedFrameCompleteness(len(records), queryLimit)
 		records, err = applyCalculationsToTableRecords(base, table.Definition.Query.DatasetID, records, completeness)
 		if err != nil {
 			return nil, nil, false, err
@@ -186,7 +205,7 @@ func (s *VisualizationDataService) matrixTableRows(ctx context.Context, runtime 
 		columns = append(columns, visibleCalculationTableColumns(base)...)
 		sortAggregateTableRows(records, request.Sort)
 	}
-	return columns, records, len(records) >= dashboard.TableInteractiveRowCap+1, nil
+	return columns, records, incomplete, nil
 }
 
 func visibleCalculationTableColumns(base visualizationir.VisualizationSpecBase) []dashboard.TableColumn {
