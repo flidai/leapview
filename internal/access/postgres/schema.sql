@@ -1264,6 +1264,9 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA access TO leapview_control_runtime';
+        -- Lifecycle facts may only be appended through the ordering function;
+        -- the authority identity is read-only for the runtime role.
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON access.lifecycle_action, access.lifecycle_authority FROM leapview_control_runtime';
         EXECUTE 'REVOKE UPDATE ON access.privacy_action_run, access.privacy_action_item FROM leapview_control_runtime';
         EXECUTE 'GRANT UPDATE (status, cursor, updated_at, completed_at) ON access.privacy_action_run TO leapview_control_runtime';
         EXECUTE 'GRANT UPDATE (status, outcome, completed_at) ON access.privacy_action_item TO leapview_control_runtime';

@@ -2,9 +2,13 @@ package postgres
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -137,6 +141,141 @@ func TestLifecyclePostgreSQL18AtomicFrontierReplayAndIdempotency(t *testing.T) {
 	}
 	if err := source.runtime.QueryRow(t.Context(), `SELECT status FROM access.principal WHERE id=$1::uuid`, lifecycleOther).Scan(&status); err != nil || status != "active" {
 		t.Fatalf("conflicting append committed source mutation: %q, %v", status, err)
+	}
+}
+
+func TestLifecyclePostgreSQL18CompletedOccurrenceRetryPreservesReactivation(t *testing.T) {
+	source, restored, _ := lifecycleTestPair(t)
+	repo, err := NewAccess(source.runtime, FingerprintConfig{Key: []byte(strings.Repeat("k", 32))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fact := lifecycleTestFact(lifecyclePrincipal, lifecycleOccurrence)
+	if _, err := repo.DisablePrincipalWithLifecycle(t.Context(), lifecyclePrincipal, fact); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.EnablePrincipal(t.Context(), lifecyclePrincipal); err != nil {
+		t.Fatal(err)
+	}
+	token, err := repo.CreateSession(t.Context(), lifecyclePrincipal, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontier := lifecycleTestFrontier(t, source, fact.Boundary)
+	var beforeUpdatedAt string
+	if err := source.runtime.QueryRow(t.Context(), `SELECT updated_at::text FROM access.principal WHERE id=$1::uuid`, lifecyclePrincipal).Scan(&beforeUpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DisablePrincipalWithLifecycle(t.Context(), lifecyclePrincipal, fact); err != nil {
+		t.Fatal(err)
+	}
+	var status, updatedAt string
+	if err := source.runtime.QueryRow(t.Context(), `SELECT status,updated_at::text FROM access.principal WHERE id=$1::uuid`, lifecyclePrincipal).Scan(&status, &updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "active" || updatedAt != beforeUpdatedAt {
+		t.Fatalf("completed occurrence retry changed reactivated principal: status=%q updated_at=%q, want active/%q", status, updatedAt, beforeUpdatedAt)
+	}
+	if _, err := repo.PrincipalForToken(t.Context(), token); err != nil {
+		t.Fatalf("completed occurrence retry revoked the fresh session: %v", err)
+	}
+	if after := lifecycleTestFrontier(t, source, fact.Boundary); after != frontier {
+		t.Fatalf("completed occurrence retry changed frontier: before=%+v after=%+v", frontier, after)
+	}
+	if evidence, err := lifecycleTestReconcile(t, source, restored, frontier); err != nil || !evidence.Reconciled || evidence.Discovered != 0 {
+		t.Fatalf("unchanged source needs no post-frontier replay: %+v, %v", evidence, err)
+	}
+	// A genuinely new disable must use a new occurrence and remain discoverable.
+	fact.OccurrenceID = "20000000-0000-7000-8000-000000000970"
+	if _, err := repo.DisablePrincipalWithLifecycle(t.Context(), lifecyclePrincipal, fact); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.PrincipalForToken(t.Context(), token); err == nil {
+		t.Fatal("new disable left the fresh session usable")
+	}
+	if evidence, err := lifecycleTestReconcile(t, source, restored, frontier); err != nil || !evidence.Reconciled || evidence.Discovered != 1 || evidence.Replayed != 1 {
+		t.Fatalf("new occurrence was not replayed after frontier: %+v, %v", evidence, err)
+	}
+}
+
+func TestLifecyclePostgreSQL18ConcurrentOccurrenceExecutesMutationOnce(t *testing.T) {
+	source := newStandaloneAccessDatabase(t)
+	if _, err := source.admin.Exec(t.Context(), `
+		INSERT INTO access.principal(id,principal_type,status)
+		VALUES ('10000000-0000-7000-8000-000000000969','user','active');
+		CREATE TABLE access.lifecycle_test_mutations (principal_id uuid NOT NULL);
+		CREATE FUNCTION access.count_lifecycle_test_mutation() RETURNS trigger
+		LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,access AS $$
+		BEGIN INSERT INTO access.lifecycle_test_mutations VALUES (NEW.id); RETURN NEW; END $$;
+		CREATE TRIGGER count_lifecycle_test_mutation AFTER UPDATE OF status ON access.principal
+		FOR EACH ROW EXECUTE FUNCTION access.count_lifecycle_test_mutation()`); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := NewAccess(source.runtime, FingerprintConfig{Key: []byte(strings.Repeat("k", 32))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			_, err := repo.DisablePrincipalWithLifecycle(t.Context(), lifecyclePrincipal, lifecycleTestFact(lifecyclePrincipal, lifecycleOccurrence))
+			results <- err
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	var mutations, facts int
+	if err := source.admin.QueryRow(t.Context(), `SELECT
+		(SELECT count(*) FROM access.lifecycle_test_mutations),
+		(SELECT count(*) FROM access.lifecycle_action)`).Scan(&mutations, &facts); err != nil {
+		t.Fatal(err)
+	}
+	if mutations != 1 || facts != 1 {
+		t.Fatalf("one occurrence produced %d mutations and %d facts", mutations, facts)
+	}
+}
+
+func TestLifecyclePostgreSQL18RuntimeLedgerPermissions(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	for _, table := range []string{"access.lifecycle_action", "access.lifecycle_authority"} {
+		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+			var allowed bool
+			if err := db.runtime.QueryRow(t.Context(), `SELECT has_table_privilege(current_user,$1,$2)`, table, privilege).Scan(&allowed); err != nil {
+				t.Fatal(err)
+			}
+			if allowed != (privilege == "SELECT") {
+				t.Errorf("runtime %s on %s = %t, want %t", privilege, table, allowed, privilege == "SELECT")
+			}
+		}
+	}
+	for _, statement := range []string{
+		`INSERT INTO access.lifecycle_action(occurrence_id,customer_id,deployment_id,resource_id,store,action,completed)
+		 VALUES ('20000000-0000-7000-8000-000000000969','customer-test','deployment-test','10000000-0000-7000-8000-000000000969','principal','disable',true)`,
+		`UPDATE access.lifecycle_authority SET authority_id='30000000-0000-7000-8000-000000000969'`,
+	} {
+		_, err := db.runtime.Exec(t.Context(), statement)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+			t.Errorf("direct runtime write must fail with insufficient privilege, got %v", err)
+		}
+	}
+	// The function remains the runtime append authority after direct writes are denied.
+	tx, err := db.runtime.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	if _, err := RecordLifecycleAction(t.Context(), tx, lifecycleTestFact(lifecyclePrincipal, "20000000-0000-7000-8000-000000000970")); err != nil {
+		t.Fatalf("authorized lifecycle append failed: %v", err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }
 

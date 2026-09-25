@@ -138,6 +138,10 @@ func RecordLifecycleAction(ctx context.Context, tx pgx.Tx, fact LifecycleFact) (
 	if err != nil {
 		return LifecycleAction{}, err
 	}
+	return matchingLifecycleAction(ctx, tx, fact)
+}
+
+func matchingLifecycleAction(ctx context.Context, tx pgx.Tx, fact LifecycleFact) (LifecycleAction, error) {
 	parsedID, err := pgUUID(fact.OccurrenceID)
 	if err != nil {
 		return LifecycleAction{}, err
@@ -193,6 +197,8 @@ func CaptureLifecycleFrontier(ctx context.Context, tx pgx.Tx, boundary Lifecycle
 // DisablePrincipalWithLifecycle reuses the existing access mutation in the
 // same transaction as its completed lifecycle fact. Other access methods are
 // intentionally not intercepted without a validated customer boundary.
+// An exact occurrence retry returns the current principal without repeating
+// the mutation; a later disable requires a new occurrence identity.
 func (r *Repository) DisablePrincipalWithLifecycle(ctx context.Context, id string, fact LifecycleFact) (access.Principal, error) {
 	if fact.Store != "principal" || fact.Action != "disable" || !fact.Completed || fact.ResourceID != id {
 		return access.Principal{}, errors.New("principal disable lifecycle fact does not match mutation")
@@ -208,6 +214,27 @@ func (r *Repository) DisablePrincipalWithLifecycle(ctx context.Context, id strin
 		defer func() { _ = tx.Rollback(ctx) }()
 	}
 	inner := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
+	if err := lifecycleReadCommitted(ctx, tx); err != nil {
+		return access.Principal{}, err
+	}
+	principalID, err := pgUUID(id)
+	if err != nil {
+		return access.Principal{}, err
+	}
+	// Preserve the mutation's principal-before-ledger lock order. The principal
+	// lock also serializes retries against concurrent reactivation.
+	if _, err := accessdb.New(tx).LockLifecyclePrincipal(ctx, principalID); err != nil {
+		return access.Principal{}, err
+	}
+	// sqlc-exception: analyzer-incompatible. Serialize occurrence lookup with append and frontier capture before mutating.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, lifecycleAdvisoryKey); err != nil {
+		return access.Principal{}, err
+	}
+	if _, err := matchingLifecycleAction(ctx, tx, fact); err == nil {
+		return inner.PrincipalByID(ctx, id)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return access.Principal{}, err
+	}
 	principal, err := inner.DisableProvisionedPrincipal(ctx, id)
 	if err != nil {
 		return access.Principal{}, err
