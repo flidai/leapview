@@ -1102,6 +1102,44 @@ CREATE TABLE access.oauth_client_assertion (
 );
 CREATE INDEX oauth_client_assertion_expiry_idx ON access.oauth_client_assertion(expires_at);
 
+-- A reviewed privacy action is an execution instruction, not a request case.
+-- The caller owns intake/legal decisions. These rows contain only opaque
+-- identities and a bounded per-record execution cursor, never subject data.
+CREATE TABLE access.privacy_action_run (
+    run_id uuid PRIMARY KEY,
+    customer_id text NOT NULL CHECK (customer_id = btrim(customer_id) AND length(customer_id) BETWEEN 1 AND 255),
+    deployment_id text NOT NULL CHECK (deployment_id = btrim(deployment_id) AND length(deployment_id) BETWEEN 1 AND 255),
+    case_id text NOT NULL CHECK (case_id = btrim(case_id) AND length(case_id) BETWEEN 1 AND 256),
+    correlation_id text NOT NULL CHECK (correlation_id = btrim(correlation_id) AND length(correlation_id) BETWEEN 1 AND 256),
+    actor_id uuid NOT NULL,
+    principal_id uuid NOT NULL REFERENCES access.principal(id),
+    principal_type text NOT NULL CHECK (principal_type IN ('user','service')),
+    action text NOT NULL CHECK (action = 'restrict_access'),
+    graph_digest text NOT NULL CHECK (graph_digest ~ '^sha256:[0-9a-f]{64}$'),
+    manifest_digest text NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','completed')),
+    cursor bigint NOT NULL DEFAULT 0 CHECK (cursor >= 0),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    completed_at timestamptz,
+    UNIQUE (customer_id, deployment_id, case_id, action),
+    CHECK ((status = 'pending' AND completed_at IS NULL) OR (status = 'completed' AND completed_at IS NOT NULL))
+);
+CREATE TABLE access.privacy_action_item (
+    run_id uuid NOT NULL REFERENCES access.privacy_action_run(run_id),
+    ordinal bigint NOT NULL CHECK (ordinal > 0),
+    store text NOT NULL CHECK (length(store) BETWEEN 1 AND 128),
+    record_id text NOT NULL CHECK (length(record_id) BETWEEN 1 AND 255),
+    actionable boolean NOT NULL,
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','completed','excluded')),
+    outcome text NOT NULL DEFAULT '' CHECK (length(outcome) <= 64),
+    completed_at timestamptz,
+    PRIMARY KEY (run_id, ordinal),
+    UNIQUE (run_id, store, record_id),
+    CHECK ((status = 'completed') = (completed_at IS NOT NULL))
+);
+CREATE INDEX privacy_action_item_pending_idx ON access.privacy_action_item(run_id, ordinal) WHERE status = 'pending';
+
 CREATE OR REPLACE FUNCTION access.reject_authorization_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_TABLE_NAME = 'authorization_snapshot' THEN
@@ -1171,6 +1209,9 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA access TO leapview_control_runtime';
+        EXECUTE 'REVOKE UPDATE ON access.privacy_action_run, access.privacy_action_item FROM leapview_control_runtime';
+        EXECUTE 'GRANT UPDATE (status, cursor, updated_at, completed_at) ON access.privacy_action_run TO leapview_control_runtime';
+        EXECUTE 'GRANT UPDATE (status, outcome, completed_at) ON access.privacy_action_item TO leapview_control_runtime';
         EXECUTE 'REVOKE UPDATE ON access.authorization_policy_revision, access.authorization_policy_role_binding, access.authorization_policy_operation FROM leapview_control_runtime';
         EXECUTE 'GRANT DELETE ON access.oauth_session, access.oauth_client_assertion TO leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION access.valid_capabilities(jsonb) TO leapview_control_runtime';
@@ -1192,6 +1233,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA access TO leapview_control_readonly';
+        EXECUTE 'REVOKE SELECT ON access.privacy_action_run, access.privacy_action_item FROM leapview_control_readonly';
         EXECUTE 'REVOKE SELECT ON access.session, access.local_credential, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_credential, access.oauth_client, access.oauth_session, access.oauth_client_assertion FROM leapview_control_readonly';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON audit.audit_event, audit.audit_retention_floor TO leapview_control_readonly';
