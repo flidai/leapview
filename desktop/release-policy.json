@@ -23,7 +23,7 @@
     }
   },
   "runtime": {
-    "electron": "44.4.2",
+    "electron": "44.4.3",
     "electronMajor": 44,
     "chromium": "152.0.7977.130",
     "node": "26.9.0",
