@@ -63,6 +63,7 @@ import {
   ReportTableFormattingController,
   ReportTableSelectionController,
   ReportTableVirtualizationController,
+  ReportTableWindowRetryController,
 } from './report-table-controller'
 
 const reportTableFeatures = tableFeatures({
@@ -163,6 +164,7 @@ export class ReportTable extends LitElement {
   private resizeDrag?: ColumnResizeDrag
   private tableController = new TableController<typeof reportTableFeatures, TanStackTableRow>(this)
   private readonly virtualizationController = new ReportTableVirtualizationController()
+  private readonly windowRetryController = new ReportTableWindowRetryController()
   private readonly selectionController = new ReportTableSelectionController()
   private readonly columnController = new ReportTableColumnController(() => this.columnSizing)
   private readonly formattingController = new ReportTableFormattingController()
@@ -1032,6 +1034,7 @@ export class ReportTable extends LitElement {
     }
     this.clearResizeGuide()
     this.clearJumpTimer()
+    this.windowRetryController.clear()
     super.disconnectedCallback()
   }
 
@@ -1045,6 +1048,7 @@ export class ReportTable extends LitElement {
       this.blockCache = emptyBlocks()
       this.shouldResetScroll = true
       this.expectedBlocks.clear()
+      this.windowRetryController.reset()
       this.latestAcceptedSeq.clear()
       this.clearJumpTimer()
       this.clearLocalSelection()
@@ -1053,6 +1057,13 @@ export class ReportTable extends LitElement {
     // that transition once; already-missing empty results must not retry forever.
     const wasVisibleLoading = this.visibleLoading
     this.mergeIncomingBlocks()
+    if (this.table.error && previousTable && !(previousTable as TableSignal).error && this.expectedBlocks.size > 0) {
+      this.expectedBlocks.clear()
+      this.windowRetryController.stop()
+      this.clearJumpTimer()
+      cancelAnimationFrame(this.scrollFrame)
+      this.scrollFrame = 0
+    }
     this.shouldReconcileViewport = changedProperties.has('table') && !wasVisibleLoading && this.visibleLoading
     if (changedProperties.has('table')) {
       this.syncSelectedRowFromTableSelection()
@@ -1241,6 +1252,7 @@ export class ReportTable extends LitElement {
     this.viewportTop = target.scrollTop
     this.viewportHeight = target.clientHeight
     this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
+    this.windowRetryController.allowRetry()
     this.scheduleEnsureBlocksForScroll()
   }
 
@@ -1249,6 +1261,7 @@ export class ReportTable extends LitElement {
     const direction: SortDirection = current.key === column.key
       ? current.direction === 'asc' ? 'desc' : 'asc'
       : defaultDirection(column)
+    this.windowRetryController.allowRetry()
     this.emitBlock('all', 0, { key: column.key, direction }, this.table.resetVersion + 1)
   }
 
@@ -1721,7 +1734,7 @@ export class ReportTable extends LitElement {
   }
 
   private scheduleEnsureBlocksForScroll(): void {
-    if (this.scrollFrame) return
+    if (this.windowRetryController.blocked || this.scrollFrame) return
     this.scrollFrame = requestAnimationFrame(() => {
       this.scrollFrame = 0
       this.ensureBlocksForScroll()
@@ -1747,6 +1760,19 @@ export class ReportTable extends LitElement {
     this.jumpTimer = 0
   }
 
+  private scheduleWindowRetry(requestSeq: number): void {
+    this.windowRetryController.schedule(requestSeq,
+      () => [...this.expectedBlocks.values()].some((request) => request.requestSeq === requestSeq),
+      () => Boolean(this.table.loadingBlock),
+      (retry) => {
+        const expired = [...this.expectedBlocks].filter(([, request]) => request.requestSeq === requestSeq)
+        for (const [id] of expired) this.expectedBlocks.delete(id)
+        if (expired.length === 0) return
+        this.requestUpdate()
+        if (retry) this.scheduleEnsureBlocksForScroll()
+      })
+  }
+
   private desiredStarts(currentStart: number): number[] {
     return this.virtualizationController.desiredStarts(currentStart, this.availableRows, this.chunkSize)
   }
@@ -1759,9 +1785,11 @@ export class ReportTable extends LitElement {
   private emitBlock(block: BlockID | 'all', start: number, sort = this.table.sort, resetVersion = this.table.resetVersion): void {
     const tableId = this.resolvedTableId()
     if (!tableId) return
+    this.windowRetryController.unblock()
     const count = this.chunkSize
     const requestSeq = ++this.requestSeq
     if (block === 'all') {
+      this.windowRetryController.clear()
       this.expectedBlocks.clear()
       const starts = this.allBlockStarts(start)
       blockIDs.forEach((id, index) => {
@@ -1773,6 +1801,7 @@ export class ReportTable extends LitElement {
     } else {
       this.expectedBlocks.set(block, { start, requestSeq, resetVersion, sort })
     }
+    this.scheduleWindowRetry(requestSeq)
     this.requestUpdate()
     this.dispatchEvent(new CustomEvent<VisualWindowCommand>('lv-visual-window-change', {
       bubbles: true,
@@ -1799,6 +1828,7 @@ export class ReportTable extends LitElement {
 
   private mergeIncomingBlocks(): void {
     const defaults = emptyBlocks()
+    let settled = false
     for (const id of blockIDs) {
       const incoming = this.table.blocks[id]
       if (!incoming) continue
@@ -1818,8 +1848,11 @@ export class ReportTable extends LitElement {
       const expected = this.expectedBlocks.get(id)
       if (expected && this.blockMatchesExpected(incoming, expected)) {
         this.expectedBlocks.delete(id)
+        settled = true
       }
     }
+    this.windowRetryController.settle(new Set([...this.expectedBlocks.values()].map((request) => request.requestSeq)))
+    if (settled) this.windowRetryController.allowRetry()
   }
 
   private shouldAcceptBlock(id: BlockID, incoming: TableBlock): boolean {
