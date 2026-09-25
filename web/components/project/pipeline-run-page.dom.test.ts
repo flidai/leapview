@@ -14,8 +14,12 @@ beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
+      const requestedSection = url.searchParams.get('section')
+      const section = requestedSection === 'events' ? 'events' : requestedSection === 'details' ? 'details' : 'execution'
+      const requestedStatus = url.searchParams.get('status')
+      const status = requestedStatus === 'failed' ? 'failed' : requestedStatus === 'running' ? 'running' : 'prepared'
       response.setHeader('content-type', 'text/html')
-      response.end(runDocument(url.searchParams.get('section') ?? 'execution', url.searchParams.get('status') ?? 'prepared'))
+      response.end(runDocument(section, status))
       return
     }
     const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
