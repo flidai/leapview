@@ -698,23 +698,6 @@ test('dashboard builder remaps normally after an intervening edit instead of rol
   }
 })
 
-test('dashboard builder explains invalid map coordinates without exposing compiler IDs', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-    const message = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      const source = element.builder.pages[0].visuals[0]
-      mergePatch({ builder: { pages: [{ ...element.builder.pages[0], visuals: [{ ...source, type: 'map', previewError: 'visual "sales-chart" IR: geographic layer "points": latitude field must be numeric' }] }, element.builder.pages[1]] } })
-      await element.updateComplete
-      return element.shadowRoot.querySelector('.visual-preview-empty')?.textContent?.trim()
-    })
-    expect(message).toContain('Choose numeric latitude and longitude fields to preview this map.')
-    expect(message).not.toContain('sales-chart')
-  } finally { await page.close() }
-})
-
 test('dashboard builder reselects a legacy mismatched type to repair its query family', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

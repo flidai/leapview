@@ -14,6 +14,20 @@ const documentWithProductFonts = () => testDocument()
   .replaceAll('system-ui', '"Inter Variable", Inter, system-ui')
   .replace('<head>', '<head><style>@font-face{font-family:"Inter Variable";src:url("/static/files/inter-latin-wght-normal.woff2") format("woff2");font-weight:100 900;}</style>')
 
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
@@ -52,11 +66,24 @@ afterAll(async () => {
 async function measureInspector(width: number) {
   const page = await browser.newPage({ viewport: { width, height: 1000 } })
   try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-    await page.evaluate(() => document.fonts.ready)
+    page.setDefaultTimeout(6_000)
+    page.setDefaultNavigationTimeout(6_000)
+    await page.goto(baseURL, { waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'), null, { timeout: 6_000 })
+    await withTimeout(page.evaluate(() => document.fonts.ready), 6_000, 'product fonts did not settle')
     return await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
-      await element.updateComplete
+      const awaitUpdate = async () => {
+        let timer: number | undefined
+        try {
+          await Promise.race([
+            element.updateComplete,
+            new Promise((_, reject) => { timer = window.setTimeout(() => reject(new Error('dashboard builder update did not settle')), 6_000) }),
+          ])
+        } finally {
+          if (timer !== undefined) window.clearTimeout(timer)
+        }
+      }
+      await awaitUpdate()
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       const pages = structuredClone(element.builder.pages)
       const visual = pages[0].visuals[0]
@@ -95,7 +122,7 @@ async function measureInspector(width: number) {
         ] }] },
         pages,
       } })
-      await element.updateComplete
+      await awaitUpdate()
       const root = element.shadowRoot as ShadowRoot
       const visualPane = root.querySelector('.visual-builder') as HTMLElement
       const visualRight = visualPane.getBoundingClientRect().left + visualPane.clientWidth
@@ -127,4 +154,4 @@ test('visual inspector controls stay within the pane at desktop and narrow width
     expect(layout.pickerButtonCount).toBe(27)
     expect(layout.queryControlCount).toBeGreaterThan(3)
   }
-})
+}, 15_000)

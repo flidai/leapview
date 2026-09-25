@@ -8,6 +8,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { dashboardBuilderToolbarStyles } from './dashboard-builder-toolbar-styles'
 import { dashboardBuilderFilterStyles } from './dashboard-builder-filter-styles'
 import { hasCompiledBuilderPreview } from './builder-preview-readiness'
+import { buildSemanticCatalog, builderFieldCatalogGroup, type BuilderCatalogField } from './builder-field-catalog'
 import { canRequireFilter, filterControlChoices, filterControlLabel } from './builder-filter-settings'
 import { applyCanonicalGridAttributes, builderGridOccupiedRows, setBuilderPreviewResizeSuspended, syncGridStackNodesToCanonical } from './builder-grid-sync'
 import { createBuilderGridDragHelper, styleBuilderGridPlaceholder } from './builder-grid-drag-preview'
@@ -68,12 +69,6 @@ const defaultCollapsedPanes: Record<BuilderPane, boolean> = { filters: false, vi
 const builderCanvasDesktopWidth = 1366
 const builderCanvasMinimumHeight = 768
 const builderCanvasRunwayRows = 3
-
-type BuilderCatalogField = {
-  field: DashboardBuilderFieldSignal
-  datasets: Array<{ id: string; title: string }>
-  group: Exclude<BuilderFieldFilter, 'all'>
-}
 
 type BuilderCatalogEntity = {
   id: string
@@ -3384,7 +3379,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderFieldBrowser(builder: DashboardBuilderSignal, visual: DashboardBuilderVisualSignal | undefined) {
     const datasets = builder.semanticModel.datasets ?? []
-    const catalog = this.filteredCatalog(this.semanticCatalog(datasets))
+    const catalog = this.filteredCatalog(buildSemanticCatalog(datasets))
     const visibleCatalog = this.fieldFilter === 'all' ? catalog : catalog.filter((item) => item.group === this.fieldFilter)
     const supported = visibleCatalog.filter((item) => this.addingSlicer
       ? this.fieldSupportsFilter(item.field)
@@ -3470,7 +3465,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = this.selectedPage(builder)
     const visual = page ? this.selectedVisual(page, builder) : undefined
     const grouped = this.groupFiltersByScope(filters, page, visual)
-    const dimensions = this.semanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => this.fieldSupportsFilter(item.field))
+    const dimensions = buildSemanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => this.fieldSupportsFilter(item.field))
     const filterError = this.builderFilterErrorMessage()
     const collapsed = this.collapsedPanes.filters
     return html`
@@ -4339,7 +4334,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private fieldIsTemporal(fieldID: string): boolean {
     const field = this.builder?.semanticModel.datasets.flatMap((dataset) => dataset.fields).find((candidate) => candidate.id === fieldID)
-    return Boolean(field && this.fieldCatalogGroup(field) === 'time')
+    return Boolean(field && builderFieldCatalogGroup(field) === 'time')
   }
 
   private alternateFieldRole(_visual: DashboardBuilderVisualSignal, _role: BuilderFieldRole): BuilderFieldRole | undefined {
@@ -4496,39 +4491,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return `${evidence.projectId}/${evidence.dashboardId} · ${evidence.generationId}${evidence.path ? ` · ${evidence.path}` : ''}`
   }
 
-  private semanticCatalog(datasets: DashboardBuilderDatasetSignal[]): BuilderCatalogField[] {
-    const catalog = new Map<string, BuilderCatalogField>()
-    for (const dataset of datasets) {
-      const datasetFields = new Map<string, DashboardBuilderFieldSignal>()
-      for (const field of dataset.fields) {
-        const rolesKey = [...(field.roles ?? [])].sort().join(',')
-        const fieldKey = `${field.kind}:${rolesKey}:${field.id}`
-        const existing = datasetFields.get(fieldKey)
-        if (!existing || this.fieldCatalogScore(field) > this.fieldCatalogScore(existing)) datasetFields.set(fieldKey, field)
-      }
-      for (const field of datasetFields.values()) {
-        const rolesKey = [...(field.roles ?? [])].sort().join(',')
-        const datasetKey = field.roles?.includes('detail') ? (field.datasetId ?? dataset.id) : ''
-        const key = `${field.kind}:${rolesKey}:${field.id}:${datasetKey}`
-        const existing = catalog.get(key)
-        if (existing) {
-          if (!existing.datasets.some((item) => item.id === dataset.id)) existing.datasets.push({ id: dataset.id, title: this.businessGroupTitle(dataset) })
-          continue
-        }
-        catalog.set(key, {
-          field,
-          datasets: [{ id: dataset.id, title: this.businessGroupTitle(dataset) }],
-          group: this.fieldCatalogGroup(field),
-        })
-      }
-    }
-    return Array.from(catalog.values()).sort((left, right) => {
-      const groupOrder = { metric: 0, dimension: 1, time: 2 }
-      const byGroup = groupOrder[left.group] - groupOrder[right.group]
-      return byGroup || left.field.label.localeCompare(right.field.label)
-    })
-  }
-
   private catalogEntities(fields: BuilderCatalogField[], datasets: DashboardBuilderDatasetSignal[]): BuilderCatalogEntity[] {
     const datasetOrder = new Map(datasets.map((dataset, index) => [dataset.id, index]))
     const entities = new Map<string, BuilderCatalogEntity>()
@@ -4547,21 +4509,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     })
   }
 
-  private fieldCatalogScore(field: DashboardBuilderFieldSignal): number {
-    let score = 0
-    if (field.dataType.trim().toLowerCase() !== 'unknown') score += 4
-    if (!field.id.includes('.')) score += 2
-    if (field.description?.trim()) score += 1
-    return score
-  }
-
-  private businessGroupTitle(dataset: DashboardBuilderDatasetSignal): string {
-    const title = dataset.title.trim()
-    const source = title.length > 0 && title.length <= 32 && !/[.!?]$/.test(title) ? title : dataset.id
-    const normalized = source.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
-    return normalized ? normalized.charAt(0).toLocaleUpperCase() + normalized.slice(1) : 'Semantic model'
-  }
-
   private filteredCatalog(catalog: BuilderCatalogField[]): BuilderCatalogField[] {
     const query = this.fieldQuery.trim().toLowerCase()
     if (!query) return catalog
@@ -4573,12 +4520,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.fieldGroupLabel(item.group),
       ...item.datasets.flatMap((dataset) => [dataset.id, dataset.title]),
     ].join(' ').toLowerCase().includes(query))
-  }
-
-  private fieldCatalogGroup(field: DashboardBuilderFieldSignal): Exclude<BuilderFieldFilter, 'all'> {
-    if (field.kind === 'metric') return 'metric'
-    const dataType = field.dataType.toLowerCase()
-    return dataType.includes('date') || dataType.includes('time') || dataType.includes('timestamp') ? 'time' : 'dimension'
   }
 
   private fieldFilterLabel(filter: BuilderFieldFilter): string {

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { chromium, type Browser } from '@playwright/test'
 import { startSiteTestServer, type SiteTestServer } from './test_server'
+import { collectVisualShowcaseMetrics } from './visual-showcase.test-helper'
 
 const sitePort = 20000 + (process.pid % 10000)
 const baseURL = `http://127.0.0.1:${sitePort}`
@@ -2414,55 +2415,7 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
           && hosts.every((host: any) => host.shadowRoot?.querySelector('.renderer')?.getAttribute('aria-busy') === 'false')
       }, theme)
 
-      const metrics = await page.locator('lv-site-visual-showcase').evaluate((element) =>
-        Array.from(element.shadowRoot?.querySelectorAll('article') ?? []).map((card) => {
-          const host = card.querySelector('lv-visualization-host') as HTMLElement & {
-            envelope?: {
-              visualID?: string
-              spec?: { kind?: string; mark?: string; y?: Array<{ dataset: string; field: string }> }
-              dataState?: { kind?: string; datasets?: Array<{ id: string; columns: string[]; rows: unknown[][] }> }
-            }
-            shadowRoot: ShadowRoot
-          }
-          const renderer = host.shadowRoot?.querySelector<HTMLElement>('.renderer')
-          const canvases = Array.from(host.shadowRoot?.querySelectorAll<HTMLCanvasElement>('canvas') ?? [])
-          const table = renderer?.querySelector<HTMLElement>('lv-report-table')
-          const bounds = renderer?.getBoundingClientRect()
-          let sampledPixels = 0
-          let coloredPixels = 0
-          for (const canvas of canvases) {
-            if (sampledPixels > 10 && coloredPixels > 0) break
-            const context = canvas.getContext('2d', { willReadFrequently: true })
-            if (context && canvas.width > 0 && canvas.height > 0) {
-              const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-              for (let index = 0; index < pixels.length; index += 4) {
-                if (pixels[index + 3]! < 32) continue
-                sampledPixels++
-                const maximum = Math.max(pixels[index]!, pixels[index + 1]!, pixels[index + 2]!)
-                const minimum = Math.min(pixels[index]!, pixels[index + 1]!, pixels[index + 2]!)
-                if (maximum - minimum >= 24) {
-                  coloredPixels++
-                }
-                if (sampledPixels > 10 && coloredPixels > 0) break
-              }
-            }
-          }
-          return {
-            visualID: host.envelope?.visualID,
-            kind: host.envelope?.spec?.kind,
-            alert: host.shadowRoot?.querySelector('[role="alert"]')?.textContent?.trim() ?? '',
-            width: Math.round(bounds?.width ?? 0),
-            height: Math.round(bounds?.height ?? 0),
-            canvasWidth: Math.max(0, ...canvases.map((canvas) => canvas.width)),
-            canvasHeight: Math.max(0, ...canvases.map((canvas) => canvas.height)),
-            sampledPixels,
-            coloredPixels,
-            mapFrame: host.shadowRoot?.querySelectorAll('.maplibregl-map .maplibregl-canvas').length ?? 0,
-            tableText: table?.shadowRoot?.textContent?.replace(/\s+/g, ' ').trim().length ?? 0,
-            rendererText: renderer?.textContent?.replace(/\s+/g, ' ').trim().length ?? 0,
-          }
-        }),
-      )
+      const metrics = await page.locator('lv-site-visual-showcase').evaluate(collectVisualShowcaseMetrics)
 
       expect(metrics, `${theme} catalog inventory`).toHaveLength(26)
       for (const metric of metrics) {
@@ -2473,6 +2426,10 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
           expect(metric.tableText, `${theme}/${metric.visualID} visible table content`).toBeGreaterThan(40)
         } else if (metric.kind === 'kpi') {
           expect(metric.rendererText, `${theme}/${metric.visualID} visible KPI context`).toBeGreaterThan(30)
+        } else if (metric.kind === 'proportional' && metric.mark === 'funnel') {
+          expect(metric.svgWidth, `${theme}/${metric.visualID} visible SVG width`).toBeGreaterThan(100)
+          expect(metric.svgHeight, `${theme}/${metric.visualID} visible SVG height`).toBeGreaterThan(100)
+          expect(metric.svgMarks, `${theme}/${metric.visualID} visible SVG data marks`).toBeGreaterThan(0)
         } else {
           expect(metric.canvasWidth, `${theme}/${metric.visualID} canvas width`).toBeGreaterThan(100)
           expect(metric.canvasHeight, `${theme}/${metric.visualID} canvas height`).toBeGreaterThan(100)
