@@ -135,12 +135,9 @@ func startMinIO(t *testing.T, ctx context.Context) string {
 	if os.Getenv("CI") == "" {
 		testcontainers.SkipIfProviderIsNotHealthy(t)
 	}
-	minioContainer, err := testminio.Run(
-		ctx,
-		tcminio.WithUsername(minIOIntegrationUser),
-		tcminio.WithPassword(minIOIntegrationSecret),
-		testcontainers.WithLogger(log.TestLogger(t)),
-	)
+	minioContainer, err := testminio.Run(ctx,
+		tcminio.WithUsername(minIOIntegrationUser), tcminio.WithPassword(minIOIntegrationSecret),
+		testcontainers.WithLogger(log.TestLogger(t)))
 	testcontainers.CleanupContainer(t, minioContainer)
 	require.NoError(t, err)
 	endpoint, err := minioContainer.ConnectionString(ctx)

@@ -1557,6 +1557,7 @@ tasks:
   test:go:external:
     desc: Run container-backed external-service integration tests serially
     cmds:
+      - go test -tags integration ./internal/platform/testminio -count=1
       - go test ./internal/app -run '^TestMinIOParquetSourceRefreshContract$' -count=1
       - task: test:go:postgres-conformance
 
