@@ -7,12 +7,20 @@ const sitePort = 30000 + (process.pid % 10000)
 const baseURL = `http://127.0.0.1:${sitePort}`
 let browser: Browser
 let siteServer: SiteTestServer | undefined
+const siteReadyTimeout = 60_000
 
 beforeAll(async () => {
-  const startupDeadline = Date.now() + 60_000
-  siteServer = await startSiteTestServer(sitePort, startupDeadline)
-  browser = await chromium.launch()
-}, 70_000)
+  const startupDeadline = Date.now() + siteReadyTimeout
+  try {
+    siteServer = await startSiteTestServer(sitePort, startupDeadline)
+    await waitForSite(siteServer.process, startupDeadline)
+    browser = await chromium.launch()
+  } catch (error) {
+    await siteServer?.stop()
+    siteServer = undefined
+    throw error
+  }
+}, siteReadyTimeout + 10_000)
 
 afterAll(async () => {
   try {
@@ -95,3 +103,19 @@ test('compliance content passes the public-site accessibility audit', async () =
     await context.close()
   }
 })
+
+async function waitForSite(siteProcess: Bun.Subprocess, deadline: number): Promise<void> {
+  while (Date.now() < deadline) {
+    if (siteProcess.exitCode !== null) {
+      throw new Error(`LeapView site exited before becoming ready (code ${siteProcess.exitCode})`)
+    }
+    try {
+      const response = await fetch(baseURL)
+      if (response.ok) return
+    } catch {
+      // The directly spawned site is still binding its listener.
+    }
+    await Bun.sleep(100)
+  }
+  throw new Error('LeapView site did not become ready')
+}
