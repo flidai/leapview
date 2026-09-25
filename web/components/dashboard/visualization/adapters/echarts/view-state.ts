@@ -1,4 +1,11 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
+import { compactScrollLegendGeometry } from './compact-scroll-legend'
+
+const COMPACT_WIDTH = 480
+const COMPACT_HEIGHT = 280
+const BOUNDED_OUTSIDE_LABEL_WIDTH = 400
+const CROWDED_INSIDE_LABEL_WIDTH = 640
+const CROWDED_INSIDE_LABEL_HEIGHT = 420
 
 export type EChartsNavigationDefaults = Readonly<{ dataZoom: boolean; roam: boolean }>
 export type EChartsViewState = Readonly<{
@@ -13,31 +20,134 @@ export function echartsNavigationDefaults(envelope: VisualizationEnvelope): ECha
   }
 }
 
+export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, width: number, height: number): string {
+  const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
+  if (envelope.spec.kind !== 'proportional' || envelope.spec.mark === 'funnel') return compact ? 'compact' : 'roomy'
+  if (envelope.spec.presentation.labelPosition === 'inside') {
+    return `${compact ? 'compact' : 'roomy'}:inside-${width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT ? 'crowded' : 'full'}`
+  }
+  const bounded = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
+  return bounded
+    ? `${compact ? 'compact' : 'roomy'}:outside-bounded`
+    : `${compact ? 'compact' : 'roomy'}:outside-local-${proportionalLabelLineLength(width, height)}-${proportionalLabelLineEndLength(width)}`
+}
+
 export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
-  if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 || option.grid === undefined) return {}
-  const compact = width < 480 || height < 280
-  const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
+  if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
+  const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
+  const proportionalSeries = responsiveProportionalSeries(option.series, width, height)
+  const responsivePie = hasPieSeries(option.series)
+  const patch: Record<string, any> = {}
   const bottomLegend = compact && hasBottomLegend(option.legend)
-  const slider = compact && hasSliderDataZoom(option.dataZoom)
-  const compactBottom = 12 + (bottomLegend ? 28 : 0) + (slider ? 42 : 0)
-  const grid = grids.map((value: Record<string, any>) => {
-    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-    return {
-      ...source,
-      ...(compact ? {
-        left: compactInset(source.left, 8),
-        right: compactInset(source.right, 8),
-        top: compactInset(source.top, 10),
-        bottom: compactBottomInset(source.bottom, compactBottom, option.visualMap !== undefined),
-      } : {}),
-    }
-  })
-  const patch: Record<string, any> = { grid: Array.isArray(option.grid) ? grid : grid[0] }
-  if (option.legend !== undefined) patch.legend = compact ? compactLegend(option.legend, width) : desktopLegend(option.legend)
+  if (option.grid !== undefined) {
+    const grids = Array.isArray(option.grid) ? option.grid : [option.grid]
+    const slider = compact && hasSliderDataZoom(option.dataZoom)
+    const compactBottom = 12 + (bottomLegend ? 28 : 0) + (slider ? 42 : 0)
+    const grid = grids.map((value: Record<string, any>) => {
+      const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+      return {
+        ...source,
+        ...(compact ? {
+          left: compactInset(source.left, 8),
+          right: compactInset(source.right, 8),
+          top: compactInset(source.top, 10),
+          bottom: compactBottomInset(source.bottom, compactBottom, option.visualMap !== undefined),
+        } : {}),
+      }
+    })
+    patch.grid = Array.isArray(option.grid) ? grid : grid[0]
+  }
+  if (proportionalSeries !== undefined) patch.series = proportionalSeries
+  if (option.legend !== undefined && (option.grid !== undefined || responsivePie)) {
+    patch.legend = compact ? compactLegend(option.legend, width) : desktopLegend(option.legend)
+  }
   if (option.dataZoom !== undefined) patch.dataZoom = compact
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
     : stripDataZoomNavigation(option.dataZoom)
   return patch
+}
+
+function hasPieSeries(value: unknown): boolean {
+  const series = Array.isArray(value) ? value : [value]
+  return series.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
+    && (entry as Record<string, unknown>).type === 'pie')
+}
+
+function responsiveProportionalSeries(value: unknown, width: number, height: number): unknown[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
+  let hasResponsivePieLabels = false
+  const series = value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, unknown>
+    const label = source.label
+    if (
+      source.type !== 'pie'
+      || !label || typeof label !== 'object' || Array.isArray(label)
+      || (label as Record<string, unknown>).show === false
+    ) return entry
+    const labelOption = label as Record<string, unknown>
+    if (labelOption.position === 'inside') {
+      const crowded = width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT
+      hasResponsivePieLabels = true
+      if (!crowded) {
+        return {
+          ...source,
+          label: { ...labelOption, rotate: null },
+        }
+      }
+      return {
+        ...source,
+        label: {
+          ...labelOption,
+          // Horizontal labels near the centre of neighbouring sectors can
+          // visually collide even when ECharts' overlap boxes only touch.
+          // Use a smaller label size in card-sized pie views while preserving
+          // authored density and full-size focus views.
+          fontSize: Math.min(finiteNumber(labelOption.fontSize) ?? 12, 11),
+          padding: 0,
+          // Radial text follows the available sector depth instead of
+          // competing horizontally with labels in neighbouring sectors.
+          rotate: 'radial',
+        },
+      }
+    }
+    if (labelOption.position !== 'outside') return entry
+    hasResponsivePieLabels = true
+    return {
+      ...source,
+      label: {
+        ...labelOption,
+        // Edge alignment keeps text inside narrow cards. In roomy views it
+        // stretches guide lines to the host boundary, so anchor labels to
+        // their natural guide-line ends instead.
+        alignTo: boundedOutsideLabels ? 'edge' : 'labelLine',
+        ...(boundedOutsideLabels ? {} : { distanceToLabelLine: 12 }),
+      },
+      ...(boundedOutsideLabels ? {} : {
+        labelLine: {
+          ...((source.labelLine && typeof source.labelLine === 'object' && !Array.isArray(source.labelLine))
+            ? source.labelLine as Record<string, unknown>
+            : {}),
+          length: proportionalLabelLineLength(width, height),
+          length2: proportionalLabelLineEndLength(width),
+        },
+      }),
+    }
+  })
+  return hasResponsivePieLabels ? series : undefined
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function proportionalLabelLineLength(width: number, height: number): number {
+  return Math.min(64, Math.max(24, Math.round(Math.min(width, height) * 0.08)))
+}
+
+function proportionalLabelLineEndLength(width: number): number {
+  return Math.min(48, Math.max(20, Math.round(width * 0.035)))
 }
 
 function compactInset(value: unknown, fallback: number): unknown {
@@ -76,6 +186,14 @@ function desktopLegend(value: unknown): unknown {
     // Clear compact sizing, retaining the scroll component and its selection state.
     return {
       type: 'scroll', left: 'center', right: 'auto', width: 'auto', height: 'auto', ...legend,
+      itemWidth: finiteNumber(legend.itemWidth) ?? 25,
+      itemHeight: finiteNumber(legend.itemHeight) ?? 14,
+      textStyle: {
+        ...((legend.textStyle && typeof legend.textStyle === 'object' && !Array.isArray(legend.textStyle))
+          ? legend.textStyle as Record<string, unknown>
+          : {}),
+        width: null, overflow: null, ellipsis: null, backgroundColor: null,
+      },
     }
   })
   return Array.isArray(value) ? result : result[0]
@@ -86,13 +204,14 @@ function compactLegend(value: unknown, width: number): unknown {
   const result = legends.map((entry) => {
     if (!isHorizontalBottomLegend(entry)) return entry
     const legend = entry
-    return {
+    const responsive = {
       ...legend,
       type: 'scroll', bottom: 0, left: 'center', right: 'auto',
       width: Math.max(0, width - 16), height: 24,
       pageIconColor: (legend.textStyle as Record<string, unknown> | undefined)?.color,
       pageTextStyle: legend.textStyle,
     }
+    return { ...responsive, ...compactScrollLegendGeometry(responsive, width) }
   })
   return Array.isArray(value) ? result : result[0]
 }
