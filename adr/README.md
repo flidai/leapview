@@ -43,6 +43,7 @@ customer site.
 | [ADR-0022](0022-adopt-dataset-local-semantic-authoring.md) | Adopt dataset-local semantic authoring | Accepted | 2026-09-11 | Complete | [ADR-0024](0024-use-named-lists-for-authored-definitions.md), named collection syntax and member-name defaults only |
 | [ADR-0023](0023-unify-source-and-model-fields-and-checks.md) | Unify Source and Model fields and checks | Accepted | 2026-09-14 | Complete | [ADR-0024](0024-use-named-lists-for-authored-definitions.md), Source and Model field and entity collection syntax only |
 | [ADR-0024](0024-use-named-lists-for-authored-definitions.md) | Use named lists for authored definitions | Accepted | 2026-09-14 | Complete | — |
+| [ADR-0025](0025-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md) | Share an open deployment stack for self-hosted and managed LeapView | Proposed | Pending review | Pending | — |
 
 ## Companion specifications
 
@@ -66,6 +67,8 @@ historical records.
 - [Project namespace conformance](specifications/project-namespace-conformance.md)
 - [ADR-0018 final conformance evidence reconciliation](specifications/project-namespace-final-conformance-evidence.md)
 - [Analytics development CLI contract](specifications/analytics-development-cli-contract.md)
+- [Deployment stack reuse research](specifications/deployment-stack-reuse-research.md)
+- [Deployment profile qualification](specifications/deployment-profile-qualification.md)
 
 ## Conventions
 
