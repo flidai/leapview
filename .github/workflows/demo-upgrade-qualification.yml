@@ -32,6 +32,8 @@ jobs:
         uses: ./.github/actions/setup-ci
         with:
           go-cache-restore-workload: full-validation
+      - name: Validate security coverage before qualification
+        run: go run ./internal/app/tools/securitypolicy -root .
       - name: Generate build contracts
         run: task generate
       - name: Test upgrade interruption and deployment exclusion
