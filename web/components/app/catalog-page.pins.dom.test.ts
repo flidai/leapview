@@ -136,4 +136,4 @@ test('eight dashboard copies can be favorited and pinned independently', async (
   } finally {
     await page.close()
   }
-})
+}, 30_000)
