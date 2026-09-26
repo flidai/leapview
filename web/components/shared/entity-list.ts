@@ -883,6 +883,7 @@ class EntityList extends LitElement {
   @property({ attribute: false }) filters: EntityListFilter[] = []
   @property({ attribute: false }) actions: EntityListAction[] = []
   @property({ attribute: false }) toolbarTrailing: unknown = nothing
+  @property({ attribute: false }) beforeRows: unknown = nothing
   @property({ attribute: 'list-label' }) listLabel = 'List'
   @property({ attribute: 'export-filename' }) exportFilename = ''
   @property({ attribute: 'search-placeholder' }) searchPlaceholder = 'Search'
@@ -969,6 +970,7 @@ class EntityList extends LitElement {
             </div>
           ` : ''}
         </div>` : ''}
+        ${this.beforeRows}
         ${items.length ? html`
           <div class="entity-list-items entity-list-table-wrap" role="region" aria-label="Scrollable ${this.listLabel} table" tabindex="0">
             <table class="entity-list-table" aria-label=${this.listLabel} style=${this.minWidth ? `min-width: ${this.minWidth}` : ''}>

@@ -1,4 +1,4 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, css, html, type TemplateResult } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import type { CatalogPageSignal, ChromeSignal } from '../../generated/signals'
 import { readStringList, readStringRecord, writeStorage } from './catalog-preferences'
@@ -278,13 +278,12 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     return html`
       <section aria-label="LeapView dashboard catalog">
         ${renderPageHeader(page.title, '', '', this.createDraftHref ? html`<a class="catalog-create-draft" href=${this.createDraftHref} aria-haspopup="dialog" aria-controls="catalog-create-draft-dialog" @click=${this.handleCreateDraftTrigger}>${lucideIcon(lucideIconByCanonicalName('plus'), { size: 16, strokeWidth: 2 })}<span>New dashboard</span></a>` : undefined)}
-        ${pinnedDashboards.length ? renderCatalogPinnedDashboards(this.renderDashboardList(pinnedDashboards, page, true)) : null}
         <nav class="catalog-tabs" aria-label="Dashboard views" role="tablist">
           ${this.renderCatalogTab('all', 'All dashboards')}
           ${this.renderCatalogTab('favorites', 'Favorites')}
           ${this.renderCatalogTab('mine', 'My dashboards')}
         </nav>
-        ${this.renderDashboardList(dashboards, page, false)}
+        ${this.renderDashboardList(dashboards, page, false, pinnedDashboards)}
         ${this.renderDashboardActionMenu(sourceDashboards)}
         ${this.renderDashboardDetails(sourceDashboards)}
         ${this.renderCopyDraftDialog(sourceDashboards)}
@@ -295,11 +294,12 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   }
 
 
-  private renderDashboardList(dashboards: CatalogDashboard[], page: CatalogPageSignal, pinned: boolean) {
+  private renderDashboardList(dashboards: CatalogDashboard[], page: CatalogPageSignal, pinned: boolean, pinnedDashboards: CatalogDashboard[] = []): TemplateResult {
     return html`
         <lv-entity-list
           list-label=${pinned ? 'Pinned dashboards' : this.catalogScope === 'favorites' ? 'Favorite dashboards' : this.catalogScope === 'mine' ? 'My dashboards' : 'All dashboards'}
           .showToolbar=${!pinned}
+          .beforeRows=${!pinned && pinnedDashboards.length ? renderCatalogPinnedDashboards(this.renderDashboardList(pinnedDashboards, page, true)) : null}
           .items=${dashboards.map((dashboard) => {
             const appearance = { icon: dashboard.appearanceIcon || 'layout-dashboard', color: dashboard.appearanceColor || 'purple' }
             const owner = this.dashboardOwner(dashboard)
@@ -466,6 +466,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   }
 
   private toggleDashboardPin = (event: CustomEvent<{ item?: { dashboardId?: string } }>): void => {
+    event.stopPropagation()
     const id = event.detail?.item?.dashboardId?.trim()
     if (id) this.toggleDashboardPinByID(id)
   }
@@ -481,6 +482,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   }
 
   private toggleDashboardFavorite = (event: CustomEvent<{ item?: { id?: string, dashboardId?: string } }>): void => {
+    event.stopPropagation()
     const id = event.detail?.item?.id?.trim()
     const dashboardID = event.detail?.item?.dashboardId?.trim()
     if (!id || !dashboardID) return
@@ -491,6 +493,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   }
 
   private recordDashboardOpen = (event: CustomEvent<{ item?: { id?: string } }>): void => {
+    event.stopPropagation()
     const id = event.detail?.item?.id?.trim()
     if (id) this.recordDashboardOpenByID(id)
   }
@@ -500,6 +503,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   }
 
   private handleDashboardRowAction = (event: CustomEvent<{ action?: string, item?: { id?: string }, anchor?: EventTarget | null }>): void => {
+    event.stopPropagation()
     if (event.detail?.action !== 'open-dashboard-menu') return
     const dashboardID = event.detail.item?.id?.trim()
     const anchor = event.detail.anchor
