@@ -301,7 +301,10 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           .showToolbar=${!pinned}
           .beforeRows=${!pinned && pinnedDashboards.length ? html`
             ${renderCatalogPinnedDashboards(this.renderDashboardList(pinnedDashboards, page, true))}
-            ${dashboards.length ? html`<h2 class="catalog-regular-heading">Dashboards</h2>` : ''}
+            ${dashboards.length ? html`
+              <h2 class="catalog-visually-hidden">Dashboards</h2>
+              <div class="catalog-section-divider" aria-hidden="true"></div>
+            ` : ''}
           ` : null}
           .items=${dashboards.map((dashboard) => {
             const appearance = { icon: dashboard.appearanceIcon || 'layout-dashboard', color: dashboard.appearanceColor || 'purple' }
@@ -346,7 +349,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
               lastOpened: formatExactTime(lastOpenedAt),
             },
           })})}
-          .columns=${catalogColumns(this.catalogScope)}
+          .columns=${catalogColumns(this.catalogScope, pinned)}
           initial-query=${pinned ? '' : page.listQuery ?? ''}
           active-filter=${pinned ? 'all' : page.listFilter ?? 'all'}
           search-placeholder="Search dashboards"

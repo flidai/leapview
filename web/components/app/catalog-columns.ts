@@ -1,7 +1,8 @@
-export function catalogColumns(scope: 'all' | 'favorites' | 'mine') {
+export function catalogColumns(scope: 'all' | 'favorites' | 'mine', pinned = false) {
+  const nameLabel = pinned ? 'Pinned dashboard' : 'Dashboard'
   if (scope === 'mine') {
     return [
-      { id: 'name', label: 'Dashboard', width: '32%' },
+      { id: 'name', label: nameLabel, width: '32%' },
       { id: 'dataModel', label: 'Data model', width: '16%' },
       { id: 'popularity', label: 'Popularity', width: '10%', align: 'center' as const, render: 'popularity' as const },
       { id: 'status', label: 'Status', width: '17%', render: 'quiet-status' as const },
@@ -11,7 +12,7 @@ export function catalogColumns(scope: 'all' | 'favorites' | 'mine') {
     ]
   }
   return [
-    { id: 'name', label: 'Dashboard', width: '36%' },
+    { id: 'name', label: nameLabel, width: '36%' },
     { id: 'dataModel', label: 'Data model', width: '15%' },
     { id: 'owner', label: 'Owner', width: '9%', align: 'center' as const, render: 'person-avatar' as const },
     { id: 'popularity', label: 'Popularity', width: '10%', align: 'center' as const, render: 'popularity' as const },

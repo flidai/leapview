@@ -1,7 +1,7 @@
 import { css } from 'lit'
 
 export const catalogPinnedStyles = css`
-  .pinned-dashboards { display: grid; gap: var(--base-size-8); min-width: 0; }
-  .pinned-dashboards h2 { margin: 0; font: var(--lv-type-section-title); }
-  .catalog-regular-heading { margin: 0 0 calc(-1 * var(--base-size-8)); font: var(--lv-type-section-title); }
+  .pinned-dashboards { min-width: 0; }
+  .catalog-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .catalog-section-divider { border-top: var(--lv-border-muted); }
 `

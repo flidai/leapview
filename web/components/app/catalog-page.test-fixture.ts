@@ -1,6 +1,6 @@
 import { typographyTestTokens } from '../test-typography-tokens'
 
-export function testDocument(): string {
+export function testDocument(dashboardCopies = 0): string {
   const page = {
     kind: 'catalog',
     title: 'Dashboards',
@@ -73,6 +73,16 @@ export function testDocument(): string {
       },
     ],
   }
+  const source = page.dashboards[0]
+  page.dashboards.push(...Array.from({ length: dashboardCopies }, (_, index) => ({
+    ...source,
+    id: `sales-copy-${index + 1}`,
+    dashboardId: `sales-copy-${index + 1}`,
+    title: `Sales copy ${index + 1}`,
+    href: `/dashboards/sales-copy-${index + 1}`,
+    catalogScope: 'mine',
+    status: 'private_draft',
+  })))
   return `
     <!doctype html>
     <html>

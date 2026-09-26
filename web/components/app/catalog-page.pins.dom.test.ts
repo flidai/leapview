@@ -13,9 +13,9 @@ const root = join(projectRoot, '.tmp/catalog-page-test')
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/') {
+    if (url.pathname === '/' || url.pathname === '/many') {
       response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
+      response.end(testDocument(url.pathname === '/many' ? 8 : 0))
       return
     }
     const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
@@ -53,7 +53,7 @@ test('dashboard pins appear in the catalog only while dashboards are pinned', as
     const allDashboards = page.locator('lv-catalog-page lv-entity-list[list-label="All dashboards"]')
     const allRows = allDashboards.getByRole('table', { name: 'All dashboards' }).locator('tbody tr')
     expect(await section.count()).toBe(0)
-    expect(await allDashboards.locator('.catalog-regular-heading').count()).toBe(0)
+    expect(await allDashboards.locator('.catalog-section-divider').count()).toBe(0)
     expect(await allRows.count()).toBe(4)
 
     const pin = page.getByRole('button', { name: 'Pin Operations Health', exact: true })
@@ -75,17 +75,22 @@ test('dashboard pins appear in the catalog only while dashboards are pinned', as
     expect(await section.getByRole('columnheader', { name: 'Popularity' }).count()).toBe(1)
     expect(await section.locator('tbody tr').count()).toBe(1)
     expect(await allRows.count()).toBe(3)
-    expect(await allDashboards.getByRole('heading', { name: 'Dashboards', exact: true }).count()).toBe(1)
+    expect(await section.locator('h2.catalog-visually-hidden').textContent()).toBe('Pinned dashboards')
+    expect(await allDashboards.locator('h2.catalog-visually-hidden').last().textContent()).toBe('Dashboards')
+    expect(await section.locator('h2.catalog-visually-hidden').evaluate((heading) => getComputedStyle(heading).position)).toBe('absolute')
+    expect(await section.getByRole('columnheader', { name: 'Pinned dashboard' }).count()).toBe(1)
+    expect(await allDashboards.getByRole('table', { name: 'All dashboards' }).getByRole('columnheader', { name: 'Dashboard' }).count()).toBe(1)
+    expect(await allDashboards.locator('.catalog-section-divider').count()).toBe(1)
     const positions = await allDashboards.evaluate((list) => {
       const search = list.querySelector('.entity-toolbar')!.getBoundingClientRect()
       const pinned = list.querySelector('.pinned-dashboards')!.getBoundingClientRect()
-      const regularHeading = list.querySelector('.catalog-regular-heading')!.getBoundingClientRect()
+      const divider = list.querySelector('.catalog-section-divider')!.getBoundingClientRect()
       const rows = list.querySelector('.entity-list-items[aria-label="Scrollable All dashboards table"]')!.getBoundingClientRect()
-      return { search: search.bottom, pinnedTop: pinned.top, pinnedBottom: pinned.bottom, regularHeadingTop: regularHeading.top, regularHeadingBottom: regularHeading.bottom, rowsTop: rows.top }
+      return { search: search.bottom, pinnedTop: pinned.top, pinnedBottom: pinned.bottom, dividerTop: divider.top, dividerBottom: divider.bottom, rowsTop: rows.top }
     })
     expect(positions.search).toBeLessThan(positions.pinnedTop)
-    expect(positions.pinnedBottom).toBeLessThan(positions.regularHeadingTop)
-    expect(positions.regularHeadingBottom).toBeLessThan(positions.rowsTop)
+    expect(positions.pinnedBottom).toBeLessThan(positions.dividerTop)
+    expect(positions.dividerBottom).toBeLessThan(positions.rowsTop)
     expect(await section.locator('.entity-list-row-pin[aria-pressed="true"]').first().evaluate((button) => getComputedStyle(button).opacity)).toBe('1')
     await section.getByRole('button', { name: 'Add Operations Health to favorites' }).click()
     expect(await section.getByRole('button', { name: 'Remove Operations Health from favorites' }).count()).toBe(1)
@@ -111,7 +116,7 @@ test('dashboard pins appear in the catalog only while dashboards are pinned', as
     expect(await allRows.count()).toBe(3)
     await section.getByRole('button', { name: 'Unpin Executive Sales Dashboard' }).click()
     await section.waitFor({ state: 'detached' })
-    expect(await allDashboards.locator('.catalog-regular-heading').count()).toBe(0)
+    expect(await allDashboards.locator('.catalog-section-divider').count()).toBe(0)
     expect(await allRows.count()).toBe(4)
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pins.v1') ?? '[]'))).toEqual([])
   } finally {
@@ -122,34 +127,20 @@ test('dashboard pins appear in the catalog only while dashboards are pinned', as
 test('eight dashboard copies keep favorites and pins independent across catalog views', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
-    const catalog = page.locator('lv-catalog-page')
-    await catalog.evaluate(async (element: any) => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      const source = element.page.dashboards[0]
-      const copies = Array.from({ length: 8 }, (_, index) => ({
-        ...source,
-        id: `sales-copy-${index + 1}`,
-        dashboardId: `sales-copy-${index + 1}`,
-        title: `Sales copy ${index + 1}`,
-        href: `/dashboards/sales-copy-${index + 1}`,
-        catalogScope: 'mine',
-        status: 'private',
-      }))
-      mergePatch({ page: { ...element.page, dashboards: [...element.page.dashboards, ...copies] } })
+    await page.addInitScript(() => {
       localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['sales-copy-1', 'sales-copy-8']))
-      localStorage.setItem('leapview.dashboard-catalog.pins.v1', JSON.stringify(copies.map((copy: any) => copy.dashboardId)))
-      element.reloadDiscoveryPreferences()
-      await element.updateComplete
+      localStorage.setItem('leapview.dashboard-catalog.pins.v1', JSON.stringify(Array.from({ length: 8 }, (_, index) => `sales-copy-${index + 1}`)))
     })
-
+    await page.goto(`${baseURL}/many`)
+    const catalog = page.locator('lv-catalog-page')
     const pinned = catalog.locator('.pinned-dashboards')
+    await pinned.getByRole('link', { name: 'Sales copy 8' }).waitFor()
     expect(await pinned.getByRole('link').count()).toBe(8)
     expect(await pinned.locator('tbody tr').count()).toBe(8)
     expect(await catalog.getByRole('table', { name: 'All dashboards' }).locator('tbody tr').count()).toBe(4)
     await catalog.getByRole('tab', { name: 'My dashboards' }).evaluate((tab: HTMLButtonElement) => tab.click())
     expect(await pinned.getByRole('link').count()).toBe(8)
-    expect(await catalog.locator('.catalog-regular-heading').count()).toBe(0)
+    expect(await catalog.locator('.catalog-section-divider').count()).toBe(0)
     expect(await pinned.getByRole('columnheader', { name: 'Status' }).count()).toBe(1)
     expect(await pinned.getByRole('columnheader', { name: 'Owner' }).count()).toBe(0)
     expect(await catalog.getByRole('table', { name: 'My dashboards' }).locator('tbody tr').count()).toBe(0)
@@ -162,11 +153,11 @@ test('eight dashboard copies keep favorites and pins independent across catalog 
     expect(await pinned.getByRole('link').count()).toBe(2)
     expect(await catalog.getByRole('table', { name: 'Favorite dashboards' }).locator('tbody tr').count()).toBe(0)
 
-    await catalog.evaluate(async (element: any) => {
+    await catalog.evaluate((element: any) => {
       localStorage.setItem('leapview.dashboard-catalog.pins.v1', '[]')
       element.reloadDiscoveryPreferences()
-      await element.updateComplete
     })
+    await pinned.waitFor({ state: 'detached' })
     await catalog.getByRole('tab', { name: 'All dashboards' }).evaluate((tab: HTMLButtonElement) => tab.click())
     expect(await pinned.count()).toBe(0)
     await catalog.getByRole('tab', { name: 'Favorites' }).evaluate((tab: HTMLButtonElement) => tab.click())
