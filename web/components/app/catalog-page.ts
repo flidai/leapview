@@ -272,8 +272,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     if (!page) return html`<slot></slot>`
     const sourceDashboards = page.dashboards as CatalogDashboard[]
     const visibleDashboards = this.visibleDashboards(sourceDashboards)
-    const pinnedDashboards = this.catalogScope === 'all' ? visibleDashboards.filter(dashboard => dashboardIsPinned(this.pinnedDashboardIDs, dashboard)) : []
-    const dashboards = this.catalogScope === 'all' ? visibleDashboards.filter(dashboard => !dashboardIsPinned(this.pinnedDashboardIDs, dashboard)) : visibleDashboards
+    const pinnedDashboards = visibleDashboards.filter(dashboard => dashboardIsPinned(this.pinnedDashboardIDs, dashboard))
+    const dashboards = visibleDashboards.filter(dashboard => !dashboardIsPinned(this.pinnedDashboardIDs, dashboard))
     const models = this.createDraftModels()
     return html`
       <section aria-label="LeapView dashboard catalog">
@@ -347,7 +347,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           initial-query=${pinned ? '' : page.listQuery ?? ''}
           active-filter=${pinned ? 'all' : page.listFilter ?? 'all'}
           search-placeholder="Search dashboards"
-          empty-text=${!pinned && this.catalogScope === 'all' && this.pinnedDashboardIDs.length && dashboards.length === 0 ? 'All dashboards are pinned above.' : this.catalogEmptyText()}
+          empty-text=${!pinned && pinnedDashboards.length && dashboards.length === 0 ? 'All dashboards in this view are pinned above.' : this.catalogEmptyText()}
           title-emphasis="normal"
           sticky-identity
           hover-sort-indicators
