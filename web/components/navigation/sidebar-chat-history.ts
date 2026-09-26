@@ -19,11 +19,17 @@ export type SidebarHistoryItem = {
 }
 
 export const sidebarChatHistoryStyles = css`
-  .history {
+  .history-sections {
     display: grid;
     gap: var(--base-size-4);
     min-height: 0;
     padding-top: var(--base-size-8);
+  }
+
+  .history {
+    display: grid;
+    gap: var(--base-size-4);
+    min-height: 0;
   }
 
   .history-label {
@@ -116,14 +122,39 @@ export function renderSidebarChatHistory(
   if (!history) return null
   const pending = new Set(pendingRemovalIds)
   const items = (Array.isArray(history.items) ? history.items : []).filter(item => !pending.has(item.id))
+  const pinnedItems = items.filter(item => item.pinned)
+  const regularItems = items.filter(item => !item.pinned)
   return html`
-    <details class="history" open>
+    <div class="history-sections">
+      ${renderSidebarChatHistorySection('pinned-history', 'Pinned chats', pinnedItems, 'No pinned chats yet.', followInternalLink, chatAction)}
+      ${renderSidebarChatHistorySection(
+        'chats-history',
+        history.label || 'Chats',
+        regularItems,
+        regularItems.length > 0 ? '' : pinnedItems.length > 0 ? 'No other chats.' : history.emptyText || 'No chats yet.',
+        followInternalLink,
+        chatAction,
+      )}
+    </div>
+  `
+}
+
+function renderSidebarChatHistorySection(
+  className: string,
+  label: string,
+  items: SidebarHistoryItem[],
+  emptyText: string,
+  followInternalLink: (event: MouseEvent, href: string) => void,
+  chatAction: (action: string, item: SidebarHistoryItem) => void,
+) {
+  return html`
+    <details class=${`history ${className}`} open>
       <summary class="history-label">
-        <span class="history-label-text">${history.label || 'Chats'}</span>
+        <span class="history-label-text" role="heading" aria-level="2">${label}</span>
         <span class="history-chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span>
       </summary>
       <div class="history-list">
-        ${items.length === 0 ? html`<span class="history-empty">${history.emptyText || 'No chats yet.'}</span>` : null}
+        ${items.length === 0 && emptyText ? html`<span class="history-empty">${emptyText}</span>` : null}
         ${items.map((item) => renderSidebarChatHistoryItem(item, followInternalLink, chatAction))}
       </div>
     </details>

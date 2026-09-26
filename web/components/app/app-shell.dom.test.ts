@@ -457,7 +457,7 @@ test('desktop sidebar shares its accessible persisted width with admin routes', 
   }
 })
 
-test('collapsed main sidebar keeps a compact gutter and peeks from its top-left trigger', async () => {
+test('collapsed main sidebar keeps a full rail and expands from its top-left trigger', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
     await page.goto(`${baseURL}/upgraded-compact-shell`)
@@ -483,6 +483,7 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
         markCount: root.querySelectorAll('lv-brand-mark').length,
         collapsedAttribute: sidebar.hasAttribute('data-collapsed'),
         contentInert: (root.querySelector('.sidebar-content') as HTMLElement | null)?.inert,
+        railLabels: Array.from(root.querySelectorAll<HTMLElement>('.collapsed-chrome .rail-link')).map((item) => item.getAttribute('aria-label')),
         visibleAreaSwitcherCount: Array.from(root.querySelectorAll('.area-switcher')).filter((item) => {
           const rect = item.getBoundingClientRect()
           const style = getComputedStyle(item)
@@ -512,6 +513,7 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
       markCount: 0,
       collapsedAttribute: true,
       contentInert: true,
+      railLabels: ['LeapView home', 'Search LeapView', 'Settings'],
       visibleAreaSwitcherCount: 0,
       trigger: {
         label: 'Open navigation',
@@ -526,67 +528,19 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
       },
     })
 
-    await page.locator('lv-sidebar .collapsed-trigger').hover()
-    await page.waitForFunction(() => {
-      const shell = document.querySelector('lv-app-shell') as HTMLElement
-      return shell.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-peeking')
-    })
-    const peek = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
-      const root = (sidebar.shadowRoot as ShadowRoot)!
-      const aside = root.querySelector('aside') as HTMLElement
-      const nav = root.querySelector('nav') as HTMLElement
-      const brand = root.querySelector('.brand') as HTMLElement
-      const brandIdentity = root.querySelector('.brand-identity') as HTMLElement
-      const visibleCollapseControls = Array.from(root.querySelectorAll<HTMLElement>('.collapsed-trigger, .collapse-button'))
-        .filter((control) => {
-          const rect = control.getBoundingClientRect()
-          const style = getComputedStyle(control)
-          return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
-        })
+    await page.mouse.move(22, 22)
+    await page.waitForFunction(() => (document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-peeking'))
+    expect(await page.locator('lv-app-shell').evaluate((shell: any) => {
+      const sidebar = shell.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
+      const root = sidebar.shadowRoot!
       return {
-        hostWidth: Math.round(sidebar.getBoundingClientRect().width),
-        overlayWidth: Math.round(aside.getBoundingClientRect().width),
-        collapsed: sidebar.hasAttribute('data-collapsed'),
         peeking: sidebar.hasAttribute('data-peeking'),
-        contentInert: (root.querySelector('.sidebar-content') as HTMLElement).inert,
-        navVisible: getComputedStyle(nav).visibility === 'visible' && nav.getBoundingClientRect().width > 0,
-        compactHeader: Math.round(brand.getBoundingClientRect().height) < 80,
-        identityVisible: getComputedStyle(brandIdentity).visibility === 'visible' && brandIdentity.getBoundingClientRect().height > 0,
-        visibleCollapseControlLabels: visibleCollapseControls.map((control) => control.getAttribute('aria-label')),
-        footerActionCount: root.querySelectorAll('.footer-actions').length,
-        footerSearchCount: root.querySelectorAll('.footer > .sidebar-search').length,
+        railVisible: getComputedStyle(root.querySelector('.collapsed-chrome') as HTMLElement).display !== 'none',
+        fullSidebarVisible: (root.querySelector('aside') as HTMLElement).getBoundingClientRect().width > 200,
+        collapseButtonVisible: getComputedStyle(root.querySelector('.collapse-button') as HTMLElement).visibility === 'visible',
       }
-    })
-    expect(peek).toEqual({
-      hostWidth: 44,
-      overlayWidth: expect.any(Number),
-      collapsed: true,
-      peeking: true,
-      contentInert: false,
-      navVisible: true,
-      compactHeader: true,
-      identityVisible: true,
-      visibleCollapseControlLabels: ['Open navigation'],
-      footerActionCount: 2,
-      footerSearchCount: 0,
-    })
-    expect(peek.overlayWidth).toBeGreaterThan(200)
-
-    await page.mouse.move(900, 400)
-    await page.waitForFunction(() => {
-      const shell = document.querySelector('lv-app-shell') as HTMLElement
-      const sidebar = (shell.shadowRoot as ShadowRoot)?.querySelector('lv-sidebar') as HTMLElement
-      return !sidebar.hasAttribute('data-peeking')
-        && ((sidebar.shadowRoot as ShadowRoot)?.querySelector('.sidebar-content') as HTMLElement)?.inert
-    })
-
-    await page.locator('lv-app-shell').evaluate(async (element: any) => {
-      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
-      const button = (sidebar.shadowRoot as ShadowRoot).querySelector('.collapsed-trigger') as HTMLButtonElement
-      button.click()
-      await sidebar.updateComplete
-    })
+    })).toEqual({ peeking: true, railVisible: false, fullSidebarVisible: true, collapseButtonVisible: true })
+    await page.locator('lv-sidebar .collapse-button').click()
     const expanded = await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
       const root = (sidebar.shadowRoot as ShadowRoot)!
@@ -643,7 +597,8 @@ test('collapsed asset detail chrome can draw rules across its gutter without shi
       assetRight: 1320,
       ruleGutterInherited: true,
     })
-    await page.locator('lv-sidebar .collapsed-trigger').click()
+    await page.locator('lv-sidebar .collapsed-trigger').focus()
+    await page.keyboard.press('Enter')
     const expanded = await page.locator('lv-app-shell').evaluate((shell: HTMLElement) => {
       const main = shell.shadowRoot!.querySelector('main')!
       return { left: Math.round(main.getBoundingClientRect().left), paddingLeft: getComputedStyle(main).paddingLeft }
@@ -676,13 +631,13 @@ test('collapsed main sidebar keeps peeking across navigation while the pointer r
     await page.reload()
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
 
-    await page.locator('lv-sidebar .collapsed-trigger').hover()
+    await page.locator('lv-sidebar .rail-link[aria-label="Pinned chats"]').click()
     await page.waitForFunction(() => {
       const shell = document.querySelector('lv-app-shell') as HTMLElement
       return shell.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-peeking')
     })
 
-    await page.locator('lv-sidebar a[href="/chats"]').click()
+    await page.locator('lv-sidebar nav a[href="/chats"]').click()
     await page.waitForURL(`${baseURL}/chats`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     await page.waitForFunction(() => {
@@ -1174,7 +1129,7 @@ test('expired chat refresh keeps the current focus when the sidebar read succeed
     await page.waitForFunction(() => (window as any).managementLoads.length > 0)
     await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
-      ;(sidebar.shadowRoot.querySelector('a[href="/"]') as HTMLElement).focus()
+      ;(sidebar.shadowRoot.querySelector('.brand-home') as HTMLElement).focus()
     })
 
     await page.evaluate(() => {
@@ -1239,9 +1194,9 @@ test('chat history can be hidden and reopened with mouse and keyboard without lo
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
     await page.goto(`${baseURL}/sidebar-history`)
-    const heading = page.locator('summary.history-label')
+    const heading = page.locator('details.chats-history > summary.history-label')
     await heading.waitFor({ timeout: 2000 })
-    const history = page.locator('details.history')
+    const history = page.locator('details.chats-history')
     await heading.click()
     expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(false)
     expect(await page.getByRole('link', { name: 'Revenue check', exact: true }).isVisible()).toBe(false)
@@ -1258,6 +1213,39 @@ test('chat history can be hidden and reopened with mouse and keyboard without lo
     expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(false)
     expect(await page.getByRole('link', { name: 'New chat', exact: true }).isVisible()).toBe(true)
     expect(new URL(page.url()).pathname).toBe('/sidebar-history')
+  } finally {
+    await page.close()
+  }
+})
+
+test('pinned chats have their own accessible section and keep chat actions and pending filtering', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    const pinned = page.locator('lv-app-shell lv-sidebar details.pinned-history')
+    const chats = page.locator('lv-app-shell lv-sidebar details.chats-history')
+
+    expect(await page.getByRole('heading', { name: 'Pinned chats', exact: true }).count()).toBe(1)
+    expect(await page.getByRole('heading', { name: 'Chats', exact: true }).count()).toBe(1)
+    expect(await pinned.getByRole('link', { name: 'Pinned title loading', exact: true }).count()).toBe(1)
+    expect(await chats.getByRole('link', { name: 'Revenue check', exact: true }).count()).toBe(1)
+    expect(await pinned.getByRole('button', { name: 'Unpin Pinned title loading', exact: true }).count()).toBe(1)
+    expect(await pinned.getByRole('button', { name: 'Archive Pinned title loading', exact: true }).count()).toBe(1)
+    expect(await pinned.getByRole('button', { name: 'Delete Pinned title loading', exact: true }).count()).toBe(1)
+    expect(await chats.getByRole('button', { name: 'Pin Revenue check', exact: true }).count()).toBe(1)
+    expect(await chats.getByRole('button', { name: 'Archive Revenue check', exact: true }).count()).toBe(1)
+    expect(await chats.getByRole('button', { name: 'Delete Revenue check', exact: true }).count()).toBe(1)
+
+    await page.locator('lv-app-shell lv-chat-manager').evaluate((element) => {
+      element.dispatchEvent(new CustomEvent('lv-chat-removal-pending', {
+        bubbles: true,
+        composed: true,
+        detail: { conversationIds: ['c3'] },
+      }))
+    })
+    await page.waitForFunction(() => !document.querySelector('lv-app-shell')?.shadowRoot?.querySelector('lv-sidebar')?.shadowRoot?.querySelector('a[href="/chats/c3"]'))
+    expect(await pinned.getByRole('link', { name: 'Pinned title loading', exact: true }).count()).toBe(0)
+    expect(await chats.getByRole('link', { name: 'Revenue check', exact: true }).count()).toBe(1)
   } finally {
     await page.close()
   }
@@ -1301,7 +1289,7 @@ test('sidebar renders global chat action and recent history', async () => {
             iconRadius: getComputedStyle(icon).borderRadius,
           }
         })(),
-        historyLabel: root.querySelector('.history-label')?.textContent?.trim(),
+        historyLabel: root.querySelector('.chats-history .history-label')?.textContent?.trim(),
         historySpinner: (() => {
           const spinner = root.querySelector('lv-loading-spinner') as HTMLElement | null
           return {
@@ -1311,7 +1299,7 @@ test('sidebar renders global chat action and recent history', async () => {
         })(),
         hasHistorySearch: Boolean(root.querySelector('.history-search')),
         historyStyle: (() => {
-          const history = root.querySelector('.history') as HTMLElement
+          const history = root.querySelector('.chats-history') as HTMLElement
           const style = getComputedStyle(history)
           return {
             borderTopWidth: style.borderTopWidth,
@@ -1319,11 +1307,11 @@ test('sidebar renders global chat action and recent history', async () => {
           }
         })(),
         historyItemMetrics: (() => {
-          const item = root.querySelector('.history-item') as HTMLElement
+          const item = root.querySelector('.chats-history .history-item') as HTMLElement
           const title = item?.querySelector('.history-title') as HTMLElement
           const navIcon = root.querySelector('a[href="/"] .nav-icon') as HTMLElement
           const navText = root.querySelector('a[href="/"] .nav-text') as HTMLElement
-          const label = root.querySelector('.history-label') as HTMLElement
+          const label = root.querySelector('.chats-history .history-label') as HTMLElement
           const mutedProbe = document.createElement('span')
           mutedProbe.style.color = 'var(--lv-fg-muted)'
           root.append(mutedProbe)
@@ -1350,7 +1338,7 @@ test('sidebar renders global chat action and recent history', async () => {
     expect(state.links).toContainEqual({ href: '/chats/c1', text: 'Revenue check', current: 'page', ariaLabel: 'Revenue check', title: 'Revenue check' })
     expect(state.spacing).toEqual({ navGroupGap: '2px', historyListGap: '2px', navItemHeight: 32 })
     expect(state.hasHistorySearch).toBe(false)
-    expect(state.historyStyle).toEqual({ borderTopWidth: '0px', paddingTop: '8px' })
+    expect(state.historyStyle).toEqual({ borderTopWidth: '0px', paddingTop: '0px' })
     expect(state.historyItemMetrics.gridTemplateColumns).not.toMatch(/^26px /)
     expect(state.historyItemMetrics.labelLeft).toBe(state.historyItemMetrics.navIconLeft)
     expect(state.historyItemMetrics.titleLeft).toBe(state.historyItemMetrics.navIconLeft)
@@ -1375,7 +1363,7 @@ test('sidebar active nav item uses a full-row highlight without selector rail', 
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
       const root = (sidebar.shadowRoot as ShadowRoot)
-      const active = root.querySelector('a[href="/sources"]') as HTMLElement
+      const active = root.querySelector('#mobile-navigation a[href="/sources"]') as HTMLElement
       const icon = active.querySelector('.nav-icon') as HTMLElement
       const style = getComputedStyle(active)
       const iconStyle = getComputedStyle(icon)
