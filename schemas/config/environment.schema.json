@@ -3781,6 +3781,21 @@
       "x-lifecycle": "tooling",
       "x-scope": "public-site provisioner"
     },
+    "LEAPVIEW_SITE_LOCK_FD": {
+      "description": "Inherited file descriptor number for the site mutation lock; set internally when scripts invoke one another.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "public-site deployment scripts"
+    },
+    "LEAPVIEW_SITE_MIN_FREE_BYTES": {
+      "default": "5368709120",
+      "description": "Minimum free bytes required on Docker's image-storage filesystem before public-site image pulls.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "tooling",
+      "x-scope": "public-site operator"
+    },
     "LEAPVIEW_SITE_SHOWCASE_EMBED_URL": {
       "description": "Optional public dashboard embed URL that enables the live /showcase route and its exact frame-src policy.",
       "type": "string",
@@ -3789,6 +3804,12 @@
     },
     "LEAPVIEW_SITE_SSH_KEY": {
       "description": "Optional path to the dedicated production SSH identity used by the public-site deployment command.",
+      "type": "string",
+      "x-lifecycle": "tooling",
+      "x-scope": "public-site operator"
+    },
+    "LEAPVIEW_SITE_STORAGE_PATH": {
+      "description": "Optional existing directory on the filesystem holding Docker image storage, used to override automatic backend detection.",
       "type": "string",
       "x-lifecycle": "tooling",
       "x-scope": "public-site operator"
