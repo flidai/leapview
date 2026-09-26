@@ -202,6 +202,24 @@ A malformed or contradictory record requires investigation; do not delete it to
 force cleanup. The installer likewise leaves reconciliation stopped if it cannot
 fully restore a consistent script set, and reports the retained staging path.
 
+### Testing retention
+
+Run `go test ./deploy/hetzner-site` from the repository root for the policy,
+lifecycle and installer failure tests. The real-engine qualification uses a
+private Docker 29 daemon, separate containerd storage and a loopback Distribution
+registry. It does not use the default Docker daemon or pull external images.
+Run it on a development/CI machine with Docker 29, containerd and a Distribution
+registry binary available:
+
+```sh
+sudo env REGISTRY_BINARY=/absolute/path/to/docker-registry \
+  python3 scripts/qualify_site_image_retention_docker29.py
+```
+
+The fixture checks repeated update cycles, shared layers, digest/tag removal and
+foreign-alias protection. It creates and removes only its private temporary
+resources; it does not install a registry service.
+
 ### Recovering a full existing site host
 
 1. Confirm the actual site container, deployed-image, previous-image, Caddy,
