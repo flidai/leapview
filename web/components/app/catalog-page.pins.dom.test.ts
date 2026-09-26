@@ -144,6 +144,8 @@ test('eight dashboard copies keep favorites and pins independent across catalog 
     expect(await catalog.getByRole('table', { name: 'All dashboards' }).locator('tbody tr').count()).toBe(4)
     await catalog.getByRole('tab', { name: 'My dashboards' }).evaluate((tab: HTMLButtonElement) => tab.click())
     expect(await pinned.getByRole('link').count()).toBe(8)
+    expect(await pinned.getByRole('columnheader', { name: 'Status' }).count()).toBe(1)
+    expect(await pinned.getByRole('columnheader', { name: 'Owner' }).count()).toBe(0)
     expect(await catalog.getByRole('table', { name: 'My dashboards' }).locator('tbody tr').count()).toBe(0)
     await pinned.getByRole('button', { name: 'Unpin Sales copy 1' }).evaluate((button: HTMLButtonElement) => button.click())
     expect(await pinned.getByRole('link').count()).toBe(7)

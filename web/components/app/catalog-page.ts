@@ -317,7 +317,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
             iconTreatment: 'framed' as const,
-            badges: !pinned && this.catalogScope === 'mine' ? undefined : dashboardDiscoveryStatusBadges(dashboard.status),
+            badges: this.catalogScope === 'mine' ? undefined : dashboardDiscoveryStatusBadges(dashboard.status),
             actions: [{ label: `More actions for ${dashboard.title}`, action: 'open-dashboard-menu', icon: 'more' as const }],
             columns: {
               dataModel: semanticModelTitle(dashboard.semanticModel),
@@ -343,7 +343,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
               lastOpened: formatExactTime(lastOpenedAt),
             },
           })})}
-          .columns=${catalogColumns(pinned ? 'all' : this.catalogScope)}
+          .columns=${catalogColumns(this.catalogScope)}
           initial-query=${pinned ? '' : page.listQuery ?? ''}
           active-filter=${pinned ? 'all' : page.listFilter ?? 'all'}
           search-placeholder="Search dashboards"
