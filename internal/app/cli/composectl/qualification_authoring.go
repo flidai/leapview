@@ -345,7 +345,8 @@ func (c *Controller) runQualificationAuthoring(
 	}
 	var administratorToken qualificationBrowserToken
 	if err := browserWorker.CallContext(ctx, "issueAdministratorToken", map[string]any{
-		"actions": qualificationActionNames([]access.Action{access.ActionProjectAccessManage, access.ActionProjectAccessDelegate}),
+		// Reviewer setup reads the policy before and after its CAS mutation.
+		"actions": qualificationActionNames([]access.Action{access.ActionProjectAccessRead, access.ActionProjectAccessManage, access.ActionProjectAccessDelegate}),
 	}, &administratorToken, nil); err != nil {
 		return report, err
 	}
