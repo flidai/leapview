@@ -45,6 +45,7 @@ import {
 import { lucideIcon } from './lucide-icons'
 import { entityListStickyStyles } from './entity-list-sticky.styles'
 import { entityListGroupStyles } from './entity-list-group.styles'
+import { entityListRowActionsStyles } from './entity-list-row-actions.styles'
 import './user-avatar'
 
 export type EntityListItem = {
@@ -225,44 +226,7 @@ const entityListStyles = `
     background: var(--lv-button-accent-bg-hover);
   }
 
-  .entity-list-row-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--base-size-4);
-  }
-
-  .entity-list-row-action {
-    display: inline-flex;
-    width: var(--control-medium-size);
-    height: var(--control-medium-size);
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    border-radius: var(--lv-radius-default);
-    background: transparent;
-    color: var(--lv-fg-muted);
-    cursor: pointer;
-  }
-
-  .entity-list-row-action:hover:not(:disabled),
-  .entity-list-row-action:focus-visible {
-    background: var(--lv-bg-control-hover, var(--lv-bg-panel-muted));
-    color: var(--lv-fg-default);
-  }
-
-  .entity-list-row-action:focus-visible {
-    outline: var(--focus-outline);
-    outline-offset: var(--focus-outline-offset);
-  }
-
-  .entity-list-row-action:disabled {
-    cursor: not-allowed;
-    opacity: 0.45;
-  }
-
-  .entity-list-cell.is-center .entity-list-row-actions {
-    justify-content: center;
-  }
+  ${entityListRowActionsStyles}
 
   .entity-list-items {
     min-width: 0;
@@ -576,8 +540,7 @@ const entityListStyles = `
     flex: 1 1 auto;
   }
 
-  .entity-list-favorite,
-  .entity-list-pin {
+  .entity-list-favorite {
     display: inline-grid;
     width: var(--control-medium-size, 32px);
     height: var(--control-medium-size, 32px);
@@ -595,9 +558,6 @@ const entityListStyles = `
   .entity-list-favorite:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
   .entity-list-favorite[aria-pressed='true'] { color: var(--button-star-iconColor, var(--lv-fg-warning)); }
   .entity-list-favorite[aria-pressed='true'] svg { fill: currentColor; }
-  .entity-list-pin:hover { color: var(--lv-fg-default); background: var(--lv-bg-control-hover); }
-  .entity-list-pin:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
-  .entity-list-pin[aria-pressed='true'] { color: var(--lv-fg-accent); }
 
   .entity-list-copy {
     display: grid;
@@ -869,7 +829,8 @@ const entityListStyles = `
     display: none;
   }
 
-  .entity-list.is-compact .entity-list-row-action {
+  .entity-list.is-compact .entity-list-row-action,
+  .entity-list.is-compact .entity-list-row-pin {
     width: var(--base-size-28);
     height: var(--base-size-28);
   }
@@ -1201,24 +1162,15 @@ class EntityList extends LitElement {
         @click=${(event: Event) => this.toggleFavorite(event, item)}
       >${lucideIcon(Star, { size: 16, strokeWidth: 1.8 })}</button>
     ` : ''
-    const pin = item.pinLabel ? html`
-      <button
-        type="button"
-        class="entity-list-pin"
-        aria-label=${item.pinLabel}
-        aria-pressed=${String(Boolean(item.pinned))}
-        @click=${(event: Event) => this.togglePin(event, item)}
-      >${lucideIcon(Pin, { size: 16, strokeWidth: 1.8 })}</button>
-    ` : ''
     return html`
       <th scope="row">
         ${item.iconButtonLabel
-          ? html`<span class="entity-list-identity-row">${favorite}${pin}${icon}${item.href
+          ? html`<span class="entity-list-identity-row">${favorite}${icon}${item.href
             ? html`<a class="entity-list-identity" data-item-id=${item.id} href=${item.href} @click=${(event: Event) => this.activateIdentity(event, item)}>${copy}</a>`
             : html`<span class="entity-list-identity">${copy}</span>`}</span>`
           : item.href
-            ? html`<span class="entity-list-identity-row">${favorite}${pin}<a class="entity-list-identity" data-item-id=${item.id} href=${item.href} @click=${(event: Event) => this.activateIdentity(event, item)}>${icon}${copy}</a></span>`
-            : html`<span class="entity-list-identity-row">${favorite}${pin}<span class="entity-list-identity">${icon}${copy}</span></span>`}
+            ? html`<span class="entity-list-identity-row">${favorite}<a class="entity-list-identity" data-item-id=${item.id} href=${item.href} @click=${(event: Event) => this.activateIdentity(event, item)}>${icon}${copy}</a></span>`
+            : html`<span class="entity-list-identity-row">${favorite}<span class="entity-list-identity">${icon}${copy}</span></span>`}
       </th>
     `
   }
@@ -1237,7 +1189,16 @@ class EntityList extends LitElement {
               <span class="entity-list-badge-empty" role="img" aria-label="No popularity data">—</span>
             `)
           : column.render === 'actions'
-            ? html`<span class="entity-list-row-actions">${(item.actions ?? []).map((action) => html`
+            ? html`<span class="entity-list-row-actions">${item.pinLabel ? html`
+                <button
+                  type="button"
+                  class="entity-list-row-pin"
+                  title=${item.pinLabel}
+                  aria-label=${item.pinLabel}
+                  aria-pressed=${String(Boolean(item.pinned))}
+                  @click=${(event: Event) => this.togglePin(event, item)}
+                >${lucideIcon(Pin, { size: 16, strokeWidth: 1.8 })}</button>
+              ` : ''}${(item.actions ?? []).map((action) => html`
                 <button
                   type="button"
                   class="entity-list-row-action"
