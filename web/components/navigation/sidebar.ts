@@ -188,6 +188,7 @@ class LeapViewSidebar extends LitElement {
   @state() private liveUserAvatarUrl: string | undefined
   @state() private sidebarWidth = SIDEBAR_DEFAULT_WIDTH
   private collapseStateInitialized = false
+  private collapsePointerType = ''
   private suppressPeekUntilPointerExit = false
   private loadedWidthStorageKey = ''
   private mobileMediaQuery?: MediaQueryList
@@ -1129,7 +1130,10 @@ class LeapViewSidebar extends LitElement {
     if (this.config.admin) return
     this.collapsed = !this.collapsed
     this.peeking = false
-    this.suppressPeekUntilPointerExit = this.collapsed && Boolean(event?.detail)
+    const pointerType = (event as PointerEvent | undefined)?.pointerType || (event?.detail ? this.collapsePointerType : '')
+    const pointerOverControl = event?.currentTarget instanceof Element && event.currentTarget.matches(':hover')
+    this.suppressPeekUntilPointerExit = this.collapsed && pointerType !== 'touch' && pointerOverControl
+    this.collapsePointerType = ''
     try {
       localStorage.setItem('leapview-sidebar-collapsed', String(this.collapsed))
     } catch {
@@ -1148,9 +1152,13 @@ class LeapViewSidebar extends LitElement {
     this.peeking = false
   }
 
-  private beginPeek = (): void => {
-    if (!this.effectiveCollapsed || this.isMobileViewport || this.suppressPeekUntilPointerExit) return
+  private beginPeek = (event: PointerEvent): void => {
+    if (event.pointerType !== 'mouse' || !this.effectiveCollapsed || this.isMobileViewport || this.suppressPeekUntilPointerExit) return
     this.peeking = true
+  }
+
+  private rememberCollapsePointerType = (event: PointerEvent): void => {
+    this.collapsePointerType = event.pointerType
   }
 
   private allowPeekAfterPointerExit = (): void => {
@@ -1294,8 +1302,8 @@ class LeapViewSidebar extends LitElement {
             type="button"
             aria-label="Open navigation"
             aria-expanded=${String(this.peeking)}
-            @mouseenter=${this.beginPeek}
-            @mouseleave=${this.allowPeekAfterPointerExit}
+            @pointerenter=${this.beginPeek}
+            @pointerleave=${this.allowPeekAfterPointerExit}
             @click=${this.toggleCollapsed}
           >
             ${icon('expand')}
@@ -1326,6 +1334,7 @@ class LeapViewSidebar extends LitElement {
                   aria-label=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
                   aria-pressed=${String(collapsed)}
                   title=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
+                  @pointerdown=${this.rememberCollapsePointerType}
                   @click=${this.toggleCollapsed}
                 >
                   ${icon(collapsed ? 'expand' : 'collapse')}

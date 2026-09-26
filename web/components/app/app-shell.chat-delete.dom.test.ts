@@ -130,6 +130,47 @@ test('collapsed chat rail exposes shortcuts and opens the pinned section', async
   }
 })
 
+test('keyboard collapse keeps the rail closed while the pointer remains over its trigger', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.evaluate(() => localStorage.setItem('leapview-sidebar-collapsed', 'false'))
+    await page.reload()
+    await page.waitForFunction(() => !(document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-collapsed'))
+    await page.mouse.move(22, 22)
+    await page.locator('lv-sidebar .collapse-button').focus()
+    await page.keyboard.press('Enter')
+    await page.mouse.move(21, 21)
+    const sidebar = page.locator('lv-sidebar')
+    expect(await sidebar.evaluate((element) => element.hasAttribute('data-collapsed'))).toBe(true)
+    expect(await sidebar.evaluate((element) => element.hasAttribute('data-peeking'))).toBe(false)
+    await page.mouse.move(100, 100)
+    await page.mouse.move(21, 21)
+    await page.waitForFunction(() => (document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-peeking'))
+  } finally {
+    await page.close()
+  }
+})
+
+test('mouse hover previews the rail on its first entry after a touch collapse', async () => {
+  const page = await browser.newPage({ viewport: { width: 1024, height: 768 }, hasTouch: true, isMobile: true })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.evaluate(() => localStorage.setItem('leapview-sidebar-collapsed', 'false'))
+    await page.reload()
+    await page.waitForFunction(() => !(document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-collapsed'))
+    await page.locator('lv-sidebar .collapse-button').tap()
+    await page.waitForFunction(() => (document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-collapsed'))
+    expect(await page.locator('lv-sidebar').evaluate((element) => element.hasAttribute('data-peeking'))).toBe(false)
+    await page.mouse.move(900, 400)
+    await page.mouse.move(22, 22)
+    await page.waitForTimeout(100)
+    expect(await page.locator('lv-sidebar').evaluate((element) => element.hasAttribute('data-peeking'))).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
 test('ordinary chat hover actions expose Pin, Archive, and Delete without an overflow menu', async () => {
   const page = await browser.newPage()
   try {
