@@ -126,7 +126,7 @@ export function renderSidebarChatHistory(
   const regularItems = items.filter(item => !item.pinned)
   return html`
     <div class="history-sections">
-      ${renderSidebarChatHistorySection('pinned-history', 'Pinned chats', pinnedItems, 'No pinned chats yet.', followInternalLink, chatAction)}
+      ${pinnedItems.length > 0 ? renderSidebarChatHistorySection('pinned-history', 'Pinned chats', pinnedItems, '', followInternalLink, chatAction) : null}
       ${renderSidebarChatHistorySection(
         'chats-history',
         history.label || 'Chats',

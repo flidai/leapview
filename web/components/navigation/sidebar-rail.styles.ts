@@ -44,7 +44,7 @@ export const sidebarRailStyles = css`
       height: var(--base-size-20);
     }
 
-    .rail-settings {
+    .rail-search {
       margin-top: auto;
     }
 

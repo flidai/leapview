@@ -554,6 +554,13 @@ test('collapsed main sidebar keeps a full rail and expands from its top-left tri
     })
     expect(expanded).toEqual({ width: expect.any(Number), name: 'LeapView', label: 'Collapse navigation', collapsedAttribute: false })
     expect(expanded.width).toBeGreaterThan(200)
+    await page.locator('lv-sidebar .collapse-button').click()
+    await page.mouse.move(21, 21)
+    await page.waitForFunction(() => (document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-collapsed'))
+    expect(await page.locator('lv-sidebar').evaluate((sidebar) => sidebar.hasAttribute('data-peeking'))).toBe(false)
+    await page.mouse.move(100, 100)
+    await page.mouse.move(21, 21)
+    await page.waitForFunction(() => (document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-peeking'))
   } finally {
     await page.close()
   }
@@ -1245,6 +1252,8 @@ test('pinned chats have their own accessible section and keep chat actions and p
     })
     await page.waitForFunction(() => !document.querySelector('lv-app-shell')?.shadowRoot?.querySelector('lv-sidebar')?.shadowRoot?.querySelector('a[href="/chats/c3"]'))
     expect(await pinned.getByRole('link', { name: 'Pinned title loading', exact: true }).count()).toBe(0)
+    expect(await pinned.count()).toBe(0)
+    expect(await page.locator('lv-sidebar .rail-link[aria-label="Pinned chats"]').count()).toBe(0)
     expect(await chats.getByRole('link', { name: 'Revenue check', exact: true }).count()).toBe(1)
   } finally {
     await page.close()

@@ -190,6 +190,7 @@ class LeapViewSidebar extends LitElement {
   @state() private liveUserAvatarUrl: string | undefined
   @state() private sidebarWidth = SIDEBAR_DEFAULT_WIDTH
   private collapseStateInitialized = false
+  private suppressPeekUntilPointerExit = false
   private loadedWidthStorageKey = ''
   private mobileMediaQuery?: MediaQueryList
   private resizeDrag?: { pointerId: number; startX: number; startWidth: number }
@@ -1126,10 +1127,11 @@ class LeapViewSidebar extends LitElement {
     this.toggleAttribute('data-peeking', this.effectiveCollapsed && this.peeking)
   }
 
-  private toggleCollapsed(): void {
+  private toggleCollapsed(event?: MouseEvent): void {
     if (this.config.admin) return
     this.collapsed = !this.collapsed
     this.peeking = false
+    this.suppressPeekUntilPointerExit = this.collapsed && Boolean(event?.detail)
     try {
       localStorage.setItem('leapview-sidebar-collapsed', String(this.collapsed))
     } catch {
@@ -1149,8 +1151,12 @@ class LeapViewSidebar extends LitElement {
   }
 
   private beginPeek = (): void => {
-    if (!this.effectiveCollapsed || this.isMobileViewport) return
+    if (!this.effectiveCollapsed || this.isMobileViewport || this.suppressPeekUntilPointerExit) return
     this.peeking = true
+  }
+
+  private allowPeekAfterPointerExit = (): void => {
+    this.suppressPeekUntilPointerExit = false
   }
 
   private handlePeekFocusOut = (): void => {
@@ -1257,6 +1263,7 @@ class LeapViewSidebar extends LitElement {
     const railItems = this.config.groups.flatMap(group => group.items)
       .filter(item => !item.disabled && (!this.config.history || item.id !== 'chat'))
       .slice(0, 6)
+    const hasPinnedChats = this.config.history?.items?.some(item => item.pinned && !this.pendingRemovalIds.includes(item.id)) ?? false
     const productName = this.config.productName?.trim() || leapViewBrandName
     const productLogoUrl = this.config.productLogoUrl?.trim()
     return html`
@@ -1290,6 +1297,7 @@ class LeapViewSidebar extends LitElement {
             aria-label="Open navigation"
             aria-expanded=${String(this.peeking)}
             @mouseenter=${this.beginPeek}
+            @mouseleave=${this.allowPeekAfterPointerExit}
             @click=${this.toggleCollapsed}
           >
             ${icon('expand')}
@@ -1300,15 +1308,17 @@ class LeapViewSidebar extends LitElement {
           ${this.config.primaryAction && !this.config.admin ? html`
             <a class="rail-link" href=${this.config.primaryAction.href} aria-label=${this.config.primaryAction.label} title=${this.config.primaryAction.label} @click=${(event: MouseEvent) => this.followInternalLink(event, this.config.primaryAction!.href)}>${icon(this.config.primaryAction.icon === 'plus' ? 'compose' : this.config.primaryAction.icon)}</a>
           ` : null}
-          <button class="rail-link" type="button" aria-label="Search LeapView" title="Search LeapView" aria-haspopup="dialog" @click=${this.openProductSearch}>${icon('search')}</button>
           ${railItems.map(item => html`
             <a class="rail-link" href=${item.href} aria-label=${item.label} title=${item.label} aria-current=${item.id === this.config.active ? 'page' : 'false'} @click=${(event: MouseEvent) => this.followInternalLink(event, item.href)}>${icon(item.icon)}</a>
           `)}
           ${this.config.history ? html`
-            <span class="rail-divider" aria-hidden="true"></span>
-            <button class="rail-link" type="button" aria-label="Pinned chats" title="Pinned chats" @click=${this.openPinnedChats}>${icon('pin')}</button>
             <a class="rail-link" href="/chats" aria-label="Chats" title="Chats" aria-current=${this.config.active === 'chat' ? 'page' : 'false'} @click=${(event: MouseEvent) => this.followInternalLink(event, '/chats')}>${icon('chat')}</a>
+            ${hasPinnedChats ? html`
+              <span class="rail-divider" aria-hidden="true"></span>
+              <button class="rail-link" type="button" aria-label="Pinned chats" title="Pinned chats" @click=${this.openPinnedChats}>${icon('pin')}</button>
+            ` : null}
           ` : null}
+          <button class="rail-link rail-search" type="button" aria-label="Search LeapView" title="Search LeapView" aria-haspopup="dialog" @click=${this.openProductSearch}>${icon('search')}</button>
           <a class="rail-link rail-settings" href=${this.config.userSettingsHref || '/admin/profile'} aria-label="Settings" title="Settings" @click=${(event: MouseEvent) => this.followInternalLink(event, this.config.userSettingsHref || '/admin/profile')}>${icon('settings')}</a>
         </div>
         <div class="sidebar-content" ?inert=${collapsed && !this.peeking && !this.isMobileViewport}>

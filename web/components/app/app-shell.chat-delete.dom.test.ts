@@ -100,7 +100,7 @@ test('collapsed chat rail exposes shortcuts and opens the pinned section', async
 
     const rail = page.locator('lv-sidebar .collapsed-chrome')
     expect(await rail.locator('.rail-link').evaluateAll((links) => links.map((link) => link.getAttribute('aria-label')))).toEqual([
-      'LeapView home', 'New chat', 'Search LeapView', 'Dashboards', 'Data Explorer', 'Pinned chats', 'Chats', 'Settings',
+      'LeapView home', 'New chat', 'Dashboards', 'Data Explorer', 'Chats', 'Pinned chats', 'Search LeapView', 'Settings',
     ])
     const dashboards = rail.getByRole('link', { name: 'Dashboards' })
     expect(await dashboards.getAttribute('href')).toBe('/')
