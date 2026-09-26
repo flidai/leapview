@@ -109,7 +109,7 @@ var (
 		"govulncheck":       {"go-module": true},
 		"bun-audit":         {"js-package": true, "js-lock": true},
 		"npm-audit":         {"js-package": true, "js-lock": true},
-		"trivy":             {"terraform-root": true, "dockerfile": true, "github-actions": true},
+		"trivy":             {"terraform-root": true, "dockerfile": true, "github-actions": true, "ruby-lock": true},
 		"action-pin-policy": {"github-actions": true},
 		"actionlint":        {"github-actions": true},
 	}
@@ -403,6 +403,7 @@ func validateSurfaceUpdater(surface Surface, where string) error {
 		"go-module":      "gomod",
 		"js-package":     "npm",
 		"js-lock":        "npm",
+		"ruby-lock":      "bundler",
 		"terraform-root": "terraform",
 		"dockerfile":     "docker",
 		"github-actions": "github-actions",
@@ -438,7 +439,7 @@ func validateUpdater(updater Updater, where string) error {
 		return fmt.Errorf("%s updater directory must be a normalized absolute repository path", where)
 	}
 	switch updater.Ecosystem {
-	case "gomod", "npm", "docker", "terraform", "github-actions":
+	case "gomod", "npm", "docker", "terraform", "github-actions", "bundler":
 	default:
 		return fmt.Errorf("%s has unsupported updater ecosystem %q", where, updater.Ecosystem)
 	}
@@ -632,6 +633,8 @@ func discoverSurfaces(root string) (map[string]bool, error) {
 		}
 		base := filepath.Base(rel)
 		switch {
+		case base == "Gemfile.lock":
+			discovered[coverageKey(rel, "ruby-lock")] = true
 		case base == "go.mod":
 			discovered[coverageKey(rel, "go-module")] = true
 		case base == "package.json":
@@ -729,7 +732,7 @@ func normalizeRepoPath(path string) (string, error) {
 
 func isKnownKind(kind string) bool {
 	switch kind {
-	case "go-module", "js-package", "js-lock", "terraform-root", "dockerfile", "github-actions":
+	case "go-module", "js-package", "js-lock", "ruby-lock", "terraform-root", "dockerfile", "github-actions":
 		return true
 	default:
 		return false

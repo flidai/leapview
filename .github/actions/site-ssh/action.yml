@@ -1,0 +1,65 @@
+name: Connect to the public-site private SSH endpoint
+description: Temporary Tailscale identity and protected SSH key; performs no host mutation.
+inputs:
+  tailscale-client-id:
+    required: true
+    description: Reviewed site CI OIDC federated identity client ID.
+  tailscale-audience:
+    required: true
+    description: Audience from the reviewed Tailscale federated identity.
+  ssh-private-key:
+    required: false
+    description: Existing GitHub site SSH secret, if available to this repository.
+  infisical-identity-id:
+    required: false
+    description: Narrow OIDC identity allowed to read prod /hetzner-site/operator.
+runs:
+  using: composite
+  steps:
+    - name: Verify configured access identifiers
+      shell: bash
+      env:
+        CLIENT_ID: ${{ inputs.tailscale-client-id }}
+        AUDIENCE: ${{ inputs.tailscale-audience }}
+        SSH_KEY: ${{ inputs.ssh-private-key }}
+        INFISICAL_ID: ${{ inputs.infisical-identity-id }}
+      run: |
+        test -n "$CLIENT_ID" && test -n "$AUDIENCE"
+        test -n "$SSH_KEY" || test -n "$INFISICAL_ID"
+    - name: Join the private network temporarily
+      uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+      with:
+        oauth-client-id: ${{ inputs.tailscale-client-id }}
+        audience: ${{ inputs.tailscale-audience }}
+        tags: tag:leapview-site-ci
+        version: 1.102.3
+        ping: 100.73.220.23
+    - name: Fetch operator key when no direct GitHub secret is configured
+      if: inputs.ssh-private-key == ''
+      uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+      with:
+        method: oidc
+        identity-id: ${{ inputs.infisical-identity-id }}
+        oidc-audience: https://github.com/flidai
+        domain: https://us.infisical.com
+        project-slug: leapview
+        env-slug: prod
+        secret-path: /hetzner-site/operator
+    - name: Prepare protected SSH identity
+      shell: bash
+      env:
+        DIRECT_SSH_KEY: ${{ inputs.ssh-private-key }}
+      run: |
+        python3 - <<'PY'
+        import os
+        from pathlib import Path
+        value = os.environ.get('DIRECT_SSH_KEY') or os.environ.get('SITE_SSH_PRIVATE_KEY')
+        if not value:
+            raise SystemExit('No site SSH identity supplied')
+        path = Path(os.environ['RUNNER_TEMP']) / 'site-ssh-identity'
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'w') as key:
+            key.write(value.rstrip() + '\n')
+        with open(os.environ['GITHUB_ENV'], 'a') as env:
+            env.write('SITE_SSH_KEY=' + str(path) + '\n')
+        PY

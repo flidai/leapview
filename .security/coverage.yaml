@@ -58,6 +58,11 @@ surfaces:
     updater: {ecosystem: npm, directory: /pkg/apigen/typespec}
     scanners: [npm-audit]
 
+  - path: deploy/kamal-site/Gemfile.lock
+    kind: ruby-lock
+    updater: {ecosystem: bundler, directory: /deploy/kamal-site}
+    scanners: [trivy]
+
   - path: deploy/hetzner
     kind: terraform-root
     updater: {ecosystem: terraform, directory: /deploy/hetzner}
@@ -115,6 +120,10 @@ surfaces:
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
   - path: .github/actions/desktop-preview-candidate/action.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/actions/site-ssh/action.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]

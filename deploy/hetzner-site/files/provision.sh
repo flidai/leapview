@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -e /var/lib/leapview-site/kamal/ready.json ]]; then
+  echo "Legacy site controller is retired after Kamal handover" >&2
+  exit 64
+fi
+
 site_root="/opt/leapview-site"
 cd "$site_root"
 set -a

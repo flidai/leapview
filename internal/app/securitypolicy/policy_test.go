@@ -36,6 +36,14 @@ func TestCoverageDiscoversOmissionsAndDuplicates(t *testing.T) {
 	assertValidationError(t, root, "not a maintained security surface")
 }
 
+func TestRubyDeploymentLockRequiresCoverage(t *testing.T) {
+	root := fixtureRepository(t)
+	if err := os.WriteFile(filepath.Join(root, "Gemfile.lock"), []byte("GEM\n  specs:\n    kamal (2.12.0)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assertValidationError(t, root, "missing from coverage")
+}
+
 func TestCoverageRejectsUnknownAndInapplicableScanners(t *testing.T) {
 	for _, test := range []struct {
 		name    string

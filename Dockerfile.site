@@ -67,7 +67,8 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 ARG BUILD_VERSION=dev
 ARG BUILD_REVISION=unknown
 
-LABEL org.opencontainers.image.title="LeapView documentation site" \
+LABEL service="leapview-site" \
+      org.opencontainers.image.title="LeapView documentation site" \
       org.opencontainers.image.description="LeapView public website and documentation portal" \
       org.opencontainers.image.source="https://github.com/flidai/leapview" \
       org.opencontainers.image.licenses="Apache-2.0" \

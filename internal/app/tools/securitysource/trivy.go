@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os/exec"
 	"path/filepath"
 
@@ -21,6 +22,35 @@ type trivyRunner struct {
 func runTrivy(parent context.Context, cfg Config, root string, contract *securitypolicy.Exceptions) error {
 	runner, err := chooseTrivy(parent, cfg, root)
 	if err != nil {
+		return err
+	}
+	// Ruby deployment tools execute with production SSH access. Scan their locked
+	// dependencies as well as the existing source/misconfiguration surfaces.
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", "node_modules", "vendor", ".terraform", ".data", ".tmp":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if entry.Name() != "Gemfile.lock" {
+			return nil
+		}
+		rel, err := filepath.Rel(root, filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		args := append([]string(nil), runner.prefix...)
+		args = append(args, "fs", "--scanners", "vuln", "--severity", "HIGH,CRITICAL", "--exit-code", "1", "--ignore-unfixed=false", filepath.ToSlash(rel))
+		if err := runCommand(parent, cfg, root, cfg.Stdout, cfg.Stderr, runner.name, args...); err != nil {
+			return commandFailure("Ruby deployment dependency scan", err)
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	args := append([]string(nil), runner.prefix...)
