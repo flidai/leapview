@@ -546,9 +546,10 @@ type RotatableAPITokenRepository interface {
 }
 
 type APICredential struct {
-	Principal Principal
-	Token     APIToken
-	Authoring *AuthoringSession
+	Principal        Principal
+	Token            APIToken
+	Authoring        *AuthoringSession
+	InitialPublisher *InitialPublisherOrigin `json:"-"`
 }
 
 type CredentialEvidence struct {

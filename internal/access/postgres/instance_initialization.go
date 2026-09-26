@@ -97,13 +97,24 @@ func (r *Repository) InitializeInstance(
 		if !ok {
 			return nil, fmt.Errorf("typed scoped API token issuance is unavailable")
 		}
-		token, _, err := scoped.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
+		token, metadata, err := scoped.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
 			PrincipalID: principal.ID,
 			Name:        access.APITokenNameInitialProjectClaim,
 			Permissions: permissions,
 			ExpiresAt:   expires,
 		})
 		if err != nil {
+			return nil, err
+		}
+		claimID, err := pgUUID(metadata.ID)
+		if err != nil {
+			return nil, err
+		}
+		principalID, err := pgUUID(principal.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := accessdb.New(db).CreateInitialPasswordSetup(ctx, accessdb.CreateInitialPasswordSetupParams{ClaimCredentialID: claimID, PrincipalID: principalID, InstanceID: input.InstanceID}); err != nil {
 			return nil, err
 		}
 		result = access.InitialInstanceCredentials{
@@ -181,6 +192,23 @@ func (r *Repository) ExchangeProjectClaimPublisher(
 		ExpiresAt:   expiresAt,
 	})
 	if err != nil {
+		return result, err
+	}
+	publisherID, err := pgUUID(metadata.ID)
+	if err != nil {
+		return result, err
+	}
+	claimID, err := pgUUID(input.ClaimCredentialID)
+	if err != nil {
+		return result, err
+	}
+	principalID, err := pgUUID(input.PrincipalID)
+	if err != nil {
+		return result, err
+	}
+	// A legacy claim may still exchange normally, but cannot invent an
+	// initial-password window. Closed records are linked without reopening.
+	if err := accessdb.New(db).RecordInitialPublisherOrigin(ctx, accessdb.RecordInitialPublisherOriginParams{PublisherCredentialID: publisherID, ClaimCredentialID: claimID, PrincipalID: principalID, InstanceID: input.InstanceID, ProjectID: projectID.String()}); err != nil {
 		return result, err
 	}
 	parsedExpiry, err := time.Parse(time.RFC3339Nano, metadata.ExpiresAt)

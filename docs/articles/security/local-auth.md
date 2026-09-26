@@ -35,13 +35,13 @@ leapview admin initialize --format json > initial-credentials.json
 leapview admin initialize --acknowledge-credentials
 ```
 
-The one-shot offline initializer atomically binds the instance environment and creates a platform administrator with a forced-change temporary password plus a privilege-restricted publisher token that expires after 24 hours. It does not start an HTTP server or create an unrestricted bootstrap token. Until acknowledgement, rerunning the initializer returns the same credential bundle so an output-delivery failure is recoverable. After acknowledgement, a second initialization attempt fails.
+The one-shot offline initializer atomically binds the instance environment and creates a platform administrator with a forced-change temporary password and an initial project-claim token that expires after 24 hours. It does not start an HTTP server or create an unrestricted bootstrap token. Until acknowledgement, rerunning the initializer returns the same credential bundle so an output-delivery failure is recoverable. After acknowledgement, a second initialization attempt fails.
 
-The initial publisher token includes `PROJECT_ADMIN` so the administrator can
-run `bootstrap-project` before the first deployment. Treat this initial token as
-an administrative credential, not a publishing-only automation token. Its
-capability does not grant platform administration to a non-administrator
-principal. Use separately scoped credentials for ongoing publication.
+`bootstrap-project` exchanges the claim for a publisher scoped to the claimed project. The publisher can establish the initial project policy and stage data before the administrator changes the temporary password. This exception requires privately recorded issuance provenance; naming an ordinary token like an initial publisher does not grant it. Acknowledging the publisher handoff revokes the claim while allowing the publisher to finish data staging.
+
+The first successful password change or reset permanently ends this publisher exception. A later administrator reset blocks that publisher through the normal password-change gate; exchanging or rotating credentials cannot restore the exception. After the password requirement is satisfied, the publisher remains subject to its normal scope and expiry. Existing installations without recorded initial-setup provenance must complete the normal browser password-change flow.
+
+Initial publisher metadata cannot be edited through generic token management. While the claim remains usable, retry the explicit exchange to replace the publisher. Generic rotation produces an ordinary token without the setup exception. Use separately scoped credentials for ongoing publication.
 
 The generic Compose controller and Hetzner provider recipe wrap this command and expose the result once through `leapviewctl first-login`, which deletes the credential file after printing it.
 
