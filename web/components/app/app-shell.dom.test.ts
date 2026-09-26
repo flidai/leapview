@@ -513,7 +513,7 @@ test('collapsed main sidebar keeps a full rail and expands from its top-left tri
       markCount: 0,
       collapsedAttribute: true,
       contentInert: true,
-      railLabels: ['LeapView home', 'Search LeapView', 'Settings'],
+      railLabels: ['Search LeapView', 'Settings'],
       visibleAreaSwitcherCount: 0,
       trigger: {
         label: 'Open navigation',

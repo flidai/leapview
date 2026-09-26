@@ -2,7 +2,6 @@ import { LitElement, css, html, type PropertyValues } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import {
 	Activity,
-	Aperture,
 	ArrowLeft,
 	Bot,
 	Boxes,
@@ -124,7 +123,6 @@ type IconName =
   | 'close'
   | 'code'
   | 'plus'
-  | 'brand'
   | 'compose'
   | 'pin'
   | 'workflow'
@@ -1302,9 +1300,6 @@ class LeapViewSidebar extends LitElement {
           >
             ${icon('expand')}
           </button>
-          <a class="rail-link rail-brand" href="/" aria-label=${`${productName} home`} title=${`${productName} home`} @click=${(event: MouseEvent) => this.followInternalLink(event, '/')}>
-            ${productLogoUrl ? html`<img class="product-logo" src=${productLogoUrl} alt="">` : icon('brand')}
-          </a>
           ${this.config.primaryAction && !this.config.admin ? html`
             <a class="rail-link" href=${this.config.primaryAction.href} aria-label=${this.config.primaryAction.label} title=${this.config.primaryAction.label} @click=${(event: MouseEvent) => this.followInternalLink(event, this.config.primaryAction!.href)}>${icon(this.config.primaryAction.icon === 'plus' ? 'compose' : this.config.primaryAction.icon)}</a>
           ` : null}
@@ -1734,7 +1729,6 @@ function icon(name: string) {
     menu: PanelLeft,
     close: X,
     plus: Plus,
-    brand: Aperture,
     compose: SquarePen,
     pin: Pin,
     workflow: Workflow,

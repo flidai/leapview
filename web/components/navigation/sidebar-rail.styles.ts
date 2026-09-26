@@ -35,15 +35,6 @@ export const sidebarRailStyles = css`
       background: var(--lv-line-muted);
     }
 
-    .rail-brand {
-      color: var(--lv-fg-default);
-    }
-
-    .rail-brand .product-logo {
-      width: var(--base-size-20);
-      height: var(--base-size-20);
-    }
-
     .rail-search {
       margin-top: auto;
     }
