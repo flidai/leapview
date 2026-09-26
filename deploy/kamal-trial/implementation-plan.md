@@ -155,9 +155,15 @@ This changes the integration sequence to pull/start -> public verification ->
 record verified version -> native cleanup, with recovery before cleanup on error.
 
 Remaining gates are documented rather than waived: hosted-runner private SSH
-access, truly separate-runner rollback, measured production capacity reserve,
+access, measured production capacity reserve,
 and a reviewed default-off adapter enforcing shared workflow serialization and
 the tested safeguards. `runner-access.md` specifies proposed Tailscale OIDC setup;
 it is not an applied tailnet policy. PR #751 remains a draft trial, and #748 stays
 unmerged. Full local CI was attempted but blocked by the workspace Docker bridge;
 focused checks and the experimental image build/admission passed.
+
+A further `fresh_runner.py` trial passed offline rollback from a fresh controller
+mount namespace with the host filesystem hidden. Only copied transport keys and
+pinned SSH configuration were provided; the prior application record and Docker
+identity were obtained remotely. This is fixture evidence, not a completed
+GitHub-hosted-runner network test.

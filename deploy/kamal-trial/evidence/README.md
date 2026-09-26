@@ -57,9 +57,11 @@ HOME before invoking commands. Earlier sequential native baselines establish the
 documented cleanup behavior; only the final runs assert metadata isolation.
 
 Still required: a verified hosted-runner SSH route, a production adapter that
-enforces these remedies and shared CI/operator serialization, rollback from a
-truly separate runner, production reserve sizing, reviewed default-off integration
-and controller handover. The host-record rollback test uses SSH but shares the
-fixture filesystem with its controller. No production activation or cleanup has
+enforces these remedies and shared CI/operator serialization, production reserve sizing, reviewed default-off integration
+and controller handover. The original host-record test shares a filesystem. `fresh-runner.json` adds
+a controller in a separate mount namespace with the host directory hidden; it
+retrieves the record and checks Docker only over SSH while the registry is offline.
+Reproduce with `fresh_runner.py` using the same four required launcher arguments
+as `storage_edges.py`. This tests controller separation, not hosted-runner routing. No production activation or cleanup has
 occurred. Full `task ci` remains blocked by the workspace's missing `docker0`
 bridge; focused guard, security-policy/admission tests and actionlint passed.

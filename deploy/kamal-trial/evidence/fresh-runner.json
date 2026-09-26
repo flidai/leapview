@@ -1,0 +1,36 @@
+{
+  "synthetic": true,
+  "production_changed": false,
+  "observations": [],
+  "cycles": [],
+  "harness_sha256": "31e61e46a0fa64cadadcc78bd47ae1ad887c5df3452621ca0da55e66fc284d61",
+  "docker": {
+    "ServerVersion": "29.1.3",
+    "Driver": "overlayfs",
+    "DriverStatus": [
+      [
+        "driver-type",
+        "io.containerd.snapshotter.v1"
+      ]
+    ]
+  },
+  "kamal": "2.12.0",
+  "private_remote_working_directory_verified": true,
+  "images": {
+    "prior": {
+      "id": "sha256:2bff7181b8643166356e8d59e425eac2b9b90463ff01d30850d9b100b818fdc7",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:2bff7181b8643166356e8d59e425eac2b9b90463ff01d30850d9b100b818fdc7"
+      ]
+    },
+    "current": {
+      "id": "sha256:95ceaaf7119ed085e9045ef895f51fd11016a9d6fd79a9b607c77362838c8266",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:95ceaaf7119ed085e9045ef895f51fd11016a9d6fd79a9b607c77362838c8266"
+      ]
+    }
+  },
+  "fresh_runner_host_filesystem_hidden": true,
+  "fresh_runner_registry_offline_rollback": true,
+  "fresh_runner_sha256": "e720bc6d53161f33e6416555109696c070362986c3de1451b314b0bdb4e5137b"
+}

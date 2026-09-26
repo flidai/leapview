@@ -114,8 +114,8 @@ The full approved plan is in `implementation-plan.md`; network setup is in
   including host-local metadata, failure recovery and external CI/operator
   serialization. `storage_edges.py` now covers shared layers/foreign containers
   and public acceptance failure using supported `redeploy` to defer pruning.
-  Verify rollback from a genuinely separate runner before declaring the complete
-  trial gate satisfied; the current SSH record-reload test shares a filesystem.
+  `fresh_runner.py` additionally proves offline rollback from a fresh controller
+  mount namespace with the host records/socket hidden; all host access uses SSH.
 - Derive production capacity from actual site images and peak physical usage;
   synthetic fixture sizes are not a production sizing recommendation.
 - Establish runner-to-host SSH access. The existing workflow has no SSH step;
