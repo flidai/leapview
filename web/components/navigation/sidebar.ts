@@ -16,11 +16,9 @@ import {
 	Monitor,
 	PanelLeft,
 	Plus,
-	Pin,
 	Plug,
 	Search,
 	Settings,
-	SquarePen,
   ShieldCheck,
   TableProperties,
 	Users,
@@ -35,7 +33,6 @@ import { lucideIcon } from '../shared/lucide-icons'
 import { leapViewBrandName } from '../shared/brand-mark'
 import { sidebarControlStyles } from './sidebar-controls'
 import { sidebarBrandLayoutStyles } from './sidebar-brand-layout.styles'
-import { sidebarRailStyles } from './sidebar-rail.styles'
 import { renderSidebarChatHistory, sidebarChatHistoryStyles, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
 import { renderSidebarAccount, sidebarAccountStyles } from './sidebar-account'
 
@@ -123,8 +120,6 @@ type IconName =
   | 'close'
   | 'code'
   | 'plus'
-  | 'compose'
-  | 'pin'
   | 'workflow'
 
 const defaultConfig: SidebarConfig = {
@@ -188,8 +183,6 @@ class LeapViewSidebar extends LitElement {
   @state() private liveUserAvatarUrl: string | undefined
   @state() private sidebarWidth = SIDEBAR_DEFAULT_WIDTH
   private collapseStateInitialized = false
-  private collapsePointerType = ''
-  private suppressPeekUntilPointerExit = false
   private loadedWidthStorageKey = ''
   private mobileMediaQuery?: MediaQueryList
   private resizeDrag?: { pointerId: number; startX: number; startWidth: number }
@@ -750,22 +743,9 @@ class LeapViewSidebar extends LitElement {
       :host([data-collapsed]) .collapsed-chrome {
         position: fixed;
         z-index: calc(var(--z-index-sidebar) + 1);
-        top: 0;
-        left: 0;
-        box-sizing: border-box;
+        top: var(--base-size-8);
+        left: var(--base-size-8);
         display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: var(--base-size-6);
-        width: var(--lv-sidebar-width);
-        height: 100svh;
-        padding: var(--base-size-8);
-        border-right: var(--lv-border-default);
-        background: var(--lv-sidebar-bg);
-      }
-
-      :host([data-collapsed][data-peeking]) .collapsed-chrome {
-        display: none;
       }
 
       :host([data-collapsed]) .sidebar-content > * {
@@ -789,6 +769,10 @@ class LeapViewSidebar extends LitElement {
         transition: opacity var(--motion-transition-stateChange);
       }
 
+      :host([data-collapsed][data-peeking]) .collapse-button {
+        visibility: hidden;
+        pointer-events: none;
+      }
     }
 
     @media (max-width: 640px) {
@@ -1071,7 +1055,7 @@ class LeapViewSidebar extends LitElement {
       }
     }
 
-  `, sidebarBrandLayoutStyles, sidebarRailStyles]
+  `, sidebarBrandLayoutStyles]
 
   connectedCallback(): void {
     super.connectedCallback()
@@ -1126,14 +1110,10 @@ class LeapViewSidebar extends LitElement {
     this.toggleAttribute('data-peeking', this.effectiveCollapsed && this.peeking)
   }
 
-  private toggleCollapsed(event?: MouseEvent): void {
+  private toggleCollapsed(): void {
     if (this.config.admin) return
     this.collapsed = !this.collapsed
     this.peeking = false
-    const pointerType = (event as PointerEvent | undefined)?.pointerType || (event?.detail ? this.collapsePointerType : '')
-    const pointerOverControl = event?.currentTarget instanceof Element && event.currentTarget.matches(':hover')
-    this.suppressPeekUntilPointerExit = this.collapsed && pointerType !== 'touch' && pointerOverControl
-    this.collapsePointerType = ''
     try {
       localStorage.setItem('leapview-sidebar-collapsed', String(this.collapsed))
     } catch {
@@ -1146,23 +1126,15 @@ class LeapViewSidebar extends LitElement {
     }))
   }
 
+  private beginPeek = (): void => {
+    if (!this.effectiveCollapsed || this.isMobileViewport) return
+    this.peeking = true
+  }
+
   private endPeek = (): void => {
     const aside = this.shadowRoot?.querySelector('aside')
     if (aside?.contains(this.shadowRoot?.activeElement ?? null)) return
     this.peeking = false
-  }
-
-  private beginPeek = (event: PointerEvent): void => {
-    if (event.pointerType !== 'mouse' || !this.effectiveCollapsed || this.isMobileViewport || this.suppressPeekUntilPointerExit) return
-    this.peeking = true
-  }
-
-  private rememberCollapsePointerType = (event: PointerEvent): void => {
-    this.collapsePointerType = event.pointerType
-  }
-
-  private allowPeekAfterPointerExit = (): void => {
-    this.suppressPeekUntilPointerExit = false
   }
 
   private handlePeekFocusOut = (): void => {
@@ -1266,10 +1238,6 @@ class LeapViewSidebar extends LitElement {
     const collapsed = this.effectiveCollapsed
     const mobileNavigationClosed = this.isMobileViewport && !this.mobileOpen
     const groups = this.filteredGroups()
-    const railItems = this.config.groups.flatMap(group => group.items)
-      .filter(item => !item.disabled && (!this.config.history || item.id !== 'chat'))
-      .slice(0, 6)
-    const hasPinnedChats = this.config.history?.items?.some(item => item.pinned && !this.pendingRemovalIds.includes(item.id)) ?? false
     const productName = this.config.productName?.trim() || leapViewBrandName
     const productLogoUrl = this.config.productLogoUrl?.trim()
     return html`
@@ -1302,27 +1270,13 @@ class LeapViewSidebar extends LitElement {
             type="button"
             aria-label="Open navigation"
             aria-expanded=${String(this.peeking)}
-            @pointerenter=${this.beginPeek}
-            @pointerleave=${this.allowPeekAfterPointerExit}
+            title="Open navigation"
+            @mouseenter=${this.beginPeek}
+            @focus=${this.beginPeek}
             @click=${this.toggleCollapsed}
           >
             ${icon('expand')}
           </button>
-          ${this.config.primaryAction && !this.config.admin ? html`
-            <a class="rail-link" href=${this.config.primaryAction.href} aria-label=${this.config.primaryAction.label} title=${this.config.primaryAction.label} @click=${(event: MouseEvent) => this.followInternalLink(event, this.config.primaryAction!.href)}>${icon(this.config.primaryAction.icon === 'plus' ? 'compose' : this.config.primaryAction.icon)}</a>
-          ` : null}
-          ${railItems.map(item => html`
-            <a class="rail-link" href=${item.href} aria-label=${item.label} title=${item.label} aria-current=${item.id === this.config.active ? 'page' : 'false'} @click=${(event: MouseEvent) => this.followInternalLink(event, item.href)}>${icon(item.icon)}</a>
-          `)}
-          ${this.config.history ? html`
-            <a class="rail-link" href="/chats" aria-label="Chats" title="Chats" aria-current=${this.config.active === 'chat' ? 'page' : 'false'} @click=${(event: MouseEvent) => this.followInternalLink(event, '/chats')}>${icon('chat')}</a>
-            ${hasPinnedChats ? html`
-              <span class="rail-divider" aria-hidden="true"></span>
-              <button class="rail-link" type="button" aria-label="Pinned chats" title="Pinned chats" @click=${this.openPinnedChats}>${icon('pin')}</button>
-            ` : null}
-          ` : null}
-          <button class="rail-link rail-search" type="button" aria-label="Search LeapView" title="Search LeapView" aria-haspopup="dialog" @click=${this.openProductSearch}>${icon('search')}</button>
-          <a class="rail-link rail-settings" href=${this.config.userSettingsHref || '/admin/profile'} aria-label="Settings" title="Settings" @click=${(event: MouseEvent) => this.followInternalLink(event, this.config.userSettingsHref || '/admin/profile')}>${icon('settings')}</a>
         </div>
         <div class="sidebar-content" ?inert=${collapsed && !this.peeking && !this.isMobileViewport}>
         <header class="brand">
@@ -1334,7 +1288,6 @@ class LeapViewSidebar extends LitElement {
                   aria-label=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
                   aria-pressed=${String(collapsed)}
                   title=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
-                  @pointerdown=${this.rememberCollapsePointerType}
                   @click=${this.toggleCollapsed}
                 >
                   ${icon(collapsed ? 'expand' : 'collapse')}
@@ -1674,20 +1627,6 @@ class LeapViewSidebar extends LitElement {
     return renderSidebarChatHistory(this.config.history, this.pendingRemovalIds, (event, href) => this.followInternalLink(event, href), (action, item) => this.chatAction(action, item))
   }
 
-  private openPinnedChats = (): void => {
-    this.peeking = true
-    void this.updateComplete.then(() => {
-      const pinned = this.shadowRoot?.querySelector<HTMLDetailsElement>('.pinned-history')
-      if (pinned) {
-        pinned.open = true
-        pinned.querySelector<HTMLElement>('summary')?.focus()
-        pinned.scrollIntoView({ block: 'nearest' })
-      } else {
-        this.shadowRoot?.querySelector<HTMLElement>('.history-label')?.focus()
-      }
-    })
-  }
-
   private chatAction(action: string, item: SidebarHistoryItem) {
     this.dispatchEvent(new CustomEvent('lv-chat-action', { bubbles: true, composed: true, detail: { action, conversationId: item.id, title: item.title, href: item.href } }))
   }
@@ -1738,8 +1677,6 @@ function icon(name: string) {
     menu: PanelLeft,
     close: X,
     plus: Plus,
-    compose: SquarePen,
-    pin: Pin,
     workflow: Workflow,
   }
 

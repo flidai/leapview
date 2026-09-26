@@ -1,5 +1,6 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
+import { Pin, PinOff } from 'lucide'
 import type { CatalogPageSignal, ChromeSignal } from '../../generated/signals'
 import { readStringList, readStringRecord, writeStorage } from './catalog-preferences'
 import { uuidv7 } from '../shared/command'
@@ -7,6 +8,7 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import '../shared/entity-list'
+import { catalogPinnedStyles } from './catalog-pins.styles'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
 
@@ -18,6 +20,7 @@ interface CreateDraftModel {
 type CatalogDashboard = CatalogPageSignal['dashboards'][number]
 
 const catalogFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
+const catalogPinsStorageKey = 'leapview.dashboard-catalog.pins.v1'
 const catalogRecentsStorageKey = 'leapview.dashboard-catalog.recents.v1'
 const unrankedPopularityLabel = 'Not ranked — popularity is based on distinct viewers, not opens; at least 3 viewers and a top-30% rank over 30 days are required.'
 
@@ -29,6 +32,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @property({ attribute: 'mutation-csrf-token' }) mutationCSRFToken = ''
   @state() private catalogScope: 'all' | 'favorites' | 'mine' = 'all'
   @state() private favoriteDashboardIDs: string[] = []
+  @state() private pinnedDashboardIDs: string[] = []
   @state() private recentDashboardIDs: Record<string, string> = {}
   @state() private createDraftOpen = false
   @state() private copyDraftDashboardID = ''
@@ -41,7 +45,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   private createDraftTrigger: HTMLAnchorElement | null = null
   private copyDraftTrigger: HTMLElement | null = null
   private actionMenuTrigger: HTMLElement | null = null
-  static styles = [pageHeaderStyles, css`
+  static styles = [pageHeaderStyles, catalogPinnedStyles, css`
     :host {
       display: block;
       min-width: 0;
@@ -225,10 +229,12 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     super.connectedCallback()
 	this.reloadDiscoveryPreferences()
     window.addEventListener('keydown', this.handleGlobalKeydown)
+    window.addEventListener('storage', this.handlePreferencesStorage)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener('keydown', this.handleGlobalKeydown)
+    window.removeEventListener('storage', this.handlePreferencesStorage)
     super.disconnectedCallback()
   }
 
@@ -265,10 +271,24 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     if (!page) return html`<slot></slot>`
     const sourceDashboards = page.dashboards as CatalogDashboard[]
     const dashboards = this.visibleDashboards(sourceDashboards)
+    const pinnedDashboards = sourceDashboards.filter(dashboard => this.isDashboardPinned(dashboard))
     const models = this.createDraftModels()
     return html`
       <section aria-label="LeapView dashboard catalog">
         ${renderPageHeader(page.title, '', '', this.createDraftHref ? html`<a class="catalog-create-draft" href=${this.createDraftHref} aria-haspopup="dialog" aria-controls="catalog-create-draft-dialog" @click=${this.handleCreateDraftTrigger}>${lucideIcon(lucideIconByCanonicalName('plus'), { size: 16, strokeWidth: 2 })}<span>New dashboard</span></a>` : undefined)}
+        ${this.catalogScope === 'all' && pinnedDashboards.length > 0 ? html`
+          <section class="pinned-dashboards" aria-labelledby="pinned-dashboards-heading">
+            <h2 id="pinned-dashboards-heading">Pinned dashboards</h2>
+            <ul class="pinned-dashboards-list">
+              ${pinnedDashboards.map(dashboard => html`
+                <li class="pinned-dashboard">
+                  <a href=${dashboard.href} @click=${() => this.recordDashboardOpenByID(dashboard.id)}>${lucideIcon(Pin, { size: 16 })}<span>${dashboard.title}</span></a>
+                  <button type="button" aria-label=${`Unpin ${dashboard.title}`} title=${`Unpin ${dashboard.title}`} @click=${() => this.toggleDashboardPinByID(dashboard.dashboardId)}>${lucideIcon(PinOff, { size: 16 })}</button>
+                </li>
+              `)}
+            </ul>
+          </section>
+        ` : null}
         <nav class="catalog-tabs" aria-label="Dashboard views" role="tablist">
           ${this.renderCatalogTab('all', 'All dashboards')}
           ${this.renderCatalogTab('favorites', 'Favorites')}
@@ -287,6 +307,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             icon: 'dashboard',
             favorite: this.isDashboardFavorite(dashboard),
             favoriteLabel: this.isDashboardFavorite(dashboard) ? `Remove ${dashboard.title} from favorites` : `Add ${dashboard.title} to favorites`,
+            pinned: this.isDashboardPinned(dashboard),
+            pinLabel: this.isDashboardPinned(dashboard) ? `Unpin ${dashboard.title}` : `Pin ${dashboard.title}`,
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
             iconTreatment: 'framed' as const,
@@ -325,6 +347,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           sticky-identity
           hover-sort-indicators
           @lv-entity-list-favorite-toggle=${this.toggleDashboardFavorite}
+          @lv-entity-list-pin-toggle=${this.toggleDashboardPin}
           @lv-entity-list-item-activate=${this.recordDashboardOpen}
           @lv-entity-list-row-action=${this.handleDashboardRowAction}
         ></lv-entity-list>
@@ -458,7 +481,28 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
 
   reloadDiscoveryPreferences(): void {
     this.favoriteDashboardIDs = readStringList(catalogFavoritesStorageKey)
+    this.pinnedDashboardIDs = readStringList(catalogPinsStorageKey)
     this.recentDashboardIDs = readStringRecord(catalogRecentsStorageKey)
+  }
+
+  private handlePreferencesStorage = (event: StorageEvent): void => {
+    if (event.key === catalogPinsStorageKey || event.key === null) this.pinnedDashboardIDs = readStringList(catalogPinsStorageKey)
+  }
+
+  private isDashboardPinned(dashboard: CatalogDashboard): boolean {
+    return this.pinnedDashboardIDs.some(id => id === dashboard.dashboardId || id === dashboard.id)
+  }
+
+  private toggleDashboardPin = (event: CustomEvent<{ item?: { dashboardId?: string } }>): void => {
+    const id = event.detail?.item?.dashboardId?.trim()
+    if (id) this.toggleDashboardPinByID(id)
+  }
+
+  private toggleDashboardPinByID(id: string): void {
+    const pinned = this.pinnedDashboardIDs.filter(value => value !== id && !value.endsWith(`:${id}`))
+    if (pinned.length === this.pinnedDashboardIDs.length) pinned.push(id)
+    this.pinnedDashboardIDs = pinned
+    writeStorage(catalogPinsStorageKey, pinned)
   }
 
   private isDashboardFavorite(dashboard: CatalogDashboard): boolean {
@@ -478,7 +522,10 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
 
   private recordDashboardOpen = (event: CustomEvent<{ item?: { id?: string } }>): void => {
     const id = event.detail?.item?.id?.trim()
-    if (!id) return
+    if (id) this.recordDashboardOpenByID(id)
+  }
+
+  private recordDashboardOpenByID(id: string): void {
     writeStorage(catalogRecentsStorageKey, { ...readStringRecord(catalogRecentsStorageKey), [id]: new Date().toISOString() })
   }
 

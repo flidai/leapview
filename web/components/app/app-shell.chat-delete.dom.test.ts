@@ -90,87 +90,6 @@ test('app shell renders a custom logo and name without sidebar attribution', asy
   }
 }, 30_000)
 
-test('collapsed chat rail exposes shortcuts and opens the pinned section', async () => {
-  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
-  try {
-    await page.goto(`${baseURL}/sidebar-history`)
-    await page.evaluate(() => localStorage.setItem('leapview-sidebar-collapsed', 'true'))
-    await page.reload()
-    await page.waitForFunction(() => (document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-collapsed'))
-
-    const rail = page.locator('lv-sidebar .collapsed-chrome')
-    expect(await rail.locator('.rail-link').evaluateAll((links) => links.map((link) => link.getAttribute('aria-label')))).toEqual([
-      'New chat', 'Dashboards', 'Data Explorer', 'Chats', 'Pinned chats', 'Search LeapView', 'Settings',
-    ])
-    const dashboards = rail.getByRole('link', { name: 'Dashboards' })
-    expect(await dashboards.getAttribute('href')).toBe('/')
-    await dashboards.click()
-    await page.waitForURL(`${baseURL}/`)
-    await page.goto(`${baseURL}/sidebar-history`)
-    await page.waitForFunction(() => (document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-collapsed'))
-    const geometry = await rail.evaluate((element) => {
-      const rail = element.getBoundingClientRect()
-      const settings = element.querySelector('.rail-settings')!.getBoundingClientRect()
-      return { height: Math.round(rail.height), bottom: Math.round(rail.bottom), settingsBottom: Math.round(settings.bottom) }
-    })
-    expect(geometry.height).toBe(900)
-    expect(geometry.bottom).toBe(900)
-    expect(geometry.settingsBottom).toBeGreaterThan(850)
-    expect(await rail.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe('/admin/profile')
-    await rail.getByRole('button', { name: 'Pinned chats' }).click()
-    await page.waitForFunction(() => {
-      const sidebar = (document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
-      return sidebar?.hasAttribute('data-peeking') && sidebar.shadowRoot?.querySelector('.pinned-history summary') === sidebar.shadowRoot?.activeElement
-    })
-    expect(await rail.isVisible()).toBe(false)
-    expect(await page.locator('lv-sidebar .collapse-button').isVisible()).toBe(true)
-    expect(await page.locator('lv-sidebar .pinned-history .history-item').count()).toBe(1)
-  } finally {
-    await page.close()
-  }
-})
-
-test('keyboard collapse keeps the rail closed while the pointer remains over its trigger', async () => {
-  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
-  try {
-    await page.goto(`${baseURL}/sidebar-history`)
-    await page.evaluate(() => localStorage.setItem('leapview-sidebar-collapsed', 'false'))
-    await page.reload()
-    await page.waitForFunction(() => !(document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-collapsed'))
-    await page.mouse.move(22, 22)
-    await page.locator('lv-sidebar .collapse-button').focus()
-    await page.keyboard.press('Enter')
-    await page.mouse.move(21, 21)
-    const sidebar = page.locator('lv-sidebar')
-    expect(await sidebar.evaluate((element) => element.hasAttribute('data-collapsed'))).toBe(true)
-    expect(await sidebar.evaluate((element) => element.hasAttribute('data-peeking'))).toBe(false)
-    await page.mouse.move(100, 100)
-    await page.mouse.move(21, 21)
-    await page.waitForFunction(() => (document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-peeking'))
-  } finally {
-    await page.close()
-  }
-})
-
-test('mouse hover previews the rail on its first entry after a touch collapse', async () => {
-  const page = await browser.newPage({ viewport: { width: 1024, height: 768 }, hasTouch: true, isMobile: true })
-  try {
-    await page.goto(`${baseURL}/sidebar-history`)
-    await page.evaluate(() => localStorage.setItem('leapview-sidebar-collapsed', 'false'))
-    await page.reload()
-    await page.waitForFunction(() => !(document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-collapsed'))
-    await page.locator('lv-sidebar .collapse-button').tap()
-    await page.waitForFunction(() => (document.querySelector('lv-app-shell') as any)?.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-collapsed'))
-    expect(await page.locator('lv-sidebar').evaluate((element) => element.hasAttribute('data-peeking'))).toBe(false)
-    await page.mouse.move(900, 400)
-    await page.mouse.move(22, 22)
-    await page.waitForTimeout(100)
-    expect(await page.locator('lv-sidebar').evaluate((element) => element.hasAttribute('data-peeking'))).toBe(true)
-  } finally {
-    await page.close()
-  }
-})
-
 test('ordinary chat hover actions expose Pin, Archive, and Delete without an overflow menu', async () => {
   const page = await browser.newPage()
   try {
@@ -371,3 +290,22 @@ test('mobile account menu fits above the footer and keeps search available after
     }
   } finally { await page.close() }
 }, 30_000)
+
+test('pinned chats have a section only while a chat is pinned', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    const pinned = page.locator('lv-sidebar details.pinned-history')
+    expect(await pinned.getByRole('link', { name: 'Pinned title loading' }).count()).toBe(1)
+    expect(await page.getByRole('heading', { name: 'Pinned chats', exact: true }).count()).toBe(1)
+    expect(await pinned.getByRole('button', { name: 'Unpin Pinned title loading' }).count()).toBe(1)
+    await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
+      sidebar.config = { ...sidebar.config, history: { ...sidebar.config.history, items: sidebar.config.history.items.map((item: any) => ({ ...item, pinned: false })) } }
+      await sidebar.updateComplete
+    })
+    expect(await pinned.count()).toBe(0)
+    expect(await page.locator('lv-sidebar details.chats-history').count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
