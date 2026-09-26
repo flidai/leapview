@@ -7,7 +7,19 @@ site_host="${LEAPVIEW_SITE_HOST:-178.105.204.14}"
 fingerprint_file="$repo_root/deploy/hetzner-site/ssh-host-key.sha256"
 temporary_directory="$(mktemp -d)"
 cleanup() {
+  status=$?
+  trap - EXIT
+  if [[ "${remote_stage:-}" =~ ^/root/leapview-site-install\.[A-Za-z0-9]+$ ]]; then
+    # The staging path is validated locally before expansion into the remote command.
+    # shellcheck disable=SC2029
+    if ! ssh "${ssh_options[@]}" "$remote" \
+      "if test -f '$remote_stage/timer-was-active'; then test -f '$remote_stage/resume-safe' || exit 1; systemctl start leapview-site-reconcile.timer || exit 1; fi; rm -r -- '$remote_stage'"; then
+      echo "Could not restore the site timer or remove staging at $remote_stage; operator recovery is required" >&2
+      status=1
+    fi
+  fi
   rm -rf "$temporary_directory"
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -80,35 +92,80 @@ ssh_options=(
 )
 remote="root@$site_host"
 
-scp "${ssh_options[@]}" \
-  "$repo_root/deploy/hetzner-site/files/compose.yaml" \
-  "$remote:/root/.leapview-site-compose.next"
-scp "${ssh_options[@]}" \
-  "$repo_root/deploy/hetzner-site/files/deploy.sh" \
-  "$remote:/root/.leapview-site-deploy.next"
-scp "${ssh_options[@]}" \
-  "$repo_root/deploy/hetzner-site/files/provision.sh" \
-  "$remote:/root/.leapview-site-provision.next"
-scp "${ssh_options[@]}" \
-  "$repo_root/deploy/hetzner-site/files/reconcile.sh" \
-  "$remote:/root/.leapview-site-reconcile.next"
-scp "${ssh_options[@]}" \
-  "$repo_root/deploy/hetzner-site/files/leapview-site-reconcile.service" \
-  "$remote:/root/.leapview-site-reconcile-service.next"
-scp "${ssh_options[@]}" \
-  "$repo_root/deploy/hetzner-site/files/leapview-site-reconcile.timer" \
-  "$remote:/root/.leapview-site-reconcile-timer.next"
-ssh "${ssh_options[@]}" "$remote" \
-  'install -o root -g root -m 0644 /root/.leapview-site-compose.next /opt/leapview-site/compose.yaml &&
-   install -o root -g root -m 0700 /root/.leapview-site-deploy.next /opt/leapview-site/deploy.sh &&
-   install -o root -g root -m 0700 /root/.leapview-site-provision.next /opt/leapview-site/provision.sh &&
-   install -o root -g root -m 0700 /root/.leapview-site-reconcile.next /opt/leapview-site/reconcile.sh &&
-   install -o root -g root -m 0644 /root/.leapview-site-reconcile-service.next /etc/systemd/system/leapview-site-reconcile.service &&
-   install -o root -g root -m 0644 /root/.leapview-site-reconcile-timer.next /etc/systemd/system/leapview-site-reconcile.timer &&
-   rm -f /root/.leapview-site-compose.next /root/.leapview-site-deploy.next /root/.leapview-site-provision.next \
-     /root/.leapview-site-reconcile.next /root/.leapview-site-reconcile-service.next \
-     /root/.leapview-site-reconcile-timer.next &&
-   systemctl daemon-reload'
+remote_stage="$(ssh "${ssh_options[@]}" "$remote" 'mktemp -d /root/leapview-site-install.XXXXXX')"
+if [[ ! "$remote_stage" =~ ^/root/leapview-site-install\.[A-Za-z0-9]+$ ]]; then
+  echo "unexpected remote staging directory" >&2
+  remote_stage=""
+  exit 1
+fi
+bundle="$temporary_directory/bundle"
+mkdir "$bundle"
+for file in compose.yaml deploy.sh provision.sh reconcile.sh site_image_retention.py \
+  leapview-site-reconcile.service leapview-site-reconcile.timer; do
+  cp "$repo_root/deploy/hetzner-site/files/$file" "$bundle/$file"
+done
+(cd "$bundle" && sha256sum ./* > SHA256SUMS)
+scp "${ssh_options[@]}" "$bundle/"* "$remote:$remote_stage/"
+
+# Install one coherent script set without interrupting the serving containers.
+ssh "${ssh_options[@]}" "$remote" bash -s -- "$remote_stage" <<'REMOTE_INSTALL'
+set -euo pipefail
+stage="${1:?missing staging directory}"
+(cd "$stage" && sha256sum --check SHA256SUMS)
+command -v python3 >/dev/null
+python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$stage/site_image_retention.py"
+for script in deploy provision reconcile; do bash -n "$stage/$script.sh"; done
+
+# Also take the legacy locks to safely upgrade a host running the old scripts.
+exec 8>/opt/leapview-site/reconcile.lock
+flock -w 60 8
+exec 9>/opt/leapview-site/deploy.lock
+flock -w 60 9
+exec 7>/opt/leapview-site/site-mutation.lock
+flock -w 60 7
+was_active=false
+if systemctl is-active --quiet leapview-site-reconcile.timer; then
+  was_active=true
+  touch "$stage/timer-was-active"
+fi
+backup=$(mktemp -d /opt/leapview-site/operator-install.XXXXXX)
+paths=(/opt/leapview-site/compose.yaml /opt/leapview-site/deploy.sh
+  /opt/leapview-site/provision.sh /opt/leapview-site/reconcile.sh
+  /opt/leapview-site/site_image_retention.py
+  /etc/systemd/system/leapview-site-reconcile.service
+  /etc/systemd/system/leapview-site-reconcile.timer)
+for i in "${!paths[@]}"; do
+  if [[ -e "${paths[$i]}" ]]; then cp -p "${paths[$i]}" "$backup/$i"; fi
+done
+finish_install() {
+  status=$?
+  trap - EXIT
+  if [[ "$status" -ne 0 ]]; then
+    for i in "${!paths[@]}"; do
+      if [[ -e "$backup/$i" ]]; then
+        cp -p "$backup/$i" "${paths[$i]}" || exit 1
+      else
+        rm -f "${paths[$i]}" || exit 1
+      fi
+    done
+    systemctl daemon-reload || exit 1
+  fi
+  touch "$stage/resume-safe" || exit 1
+  if [[ "$status" -ne 0 && "$was_active" == true ]]; then systemctl start leapview-site-reconcile.timer || exit 1; fi
+  rm -r "$backup"
+  exit "$status"
+}
+trap finish_install EXIT
+systemctl stop leapview-site-reconcile.timer
+install -o root -g root -m 0700 "$stage/site_image_retention.py" /opt/leapview-site/site_image_retention.py
+install -o root -g root -m 0644 "$stage/compose.yaml" /opt/leapview-site/compose.yaml
+for script in deploy provision reconcile; do
+  install -o root -g root -m 0700 "$stage/$script.sh" "/opt/leapview-site/$script.sh"
+done
+install -o root -g root -m 0644 "$stage/leapview-site-reconcile.service" /etc/systemd/system/leapview-site-reconcile.service
+install -o root -g root -m 0644 "$stage/leapview-site-reconcile.timer" /etc/systemd/system/leapview-site-reconcile.timer
+systemctl daemon-reload
+REMOTE_INSTALL
 # The value is deliberately expanded locally after the strict digest validation above.
 # shellcheck disable=SC2029
 ssh "${ssh_options[@]}" "$remote" "/opt/leapview-site/deploy.sh '$site_image'"

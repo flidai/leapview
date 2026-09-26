@@ -84,6 +84,7 @@ resource "hcloud_server" "site" {
     }))
     provision_b64 = base64encode(file("${path.module}/files/provision.sh"))
     deploy_b64    = base64encode(file("${path.module}/files/deploy.sh"))
+    retention_b64 = base64encode(file("${path.module}/files/site_image_retention.py"))
     reconcile_b64 = base64encode(file("${path.module}/files/reconcile.sh"))
     reconcile_service_b64 = base64encode(
       file("${path.module}/files/leapview-site-reconcile.service")
