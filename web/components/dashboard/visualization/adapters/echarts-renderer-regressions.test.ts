@@ -5,7 +5,24 @@ import type { InlineVisualizationDataState } from '../../../../generated/visuali
 import { defaultRendererContext } from '../host-controller'
 import { EChartsHandle, echartsOption, responsiveEChartsPatch } from './echarts'
 import { CategoryColorRegistry } from './echarts/category-colors'
+import { responsiveEChartsLayoutKey } from './echarts/view-state'
 import { hierarchyFixture, networkFixture } from './echarts-test-fixtures'
+
+test('expanded hierarchy and flow plots center their bounds without changing chart semantics', () => {
+  for (const envelope of [hierarchyFixture('tree'), networkFixture('sankey')]) {
+    if (envelope.spec.kind !== 'hierarchy') throw new Error('Expected hierarchy fixture')
+    envelope.spec.presentation.orientation = 'horizontal'
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    expect(responsiveEChartsLayoutKey(envelope, 700, 500)).not.toBe(responsiveEChartsLayoutKey(envelope, 1200, 720))
+    const compact = (responsiveEChartsPatch(option, 320, 240).series ?? option.series)[0]
+    const expanded = responsiveEChartsPatch(option, 1200, 720).series[0]
+    expect(compact.left).toBe(option.series[0].left)
+    expect(compact.right).toBe(option.series[0].right)
+    expect(expanded.left).toBe(expanded.right)
+    expect(expanded.orient).toBe(option.series[0].orient)
+    expect(expanded.data).toBe(option.series[0].data)
+  }
+})
 
 test('ECharts treemap and sunburst convert canonical decimal strings for layout and preserve raw tooltip values', () => {
   for (const mark of ['treemap', 'sunburst'] as const) {
@@ -218,5 +235,42 @@ test('ECharts tree survives empty, loaded, and cleared data frames', () => {
         }).not.toThrow()
       }
     } finally { chart.dispose() }
+  }
+})
+
+test('a single-category tree shows its value without an artificial parent or connector', () => {
+  const envelope = hierarchyFixture('tree') as any
+  envelope.dataState.datasets[0].rows = [['Base', null, '15743364.25']]
+  expect(responsiveEChartsLayoutKey(envelope, 256, 105)).not.toBe(responsiveEChartsLayoutKey(envelope, 320, 240))
+  for (const orientation of ['vertical', 'horizontal'] as const) {
+    envelope.spec.presentation.orientation = orientation
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    expect(option.series[0].data).toHaveLength(1)
+    expect(option.series[0].data[0].name).toBe('Base')
+    expect(option.series[0].label.formatter({ data: option.series[0].data[0] })).toContain('15743364.25')
+    for (const [width, height] of [[256, 105], [320, 240], [1200, 720]] as const) {
+      const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+      try {
+        chart.setOption({ ...option, ...responsiveEChartsPatch(option, width, height), animation: false })
+        const svg = chart.renderToSVGString()
+        expect(svg).toContain('Base')
+        expect(svg).toContain('15743364.25')
+        expect(svg).not.toContain('>All</text>')
+        const labels = chart.getZr().storage.getDisplayList()
+          .filter((item: any) => item.type === 'tspan' && ['Base', '15743364.25'].includes(item.style?.text))
+        expect(labels).toHaveLength(2)
+        const bounds = labels.map((item: any) => {
+          const rect = item.getBoundingRect().clone()
+          const transform = item.getComputedTransform?.() ?? item.transform
+          if (transform) rect.applyTransform(transform)
+          expect(rect.x).toBeGreaterThanOrEqual(0)
+          expect(rect.x + rect.width).toBeLessThanOrEqual(width)
+          expect(rect.y).toBeGreaterThanOrEqual(0)
+          expect(rect.y + rect.height).toBeLessThanOrEqual(height)
+          return rect
+        })
+        expect(bounds[0]!.y + bounds[0]!.height).toBeLessThanOrEqual(bounds[1]!.y)
+      } finally { chart.dispose() }
+    }
   }
 })
