@@ -1,0 +1,108 @@
+{
+  "synthetic": true,
+  "production_changed": false,
+  "observations": [
+    {
+      "case": "native-prune-preserves-verified-prior",
+      "passed": true
+    }
+  ],
+  "harness_sha256": "f58b6aff90f5c3528f87cd3e52a12d0a95aa84da3785af5ac0757dfbbfd0110b",
+  "docker": {
+    "ServerVersion": "29.1.3",
+    "Driver": "overlayfs",
+    "DriverStatus": [
+      [
+        "driver-type",
+        "io.containerd.snapshotter.v1"
+      ]
+    ]
+  },
+  "kamal": "2.12.0",
+  "peak_allocated_bytes": 1529360384,
+  "caddy_tls_host_forwarding_www": true,
+  "identity_negative_cases": [
+    "wrong-architecture",
+    "wrong-service",
+    "mismatched-record",
+    "missing-record",
+    "changed-tag"
+  ],
+  "enospc_kept_live": true,
+  "enospc_retry_succeeded": true,
+  "native_rollback_uses_candidate_settings": true,
+  "offline_rollback_with_prior_record": true,
+  "native_lock_blocks_activation_but_not_pull": true,
+  "interruption_recovery": [
+    "pre-app-boot",
+    "post-app-boot"
+  ],
+  "cleanup_failure_reports_live_new_version": true,
+  "native_prune_preserves_foreign_alias": false,
+  "native_same_version_keeps_distinct_prior": false,
+  "date": "2026-09-26",
+  "overall_qualification": "not-qualified; native retention gaps and real-image/runner-access gates remain",
+  "sampling_limit": "500ms sampling, transient du errors excluded; peak includes intentional ENOSPC filler, not a production sizing value",
+  "cycles": [
+    {
+      "version": "good-01",
+      "runtime_allocated_bytes": 349151232,
+      "containers": 1
+    },
+    {
+      "version": "good-02",
+      "runtime_allocated_bytes": 364875776,
+      "containers": 2
+    },
+    {
+      "version": "good-03",
+      "runtime_allocated_bytes": 364920832,
+      "containers": 2
+    },
+    {
+      "version": "good-04",
+      "runtime_allocated_bytes": 364920832,
+      "containers": 2
+    },
+    {
+      "version": "good-05",
+      "runtime_allocated_bytes": 364924928,
+      "containers": 2
+    },
+    {
+      "version": "good-06",
+      "runtime_allocated_bytes": 364924928,
+      "containers": 2
+    },
+    {
+      "version": "good-07",
+      "runtime_allocated_bytes": 364924928,
+      "containers": 2
+    },
+    {
+      "version": "good-08",
+      "runtime_allocated_bytes": 364929024,
+      "containers": 2
+    },
+    {
+      "version": "good-09",
+      "runtime_allocated_bytes": 364929024,
+      "containers": 2
+    },
+    {
+      "version": "good-10",
+      "runtime_allocated_bytes": 364933120,
+      "containers": 2
+    }
+  ],
+  "retained_after_failed_attempt_cleanup": [
+    {
+      "name": "leapview-site-trial-web-good-10",
+      "state": "running"
+    },
+    {
+      "name": "leapview-site-trial-web-good-09",
+      "state": "exited"
+    }
+  ]
+}

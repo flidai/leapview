@@ -133,6 +133,8 @@ class Trial:
         wait_until(lambda: HTTP.open('http://127.0.0.1:5000/v2/').status == 200)
         self.setup_ssh()
         self.write_config()
+        if self.mitigate:
+            self.install_identity_hook()
         self.docker('run', '--rm', '--network', 'none', 'caddy:2.10.2-alpine', 'caddy', 'version')
         print('PASS isolated Docker/containerd, SSH and container execution', flush=True)
 
@@ -225,7 +227,7 @@ env:
     TRIAL_IMAGE_REFERENCE: <%= ENV.fetch("TRIAL_IMAGE_REFERENCE", "unset").inspect %>
 ''')
 
-    def image(self, version, unhealthy=False):
+    def image(self, version, unhealthy=False, arch='amd64', service='leapview-site-trial'):
         archive = io.BytesIO()
         with tarfile.open(fileobj=archive, mode='w') as tar:
             for name, data in [('fixture', (self.artifacts / 'fixture').read_bytes()),
@@ -234,14 +236,41 @@ env:
                 info.size, info.mode, info.mtime = len(data), (0o755 if name == 'fixture' else 0o444), 0
                 tar.addfile(info, io.BytesIO(data))
         tag = f'{self.repo}:{version}'
-        self.docker('import', '--change', 'LABEL service=leapview-site-trial', '--change', 'CMD ["/fixture"]',
+        self.docker('import', '--platform', f'linux/{arch}', '--change', f'LABEL service={service}', '--change', 'CMD ["/fixture"]',
                     '--change', 'USER 65532:65532', '--change', f'ENV TRIAL_UNHEALTHY={int(unhealthy)}', '-', tag,
                     data=archive.getvalue())
         self.docker('push', tag)
         identity = self.inspect(tag)
         self.report.setdefault('images', {})[version] = {'id': identity['Id'], 'digests': identity['RepoDigests']}
+        record = {'schema': 1, 'version': version, 'service': 'leapview-site-trial', 'status': 'candidate',
+                  'image_id': identity['Id'], 'reference': identity['RepoDigests'][0]}
+        (self.root / 'records').mkdir(exist_ok=True)
+        self.save_record(version, record)
         self.docker('image', 'rm', tag)
         return identity['RepoDigests'][0]
+
+    def save_record(self, version, record):
+        path = self.root / 'records' / f'{version}.json'
+        temp = path.with_suffix('.tmp')
+        temp.write_text(json.dumps(record))
+        temp.chmod(0o600)
+        temp.replace(path)
+
+    def install_identity_hook(self):
+        (self.root / 'hooks').mkdir()
+        hook = self.root / 'hooks/pre-app-boot'
+        hook.write_text('#!/bin/bash\nset -eu\nexec python3 ' + shlex.quote(str(HERE / 'identity_guard.py')) +
+                       ' --record "$TRIAL_ROOT/records/$KAMAL_VERSION.json" --version "$KAMAL_VERSION"\n')
+        hook.chmod(0o700)
+        for stage in ('pre-app-boot', 'post-app-boot'):
+            path = self.root / 'hooks' / stage
+            original = path.read_text() if path.exists() else '#!/bin/bash\nset -eu\n'
+            # Pause before the guard for pre-boot, after traffic switch for post-boot.
+            pause = (f'if test -f "$TRIAL_ROOT/pause-{stage}"; then\n'
+                     f'  touch "$TRIAL_ROOT/reached-{stage}"\n'
+                     '  while true; do sleep 1; done\nfi\n')
+            path.write_text(original.replace('set -eu\n', 'set -eu\n' + pause, 1))
+            path.chmod(0o700)
 
     def deploy(self, version, *, unhealthy=False):
         identity = self.image(version, unhealthy)
@@ -318,12 +347,17 @@ https://www.leapview.test {
             identity = self.deploy(version)
             actual = self.served()
             assert actual['version'] == version and actual['image_reference'] == identity, actual
+            record = json.loads((self.root / 'records' / f'{version}.json').read_text())
+            record['status'] = 'verified'
+            self.save_record(version, record)
             time.sleep(1)
             snap = self.snapshot()
             assert len(snap['containers']) == min(index, 2), snap
             self.report['cycles'].append({'version': version, **snap})
             print(f'PASS healthy deployment {index}/10; {len(snap["containers"])} site containers retained', flush=True)
         self.setup_caddy()
+        if self.mitigate:
+            self.identity_rejections()
         for index in range(1, 4):
             self.deploy(f'bad-{index:02d}', unhealthy=True)
             assert self.served()['version'] == 'good-10'
@@ -348,9 +382,6 @@ https://www.leapview.test {
         if self.mitigate:
             if self.disk_mib:
                 self.disk_full_case()
-                # Restore the selected pair after the successful retry.
-                self.env['TRIAL_IMAGE_REFERENCE'] = self.report['images']['good-10']['digests'][0]
-                self.kamal('rollback', 'good-10')
                 prior_version = 'good-10'
             else:
                 prior_version = 'good-09'
@@ -373,6 +404,125 @@ https://www.leapview.test {
             assert running['Image'] == record['id'] and running['State']['Running']
             self.report['offline_rollback_with_prior_record'] = True
             print('PASS registry-offline rollback with prior version identity restored', flush=True)
+            self.registry = self.spawn('registry-restarted', [str(self.registry_binary), 'serve', str(self.root / 'registry.yml')])
+            wait_until(lambda: HTTP.open('http://127.0.0.1:5000/v2/').status == 200)
+            self.interruption_cases()
+            self.cleanup_failure_case()
+            self.foreign_alias_case()
+            self.same_version_case()
+
+
+    def identity_rejections(self):
+        before = self.served()
+        for version, arch, service in [('wrong-arch', 'arm64', 'leapview-site-trial'),
+                                       ('wrong-service', 'amd64', 'different-service')]:
+            reference = self.image(version, arch=arch, service=service)
+            self.env['TRIAL_IMAGE_REFERENCE'] = reference
+            code, _ = self.kamal('deploy', '--skip-push', '--version', version, check=False)
+            assert code != 0 and self.served() == before
+        reference = self.image('wrong-identity')
+        path = self.root / 'records/wrong-identity.json'
+        original = json.loads(path.read_text())
+        self.save_record('wrong-identity', {**original, 'reference': '127.0.0.1:5000/site@sha256:' + '0' * 64})
+        self.env['TRIAL_IMAGE_REFERENCE'] = reference
+        code, _ = self.kamal('deploy', '--skip-push', '--version', 'wrong-identity', check=False)
+        assert code != 0 and self.served() == before
+        path.unlink()
+        code, _ = self.kamal('app', 'boot', '--version', 'wrong-identity', check=False)
+        assert code != 0 and self.served() == before
+        self.save_record('wrong-identity', original)
+        self.docker('tag', f'{self.repo}:good-09', f'{self.repo}:wrong-identity')
+        code, _ = self.kamal('app', 'boot', '--version', 'wrong-identity', check=False)
+        assert code != 0 and self.served() == before
+        self.report['identity_negative_cases'] = ['wrong-architecture', 'wrong-service', 'mismatched-record', 'missing-record', 'changed-tag']
+        print('PASS wrong platform/service, corrupt/missing identity record and changed tag blocked before boot', flush=True)
+
+    def interruption_cases(self):
+        for stage in ('pre-app-boot', 'post-app-boot'):
+            version = 'interrupted-' + stage
+            reference = self.image(version)
+            self.env['TRIAL_IMAGE_REFERENCE'] = reference
+            before = self.served()
+            pause = self.root / f'pause-{stage}'
+            reached = self.root / f'reached-{stage}'
+            pause.touch()
+            with (self.root / f'{version}.log').open('wb') as log:
+                process = subprocess.Popen([self.bundle, 'exec', 'kamal', 'deploy', '--skip-push', '--version', version,
+                                            '-c', str(self.root / 'deploy.yml')], env=self.env, stdout=log,
+                                           stderr=subprocess.STDOUT, start_new_session=True)
+            self.processes.append(process)
+            wait_until(lambda: reached.exists(), seconds=45)
+            if stage == 'pre-app-boot':
+                assert self.served() == before
+                self.image('concurrent-attempt')
+                code, output = self.kamal('deploy', '--skip-push', '--version', 'concurrent-attempt', check=False)
+                assert code != 0 and 'lock' in output.lower() and self.served() == before
+                assert self.inspect(f'{self.repo}:concurrent-attempt')
+                self.report['native_lock_blocks_activation_but_not_pull'] = True
+            else:
+                assert self.served()['version'] == version
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=10)
+            assert process.returncode == -signal.SIGKILL
+            pause.unlink()
+            # This harness created and killed the sole controller, at a known local
+            # hook boundary. Never blindly release an unknown production lock.
+            _, status = self.kamal('lock', 'status')
+            assert version in status
+            self.kamal('lock', 'release')
+            if stage == 'pre-app-boot':
+                self.kamal('deploy', '--skip-push', '--version', version)
+            else:
+                # Observe/accept the already-switched version; do not boot it again.
+                actual = self.inspect(f'leapview-site-trial-web-{version}')
+                assert actual['Image'] == self.report['images'][version]['id']
+                assert self.served()['image_reference'] == reference
+                record = json.loads((self.root / 'records' / f'{version}.json').read_text())
+                record['status'] = 'verified'
+                self.save_record(version, record)
+                self.kamal('prune', 'all')
+            assert self.served()['version'] == version
+            self.report.setdefault('interruption_recovery', []).append(stage)
+            print(f'PASS interrupted {stage}: inspect state, release only known-dead owner, recover', flush=True)
+
+    def cleanup_failure_case(self):
+        reference = self.image('maintenance-failure')
+        self.env['TRIAL_IMAGE_REFERENCE'] = reference
+        wrapper = self.root / 'remote-shell'
+        original = wrapper.read_text()
+        wrapper.write_text(original.replace('exec /bin/bash',
+            'if [[ "$SSH_ORIGINAL_COMMAND" == *"docker image prune"* ]]; then echo "injected cleanup failure" >&2; exit 74; fi\nexec /bin/bash'))
+        try:
+            code, output = self.kamal('deploy', '--skip-push', '--version', 'maintenance-failure', check=False)
+            assert code != 0 and 'injected cleanup failure' in output
+            assert self.served()['version'] == 'maintenance-failure'
+            self.report['cleanup_failure_reports_live_new_version'] = True
+        finally:
+            wrapper.write_text(original)
+        self.kamal('prune', 'all')
+        assert self.served()['version'] == 'maintenance-failure'
+        print('PASS cleanup failure after activation: new site stays live; maintenance retry succeeds', flush=True)
+
+    def foreign_alias_case(self):
+        alias = '127.0.0.1:5000/foreign:keep'
+        current = f'{self.repo}:maintenance-failure'
+        self.docker('tag', current, alias)
+        # Demonstrate native scope behavior on a disposable alias, not a real service.
+        self.kamal('prune', 'all')
+        retained = self.docker('image', 'inspect', alias, check=False)[0] == 0
+        self.report['native_prune_preserves_foreign_alias'] = retained
+        assert self.inspect('trial-caddy')['State']['Running']
+        assert self.served()['version'] == 'maintenance-failure'
+        print(f'RESULT native cleanup preserves foreign alias of service-labeled image: {retained}', flush=True)
+
+    def same_version_case(self):
+        prior = 'interrupted-post-app-boot'
+        self.env['TRIAL_IMAGE_REFERENCE'] = self.report['images']['maintenance-failure']['digests'][0]
+        self.kamal('deploy', '--skip-push', '--version', 'maintenance-failure')
+        assert self.served()['version'] == 'maintenance-failure'
+        kept = self.docker('inspect', f'leapview-site-trial-web-{prior}', check=False)[0] == 0
+        self.report['native_same_version_keeps_distinct_prior'] = kept
+        print(f'RESULT native same-version deployment retains distinct prior: {kept}', flush=True)
 
     def disk_full_case(self):
         reference = self.image('after-enospc')

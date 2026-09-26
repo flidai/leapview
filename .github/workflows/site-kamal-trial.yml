@@ -59,6 +59,15 @@ jobs:
             echo "build_time=$build_time"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Set up policy validation Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Validate security coverage before building
+        run: go run ./internal/app/tools/securitypolicy -root .
+
   platform:
     name: Build public site image (${{ matrix.arch }})
     needs: identity
@@ -131,6 +140,7 @@ jobs:
           expected-workflow: flidai/leapview/.github/workflows/site-kamal-trial.yml
           source-revision: ${{ needs.identity.outputs.revision }}
           platform: linux/${{ matrix.arch }}
+          output: ${{ runner.temp }}/oci-admission-${{ matrix.arch }}.json
 
       - name: Record admitted native site image digest
         env:
@@ -146,6 +156,14 @@ jobs:
           retention-days: 7
           if-no-files-found: error
           path: platform-digests/${{ matrix.arch }}.txt
+
+      - name: Retain native admission evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kamal-trial-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ runner.temp }}/oci-admission-${{ matrix.arch }}.json
 
   image:
     name: Assemble and verify public site image
@@ -306,4 +324,6 @@ jobs:
           name: kamal-trial-image-${{ needs.identity.outputs.revision }}
           retention-days: 30
           if-no-files-found: error
-          path: site-image-reference.txt
+          path: |
+            site-image-reference.txt
+            ${{ runner.temp }}/oci-admission.json

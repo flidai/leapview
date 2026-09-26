@@ -91,7 +91,8 @@ The full approved plan is in `implementation-plan.md`. In particular:
   synthetic fixture sizes are not a production sizing recommendation.
 - Establish runner-to-host SSH access. The existing workflow has no SSH step;
   the production environment currently restricts inbound SSH to an operator
-  CIDR. No runner route or deployment identity is yet verified. Do not widen SSH
+  CIDR. Operator SSH through Tailscale is verified with the repository host-key pin.
+  Hosted-runner network access is not yet verified. Do not widen SSH
   to the internet as a shortcut.
 - Deliver/review a separate, default-off integration; drain old jobs, disable
   the old controller, and rehearse controller handover before enabling it.
