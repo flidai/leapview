@@ -14,8 +14,8 @@ ADR now proposes Kamal on one dedicated application VPS per customer on European
 Hetzner infrastructure, plus a separate customer PostgreSQL VPS operated by
 LeapView with Ansible and pgBackRest. Local SSD holds analytical files.
 Derived data is explicitly rebuildable where complete source replay is supported.
-Off-host recovery protects irreplaceable managed customer state; S3 is an optional
-recovery destination rather than a required analytical-serving dependency.
+Off-host recovery protects irreplaceable managed customer state through the selected
+Hetzner Object Storage backup destination; S3 is outside the analytical serving path.
 Restart-based rollback and measured downtime are accepted; a warm retained
 release is no longer required. Customer-owned infrastructure remains a future option.
 The alternatives below remain research context, not additional v1 support promises.
@@ -34,6 +34,44 @@ separately qualified topology when service obligations require it. Host replacem
 now includes analytical rebuild from sources or an optional consistent backup.
 
 ## Findings and recommendation
+
+### Selected target supporting stack
+
+The target now selects Ubuntu LTS, OpenTofu and Ansible for managed hosts;
+GitHub Actions/GHCR and Trivy for release production; Better Stack for monitoring,
+logs, on-call and status pages; Tailscale for private operator/deployment access;
+and Postmark for transactional email. Cloudflare is the supported optional edge.
+These selections replace open vendor shortlists; concrete configurations and plans
+still need the companion qualification evidence. Public Compose remains independent
+of these hosted operational accounts, with configurable SMTP and portable telemetry.
+
+GitHub Environments/Secrets delivers customer-scoped deployment and bootstrap
+secrets to Kamal and host automation. Customer credentials belong in
+application-encrypted PostgreSQL records managed through UI/API/bootstrap, with
+a separately provisioned per-deployment keyring and independent key recovery.
+No runtime GitHub lookup or required Infisical service is part of the target.
+A focused product ADR will define credential formats, rotation and activation.
+
+Official sources supporting these choices:
+
+- [Better Stack services and plans](https://betterstack.com/pricing): consolidation
+  of telemetry and incident operations; assess usage, retention and required access features.
+- [Tailscale workload federation](https://tailscale.com/docs/features/workload-identity-federation):
+  temporary CI access can use GitHub identity instead of a static access secret.
+- [GitHub environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
+  and [Kamal environment handling](https://kamal-deploy.org/docs/configuration/environment-variables/):
+  environment protections depend on the GitHub plan; Kamal writes secret files on
+  the target host, so secret injection must not be described as RAM-only.
+- [Cloudflare origin TLS](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/)
+  and [localization](https://developers.cloudflare.com/data-localization/): qualify
+  both TLS hops and plaintext processing; regional controls are a separate decision.
+- [Trivy image scanning](https://trivy.dev/docs/latest/target/container_image/)
+  and [Postmark SMTP](https://postmarkapp.com/developer/user-guide/send-email-with-smtp):
+  reuse image assessment and email delivery rather than building those services.
+- [OWASP cryptographic storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html):
+  use established authenticated encryption and explicit key lifecycle/recovery.
+
+### Deployment mechanisms
 
 Prefer established deployment controllers over implementing a LeapView controller
 for slots, replica replacement, promotion, monitoring, traffic switching, and
@@ -235,8 +273,8 @@ needs to be installed into every customer environment.
 - **PostgreSQL backup engines:** use the selected native
   [pgBackRest](https://pgbackrest.org/user-guide.html) recovery engine.
   LeapView should invoke supported operations and validate the recovered state.
-- **Monitoring storage and dashboards:** use standard metrics/log collection and
-  Grafana, with a hosted backend where operationally appropriate.
+- **Monitoring storage and incident tooling:** use portable telemetry with the
+  selected Better Stack service. A separate Grafana backend is optional.
 - **A second recovery scheduler:** retain the existing PostgreSQL/River recovery
   occurrence and evidence contracts. Kubernetes Jobs or external CI can execute
   a claimed scenario without becoming another authority for its identity.

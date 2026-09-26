@@ -19,7 +19,12 @@ proposed replacement of the mandatory managed HA PostgreSQL baseline with
 qualified self-operated PostgreSQL: bundled Compose and an operated single-primary
 VPS profile. Also proposes local analytical file storage and rebuild-based recovery
 for explicitly reconstructible analytical outputs. PostgreSQL control authority,
-privilege separation and safe publication remain unchanged. This proposal does not amend the accepted record until reviewed.
+privilege separation and safe publication remain unchanged. Also proposes narrowing
+[ADR-0003](0003-retain-narrow-infisical-resolver.md) to deployments that explicitly
+choose the Infisical integration: the target default stores customer credentials
+encrypted in PostgreSQL and requires no external secret service. Its resolver
+security invariants remain applicable when that integration is used. These
+proposals do not amend the accepted records until reviewed.
 
 Related: [ADR-0003](0003-retain-narrow-infisical-resolver.md),
 [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md),
@@ -49,11 +54,9 @@ implementations would duplicate correctness work and allow the two offerings to
 diverge. Conversely, placing every fleet-management tool in the default Compose
 installation would make ordinary self-hosting unnecessarily difficult.
 
-The repository already contains Compose, Caddy, Terraform-based Hetzner
-provisioning, PostgreSQL tooling, and Prometheus rules. This proposal establishes
-their long-term relationship and introduces additional supporting technologies.
-Existing implementation choices inform migration work; they do not establish
-that the target architecture is already qualified.
+This proposal defines the target architecture while LeapView is under active
+development. Existing implementation choices do not constrain stack selection or
+establish that the target architecture is already qualified.
 
 ## Decision drivers
 
@@ -156,8 +159,10 @@ private implementation of a required recovery or migration operation.
 Actual customer inventories, environment declarations, access assignments,
 incident records, and customer-specific procedures remain private. A private
 operations repository may version suitable configuration and internal procedures
-when needed. Secrets belong in a secret manager; infrastructure state belongs in
-a protected, backed-up remote backend with locking. Neither belongs in Git.
+when needed. Deployment and bootstrap secrets belong in GitHub environment secrets
+or operator-supplied protected inputs; customer credentials belong in encrypted
+application records. Infrastructure state belongs in a protected, backed-up remote
+backend with locking. Secret values and infrastructure state must not enter Git.
 Billing systems and a future customer portal may be private without changing
 the public deployment contract.
 
@@ -168,24 +173,34 @@ license or third-party component licenses.
 
 ### Reference technologies and their responsibilities
 
-The following are proposed stack choices, subject to implementation and the
-confirmation evidence below. They are not a statement that every integration
-already exists.
+The following technologies are selected for the target stack in this proposal.
+Implementation and production qualification remain delivery work; pending evidence
+does not leave the technology selection open. The ADR itself remains proposed
+until review. Exact versions, plans and resource sizes are qualified separately.
 
-| Layer | Proposed reference | Responsibility and inclusion |
+| Layer | Selected technology | Responsibility and inclusion |
 |---|---|---|
-| Application runtime | Docker Engine and Docker Compose | Default self-hosted application lifecycle. Keep the base package small. |
-| HTTPS edge | Caddy for Compose; kamal-proxy for managed installations | One edge per profile with qualified TLS, SSE and draining behavior. |
-| Operated release deployment | Kamal and Docker Engine | Public configuration for one dedicated customer application VPS; health-gated updates and restart-based rollback. |
-| Infrastructure provisioning | OpenTofu with the official Hetzner provider | Public modules for VPSs, networks, firewalls, and load balancers. Qualify existing Terraform modules and state before changing their runner. |
-| Host and database configuration | Ansible; minimal cloud-init bootstrap | Public OS, Docker, PostgreSQL and agent configuration. LeapView owns controlled patching, staggered reboots and replacement procedures. |
-| Observability | Prometheus-compatible metrics, Grafana Alloy, and Grafana | Public collection configuration, dashboards, and alerts. Optional local monitoring package; managed operation uses a central backend. |
-| Deployment secrets | Infisical | Reference managed secrets integration with scoped machine identities. Self-hosters can supply supported secret inputs without subscribing to Infisical Cloud. |
-| Release production | GitHub Actions and GHCR | Produce immutable release images and provenance; deployments verify and promote existing artifacts. |
-| Data services | Self-operated PostgreSQL plus local SSD | Operated deployments use a separate customer database VPS with one primary; Compose bundles PostgreSQL. PostgreSQL holds control state and DuckLake metadata; application SSD holds analytical files. No external database service is required. |
-| PostgreSQL recovery | pgBackRest and standard scheduling | Physical backups, continuous WAL archiving, retention and PITR to a qualified off-host destination. Publish configuration and restoration procedures; qualify application recovery after database restore. |
-| Recovery storage | Operator-selected off-host destination | Optional self-hosted configuration; required protection for managed customer state that cannot be recreated. Managed S3 is a candidate backup/upload destination, not a required analytical read path. |
-| Initial managed infrastructure | One application VPS and one database VPS per customer on European Hetzner infrastructure | Public provider adapter; size resources independently from measured workloads. Each tier has a single host; a second tier does not provide redundancy. |
+| Infrastructure | Hetzner Cloud | One dedicated application VPS and one dedicated PostgreSQL VPS per customer in a European region. Size independently from measured workloads; neither tier has redundancy in v1. |
+| Operating system | Ubuntu LTS | Standard managed host baseline with scheduled maintenance and security updates. |
+| Infrastructure provisioning | OpenTofu with the official Hetzner provider | Public modules for servers, networks, firewalls and storage resources. Protect remote state and locking; qualify existing state before changing runners. |
+| Host and database configuration | Ansible; minimal cloud-init bootstrap | Repeatable Docker, PostgreSQL, backup, networking and agent configuration; controlled patching, staggered reboots and replacement. |
+| Application runtime | Docker Engine | Immutable release images and persistent local volumes. |
+| Self-hosted deployment | Docker Compose; optional Caddy | Minimal public installation with bundled PostgreSQL and optional HTTPS. |
+| Managed application deployment | Kamal and kamal-proxy | Health-gated releases, TLS and traffic routing, draining and restart-based rollback. No retained warm release. |
+| Database | Self-operated PostgreSQL | Application state, encrypted customer credentials, jobs and DuckLake metadata. Separate customer database VPS with one primary; bundled locally for Compose. |
+| Background jobs | River / PostgreSQL | Durable jobs and recovery work without an additional Redis service. |
+| Analytical storage | DuckDB and DuckLake on local SSD | Local analytical serving; rebuild and republish only where complete source replay is supported. |
+| PostgreSQL backups | pgBackRest and standard scheduling | Base backups, continuous WAL archiving, retention and PITR. |
+| Off-host backup destination | Hetzner Object Storage | Encrypted managed PostgreSQL backups and protection for irreplaceable files. Qualify actual storage/retention guarantees. S3 is outside the analytical serving path. |
+| Private administration | Tailscale | Customer-scoped operator and deployment access; prefer GitHub OIDC federation for temporary runner access. |
+| Public edge / WAF | Cloudflare, optional per deployment | Supported managed edge where customer data-processing requirements permit it; qualify SSE, uploads, certificates and origin protection. |
+| CI and release registry | GitHub Actions and GHCR | Build, test and publish immutable images with provenance; deploy approved existing artifacts. |
+| Image security | Trivy | Release image vulnerability scanning with a defined remediation and exception policy. |
+| Deployment and bootstrap secrets | GitHub Environments / Secrets | Customer/environment-scoped delivery to Kamal and configuration automation; no runtime GitHub secret lookup. |
+| Customer credentials | Application-encrypted PostgreSQL records | Source credentials, provider keys and integration tokens managed through authorized UI/API/bootstrap operations. |
+| Encryption keys | Per-deployment, versioned keyring | Provision separately from the database; keep an independent encrypted recovery copy and support rotation. |
+| Observability | Better Stack | Managed monitoring, logs, alerts, on-call and status pages. Portable telemetry and public collection configuration; no separately operated Grafana backend required. |
+| Transactional email | Postmark for managed hosting; configurable SMTP for self-hosting | Provider-replaceable application email with scoped credentials and delivery monitoring. |
 
 Compose and Kamal are alternative owners of application container lifecycle.
 They must not reconcile the same containers. Both consume shared LeapView
@@ -210,10 +225,25 @@ independent maintenance lifecycle; application deployment must not restart or
 upgrade it implicitly. Use established roles and tools with pinned versions and
 reviewed configuration, rather than a custom database controller.
 
-Grafana is not an application dependency. A local metrics backend and Grafana may
-be supplied as an optional monitoring package; managed hosting may use Grafana
-Cloud or another compatible central backend. Telemetry export is operator
-configured and must exclude credentials and customer data by default.
+Better Stack is the selected managed observability service. Keep application
+health endpoints and telemetry portable; public collection configuration must
+allow self-hosters to choose their own backend. A separate Grafana installation
+is optional. Telemetry export is operator configured and must exclude credentials,
+sensitive request bodies and customer query/data payloads by default. Do not
+enable session replay on credential administration screens.
+
+Tailscale provides private operator and deployment connectivity. Restrict grants
+by customer and role, require operator identity controls, and qualify revocation,
+temporary runner membership and recovery access. Network membership does not
+replace PostgreSQL/application authorization or operation-level audit records.
+
+Cloudflare is optional in front of kamal-proxy and does not own application
+release switching. Configure verified origin TLS, trusted client forwarding,
+cache exclusions and origin access restrictions. Qualify SSE, upload limits and
+certificate issuance/renewal for both direct and proxied ingress. When enabled,
+Cloudflare terminates TLS and can process plaintext BI traffic and submitted
+credentials. Its default service must not be represented as EU-only processing;
+qualify the required regional controls and contract or omit it for that deployment.
 
 ### Deployment profiles and service boundaries
 
@@ -243,11 +273,17 @@ to start and serve dashboards.
 
 | Capability | Self-hosted Compose | Operated Kamal |
 |---|---|---|
+| Installation and infrastructure | Compose; operator chooses host | Kamal, OpenTofu and Ansible on European Hetzner infrastructure |
 | Analytical serving | Local persistent filesystem | Local SSD on customer VPS |
 | PostgreSQL | Bundled by default; external supported | Separate customer VPS; self-operated single primary with pgBackRest |
-| Monitoring | Optional integration | Monitoring and alerts required; Grafana is a replaceable tool choice |
-| Irreplaceable-state backups | Operator configures destination, schedule and recovery policy | Off-host protection and restore testing required |
+| Customer credentials | Encrypted PostgreSQL records through UI/API/bootstrap | Same implementation and lifecycle |
+| Bootstrap secrets | Operator-supplied environment or protected files | GitHub environment secrets delivered to protected host configuration |
+| Monitoring | Optional integration; portable health endpoints and telemetry | Better Stack configured and operated by LeapView |
+| Private access and edge | Operator's choice; optional Caddy HTTPS | Tailscale; optional Cloudflare in front of kamal-proxy |
+| Irreplaceable-state backups | Operator configures destination, schedule and recovery policy | pgBackRest and Hetzner Object Storage; off-host protection and restore testing required |
 | Rebuildable analytical backups | Optional | Optional when qualified source rebuild meets commitments |
+| Email | Configurable SMTP | Postmark |
+| Repository boundary | Public application and reusable automation | Same public components; private customer inventory and operational records |
 | S3/Kubernetes | No installation prerequisite | No analytical-serving prerequisite |
 
 Publish backup/export and rebuild procedures in the public tooling. Optional backup
@@ -262,7 +298,7 @@ use scoped identities and preserve customer isolation.
 
 Managed v1 assigns each customer separate application and database VPSs, scoped
 deployment credentials, PostgreSQL roles and isolated local data directories.
-Record database, optional bucket, provider administration and backup isolation
+Record database, backup bucket, provider administration and backup isolation
 boundaries and reject cross-customer access. Managed service resource isolation
 does not imply a physically dedicated database or storage server.
 
@@ -287,6 +323,63 @@ Use TLS for database and cross-host application connections and enforce host
 firewalls. Where a Hetzner load balancer fronts the TLS edge, use TCP passthrough
 to retain encryption to the application host. Qualify certificate issuance and
 renewal across nodes and trusted client-IP forwarding.
+
+### Secrets ownership and lifecycle
+
+The target uses three secret categories. Ownership and purpose determine the
+category; a customer-supplied email-provider key is domain data even when our
+platform email-provider key is bootstrap configuration.
+
+| Category | Examples | Owner and delivery |
+|---|---|---|
+| Deployment and operations | Provisioning tokens, registry access, deployment SSH credentials, backup repository credentials | Operators; short-lived identity or GitHub environment secrets, delivered only to the relevant job or host |
+| Application bootstrap | Application PostgreSQL credential, encryption keyring, signing keys, platform email credential | Operators; protected configuration provisioned at deployment, independently recoverable |
+| Customer/domain credentials | Source passwords, provider API keys, OAuth refresh tokens and integration signing secrets | Authorized application administrators; encrypted PostgreSQL records through UI/API/bootstrap |
+
+Use a GitHub environment per customer and deployment environment. Scope secrets
+and job permissions, restrict deployment refs, review and pin workflow dependencies,
+and keep untrusted pull-request code outside privileged jobs. Validate the chosen
+GitHub plan against required environment protections, including private-repository
+approval gates. Prefer short-lived OIDC credentials where supported. Runtime,
+migration, provisioning and backup privileges must not be delivered wholesale to
+the application. Reusable configuration can be public; actual secret values cannot.
+
+Kamal consumes the runner's supplied values and writes secret environment files
+on the target host. Protect these files and Docker/root access; this is not RAM-only
+storage. Deployed application serving and restart use the provisioned configuration
+without a live GitHub or Infisical lookup. Secret updates require explicit delivery
+and coordinated restart/reload. Keep an independent encrypted recovery copy of
+essential bootstrap keys and document recovery when GitHub is unavailable.
+
+Customer credential management is an application capability shared by both profiles.
+UI, API and bootstrap/CLI use the same authorized, audited service for validation,
+encryption and version activation. Bootstrap must not bypass it through raw SQL.
+Accept secret input through protected stdin, files or authenticated requests;
+exclude values from command arguments, logs, telemetry and portable analytics
+definitions. Hash credentials used only for verification; encrypt external
+credentials that the application must recover. Workload identities can remain
+references without persisting reusable external secrets.
+
+Use standard authenticated encryption with secure random nonces, a key identifier
+and authenticated context binding ciphertext to its owner, credential and purpose.
+Each deployment has a distinct versioned keyring, stored separately from PostgreSQL.
+Missing keys fail closed; do not generate replacements over existing encrypted
+state. Rotate keys with resumable re-encryption and retain old decryption keys for
+retained backups. Test restoration of the database and keys together. Database
+backup encryption and application credential encryption have separate purposes.
+
+Credential replacement must validate and activate a version, refresh pools/caches,
+and define in-flight and upstream revocation behavior. A SQL transaction alone
+does not rotate every active connection. Preserve scoped authorization, version
+pinning, bounded credential lifetimes and audit evidence. Separating keys from
+database backups limits backup-only disclosure; privileged application/host or
+deployment access can still expose decrypted credentials.
+
+Infisical is not required by either target profile. ADR-0003 continues to describe
+the security contract for an explicitly configured Infisical resolver. Record
+credential record formats, key rotation and activation protocols in a focused
+credential-lifecycle ADR before implementing that product contract; that detail
+does not reopen the PostgreSQL storage and deployment-secret choices made here.
 
 ### Application releases, rollback, and recovery
 
@@ -379,8 +472,11 @@ The public package supplies supported procedures and clear data classifications.
 
 Managed hosting requires off-host recoverable copies of authoritative state,
 customer uploads we retain, necessary authored content/artifacts and protected
-key/configuration recovery. Choose an existing backup service, managed S3 or
-another qualified destination; a second local directory/volume is not off-host.
+key/configuration recovery. Hetzner Object Storage is the selected managed backup
+destination; self-hosters can choose a supported alternative. A second local
+directory/volume is not off-host. Off-host storage at Hetzner shares provider and
+account risks with compute; qualify that failure boundary and add an independently
+controlled copy when required by the recovery commitment.
 Test recovery, retention and deletion behavior against promised RPO/RTO. Use
 pgBackRest for the operated PostgreSQL profile; verify base backups and continuous
 WAL availability through actual restoration, not only successful backup commands.
@@ -392,9 +488,9 @@ workloads or different recovery requirements, without becoming a default depende
 
 ### Service selection and qualification
 
-Hetzner is the selected v1 application and database VPS provider. Self-operated
-PostgreSQL is the selected database approach. Recovery destinations and optional
-operational providers still require qualification before launch:
+The target stack above selects the v1 providers and tools. Launch qualification
+must establish their configured behavior, versions, service plans and operational
+evidence; it does not defer the selection itself:
 
 - **Application VPS and host operations:** qualify the European Hetzner region,
   dedicated customer assignment, sizing, OS/Docker/proxy maintenance, support and
@@ -410,15 +506,25 @@ operational providers still require qualification before launch:
 - **Local analytical storage:** qualify native filesystem paths and permissions,
   integrity, persistent Docker mounts, disk-full behavior, capacity and performance
   under refresh and release overlap. Test complete disk loss and catalog replacement.
-- **Off-host recovery storage:** evaluate managed S3 or established backup services
-  for European regions, tenant isolation, protected copies, retention, key recovery,
-  restoration/export and cost. Match capabilities to the actual backup or upload
+- **Off-host recovery storage:** qualify Hetzner Object Storage with pgBackRest and
+  retained-file recovery for European regions, tenant isolation, protected copies,
+  retention, key recovery, restoration/export and cost. Match capabilities to the actual backup or upload
   contract. Immutable runtime objects, if stored there, still need their declared
   conditional-write semantics; backups need their selected tool's storage guarantees.
   An S3-compatible label or versioning alone does not establish backup protection.
-- **Operational services:** evaluate Grafana Cloud and Teleport against monitoring
-  and privileged-access requirements. Their hosted products are not prerequisites
-  for the public deployment stack.
+- **Better Stack:** qualify monitoring coverage, alert delivery, on-call escalation,
+  status communication, telemetry location, retention, access and payload exclusions.
+- **Tailscale:** qualify customer isolation, operator MFA, scoped OIDC runner access,
+  revocation, audit coverage and recovery access during control-service outages.
+- **GitHub and Trivy:** qualify environment protections on the selected plan,
+  customer-scoped workflows, immutable artifact promotion, vulnerability gates and
+  exceptions, bootstrap delivery and recovery without live GitHub access.
+- **Cloudflare, where enabled:** qualify SSE, upload limits, cache exclusions,
+  origin certificates, trusted forwarding and data-processing requirements. Direct
+  ingress remains supported for deployments that omit this optional service.
+- **Postmark:** qualify SMTP/TLS delivery, sender domains, retries, bounce handling,
+  scoped access and recipient/content processing. European compute hosting does
+  not establish European processing by every supporting service.
 
 The release and provider qualification results belong in a mutable companion
 specification or linked delivery work. This proposal establishes required
@@ -602,11 +708,12 @@ retain reproducible evidence appropriate to that profile:
     evidence. Halt further customer promotions and alert the operator; exercise the
     bounded investigation/rollback procedure. Missing evidence cannot approve a
     release, and no automatic post-deployment Kamal rollback is assumed.
-11. **Secrets outage on restart:** restart an application while its configured
-    secret service is unavailable. Prove the declared startup/recovery behavior,
-    including credential expiry and denial; fail closed when credentials cannot
-    be obtained through an approved path. Include any resulting delay in recovery
-    measurements rather than claiming unconditional restart availability.
+11. **Credential delivery and recovery:** restart with GitHub unavailable using
+    already provisioned bootstrap configuration and PostgreSQL credentials. Restore
+    onto a fresh host using independently protected recovery keys; test missing,
+    invalid and retired keys, retained backups, customer credential activation and
+    rejected cross-scope access. An optional external resolver must separately
+    prove its outage/expiry behavior. Include actual dependencies in recovery time.
 12. **Analytics overload:** saturate memory, query concurrency and temporary-disk
     budgets under release overlap. Verify bounded admission and failure behavior,
     truthful readiness, and sufficient capacity for release/recovery operations.
@@ -661,5 +768,13 @@ must be rechecked when qualifying an implementation:
   [PgBouncer compatibility](https://www.pgbouncer.org/features.html).
 - [Hetzner data protection](https://docs.hetzner.com/general/company-and-policy/data-protection-at-hetzner/)
   and [EDPB processor roles](https://www.edpb.europa.eu/sme/learn-the-basics/data-controller-or-data-processor_en).
-- [Grafana telemetry collection](https://grafana.com/docs/grafana-cloud/observe-and-act/send-data/)
-  and [Infisical machine identities](https://infisical.com/docs/documentation/platform/identities/machine-identities).
+- [Better Stack services and plans](https://betterstack.com/pricing),
+  [Tailscale workload identity federation](https://tailscale.com/docs/features/workload-identity-federation),
+  and [Tailscale GitHub integration](https://tailscale.com/docs/integrations/github/github-action).
+- [GitHub environment protections and secrets](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments),
+  [Kamal secret environment handling](https://kamal-deploy.org/docs/configuration/environment-variables/),
+  and [OWASP cryptographic storage](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html).
+- [Cloudflare origin TLS](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/)
+  and [data localization](https://developers.cloudflare.com/data-localization/).
+- [Trivy image scanning](https://trivy.dev/docs/latest/target/container_image/)
+  and [Postmark SMTP](https://postmarkapp.com/developer/user-guide/send-email-with-smtp).

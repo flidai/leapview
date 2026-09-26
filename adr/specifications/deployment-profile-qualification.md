@@ -18,7 +18,7 @@ numeric service guarantee is established by this specification.
 
 | Gate | Required before | Open decisions and evidence |
 |---|---|---|
-| Operated VPS, PostgreSQL and local analytical rebuild | Managed launch | Provider/region selection, filesystem qualification, rebuild time, protected customer state, isolation and eligibility |
+| Operated VPS, PostgreSQL and local analytical rebuild | Managed launch | Selected stack configuration, region/plan qualification, rebuild time, protected customer state, isolation and eligibility |
 | Bundled Compose dependencies | Advertising bundled single-host production support | Local persistence, rebuild/publication and PostgreSQL dependency lifecycle evidence |
 
 Record the release, configuration, providers, resource layout, reviewer and dated
@@ -34,19 +34,25 @@ Analytical output backups are optional when full reconstruction is qualified.
 
 ### Ownership and locations
 
-Record European application, database, object and backup regions, plus telemetry,
-secret-service and support access locations. Name the accountable party,
+Record European application, database, object and backup regions, plus GitHub,
+telemetry, access, email, optional edge and support processing locations. Name the accountable party,
 implementation, maintenance process, escalation and recovery evidence for each:
 
 | Responsibility | Required coverage |
 |---|---|
 | Hetzner resources | Account ownership, dedicated customer VPS, quotas, replacement capacity and region failure |
-| Host and Docker | OS baseline, vulnerability updates, Docker upgrades, reboot windows, firewall and recovery |
+| Ubuntu LTS and Docker | Qualified OS baseline, vulnerability updates, Docker upgrades, reboot windows, firewall and recovery |
 | Kamal and proxy | Pinned versions, application updates, rollback, HTTPS renewal, trusted client identity and SSE |
 | Self-operated PostgreSQL | Customer database VPS, roles, TLS, version/OS maintenance, PITR, archive monitoring, retention and restoration to a replacement host |
 | Local SSD | Persistent mount layout, isolated paths, integrity, capacity, rebuild/publication and safe cleanup |
-| Off-host recovery destination | Protection of customer state/retained inputs, access isolation, retention, deletion protection, restore/export and keys |
-| Operations | Scoped credentials, monitoring, retained audit records, support coverage, incident response and supplier exit |
+| Hetzner Object Storage | Protection of customer state/retained inputs, pgBackRest compatibility, access isolation, retention, deletion protection, restore/export and keys |
+| Better Stack | Monitoring coverage, redacted logs, alerts, on-call, status pages, retention and processing locations |
+| Tailscale | Customer-scoped operator/runner access, OIDC trust, operator MFA, revocation and recovery access |
+| GitHub Actions, GHCR and Trivy | Environment protections, scoped secret delivery, immutable release images, vulnerability gates and remediation |
+| PostgreSQL credential storage | UI/API/bootstrap authorization, ciphertext isolation, key/version lifecycle and recovery |
+| Cloudflare, when enabled | SSE, uploads, caching exclusions, origin TLS/access, client identity and data processing |
+| Postmark | SMTP/TLS, sender domains, retry/bounce handling, scoped access and recipient/content processing |
+| Operations | Retained audit records, support coverage, incident response and supplier exit |
 
 OpenTofu provisions declared infrastructure; cloud-init bootstraps access; Ansible
 configures and maintains hosts, PostgreSQL and pgBackRest. Kamal owns application
@@ -54,6 +60,41 @@ and proxy deployment. Do not let Compose and Kamal manage the same containers or
 let application releases implicitly upgrade PostgreSQL. LeapView owns database
 maintenance, backup operation, incident response and coordinated recovery. External
 database vendors are not required by this profile.
+
+### Selected supporting services and credential evidence
+
+The ADR selects these technologies; qualification approves a concrete configuration
+for production. Do not require self-hosters to subscribe to them.
+
+- **Better Stack:** inject application, database, archival and disk failures and
+  verify actionable alerts and escalation. Check log/trace redaction, metrics
+  labels, retention, processing region and access isolation. Exclude credentials,
+  query results and sensitive request bodies; do not record credential UI sessions.
+- **Tailscale:** scope GitHub OIDC trust and ephemeral runner grants to the intended
+  customer/environment. Test operator revocation and denied cross-customer access.
+  Verify database/SSH authorization separately, record audit coverage, and rehearse
+  recovery access if normal identity or control services are unavailable.
+- **GitHub/Trivy:** verify plan support for private-repository environment protections,
+  permitted deployment refs, reviewed/pinned workflows, untrusted-code separation,
+  least-privilege jobs and per-customer secrets. Scan the actual release digest and
+  enforce documented remediation/exception rules. Keep infrastructure, runtime,
+  migration and backup privileges separate. Changing a GitHub secret must require
+  explicit deployment/reload; protect Kamal's target-host secret files.
+- **Customer credentials:** use the same authorized/audited service for UI, API and
+  bootstrap. Test secret redaction, version validation/activation, pool refresh,
+  in-flight behavior and cross-scope ciphertext rejection. Reject incorrect keys
+  without replacing them. Exercise resumable key rotation, retained-backup
+  decryption and restoration using a separately protected per-deployment keyring.
+  Credential formats and lifecycle details require the focused ADR identified by
+  ADR-0025 before implementation.
+- **Cloudflare:** test both direct ingress and the optional proxy path. Verify SSE
+  delivery/reconnection, upload bounds, cache exclusions, origin TLS/certificate
+  renewal, origin restrictions and trusted client identity. Record plaintext access
+  and any required regional processing controls; default edge plans do not establish
+  EU-only processing.
+- **Postmark:** verify authenticated TLS delivery, sender setup, bounded retries,
+  bounce visibility and secret redaction. Demonstrate configurable SMTP so email
+  remains provider-replaceable; qualify message processing and retention separately.
 
 ### Portability and data access evidence
 
@@ -76,7 +117,7 @@ provider-inaccessible live memory, or compliance from encryption or self-operati
 
 Use separate customer application and database VPSs with scoped deployment
 credentials. Specify PostgreSQL roles and isolated filesystem paths,
-optional bucket resources/credentials, backup access and shared administration.
+backup bucket resources/credentials, backup access and shared administration.
 Do not infer physical host or storage hardware exclusivity. Reject cross-customer
 database, file, object and operator access. Document shared provider dependencies.
 
@@ -142,7 +183,10 @@ restoration is distinct from analytical reconstruction and must preserve authori
 
 For managed customers, require off-host recoverable copies of customer state,
 retained uploads, necessary authored artifacts and protected configuration/keys.
-Choose an existing backup service, managed S3 or another qualified destination.
+Use the selected Hetzner Object Storage destination for managed backups; qualify
+pgBackRest and retained-file protection against its actual API and retention behavior.
+Document shared provider/account risks and independently controlled copies required
+by the recovery commitment. Self-hosters can choose supported alternatives.
 Verify access separation, retention, deletion behavior and restore testing. A
 backup on the same VPS is insufficient for host-loss recovery. State the accepted
 RPO, including upload acknowledgement versus durable-copy completion.
@@ -308,9 +352,10 @@ Certification and legal compliance claims require their own scope and evidence.
 - **Management outage:** interrupt the runner before/after cutover; inspect actual
   host state and safely resume/recover without duplicate effects. Continued serving
   must not require the central deployment runner.
-- **Secrets outage:** restart without the secret service, then with expired/revoked
-  credentials. Document permitted cached/projected credential behavior; fail closed
-  without an approved path and include startup dependencies in recovery time.
+- **Credential recovery:** restart with GitHub unavailable using provisioned host
+  secrets. Restore a fresh host using independent encrypted bootstrap/key recovery.
+  Test missing/invalid keys, retained backups after rotation and revoked credentials.
+  Any optional external resolver separately proves outage and expiry behavior.
 - **Overload:** saturate memory, query concurrency and temporary disk during overlap;
   prove bounded failure, truthful readiness and capacity for operator recovery.
 - **Host failure:** replace the VPS, preserve authoritative state, rebuild local
