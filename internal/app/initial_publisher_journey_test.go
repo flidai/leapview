@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +12,8 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/runtimehost"
 )
 
 // This is the production qualifier's pre-password bootstrap: real PostgreSQL
@@ -84,4 +88,48 @@ func TestInitialPublisherPasswordSetupJourney(t *testing.T) {
 	request(http.MethodGet, path+"?limit=200", "", publisher.PublisherToken, http.StatusForbidden)
 	request(http.MethodGet, path+"?limit=200", "", ordinary, http.StatusForbidden)
 
+}
+
+func TestInitialAdministratorDirectoryBeforeFirstPublication(t *testing.T) {
+	f := NewPostgresJourneyFixture(t, PostgresJourneyFixtureOptions{TargetID: "lvinst_0123456789abcdefghijklmnopqrstuv", BrowserSessionAuth: true, ProjectClaimBootstrap: true})
+	f.AccessModule.SetCurrentProjectID(func(context.Context) (projectgraph.ResourceID, error) {
+		return "", fmt.Errorf("resolve active project: %w", runtimehost.ErrNoActiveServingState)
+	})
+	repo := f.Graph.Access
+	initial, err := repo.InitializeInstance(t.Context(), access.InstanceInitializationInput{InstanceID: "lvinst_0123456789abcdefghijklmnopqrstuv", Email: "initial@example.test", Environment: "prod"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, err := repo.CredentialForAPIToken(t.Context(), initial.ProjectClaimToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ChangeLocalPassword(t.Context(), credential.Principal.ID, initial.TemporaryPassword, "replacement-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	session, err := repo.CreateSession(t.Context(), credential.Principal.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	checkDirectory := func(want int) string {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		req := httptest.NewRequest(http.MethodGet, "/updates?route=admin&section=principals", nil).WithContext(ctx)
+		req.AddCookie(&http.Cookie{Name: f.AccessModule.Auth().SessionCookieName(), Value: session})
+		req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "initial-admin-directory"})
+		res := httptest.NewRecorder()
+		f.Handler.ServeHTTP(res, req)
+		if res.Code != want {
+			t.Fatalf("initial user directory = %d want=%d body=%s", res.Code, want, res.Body)
+		}
+		return res.Body.String()
+	}
+	if body := checkDirectory(http.StatusOK); !strings.Contains(body, "initial@example.test") {
+		t.Fatalf("directory missing initial administrator: %s", body)
+	}
+	// A genuine resolver failure must not be treated as an empty fresh install.
+	f.AccessModule.SetCurrentProjectID(func(context.Context) (projectgraph.ResourceID, error) { return "", errors.New("resolver unavailable") })
+	checkDirectory(http.StatusInternalServerError)
 }
