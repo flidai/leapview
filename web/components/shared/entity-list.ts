@@ -26,6 +26,7 @@ import {
   LockKeyhole,
   EllipsisVertical,
   Plus,
+  Pin,
   Plug,
   Play,
   RefreshCw,
@@ -44,6 +45,7 @@ import {
 import { lucideIcon } from './lucide-icons'
 import { entityListStickyStyles } from './entity-list-sticky.styles'
 import { entityListGroupStyles } from './entity-list-group.styles'
+import { entityListRowActionsStyles } from './entity-list-row-actions.styles'
 import './user-avatar'
 
 export type EntityListItem = {
@@ -69,6 +71,8 @@ export type EntityListItem = {
   badges?: EntityListBadge[]
   favorite?: boolean
   favoriteLabel?: string
+  pinned?: boolean
+  pinLabel?: string
   actions?: EntityListRowAction[]
 }
 
@@ -222,44 +226,7 @@ const entityListStyles = `
     background: var(--lv-button-accent-bg-hover);
   }
 
-  .entity-list-row-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--base-size-4);
-  }
-
-  .entity-list-row-action {
-    display: inline-flex;
-    width: var(--control-medium-size);
-    height: var(--control-medium-size);
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    border-radius: var(--lv-radius-default);
-    background: transparent;
-    color: var(--lv-fg-muted);
-    cursor: pointer;
-  }
-
-  .entity-list-row-action:hover:not(:disabled),
-  .entity-list-row-action:focus-visible {
-    background: var(--lv-bg-control-hover, var(--lv-bg-panel-muted));
-    color: var(--lv-fg-default);
-  }
-
-  .entity-list-row-action:focus-visible {
-    outline: var(--focus-outline);
-    outline-offset: var(--focus-outline-offset);
-  }
-
-  .entity-list-row-action:disabled {
-    cursor: not-allowed;
-    opacity: 0.45;
-  }
-
-  .entity-list-cell.is-center .entity-list-row-actions {
-    justify-content: center;
-  }
+  ${entityListRowActionsStyles}
 
   .entity-list-items {
     min-width: 0;
@@ -862,7 +829,8 @@ const entityListStyles = `
     display: none;
   }
 
-  .entity-list.is-compact .entity-list-row-action {
+  .entity-list.is-compact .entity-list-row-action,
+  .entity-list.is-compact .entity-list-row-pin {
     width: var(--base-size-28);
     height: var(--base-size-28);
   }
@@ -915,6 +883,7 @@ class EntityList extends LitElement {
   @property({ attribute: false }) filters: EntityListFilter[] = []
   @property({ attribute: false }) actions: EntityListAction[] = []
   @property({ attribute: false }) toolbarTrailing: unknown = nothing
+  @property({ attribute: false }) beforeRows: unknown = nothing
   @property({ attribute: 'list-label' }) listLabel = 'List'
   @property({ attribute: 'export-filename' }) exportFilename = ''
   @property({ attribute: 'search-placeholder' }) searchPlaceholder = 'Search'
@@ -1001,6 +970,7 @@ class EntityList extends LitElement {
             </div>
           ` : ''}
         </div>` : ''}
+        ${this.beforeRows}
         ${items.length ? html`
           <div class="entity-list-items entity-list-table-wrap" role="region" aria-label="Scrollable ${this.listLabel} table" tabindex="0">
             <table class="entity-list-table" aria-label=${this.listLabel} style=${this.minWidth ? `min-width: ${this.minWidth}` : ''}>
@@ -1221,7 +1191,16 @@ class EntityList extends LitElement {
               <span class="entity-list-badge-empty" role="img" aria-label="No popularity data">—</span>
             `)
           : column.render === 'actions'
-            ? html`<span class="entity-list-row-actions">${(item.actions ?? []).map((action) => html`
+            ? html`<span class="entity-list-row-actions">${item.pinLabel ? html`
+                <button
+                  type="button"
+                  class="entity-list-row-pin"
+                  title=${item.pinLabel}
+                  aria-label=${item.pinLabel}
+                  aria-pressed=${String(Boolean(item.pinned))}
+                  @click=${(event: Event) => this.togglePin(event, item)}
+                >${lucideIcon(Pin, { size: 16, strokeWidth: 1.8 })}</button>
+              ` : ''}${(item.actions ?? []).map((action) => html`
                 <button
                   type="button"
                   class="entity-list-row-action"
@@ -1320,6 +1299,16 @@ class EntityList extends LitElement {
     event.preventDefault()
     event.stopPropagation()
     this.dispatchEvent(new CustomEvent('lv-entity-list-favorite-toggle', {
+      bubbles: true,
+      composed: true,
+      detail: { item },
+    }))
+  }
+
+  private togglePin(event: Event, item: EntityListItem): void {
+    event.preventDefault()
+    event.stopPropagation()
+    this.dispatchEvent(new CustomEvent('lv-entity-list-pin-toggle', {
       bubbles: true,
       composed: true,
       detail: { item },
