@@ -15,10 +15,11 @@ Deciders: LeapView maintainers
 Supersedes: none
 
 Amends: [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md),
-proposed single-host Compose exception to managed PostgreSQL, local analytical
-file storage, and rebuild-based recovery for explicitly reconstructible analytical
-outputs. PostgreSQL control authority, privilege separation and safe publication
-remain unchanged. This proposal does not amend the accepted record until reviewed.
+proposed replacement of the mandatory managed HA PostgreSQL baseline with
+qualified self-operated PostgreSQL: bundled Compose and an operated single-primary
+VPS profile. Also proposes local analytical file storage and rebuild-based recovery
+for explicitly reconstructible analytical outputs. PostgreSQL control authority,
+privilege separation and safe publication remain unchanged. This proposal does not amend the accepted record until reviewed.
 
 Related: [ADR-0003](0003-retain-narrow-infisical-resolver.md),
 [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md),
@@ -59,7 +60,7 @@ that the target architecture is already qualified.
 - Keep a complete, independently operable open-source product.
 - Make managed-hosting reliability improvements reusable by self-hosters.
 - Minimize custom infrastructure code and recurring operational work by reusing
-  established deployment tools and qualified managed data services.
+  established deployment, database maintenance and recovery tools.
 - Make basic self-hosting possible with Docker Compose and minimal configuration.
 - Operate dedicated customer environments with established tools, while keeping
   the product independent of Kubernetes.
@@ -100,9 +101,10 @@ V1 has two public deployment packages for the same product:
   persistent dependencies, and optional HTTPS and monitoring.
 - **Operated by LeapView:** one dedicated application VPS per customer, initially
   on European Hetzner infrastructure, using Docker and Kamal with restart-based
-  rollback. Managed PostgreSQL hosts authoritative application state and the
-  DuckLake catalog; local SSD stores analytical files. S3 and Kubernetes are not
-  required for analytical serving. Managed operations additionally protect
+  rollback. A separate dedicated PostgreSQL VPS per customer hosts authoritative
+  application state and the DuckLake catalog; LeapView operates its single primary
+  using Ansible and pgBackRest. Local SSD on the application VPS stores analytical
+  files. S3 and Kubernetes are not required for analytical serving. Managed operations additionally protect
   irreplaceable customer state through off-host backups or durable copies.
 
 LeapView prepares source data for BI. For sources supporting a complete rebuild,
@@ -118,9 +120,9 @@ they are not additional v1 packages we commit to maintain.
 
 Architectural acceptance does not clear either profile for production. The
 companion specification defines separate gates for the operated VPS/data-service
-profile and bundled Compose dependencies. We own OS, Docker and proxy maintenance;
-managed PostgreSQL reduces database operations within qualified provider
-responsibilities.
+profile and bundled Compose dependencies. We own application and database host
+maintenance, PostgreSQL updates, backup operation and restoration. A database standby and automatic failover are
+not part of the selected v1 profile; measured restore-time downtime is accepted.
 
 V1 includes repeatable installation, upgrades, rollback, monitoring, access, and
 tested recovery using existing tooling. A customer portal, automatic signup,
@@ -176,13 +178,14 @@ already exists.
 | HTTPS edge | Caddy for Compose; kamal-proxy for managed installations | One edge per profile with qualified TLS, SSE and draining behavior. |
 | Operated release deployment | Kamal and Docker Engine | Public configuration for one dedicated customer application VPS; health-gated updates and restart-based rollback. |
 | Infrastructure provisioning | OpenTofu with the official Hetzner provider | Public modules for VPSs, networks, firewalls, and load balancers. Qualify existing Terraform modules and state before changing their runner. |
-| Host configuration | Ansible | Public OS baseline, Docker and agent configuration. LeapView owns host patching, reboots and replacement procedures. |
+| Host and database configuration | Ansible; minimal cloud-init bootstrap | Public OS, Docker, PostgreSQL and agent configuration. LeapView owns controlled patching, staggered reboots and replacement procedures. |
 | Observability | Prometheus-compatible metrics, Grafana Alloy, and Grafana | Public collection configuration, dashboards, and alerts. Optional local monitoring package; managed operation uses a central backend. |
 | Deployment secrets | Infisical | Reference managed secrets integration with scoped machine identities. Self-hosters can supply supported secret inputs without subscribing to Infisical Cloud. |
 | Release production | GitHub Actions and GHCR | Produce immutable release images and provenance; deployments verify and promote existing artifacts. |
-| Data services | Managed PostgreSQL plus local SSD for operated deployments | PostgreSQL holds authoritative control state and DuckLake metadata; SSD holds analytical files. Compose can bundle PostgreSQL. Back up irreplaceable state and qualify analytical rebuilds. |
+| Data services | Self-operated PostgreSQL plus local SSD | Operated deployments use a separate customer database VPS with one primary; Compose bundles PostgreSQL. PostgreSQL holds control state and DuckLake metadata; application SSD holds analytical files. No external database service is required. |
+| PostgreSQL recovery | pgBackRest and standard scheduling | Physical backups, continuous WAL archiving, retention and PITR to a qualified off-host destination. Publish configuration and restoration procedures; qualify application recovery after database restore. |
 | Recovery storage | Operator-selected off-host destination | Optional self-hosted configuration; required protection for managed customer state that cannot be recreated. Managed S3 is a candidate backup/upload destination, not a required analytical read path. |
-| Initial managed infrastructure | One dedicated Hetzner application VPS per customer | Public provider adapter; size dedicated-vCPU capacity and transient release overlap from measured workloads. Single-host availability limits apply. |
+| Initial managed infrastructure | One application VPS and one database VPS per customer on European Hetzner infrastructure | Public provider adapter; size resources independently from measured workloads. Each tier has a single host; a second tier does not provide redundancy. |
 
 Compose and Kamal are alternative owners of application container lifecycle.
 They must not reconcile the same containers. Both consume shared LeapView
@@ -200,11 +203,12 @@ kamal-proxy for HTTPS and release routing. Qualify SSE buffering and timeouts,
 uploads, client identity, draining and certificate renewal. Private administrative
 and metrics endpoints must remain protected.
 
-OpenTofu owns declared provider resources; Ansible owns the OS baseline, Docker
-and supporting host configuration; Kamal owns application deployment and its proxy
-lifecycle. Define maintenance ownership for each component without competing
-reconcilers. Managed data-service maintenance follows separately qualified
-provider procedures.
+OpenTofu owns declared provider resources; cloud-init establishes minimal host
+access; Ansible owns repeatable OS, Docker, PostgreSQL and backup configuration.
+Kamal owns application deployment and its proxy lifecycle. The database has an
+independent maintenance lifecycle; application deployment must not restart or
+upgrade it implicitly. Use established roles and tools with pinned versions and
+reviewed configuration, rather than a custom database controller.
 
 Grafana is not an application dependency. A local metrics backend and Grafana may
 be supplied as an optional monitoring package; managed hosting may use Grafana
@@ -220,8 +224,10 @@ operator orchestration stack before first use. Generate initial credentials and
 bootstrap the required database roles through supported tooling. Document the
 small set of inputs, data locations, updates and backup responsibilities.
 
-This proposes a single-host Compose exception to ADR-0020's managed PostgreSQL
-baseline and a production local-filesystem analytical profile. PostgreSQL remains
+This proposes replacing ADR-0020's mandatory managed HA PostgreSQL baseline
+for both selected profiles and adding a production local-filesystem analytical
+profile. The operated service uses one PostgreSQL primary on its own VPS; Compose
+bundles PostgreSQL on the application host by default. PostgreSQL remains
 authoritative for control state; runtime, migration and maintenance privileges
 remain separate. The DuckLake catalog describes replaceable analytical outputs
 and must be rebuilt together with them when they are lost. Existing filesystem
@@ -238,7 +244,7 @@ to start and serve dashboards.
 | Capability | Self-hosted Compose | Operated Kamal |
 |---|---|---|
 | Analytical serving | Local persistent filesystem | Local SSD on customer VPS |
-| PostgreSQL | Bundled by default; external supported | Qualified managed service |
+| PostgreSQL | Bundled by default; external supported | Separate customer VPS; self-operated single primary with pgBackRest |
 | Monitoring | Optional integration | Monitoring and alerts required; Grafana is a replaceable tool choice |
 | Irreplaceable-state backups | Operator configures destination, schedule and recovery policy | Off-host protection and restore testing required |
 | Rebuildable analytical backups | Optional | Optional when qualified source rebuild meets commitments |
@@ -254,16 +260,18 @@ credentials to the customer. Sharing a management or observability service does
 not permit cross-customer data access. Shared infrastructure administration must
 use scoped identities and preserve customer isolation.
 
-Managed v1 assigns each customer a separate application VPS, scoped deployment
-credentials, PostgreSQL resources/roles and isolated local data directories.
+Managed v1 assigns each customer separate application and database VPSs, scoped
+deployment credentials, PostgreSQL roles and isolated local data directories.
 Record database, optional bucket, provider administration and backup isolation
 boundaries and reject cross-customer access. Managed service resource isolation
 does not imply a physically dedicated database or storage server.
 
 An application VPS failure or maintenance reboot interrupts that customer's
 service until restart or replacement. Lost local data additionally requires
-analytical rebuild or a qualified analytical restore. Managed PostgreSQL
-preserves application state but cannot restore missing local analytical files.
+analytical rebuild or a qualified analytical restore. The separate PostgreSQL
+VPS can preserve state through application-host loss, but cannot restore missing
+local analytical files. Database-host loss requires PostgreSQL restoration from
+off-host backups; protect against the old primary returning as an active writer.
 Recovery depends on source availability, full extraction and validation; include
 those dependencies in measured downtime. Qualify authoritative-state restoration
 separately from analytical reconstruction.
@@ -373,8 +381,9 @@ Managed hosting requires off-host recoverable copies of authoritative state,
 customer uploads we retain, necessary authored content/artifacts and protected
 key/configuration recovery. Choose an existing backup service, managed S3 or
 another qualified destination; a second local directory/volume is not off-host.
-Test recovery, retention and deletion behavior against promised RPO/RTO. A managed
-PostgreSQL label alone does not prove an adequate backup policy.
+Test recovery, retention and deletion behavior against promised RPO/RTO. Use
+pgBackRest for the operated PostgreSQL profile; verify base backups and continuous
+WAL availability through actual restoration, not only successful backup commands.
 
 Backups of genuinely rebuildable analytical outputs are optional. Use them when
 they reduce recovery time or dependence on upstream availability. S3 analytical
@@ -383,17 +392,21 @@ workloads or different recovery requirements, without becoming a default depende
 
 ### Service selection and qualification
 
-Hetzner is the selected application VPS provider. Data and operational service
-providers remain candidates; qualify the responsibilities below before launch:
+Hetzner is the selected v1 application and database VPS provider. Self-operated
+PostgreSQL is the selected database approach. Recovery destinations and optional
+operational providers still require qualification before launch:
 
 - **Application VPS and host operations:** qualify the European Hetzner region,
   dedicated customer assignment, sizing, OS/Docker/proxy maintenance, support and
   replacement capacity. Record patch/reboot behavior, operator access, costs and
   recovery evidence. LeapView owns these duties; Kamal does not outsource them.
-- **PostgreSQL:** use an external managed service; evaluate Ubicloud on Hetzner
-  for European region, version/privilege compatibility, TLS, replication mode,
-  failover, major-version maintenance, support, PITR retention and independently
-  usable backup export. Preserve ADR-0020's managed HA production baseline.
+- **PostgreSQL:** use one customer database VPS with a qualified PostgreSQL major
+  version, persistent storage, scoped roles, verified TLS and host access controls.
+  Ansible and pgBackRest own repeatable configuration and recovery mechanics.
+  Qualify minor updates, OS reboots, major upgrades, PITR, retention, archive
+  failures and complete host replacement. Managed database providers such as
+  Ubicloud are researched alternatives, not selected v1 dependencies or support
+  commitments. A future change requires explicit qualification.
 - **Local analytical storage:** qualify native filesystem paths and permissions,
   integrity, persistent Docker mounts, disk-full behavior, capacity and performance
   under refresh and release overlap. Test complete disk loss and catalog replacement.
@@ -413,10 +426,64 @@ behavior, not evidence that vendor defaults meet it. Managed-service assurance
 and customer qualification require separate decisions; this deployment proposal
 does not establish their legal coverage or customer commitments.
 
+### PostgreSQL maintenance and recovery ownership
+
+Use one qualified major version per supported release profile. Minor security and
+bug-fix updates follow reviewed, scheduled maintenance; package holds must have an
+explicit update procedure and overdue-patch reporting. Schedule and stagger host
+reboots with pre/post health checks. Cloud-init is bootstrap, not ongoing fleet
+reconciliation. Derive connection/memory budgets from the actual database VPS;
+OLAP memory belongs to the separately sized application host. Omit PgBouncer by
+default: session advisory locks require direct or compatible session connections,
+not blanket transaction pooling.
+
+Major upgrades use PostgreSQL's supported tools, preflight checks and a rehearsal
+on restored data. Retain an independent recovery copy and stop writers until
+validation completes. With `pg_upgrade --link`, starting the new cluster makes the
+linked old cluster unsafe to restart; copy/qualified clone modes or independent
+backups provide the required recovery boundary. Returning to an old copy after
+new writes needs an explicit data-loss/reconciliation decision. No fixed seconds
+or sub-minute upgrade promise is inferred from the command chosen.
+
+Configure pgBackRest base backups, continuous WAL archiving, retention and standard
+scheduling. Monitor backup age, archive failures/backlog, WAL/disk growth and
+restoration evidence. Encrypt off-host backups with recoverable keys controlled
+separately from storage credentials; qualify retention and deletion protection.
+A completed backup or configured archive interval does not guarantee RPO during
+an archive failure. Define RPO for acknowledged PostgreSQL writes independently
+of accepted downtime and the freshness of reconstructed analytical outputs.
+
+### Portability, operator access and supplier boundary
+
+The product and reusable deployment automation must run without an external
+managed database service or LeapView-hosted control plane. Customer-owned
+infrastructure is the long-term deployment goal; v1 qualification covers the
+selected Hetzner profile, not every host or automated BYOC onboarding.
+Self-hosters control their infrastructure and access grants; installing LeapView
+does not grant LeapView staff access. Where customers later delegate operations,
+operator access must be explicitly scoped, auditable and revocable.
+
+For LeapView-operated environments, routine database administration stays with
+LeapView's authorized operators rather than an additional database-service vendor.
+This reduces service dependencies and third-party administration, and can simplify
+supplier assessment. It does not establish exclusive access to data or compliance
+by itself. Hetzner remains an infrastructure supplier; assess its actual role and
+contract. Hosting, backup, secrets, telemetry, email and any TLS-terminating edge
+services remain in the data-flow and supplier assessment where used. Exclude
+credentials and customer query/data payloads from external telemetry by default.
+
+Document access to plaintext, encryption keys, backups, infrastructure consoles
+and support channels, including exceptional access. TLS and ordinary disk/backup
+encryption do not prove that an infrastructure operator cannot access data while
+the application processes it. Avoid claims such as "only LeapView can access your
+data" or "no subprocessors" based solely on self-operated PostgreSQL. Customer
+materials must distinguish public self-hosting from delegated managed operation
+and accurately state the suppliers and access controls for that deployment.
+
 ### Availability and assurance boundary
 
-Declare this offering as a recoverable single-application-host service. Establish
-customer eligibility, maintenance windows, support coverage, maximum acceptable
+Declare this offering as a recoverable service with one application host and one
+database primary per customer. Establish customer eligibility, maintenance windows, support coverage, maximum acceptable
 interruption, recovery time (RTO) and data loss (RPO) from the service's risk
 assessment and measured exercises before contractual commitments. Include outage
 detection, operator response, provider capacity, credentials and routing changes
@@ -448,8 +515,8 @@ document and test behavior during management outages.
 Evaluate existing fleet interfaces and reconcilers before building their
 equivalents. Preserve the existing PostgreSQL/River recovery occurrence and
 evidence contracts; a deployment controller or external job runner does not
-become a second authority for application recovery. Use provider-native backup
-operations or established database backup tools rather than implementing backup
+become a second authority for application recovery. Use pgBackRest and supported
+PostgreSQL upgrade tools rather than implementing backup or database upgrade
 engines in LeapView.
 
 Do not use Watchtower-style autonomous image replacement for production releases.
@@ -469,13 +536,15 @@ public infrastructure modules make Hetzner provisioning reproducible. Customer
 operations can begin before a bespoke fleet platform exists.
 
 Supporting Compose and one managed deployment path creates an ongoing integration
-and qualification cost. We retain OS, Docker, proxy and host recovery work.
-Managed data services add provider dependence and service fees. Public operational
-interfaces need compatibility discipline, documentation and sanitized fixtures.
+and qualification cost. We retain OS, Docker, proxy, PostgreSQL patching,
+backup operation and host/database recovery work. Self-operated PostgreSQL removes
+a separate database-service dependency and gives us control over its location,
+maintenance and access; it also makes database incident response our duty. Public
+operational interfaces need compatibility discipline, documentation and sanitized fixtures.
 Temporary release overlap requires spare capacity. Single-host outages and
 restart-based rollback constrain the customers and service levels supported. HA,
-backup retention, managed services, and off-provider storage introduce recurring
-costs that must be measured against the offering's service commitments.
+backup retention, optional operational services, and off-provider storage introduce
+recurring costs that must be measured against the offering's service commitments.
 
 A bundled self-hosted database/storage profile adds upgrade, persistence and
 recovery qualification duties. Local serving removes remote object reads, but
@@ -541,14 +610,22 @@ retain reproducible evidence appropriate to that profile:
 12. **Analytics overload:** saturate memory, query concurrency and temporary-disk
     budgets under release overlap. Verify bounded admission and failure behavior,
     truthful readiness, and sufficient capacity for release/recovery operations.
-13. **Application host loss:** provision an empty VPS, reconnect to managed
-    PostgreSQL and rebuild analytical outputs into fresh metadata/files. Fence a
+13. **Application host loss:** provision an empty VPS, reconnect to the separate
+    PostgreSQL VPS and rebuild analytical outputs into fresh metadata/files. Fence a
     returning host and preserve authoritative customer writes. Exercise unavailable
     sources, interrupted rebuild, invalid outputs, repeated snapshot numbers and
     failed/lost-ack publication. Test authoritative-state restoration separately.
 14. **Service qualification:** approve the measured maintenance/recovery bounds,
     support model, customer eligibility and applicable legal/assurance controls.
     Retain evidence of isolated backups and scheduled recovery testing.
+15. **Database lifecycle and loss:** provision from public automation, repeat it
+    safely, patch and reboot, rehearse a major upgrade and its recovery path, then
+    restore to an empty replacement with the original primary unavailable. Test
+    failed WAL archiving, backup/key unavailability, old-primary fencing and
+    governed application behaviour after PITR. Record achieved RPO/RTO.
+16. **Data access boundary:** record infrastructure and optional service access,
+    test scoped operator grants/revocation, telemetry exclusion and backup-key
+    separation. Verify public installation needs no LeapView operator access.
 
 No new qualification is claimed by drafting or accepting this ADR.
 
@@ -578,8 +655,11 @@ must be rechecked when qualifying an implementation:
 - [Hetzner object-storage limitations](https://docs.hetzner.com/storage/object-storage/supported-actions/),
   [AWS conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html),
   and [Scaleway conditional writes](https://www.scaleway.com/en/docs/object-storage/api-cli/using-conditional-writes/).
-- [Ubicloud HA](https://www.ubicloud.com/docs/managed-postgresql/high-availability),
-  [networking](https://www.ubicloud.com/docs/managed-postgresql/networking), and
-  [backup and restore](https://www.ubicloud.com/docs/managed-postgresql/backup-and-restore).
+- [PostgreSQL version policy](https://www.postgresql.org/support/versioning/),
+  [major upgrades](https://www.postgresql.org/docs/17/pgupgrade.html),
+  [pgBackRest](https://pgbackrest.org/user-guide.html), and
+  [PgBouncer compatibility](https://www.pgbouncer.org/features.html).
+- [Hetzner data protection](https://docs.hetzner.com/general/company-and-policy/data-protection-at-hetzner/)
+  and [EDPB processor roles](https://www.edpb.europa.eu/sme/learn-the-basics/data-controller-or-data-processor_en).
 - [Grafana telemetry collection](https://grafana.com/docs/grafana-cloud/observe-and-act/send-data/)
   and [Infisical machine identities](https://infisical.com/docs/documentation/platform/identities/machine-identities).

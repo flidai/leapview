@@ -4,14 +4,15 @@ Date: 2026-09-25
 
 Last revised: 2026-09-26
 
-Status: research and qualification proposal; no platform or provider is approved
+Status: research supporting selected proposal; no production profile is qualified
 
 Governing proposal: [ADR-0025](../0025-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md)
 
 Scope clarification after this research: self-hosting prioritizes a straightforward
 Compose installation; operator deployments prioritize reuse and robustness. The
 ADR now proposes Kamal on one dedicated application VPS per customer on European
-Hetzner infrastructure, with managed PostgreSQL and local SSD analytical files.
+Hetzner infrastructure, plus a separate customer PostgreSQL VPS operated by
+LeapView with Ansible and pgBackRest. Local SSD holds analytical files.
 Derived data is explicitly rebuildable where complete source replay is supported.
 Off-host recovery protects irreplaceable managed customer state; S3 is an optional
 recovery destination rather than a required analytical-serving dependency.
@@ -75,11 +76,62 @@ ends after deployment, so continuous off-host monitoring and operator response
 remain necessary. Qualify SSE buffering, timeouts, uploads and drain behavior.
 Normal deployment still overlaps processes and needs memory and worker fencing.
 
-Host maintenance stays with us. Managed PostgreSQL preserves control state while
-local SSD serves analytical outputs. Rebuilding a host must preserve authoritative
+Host and PostgreSQL maintenance stay with us. The separate database VPS holds
+control state while local SSD serves analytical outputs. Rebuilding a host must preserve authoritative
 customer writes and republish analytical data from retained sources into a fresh
 catalog/directory. Source availability and rebuild time affect recovery. Managed
 backups protect irreplaceable state; they need not include every materialization.
+
+### Self-operated PostgreSQL: selected v1 approach
+
+Accepting restore-time downtime makes a single primary with off-host backups a
+credible option. Database operation and availability topology are separate choices:
+a managed database can also have no standby. The selected approach is one separate
+PostgreSQL VPS per customer, with reviewed Ansible roles for lifecycle configuration
+and pgBackRest for physical backups, WAL archiving, retention and PITR. Cloud-init
+provides minimal bootstrap. No custom database controller, standby, Redis or default
+PgBouncer service is required. Connection pooling must preserve session advisory
+locks used by LeapView; transaction pooling is not a universal default.
+
+| Candidate | Reuse | Trade-off and conclusion |
+|---|---|---|
+| Ansible + pgBackRest | Established configuration and database recovery tools | Selected; we own integration, patching, alerts, restore exercises and incident response |
+| Pigsty | Integrated PostgreSQL lifecycle, backup and observability | Researched alternative; even the documented slim profile requires Patroni and etcd |
+| Autobase | PostgreSQL deployment, upgrade and recovery automation | Broader alternative; distinguish automation licensing from commercial console features |
+| Ubicloud PostgreSQL | Provider-operated database lifecycle and backups, optional standbys | Researched alternative, not a selected v1 dependency; adds a database vendor and requires provider/network/recovery qualification |
+
+Sources: [PostgreSQL Ansible role](https://github.com/geerlingguy/ansible-role-postgresql),
+[pgBackRest](https://pgbackrest.org/user-guide.html),
+[Pigsty slim profile](https://pigsty.io/docs/setup/slim/),
+[Autobase](https://github.com/autobase-tech/autobase), and
+[Ubicloud availability options](https://www.ubicloud.com/docs/managed-postgresql/high-availability).
+These sources identify reusable mechanisms, not approved versions/configurations.
+
+Minor updates and host reboots need controlled maintenance and overdue-patch
+reporting. Major upgrades use native tools and rehearsed recovery. In particular,
+[`pg_upgrade --link`](https://www.postgresql.org/docs/17/pgupgrade.html) does not
+leave a safe old cluster after the new one starts. Preserve independent recovery
+copies and define the rollback boundary before admitting new writes. Upgrade and
+restore times must be measured; backups do not imply zero data loss or automatic
+failover. Qualification includes failed archival and primary loss, not only happy
+path installation. PostgreSQL PITR still needs LeapView job and DuckLake recovery
+validation.
+
+The choice strengthens portability to customer-owned infrastructure and removes
+an additional database-service administrator. It does not remove the infrastructure
+supplier or establish exclusive data access. Supplier, key, telemetry, backup and
+operator access boundaries remain explicit. Customer-owned deployment support is
+future scope; v1 evidence covers the chosen Hetzner deployment only.
+
+Latency is an evidence question. Ubicloud documents a Falkenstein region and
+public PostgreSQL endpoints with firewall controls; private connectivity described
+for Ubicloud resources must not be assumed to join our Hetzner Cloud network.
+If revisited, compare representative LeapView requests, catalog publication and
+River operations using warm TLS connections and p95/p99 under load. No benchmark
+or conclusion that managed PostgreSQL is inherently slower is established here.
+See [regions](https://www.ubicloud.com/docs/about/regions),
+[connections](https://www.ubicloud.com/docs/managed-postgresql/connection) and
+[backup export/recovery](https://www.ubicloud.com/docs/managed-postgresql/backup-and-restore).
 
 ### Local analytical storage and replaceable pipeline outputs
 
@@ -180,8 +232,8 @@ needs to be installed into every customer environment.
 - **Proxy discovery and certificate controllers:** use the selected platform's
   standard edge. Compose uses optional Caddy; managed Kamal uses kamal-proxy.
   Avoid multiple release-routing owners.
-- **PostgreSQL backup engines:** use qualified managed backup/PITR or a mature
-  native tool such as [pgBackRest](https://pgbackrest.org/user-guide.html).
+- **PostgreSQL backup engines:** use the selected native
+  [pgBackRest](https://pgbackrest.org/user-guide.html) recovery engine.
   LeapView should invoke supported operations and validate the recovered state.
 - **Monitoring storage and dashboards:** use standard metrics/log collection and
   Grafana, with a hosted backend where operationally appropriate.
@@ -216,8 +268,8 @@ and provider-handoff work.
 ## Bounded selection exercise
 
 Qualify Kamal first against the revised restart-based rollback contract. The
-selected managed shape is one application VPS per customer with managed
-PostgreSQL and local SSD analytical storage. Keep Compose for self-hosters.
+selected managed shape is one application VPS plus one self-operated PostgreSQL
+VPS per customer, with local SSD analytical storage and pgBackRest recovery. Keep Compose for self-hosters.
 Reopen platform selection only if measured product behavior or service obligations reveal a concrete gap;
 do not rebuild Argo-style warm retention and analysis around Kamal.
 

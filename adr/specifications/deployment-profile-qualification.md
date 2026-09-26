@@ -23,8 +23,9 @@ numeric service guarantee is established by this specification.
 
 Record the release, configuration, providers, resource layout, reviewer and dated
 results for each gate. The managed profile uses one application VPS per customer
-with local SSD and external managed PostgreSQL. Compose uses local persistent
-storage and bundled PostgreSQL by default. Neither profile requires S3 for
+with local SSD and a separate customer PostgreSQL VPS operated by LeapView.
+PostgreSQL has one primary and no standby in the selected v1 profile. Compose uses
+local persistent storage and bundled PostgreSQL by default. Neither profile requires S3 for
 analytical serving. Managed operations additionally require monitoring and off-host
 protection of irreplaceable state; self-hosters configure those integrations.
 Analytical output backups are optional when full reconstruction is qualified.
@@ -42,20 +43,39 @@ implementation, maintenance process, escalation and recovery evidence for each:
 | Hetzner resources | Account ownership, dedicated customer VPS, quotas, replacement capacity and region failure |
 | Host and Docker | OS baseline, vulnerability updates, Docker upgrades, reboot windows, firewall and recovery |
 | Kamal and proxy | Pinned versions, application updates, rollback, HTTPS renewal, trusted client identity and SSE |
-| Managed PostgreSQL | Customer isolation, roles, TLS, HA/failover, major upgrades, PITR, retention, export and restore |
+| Self-operated PostgreSQL | Customer database VPS, roles, TLS, version/OS maintenance, PITR, archive monitoring, retention and restoration to a replacement host |
 | Local SSD | Persistent mount layout, isolated paths, integrity, capacity, rebuild/publication and safe cleanup |
 | Off-host recovery destination | Protection of customer state/retained inputs, access isolation, retention, deletion protection, restore/export and keys |
 | Operations | Scoped credentials, monitoring, retained audit records, support coverage, incident response and supplier exit |
 
-OpenTofu provisions declared infrastructure; Ansible configures hosts; Kamal owns
-application/proxy deployment. Do not let Compose and Kamal manage the same
-containers. Managed data providers own only the duties explicitly supported by
-their service and contract. LeapView retains coordinated recovery correctness.
+OpenTofu provisions declared infrastructure; cloud-init bootstraps access; Ansible
+configures and maintains hosts, PostgreSQL and pgBackRest. Kamal owns application
+and proxy deployment. Do not let Compose and Kamal manage the same containers or
+let application releases implicitly upgrade PostgreSQL. LeapView owns database
+maintenance, backup operation, incident response and coordinated recovery. External
+database vendors are not required by this profile.
+
+### Portability and data access evidence
+
+Public installation must not require a managed database provider, LeapView account
+or access grant to LeapView staff. Keep provider provisioning separate from
+portable PostgreSQL/application configuration. Future customer-owned infrastructure
+requires its own qualification and explicit, revocable delegation of operator
+access; the v1 Hetzner qualification is not a universal hosting guarantee.
+
+Record the infrastructure, backup, telemetry, secret, email and optional edge
+suppliers used, their locations and actual data/credential access. Assess their
+processor/subprocessor roles and contracts as applicable. Removing a database
+operator does not remove Hetzner or other suppliers from this assessment. Test
+operator access scope/revocation, audit retention, telemetry exclusion and backup
+key separation. Distinguish normal database administration from infrastructure,
+console and exceptional support access. Do not infer exclusive plaintext access,
+provider-inaccessible live memory, or compliance from encryption or self-operation.
 
 ### Isolation and durable state
 
-Use one customer application VPS and scoped deployment credentials per customer.
-Specify dedicated database resources/roles and isolated filesystem paths,
+Use separate customer application and database VPSs with scoped deployment
+credentials. Specify PostgreSQL roles and isolated filesystem paths,
 optional bucket resources/credentials, backup access and shared administration.
 Do not infer physical host or storage hardware exclusivity. Reject cross-customer
 database, file, object and operator access. Document shared provider dependencies.
@@ -114,10 +134,11 @@ application/data pair during restart-based application rollback.
 
 ### Authoritative state and optional analytical backups
 
-Qualify managed PostgreSQL versions, privileges, TLS, HA/failover, major upgrades,
-PITR and backup export. Verify the selected backup policy; managed service status
-alone does not establish recoverability. Application-state restoration is distinct
-from analytical reconstruction and must preserve authorization and replay safety.
+Qualify self-operated PostgreSQL versions, privileges, TLS, minor/major upgrades,
+OS maintenance, pgBackRest PITR and independent restoration. A standby/failover
+mechanism is not required by the selected v1 profile. Verify the backup policy
+through restoration with the original database host unavailable. Application-state
+restoration is distinct from analytical reconstruction and must preserve authorization and replay safety.
 
 For managed customers, require off-host recoverable copies of customer state,
 retained uploads, necessary authored artifacts and protected configuration/keys.
@@ -128,14 +149,54 @@ RPO, including upload acknowledgement versus durable-copy completion.
 
 Backups of fully rebuildable analytical outputs are optional. If used, qualify a
 consistent catalog/file recovery point including cleanup and retention behavior.
-Managed PostgreSQL PITR alone does not recover local Parquet files. If not used,
+PostgreSQL PITR alone does not recover local Parquet files. If not used,
 prove source reconstruction fits recovery commitments and document upstream-outage
 behavior. Do not restore older control state merely because analytical SSD data
-was lost. Use native provider operations or established backup tools.
+was lost. Use pgBackRest for PostgreSQL recovery and established tools for
+retained files; backups of PostgreSQL do not include external artifact directories.
 
 Self-hosted startup requires no off-host storage, monitoring service or backup
 account. Ship public backup/export/rebuild procedures and disclose what host loss
 can destroy when the operator has not protected irreplaceable state.
+
+### PostgreSQL lifecycle and recovery qualification
+
+Use reviewed, version-pinned Ansible roles and native PostgreSQL/pgBackRest tools.
+Prove fresh provisioning and safe reapplication, scoped role bootstrap, verified
+TLS and host firewall rules. Exercise runtime, migrator and maintenance identities
+separately. Use direct or qualified session-compatible connections for session
+advisory locks; do not place every client behind transaction-mode PgBouncer.
+
+Record the supported major version and package origin, minor/security patch
+procedure, any package holds and their update/overdue-alert path. Qualify scheduled,
+staggered reboots and service restart behaviour. Cloud-init runs bootstrap only;
+ongoing changes must reconcile existing hosts. Budget connection pools, memory per
+query operation, autovacuum, WAL and backup work from actual VPS resources.
+
+Rehearse a PostgreSQL major upgrade against restored data, including preflight,
+extensions/catalog compatibility, writer quiescence, validation and a fresh backup.
+Record the last safe rollback point. Starting a `pg_upgrade --link` target makes
+its linked old cluster unsafe to restart. Use independent recovery copies or
+qualified copy/clone procedures. Reverting after writes were accepted on the new
+cluster requires an explicit reconciliation/data-loss decision. Measure the full
+service interruption; neither a package command nor `pg_upgrade` guarantees a
+fixed restart or sub-minute maintenance window.
+
+Configure off-host base backups plus continuous WAL archiving with pgBackRest,
+retention and standard scheduled execution. Record backup encryption and key
+recovery independent of the database VPS, storage credential scope and deletion
+protection. Test retention/expiration with the destination's protection settings.
+Monitor base-backup age, archival failures/backlog, WAL growth and disk capacity.
+An archive interval is not a hard RPO guarantee during upload failure; define
+whether writes may continue when protection falls behind and alert accordingly.
+
+Measure PITR and complete primary-host-loss restoration, including detection,
+on-call coverage, response, replacement capacity, provisioning, keys, transfer,
+WAL replay, endpoint changes and application validation. Use a disposable isolated
+restore destination on a schedule and after material tooling changes. Verify
+restored roles/configuration, replay safety, external effects and catalog/files;
+rebuild analytical pools when their restored references cannot safely be served.
+Neither successful backup exit status nor retained files alone qualifies recovery.
 
 ## Bundled Compose dependency qualification
 
@@ -217,8 +278,9 @@ SSE reconnection and upload retries, and preserve queued-work compatibility.
 Before sale or onboarding, security/privacy and service owners approve customer
 uses, data classes, applicable obligations, maintenance windows, support coverage,
 maximum interruption, RTO and RPO against operating evidence. The profile provides
-single-host application availability. A reboot or failed VPS causes an outage;
-managed data-service HA cannot remove it.
+single-host availability in both tiers. An application or database reboot/host
+failure can cause an outage; a separate database VPS provides resource isolation,
+not redundancy. Accepted downtime does not set an acceptable data-loss bound.
 
 Measure detection, operator response, replacement capacity, provisioning, secrets,
 certificates, routing/DNS changes, source extraction, transformation, validation
@@ -260,10 +322,23 @@ Certification and legal compliance claims require their own scope and evidence.
   governed reads/writes and replay protection, and record achieved RTO/RPO.
 - **Optional analytical restore:** match catalog/files and prove consistency if
   this recovery path is offered. Otherwise measure complete source rebuild time.
-- **Maintenance:** qualify OS/Docker/proxy updates and reboot, managed database
-  failover/major upgrades, and bundled Compose dependency interruption separately.
+- **Database host loss:** restore pgBackRest backups and WAL into an empty
+  replacement, without access to the original primary; fence any returning primary
+  and validate permissions, jobs, external effects and DuckLake file references.
+- **Backup failure:** interrupt WAL archiving, exhaust repository capacity, deny
+  credentials and lose the primary encryption-key copy. Verify alerts, permitted
+  write behaviour, key recovery and measured restore/data-loss bounds.
+- **Maintenance:** qualify OS/Docker/proxy updates and staggered reboot, PostgreSQL
+  minor and major upgrades, and bundled Compose dependency interruption separately.
 
 ## References
+
+- [PostgreSQL upgrades](https://www.postgresql.org/docs/17/pgupgrade.html),
+  [version policy](https://www.postgresql.org/support/versioning/),
+  [pgBackRest](https://pgbackrest.org/user-guide.html), and
+  [PgBouncer compatibility](https://www.pgbouncer.org/features.html).
+- [Hetzner data protection](https://docs.hetzner.com/general/company-and-policy/data-protection-at-hetzner/)
+  and [EDPB processor roles](https://www.edpb.europa.eu/sme/learn-the-basics/data-controller-or-data-processor_en).
 
 - [DuckLake catalog creation](https://ducklake.select/docs/stable/duckdb/usage/connecting),
   [storage](https://ducklake.select/docs/stable/duckdb/usage/choosing_storage) and
