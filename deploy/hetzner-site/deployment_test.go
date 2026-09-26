@@ -242,64 +242,31 @@ printf '%s\n' "${LEAPVIEW_SITE_IMAGE}" > "${site_root}/deployed-image"
 	requireContains(t, history, "activated")
 }
 
-func TestOperatorDeploymentPinsTheServerIdentityAndQualifiesThePublicRoute(t *testing.T) {
-	operator := readFile(t, filepath.Join("..", "..", "scripts", "deploy_site.sh"))
-	for _, fragment := range []string{
-		"ssh-keyscan",
-		"ssh-keygen -lf",
-		`"$scanned_key" == \#*`,
-		`"$scanned_key_file"`,
-		"StrictHostKeyChecking=yes",
-		"UserKnownHostsFile=",
-		"deploy/hetzner-site/ssh-host-key.sha256",
-		"SITE_SSH_PRIVATE_KEY",
-		"chmod 0600",
-		"deploy/hetzner-site/files/compose.yaml",
-		"/opt/leapview-site/compose.yaml",
-		"/opt/leapview-site/deploy.sh",
-		"leapview-site-reconcile.timer",
-		"https://leapview.dev/healthz",
-		"https://leapview.dev/readyz",
-		"https://www.leapview.dev/",
-	} {
-		requireContains(t, operator, fragment)
+func TestRetiredOperatorDeploymentCannotRestartLegacyController(t *testing.T) {
+	command := exec.Command("bash", filepath.Join("..", "..", "scripts", "deploy_site.sh"))
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("retired deployment entrypoint unexpectedly succeeded")
 	}
-	for _, forbidden := range []string{
-		"StrictHostKeyChecking=no",
-		"~/.ssh/known_hosts",
-		"${HOME}/.ssh/known_hosts",
-	} {
-		if strings.Contains(operator, forbidden) {
-			t.Errorf("operator deployment contains forbidden fragment %q", forbidden)
-		}
-	}
+	requireContains(t, string(output), "serialized Deploy public site workflow")
 }
 
-func TestGitHubActionsPromotesVerifiedSiteImageWithoutProductionCredentials(t *testing.T) {
+func TestKamalWorkflowIsDefaultOffAndNeverPromotesLegacyTag(t *testing.T) {
 	workflow := readFile(t, filepath.Join("..", "..", ".github", "workflows", "site-deploy.yml"))
 	for _, fragment := range []string{
-		"name: Deploy public site",
-		"push:",
-		"branches: [main]",
-		"workflow_dispatch:",
-		"uses: ./.github/workflows/site-image.yml",
-		"environment: leapview-site-production",
-		"packages: write",
-		"ghcr.io/flidai/leapview-site:production",
-		"needs.publish.outputs.image_reference",
-		"needs.publish.outputs.revision",
-		"https://leapview.dev/build.json",
-		"https://leapview.dev/healthz",
-		"https://leapview.dev/readyz",
+		"branches: [main]", "uses: ./.github/workflows/site-image.yml",
+		"group: public-site-production", "cancel-in-progress: false",
+		"vars.LEAPVIEW_SITE_DEPLOYMENT_MODE == 'kamal'",
+		"environment: leapview-site-production", "./.github/actions/oci-admission",
+		"expected-workflow: flidai/leapview/.github/workflows/site-image.yml",
+		"needs.publish.outputs.image_reference", "needs.publish.outputs.revision",
+		"deploy/kamal-site/deploy.py", "access-check", "rollback",
 	} {
 		requireContains(t, workflow, fragment)
 	}
-	for _, forbidden := range []string{
-		"autback", "SITE_SSH_PRIVATE_KEY", "HCLOUD_TOKEN", "ssh ", "scp ",
-		"docker build ", "Dockerfile.site",
-	} {
+	for _, forbidden := range []string{"ghcr.io/flidai/leapview-site:production", "rollback_desired_state", "HCLOUD_TOKEN"} {
 		if strings.Contains(workflow, forbidden) {
-			t.Errorf("public-site deployment workflow contains forbidden fragment %q", forbidden)
+			t.Errorf("retired path remains in workflow: %s", forbidden)
 		}
 	}
 }
@@ -422,11 +389,9 @@ func TestTaskExposesTheBoundedSiteDeployment(t *testing.T) {
 	taskfile := readFile(t, filepath.Join("..", "..", "Taskfile.yml"))
 	for _, fragment := range []string{
 		"site:deploy:",
-		"vars: [LEAPVIEW_SITE_IMAGE]",
-		"infisical run",
-		"--path /hetzner-site/operator",
-		"--projectId c52a0183-fc82-4614-b437-c237a889d79c",
-		"./scripts/deploy_site.sh",
+		"site:access-check:",
+		"gh workflow run site-deploy.yml --repo flidai/leapview --ref main -f operation=deploy",
+		"gh workflow run site-deploy.yml --repo flidai/leapview --ref main -f operation=access-check",
 	} {
 		requireContains(t, taskfile, fragment)
 	}

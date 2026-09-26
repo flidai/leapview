@@ -1,0 +1,121 @@
+{
+  "date": "2026-09-26",
+  "host": "app-leapview-site-01",
+  "scope": "approved temporary manual experiment; permanent migration and CI/CD deferred",
+  "kamal": "2.12.0",
+  "images": {
+    "a": {
+      "admission": {
+        "attestation": {
+          "repository": "flidai/leapview",
+          "sourceRevision": "b83767f8a5c6a2d158968e3458295ff50890e4c1",
+          "verified": true,
+          "workflow": "flidai/leapview/.github/workflows/site-kamal-trial.yml"
+        },
+        "digest": "sha256:8e653a743d65a8d90b2bbf65a620524c4d378f936f7754407c0a9fa09d3d8339",
+        "image": "ghcr.io/flidai/leapview-site-kamal-trial@sha256:8e653a743d65a8d90b2bbf65a620524c4d378f936f7754407c0a9fa09d3d8339",
+        "registryDigest": "sha256:8e653a743d65a8d90b2bbf65a620524c4d378f936f7754407c0a9fa09d3d8339",
+        "sbom": {
+          "discoverable": true,
+          "predicateType": "https://spdx.dev/Document/v2.3"
+        },
+        "schemaVersion": 1,
+        "vulnerabilityPolicy": {
+          "passed": true,
+          "scanner": "trivy",
+          "sha256": "a203e922b5e962c675d8c7f87b687daf72ca65a09c9089763b212663a501bcba"
+        }
+      },
+      "version": "trial-b83767f8a5c6a2d158968e3458295ff50890e4c1-36228605549-1",
+      "platform": "sha256:82d1a56548c833e354d20dab916bb8ddf994caade8222cf5529b44809c606e72",
+      "config": "sha256:80da043f2296636d4996b7268ae62e7c99dbf2471d3b2353ae3bde8f3d3acc3f"
+    },
+    "b": {
+      "admission": {
+        "attestation": {
+          "repository": "flidai/leapview",
+          "sourceRevision": "9786a0fd09f922e2e5da3f544bf9d2670d3d7019",
+          "verified": true,
+          "workflow": "flidai/leapview/.github/workflows/site-kamal-trial.yml"
+        },
+        "digest": "sha256:b60e9a9c1054b4d8071d655f03852d8032df038be3fe0204a53130377563de0c",
+        "image": "ghcr.io/flidai/leapview-site-kamal-trial@sha256:b60e9a9c1054b4d8071d655f03852d8032df038be3fe0204a53130377563de0c",
+        "registryDigest": "sha256:b60e9a9c1054b4d8071d655f03852d8032df038be3fe0204a53130377563de0c",
+        "sbom": {
+          "discoverable": true,
+          "predicateType": "https://spdx.dev/Document/v2.3"
+        },
+        "schemaVersion": 1,
+        "vulnerabilityPolicy": {
+          "passed": true,
+          "scanner": "trivy",
+          "sha256": "a203e922b5e962c675d8c7f87b687daf72ca65a09c9089763b212663a501bcba"
+        }
+      },
+      "version": "trial-9786a0fd09f922e2e5da3f544bf9d2670d3d7019-36230525487-1",
+      "platform": "sha256:dc8fec38a33edcf5b8527a9e8e11f9200554eacdf96fe2d3bfc3cc6c1699177e",
+      "config": "sha256:b97e35017b5ade9bbe60d155c1a06cf2d163a2872bae9b63cd6239a462b1e8af"
+    }
+  },
+  "checks": {
+    "public_cutover_a": true,
+    "unhealthy_b_rejected": true,
+    "a_survived_failure": true,
+    "healthy_b": true,
+    "local_rollback_a": true,
+    "restore_b": true,
+    "original_site_restored": true
+  },
+  "availability": {
+    "samples": 111,
+    "failed_samples": 4,
+    "duration_seconds": 67.86382699012756,
+    "failures": [
+      {
+        "at": 1790425603.9631011,
+        "ok": false,
+        "error": "<urlopen error [Errno 111] Connection refused>",
+        "elapsed": 0.07456469535827637
+      },
+      {
+        "at": 1790425604.5378563,
+        "ok": false,
+        "error": "<urlopen error [Errno 111] Connection refused>",
+        "elapsed": 0.036026954650878906
+      },
+      {
+        "at": 1790425667.5883765,
+        "ok": false,
+        "error": "<urlopen error [Errno 111] Connection refused>",
+        "elapsed": 0.0379030704498291
+      },
+      {
+        "at": 1790425668.1265604,
+        "ok": false,
+        "error": "<urlopen error [Errno 111] Connection refused>",
+        "elapsed": 0.03634786605834961
+      }
+    ]
+  },
+  "cleanup": {
+    "obsolete_image_identities_removed": 66,
+    "all_original_container_images_and_prior_preserved": true,
+    "free_bytes_after_legacy_cleanup": 34661191680
+  },
+  "retention_verified": true,
+  "limitations": [
+    "Temporary trial image cutover, not production image admission",
+    "Automated adapter not qualified",
+    "Remote registry login needs valid authentication",
+    "Caddy restart interruptions observed",
+    "Full local CI blocked by missing docker0 bridge"
+  ],
+  "final_host": {
+    "df": "Filesystem       1B-blocks       Used   Available Use% Mounted on\n/dev/sda1      39964635136 3614654464 34660798464  10% /\n",
+    "containers": "leapview-site-leapview-site-1 Up 10 days\nleapview-site-caddy-1 Up 4 minutes\n",
+    "images": "ghcr.io/flidai/leapview-site production 0d2d1ca0017b\nghcr.io/flidai/leapview-site <none> 5cd8309b8ece\ncaddy <none> 4c6e91c6ed0e\n",
+    "timer": "ActiveState=inactive\nUnitFileState=disabled\n",
+    "original_live_and_rollback_preserved": true,
+    "trial_runtime_removed": true
+  }
+}

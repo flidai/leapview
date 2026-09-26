@@ -1941,6 +1941,7 @@ tasks:
       - LEAPVIEW_TEST_CONTAINERS=1 go test ./internal/app/cli/composectl -run '^TestQualificationContainerRuntimeLifecycle$'
       - go test ./deploy/hetzner
       - go test ./deploy/hetzner-site
+      - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/kamal-site -p 'test_*.py'
       - terraform fmt -check -recursive deploy/hetzner
       - terraform -chdir=deploy/hetzner init -backend=false -input=false
       - terraform -chdir=deploy/hetzner validate
@@ -1951,16 +1952,14 @@ tasks:
       - terraform -chdir=deploy/hetzner-site test
 
   site:deploy:
-    desc: Bootstrap or recover pull-based deployment with an immutable public-site image
-    requires:
-      vars: [LEAPVIEW_SITE_IMAGE]
+    desc: Request the serialized, gated public-site deployment workflow
     cmds:
-      - >-
-        infisical run --silent
-        --env prod
-        --path /hetzner-site/operator
-        --projectId c52a0183-fc82-4614-b437-c237a889d79c
-        -- ./scripts/deploy_site.sh
+      - gh workflow run site-deploy.yml --repo flidai/leapview --ref main -f operation=deploy
+
+  site:access-check:
+    desc: Check private runner SSH access without changing the public-site host
+    cmds:
+      - gh workflow run site-deploy.yml --repo flidai/leapview --ref main -f operation=access-check
 
   node:audit:
     desc: Scan JavaScript dependencies for known vulnerabilities

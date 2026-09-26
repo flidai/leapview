@@ -16,7 +16,11 @@ creation-time bootstrap. The `bootstrap_site_image` value is only the image
 used to create a replacement server. Terraform ignores later cloud-init
 changes, so updating that value cannot replace the server or reserved IP.
 
-Routine image deployment is pull-based. The protected GitHub Actions workflow
+The existing, pre-migration host uses pull-based deployment. The replacement
+workflow and guarded migration are documented in [the Kamal integration](../kamal-site/README.md).
+Do not enable the replacement before its qualification and handover gates pass.
+
+Legacy deployment was pull-based. The protected GitHub Actions workflow
 builds and verifies the site image, then promotes that immutable manifest to the
 `ghcr.io/flidai/leapview-site:production` desired-state tag. A root-owned systemd
 timer on the origin resolves the tag to its immutable digest and invokes the
@@ -98,46 +102,19 @@ Configure required reviewers and prevent administrator bypass for the
 production environment. Protect `main` with the CI and merge-queue checks before
 enabling automatic promotion.
 
-### Bootstrap and break glass
+### Deployment controller migration
 
-The operator command installs or refreshes the root-owned reconciliation units
-and can directly activate an image from the canonical public GHCR package. Use
-it once to enable pull-based deployment on an origin created before the timer
-was added, and thereafter only for break-glass recovery:
+The old `scripts/deploy_site.sh` entrypoint is retired. Routine operator requests
+must use `task site:deploy`, which dispatches the same gated, serialized GitHub
+workflow as automatic main deployments. `task site:access-check` requests a
+read-only network/SSH inventory. See [the Kamal integration runbook](../kamal-site/README.md)
+for prerequisites, exact draft status and migration/rollback gates.
 
-```sh
-LEAPVIEW_SITE_IMAGE='ghcr.io/flidai/leapview-site@sha256:<digest>' task site:deploy
-```
-
-The task uses the authenticated Infisical CLI session to inject
-`prod:/hetzner-site/operator/SITE_SSH_PRIVATE_KEY`. The operator writes it to a
-mode-0600 temporary file for the duration of the command and removes it on
-exit. For break-glass operation, invoke `scripts/deploy_site.sh` directly and
-set `LEAPVIEW_SITE_SSH_KEY` to a readable identity file; without either input,
-the script falls back to `~/.ssh/leapview-site-production`.
-
-The reviewed, non-secret SSH host-key fingerprint is stored in
-`ssh-host-key.sha256`; change it only after verifying a deliberate server
-replacement against the Hetzner control plane.
-
-The operator command scans the presented host key into a temporary
-`known_hosts` file, requires the exact reviewed fingerprint, installs the
-versioned deployment scripts, and invokes the bounded server-side deploy
-command. The server serializes deployments, pulls the candidate before changing
-the active environment, retains a rollback snapshot, and restores and
-re-qualifies the previous image if the candidate fails. Finally, the operator
-checks the server's recorded digest, public health and readiness routes, and
-the `www` redirect.
-
-The reconciliation service records a failed desired digest and does not retry
-that same candidate every minute. A later promotion clears that suppression.
-If hosted activation does not converge, the workflow restores the previous
-desired-state digest while the server-side deployment command restores and
-re-qualifies the active image.
-
-Successful and failed deployment decisions are appended to root-readable
-`/opt/leapview-site/deployment-history.tsv`. Rollback environment snapshots are
-retained as `/opt/leapview-site/deployment.env.rollback.*`.
+The installed legacy controller continues operating until the explicit handover.
+Its history and rollback environment snapshots must be retained during migration.
+The reviewed non-secret SSH host-key fingerprint remains in
+`ssh-host-key.sha256`; verify any intentional replacement against the provider
+control plane before changing it.
 
 ## Break-glass destruction
 

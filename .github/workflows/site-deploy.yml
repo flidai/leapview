@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Deploy an admitted main image, or test private SSH without host changes
+        type: choice
+        default: deploy
+        options: [deploy, access-check, rollback]
 
 permissions:
   contents: read
@@ -15,7 +21,7 @@ concurrency:
 jobs:
   publish:
     name: Publish verified site image
-    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && inputs.operation != 'access-check' && inputs.operation != 'rollback'
     permissions:
       contents: read
       packages: write
@@ -23,106 +29,90 @@ jobs:
       id-token: write
     uses: ./.github/workflows/site-image.yml
 
-  promote:
-    name: Promote and verify production
-    needs: publish
+  access:
+    name: Read-only private SSH check
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && inputs.operation == 'access-check'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
+    environment: leapview-site-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/site-ssh
+        with:
+          tailscale-client-id: ${{ vars.SITE_TS_CLIENT_ID }}
+          tailscale-audience: ${{ vars.SITE_TS_AUDIENCE }}
+          ssh-private-key: ${{ secrets.SITE_SSH_PRIVATE_KEY }}
+          infisical-identity-id: ${{ vars.SITE_INFISICAL_IDENTITY_ID }}
+      - name: Verify host key and inspect runtime without mutation
+        run: python3 -B deploy/kamal-site/deploy.py access-check
+      - name: Remove temporary SSH identity
+        if: always()
+        run: python3 -c 'import os,pathlib; (pathlib.Path(os.environ["RUNNER_TEMP"])/"site-ssh-identity").unlink(missing_ok=True)'
+
+  activate:
+    name: Activate admitted image through Kamal
+    needs: publish
+    if: always() && vars.LEAPVIEW_SITE_DEPLOYMENT_MODE == 'kamal' && github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && (needs.publish.result == 'success' || inputs.operation == 'rollback')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     environment: leapview-site-production
     permissions:
       contents: read
       packages: write
       attestations: read
-
+      id-token: write
+    env:
+      LEAPVIEW_SITE_DEPLOYMENT_MODE: ${{ vars.LEAPVIEW_SITE_DEPLOYMENT_MODE }}
+      BUNDLE_GEMFILE: deploy/kamal-site/Gemfile
     steps:
       - name: Check out the published revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.publish.outputs.revision }}
+          ref: ${{ needs.publish.outputs.revision || github.sha }}
           fetch-depth: 0
-
       - name: Reject a superseded candidate
+        if: inputs.operation != 'rollback'
         env:
           REVISION: ${{ needs.publish.outputs.revision }}
         run: |
           git fetch --no-tags origin main
           test "$(git rev-parse FETCH_HEAD)" = "$REVISION"
-
-      - name: Set up Buildx
+      - if: inputs.operation != 'rollback'
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-
-      - name: Log in to GHCR
+      - if: inputs.operation != 'rollback'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Re-admit the exact public-site image before promotion
-        id: admission
+      - name: Re-admit the exact production image
+        if: inputs.operation != 'rollback'
         uses: ./.github/actions/oci-admission
         with:
           image: ${{ needs.publish.outputs.image_reference }}
           repository: ghcr.io/flidai/leapview-site
           expected-workflow: flidai/leapview/.github/workflows/site-image.yml
           source-revision: ${{ needs.publish.outputs.revision }}
-
-      - name: Promote the verified digest and await activation
+          output: ${{ runner.temp }}/site-admission.json
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
+        with:
+          ruby-version: '3.3.8'
+          bundler: '2.6.9'
+          bundler-cache: true
+      - uses: ./.github/actions/site-ssh
+        with:
+          tailscale-client-id: ${{ vars.SITE_TS_CLIENT_ID }}
+          tailscale-audience: ${{ vars.SITE_TS_AUDIENCE }}
+          ssh-private-key: ${{ secrets.SITE_SSH_PRIVATE_KEY }}
+          infisical-identity-id: ${{ vars.SITE_INFISICAL_IDENTITY_ID }}
+      - name: Verify handover and capacity, deploy, accept, then clean up
         env:
-          IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
-          IMAGE_DIGEST: ${{ steps.admission.outputs.digest }}
-          REVISION: ${{ needs.publish.outputs.revision }}
-          PRODUCTION_TAG: ghcr.io/flidai/leapview-site:production
-        run: |
-          set -euo pipefail
-
-          previous_reference=""
-          if docker buildx imagetools inspect "$PRODUCTION_TAG" >/dev/null 2>&1; then
-            previous_digest="sha256:$(docker buildx imagetools inspect --raw "$PRODUCTION_TAG" | sha256sum | awk '{print $1}')"
-            previous_reference="ghcr.io/flidai/leapview-site@${previous_digest}"
-          fi
-
-          promotion_changed=false
-          rollback_desired_state() {
-            status=$?
-            trap - ERR
-            if [[ "$promotion_changed" == true && -n "$previous_reference" ]]; then
-              echo "Activation failed; restoring desired state to $previous_reference" >&2
-              docker buildx imagetools create --tag "$PRODUCTION_TAG" "$previous_reference"
-            fi
-            exit "$status"
-          }
-          trap rollback_desired_state ERR
-
-          docker buildx imagetools create --tag "$PRODUCTION_TAG" "$IMAGE_REFERENCE"
-          promotion_changed=true
-          promoted_digest="sha256:$(docker buildx imagetools inspect --raw "$PRODUCTION_TAG" | sha256sum | awk '{print $1}')"
-          test "$promoted_digest" = "$IMAGE_DIGEST"
-
-          activated=false
-          for _ in $(seq 1 90); do
-            if curl --fail --silent --show-error --max-time 10 https://leapview.dev/build.json > deployed-build.json &&
-              jq --exit-status \
-                --arg revision "$REVISION" \
-                --arg image "$IMAGE_REFERENCE" \
-                '.schemaVersion == 1 and .revision == $revision and .image == $image' \
-                deployed-build.json >/dev/null &&
-              curl --fail --silent --show-error --max-time 10 https://leapview.dev/healthz >/dev/null &&
-              curl --fail --silent --show-error --max-time 10 https://leapview.dev/readyz >/dev/null; then
-              activated=true
-              break
-            fi
-            sleep 5
-          done
-          test "$activated" = true
-          trap - ERR
-
-          {
-            echo "### Public site deployed"
-            echo
-            echo "- Revision: \`$REVISION\`"
-            echo "- Image: \`$IMAGE_REFERENCE\`"
-            if [[ -n "$previous_reference" ]]; then
-              echo "- Previous desired image: \`$previous_reference\`"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          ADMISSION_FILE: ${{ runner.temp }}/site-admission.json
+          OPERATION: ${{ inputs.operation || 'deploy' }}
+        run: python3 -B deploy/kamal-site/deploy.py "$OPERATION" --admission "$ADMISSION_FILE"
+      - name: Remove temporary SSH identity
+        if: always()
+        run: python3 -c 'import os,pathlib; (pathlib.Path(os.environ["RUNNER_TEMP"])/"site-ssh-identity").unlink(missing_ok=True)'
