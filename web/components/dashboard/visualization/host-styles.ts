@@ -32,7 +32,7 @@ export const visualizationHostStyles = css`
     background: var(--lv-chart-surface);
     container-type: inline-size;
   }
-  :host(:not([slot='focus-visual'])) .lv-kpi-card[data-mode='compact'] {
+  :host(:not([slot='focus-visual'])) .lv-kpi-card[data-mode='compact'][data-layout='wide'] {
     align-content: start;
     padding-block-start: var(--base-size-32);
   }
