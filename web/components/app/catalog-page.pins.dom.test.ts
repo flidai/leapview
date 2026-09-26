@@ -15,7 +15,7 @@ beforeAll(async () => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/' || url.pathname === '/many') {
       response.setHeader('content-type', 'text/html')
-      response.end(testDocument(url.pathname === '/many' ? 8 : 0))
+      response.end(testDocument(url.pathname === '/many' ? 8 : 0, url.pathname === '/many'))
       return
     }
     const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
@@ -130,11 +130,7 @@ test('eight dashboard copies keep favorites and pins independent across catalog 
   const mark = (step: string) => console.log(`[catalog pin stress] ${step}`)
   try {
     mark('page ready')
-    await page.addInitScript(() => {
-      localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['sales-copy-1', 'sales-copy-8']))
-      localStorage.setItem('leapview.dashboard-catalog.pins.v1', JSON.stringify(Array.from({ length: 8 }, (_, index) => `sales-copy-${index + 1}`)))
-    })
-    await page.goto(`${baseURL}/many`)
+    await page.goto(`${baseURL}/many`, { waitUntil: 'domcontentloaded', timeout: 8_000 })
     mark('fixture loaded')
     const catalog = page.locator('lv-catalog-page')
     const pinned = catalog.locator('.pinned-dashboards')

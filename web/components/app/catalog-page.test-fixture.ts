@@ -1,6 +1,6 @@
 import { typographyTestTokens } from '../test-typography-tokens'
 
-export function testDocument(dashboardCopies = 0): string {
+export function testDocument(dashboardCopies = 0, preloadPins = false): string {
   const page = {
     kind: 'catalog',
     title: 'Dashboards',
@@ -94,6 +94,10 @@ export function testDocument(dashboardCopies = 0): string {
         </style>
       </head>
       <body>
+        ${preloadPins ? `<script>
+          localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['sales-copy-1', 'sales-copy-8']))
+          localStorage.setItem('leapview.dashboard-catalog.pins.v1', JSON.stringify(Array.from({ length: 8 }, (_, index) => \`sales-copy-\${index + 1}\`)))
+        </script>` : ''}
         <main data-signals="${escapeHTML(JSON.stringify({ page, chrome: { sidebar: { userName: 'Jacob Nielsen', userAvatarUrl: '/profile/avatars/jacob/avatar-digest' } } }))}">
           <lv-catalog-page></lv-catalog-page>
         </main>
