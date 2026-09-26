@@ -1814,6 +1814,28 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       font: var(--lv-type-caption);
     }
 
+    .visual-field-help {
+      display: grid;
+      gap: var(--base-size-4);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+    }
+
+    .visual-field-help button {
+      width: fit-content;
+      padding: 0;
+      border: 0;
+      color: var(--lv-fg-accent);
+      background: none;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .visual-field-help button:hover,
+    .visual-field-help button:focus-visible {
+      text-decoration: underline;
+    }
+
     .property-heading {
       display: flex;
       min-width: 0;
@@ -4014,13 +4036,28 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const requirements = visualTypeSwitchPending ? [] : this.visualRequirementMessages(visual)
     const previewIssue = visualTypeSwitchPending ? '' : this.visualPreviewErrorMessage(visual)
     const ready = !visualTypeSwitchPending && requirements.length === 0 && !previewIssue
+    const heatmapNeedsFields = this.visualTypeForRender(visual) === 'heatmap' && requirements.length > 0
     return html`
       <section class="property-group" aria-label="Field wells">
         <div class="property-heading"><span class="property-label">Fields</span></div>
         ${ready ? nothing : html`<div class="visual-requirements" role="status"><span>${visualTypeSwitchPending ? `Updating ${this.visualLabel(this.visualTypeForRender(visual)).toLowerCase()} preview…` : requirements.length > 0 ? this.visualRequirementSummary(requirements) : previewIssue}</span></div>`}
+        ${heatmapNeedsFields ? html`<div class="visual-field-help"><span>Click two dimensions in Data: first sets X, second sets Y. Then select Measures and click one for color. You can also drag fields into the wells.</span><button type="button" @click=${this.focusDataPane}>Browse data fields</button></div>` : nothing}
         <div class="field-wells">${roles.map((role) => this.renderFieldWell(visual, role))}</div>
       </section>
     `
+  }
+
+  private readonly focusDataPane = async (): Promise<void> => {
+    this.fieldQuery = ''
+    this.fieldFilter = 'dimension'
+    if (this.collapsedPanes.data) {
+      this.collapsedPanes = { ...this.collapsedPanes, data: false }
+      this.persistCollapsedPanes()
+    }
+    await this.updateComplete
+    const search = this.shadowRoot?.querySelector<HTMLInputElement>('.data-pane input[aria-label="Search fields"]')
+    search?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    search?.focus()
   }
 
   private renderVisualQueryControls(visual: DashboardBuilderVisualSignal) {
@@ -4232,15 +4269,17 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private renderFieldWell(visual: DashboardBuilderVisualSignal, role: BuilderFieldRole) {
     const slots = visual.slots.filter((slot) => this.slotRole(slot) === role)
     const label = this.fieldWellLabel(visual, role)
+    const heatmapAxis = this.visualTypeForRender(visual) === 'heatmap' && role === 'dimension' && slots.length < 2
     const draggedField = this.draggedFieldFromBuilder(this.builder)
     const fieldDrop = draggedField ? (this.fieldCompatibleWithRole(draggedField, role) && this.roleHasCapacity(visual, role) ? 'compatible' : 'incompatible') : ''
     return html`
       <section class="field-well">
         <div class="field-well-label"><span>${label}</span>${slots.length > 0 ? html`<span>${slots.length}</span>` : nothing}</div>
         <div class="field-well-target" data-drop-well=${role} data-field-drop=${fieldDrop || nothing} tabindex="0" aria-label=${`Drop ${role} field in ${label}`} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnRole(event, role)}>
-          ${slots.length === 0
-            ? html`<span class="empty-well">Drop ${role === 'metric' ? 'a measure' : role === 'detail' ? 'a column' : 'a dimension'}</span>`
-            : slots.map((slot, index) => this.renderFieldToken(visual, role, slot, index, slots.length))}
+          ${slots.map((slot, index) => this.renderFieldToken(visual, role, slot, index, slots.length))}
+          ${slots.length === 0 || heatmapAxis
+            ? html`<span class="empty-well">${heatmapAxis ? `Drop ${slots.length === 0 ? 'X' : 'Y'} dimension` : `Drop ${role === 'metric' ? 'a measure' : role === 'detail' ? 'a column' : 'a dimension'}`}</span>`
+            : nothing}
         </div>
       </section>
     `
@@ -4677,6 +4716,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (type === 'map') return role === 'dimension' ? 'Dimensions' : 'Measures'
     if (type === 'kpi') return 'Value'
     if (type === 'matrix' || type === 'pivot') return role === 'dimension' ? 'Rows / Columns' : 'Values'
+    if (type === 'heatmap') return role === 'dimension' ? 'Dimensions (X then Y)' : 'Color value'
     if (['pie', 'donut', 'funnel', 'treemap', 'sunburst'].includes(type)) return role === 'dimension' ? 'Category' : 'Values'
     const horizontal = type === 'bar'
     if (role === 'dimension') return horizontal ? 'Y-axis' : 'X-axis'
@@ -4959,7 +4999,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.visualType = type
     this.visualActionMessage = `Adding a ${this.visualLabel(type, builder)} visual${measure ? ` for ${measure.label}` : ''}.`
     this.emitCommand('add_visual', {
-      pageId: page.id, visualId: '', componentId: '', type, title: measure?.label ?? '',
+      pageId: page.id, visualId: '', componentId: '', type, title: measure?.label ?? this.visualLabel(type, builder),
       ...(measure ? { fieldId: measure.id, role: 'metric' } : {}),
     })
   }
