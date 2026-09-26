@@ -480,9 +480,29 @@ func bootstrapPolicyGrants(ctx context.Context, client *accessgen.GenClient, pol
 		if err != nil {
 			return nil, err
 		}
-		grant := access.AuthorizationGrant{ID: item.Id, Resource: resource, Subject: access.SubjectRef{Kind: access.SubjectKind(item.SubjectType), ID: item.SubjectId}, Capability: access.Capability(item.Capability)}
+		grant := access.AuthorizationGrant{ID: item.Id, Resource: resource, Subject: access.SubjectRef{Kind: access.SubjectKind(item.SubjectType), ID: item.SubjectId}}
 		if item.Name != nil {
 			grant.Name = *item.Name
+		}
+		if item.PermissionProfile != nil || item.Permissions != nil {
+			if item.PermissionProfile == nil || item.Permissions == nil || item.Capability != nil {
+				return nil, errors.New("typed grant response has mixed or incomplete permission fields")
+			}
+			encoded, err := json.Marshal(*item.Permissions)
+			if err != nil {
+				return nil, err
+			}
+			permissions, err := access.DecodePermissionPairs(encoded)
+			if err != nil {
+				return nil, err
+			}
+			grant.PermissionProfile = string(*item.PermissionProfile)
+			grant.Permissions = permissions
+		} else {
+			if item.Capability == nil {
+				return nil, errors.New("legacy grant response is missing its capability")
+			}
+			grant.Capability = access.Capability(*item.Capability)
 		}
 		if err := access.ValidateAuthorizationGrant(grant); err != nil {
 			return nil, err

@@ -85,6 +85,29 @@ func CompileAuthorizationSnapshot(identity graph.ServingIdentity, project graph.
 		if err != nil {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q resource: %w", id, err)
 		}
+		if authored.PermissionProfile != "" || authored.Permissions != nil {
+			subject, err := canonicalSubject(authored.Subject)
+			if err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q subject: %w", id, err)
+			}
+			authorizationGrant := access.AuthorizationGrant{
+				ID: id, Name: authored.Name, Subject: subject, Resource: resource,
+				Capability:        access.Capability(authored.Capability),
+				PermissionProfile: authored.PermissionProfile, Permissions: access.ClonePermissionPairs(authored.Permissions),
+			}
+			if err := authorizationGrant.ValidateAgainst(project); err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q typed target: %w", id, err)
+			}
+			grant, err := accesssnapshot.NewTypedGrant(id, authored.Name, subject, authored.Permissions)
+			if err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q typed permissions: %w", id, err)
+			}
+			if grant.PermissionProfile != authored.PermissionProfile {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q has a mismatched permission profile", id)
+			}
+			grants = append(grants, grant)
+			continue
+		}
 		subject, err := canonicalSubject(authored.Subject)
 		if err != nil {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q subject: %w", id, err)

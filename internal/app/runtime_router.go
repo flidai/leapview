@@ -1771,7 +1771,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return state, nil
 			},
-			RoleBindingMutation: routes.accessModule.ApplyRoleBindingAdministration,
+			RoleBindingAdministrationForRequest: routes.accessModule.RoleBindingAdministrationForRequest,
+			RoleBindingProjectID:                routes.accessModule.RoleBindingProjectID,
+			RoleBindingMutation:                 routes.accessModule.ApplyRoleBindingAdministration,
 			AuthorizeTypedDashboardAction: func(ctx context.Context, principalID string, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, error) {
 				return authorizeTypedDashboardAction(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, dashboardID, action)
 			},
@@ -1999,6 +2001,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		return fmt.Errorf("build APIGen authorizer: %w", err)
 	}
 	if claimReader := moduleWorkflow.deploymentConfig.ProjectClaims; claimReader != nil {
+		configureInitialReviewerBootstrap(routes.accessModule, claimReader, runtimeConfig.DeliveryTargetReader, runtimeConfig.InstanceID, policy.defaultEnvironment)
 		routes.accessModule.SetProjectClaimResolver(func(ctx context.Context) (string, string, error) {
 			claim, err := claimReader.GetProjectClaim(ctx)
 			if err != nil {

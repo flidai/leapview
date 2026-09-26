@@ -1791,11 +1791,19 @@ CREATE TABLE IF NOT EXISTS access.authorization_policy_grant (
     subject_id text NOT NULL CHECK (subject_id = btrim(subject_id) AND length(subject_id) BETWEEN 1 AND 255),
     resource_id text NOT NULL CHECK (resource_id = btrim(resource_id) AND length(resource_id) BETWEEN 1 AND 255),
     resource_kind text NOT NULL CHECK (resource_kind IN ('project','connection','source','model','semantic_model','pipeline','dashboard')),
-    capability text NOT NULL CHECK (capability IN ('RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH','PROJECT_ADMIN')),
+    capability text CHECK (capability IN ('RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH','PROJECT_ADMIN')),
+    permission_profile text,
+    permissions jsonb,
     name text NOT NULL DEFAULT '' CHECK (length(name)<=255),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (target_id, project_id, environment, revision, id),
     UNIQUE (target_id, project_id, environment, revision, subject_kind, subject_id, resource_kind, resource_id, capability),
+    CHECK (
+        (permission_profile IS NULL AND permissions IS NULL AND capability IS NOT NULL)
+        OR
+        (permission_profile IS NOT NULL AND permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL
+         AND jsonb_typeof(permissions) = 'array' AND permissions <> '[]'::jsonb AND capability IS NULL)
+    ),
     FOREIGN KEY (target_id, project_id, environment, revision)
         REFERENCES access.authorization_policy_revision(target_id, project_id, environment, revision)
         ON DELETE RESTRICT

@@ -98,3 +98,91 @@ func TestTargetGrantPolicyAllowsOnlySpecifiedDashboard(t *testing.T) {
 		t.Fatal("unknown dashboard admitted")
 	}
 }
+
+func TestAccessPolicyProjectionAndCompilationPreserveTypedExactGrant(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	resource, err := access.NewResourceRef("dashboard_main", projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := access.NewExactPermissionPair(access.ActionDashboardRead, projectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal-demo"}
+	grant := access.AuthorizationGrant{
+		ID: "typed-dashboard-read", Name: "Exact dashboard reader", Subject: subject, Resource: resource,
+		PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{permission},
+	}
+	policy, err := AccessPolicyFromAuthorizationPolicy(access.AuthorizationPolicy{
+		Scope:  access.AuthorizationPolicyScope{TargetID: "target-demo", ProjectID: projectID.String(), Environment: "production"},
+		Grants: []access.AuthorizationGrant{grant},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected := policy.Grants[grant.ID]
+	if projected.Capability != "" || projected.Object.ID != string(resource.ID()) || projected.Object.Kind != string(resource.Kind()) ||
+		projected.PermissionProfile != access.PermissionCatalogProfile || len(projected.Permissions) != 1 || projected.Permissions[0] != permission {
+		t.Fatalf("typed project manifest grant = %#v", projected)
+	}
+	grant.Permissions[0] = access.PermissionPair{}
+	if policy.Grants[grant.ID].Permissions[0] != permission {
+		t.Fatal("manifest projection retained the mutable permission slice")
+	}
+	snapshot, err := CompileAuthorizationSnapshot(compileTestIdentity(), compileTestGraph(t), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled := snapshot.Grants()
+	if len(compiled) != 1 || compiled[0].PermissionProfile != access.PermissionCatalogProfile || len(compiled[0].Permissions) != 1 || compiled[0].Permissions[0] != permission {
+		t.Fatalf("compiled typed grants = %#v", compiled)
+	}
+	allowed, err := snapshot.AllowsTyped(subject, permission)
+	if err != nil || !allowed {
+		t.Fatalf("typed exact permission allowed=%v err=%v", allowed, err)
+	}
+	updateDashboard, err := access.NewExactPermissionPair(access.ActionDashboardUpdate, projectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed, err = snapshot.AllowsTyped(subject, updateDashboard)
+	if err != nil || allowed {
+		t.Fatalf("ungranted dashboard update allowed=%v err=%v", allowed, err)
+	}
+}
+
+func TestCompileAuthorizationSnapshotRejectsInvalidTypedGrantCombinations(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	resource, err := access.NewResourceRef("dashboard_main", projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal-demo"}
+	makePolicy := func(pair access.PermissionPair, capability string) AccessPolicy {
+		return AccessPolicy{Grants: map[string]Grant{"typed-dashboard-read": {
+			ID: "typed-dashboard-read", Name: "Exact dashboard reader",
+			Object:  SecurableRef{Kind: string(resource.Kind()), ID: string(resource.ID())},
+			Subject: Subject{Kind: string(subject.Kind), PrincipalID: subject.ID}, Capability: capability,
+			PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{pair},
+		}}}
+	}
+
+	validPair, err := access.NewExactPermissionPair(access.ActionDashboardRead, projectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mixed := makePolicy(validPair, string(access.CapabilityResourceRead))
+	if _, err := CompileAuthorizationSnapshot(compileTestIdentity(), compileTestGraph(t), mixed); err == nil {
+		t.Fatal("compiled a typed grant that also carries a legacy capability")
+	}
+
+	foreignPair, err := access.NewExactPermissionPair(access.ActionDashboardRead, projectgraph.ResourceID("project_other"), resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := makePolicy(foreignPair, "")
+	if _, err := CompileAuthorizationSnapshot(compileTestIdentity(), compileTestGraph(t), foreign); err == nil {
+		t.Fatal("compiled a typed grant whose exact permission belongs to another project")
+	}
+}

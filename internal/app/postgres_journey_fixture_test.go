@@ -24,6 +24,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	apprefreshpostgres "github.com/flidai/leapview/internal/app/refreshpostgres"
@@ -298,6 +299,9 @@ func (f *PostgresJourneyFixture) assembleRoutes(t *testing.T, options PostgresJo
 		ProjectIDResolver:       func(context.Context) (projectgraph.ResourceID, error) { return options.ProjectID, nil },
 		ServingSnapshotResolver: options.ServingSnapshotResolver,
 		InstanceID:              options.TargetID, DefaultEnvironment: "prod", AllowDevAuthBypass: true,
+	}
+	if options.ProjectClaimBootstrap {
+		runtimeConfig.DeliveryTargetReader = appdeploymentpostgres.NewTargetReader(f.Graph.DeploymentRepository)
 	}
 	if runtimeConfig.ServingSnapshotResolver == nil {
 		runtimeConfig.ServingSnapshotResolver = func(context.Context) (string, error) {

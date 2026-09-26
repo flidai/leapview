@@ -53,6 +53,29 @@ New local passwords must contain at least 12 Unicode characters and no more than
 
 Do not place temporary passwords in tickets, chat rooms, shell history, deployment output retained broadly, or automation variables. If delivery is uncertain, reset the password instead of forwarding the same value again.
 
+## Prepare the first independent reviewer
+
+A protected target needs a reviewer before its first publication. After claiming the project and changing the initial password, the original claiming administrator can use Admin / Users to assign **Release approver** to a different active user. Do this before inspecting or building the candidate so its immutable authorization snapshot includes that reviewer.
+
+This initial nomination is available only through the claiming administrator's authenticated browser session, while the canonical owner binding remains present and the target has no active publication. It can grant only the exact Release approver role to another user. API tokens, other platform administrators, self-nomination, group assignments and broader roles do not receive this authority. The owner does not acquire approval permission.
+
+Nomination uses the normal short-lived grant administration envelope, policy revision check and audited role-binding mutation. A PostgreSQL target lock serializes it with first activation, including on a target that has not yet created its first plan. After activation, ordinary current-project grant authority applies. The reviewer signs in, changes their temporary password and approves the exact candidate with a separately scoped credential; independent approval is still required.
+
+### Stage an explicit workload grant
+
+The default owner and publisher roles do not include pipeline execution. An installation operator with local control-plane access can stage an exact resource grant when a workload requires that additional authority:
+
+```sh
+leapview admin access stage-grant \
+  --project project:example --id refresh-orders \
+  --principal PRINCIPAL_ID --kind pipeline --resource pipeline:orders \
+  --action pipeline.run --expected-revision 4 --operation-id refresh-orders-v1
+```
+
+The command previews by default. Add `--apply` to persist the grant and its audit event together. It checks the immutable Project claim, bound environment, active recipient, and expected policy revision. Reuse the operation ID only for an identical retry. The command accepts exact, delegable resource actions; it cannot create project-wide or future-resource grants, and it does not impersonate an application user or issue a credential.
+
+Staging changes only the target-owned policy. Plan and publish a candidate with that policy revision, obtain independent approval, and activate it before the grant becomes runtime authority. Admission verifies the resource against the candidate's graph. After activation, the recipient may issue a token limited to that exact permission. Existing grants retain their recorded representation; legacy capabilities do not implicitly become typed permissions.
+
 ## Reset access
 
 Use `POST /api/v1/principals/{principal}/password-reset` to issue a new temporary credential. LeapView never reveals the previous password. A reset forces a password change, revokes interactive sessions, and produces an audit event.

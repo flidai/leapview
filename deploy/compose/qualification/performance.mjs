@@ -2,6 +2,7 @@ import { chromium } from 'playwright'
 import { readFile, writeFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import process from 'node:process'
+import { dashboardRevisionSettled } from './performance-status.mjs'
 
 const baseURL = process.env.QUALIFICATION_URL || 'https://localhost'
 const projectID = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
@@ -111,16 +112,16 @@ async function runWorkload(path) {
     for (let index = 0; index < policy.assumptions.samples.filterInteractions; index += 1) {
       const value = filterValues[index % filterValues.length]
       if (index > 0) {
-        const resetGeneration = await dashboardGeneration(page)
+        const resetRevision = await dashboardFilterRevision(page)
         await page.getByRole('button', { name: 'Clear State', exact: true }).click()
-        await waitForDashboardGeneration(page, resetGeneration, 30_000)
+        await waitForDashboardRevision(page, resetRevision, 30_000)
       }
-      const generation = await dashboardGeneration(page)
+      const filterRevision = await dashboardFilterRevision(page)
       const startedAt = performance.now()
       await filter.click()
       const options = page.getByRole('dialog', { name: 'State filter options', exact: true })
       await options.getByRole('checkbox', { name: value, exact: true }).check()
-      await waitForDashboardGeneration(page, generation, 30_000)
+      await waitForDashboardRevision(page, filterRevision, 30_000)
       await page.keyboard.press('Escape')
       await options.waitFor({ state: 'hidden', timeout: 30_000 })
       await table.locator('.row:not(.skeleton-row) button.cell-action').first().waitFor({ state: 'visible', timeout: 30_000 })
@@ -293,15 +294,61 @@ async function waitForDashboardIdle(page, timeoutMs) {
   )
 }
 
-async function dashboardGeneration(page) {
-  return page.locator('lv-dashboard-page').evaluate((element) => Number(element.status?.generation || 0))
+async function dashboardFilterRevision(page) {
+  return page.locator('lv-dashboard-page').evaluate((element) =>
+    Number(element.signal('filterState', {}).revision || 0))
 }
 
-async function waitForDashboardGeneration(page, previous, timeoutMs) {
-  await waitForDashboardStatus(
-    page,
-    (status) => status.generation > previous && !status.loading,
-    timeoutMs,
+async function dashboardRefreshSnapshot(page) {
+  return page.locator('lv-dashboard-page').evaluate((element) => {
+    const status = element.status || {}
+    const filterState = element.signal('filterState', {})
+    const visuals = element.signal('visuals', {})
+    return {
+      filterRevision: Number(filterState.revision || 0),
+      status: {
+        generation: Number(status.generation || 0),
+        loading: Boolean(status.loading),
+        refreshId: String(status.refreshId || ''),
+        error: String(status.error || ''),
+      },
+      visuals: Object.fromEntries(Object.entries(visuals).map(([id, visual]) => [id, {
+        filterRevision: Number(visual?.filterRevision || 0),
+        streamGeneration: Number(visual?.streamGeneration || 0),
+        status: String(visual?.status?.kind || ''),
+      }])),
+    }
+  })
+}
+
+async function waitForDashboardRevision(page, previousRevision, timeoutMs) {
+  const expectedRevision = previousRevision + 1
+  const deadline = Date.now() + timeoutMs
+  let lastSnapshot = null
+  while (Date.now() < deadline) {
+    lastSnapshot = await dashboardRefreshSnapshot(page)
+    if (lastSnapshot.filterRevision > expectedRevision) {
+      throw new Error(
+        `dashboard filter revision advanced from ${previousRevision} to ${lastSnapshot.filterRevision}; expected ${expectedRevision}`,
+      )
+    }
+    if (lastSnapshot.filterRevision === expectedRevision) {
+      if (lastSnapshot.status.error) {
+        throw new Error(`dashboard refresh failed at filter revision ${expectedRevision}: ${lastSnapshot.status.error}`)
+      }
+      const visualErrors = Object.entries(lastSnapshot.visuals)
+        .filter(([, visual]) => visual.status === 'error')
+        .map(([id]) => id)
+      if (visualErrors.length > 0) {
+        throw new Error(`dashboard refresh failed for visuals at filter revision ${expectedRevision}: ${visualErrors.join(', ')}`)
+      }
+      if (dashboardRevisionSettled(lastSnapshot, expectedRevision)) return lastSnapshot
+    }
+    await page.waitForTimeout(25)
+  }
+  const observed = lastSnapshot ? JSON.stringify(lastSnapshot) : 'no dashboard signal snapshot'
+  throw new Error(
+    `timed out after ${timeoutMs}ms waiting for dashboard filter revision ${expectedRevision} to settle; observed ${observed}`,
   )
 }
 

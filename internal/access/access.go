@@ -202,7 +202,7 @@ func AuthorizationPolicyDigest(scope AuthorizationPolicyScope, bindings []RoleBi
 		}
 		seenSubjectRole[key] = struct{}{}
 	}
-	canonicalGrants, err := canonicalAuthorizationGrants(grants)
+	canonicalGrants, err := canonicalAuthorizationGrants(scope, grants)
 	if err != nil {
 		return "", err
 	}

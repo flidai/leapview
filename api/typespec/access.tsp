@@ -630,9 +630,40 @@ model TargetGrantCreateRequest extends GrantRequest {
   expectedRevision: int64;
 }
 
-model TargetGrantResponse extends GrantRequest {
+@example(#{
+  id: "sales-dashboard-reader",
+  name: "Sales dashboard reader",
+  resourceKind: ResourceKind.dashboardKind,
+  resourceId: "dashboard:sales",
+  subjectType: "principal",
+  subjectId: "principal:analyst",
+  permissionProfile: PermissionCatalogProfile.v1,
+  permissions: #[#{
+    action: PermissionAction.dashboardRead,
+    profile: PermissionCatalogProfile.v1,
+    target: #{
+      scope: PermissionScope.resource,
+      projectId: "project:analytics",
+      resourceKind: ResourceKind.dashboardKind,
+      resourceId: "dashboard:sales",
+    },
+  }],
+  policyRevision: 4,
+  policyDigest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+})
+/** Each response uses either legacy capability or typed permission fields, never both. */
+model TargetGrantResponse {
   id: string;
   name?: string;
+  resourceKind: ResourceKind;
+  resourceId: ResourceId;
+  subjectType: string;
+  subjectId: string;
+  /** Legacy capability grants include this field; typed grants omit it. */
+  capability?: Capability;
+  /** Typed exact grants include this profile and the persisted action-target pairs. */
+  permissionProfile?: PermissionCatalogProfile;
+  permissions?: PermissionPair[];
   policyRevision: int64;
   policyDigest: string;
 }
