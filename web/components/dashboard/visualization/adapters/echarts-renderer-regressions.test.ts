@@ -220,3 +220,39 @@ test('ECharts tree survives empty, loaded, and cleared data frames', () => {
     } finally { chart.dispose() }
   }
 })
+
+test('a single-category tree shows its value without an artificial parent or connector', () => {
+  const envelope = hierarchyFixture('tree') as any
+  envelope.dataState.datasets[0].rows = [['Base', null, '15743364.25']]
+  for (const orientation of ['vertical', 'horizontal'] as const) {
+    envelope.spec.presentation.orientation = orientation
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    expect(option.series[0].data).toHaveLength(1)
+    expect(option.series[0].data[0].name).toBe('Base')
+    expect(option.series[0].label.formatter({ data: option.series[0].data[0] })).toContain('15743364.25')
+    for (const [width, height] of [[320, 240], [1200, 720]] as const) {
+      const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+      try {
+        chart.setOption({ ...option, animation: false })
+        const svg = chart.renderToSVGString()
+        expect(svg).toContain('Base')
+        expect(svg).toContain('15743364.25')
+        expect(svg).not.toContain('>All</text>')
+        const labels = chart.getZr().storage.getDisplayList()
+          .filter((item: any) => item.type === 'tspan' && ['Base', '15743364.25'].includes(item.style?.text))
+        expect(labels).toHaveLength(2)
+        const bounds = labels.map((item: any) => {
+          const rect = item.getBoundingRect().clone()
+          const transform = item.getComputedTransform?.() ?? item.transform
+          if (transform) rect.applyTransform(transform)
+          expect(rect.x).toBeGreaterThanOrEqual(0)
+          expect(rect.x + rect.width).toBeLessThanOrEqual(width)
+          expect(rect.y).toBeGreaterThanOrEqual(0)
+          expect(rect.y + rect.height).toBeLessThanOrEqual(height)
+          return rect
+        })
+        expect(bounds[0]!.y + bounds[0]!.height).toBeLessThanOrEqual(bounds[1]!.y)
+      } finally { chart.dispose() }
+    }
+  }
+})
