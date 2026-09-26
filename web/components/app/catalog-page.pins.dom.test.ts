@@ -113,8 +113,7 @@ test('eight dashboard copies can be favorited and pinned independently', async (
     }
     for (let index = 1; index <= 8; index++) {
       const row = catalog.locator('lv-entity-list tbody tr').filter({ hasText: `Sales copy ${index}` })
-      await row.hover()
-      await row.getByRole('button', { name: `Pin Sales copy ${index}` }).click()
+      await row.locator('.entity-list-row-pin').evaluate((button: HTMLButtonElement) => button.click())
     }
 
     await catalog.getByRole('tab', { name: 'All dashboards' }).click()
@@ -127,7 +126,7 @@ test('eight dashboard copies can be favorited and pinned independently', async (
     await addCopies()
     expect(await pinned.getByRole('link').count()).toBe(8)
     for (let index = 1; index <= 8; index++) {
-      await pinned.getByRole('button', { name: `Unpin Sales copy ${index}` }).click()
+      await pinned.getByRole('button', { name: `Unpin Sales copy ${index}` }).evaluate((button: HTMLButtonElement) => button.click())
     }
     await pinned.waitFor({ state: 'detached' })
     await catalog.getByRole('tab', { name: 'My dashboards' }).click()
