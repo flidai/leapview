@@ -881,6 +881,9 @@ func (r *Repository) setPasswordCredential(ctx context.Context, pid, current, ne
 	if tag.RowsAffected() == 0 {
 		return access.LocalCredential{}, pgx.ErrNoRows
 	}
+	if err = accessdb.New(tx).CloseInitialPasswordSetup(ctx, parsedID); err != nil {
+		return access.LocalCredential{}, err
+	}
 	if err = accessdb.New(tx).RevokePrincipalSessions(ctx, parsedID); err != nil {
 		return access.LocalCredential{}, err
 	}
@@ -1140,7 +1143,11 @@ func (r *Repository) CredentialForAPIToken(ctx context.Context, tok string) (acc
 	if e != nil || p.AccessDisabled() {
 		return access.APICredential{}, pgx.ErrNoRows
 	}
-	return access.APICredential{Principal: p, Token: t}, nil
+	origin, _, err := r.initialPublisherOrigin(ctx, t)
+	if err != nil {
+		return access.APICredential{}, err
+	}
+	return access.APICredential{Principal: p, Token: t, InitialPublisher: origin}, nil
 }
 func (r *Repository) ListAPITokens(ctx context.Context, pid string) ([]access.APIToken, error) {
 	pid, e := uuidID("principal id", pid)

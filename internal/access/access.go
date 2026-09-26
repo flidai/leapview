@@ -202,7 +202,7 @@ func AuthorizationPolicyDigest(scope AuthorizationPolicyScope, bindings []RoleBi
 		}
 		seenSubjectRole[key] = struct{}{}
 	}
-	canonicalGrants, err := canonicalAuthorizationGrants(grants)
+	canonicalGrants, err := canonicalAuthorizationGrants(scope, grants)
 	if err != nil {
 		return "", err
 	}
@@ -546,9 +546,10 @@ type RotatableAPITokenRepository interface {
 }
 
 type APICredential struct {
-	Principal Principal
-	Token     APIToken
-	Authoring *AuthoringSession
+	Principal        Principal
+	Token            APIToken
+	Authoring        *AuthoringSession
+	InitialPublisher *InitialPublisherOrigin `json:"-"`
 }
 
 type CredentialEvidence struct {

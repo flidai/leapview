@@ -122,3 +122,18 @@ func InitialProjectPublisherPermissions(projectID projectgraph.ResourceID) ([]Pe
 func InitialProjectClaimPublisherTokenName(claimCredentialID string) string {
 	return APITokenNameInitialProjectClaimPublisherPrefix + strings.TrimSpace(claimCredentialID)
 }
+
+// InitialPublisherOrigin is private credential evidence, never caller-supplied
+// token metadata. Eligibility is deliberately not cached with this provenance.
+type InitialPublisherOrigin struct {
+	ClaimCredentialID string
+	PrincipalID       string
+	InstanceID        string
+	ProjectID         string
+}
+
+// InitialPublisherPasswordSetupReader checks the live initial setup record.
+// Password changes/resets close it permanently; ACK does not close it.
+type InitialPublisherPasswordSetupReader interface {
+	InitialPublisherPasswordSetupOpen(context.Context, string, string) (bool, error)
+}

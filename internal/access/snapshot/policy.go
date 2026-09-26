@@ -382,6 +382,67 @@ func (s AuthorizationSnapshot) RestrictToCurrentRoleBindings(current []RoleBindi
 	return NewAuthorizationSnapshotWithRoleBindings(s.identity, s.project, retained, s.grants, s.dataPolicies)
 }
 
+// RestrictToCurrentAuthorizationGrants keeps only captured grants whose exact
+// authority-bearing definition still exists in the target-owned policy. New
+// grants are never imported into a captured generation; removed or changed
+// grants stop authorizing on the next lease. Descriptive names are ignored.
+// Current grants are validated against the policy project namespace, but not
+// the captured graph: a newly staged grant may name a resource that exists
+// only in a later candidate and must not make this generation unavailable.
+func (s AuthorizationSnapshot) RestrictToCurrentAuthorizationGrants(current []access.AuthorizationGrant) (AuthorizationSnapshot, error) {
+	if err := s.ValidateBound(); err != nil {
+		return AuthorizationSnapshot{}, err
+	}
+	scope := access.AuthorizationPolicyScope{ProjectID: s.identity.ProjectID.String()}
+	byID := make(map[string]access.AuthorizationGrant, len(current))
+	for _, grant := range current {
+		if err := access.ValidateAuthorizationGrantForScope(grant, scope); err != nil {
+			return AuthorizationSnapshot{}, fmt.Errorf("current authorization grant %q: %w", grant.ID, err)
+		}
+		if _, duplicate := byID[grant.ID]; duplicate {
+			return AuthorizationSnapshot{}, fmt.Errorf("duplicate current authorization grant %q", grant.ID)
+		}
+		byID[grant.ID] = grant
+	}
+	retained := make([]Grant, 0, len(s.grants))
+	for _, captured := range s.grants {
+		live, exists := byID[captured.ID]
+		if exists && sameCapturedGrantAuthority(captured, live) {
+			retained = append(retained, captured)
+		}
+	}
+	return NewAuthorizationSnapshotWithRoleBindings(s.identity, s.project, s.roleBindings, retained, s.dataPolicies)
+}
+
+func sameCapturedGrantAuthority(captured Grant, live access.AuthorizationGrant) bool {
+	capturedTyped := captured.PermissionProfile != "" || captured.Permissions != nil
+	liveTyped := live.PermissionProfile != "" || live.Permissions != nil
+	if capturedTyped != liveTyped {
+		return false
+	}
+	if capturedTyped {
+		if captured.Subject != live.Subject || captured.PermissionProfile != live.PermissionProfile || len(captured.Permissions) != len(live.Permissions) {
+			return false
+		}
+		capturedPairs := make([]string, len(captured.Permissions))
+		livePairs := make([]string, len(live.Permissions))
+		for i, pair := range captured.Permissions {
+			capturedPairs[i] = pair.Key()
+		}
+		for i, pair := range live.Permissions {
+			livePairs[i] = pair.Key()
+		}
+		sort.Strings(capturedPairs)
+		sort.Strings(livePairs)
+		return reflect.DeepEqual(capturedPairs, livePairs)
+	}
+	return captured.Canonical.Validate() == nil &&
+		captured.Canonical.Subject() == live.Subject &&
+		captured.Canonical.Resource().ID() == live.Resource.ID() &&
+		captured.Canonical.Resource().Kind() == live.Resource.Kind() &&
+		captured.Canonical.Capability() == live.Capability
+}
+
 // DataPolicies returns a defensive copy of the validated policy list.
 func (s AuthorizationSnapshot) DataPolicies() []DataPolicy { return clonePolicies(s.dataPolicies) }
 

@@ -193,6 +193,7 @@ jobs:
           source-revision: ${{ github.sha }}
 
       - name: Qualify the immutable production image
+        id: qualification
         env:
           IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
           IMAGE_VERSION: ${{ needs.build-production-image.outputs.version }}
@@ -211,6 +212,18 @@ jobs:
             '.version == $version and .revision == $revision and .buildTime == $build_time and .dirty == false and .development == true' \
             <<<"${identity}" >/dev/null
           printf 'Production image: `%s`\n' "${immutable_image}" >> "${GITHUB_STEP_SUMMARY}"
+
+      # This typed report contains only image identity and bounded phase
+      # names/results/codes/timings. Never upload the surrounding evidence
+      # directory: it can include credentials, database state and raw logs.
+      - name: Upload failed qualification phase summary
+        if: failure() && steps.qualification.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-image-qualification-failure-${{ github.run_attempt }}
+          path: .tmp/qualification/production-image/image-qualification-report.json
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Record exact image qualification
         env:

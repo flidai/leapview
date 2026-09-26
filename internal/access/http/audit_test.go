@@ -29,10 +29,17 @@ func (r *auditReadRepository) ListAuditEvents(_ context.Context, filter access.A
 }
 
 func projectAuditHandler(repo *auditReadRepository) Handler {
+	auditRead, err := access.NewProjectPermissionPair(access.ActionAuditRead, "project:test")
+	if err != nil {
+		panic(err)
+	}
 	return Handler{
 		Repository: func() (access.Repository, error) { return repo, nil },
 		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 			return Principal{ID: "principal-admin"}, true
+		},
+		CurrentEffectivePermissionOptions: func(context.Context, string) ([]access.PermissionPair, error) {
+			return []access.PermissionPair{auditRead}, nil
 		},
 		PlatformAdmin: func(context.Context, string) (bool, error) { return true, nil },
 		CurrentProjectID: func(context.Context) (projectgraph.ResourceID, error) {
@@ -48,6 +55,7 @@ func TestListAuditEventsBindsProjectAndPreservesProjectIdentity(t *testing.T) {
 		CreatedAt: "2026-09-13T00:00:00Z",
 	}}}
 	handler := projectAuditHandler(repo)
+	handler.PlatformAdmin = func(context.Context, string) (bool, error) { return false, nil }
 	request := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/projects/project:test/audit-events", nil)
 	response := httptest.NewRecorder()
 
@@ -67,6 +75,93 @@ func TestListAuditEventsBindsProjectAndPreservesProjectIdentity(t *testing.T) {
 	}
 	if len(payload.Items) != 1 || payload.Items[0]["projectId"] != "project:test" {
 		t.Fatalf("audit response = %#v, want Project identity", payload.Items)
+	}
+}
+
+func TestListProjectAuditEventsRequiresTypedProjectPermissionAndCredentialCeiling(t *testing.T) {
+	auditRead, err := access.NewProjectPermissionPair(access.ActionAuditRead, "project:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherProjectRead, err := access.NewProjectPermissionPair(access.ActionAuditRead, "project:other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessRead, err := access.NewProjectPermissionPair(access.ActionProjectAccessRead, "project:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformAuditRead, err := access.NewInstancePermissionPair(access.ActionPlatformAuditRead, "instance:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name        string
+		permissions []access.PermissionPair
+		credential  *access.APICredential
+		platform    bool
+		wantStatus  int
+	}{
+		{name: "missing audit permission", permissions: []access.PermissionPair{accessRead}, platform: true, wantStatus: stdhttp.StatusForbidden},
+		{name: "audit permission for another project", permissions: []access.PermissionPair{otherProjectRead}, platform: true, wantStatus: stdhttp.StatusForbidden},
+		{name: "instance audit permission is not project audit permission", permissions: []access.PermissionPair{platformAuditRead}, platform: true, wantStatus: stdhttp.StatusForbidden},
+		{name: "platform administrator does not imply project audit read", permissions: []access.PermissionPair{}, platform: true, wantStatus: stdhttp.StatusForbidden},
+		{
+			name:        "API token attenuates project audit permission",
+			permissions: []access.PermissionPair{auditRead}, platform: true,
+			credential: &access.APICredential{
+				Principal: access.Principal{ID: "principal-admin"},
+				Token:     access.APIToken{ID: "token-1", PrincipalID: "principal-admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{accessRead}},
+			}, wantStatus: stdhttp.StatusForbidden,
+		},
+		{
+			name:        "API token must target this project",
+			permissions: []access.PermissionPair{auditRead}, platform: true,
+			credential: &access.APICredential{
+				Principal: access.Principal{ID: "principal-admin"},
+				Token:     access.APIToken{ID: "token-1", PrincipalID: "principal-admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{otherProjectRead}},
+			}, wantStatus: stdhttp.StatusForbidden,
+		},
+		{
+			name:        "API token with exact project audit permission",
+			permissions: []access.PermissionPair{auditRead}, platform: false,
+			credential: &access.APICredential{
+				Principal: access.Principal{ID: "principal-admin"},
+				Token:     access.APIToken{ID: "token-1", PrincipalID: "principal-admin", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{auditRead}},
+			}, wantStatus: stdhttp.StatusOK,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &auditReadRepository{}
+			handler := projectAuditHandler(repo)
+			handler.CurrentEffectivePermissionOptions = func(context.Context, string) ([]access.PermissionPair, error) {
+				return test.permissions, nil
+			}
+			handler.PlatformAdmin = func(context.Context, string) (bool, error) { return test.platform, nil }
+			if test.credential != nil {
+				handler.CurrentCredential = func(*stdhttp.Request) (access.APICredential, bool) {
+					return *test.credential, true
+				}
+			}
+			request := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/projects/project:test/audit-events", nil)
+			response := httptest.NewRecorder()
+
+			handler.ListAuditEventsForProject(response, request, "project:test")
+
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, body=%s; want %d", response.Code, response.Body.String(), test.wantStatus)
+			}
+			if test.wantStatus == stdhttp.StatusOK {
+				if !repo.called || repo.filter.ProjectID != "project:test" || repo.filter.IncludeUnscoped {
+					t.Fatalf("audit filter = %#v, called=%v; want project:test without unscoped events", repo.filter, repo.called)
+				}
+			} else if repo.called {
+				t.Fatal("unauthorized project audit request reached the repository")
+			}
+		})
 	}
 }
 
@@ -97,6 +192,23 @@ func TestListPlatformAuditEventsLimitsProjectRowsAndIncludesPlatformEvents(t *te
 	}
 	if repo.filter.ProjectID != "project:test" || !repo.filter.IncludeUnscoped {
 		t.Fatalf("platform audit filter = %#v, want bound Project plus unscoped events", repo.filter)
+	}
+}
+
+func TestListPlatformAuditEventsStillRequiresPlatformAdmin(t *testing.T) {
+	repo := &auditReadRepository{}
+	handler := projectAuditHandler(repo)
+	handler.PlatformAdmin = func(context.Context, string) (bool, error) { return false, nil }
+	request := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/audit-events", nil)
+	response := httptest.NewRecorder()
+
+	handler.ListPlatformAuditEvents(response, request)
+
+	if response.Code != stdhttp.StatusForbidden {
+		t.Fatalf("status = %d, body=%s; want %d", response.Code, response.Body.String(), stdhttp.StatusForbidden)
+	}
+	if repo.called {
+		t.Fatal("non-admin platform audit request reached the repository")
 	}
 }
 

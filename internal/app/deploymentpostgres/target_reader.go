@@ -10,6 +10,11 @@ import (
 	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 )
 
+// ErrTargetAlreadyPublished signals that ordinary grant authority should
+// handle the request because this target already has an active publication.
+// It aliases the native fence sentinel so errors.Is works across the adapter.
+var ErrTargetAlreadyPublished = nativepostgres.ErrAlreadyActive
+
 // nativeTargetReader is the small read-only portion of the native delivery
 // repository needed by the application readiness and serving checks. Keeping
 // this interface local makes the adapter straightforward to test without
@@ -18,9 +23,13 @@ type nativeTargetReader interface {
 	Target(context.Context, string) (nativepostgres.DeliveryTarget, error)
 }
 
-// TargetReader adapts the native PostgreSQL target fence to the application
-// delivery-target reader contract. It does not cache or derive target state;
-// every call reads the current control-plane row from the supplied authority.
+type nativeUnpublishedTargetRunner interface {
+	WithUnpublishedTarget(context.Context, string, string, string, func(context.Context) error) error
+}
+
+// TargetReader adapts the native PostgreSQL target fence to application
+// delivery-target reads and first-publication checks. It does not cache or
+// derive target state; each operation uses the supplied control-plane authority.
 type TargetReader struct {
 	repository nativeTargetReader
 }
@@ -52,6 +61,29 @@ func (r *TargetReader) DeliveryTargetRevision(ctx context.Context, targetID stri
 // call; no target identity is reconstructed from process configuration.
 func (r *TargetReader) ResolveDeliveryTarget(ctx context.Context, targetID string) (deployment.DeliveryTarget, error) {
 	return r.DeliveryTargetRevision(ctx, targetID)
+}
+
+// WithUnpublishedTarget holds the native target fence while a caller grants
+// first-publication authority in its own access transaction. Native
+// ErrAlreadyActive is preserved so callers can continue through their regular
+// grant authority when publication has already activated the target.
+func (r *TargetReader) WithUnpublishedTarget(ctx context.Context, targetID, projectID, environment string, callback func(context.Context) error) error {
+	if r == nil || r.repository == nil || callback == nil {
+		return nativepostgres.ErrInvalid
+	}
+	runner, ok := r.repository.(nativeUnpublishedTargetRunner)
+	if !ok {
+		return fmt.Errorf("%w: deployment PostgreSQL unpublished target fence is not configured", nativepostgres.ErrInvalid)
+	}
+	var callbackErr error
+	err := runner.WithUnpublishedTarget(ctx, targetID, projectID, environment, func(callbackCtx context.Context) error {
+		callbackErr = callback(callbackCtx)
+		return callbackErr
+	})
+	if callbackErr != nil {
+		return callbackErr
+	}
+	return mapTargetReaderError(err)
 }
 
 func (r *TargetReader) readTarget(ctx context.Context, targetID string) (deployment.DeliveryTarget, error) {

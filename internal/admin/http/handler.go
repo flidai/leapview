@@ -22,6 +22,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 )
@@ -40,10 +41,12 @@ type Handler struct {
 		access.Repository
 		adminsettings.ServiceAccountReader
 	}
-	AuthorizationProjection   adminsettings.AuthorizationProjectionReader
-	RoleBindingAdministration func(context.Context) (access.RoleBindingAdministrationState, error)
-	RoleBindingMutation       func(*nethttp.Request, access.RoleBindingAdministrationCommand) (access.RoleBindingAdministrationState, error)
-	CurrentCredential         func(*nethttp.Request) (access.APICredential, bool)
+	AuthorizationProjection             adminsettings.AuthorizationProjectionReader
+	RoleBindingAdministration           func(context.Context) (access.RoleBindingAdministrationState, error)
+	RoleBindingAdministrationForRequest func(*nethttp.Request) (access.RoleBindingAdministrationState, bool, error)
+	RoleBindingProjectID                func(*nethttp.Request) (projectgraph.ResourceID, error)
+	RoleBindingMutation                 func(*nethttp.Request, access.RoleBindingAdministrationCommand) (access.RoleBindingAdministrationState, error)
+	CurrentCredential                   func(*nethttp.Request) (access.APICredential, bool)
 }
 
 type publicationCommandSignals struct {

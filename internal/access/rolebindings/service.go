@@ -303,6 +303,7 @@ func ValidatePermissionCeiling(ceiling, requested []access.PermissionPair) error
 
 func auditInput(mutation access.RoleBindingAdministrationMutation, action, bindingID, metadata string) access.AuditEventInput {
 	return access.AuditEventInput{
+		ProjectID:   mutation.Scope.ProjectID,
 		PrincipalID: mutation.ActorID, Action: action, ResourceKind: "role_binding", ResourceID: bindingID,
 		Capability: access.CapabilityProjectAdmin, Status: "success", RequestID: mutation.RequestID,
 		CorrelationID: mutation.CorrelationID, MetadataJSON: metadata,

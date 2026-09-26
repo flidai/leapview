@@ -231,6 +231,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	browser := read(t, filepath.Join(root, "deploy", "compose", "qualification", "browser.mjs"))
 	authoringWorker := read(t, filepath.Join(root, "deploy", "compose", "qualification", "authoring-worker.mjs"))
 	performance := read(t, filepath.Join(root, "deploy", "compose", "qualification", "performance.mjs"))
+	performanceStatus := read(t, filepath.Join(root, "deploy", "compose", "qualification", "performance-status.mjs"))
 	reportTable := read(t, filepath.Join(root, "web", "components", "dashboard", "table", "report-table.ts"))
 	performancePolicy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_performance.go"))
 	runtimeQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image_runtime.go"))
@@ -280,7 +281,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 			t.Errorf("installed-candidate workflow missing %q", required)
 		}
 	}
-	for _, required := range []string{"func (c *Controller) QualifyInstalledCandidate", "runQualificationAuthoring", "runQualificationRecovery", "qualification-report.json", "runtime-identity.json", "performance-report.json", "recovery-report.json"} {
+	for _, required := range []string{"func (c *Controller) QualifyInstalledCandidate", "runQualificationAuthoring", "runQualificationRecovery", "qualification-report.json", "runtime-identity.json", "performance-report.json", "performance-status.mjs", "recovery-report.json"} {
 		if !strings.Contains(installed, required) {
 			t.Errorf("typed installed-candidate controller missing %q", required)
 		}
@@ -317,6 +318,13 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	if strings.Contains(performance, "setInterval(") || strings.Count(performance, "metricSamples.push(await metricSnapshot())") < 7 || !strings.Contains(performance, "{ mode: 0o644 }") {
 		t.Error("performance evidence must be bounded and artifact-readable")
+	}
+	if !strings.Contains(performance, "waitForDashboardRevision(page, resetRevision, 30_000)") ||
+		!strings.Contains(performance, "waitForDashboardRevision(page, filterRevision, 30_000)") ||
+		!strings.Contains(performanceStatus, "snapshot.filterRevision !== expectedRevision") ||
+		!strings.Contains(performanceStatus, "visual.streamGeneration === status.generation") ||
+		!strings.Contains(performanceStatus, "status.loading || status.error") {
+		t.Error("performance filter settling must follow the canonical filter revision and its current, completed visual generation")
 	}
 	for name, script := range map[string]string{
 		"authoring":   authoringWorker,
@@ -428,12 +436,12 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(client, "LEAPVIEW_API_TOKEN") {
 		t.Error("authoring must use browser-approved login")
 	}
-	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "RequestDeliveryPublicationApproval", "ApproveDeliveryPublicationApproval", "dbus-run-session", "ActionProjectAccessManage", "ActionProjectAccessDelegate"} {
+	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "RequestDeliveryPublicationApproval", "ApproveDeliveryPublicationApproval", "dbus-run-session", "qualificationAdministratorActions()", "qualificationReviewerActions()", "ActionProjectAccessRead", "ActionDeliveryRead", "ActionDeliveryPublish", "ActionDeliveryApprove", "expectedRevision"} {
 		if !strings.Contains(authoring, required) {
 			t.Errorf("typed authoring controller missing %q", required)
 		}
 	}
-	for _, required := range []string{"NewTypedRoleBinding", "PermissionRoleProjectAdmin", "ProjectID", "PolicyRevision"} {
+	for _, required := range []string{"NewTypedRoleBinding", "PermissionRoleProjectAdmin", "ProjectID", "PolicyRevision", "grantReviewer func(expectedRevision int64) error", "retrieveQualificationRoleBindingPolicy", "sameQualificationRoleBinding"} {
 		if !strings.Contains(policy, required) {
 			t.Errorf("typed authoring policy flow missing %q", required)
 		}
@@ -476,8 +484,15 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 			t.Errorf("browser worker must resolve durable principal IDs from the authenticated directory: missing %q", required)
 		}
 	}
-	if strings.Contains(worker, "params.principalId") || strings.Contains(worker, "new URL('/api/v1/me'") || strings.Contains(worker, "/api/v1/principals?email=") {
-		t.Error("browser worker must not fabricate identities or send browser sessions to bearer-only API routes")
+	for _, required := range []string{"async grantReviewerRole(params)", "new URL('/admin/access', baseURL)", "lv-access-admin-command", "'/admin/access/command'", "action: 'grant_role'", "expectedRevision"} {
+		if !strings.Contains(worker, required) {
+			t.Errorf("browser worker must issue the revision-fenced reviewer grant through the native access command: missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"new URL('/api/v1/me'", "/api/v1/principals?email=", "new URL('/api/v1/projects/", "/api/v1/projects/"} {
+		if strings.Contains(worker, forbidden) {
+			t.Errorf("browser worker must not fabricate identities or send browser sessions to bearer-only API routes; found %q", forbidden)
+		}
 	}
 	for _, required := range []string{"page.waitForResponse", "'/auth/local/password'", `locator('input[name="password"]').fill(password)`, `locator('input[name="currentPassword"]')`, `locator('input[name="newPassword"]')`} {
 		if !strings.Contains(worker, required) {

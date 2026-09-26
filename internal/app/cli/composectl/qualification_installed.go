@@ -897,6 +897,7 @@ func (c *Controller) startQualificationPerformanceBrowser(
 		"package.json",
 		"browser.mjs",
 		"performance.mjs",
+		"performance-status.mjs",
 		"performance-policy.json",
 	} {
 		if _, err := browser.CopyTo(

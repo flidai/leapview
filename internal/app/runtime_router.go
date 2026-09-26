@@ -49,6 +49,7 @@ import (
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
+	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
@@ -1741,6 +1742,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			CurrentEffectivePermissionOptions: routes.accessModule.CurrentEffectivePermissionOptions,
 			RoleBindingAdministration: func(ctx context.Context) (access.RoleBindingAdministrationState, error) {
 				state, err := routes.accessModule.RoleBindingAdministration(ctx)
+				// The instance user directory is needed to prepare the first
+				// publication, before there is an active project to project roles from.
+				if errors.Is(err, runtimehost.ErrNoActiveServingState) {
+					return access.RoleBindingAdministrationState{}, nil
+				}
 				if err != nil || runtime.runtimeHostModule == nil {
 					return state, err
 				}
@@ -1765,7 +1771,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return state, nil
 			},
-			RoleBindingMutation: routes.accessModule.ApplyRoleBindingAdministration,
+			RoleBindingAdministrationForRequest: routes.accessModule.RoleBindingAdministrationForRequest,
+			RoleBindingProjectID:                routes.accessModule.RoleBindingProjectID,
+			RoleBindingMutation:                 routes.accessModule.ApplyRoleBindingAdministration,
 			AuthorizeTypedDashboardAction: func(ctx context.Context, principalID string, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, error) {
 				return authorizeTypedDashboardAction(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, dashboardID, action)
 			},
@@ -1993,6 +2001,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		return fmt.Errorf("build APIGen authorizer: %w", err)
 	}
 	if claimReader := moduleWorkflow.deploymentConfig.ProjectClaims; claimReader != nil {
+		configureInitialReviewerBootstrap(routes.accessModule, claimReader, runtimeConfig.DeliveryTargetReader, runtimeConfig.InstanceID, policy.defaultEnvironment)
 		routes.accessModule.SetProjectClaimResolver(func(ctx context.Context) (string, string, error) {
 			claim, err := claimReader.GetProjectClaim(ctx)
 			if err != nil {

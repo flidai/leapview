@@ -16,6 +16,25 @@ type targetReaderRepositoryFake struct {
 	id     string
 }
 
+type targetReaderFenceRepositoryFake struct {
+	targetReaderRepositoryFake
+	fenceErr         error
+	fenceTargetID    string
+	fenceProjectID   string
+	fenceEnvironment string
+	fenceContext     context.Context
+	callbackCalled   bool
+}
+
+func (f *targetReaderFenceRepositoryFake) WithUnpublishedTarget(ctx context.Context, targetID, projectID, environment string, callback func(context.Context) error) error {
+	f.fenceContext, f.fenceTargetID, f.fenceProjectID, f.fenceEnvironment = ctx, targetID, projectID, environment
+	if f.fenceErr != nil {
+		return f.fenceErr
+	}
+	f.callbackCalled = true
+	return callback(ctx)
+}
+
 func (f *targetReaderRepositoryFake) Target(ctx context.Context, id string) (nativepostgres.DeliveryTarget, error) {
 	f.ctx, f.id = ctx, id
 	if f.err != nil {
@@ -87,5 +106,38 @@ func TestTargetReaderFailsClosedWhenUnconfigured(t *testing.T) {
 	}
 	if _, err := NewTargetReader(nil).DeliveryTargetRevision(t.Context(), "target-prod"); !errors.Is(err, nativepostgres.ErrInvalid) {
 		t.Fatalf("nil repository error = %v, want native ErrInvalid", err)
+	}
+}
+
+func TestTargetReaderWithUnpublishedTargetPreservesActiveSentinelAndCallbackError(t *testing.T) {
+	active := &targetReaderFenceRepositoryFake{fenceErr: nativepostgres.ErrAlreadyActive}
+	reader := newTargetReader(active)
+	called := false
+	err := reader.WithUnpublishedTarget(t.Context(), "target-prod", "project-finance", "prod", func(context.Context) error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, ErrTargetAlreadyPublished) || called || active.callbackCalled {
+		t.Fatalf("active-target result = %v, called=%v, repository callback=%v", err, called, active.callbackCalled)
+	}
+
+	denial := errors.New("access policy denied")
+	callbackContext := context.WithValue(t.Context(), struct{}{}, "callback")
+	denying := &targetReaderFenceRepositoryFake{}
+	denyingReader := newTargetReader(denying)
+	err = denyingReader.WithUnpublishedTarget(callbackContext, "target-prod", "project-finance", "prod", func(ctx context.Context) error {
+		if ctx != callbackContext {
+			t.Fatal("callback context was not forwarded")
+		}
+		return denial
+	})
+	if !errors.Is(err, denial) {
+		t.Fatalf("callback error = %v, want %v", err, denial)
+	}
+	if denying.fenceContext != callbackContext || denying.fenceTargetID != "target-prod" || denying.fenceProjectID != "project-finance" || denying.fenceEnvironment != "prod" || !denying.callbackCalled {
+		t.Fatalf("fence call = context %p target %q project %q environment %q callback=%v", denying.fenceContext, denying.fenceTargetID, denying.fenceProjectID, denying.fenceEnvironment, denying.callbackCalled)
+	}
+	if !errors.Is(ErrTargetAlreadyPublished, nativepostgres.ErrAlreadyActive) {
+		t.Fatalf("adapter sentinel = %v, want native ErrAlreadyActive", ErrTargetAlreadyPublished)
 	}
 }

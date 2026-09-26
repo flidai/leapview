@@ -206,6 +206,13 @@ COALESCE((SELECT generation_id::text FROM delivery.delivery_active_pointer p WHE
 COALESCE((SELECT publication_id::text FROM delivery.delivery_active_pointer p WHERE p.target_id=t.target_id),'')::text AS active_publication_id,t.created_at,t.updated_at
 FROM delivery.delivery_target t WHERE t.target_id=sqlc.arg(target_id) FOR SHARE;
 
+-- A bootstrap fence must serialize with activation and other fences while
+-- remaining compatible with target foreign-key KEY SHARE checks performed by
+-- candidate and generation admission. Read active pointers in a following
+-- statement after any lock wait so READ COMMITTED sees activation's commit.
+-- name: LockTargetForNoKeyUpdate :one
+SELECT target_id FROM delivery.delivery_target WHERE target_id=sqlc.arg(target_id) FOR NO KEY UPDATE;
+
 -- name: GetGenerationLinks :one
 SELECT target_id,candidate_id::text,snapshot_seal_id::text FROM delivery.delivery_generation WHERE generation_id=sqlc.arg(generation_id)::uuid;
 

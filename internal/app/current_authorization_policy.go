@@ -34,10 +34,14 @@ func currentTargetAuthorizationFilter(reader access.AuthorizationPolicyReader, t
 		if current.Scope != scope || current.Revision <= 0 {
 			return accesssnapshot.AuthorizationSnapshot{}, errors.New("current authorization policy identity is invalid")
 		}
-		digest, err := access.AuthorizationPolicyDigest(scope, current.RoleBindings)
+		digest, err := access.AuthorizationPolicyDigest(scope, current.RoleBindings, current.Grants...)
 		if err != nil || digest != current.Digest {
 			return accesssnapshot.AuthorizationSnapshot{}, errors.New("current authorization policy digest is invalid")
 		}
-		return captured.RestrictToCurrentRoleBindings(current.RoleBindings)
+		rolesRestricted, err := captured.RestrictToCurrentRoleBindings(current.RoleBindings)
+		if err != nil {
+			return accesssnapshot.AuthorizationSnapshot{}, err
+		}
+		return rolesRestricted.RestrictToCurrentAuthorizationGrants(current.Grants)
 	}
 }

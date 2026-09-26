@@ -599,7 +599,7 @@ func (r *Repository) removeAuthorizationRoleBindingCore(ctx context.Context, db 
 	if !found {
 		return access.AuthorizationPolicy{}, fmt.Errorf("%w: role binding %q", access.ErrAuthorizationPolicyNotFound, input.BindingID)
 	}
-	digest, err := access.AuthorizationPolicyDigest(input.Scope, bindings)
+	digest, err := access.AuthorizationPolicyDigest(input.Scope, bindings, current.Grants...)
 	if err != nil {
 		return access.AuthorizationPolicy{}, err
 	}
@@ -615,6 +615,9 @@ func (r *Repository) removeAuthorizationRoleBindingCore(ctx context.Context, db 
 		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: nextRevision, ID: binding.ID, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID, Role: nullableString(string(binding.Role)), Capabilities: caps, PermissionProfile: profile, Permissions: permissions, PermissionRole: permissionRole, Name: binding.Name}); err != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy role binding %q: %w", binding.ID, err)
 		}
+	}
+	if err := insertAuthorizationPolicyGrants(ctx, db, input.Scope, nextRevision, current.Grants); err != nil {
+		return access.AuthorizationPolicy{}, err
 	}
 	updateTag, err := queries.UpdateAuthorizationPolicyHead(ctx, accessdb.UpdateAuthorizationPolicyHeadParams{Revision: nextRevision, Digest: digest, ExpectedRevision: head.Revision, TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment})
 	if err != nil {

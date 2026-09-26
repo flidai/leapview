@@ -1,7 +1,6 @@
 package composectl
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -51,7 +50,16 @@ func validateQualificationAuthoringPolicyEvidence(report qualificationAuthoringR
 	return nil
 }
 
-func bootstrapQualificationRoleBindings(ctx context.Context, client *http.Client, target, projectID, environment, token, administratorID, reviewerID string) (int64, string, error) {
+func qualificationReviewerBindingID(reviewerID string) string {
+	return "qualification-reviewer-" + reviewerID
+}
+
+func bootstrapQualificationRoleBindings(
+	ctx context.Context,
+	client *http.Client,
+	target, projectID, environment, token, administratorID, reviewerID string,
+	grantReviewer func(expectedRevision int64) error,
+) (int64, string, error) {
 	if client == nil {
 		return 0, "", errors.New("qualification role-binding client is required")
 	}
@@ -64,9 +72,9 @@ func bootstrapQualificationRoleBindings(ctx context.Context, client *http.Client
 		return 0, "", errors.New("qualification administrator is not bound by the bootstrapped policy")
 	}
 	reviewer, err := access.NewTypedRoleBinding(
-		"qualification-reviewer-"+reviewerID, "Qualification reviewer",
+		qualificationReviewerBindingID(reviewerID), string(access.PermissionRoleReleaseApprover),
 		access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: reviewerID},
-		access.PermissionRoleProjectAdmin, projectgraph.ResourceID(projectID),
+		access.PermissionRoleReleaseApprover, projectgraph.ResourceID(projectID),
 	)
 	if err != nil {
 		return 0, "", fmt.Errorf("construct qualification reviewer role binding: %w", err)
@@ -81,19 +89,18 @@ func bootstrapQualificationRoleBindings(ctx context.Context, client *http.Client
 		return initial.PolicyRevision, initial.PolicyDigest, nil
 	}
 
-	created, err := createQualificationRoleBinding(ctx, client, endpoint, token, reviewer, initial.PolicyRevision)
-	if err != nil {
-		return 0, "", err
+	if grantReviewer == nil {
+		return 0, "", errors.New("qualification reviewer browser role command is required")
 	}
-	if created.PolicyRevision != initial.PolicyRevision+1 {
-		return 0, "", fmt.Errorf("qualification reviewer policy revision is %d, want %d", created.PolicyRevision, initial.PolicyRevision+1)
+	if err := grantReviewer(initial.PolicyRevision); err != nil {
+		return 0, "", fmt.Errorf("grant qualification reviewer role through browser session: %w", err)
 	}
 	final, finalBindings, err := retrieveQualificationRoleBindingPolicy(ctx, client, endpoint, projectID, environment, token)
 	if err != nil {
 		return 0, "", err
 	}
-	if final.PolicyRevision != created.PolicyRevision || final.PolicyDigest != created.PolicyDigest {
-		return 0, "", errors.New("qualification authorization policy identity does not match role-binding result")
+	if final.PolicyRevision != initial.PolicyRevision+1 {
+		return 0, "", fmt.Errorf("qualification reviewer policy revision is %d, want %d", final.PolicyRevision, initial.PolicyRevision+1)
 	}
 	if !qualificationAdministratorBound(finalBindings, administratorID) {
 		return 0, "", errors.New("qualification administrator binding disappeared from the current policy")
@@ -111,7 +118,7 @@ func bootstrapQualificationRoleBindings(ctx context.Context, client *http.Client
 	return final.PolicyRevision, final.PolicyDigest, nil
 }
 
-func retrieveQualificationRoleBindingPolicy(ctx context.Context, client *http.Client, endpoint, projectID, environment, token string) (qualificationRoleBindingListResponse, []access.RoleBinding, error) {
+func retrieveQualificationRoleBindingPolicy(ctx context.Context, client *http.Client, endpoint, projectID, environment, token string, grants ...access.AuthorizationGrant) (qualificationRoleBindingListResponse, []access.RoleBinding, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?limit=200", nil)
 	if err != nil {
 		return qualificationRoleBindingListResponse{}, nil, err
@@ -136,14 +143,14 @@ func retrieveQualificationRoleBindingPolicy(ctx context.Context, client *http.Cl
 	if err := json.Unmarshal(responseBody, &policy); err != nil {
 		return qualificationRoleBindingListResponse{}, nil, fmt.Errorf("decode qualification authorization policy response: %w", err)
 	}
-	bindings, err := validateQualificationRoleBindingPolicy(policy, projectID, environment)
+	bindings, err := validateQualificationRoleBindingPolicy(policy, projectID, environment, grants...)
 	if err != nil {
 		return qualificationRoleBindingListResponse{}, nil, err
 	}
 	return policy, bindings, nil
 }
 
-func validateQualificationRoleBindingPolicy(policy qualificationRoleBindingListResponse, projectID, environment string) ([]access.RoleBinding, error) {
+func validateQualificationRoleBindingPolicy(policy qualificationRoleBindingListResponse, projectID, environment string, grants ...access.AuthorizationGrant) ([]access.RoleBinding, error) {
 	if policy.Page.NextCursor != "" {
 		return nil, errors.New("qualification authorization policy response is paginated")
 	}
@@ -183,7 +190,7 @@ func validateQualificationRoleBindingPolicy(policy qualificationRoleBindingListR
 		}
 		bindings = append(bindings, binding)
 	}
-	canonicalDigest, err := access.AuthorizationPolicyDigest(scope, bindings)
+	canonicalDigest, err := access.AuthorizationPolicyDigest(scope, bindings, grants...)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize qualification authorization policy: %w", err)
 	}
@@ -191,50 +198,6 @@ func validateQualificationRoleBindingPolicy(policy qualificationRoleBindingListR
 		return nil, errors.New("qualification authorization policy digest does not match canonical policy identity")
 	}
 	return bindings, nil
-}
-
-func createQualificationRoleBinding(ctx context.Context, client *http.Client, endpoint, token string, binding access.RoleBinding, expectedRevision int64) (qualificationRoleBindingResponse, error) {
-	body, err := json.Marshal(map[string]any{
-		"id": binding.ID, "name": binding.Name, "subjectType": string(binding.Subject.Kind), "subjectId": binding.Subject.ID,
-		"role": string(binding.PermissionRole), "expectedRevision": expectedRevision,
-	})
-	if err != nil {
-		return qualificationRoleBindingResponse{}, err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return qualificationRoleBindingResponse{}, err
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Idempotency-Key", "qualification-policy-reviewer-"+binding.Subject.ID)
-	response, err := client.Do(request)
-	if err != nil {
-		return qualificationRoleBindingResponse{}, fmt.Errorf("create qualification role binding %q: %w", binding.ID, err)
-	}
-	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, 64<<10))
-	closeErr := response.Body.Close()
-	if readErr != nil {
-		return qualificationRoleBindingResponse{}, fmt.Errorf("read qualification role binding %q response: %w", binding.ID, readErr)
-	}
-	if closeErr != nil {
-		return qualificationRoleBindingResponse{}, fmt.Errorf("close qualification role binding %q response: %w", binding.ID, closeErr)
-	}
-	if response.StatusCode != http.StatusCreated {
-		return qualificationRoleBindingResponse{}, fmt.Errorf("create qualification role binding %q returned HTTP %d: %s", binding.ID, response.StatusCode, strings.TrimSpace(string(responseBody)))
-	}
-	var created qualificationRoleBindingResponse
-	if err := json.Unmarshal(responseBody, &created); err != nil {
-		return qualificationRoleBindingResponse{}, fmt.Errorf("decode qualification role binding %q: %w", binding.ID, err)
-	}
-	if created.ID != binding.ID || created.Name != binding.Name || created.SubjectType != string(binding.Subject.Kind) || created.SubjectID != binding.Subject.ID || created.Role != string(binding.PermissionRole) ||
-		created.PermissionProfile != access.PermissionCatalogProfile || len(created.Capabilities) != 0 || !samePermissionPairs(created.Permissions, binding.Permissions) {
-		return qualificationRoleBindingResponse{}, fmt.Errorf("qualification role binding %q returned incompatible policy evidence", binding.ID)
-	}
-	if err := platformdigest.ValidateSHA256Identity(created.PolicyDigest); err != nil {
-		return qualificationRoleBindingResponse{}, fmt.Errorf("qualification role binding %q returned an invalid policy digest: %w", binding.ID, err)
-	}
-	return created, nil
 }
 
 func qualificationAdministratorBound(bindings []access.RoleBinding, principalID string) bool {

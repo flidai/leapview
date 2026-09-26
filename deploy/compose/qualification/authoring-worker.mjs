@@ -129,6 +129,46 @@ const methods = {
     )
   },
 
+  async grantReviewerRole(params) {
+    const principalId = String(params.principalId || '').trim()
+    const bindingId = String(params.bindingId || '').trim()
+    const role = String(params.role || '').trim()
+    const expectedRevision = Number(params.expectedRevision)
+    if (!principalId || !bindingId || role !== 'release_approver' ||
+      !Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
+      throw new Error('reviewer role command has incomplete identity, role, or policy revision')
+    }
+
+    await administratorPage.goto(new URL('/admin/access', baseURL).href, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60_000,
+    })
+    const adminPage = administratorPage.locator('lv-admin-page[section="access"]')
+    await adminPage.waitFor({ state: 'visible', timeout: 30_000 })
+    const commandResponse = administratorPage.waitForResponse((response) => {
+      const url = new URL(response.url())
+      return url.pathname === '/admin/access/command' && response.request().method() === 'POST'
+    }, { timeout: 30_000 })
+    const [, response] = await Promise.all([adminPage.evaluate((element, detail) => {
+      element.dispatchEvent(new CustomEvent('lv-access-admin-command', {
+        bubbles: true,
+        composed: true,
+        detail,
+      }))
+    }, {
+      action: 'grant_role',
+      subjectType: 'principal',
+      subjectId: principalId,
+      bindingId,
+      role,
+      expectedRevision,
+    }), commandResponse])
+    if (!response.ok()) {
+      throw new Error(`browser reviewer role command returned ${response.status()}: ${await response.text()}`)
+    }
+    return { submitted: true }
+  },
+
   async createReviewer(params) {
     await administratorPage.goto(new URL('/admin/principals', baseURL).href, {
       waitUntil: 'domcontentloaded',
@@ -182,6 +222,13 @@ const methods = {
     // into human-friendly bundles. Qualification uses the stable UI command
     // contract directly so its machine credentials retain their exact scopes;
     // the picker interaction itself is covered by the browser DOM suite.
+    await administratorPage.locator('lv-one-time-secret, lv-personal-settings [role="alert"]').first().waitFor({
+      state: 'visible', timeout: 30_000,
+    })
+    const tokenError = administratorPage.locator('lv-personal-settings [role="alert"]')
+    if (await tokenError.first().isVisible()) {
+      throw new Error(`create administrator API token ${params.name}: ${await tokenError.first().innerText()}`)
+    }
     const token = await administratorPage.locator('lv-one-time-secret').evaluate((element) => element.secret)
     if (!token?.trim()) {
       throw new Error(`create administrator API token ${params.name} returned no token`)

@@ -1791,11 +1791,19 @@ CREATE TABLE IF NOT EXISTS access.authorization_policy_grant (
     subject_id text NOT NULL CHECK (subject_id = btrim(subject_id) AND length(subject_id) BETWEEN 1 AND 255),
     resource_id text NOT NULL CHECK (resource_id = btrim(resource_id) AND length(resource_id) BETWEEN 1 AND 255),
     resource_kind text NOT NULL CHECK (resource_kind IN ('project','connection','source','model','semantic_model','pipeline','dashboard')),
-    capability text NOT NULL CHECK (capability IN ('RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH','PROJECT_ADMIN')),
+    capability text CHECK (capability IN ('RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH','PROJECT_ADMIN')),
+    permission_profile text,
+    permissions jsonb,
     name text NOT NULL DEFAULT '' CHECK (length(name)<=255),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (target_id, project_id, environment, revision, id),
     UNIQUE (target_id, project_id, environment, revision, subject_kind, subject_id, resource_kind, resource_id, capability),
+    CHECK (
+        (permission_profile IS NULL AND permissions IS NULL AND capability IS NOT NULL)
+        OR
+        (permission_profile IS NOT NULL AND permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL
+         AND jsonb_typeof(permissions) = 'array' AND permissions <> '[]'::jsonb AND capability IS NULL)
+    ),
     FOREIGN KEY (target_id, project_id, environment, revision)
         REFERENCES access.authorization_policy_revision(target_id, project_id, environment, revision)
         ON DELETE RESTRICT
@@ -1822,6 +1830,56 @@ DO $$ BEGIN
  END IF;
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_backup') THEN
   GRANT SELECT ON access.authorization_policy_grant TO leapview_control_backup;
+ END IF;
+END $$;
+-- +goose StatementEnd
+
+-- Provenance is private access authority, never inferred from token names.
+CREATE TABLE access.initial_password_setup (
+    -- The spent claim can be pruned while its publisher remains active.
+    -- This initialization record permanently retains the original binding.
+    claim_credential_id uuid PRIMARY KEY,
+    principal_id uuid NOT NULL REFERENCES access.principal(id),
+    instance_id text NOT NULL CHECK (instance_id = btrim(instance_id) AND length(instance_id) BETWEEN 1 AND 255),
+    closed_at timestamptz,
+    UNIQUE (principal_id, instance_id)
+);
+CREATE TABLE access.initial_publisher_origin (
+    publisher_credential_id uuid PRIMARY KEY REFERENCES access.api_token(id) ON DELETE CASCADE,
+    claim_credential_id uuid NOT NULL REFERENCES access.initial_password_setup(claim_credential_id),
+    project_id text NOT NULL CHECK (project_id = btrim(project_id) AND length(project_id) BETWEEN 1 AND 255)
+);
+
+-- +goose StatementBegin
+CREATE FUNCTION access.reject_initial_setup_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.claim_credential_id <> NEW.claim_credential_id OR OLD.principal_id <> NEW.principal_id
+       OR OLD.instance_id <> NEW.instance_id
+       OR (OLD.closed_at IS NOT NULL AND NEW.closed_at IS DISTINCT FROM OLD.closed_at) THEN
+        RAISE EXCEPTION 'initial password setup closure is permanent';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+REVOKE ALL ON FUNCTION access.reject_initial_setup_rewrite() FROM PUBLIC;
+CREATE TRIGGER initial_password_setup_monotonic BEFORE UPDATE ON access.initial_password_setup
+FOR EACH ROW EXECUTE FUNCTION access.reject_initial_setup_rewrite();
+CREATE TRIGGER initial_password_setup_no_delete BEFORE DELETE ON access.initial_password_setup
+FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER initial_publisher_origin_immutable BEFORE UPDATE ON access.initial_publisher_origin
+FOR EACH ROW EXECUTE FUNCTION access.reject_authorization_policy_history_mutation();
+CREATE TRIGGER initial_publisher_origin_no_delete BEFORE DELETE ON access.initial_publisher_origin
+FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
+REVOKE ALL ON access.initial_password_setup, access.initial_publisher_origin FROM PUBLIC;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
+  GRANT SELECT, INSERT ON access.initial_password_setup, access.initial_publisher_origin TO leapview_control_runtime;
+  GRANT UPDATE (closed_at) ON access.initial_password_setup TO leapview_control_runtime;
+ END IF;
+ IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_backup') THEN
+  GRANT SELECT ON access.initial_password_setup, access.initial_publisher_origin TO leapview_control_backup;
  END IF;
 END $$;
 -- +goose StatementEnd

@@ -13,6 +13,7 @@ import (
 	adminsettings "github.com/flidai/leapview/internal/admin/settings"
 	"github.com/flidai/leapview/internal/admin/ui"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/pagestream"
 )
 
@@ -34,11 +35,17 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 	section := strings.TrimSpace(r.URL.Query().Get("section"))
 	projectID := ""
 	if command.Action == "grant_role" || command.Action == "revoke_role" {
-		if h.ReadModel.CurrentProjectID == nil {
+		if h.ReadModel.CurrentProjectID == nil && h.RoleBindingProjectID == nil {
 			nethttp.Error(w, "active project identity is unavailable", nethttp.StatusServiceUnavailable)
 			return
 		}
-		resolved, resolveErr := h.ReadModel.CurrentProjectID(r.Context())
+		resolve := h.RoleBindingProjectID
+		if resolve == nil {
+			resolve = func(r *nethttp.Request) (projectgraph.ResourceID, error) {
+				return h.ReadModel.CurrentProjectID(r.Context())
+			}
+		}
+		resolved, resolveErr := resolve(r)
 		if resolveErr != nil {
 			nethttp.Error(w, resolveErr.Error(), nethttp.StatusServiceUnavailable)
 			return
@@ -167,6 +174,16 @@ func (h Handler) loadAccessAdministration(r *nethttp.Request, actorID, selectedP
 	if h.ReadModel.CurrentPrincipal != nil {
 		if principal, ok := h.ReadModel.CurrentPrincipal(r); ok && principal.DevBypass {
 			state.RoleMutationUnavailableReason = devBypassRoleMutationUnavailable
+		}
+	}
+	if err == nil && h.RoleBindingAdministrationForRequest != nil {
+		policy, handled, policyErr := h.RoleBindingAdministrationForRequest(r)
+		if policyErr != nil {
+			return state, policyErr
+		}
+		if handled {
+			adminsettings.ApplyRoleBindingAdministrationState(&state, adminsettings.RoleBindingAdministrationStateFromAccess(policy))
+			return state, nil
 		}
 	}
 	if err == nil && h.RoleBindingAdministration != nil {

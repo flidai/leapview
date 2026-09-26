@@ -94,3 +94,54 @@ func TestCurrentTargetAuthorizationFilterRevokesCapturedRole(t *testing.T) {
 		t.Fatalf("missing current head must fail closed: %v", err)
 	}
 }
+
+func TestCurrentTargetAuthorizationFilterValidatesDigestIncludingGrants(t *testing.T) {
+	identity := projectgraph.ServingIdentity{ProjectID: "project_demo", Environment: "production", GenerationID: "generation_1"}
+	dashboard := projectgraph.ResourceID("dashboard_main")
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: dashboard, Kind: projectgraph.KindDashboard, Name: "main"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := access.NewResourceRef(dashboard, projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "alice"}
+	legacy := access.AuthorizationGrant{ID: "legacy-read", Subject: alice, Resource: resource, Capability: access.CapabilityResourceRead}
+	pair, err := access.NewExactPermissionPair(access.ActionDashboardRead, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typed := access.AuthorizationGrant{ID: "typed-read", Subject: alice, Resource: resource, PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{pair}}
+	legacyCanonical, err := access.NewCanonicalGrant(graph, legacy.Subject, legacy.Resource, legacy.Capability)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capturedTyped, err := accesssnapshot.NewTypedGrant(typed.ID, typed.Name, typed.Subject, typed.Permissions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, nil, []accesssnapshot.Grant{{ID: legacy.ID, Canonical: legacyCanonical}, capturedTyped}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := access.AuthorizationPolicyScope{TargetID: "target_demo", ProjectID: identity.ProjectID.String(), Environment: identity.Environment}
+	policy := access.AuthorizationPolicy{Scope: scope, Revision: 1, Grants: []access.AuthorizationGrant{legacy, typed}}
+	policy.Digest, err = access.AuthorizationPolicyDigest(scope, nil, policy.Grants...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &currentAuthorizationPolicyReader{policy: policy}
+	filter := currentTargetAuthorizationFilter(reader, scope.TargetID, identity.ProjectID, identity.Environment)
+	if _, err := filter(t.Context(), captured); err != nil {
+		t.Fatalf("filter valid captured grants using full policy digest: %v", err)
+	}
+	roleOnlyDigest, err := access.AuthorizationPolicyDigest(scope, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.policy.Digest = roleOnlyDigest
+	if _, err := filter(t.Context(), captured); err == nil {
+		t.Fatal("accepted a current-policy digest that omitted grants")
+	}
+}

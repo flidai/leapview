@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -84,15 +85,34 @@ func (credentials qualificationCredentials) recoveryControlToken() (string, erro
 }
 
 func qualificationWorkloadActions() []access.Action {
-	return access.DefaultAuthoringActions()
+	seen := make(map[access.Action]struct{})
+	actions := make([]access.Action, 0, 32)
+	for _, role := range []access.PermissionRole{access.PermissionRoleEditor, access.PermissionRoleReleaseOperator} {
+		roleActions, _ := access.PermissionRoleActions(role)
+		for _, action := range roleActions {
+			if _, duplicate := seen[action]; duplicate {
+				continue
+			}
+			seen[action] = struct{}{}
+			actions = append(actions, action)
+		}
+	}
+	sort.Slice(actions, func(left, right int) bool { return actions[left] < actions[right] })
+	return actions
 }
 
 func qualificationProjectDataActions() []access.Action {
 	return []access.Action{access.ActionDashboardRead, access.ActionSemanticRead, access.ActionSemanticConsume, access.ActionSemanticQuery}
 }
 
+func qualificationAdministratorActions() []access.Action {
+	// This OAuth token reads the project policy and requests/polls the protected
+	// delivery publication. Role changes are performed by the browser session.
+	return []access.Action{access.ActionProjectAccessRead, access.ActionDeliveryRead, access.ActionDeliveryPublish}
+}
+
 func qualificationReviewerActions() []access.Action {
-	return []access.Action{access.ActionProjectAccessManage}
+	return []access.Action{access.ActionDeliveryRead, access.ActionDeliveryApprove}
 }
 
 func qualificationActionNames(actions []access.Action) []string {
@@ -345,7 +365,7 @@ func (c *Controller) runQualificationAuthoring(
 	}
 	var administratorToken qualificationBrowserToken
 	if err := browserWorker.CallContext(ctx, "issueAdministratorToken", map[string]any{
-		"actions": qualificationActionNames([]access.Action{access.ActionProjectAccessManage, access.ActionProjectAccessDelegate}),
+		"actions": qualificationActionNames(qualificationAdministratorActions()),
 	}, &administratorToken, nil); err != nil {
 		return report, err
 	}
@@ -359,7 +379,28 @@ func (c *Controller) runQualificationAuthoring(
 	policyRevision, policyDigest, err := bootstrapQualificationRoleBindings(
 		ctx, apiClient, options.Target, options.ProjectID, options.Environment, administratorToken.AccessToken,
 		administrator.Principal.Id, reviewer.Principal.Id,
+		func(expectedRevision int64) error {
+			var granted struct {
+				Submitted bool `json:"submitted"`
+			}
+			if err := browserWorker.CallContext(ctx, "grantReviewerRole", map[string]any{
+				"principalId":      reviewer.Principal.Id,
+				"bindingId":        qualificationReviewerBindingID(reviewer.Principal.Id),
+				"role":             string(access.PermissionRoleReleaseApprover),
+				"expectedRevision": expectedRevision,
+			}, &granted, nil); err != nil {
+				return err
+			}
+			if !granted.Submitted {
+				return fmt.Errorf("browser worker did not submit the reviewer role command")
+			}
+			return nil
+		},
 	)
+	if err != nil {
+		return report, err
+	}
+	policyRevision, policyDigest, err = c.stageQualificationPipelineGrant(ctx, options, apiClient, administratorToken.AccessToken, administrator.Principal.Id, policyRevision)
 	if err != nil {
 		return report, err
 	}
@@ -506,7 +547,7 @@ func (c *Controller) runQualificationAuthoring(
 	if err := verifyExactAuthoringCandidate(candidate, publication, deployment); err != nil {
 		return report, err
 	}
-	createAPIToken := func(name string, actions []access.Action) (string, error) {
+	createAPIToken := func(name string, actions []access.Action, exact ...access.PermissionPair) (string, error) {
 		projectID, err := projectgraph.NewResourceID(options.ProjectID)
 		if err != nil {
 			return "", fmt.Errorf("qualification project identity: %w", err)
@@ -515,6 +556,7 @@ func (c *Controller) runQualificationAuthoring(
 		if err != nil {
 			return "", fmt.Errorf("qualification %s permission scope: %w", name, err)
 		}
+		permissions = append(permissions, exact...)
 		var response struct {
 			Token string `json:"token"`
 		}
@@ -530,7 +572,11 @@ func (c *Controller) runQualificationAuthoring(
 		}
 		return response.Token, nil
 	}
-	workloadToken, err := createAPIToken("qualification-workload", qualificationWorkloadActions())
+	runPermission, err := qualificationPipelineRunPermission(options.ProjectID)
+	if err != nil {
+		return report, err
+	}
+	workloadToken, err := createAPIToken("qualification-workload", qualificationWorkloadActions(), runPermission)
 	if err != nil {
 		return report, err
 	}
