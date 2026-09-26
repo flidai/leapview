@@ -49,5 +49,34 @@ def main():
     print('Trial local image identity verified')
 
 
+def validate_cleanup_scope(images):
+    """Reject ambiguous aliases before invoking native service-label pruning."""
+    for image in images:
+        if image.get('Config', {}).get('Labels', {}).get('service') != 'leapview-site-trial':
+            continue
+        for alias in image.get('RepoTags', []):
+            if not alias.startswith('127.0.0.1:5000/site:'):
+                raise ValueError('service-labeled image has an unrelated repository alias')
+        for digest in image.get('RepoDigests', []):
+            if not digest.startswith('127.0.0.1:5000/site@sha256:'):
+                raise ValueError('service-labeled image has an unrelated repository digest')
+
+
+def verified_noop(record, image, container, served):
+    """Synthetic fixture's full fixed runtime contract, not a production schema."""
+    validate(record, image, rollback=True)
+    config, host = container.get('Config', {}), container.get('HostConfig', {})
+    return (container.get('State', {}).get('Running') is True
+            and container.get('Image') == record['image_id']
+            and config.get('User') == '65532:65532'
+            and config.get('Cmd') == ['/fixture']
+            and 'TRIAL_IMAGE_REFERENCE=' + record['reference'] in config.get('Env', [])
+            and host.get('ReadonlyRootfs') is True
+            and 'ALL' in host.get('CapDrop', [])
+            and 'no-new-privileges=true' in host.get('SecurityOpt', [])
+            and served.get('version') == record['version']
+            and served.get('image_reference') == record['reference'])
+
+
 if __name__ == '__main__':
     main()

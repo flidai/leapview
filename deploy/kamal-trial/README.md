@@ -77,16 +77,45 @@ not change that event identity. A push on the dedicated branch plus the opt-in
 PR lookup keeps the attested source and checked-out source identical, without
 weakening admission or using `pull_request_target`.
 
-The published trial image still must be exercised with Kamal and all failure
-scenarios. Standalone image qualification is not the full trial gate.
+The admitted image at source `b83767f8a5c6a2d158968e3458295ff50890e4c1`
+has also passed the private Kamal/Caddy probe; see `evidence/real-site.json`.
+Standalone image qualification and this compatibility test do not authorize
+production activation.
+
+To reproduce the real-image probe, download the `kamal-trial-image-*` artifact
+from the successful run. Find its `oci-admission.json` (the upload preserves
+nested directories), then run:
+
+```sh
+python3 deploy/kamal-trial/prepare_site_image.py \
+  --admission "$DOWNLOADED_ADMISSION_JSON" --output "$NEW_IMAGE_DIRECTORY"
+sudo unshare --mount --net --pid --fork --mount-proc \
+  python3 -B deploy/kamal-trial/site_probe.py \
+  --state "$NEW_STATE_DIRECTORY" --artifacts "$ARTIFACTS" \
+  --gems "$GEM_HOME" --registry "$REGISTRY_BINARY" \
+  --site-record "$NEW_IMAGE_DIRECTORY/site-record.json" \
+  --site-archive "$NEW_IMAGE_DIRECTORY/site.oci.tar"
+```
+
+The archive preserves the entire admitted OCI index. The probe seeds its private
+registry, drops the seed image from Docker, waits for content GC, and pulls the
+host's platform normally. It verifies index/manifest/config identities, the
+running container's platform descriptor, and the HTTPS response. Ruby transport
+configuration in these fixtures is deliberately local; production must separate
+versioned app settings from the next CI runner's bootstrap/SSH paths.
 
 ## Remaining migration gates
 
-The full approved plan is in `implementation-plan.md`. In particular:
+The full approved plan is in `implementation-plan.md`; network setup is in
+`runner-access.md`. In particular:
 
-- Prove exact admitted image identity at pull, boot and after proxy switching.
-- Complete corrupt metadata, registry outage/retry, disk-full, interruptions,
-  concurrent operator, cleanup-error, foreign-alias and shared-layer tests.
+- Carry the proven exact admitted-image checks into the production adapter.
+- Integrate and verify the tested safeguards in the production adapter,
+  including host-local metadata, failure recovery and external CI/operator
+  serialization. `storage_edges.py` now covers shared layers/foreign containers
+  and public acceptance failure using supported `redeploy` to defer pruning.
+  Verify rollback from a genuinely separate runner before declaring the complete
+  trial gate satisfied; the current SSH record-reload test shares a filesystem.
 - Derive production capacity from actual site images and peak physical usage;
   synthetic fixture sizes are not a production sizing recommendation.
 - Establish runner-to-host SSH access. The existing workflow has no SSH step;

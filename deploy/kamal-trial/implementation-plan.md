@@ -137,4 +137,27 @@ Exit gate: focused checks and required hosted CI pass; PR review and merge requi
 - HTTPS, www redirect, docs, download links and frontend assets pass acceptance.
 - Capacity/cleanup failures are visible, ownership and recovery are documented, and the old updater cannot race Kamal.
 
-The next action is Stage 1 followed by the compatibility trial. This plan does not claim the tests have run or that Kamal is already installed.
+## Implementation checkpoint — 26 September
+
+The isolated lifecycle, real-image compatibility and storage-edge results are in
+`evidence/README.md`. Production was inspected read-only: Docker 29.1.3/containerd
+overlayfs matches the final trial; the root filesystem still has zero available
+bytes and the legacy reconciler timer is active. No production mutation occurred.
+
+Native Kamal alone does not satisfy our distinct verified rollback policy. The
+trial established narrow remedies: reject foreign aliases, skip a fully verified
+identical-version request, restore the selected version's runtime record during
+rollback, and remove only recorded rejected attempts/redundant stopped copies
+before native pruning. For an already bootstrapped proxy, supported
+`redeploy --skip-push` allows public acceptance before pruning. The initial
+private bootstrap and production controller handover remain separate procedures.
+This changes the integration sequence to pull/start -> public verification ->
+record verified version -> native cleanup, with recovery before cleanup on error.
+
+Remaining gates are documented rather than waived: hosted-runner private SSH
+access, truly separate-runner rollback, measured production capacity reserve,
+and a reviewed default-off adapter enforcing shared workflow serialization and
+the tested safeguards. `runner-access.md` specifies proposed Tailscale OIDC setup;
+it is not an applied tailnet policy. PR #751 remains a draft trial, and #748 stays
+unmerged. Full local CI was attempted but blocked by the workspace Docker bridge;
+focused checks and the experimental image build/admission passed.

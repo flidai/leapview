@@ -1,0 +1,7 @@
+{
+  "fixture": "29f5889c919d62a245523f55c2717e4692494ccf744b7a6f2ffc3021c44cfae1",
+  "proxy_archive": "4c33abdf7218574f9398d04881ea6ed52edd8589d8c2f5645276ada7eaf740e4",
+  "caddy_archive": "ca45c2b5ace84ff7e8d4890e1a689b23bc1ca7a906cfeea27ad1990356df5fc7",
+  "registry": "2bbea63618d0b847eba6272e490aa89f81b9cb87dcc735ddaf4e8923f6c68b86",
+  "gem_lock": "136748a36bdbfc72d9b49164091ba269dd0e579a52c221c18baecb44499cf326"
+}

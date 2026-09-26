@@ -7,7 +7,479 @@
       "passed": true
     }
   ],
-  "harness_sha256": "f58b6aff90f5c3528f87cd3e52a12d0a95aa84da3785af5ac0757dfbbfd0110b",
+  "cycles": [
+    {
+      "version": "good-01",
+      "containers": [
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:28:58 +0000 UTC",
+          "ID": "bc85152ff43c",
+          "Image": "127.0.0.1:5000/site:good-01",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-01",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "2 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "running",
+          "Status": "Up 2 seconds"
+        }
+      ],
+      "runtime_allocated_bytes": 349155328,
+      "filesystem_available_bytes": 30597701632,
+      "filesystem_available_inodes": 14222740,
+      "containerd_filesystem_available_bytes": 1181032448
+    },
+    {
+      "version": "good-02",
+      "containers": [
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:04 +0000 UTC",
+          "ID": "debc92e0de9e",
+          "Image": "127.0.0.1:5000/site:good-02",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-02",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "3 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "running",
+          "Status": "Up 2 seconds"
+        },
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:28:58 +0000 UTC",
+          "ID": "bc85152ff43c",
+          "Image": "127.0.0.1:5000/site:good-01",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-01",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "9 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "exited",
+          "Status": "Exited (2) 1 second ago"
+        }
+      ],
+      "runtime_allocated_bytes": 364888064,
+      "filesystem_available_bytes": 30575935488,
+      "filesystem_available_inodes": 14222707,
+      "containerd_filesystem_available_bytes": 1165344768
+    },
+    {
+      "version": "good-03",
+      "containers": [
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:11 +0000 UTC",
+          "ID": "728a35d8dcd9",
+          "Image": "127.0.0.1:5000/site:good-03",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-03",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "3 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "running",
+          "Status": "Up 2 seconds"
+        },
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:04 +0000 UTC",
+          "ID": "debc92e0de9e",
+          "Image": "127.0.0.1:5000/site:good-02",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-02",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "10 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "exited",
+          "Status": "Exited (2) 1 second ago"
+        }
+      ],
+      "runtime_allocated_bytes": 364924928,
+      "filesystem_available_bytes": 30550089728,
+      "filesystem_available_inodes": 14222685,
+      "containerd_filesystem_available_bytes": 1165312000
+    },
+    {
+      "version": "good-04",
+      "containers": [
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:18 +0000 UTC",
+          "ID": "468f67c633e9",
+          "Image": "127.0.0.1:5000/site:good-04",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-04",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "3 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "running",
+          "Status": "Up 2 seconds"
+        },
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:11 +0000 UTC",
+          "ID": "728a35d8dcd9",
+          "Image": "127.0.0.1:5000/site:good-03",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-03",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "10 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "exited",
+          "Status": "Exited (2) 1 second ago"
+        }
+      ],
+      "runtime_allocated_bytes": 364924928,
+      "filesystem_available_bytes": 30543802368,
+      "filesystem_available_inodes": 14222662,
+      "containerd_filesystem_available_bytes": 1165312000
+    },
+    {
+      "version": "good-05",
+      "containers": [
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:25 +0000 UTC",
+          "ID": "90162674ca37",
+          "Image": "127.0.0.1:5000/site:good-05",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-05",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "3 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "running",
+          "Status": "Up 2 seconds"
+        },
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:18 +0000 UTC",
+          "ID": "468f67c633e9",
+          "Image": "127.0.0.1:5000/site:good-04",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-04",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "10 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "exited",
+          "Status": "Exited (2) 2 seconds ago"
+        }
+      ],
+      "runtime_allocated_bytes": 364929024,
+      "filesystem_available_bytes": 30523494400,
+      "filesystem_available_inodes": 14222639,
+      "containerd_filesystem_available_bytes": 1165312000
+    },
+    {
+      "version": "good-06",
+      "containers": [
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:32 +0000 UTC",
+          "ID": "e528db765f3c",
+          "Image": "127.0.0.1:5000/site:good-06",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-06",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "2 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "running",
+          "Status": "Up 2 seconds"
+        },
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:25 +0000 UTC",
+          "ID": "90162674ca37",
+          "Image": "127.0.0.1:5000/site:good-05",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-05",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "9 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "exited",
+          "Status": "Exited (2) 2 seconds ago"
+        }
+      ],
+      "runtime_allocated_bytes": 364929024,
+      "filesystem_available_bytes": 30517473280,
+      "filesystem_available_inodes": 14222616,
+      "containerd_filesystem_available_bytes": 1165312000
+    },
+    {
+      "version": "good-07",
+      "containers": [
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:39 +0000 UTC",
+          "ID": "53bf32c8506b",
+          "Image": "127.0.0.1:5000/site:good-07",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-07",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "2 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "running",
+          "Status": "Up 2 seconds"
+        },
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:32 +0000 UTC",
+          "ID": "e528db765f3c",
+          "Image": "127.0.0.1:5000/site:good-06",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-06",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "9 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "exited",
+          "Status": "Exited (2) 2 seconds ago"
+        }
+      ],
+      "runtime_allocated_bytes": 364929024,
+      "filesystem_available_bytes": 30511443968,
+      "filesystem_available_inodes": 14222593,
+      "containerd_filesystem_available_bytes": 1165312000
+    },
+    {
+      "version": "good-08",
+      "containers": [
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:45 +0000 UTC",
+          "ID": "2d4a0a6c39e9",
+          "Image": "127.0.0.1:5000/site:good-08",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-08",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "3 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "running",
+          "Status": "Up 2 seconds"
+        },
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:39 +0000 UTC",
+          "ID": "53bf32c8506b",
+          "Image": "127.0.0.1:5000/site:good-07",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-07",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "9 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "exited",
+          "Status": "Exited (2) 1 second ago"
+        }
+      ],
+      "runtime_allocated_bytes": 364933120,
+      "filesystem_available_bytes": 30505414656,
+      "filesystem_available_inodes": 14222570,
+      "containerd_filesystem_available_bytes": 1165312000
+    },
+    {
+      "version": "good-09",
+      "containers": [
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:52 +0000 UTC",
+          "ID": "392d92fedc8f",
+          "Image": "127.0.0.1:5000/site:good-09",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-09",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "3 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "running",
+          "Status": "Up 2 seconds"
+        },
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:45 +0000 UTC",
+          "ID": "2d4a0a6c39e9",
+          "Image": "127.0.0.1:5000/site:good-08",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-08",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "10 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "exited",
+          "Status": "Exited (2) 2 seconds ago"
+        }
+      ],
+      "runtime_allocated_bytes": 364933120,
+      "filesystem_available_bytes": 30499311616,
+      "filesystem_available_inodes": 14222547,
+      "containerd_filesystem_available_bytes": 1165312000
+    },
+    {
+      "version": "good-10",
+      "containers": [
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:59 +0000 UTC",
+          "ID": "b99381eb0bc4",
+          "Image": "127.0.0.1:5000/site:good-10",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-10",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "3 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "running",
+          "Status": "Up 2 seconds"
+        },
+        {
+          "Command": "\"/fixture\"",
+          "CreatedAt": "2026-09-26 08:29:52 +0000 UTC",
+          "ID": "392d92fedc8f",
+          "Image": "127.0.0.1:5000/site:good-09",
+          "Labels": "destination=,role=web,service=leapview-site-trial",
+          "LocalVolumes": "0",
+          "Mounts": "",
+          "Names": "leapview-site-trial-web-good-09",
+          "Networks": "kamal",
+          "Platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "Ports": "",
+          "RunningFor": "10 seconds ago",
+          "Size": "8.19kB (virtual 9.73MB)",
+          "State": "exited",
+          "Status": "Exited (2) 1 second ago"
+        }
+      ],
+      "runtime_allocated_bytes": 364937216,
+      "filesystem_available_bytes": 30493282304,
+      "filesystem_available_inodes": 14222524,
+      "containerd_filesystem_available_bytes": 1165312000
+    }
+  ],
+  "harness_sha256": "31e61e46a0fa64cadadcc78bd47ae1ad887c5df3452621ca0da55e66fc284d61",
   "docker": {
     "ServerVersion": "29.1.3",
     "Driver": "overlayfs",
@@ -19,7 +491,142 @@
     ]
   },
   "kamal": "2.12.0",
-  "peak_allocated_bytes": 1529360384,
+  "private_remote_working_directory_verified": true,
+  "peak_allocated_bytes": 1529376768,
+  "images": {
+    "good-01": {
+      "id": "sha256:a272e19383d985f566472d77b38807e375b816c75d1b256b603f5d36f18ebe2e",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:a272e19383d985f566472d77b38807e375b816c75d1b256b603f5d36f18ebe2e"
+      ]
+    },
+    "good-02": {
+      "id": "sha256:f47696eb45948b05c9bb5bbbe1147ddff6d0f0aa3232412a1e2422693d40d769",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:f47696eb45948b05c9bb5bbbe1147ddff6d0f0aa3232412a1e2422693d40d769"
+      ]
+    },
+    "good-03": {
+      "id": "sha256:5bea37f90569d2ef0627e48d1fdd91738b03aee18147cacbb0a81138acd81876",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:5bea37f90569d2ef0627e48d1fdd91738b03aee18147cacbb0a81138acd81876"
+      ]
+    },
+    "good-04": {
+      "id": "sha256:791cbc47744e139fe94d56d20fff06b9734d680eeb904c0d92e1ce7963d43fd8",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:791cbc47744e139fe94d56d20fff06b9734d680eeb904c0d92e1ce7963d43fd8"
+      ]
+    },
+    "good-05": {
+      "id": "sha256:8fb090491fd0188d6f04c45bb6870557a7a7df31c0441c4586a23600f11a7355",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:8fb090491fd0188d6f04c45bb6870557a7a7df31c0441c4586a23600f11a7355"
+      ]
+    },
+    "good-06": {
+      "id": "sha256:31e081c314a09d60e26bd5e7f666a326819f4e562a1199e05f389228b878191f",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:31e081c314a09d60e26bd5e7f666a326819f4e562a1199e05f389228b878191f"
+      ]
+    },
+    "good-07": {
+      "id": "sha256:b2f8807b77d1fe3fd72509814a077e32c22bbde27d567694a63ce8abbf79c74c",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:b2f8807b77d1fe3fd72509814a077e32c22bbde27d567694a63ce8abbf79c74c"
+      ]
+    },
+    "good-08": {
+      "id": "sha256:7dfc1d93df8a9a2eae5f4495d2a4dc44ba43c8ce50e68ee8acf67846fbd60283",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:7dfc1d93df8a9a2eae5f4495d2a4dc44ba43c8ce50e68ee8acf67846fbd60283"
+      ]
+    },
+    "good-09": {
+      "id": "sha256:e0af806147fb8dce67eb32951c4473e336a866e1089e1f23b2ddb8882b94bf27",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:e0af806147fb8dce67eb32951c4473e336a866e1089e1f23b2ddb8882b94bf27"
+      ]
+    },
+    "good-10": {
+      "id": "sha256:af93d3714ab82ad450378115a48381d22db7889316719b2b2ab27b8e11b1db89",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:af93d3714ab82ad450378115a48381d22db7889316719b2b2ab27b8e11b1db89"
+      ]
+    },
+    "wrong-arch": {
+      "id": "sha256:b32fd3a182773456b64e7801e5ba06a799d2513c481ca50dbb9dcf043170f15c",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:b32fd3a182773456b64e7801e5ba06a799d2513c481ca50dbb9dcf043170f15c"
+      ]
+    },
+    "wrong-service": {
+      "id": "sha256:d98a6759b2c5a0c7d1f356be2ee0fa06281a5de200d3b189fafaa9f0b242124c",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:d98a6759b2c5a0c7d1f356be2ee0fa06281a5de200d3b189fafaa9f0b242124c"
+      ]
+    },
+    "wrong-identity": {
+      "id": "sha256:7dde7a495f7b0a77c0f2c8641af74ed45ffa0487adc2da75da2d93bf3aa0eeac",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:7dde7a495f7b0a77c0f2c8641af74ed45ffa0487adc2da75da2d93bf3aa0eeac"
+      ]
+    },
+    "bad-01": {
+      "id": "sha256:ba50ae36bfa6686e2a71f00204a02f26e598de645955051b309c43d2f91b6aac",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:ba50ae36bfa6686e2a71f00204a02f26e598de645955051b309c43d2f91b6aac"
+      ]
+    },
+    "bad-02": {
+      "id": "sha256:65f7ce1dbd510fe7b4f5862e72ce92be26edf5c3438f3fa06ca41f8a46788473",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:65f7ce1dbd510fe7b4f5862e72ce92be26edf5c3438f3fa06ca41f8a46788473"
+      ]
+    },
+    "bad-03": {
+      "id": "sha256:113279d02501a25571bd128786953441326c5705af6fbf00796629f26176d8f3",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:113279d02501a25571bd128786953441326c5705af6fbf00796629f26176d8f3"
+      ]
+    },
+    "after-enospc": {
+      "id": "sha256:be5f091c99aade31201b3ec23defeaeb1035edd243ea061235e5b4e651801306",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:be5f091c99aade31201b3ec23defeaeb1035edd243ea061235e5b4e651801306"
+      ]
+    },
+    "interrupted-pre-app-boot": {
+      "id": "sha256:d94278e70d455474dbe2d89b5b201b88546c77b493cdf777a43f7ad2b3e49729",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:d94278e70d455474dbe2d89b5b201b88546c77b493cdf777a43f7ad2b3e49729"
+      ]
+    },
+    "concurrent-attempt": {
+      "id": "sha256:11a28e7dc6c9562b6c0fa5c0e2e1dd55f8963e1b2723c883cb69af1d8866852e",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:11a28e7dc6c9562b6c0fa5c0e2e1dd55f8963e1b2723c883cb69af1d8866852e"
+      ]
+    },
+    "interrupted-post-app-boot": {
+      "id": "sha256:e578a3a29490b51935f7d480667a808b2466054b59247afa14ef8f372cd621b1",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:e578a3a29490b51935f7d480667a808b2466054b59247afa14ef8f372cd621b1"
+      ]
+    },
+    "maintenance-failure": {
+      "id": "sha256:0f8f9426b86db44a79c4ecd42027143475fdb4a26bb4d09858df99077bed94e8",
+      "digests": [
+        "127.0.0.1:5000/site@sha256:0f8f9426b86db44a79c4ecd42027143475fdb4a26bb4d09858df99077bed94e8"
+      ]
+    }
+  },
+  "sampling_errors": [
+    "du -sx --block-size=1 /home/codex/tmp/leapview-kamal-study/run-12/containerd /home/codex/tmp/leapview-kamal-study/run-12/docker exited 1\ndu: cannot access '/home/codex/tmp/leapview-kamal-study/run-12/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/40': No such file or directory\n380133376\t/home/codex/tmp/leapview-kamal-study/run-12/containerd\n368640\t/home/codex/tmp/leapview-kamal-study/run-12/docker\n",
+    "du -sx --block-size=1 /home/codex/tmp/leapview-kamal-study/run-12/containerd /home/codex/tmp/leapview-kamal-study/run-12/docker exited 1\ndu: cannot access '/home/codex/tmp/leapview-kamal-study/run-12/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/44/fs/.dockerenv': No such file or directory\ndu: cannot read directory '/home/codex/tmp/leapview-kamal-study/run-12/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/44/fs/dev': No such file or directory\ndu: cannot access '/home/codex/tmp/leapview-kamal-study/run-12/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/45': No such file or directory\n380137472\t/home/codex/tmp/leapview-kamal-study/run-12/containerd\n368640\t/home/codex/tmp/leapview-kamal-study/run-12/docker\n",
+    "du -sx --block-size=1 /home/codex/tmp/leapview-kamal-study/run-12/containerd /home/codex/tmp/leapview-kamal-study/run-12/docker exited 1\ndu: cannot access '/home/codex/tmp/leapview-kamal-study/run-12/containerd/io.containerd.content.v1.content/blobs/sha256/e0af806147fb8dce67eb32951c4473e336a866e1089e1f23b2ddb8882b94bf27': No such file or directory\n390434816\t/home/codex/tmp/leapview-kamal-study/run-12/containerd\n446464\t/home/codex/tmp/leapview-kamal-study/run-12/docker\n"
+  ],
+  "caddy_tls_www": true,
   "caddy_tls_host_forwarding_www": true,
   "identity_negative_cases": [
     "wrong-architecture",
@@ -28,9 +635,106 @@
     "missing-record",
     "changed-tag"
   ],
+  "before_native_prune": {
+    "containers": [
+      {
+        "Command": "\"/fixture\"",
+        "CreatedAt": "2026-09-26 08:29:59 +0000 UTC",
+        "ID": "b99381eb0bc4",
+        "Image": "127.0.0.1:5000/site:good-10",
+        "Labels": "destination=,role=web,service=leapview-site-trial",
+        "LocalVolumes": "0",
+        "Mounts": "",
+        "Names": "leapview-site-trial-web-good-10",
+        "Networks": "kamal",
+        "Platform": {
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "Ports": "",
+        "RunningFor": "47 seconds ago",
+        "Size": "8.19kB (virtual 9.73MB)",
+        "State": "running",
+        "Status": "Up 46 seconds"
+      },
+      {
+        "Command": "\"/fixture\"",
+        "CreatedAt": "2026-09-26 08:29:52 +0000 UTC",
+        "ID": "392d92fedc8f",
+        "Image": "127.0.0.1:5000/site:good-09",
+        "Labels": "destination=,role=web,service=leapview-site-trial",
+        "LocalVolumes": "0",
+        "Mounts": "",
+        "Names": "leapview-site-trial-web-good-09",
+        "Networks": "kamal",
+        "Platform": {
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "Ports": "",
+        "RunningFor": "54 seconds ago",
+        "Size": "8.19kB (virtual 9.73MB)",
+        "State": "exited",
+        "Status": "Exited (2) 46 seconds ago"
+      }
+    ],
+    "runtime_allocated_bytes": 458915840,
+    "filesystem_available_bytes": 30389555200,
+    "filesystem_available_inodes": 14222358,
+    "containerd_filesystem_available_bytes": 1071431680
+  },
+  "after_native_prune": {
+    "containers": [
+      {
+        "Command": "\"/fixture\"",
+        "CreatedAt": "2026-09-26 08:29:59 +0000 UTC",
+        "ID": "b99381eb0bc4",
+        "Image": "127.0.0.1:5000/site:good-10",
+        "Labels": "destination=,role=web,service=leapview-site-trial",
+        "LocalVolumes": "0",
+        "Mounts": "",
+        "Names": "leapview-site-trial-web-good-10",
+        "Networks": "kamal",
+        "Platform": {
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "Ports": "",
+        "RunningFor": "49 seconds ago",
+        "Size": "8.19kB (virtual 9.73MB)",
+        "State": "running",
+        "Status": "Up 48 seconds"
+      },
+      {
+        "Command": "\"/fixture\"",
+        "CreatedAt": "2026-09-26 08:29:52 +0000 UTC",
+        "ID": "392d92fedc8f",
+        "Image": "127.0.0.1:5000/site:good-09",
+        "Labels": "destination=,role=web,service=leapview-site-trial",
+        "LocalVolumes": "0",
+        "Mounts": "",
+        "Names": "leapview-site-trial-web-good-09",
+        "Networks": "kamal",
+        "Platform": {
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "Ports": "",
+        "RunningFor": "56 seconds ago",
+        "Size": "8.19kB (virtual 9.73MB)",
+        "State": "exited",
+        "Status": "Exited (2) 48 seconds ago"
+      }
+    ],
+    "runtime_allocated_bytes": 381173760,
+    "filesystem_available_bytes": 30389555200,
+    "filesystem_available_inodes": 14222358,
+    "containerd_filesystem_available_bytes": 1149173760
+  },
   "enospc_kept_live": true,
   "enospc_retry_succeeded": true,
   "native_rollback_uses_candidate_settings": true,
+  "offline_rollback_reloads_host_runtime_record": true,
   "offline_rollback_with_prior_record": true,
   "native_lock_blocks_activation_but_not_pull": true,
   "interruption_recovery": [
@@ -38,71 +742,8 @@
     "post-app-boot"
   ],
   "cleanup_failure_reports_live_new_version": true,
+  "foreign_alias_guard_blocks_cleanup": true,
   "native_prune_preserves_foreign_alias": false,
-  "native_same_version_keeps_distinct_prior": false,
-  "date": "2026-09-26",
-  "overall_qualification": "not-qualified; native retention gaps and real-image/runner-access gates remain",
-  "sampling_limit": "500ms sampling, transient du errors excluded; peak includes intentional ENOSPC filler, not a production sizing value",
-  "cycles": [
-    {
-      "version": "good-01",
-      "runtime_allocated_bytes": 349151232,
-      "containers": 1
-    },
-    {
-      "version": "good-02",
-      "runtime_allocated_bytes": 364875776,
-      "containers": 2
-    },
-    {
-      "version": "good-03",
-      "runtime_allocated_bytes": 364920832,
-      "containers": 2
-    },
-    {
-      "version": "good-04",
-      "runtime_allocated_bytes": 364920832,
-      "containers": 2
-    },
-    {
-      "version": "good-05",
-      "runtime_allocated_bytes": 364924928,
-      "containers": 2
-    },
-    {
-      "version": "good-06",
-      "runtime_allocated_bytes": 364924928,
-      "containers": 2
-    },
-    {
-      "version": "good-07",
-      "runtime_allocated_bytes": 364924928,
-      "containers": 2
-    },
-    {
-      "version": "good-08",
-      "runtime_allocated_bytes": 364929024,
-      "containers": 2
-    },
-    {
-      "version": "good-09",
-      "runtime_allocated_bytes": 364929024,
-      "containers": 2
-    },
-    {
-      "version": "good-10",
-      "runtime_allocated_bytes": 364933120,
-      "containers": 2
-    }
-  ],
-  "retained_after_failed_attempt_cleanup": [
-    {
-      "name": "leapview-site-trial-web-good-10",
-      "state": "running"
-    },
-    {
-      "name": "leapview-site-trial-web-good-09",
-      "state": "exited"
-    }
-  ]
+  "verified_same_version_noop_preserves_prior": true,
+  "native_same_version_keeps_distinct_prior": false
 }

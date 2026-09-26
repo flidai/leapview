@@ -20,6 +20,8 @@ import time
 import threading
 from urllib.request import build_opener, ProxyHandler, Request
 
+from identity_guard import validate, validate_cleanup_scope, verified_noop
+
 HERE = Path(__file__).resolve().parent
 HTTP = build_opener(ProxyHandler({}))
 
@@ -147,7 +149,7 @@ class Trial:
         wrapper = self.root / 'remote-shell'
         wrapper.write_text('#!/bin/bash\nset -eu\n' + ''.join(
             f'export {k}={shlex.quote(self.env[k])}\n' for k in ('HOME', 'DOCKER_HOST', 'DOCKER_CONFIG')) +
-            'unset DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH\nexec /bin/bash -c "$SSH_ORIGINAL_COMMAND"\n')
+            'unset DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH\ncd "$HOME"\nexec /bin/bash -c "$SSH_ORIGINAL_COMMAND"\n')
         wrapper.chmod(0o700)
         (self.root / 'authorized_keys').write_text((self.root / 'client_key.pub').read_text())
         (self.root / 'sshd_config').write_text(f'''Port 22222
@@ -176,6 +178,10 @@ ForceCommand {wrapper}
   UserKnownHostsFile {self.root}/known_hosts
 ''')
         wait_until(lambda: run(['ssh', '-F', str(self.root / 'ssh_config'), '127.0.0.1', 'docker info --format {{.DockerRootDir}}'], check=False)[0] == 0)
+        _, remote_pwd = run(['ssh', '-F', str(self.root / 'ssh_config'), '127.0.0.1', 'pwd'])
+        if remote_pwd.strip() != str(self.root):
+            raise RuntimeError('SSH working directory escaped the private fixture')
+        self.report['private_remote_working_directory_verified'] = True
 
     def write_config(self):
         (self.root / 'deploy.yml').write_text(f'''service: leapview-site-trial
@@ -213,7 +219,6 @@ proxy:
     version: v0.9.2
     publish: false
 retain_containers: 1
-run_directory: {self.root}/kamal
 hooks_path: {self.root}/hooks
 deploy_timeout: 5
 drain_timeout: 1
@@ -250,6 +255,9 @@ env:
         return identity['RepoDigests'][0]
 
     def save_record(self, version, record):
+        record.setdefault('runtime_config', (self.root / 'deploy.yml').read_text())
+        record.setdefault('runtime_env', {'TRIAL_IMAGE_REFERENCE': record['reference']})
+        record.setdefault('kamal_version', '2.12.0')
         path = self.root / 'records' / f'{version}.json'
         temp = path.with_suffix('.tmp')
         temp.write_text(json.dumps(record))
@@ -309,7 +317,7 @@ env:
             except Exception as exc:
                 self.report.setdefault('sampling_errors', []).append(str(exc))
 
-    def setup_caddy(self):
+    def setup_caddy(self, check_fixture=True):
         (self.root / 'Caddyfile').write_text("""{
  admin off
  auto_https disable_redirects
@@ -331,13 +339,20 @@ https://www.leapview.test {
                                        str(self.root / 'ca.crt'), check=False)[0] == 0)
         ip = self.inspect('trial-caddy')['NetworkSettings']['Networks']['kamal']['IPAddress']
         command = ['curl', '--noproxy', '*', '--fail', '--silent', '--show-error', '--cacert', str(self.root / 'ca.crt')]
-        code, body = run(command + ['--resolve', f'leapview.test:443:{ip}', 'https://leapview.test/build.json'])
+        probe = command + ['--resolve', f'leapview.test:443:{ip}', 'https://leapview.test/build.json']
+        # A root CA file can exist before the leaf certificate is ready.
+        wait_until(lambda: run(probe, check=False)[0] == 0)
+        code, body = run(probe)
         data = json.loads(body)
-        assert data['host'] == 'leapview.test' and data['forwarded_proto'] == 'https', data
+        if check_fixture:
+            assert data['host'] == 'leapview.test' and data['forwarded_proto'] == 'https', data
         _, headers = run(command + ['--head', '--resolve', f'www.leapview.test:443:{ip}', 'https://www.leapview.test/docs'])
         assert '301' in headers and 'location: https://leapview.test/docs' in headers.lower(), headers
-        self.report['caddy_tls_host_forwarding_www'] = True
-        print('PASS Caddy TLS, Host/HTTPS forwarding and www redirect through private proxy', flush=True)
+        self.report['caddy_tls_www'] = True
+        if check_fixture:
+            self.report['caddy_tls_host_forwarding_www'] = True
+        print('PASS Caddy TLS and www redirect through private proxy', flush=True)
+        return ip
 
     def exercise(self):
         self.sampler = threading.Thread(target=self.sample, daemon=True)
@@ -390,18 +405,26 @@ https://www.leapview.test {
             self.registry.wait(timeout=10)
             # Native rollback reuses the NEW runner's config, including its identity.
             self.env['TRIAL_IMAGE_REFERENCE'] = 'deliberately-wrong-candidate-settings'
+            config_file = self.root / 'deploy.yml'
+            config_file.write_text(config_file.read_text().replace('    options:', '    cmd: /fixture candidate-settings\n    options:', 1))
             self.kamal('rollback', prior_version)
             assert self.served()['version'] == prior_version
             self.report['native_rollback_uses_candidate_settings'] = self.served()['image_reference'] == 'deliberately-wrong-candidate-settings'
-            # Load the selected prior version's saved record (no registry access).
-            record = self.report['images'][prior_version]
-            assert self.inspect(f'{self.repo}:{prior_version}')['Id'] == record['id']
-            self.env['TRIAL_IMAGE_REFERENCE'] = record['digests'][0]
+            # Reconstruct from the HOST record over SSH, not controller memory or registry.
+            _, serialized = run(['ssh', '-F', str(self.root / 'ssh_config'), '127.0.0.1',
+                                 'cat ' + shlex.quote(str(self.root / 'records' / f'{prior_version}.json'))])
+            record = json.loads(serialized)
+            validate(record, self.inspect(f'{self.repo}:{prior_version}'), rollback=True)
+            config_file.write_text(record['runtime_config'])
+            self.env.pop('TRIAL_IMAGE_REFERENCE', None)
+            self.env.update(record['runtime_env'])
             self.kamal('rollback', prior_version)
             served = self.served()
-            assert served['version'] == prior_version and served['image_reference'] == record['digests'][0]
+            assert served['version'] == prior_version and served['image_reference'] == record['reference']
             running = self.inspect(f'leapview-site-trial-web-{prior_version}')
-            assert running['Image'] == record['id'] and running['State']['Running']
+            assert running['Image'] == record['image_id'] and running['State']['Running']
+            assert running['Config']['Cmd'] == ['/fixture']
+            self.report['offline_rollback_reloads_host_runtime_record'] = True
             self.report['offline_rollback_with_prior_record'] = True
             print('PASS registry-offline rollback with prior version identity restored', flush=True)
             self.registry = self.spawn('registry-restarted', [str(self.registry_binary), 'serve', str(self.root / 'registry.yml')])
@@ -507,6 +530,14 @@ https://www.leapview.test {
         alias = '127.0.0.1:5000/foreign:keep'
         current = f'{self.repo}:maintenance-failure'
         self.docker('tag', current, alias)
+        inventory = json.loads(self.docker('image', 'inspect', current)[1])
+        try:
+            validate_cleanup_scope(inventory)
+        except ValueError:
+            self.report['foreign_alias_guard_blocks_cleanup'] = True
+        else:
+            raise AssertionError('ambiguous foreign alias was not rejected')
+        assert self.inspect(alias)
         # Demonstrate native scope behavior on a disposable alias, not a real service.
         self.kamal('prune', 'all')
         retained = self.docker('image', 'inspect', alias, check=False)[0] == 0
@@ -518,6 +549,19 @@ https://www.leapview.test {
     def same_version_case(self):
         prior = 'interrupted-post-app-boot'
         self.env['TRIAL_IMAGE_REFERENCE'] = self.report['images']['maintenance-failure']['digests'][0]
+        record = json.loads((self.root / 'records/maintenance-failure.json').read_text())
+        record['status'] = 'verified'
+        self.save_record('maintenance-failure', record)
+        image = self.inspect(f'{self.repo}:maintenance-failure')
+        container = self.inspect('leapview-site-trial-web-maintenance-failure')
+        def identities():
+            return sorted((c['ID'], c['Image'], c['Names'], c['State']) for c in self.snapshot()['containers'])
+        before = identities()
+        assert verified_noop(record, image, container, self.served())
+        assert identities() == before
+        assert self.inspect(f'leapview-site-trial-web-{prior}')
+        self.report['verified_same_version_noop_preserves_prior'] = True
+        # Compare the no-op policy with invoking native deploy again.
         self.kamal('deploy', '--skip-push', '--version', 'maintenance-failure')
         assert self.served()['version'] == 'maintenance-failure'
         kept = self.docker('inspect', f'leapview-site-trial-web-{prior}', check=False)[0] == 0
