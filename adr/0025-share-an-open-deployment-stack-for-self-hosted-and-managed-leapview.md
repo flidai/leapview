@@ -6,6 +6,8 @@ Decision date: pending review
 
 Proposal date: 2026-09-25
 
+Last revised: 2026-09-26
+
 Implementation: pending; this proposal does not establish production readiness
 
 Deciders: LeapView maintainers
@@ -13,9 +15,10 @@ Deciders: LeapView maintainers
 Supersedes: none
 
 Amends: [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md),
-proposed self-hosted single-host packaging exception to the managed PostgreSQL
-production baseline only; PostgreSQL authority and privilege boundaries remain
-unchanged
+proposed single-host Compose exception to managed PostgreSQL, local analytical
+file storage, and rebuild-based recovery for explicitly reconstructible analytical
+outputs. PostgreSQL control authority, privilege separation and safe publication
+remain unchanged. This proposal does not amend the accepted record until reviewed.
 
 Related: [ADR-0003](0003-retain-narrow-infisical-resolver.md),
 [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md),
@@ -97,13 +100,16 @@ V1 has two public deployment packages for the same product:
   persistent dependencies, and optional HTTPS and monitoring.
 - **Operated by LeapView:** one dedicated application VPS per customer, initially
   on European Hetzner infrastructure, using Docker and Kamal with restart-based
-  rollback. Managed PostgreSQL and managed S3-compatible object storage run outside
-  the application VPS. Select and qualify European service regions and providers.
+  rollback. Managed PostgreSQL hosts authoritative application state and the
+  DuckLake catalog; local SSD stores analytical files. S3 and Kubernetes are not
+  required for analytical serving. Managed operations additionally protect
+  irreplaceable customer state through off-host backups or durable copies.
 
-The application VPS runs LeapView and DuckDB execution. PostgreSQL control/catalog
-state and durable objects belong in the managed data services; local caches and
-scratch space must be reconstructible. Inventory and resolve any other local
-state before claiming that the application host can be replaced independently.
+LeapView prepares source data for BI. For sources supporting a complete rebuild,
+DuckLake serving datasets are replaceable pipeline outputs. Local analytical data
+and its catalog can be rebuilt and republished after loss or corruption. Customer
+uploads without another retained copy, authored state and required artifacts are
+not automatically reconstructible. Classify them and preserve them separately.
 
 Restart-based rollback and measured downtime are accepted. A continuously running
 previous release and automatic metrics-driven rollback are not v1 requirements.
@@ -113,8 +119,8 @@ they are not additional v1 packages we commit to maintain.
 Architectural acceptance does not clear either profile for production. The
 companion specification defines separate gates for the operated VPS/data-service
 profile and bundled Compose dependencies. We own OS, Docker and proxy maintenance;
-managed PostgreSQL and storage reduce data-service operations only within their
-qualified provider responsibilities.
+managed PostgreSQL reduces database operations within qualified provider
+responsibilities.
 
 V1 includes repeatable installation, upgrades, rollback, monitoring, access, and
 tested recovery using existing tooling. A customer portal, automatic signup,
@@ -174,7 +180,8 @@ already exists.
 | Observability | Prometheus-compatible metrics, Grafana Alloy, and Grafana | Public collection configuration, dashboards, and alerts. Optional local monitoring package; managed operation uses a central backend. |
 | Deployment secrets | Infisical | Reference managed secrets integration with scoped machine identities. Self-hosters can supply supported secret inputs without subscribing to Infisical Cloud. |
 | Release production | GitHub Actions and GHCR | Produce immutable release images and provenance; deployments verify and promote existing artifacts. |
-| Data services | Managed PostgreSQL and managed S3-compatible storage for operated deployments | External to the application VPS; qualified European regions, isolation, backup/PITR and object recovery. Compose bundles dependencies separately. Retain ADR-0020's authority and privilege boundaries. |
+| Data services | Managed PostgreSQL plus local SSD for operated deployments | PostgreSQL holds authoritative control state and DuckLake metadata; SSD holds analytical files. Compose can bundle PostgreSQL. Back up irreplaceable state and qualify analytical rebuilds. |
+| Recovery storage | Operator-selected off-host destination | Optional self-hosted configuration; required protection for managed customer state that cannot be recreated. Managed S3 is a candidate backup/upload destination, not a required analytical read path. |
 | Initial managed infrastructure | One dedicated Hetzner application VPS per customer | Public provider adapter; size dedicated-vCPU capacity and transient release overlap from measured workloads. Single-host availability limits apply. |
 
 Compose and Kamal are alternative owners of application container lifecycle.
@@ -213,25 +220,34 @@ operator orchestration stack before first use. Generate initial credentials and
 bootstrap the required database roles through supported tooling. Document the
 small set of inputs, data locations, updates and backup responsibilities.
 
-This proposes a bounded single-host packaging exception to ADR-0020's managed
-PostgreSQL production baseline. PostgreSQL remains authoritative; its runtime,
-migration and maintenance privileges remain separate. Qualify the bundled storage
-implementation against existing data contracts before advertising production
-support. Development fixtures are not sufficient evidence. This draft does not
-select a new storage engine or extend development-only filesystem guarantees to
-production. ADR-0021 continues to govern local analytics development.
+This proposes a single-host Compose exception to ADR-0020's managed PostgreSQL
+baseline and a production local-filesystem analytical profile. PostgreSQL remains
+authoritative for control state; runtime, migration and maintenance privileges
+remain separate. The DuckLake catalog describes replaceable analytical outputs
+and must be rebuilt together with them when they are lost. Existing filesystem
+adapters and development fixtures are useful foundations, not production evidence.
+ADR-0021 continues to govern local analytics development.
 
-Bundled production dependencies are a distinct delivery milestone. Before that
-profile ships, select and qualify the storage implementation, persistence and
-retention semantics, PostgreSQL major-version upgrades, coordinated data/key
-restoration, and recovery after interrupted dependency upgrades. Simple first use
-does not remove ownership of these dependency lifecycles.
+Qualify persistent volume layout, filesystem integrity, bounded retention, capacity,
+PostgreSQL major upgrades, rebuild/publication and recovery after interrupted
+upgrades before advertising production support. Self-hosters may use external
+PostgreSQL; basic Compose installation bundles it with persistent local storage.
+No external storage account, Grafana or configured backup destination is required
+to start and serve dashboards.
 
-The Compose profile declares single-host availability limits and a supported
-backup/restore procedure. It can accept external database and storage services
-for operators who need them. Monitoring is optional and Caddy is the supported
-HTTPS addition. The managed profile uses external managed data services and
-operator-controlled Kamal releases; it does not promise application host failover.
+| Capability | Self-hosted Compose | Operated Kamal |
+|---|---|---|
+| Analytical serving | Local persistent filesystem | Local SSD on customer VPS |
+| PostgreSQL | Bundled by default; external supported | Qualified managed service |
+| Monitoring | Optional integration | Monitoring and alerts required; Grafana is a replaceable tool choice |
+| Irreplaceable-state backups | Operator configures destination, schedule and recovery policy | Off-host protection and restore testing required |
+| Rebuildable analytical backups | Optional | Optional when qualified source rebuild meets commitments |
+| S3/Kubernetes | No installation prerequisite | No analytical-serving prerequisite |
+
+Publish backup/export and rebuild procedures in the public tooling. Optional backup
+configuration does not promise recovery of the only local copy after host loss.
+Caddy remains the optional Compose HTTPS edge; Kamal supplies the managed edge.
+Both profiles declare single-host application availability limits.
 
 Managed environments dedicate application compute, data-service resources, and
 credentials to the customer. Sharing a management or observability service does
@@ -239,15 +255,18 @@ not permit cross-customer data access. Shared infrastructure administration must
 use scoped identities and preserve customer isolation.
 
 Managed v1 assigns each customer a separate application VPS, scoped deployment
-credentials, PostgreSQL resources/roles and object-storage resources/credentials.
-Record the exact database, bucket, provider administration and backup isolation
+credentials, PostgreSQL resources/roles and isolated local data directories.
+Record database, optional bucket, provider administration and backup isolation
 boundaries and reject cross-customer access. Managed service resource isolation
 does not imply a physically dedicated database or storage server.
 
 An application VPS failure or maintenance reboot interrupts that customer's
-service until restart or replacement. External durable data services reduce
-host-loss recovery scope; they do not provide application availability. Qualify
-host rebuild separately from data corruption or provider-loss restoration.
+service until restart or replacement. Lost local data additionally requires
+analytical rebuild or a qualified analytical restore. Managed PostgreSQL
+preserves application state but cannot restore missing local analytical files.
+Recovery depends on source availability, full extraction and validation; include
+those dependencies in measured downtime. Qualify authoritative-state restoration
+separately from analytical reconstruction.
 
 A future HA offering requires independent application failure domains, suitable
 routing, session/SSE and background-work coordination, and matching data-service
@@ -305,10 +324,62 @@ Application binary upgrades and authored analytics deployments remain distinct
 operations, each preserving the other's durable contracts.
 
 Database backup restoration is disaster recovery, not ordinary application
-rollback. Recovery coordinates PostgreSQL control state, DuckLake catalog state,
-referenced objects, retention, and required keys. A recoverable point must remain
-valid despite object garbage collection. Provider snapshots are supplementary;
-restoration into a fresh environment is the evidence of recoverability.
+rollback. Restoring authoritative state and republishing analytical outputs are
+separate operations. Application rollback must preserve acknowledged customer
+changes; rebuilding analytical data does not recover a historical source snapshot.
+
+### Analytical storage and rebuild contract
+
+Treat data as rebuildable only when retained source inputs, supported full
+extraction, transformation definitions and credentials can reproduce the required
+serving dataset within the accepted interruption. Incremental history that has
+expired upstream and uploads with no independent copy require preservation.
+Retain provenance and freshness information so a new extraction is never described
+as exact restoration of older data.
+
+Normal refresh uses the existing healthy DuckLake catalog and publishes a new
+validated snapshot. For catalog corruption or analytical disk loss, provision a
+new physical pool with a fresh DuckLake metadata schema in PostgreSQL and a fresh
+SSD directory. Initialize through supported DuckLake operations; do not repair
+internal tables manually or reuse an old catalog against empty storage.
+
+Use the existing durable operation/job machinery to fence affected writers,
+rebuild the dependency-complete dataset, validate it and activate a new serving
+generation. Reset extraction checkpoints for a full rebuild without discarding
+unrelated control state. Publication is the control-plane transition after the
+candidate is complete; it does not assume an atomic transaction across PostgreSQL
+and files. Reconcile interrupted work and publication acknowledgements safely.
+
+Keep healthy old data available during a normal rebuild. Reject affected reads
+when the old state is corrupt, and report rebuilding/unavailable until a validated
+replacement exists. Reader leases and worker fencing govern retirement. Keep pool,
+catalog and snapshot identities distinct in references and cache keys; snapshot
+numbers can repeat in a new catalog. Retire old metadata/files only after references
+and readers release them, using supported cleanup and maintenance privileges.
+
+Latest successfully validated data is the serving contract. Historical analytical
+retention is bounded by active readers, recovery needs and release compatibility;
+indefinite history is not required. Capacity must cover current data, candidate
+output, query/build spill and cleanup headroom. An optional analytical backup must
+pair catalog and files consistently; PostgreSQL PITR alone cannot restore files.
+
+### Recovery storage boundary
+
+The default runtime needs no off-host storage integration. Self-hosters own backup
+configuration and the consequences of retaining their only copy on the same host.
+The public package supplies supported procedures and clear data classifications.
+
+Managed hosting requires off-host recoverable copies of authoritative state,
+customer uploads we retain, necessary authored content/artifacts and protected
+key/configuration recovery. Choose an existing backup service, managed S3 or
+another qualified destination; a second local directory/volume is not off-host.
+Test recovery, retention and deletion behavior against promised RPO/RTO. A managed
+PostgreSQL label alone does not prove an adequate backup policy.
+
+Backups of genuinely rebuildable analytical outputs are optional. Use them when
+they reduce recovery time or dependence on upstream availability. S3 analytical
+serving remains a future separately qualified option for multiple hosts, larger
+workloads or different recovery requirements, without becoming a default dependency.
 
 ### Service selection and qualification
 
@@ -323,15 +394,15 @@ providers remain candidates; qualify the responsibilities below before launch:
   for European region, version/privilege compatibility, TLS, replication mode,
   failover, major-version maintenance, support, PITR retention and independently
   usable backup export. Preserve ADR-0020's managed HA production baseline.
-- **Object storage:** use an external managed S3-compatible service in a qualified
-  European region. Use AWS S3 as a behavioral reference and evaluate Scaleway
-  Multi-AZ as an alternative. Qualify conditional writes, versioning, retention,
-  deletion protection, recovery/export, latency, throughput and transfer cost.
+- **Local analytical storage:** qualify native filesystem paths and permissions,
+  integrity, persistent Docker mounts, disk-full behavior, capacity and performance
+  under refresh and release overlap. Test complete disk loss and catalog replacement.
+- **Off-host recovery storage:** evaluate managed S3 or established backup services
+  for European regions, tenant isolation, protected copies, retention, key recovery,
+  restoration/export and cost. Match capabilities to the actual backup or upload
+  contract. Immutable runtime objects, if stored there, still need their declared
+  conditional-write semantics; backups need their selected tool's storage guarantees.
   An S3-compatible label or versioning alone does not establish backup protection.
-- **Hetzner Object Storage:** its documented exclusion of conditional PUT/DELETE
-  on versioned buckets prevents assuming it meets the combined immutable-write
-  and versioned-recovery contract. Require provider qualification before adoption.
-  Apply the same conditional-write scrutiny to an S3 infrastructure-state backend.
 - **Operational services:** evaluate Grafana Cloud and Teleport against monitoring
   and privileged-access requirements. Their hosted products are not prerequisites
   for the public deployment stack.
@@ -407,7 +478,9 @@ backup retention, managed services, and off-provider storage introduce recurring
 costs that must be measured against the offering's service commitments.
 
 A bundled self-hosted database/storage profile adds upgrade, persistence and
-recovery qualification duties. Its simpler installation cannot inherit the
+recovery qualification duties. Local serving removes remote object reads, but
+host loss now requires extraction and computation or a qualified analytical restore.
+Full-source access, rate limits and rebuild cost become recovery dependencies. Its simpler installation cannot inherit the
 managed profile's availability claims. Future customer-owned hosting remains
 possible without funding its provisioning and support matrix in v1.
 
@@ -435,12 +508,14 @@ retain reproducible evidence appropriate to that profile:
    window. Verify preserved writes, correct authorization, reconnect behavior,
    fenced work, and each profile's documented interruption bound. Kamal proves
    restart-based rollback, artifact availability and safe worker ownership.
-4. **Recovery:** restore control state, catalog, objects, and required configuration
-   into fresh infrastructure. Verify representative queries and writes, and measure
-   actual recovery time and data loss against the selected objectives.
-5. **Provider and network behavior:** exercise concurrent immutable object creation
-   with versioning, data-service privileges, TLS identity verification, certificate
-   renewal, private-network restrictions, and protected administrative endpoints.
+4. **Recovery:** restore authoritative state and retained inputs into fresh
+   infrastructure; rebuild and publish analytical outputs. Separately test any
+   analytical backup restore with matching catalog/files. Verify governed queries
+   and writes, measured interruption, data loss and source freshness.
+5. **Storage and network behavior:** exercise filesystem integrity, permissions,
+   concurrent immutable writes and disk-full behavior; qualify any off-host backend
+   against its actual contract. Verify data-service privileges, TLS, certificates,
+   network restrictions and protected administrative endpoints.
 6. **Operations and isolation:** observe actionable alerts, access revocation,
    credential rotation, deployment history, and rejected cross-customer access.
    Interrupted provisioning and deployment can be safely resumed or reconciled.
@@ -466,10 +541,11 @@ retain reproducible evidence appropriate to that profile:
 12. **Analytics overload:** saturate memory, query concurrency and temporary-disk
     budgets under release overlap. Verify bounded admission and failure behavior,
     truthful readiness, and sufficient capacity for release/recovery operations.
-13. **Application host loss:** rebuild on an empty replacement VPS and reconnect to
-    intact managed PostgreSQL/storage without unnecessarily restoring older data.
-    Fence a returning old host, reconcile jobs and prove preserved acknowledged
-    writes. Test database/object recovery separately for corruption or provider loss.
+13. **Application host loss:** provision an empty VPS, reconnect to managed
+    PostgreSQL and rebuild analytical outputs into fresh metadata/files. Fence a
+    returning host and preserve authoritative customer writes. Exercise unavailable
+    sources, interrupted rebuild, invalid outputs, repeated snapshot numbers and
+    failed/lost-ack publication. Test authoritative-state restoration separately.
 14. **Service qualification:** approve the measured maintenance/recovery bounds,
     support model, customer eligibility and applicable legal/assurance controls.
     Retain evidence of isolated backups and scheduled recovery testing.
@@ -478,9 +554,13 @@ No new qualification is claimed by drafting or accepting this ADR.
 
 ## Research references
 
-Official documentation reviewed on 2026-09-25; provider capabilities must be
-rechecked when qualifying an implementation:
+Official documentation reviewed on 2026-09-25 and 2026-09-26; provider capabilities
+must be rechecked when qualifying an implementation:
 
+- [DuckLake storage](https://ducklake.select/docs/stable/duckdb/usage/choosing_storage),
+  [catalog initialization](https://ducklake.select/docs/stable/duckdb/usage/connecting),
+  [file cleanup](https://ducklake.select/docs/stable/duckdb/maintenance/cleanup_of_files)
+  and [backup/recovery](https://ducklake.select/docs/stable/duckdb/guides/backups_and_recovery).
 - [Kamal deployment](https://kamal-deploy.org/docs/commands/deploy/),
   [rollback](https://kamal-deploy.org/docs/commands/rollback/),
   [proxy](https://kamal-deploy.org/docs/configuration/proxy/) and

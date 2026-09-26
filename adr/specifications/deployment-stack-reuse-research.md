@@ -2,6 +2,8 @@
 
 Date: 2026-09-25
 
+Last revised: 2026-09-26
+
 Status: research and qualification proposal; no platform or provider is approved
 
 Governing proposal: [ADR-0025](../0025-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md)
@@ -9,8 +11,11 @@ Governing proposal: [ADR-0025](../0025-share-an-open-deployment-stack-for-self-h
 Scope clarification after this research: self-hosting prioritizes a straightforward
 Compose installation; operator deployments prioritize reuse and robustness. The
 ADR now proposes Kamal on one dedicated application VPS per customer on European
-Hetzner infrastructure, with external managed PostgreSQL and managed S3-compatible
-storage. Restart-based rollback and measured downtime are accepted; a warm retained
+Hetzner infrastructure, with managed PostgreSQL and local SSD analytical files.
+Derived data is explicitly rebuildable where complete source replay is supported.
+Off-host recovery protects irreplaceable managed customer state; S3 is an optional
+recovery destination rather than a required analytical-serving dependency.
+Restart-based rollback and measured downtime are accepted; a warm retained
 release is no longer required. Customer-owned infrastructure remains a future option.
 The alternatives below remain research context, not additional v1 support promises.
 
@@ -24,8 +29,8 @@ Fewer named tools alone does not establish a simpler system.
 The public Compose installation remains supported. Managed hosting uses dedicated
 customer environments, with the same application images and public operational
 contracts. V1 has single-host application availability. Higher availability is a
-separately qualified topology when service obligations require it. External data
-services improve host-replacement recovery but cannot prevent application outages.
+separately qualified topology when service obligations require it. Host replacement
+now includes analytical rebuild from sources or an optional consistent backup.
 
 ## Findings and recommendation
 
@@ -70,11 +75,32 @@ ends after deployment, so continuous off-host monitoring and operator response
 remain necessary. Qualify SSE buffering, timeouts, uploads and drain behavior.
 Normal deployment still overlaps processes and needs memory and worker fencing.
 
-Host maintenance stays with us. Managed PostgreSQL and managed S3 storage keep
-durable state outside the application VPS; their backup and coordinated recovery
-behavior require separate evidence. Rebuilding a host against intact data must
-not rewind acknowledged writes. A single-host outage remains an outage, and
-service/customer qualification determines whether its measured recovery is adequate.
+Host maintenance stays with us. Managed PostgreSQL preserves control state while
+local SSD serves analytical outputs. Rebuilding a host must preserve authoritative
+customer writes and republish analytical data from retained sources into a fresh
+catalog/directory. Source availability and rebuild time affect recovery. Managed
+backups protect irreplaceable state; they need not include every materialization.
+
+### Local analytical storage and replaceable pipeline outputs
+
+[DuckLake supports local filesystem data](https://ducklake.select/docs/stable/duckdb/usage/choosing_storage)
+with a PostgreSQL catalog. Local reads remove remote object requests; benchmark
+representative cold/warm dashboards, concurrent refresh and disk pressure before
+claiming a performance improvement. Existing filesystem adapters provide a base,
+not production qualification.
+
+The proposal distinguishes storage location from data ownership. Full-source
+materializations may be rebuilt; sole-copy uploads and non-replayable incremental
+history cannot be discarded. Fresh catalog/file generations provide a recovery
+boundary after corruption. Retain ordinary snapshots for normal refresh, and use
+existing pool identities, durable jobs and serving publication for recovery.
+No custom DuckLake metadata repair engine is proposed.
+
+Default Compose needs no S3, Grafana or backup account. Operators can configure
+those integrations. Managed service operations require monitoring and protection
+of irreplaceable state. Optional analytical backups can shorten rebuild downtime;
+if present, their catalog and files must form a consistent recovery set. The
+companion specification defines the required evidence for both paths.
 
 ### Argo Rollouts for a future stricter release profile
 
@@ -190,9 +216,9 @@ and provider-handoff work.
 ## Bounded selection exercise
 
 Qualify Kamal first against the revised restart-based rollback contract. The
-selected managed shape is one application VPS per customer with external managed
-PostgreSQL and S3 storage. Keep Compose for self-hosters. Reopen platform selection
-only if measured product behavior or service obligations reveal a concrete gap;
+selected managed shape is one application VPS per customer with managed
+PostgreSQL and local SSD analytical storage. Keep Compose for self-hosters.
+Reopen platform selection only if measured product behavior or service obligations reveal a concrete gap;
 do not rebuild Argo-style warm retention and analysis around Kamal.
 
 For the selected path, record:
