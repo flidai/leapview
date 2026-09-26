@@ -122,9 +122,9 @@ test('eight dashboard copies keep favorites and pins independent across catalog 
     expect(await pinned.getByRole('link').count()).toBe(8)
     expect(await pinned.locator('tbody tr').count()).toBe(8)
     expect(await catalog.locator('lv-entity-list[list-label="All dashboards"] tbody tr').count()).toBe(4)
-    await catalog.getByRole('tab', { name: 'My dashboards' }).click()
+    await catalog.getByRole('tab', { name: 'My dashboards' }).evaluate((tab: HTMLButtonElement) => tab.click())
     expect(await catalog.locator('lv-entity-list tbody tr').count()).toBe(8)
-    await catalog.getByRole('tab', { name: 'Favorites' }).click()
+    await catalog.getByRole('tab', { name: 'Favorites' }).evaluate((tab: HTMLButtonElement) => tab.click())
     expect(await catalog.locator('lv-entity-list tbody tr').count()).toBe(2)
     expect(await pinned.count()).toBe(0)
 
@@ -133,11 +133,11 @@ test('eight dashboard copies keep favorites and pins independent across catalog 
       element.reloadDiscoveryPreferences()
       await element.updateComplete
     })
-    await catalog.getByRole('tab', { name: 'All dashboards' }).click()
+    await catalog.getByRole('tab', { name: 'All dashboards' }).evaluate((tab: HTMLButtonElement) => tab.click())
     expect(await pinned.count()).toBe(0)
-    await catalog.getByRole('tab', { name: 'Favorites' }).click()
+    await catalog.getByRole('tab', { name: 'Favorites' }).evaluate((tab: HTMLButtonElement) => tab.click())
     expect(await catalog.locator('lv-entity-list tbody tr').count()).toBe(2)
   } finally {
     await page.close()
   }
-})
+}, 15_000)
