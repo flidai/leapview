@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
-from urllib.request import ProxyHandler, build_opener
+from urllib.request import ProxyHandler, Request, build_opener
 
 # Loading the production helper from this isolated checkout must not leave cache
 # artifacts beside its source.
@@ -215,6 +215,74 @@ def start_distribution_registry(temp_root: Path) -> tuple[subprocess.Popen[bytes
     raise RuntimeError(f"private Distribution Registry failed to start\nregistry:\n{log_text}")
 
 
+def registry_manifest_blobs(port: int, repository: str, digest: str) -> dict[str, Any]:
+    opener = build_opener(ProxyHandler({}))
+    request = Request(
+        f"http://127.0.0.1:{port}/v2/{repository}/manifests/{digest}",
+        headers={
+            "Accept": ", ".join((
+                "application/vnd.docker.distribution.manifest.v2+json",
+                "application/vnd.docker.distribution.manifest.list.v2+json",
+                "application/vnd.oci.image.manifest.v1+json",
+                "application/vnd.oci.image.index.v1+json",
+            ))
+        },
+    )
+    with opener.open(request, timeout=5) as response:
+        manifest = json.loads(response.read())
+    config = manifest.get("config")
+    layers = manifest.get("layers")
+    check(isinstance(config, dict) and isinstance(config.get("digest"), str),
+          f"registry returned a manifest without a config digest: {manifest!r}")
+    check(isinstance(layers, list) and layers and all(isinstance(layer, dict) for layer in layers),
+          f"registry returned a manifest without layer descriptors: {manifest!r}")
+    layer_digests = [layer.get("digest") for layer in layers]
+    check(all(isinstance(item, str) for item in layer_digests),
+          f"registry returned malformed layer descriptors: {layers!r}")
+    return {"manifest": digest, "config": config["digest"], "layers": layer_digests}
+
+
+def content_blob_path(containerd_root: Path, digest: str) -> Path:
+    algorithm, separator, encoded = digest.partition(":")
+    check(separator == ":" and algorithm == "sha256" and re.fullmatch(r"[0-9a-f]{64}", encoded) is not None,
+          f"unexpected content digest: {digest}")
+    return containerd_root / "io.containerd.content.v1.content" / "blobs" / algorithm / encoded
+
+
+def containerd_content_metrics(containerd_root: Path) -> tuple[int, int]:
+    blob_root = containerd_root / "io.containerd.content.v1.content" / "blobs" / "sha256"
+    check(blob_root.is_dir(), f"containerd content-store blob directory is missing: {blob_root}")
+    blobs = [path for path in blob_root.iterdir() if path.is_file()]
+    return len(blobs), sum(path.stat().st_size for path in blobs)
+
+
+def wait_for_containerd_image_gc(
+    containerd_root: Path,
+    obsolete: dict[str, Any],
+    retained: list[dict[str, Any]],
+    shared_layers: list[str],
+) -> tuple[int, int]:
+    obsolete_unique_layers = [digest for digest in obsolete["layers"] if digest not in shared_layers]
+    obsolete_digests = [obsolete["manifest"], obsolete["config"], *obsolete_unique_layers]
+    retained_digests = [
+        digest
+        for item in retained
+        for digest in (item["manifest"], item["config"], *item["layers"])
+    ]
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        obsolete_present = [digest for digest in obsolete_digests if content_blob_path(containerd_root, digest).exists()]
+        retained_missing = [digest for digest in (*retained_digests, *shared_layers)
+                            if not content_blob_path(containerd_root, digest).is_file()]
+        if not obsolete_present and not retained_missing:
+            return containerd_content_metrics(containerd_root)
+        time.sleep(0.25)
+    raise RuntimeError(
+        "containerd content GC did not settle: "
+        f"obsolete blobs still present={obsolete_present}, retained/shared blobs missing={retained_missing}"
+    )
+
+
 def private_docker_command(
     temp_root: Path,
     registry_port: int,
@@ -375,6 +443,7 @@ def create_published_fixture(
     docker_env: dict[str, str],
     registry_repo: str,
     base_image_id: str,
+    fixture_root: Path,
 ) -> tuple[str, str, list[str]]:
     local_tag = f"{registry_repo}:{tag}"
     container_name = f"retention-qual-{tag}"
@@ -382,6 +451,9 @@ def create_published_fixture(
         ["/usr/bin/docker", "create", "--name", container_name, "--env", f"RETENTION_FIXTURE={tag}", base_image_id, "/bin/true"],
         docker_env,
     )
+    fixture_file = fixture_root / f"retention-fixture-{tag}.txt"
+    fixture_file.write_text(f"unique retained-image payload for fixture {tag}\n", encoding="utf-8")
+    run(["/usr/bin/docker", "cp", str(fixture_file), f"{container_name}:/retention-cycle.txt"], docker_env)
     run(
         ["/usr/bin/docker", "commit", "--change", f"LABEL retention.fixture={tag}", container_name, local_tag],
         docker_env,
@@ -511,14 +583,39 @@ def qualify_docker29() -> None:
             helper_env = dict(docker_env, PATH=f"{helper_bin}:{os.environ.get('PATH', '')}")
 
             fixture_refs: list[tuple[str, str, list[str]]] = []
+            fixture_content: list[dict[str, Any]] = []
+            shared_layer_digests: list[str] | None = None
+            steady_content_metrics: tuple[int, int] | None = None
+            containerd_root = temp_root / "containerd/root"
             for index in range(11):
                 tag = f"cycle-{index:02d}"
-                image_id, digest, tags = create_published_fixture(tag, docker_env, registry_repo, base_image_id)
+                image_id, digest, tags = create_published_fixture(
+                    tag, docker_env, registry_repo, base_image_id, temp_root
+                )
                 fixture_refs.append((image_id, digest, tags))
+                content_refs = registry_manifest_blobs(port, "site", digest)
+                if shared_layer_digests is None:
+                    shared_layer_digests = content_refs["layers"][:len(base_layers)]
+                else:
+                    check(content_refs["layers"][:len(base_layers)] == shared_layer_digests,
+                          f"cycle {index}: registry manifest stopped sharing the base layer blobs")
+                unique_layers = content_refs["layers"][len(base_layers):]
+                check(len(unique_layers) == 1, f"cycle {index}: expected exactly one unique file layer")
+                check(unique_layers[0] not in (shared_layer_digests or []),
+                      f"cycle {index}: unique file layer unexpectedly aliases a shared layer")
+                check(all(unique_layers[0] != item["layers"][-1] for item in fixture_content),
+                      f"cycle {index}: per-cycle file layer was not unique")
+                for content_digest in [content_refs["manifest"], content_refs["config"], *content_refs["layers"]]:
+                    check(content_blob_path(containerd_root, content_digest).is_file(),
+                          f"cycle {index}: expected containerd content blob is missing: {content_digest}")
+                fixture_content.append(content_refs)
                 image_layers = json.loads(
                     run(["/usr/bin/docker", "image", "inspect", image_id], docker_env)
                 )[0]["RootFS"]["Layers"]
-                check(image_layers == base_layers, f"cycle {index}: test image stopped sharing the fixture base layer")
+                check(
+                    len(image_layers) == len(base_layers) + 1 and image_layers[:len(base_layers)] == base_layers,
+                    f"cycle {index}: test image stopped sharing its base layer or lost its unique payload layer",
+                )
                 if index == 0:
                     write_site_state(site_root, f"{SITE_REPOSITORY}@{digest}", None)
                 else:
@@ -555,11 +652,27 @@ def qualify_docker29() -> None:
                     expected_remaining = {base_image_id, *(entry[0] for entry in fixture_refs[index - 1 : index + 1])}
                     check(remaining == expected_remaining,
                           f"cycle {index}: image inventory did not converge to active+rollback: {remaining ^ expected_remaining}")
+                    if index >= 2:
+                        content_metrics = wait_for_containerd_image_gc(
+                            containerd_root,
+                            fixture_content[index - 2],
+                            [fixture_content[index - 1], fixture_content[index]],
+                            shared_layer_digests or [],
+                        )
+                        if steady_content_metrics is None:
+                            steady_content_metrics = content_metrics
+                        check(content_metrics[0] == steady_content_metrics[0],
+                              f"cycle {index}: containerd content blob count grew after stale-image GC: "
+                              f"{content_metrics[0]} vs settled baseline {steady_content_metrics[0]}")
+                        print(
+                            f"PASS containerd content GC cycle {index}: obsolete manifest/config/unique layer absent, "
+                            f"shared layer retained, {content_metrics[0]} blobs / {content_metrics[1]} bytes"
+                        )
 
             print("PASS Docker 29: ten deployment cycles retain exactly active+rollback and remove every tag/digest alias")
 
             foreign_id, _foreign_digest, foreign_tags = create_published_fixture(
-                "foreign-boundary", docker_env, registry_repo, base_image_id
+                "foreign-boundary", docker_env, registry_repo, base_image_id, temp_root
             )
             foreign_local_tag = f"{foreign_repo}:independent"
             run(["/usr/bin/docker", "tag", foreign_id, foreign_local_tag], docker_env)

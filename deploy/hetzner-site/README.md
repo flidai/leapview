@@ -217,7 +217,9 @@ sudo env REGISTRY_BINARY=/absolute/path/to/docker-registry \
 ```
 
 The fixture checks repeated update cycles, shared layers, digest/tag removal and
-foreign-alias protection. It creates and removes only its private temporary
+foreign-alias protection. It verifies that obsolete manifest, configuration and
+unique payload blobs are reclaimed from containerd while retained/shared blobs
+survive, and reports the settled content-store size. It creates and removes only its private temporary
 resources; it does not install a registry service.
 
 ### Recovering a full existing site host
