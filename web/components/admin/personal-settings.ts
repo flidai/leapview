@@ -23,7 +23,7 @@ import { avatarResponseError } from './avatar-response'
 import { formatDate, humanizeSessionKind, sessionFact } from './personal-settings-format'
 import { permissionPairKey, tokenPermissionPolicies, uniquePermissionPairs } from './personal-settings-permissions'
 import type { TokenPermissionPolicy } from './personal-settings-permissions'
-import { renderAuthoringSessionRow, renderBrowserSessionRow, type PendingSessionRevocation, type SelectedSession } from './personal-settings-session-rows'
+import { browserSessionLabel, renderAuthoringSessionRow, renderBrowserSessionRow, type PendingSessionRevocation, type SelectedSession } from './personal-settings-session-rows'
 import { personalSettingsStyles } from './personal-settings.styles'
 import './personal-settings-token-permission-picker'
 import '../shared/drawer'
@@ -140,6 +140,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private themeMenuOpen = false
   @state() private selectedTheme = ''
   @state() private avatarBusy = false
+  @state() private currentBrowserIsBrave = false
   @query('.avatar-trigger') private avatarTrigger?: HTMLButtonElement
   @query('.avatar-input') private avatarInput?: HTMLInputElement
   @query('.permission-trigger') private permissionTrigger?: HTMLButtonElement
@@ -160,6 +161,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
 
   override connectedCallback(): void {
     super.connectedCallback()
+    const brave = (navigator as Navigator & { brave?: { isBrave?: () => Promise<boolean> } }).brave
+    void brave?.isBrave?.().then((isBrave) => {
+      if (this.isConnected) this.currentBrowserIsBrave = isBrave
+    }).catch(() => { /* Browser detection is optional. */ })
     document.addEventListener('pointerdown', this.handleDocumentPointerDown)
     document.addEventListener('datastar-fetch', this.handleDatastarFetch)
     window.addEventListener('keydown', this.handleWindowKeydown)
@@ -406,7 +411,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
             <table class="security-session-table">
               <thead><tr><th>Device</th><th>Access</th><th>Created</th><th>Updated</th><th aria-label="Actions"></th></tr></thead>
               <tbody>
-                ${browserSessions.map((session) => renderBrowserSessionRow(session, (selected) => { this.selectedSession = selected }, (pending) => this.requestSessionRevocation(pending)))}
+                ${browserSessions.map((session) => renderBrowserSessionRow(session, (selected) => { this.selectedSession = selected }, (pending) => this.requestSessionRevocation(pending), this.currentBrowserIsBrave))}
                 ${authoringSessions.map((session) => renderAuthoringSessionRow(session, (selected) => { this.selectedSession = selected }, (pending) => this.requestSessionRevocation(pending)))}
                 ${browserSessions.length === 0 && authoringSessions.length === 0 ? html`<tr><td class="security-empty" colspan="5">No active sessions.</td></tr>` : nothing}
               </tbody>
@@ -455,9 +460,9 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (selected.kind === 'browser') {
       const session = settings.security.sessions.find((candidate) => candidate.id === selected.id && !candidate.revokedAt)
       if (!session) return nothing
-      const label = session.clientLabel || humanizeSessionKind(session.kind)
+      const label = browserSessionLabel(session, this.currentBrowserIsBrave)
       return html`<lv-drawer open label="Session details" .modal=${false} @lv-drawer-close=${this.closeSessionDrawer}>
-        <div slot="title" class="session-drawer-title"><h2>${label}</h2><p>${session.current ? 'Current browser or desktop session' : 'Browser or desktop session'}</p></div>
+        <div slot="title" class="session-drawer-title"><h2>${label}</h2><p>${session.current ? 'You’re using this session now' : 'Browser or desktop session'}</p></div>
         <div class="session-drawer-body">
           <section class="session-drawer-section"><h3>Details</h3><dl class="session-drawer-facts">
             ${sessionFact('Status', session.current ? 'This device' : 'Active')}

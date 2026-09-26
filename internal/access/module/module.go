@@ -104,6 +104,9 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		avatarService = config.Avatar
 	}
 	currentSession := func(r *http.Request) (string, bool) {
+		if id, ok := currentSessionIDFromEvidence(r, config.CurrentPrincipal); ok {
+			return id, true
+		}
 		if config.Repository == nil {
 			return "", false
 		}
@@ -154,6 +157,21 @@ func newSurface(config surfaceConfig) (*Module, error) {
 	module.handler.RequestPlatformAdmin = module.RequestPlatformAdmin
 	module.handler.DurableGrantService = module.durableGrantService
 	return module, nil
+}
+
+func currentSessionIDFromEvidence(r *http.Request, currentPrincipal func(*http.Request) (Principal, bool)) (string, bool) {
+	if currentPrincipal == nil {
+		return "", false
+	}
+	evidence, ok := SessionCredentialEvidenceFromContext(r.Context())
+	if !ok || evidence.Class != "session" || evidence.ID == "" {
+		return "", false
+	}
+	principal, ok := currentPrincipal(r)
+	if !ok || principal.ID != evidence.PrincipalID {
+		return "", false
+	}
+	return evidence.ID, true
 }
 
 // SetCurrentEffectivePermissionOptions installs the active-generation typed

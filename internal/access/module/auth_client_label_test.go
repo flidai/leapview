@@ -19,6 +19,10 @@ func TestBrowserClientLabel(t *testing.T) {
 			userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36",
 			want:      "Chrome on Windows",
 		},
+		"brave on ios": {
+			userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Version/26.5 Mobile/15E148 Safari/604.1 Brave",
+			want:      "Brave on iOS",
+		},
 		"firefox on linux": {
 			userAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0",
 			want:      "Firefox on Linux",
@@ -40,6 +44,15 @@ func TestBrowserClientLabel(t *testing.T) {
 				t.Fatalf("browserClientLabel(%q) = %q, want %q", test.userAgent, got, test.want)
 			}
 		})
+	}
+}
+
+func TestBrowserClientLabelFromRequestBraveHint(t *testing.T) {
+	request := httptest.NewRequest("POST", "/auth/local/login", nil)
+	request.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36")
+	request.Header.Set("Sec-CH-UA", `"Brave";v="140", "Chromium";v="140", "Not.A/Brand";v="99"`)
+	if got := browserClientLabelFromRequest(request); got != "Brave on Windows" {
+		t.Fatalf("browser label = %q, want Brave on Windows", got)
 	}
 }
 

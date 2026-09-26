@@ -215,6 +215,7 @@ test('profile settings renders the signed-in identity and editable local fields'
 test('security settings use a unified session list, focused password dialog, and confirmed revocation', async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1200, height: 820 } })
   try {
+    await page.addInitScript(() => { Object.defineProperty(navigator, 'brave', { value: { isBrave: async () => true } }) })
     await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-personal-settings'))
     const state = await page.evaluate(async () => {
@@ -227,7 +228,7 @@ test('security settings use a unified session list, focused password dialog, and
         security: {
           localPasswordEnabled: true,
           sessions: [
-            { id: 'session-current', kind: 'web', clientLabel: 'Chrome on Linux', current: true, createdAt: '2026-09-17T08:00:00Z', lastSeenAt: '2026-09-17T09:00:00Z', expiresAt: '2026-09-18T08:00:00Z', absoluteExpiresAt: '2026-10-17T08:00:00Z', revokedAt: '' },
+            { id: 'session-current', kind: 'browser', clientLabel: 'Chrome on Linux', current: true, createdAt: '2026-09-17T08:00:00Z', lastSeenAt: '2026-09-17T09:00:00Z', expiresAt: '2026-09-18T08:00:00Z', absoluteExpiresAt: '2026-10-17T08:00:00Z', revokedAt: '' },
             { id: 'session-other', kind: 'desktop', clientLabel: 'LeapView Desktop', current: false, createdAt: '2026-09-16T08:00:00Z', lastSeenAt: '2026-09-17T07:00:00Z', expiresAt: '2026-09-18T08:00:00Z', absoluteExpiresAt: '2026-10-17T08:00:00Z', revokedAt: '' },
           ],
           authoringSessions: [
@@ -288,6 +289,8 @@ test('security settings use a unified session list, focused password dialog, and
         sessionHeaders: Array.from(sessionsSection.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
         sessionRows: sessionsSection.querySelectorAll('tbody tr').length,
         currentBadge: root.querySelector('.security-badge')?.textContent?.trim(),
+        currentLabel: root.querySelector('.security-session-table tr.is-current .security-session-device')?.getAttribute('aria-label'),
+        currentRowBackground: getComputedStyle(root.querySelector('.security-session-table tr.is-current')!).backgroundColor,
         currentAction: root.querySelector('.security-session-table tr.is-current .session-action')?.textContent?.trim(),
         sessionActions: [root.querySelector('[data-logout-all]')?.textContent?.trim(), otherRow.querySelector('.session-action')?.textContent?.trim()],
         deviceColumnGap,
@@ -310,7 +313,9 @@ test('security settings use a unified session list, focused password dialog, and
     expect(state.sessionTableCount).toBe(1)
     expect(state.sessionHeaders).toEqual(['Device', 'Access', 'Created', 'Updated', ''])
     expect(state.sessionRows).toBe(3)
-    expect(state.currentBadge).toBe('Current')
+    expect(state.currentBadge).toBe('This device')
+    expect(state.currentLabel).toBe('View details for Brave on Linux, this device, current session')
+    expect(state.currentRowBackground).not.toBe('rgba(0, 0, 0, 0)')
     expect(state.currentAction).toBe('Sign out')
     expect(state.sessionActions).toEqual(['Log out all', 'Revoke'])
     expect(state.deviceColumnGap).toBe('16px')

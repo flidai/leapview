@@ -16,16 +16,25 @@ export type SelectedSession = {
   kind: 'browser' | 'authoring'
 }
 
+export function browserSessionLabel(session: PersonalSessionSignal, currentBrowserIsBrave: boolean): string {
+  const label = session.clientLabel || humanizeSessionKind(session.kind)
+  if (session.current && session.kind === 'browser' && currentBrowserIsBrave && (label === 'Chrome' || label.startsWith('Chrome on '))) {
+    return `Brave${label.slice('Chrome'.length)}`
+  }
+  return label
+}
+
 export function renderBrowserSessionRow(
   session: PersonalSessionSignal,
   onSelect: (session: SelectedSession) => void,
   onRevoke: (session: PendingSessionRevocation) => void,
+  currentBrowserIsBrave = false,
 ) {
-  const label = session.clientLabel || humanizeSessionKind(session.kind)
+  const label = browserSessionLabel(session, currentBrowserIsBrave)
   return html`<tr class=${session.current ? 'is-current' : ''}>
-    <td><button class="security-session-device" type="button" aria-label=${`View details for ${label}`} @click=${() => onSelect({ id: session.id, kind: 'browser' })}>
+    <td><button class="security-session-device" type="button" aria-label=${`View details for ${label}${session.current ? ', this device, current session' : ''}`} @click=${() => onSelect({ id: session.id, kind: 'browser' })}>
       <span class="security-session-icon" aria-hidden="true">${lucideIcon(Monitor, { size: 16, strokeWidth: 1.75 })}</span>
-      <span class="security-session-device-copy"><span class="security-session-title"><strong>${label}</strong>${session.current ? html`<span class="security-badge">Current</span>` : nothing}</span><span class="security-session-kind">${humanizeSessionKind(session.kind)}</span></span>
+      <span class="security-session-device-copy"><span class="security-session-title"><strong>${label}</strong>${session.current ? html`<span class="security-badge">This device</span>` : nothing}</span><span class="security-session-kind">${session.current ? 'Current session · ' : ''}${humanizeSessionKind(session.kind)}</span></span>
     </button></td>
     <td class="security-session-access">Account</td>
     <td><time>${formatSessionDate(session.createdAt)}</time></td>

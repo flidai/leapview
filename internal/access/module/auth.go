@@ -524,7 +524,7 @@ func (a *Auth) createBrowserSession(r *http.Request, principalID, provider strin
 
 func createBrowserSession(r *http.Request, repository access.Repository, principalID string, ttl time.Duration) (string, error) {
 	if labeled, ok := repository.(labeledSessionManager); ok {
-		return labeled.CreateSessionWithClientLabel(r.Context(), principalID, ttl, browserClientLabel(r.UserAgent()))
+		return labeled.CreateSessionWithClientLabel(r.Context(), principalID, ttl, browserClientLabelFromRequest(r))
 	}
 	return repository.CreateSession(r.Context(), principalID, ttl)
 }
@@ -542,6 +542,8 @@ func browserClientLabel(userAgent string) string {
 		browser = "Opera"
 	case strings.Contains(lower, "firefox/") || strings.Contains(lower, "fxios/"):
 		browser = "Firefox"
+	case strings.Contains(lower, "brave"):
+		browser = "Brave"
 	case strings.Contains(lower, "crios/") || strings.Contains(lower, "chrome/"):
 		browser = "Chrome"
 	case strings.Contains(lower, "safari/") && strings.Contains(lower, "version/"):
@@ -569,6 +571,21 @@ func browserClientLabel(userAgent string) string {
 		return browser
 	}
 	return "Browser"
+}
+
+func browserClientLabelFromRequest(r *http.Request) string {
+	label := browserClientLabel(r.UserAgent())
+	// Brave's desktop user agent is Chrome-shaped. Client hints may supply
+	// the Brave brand, but are not always available.
+	for _, brand := range strings.Split(r.Header.Get("Sec-CH-UA"), ",") {
+		if strings.HasPrefix(strings.TrimSpace(brand), `"Brave";`) {
+			if _, osName, found := strings.Cut(label, " on "); found {
+				return "Brave on " + osName
+			}
+			return "Brave"
+		}
+	}
+	return label
 }
 
 func (a *Auth) LocalPassword(w http.ResponseWriter, r *http.Request) {
