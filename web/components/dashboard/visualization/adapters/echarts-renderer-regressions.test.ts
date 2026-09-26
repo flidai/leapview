@@ -8,6 +8,22 @@ import { CategoryColorRegistry } from './echarts/category-colors'
 import { responsiveEChartsLayoutKey } from './echarts/view-state'
 import { hierarchyFixture, networkFixture } from './echarts-test-fixtures'
 
+test('expanded hierarchy and flow plots center their bounds without changing chart semantics', () => {
+  for (const envelope of [hierarchyFixture('tree'), networkFixture('sankey')]) {
+    if (envelope.spec.kind !== 'hierarchy') throw new Error('Expected hierarchy fixture')
+    envelope.spec.presentation.orientation = 'horizontal'
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    expect(responsiveEChartsLayoutKey(envelope, 700, 500)).not.toBe(responsiveEChartsLayoutKey(envelope, 1200, 720))
+    const compact = (responsiveEChartsPatch(option, 320, 240).series ?? option.series)[0]
+    const expanded = responsiveEChartsPatch(option, 1200, 720).series[0]
+    expect(compact.left).toBe(option.series[0].left)
+    expect(compact.right).toBe(option.series[0].right)
+    expect(expanded.left).toBe(expanded.right)
+    expect(expanded.orient).toBe(option.series[0].orient)
+    expect(expanded.data).toBe(option.series[0].data)
+  }
+})
+
 test('ECharts treemap and sunburst convert canonical decimal strings for layout and preserve raw tooltip values', () => {
   for (const mark of ['treemap', 'sunburst'] as const) {
     const envelope = hierarchyFixture(mark) as any

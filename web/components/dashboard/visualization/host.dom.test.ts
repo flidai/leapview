@@ -73,6 +73,34 @@ test('standalone chart hosts keep the canvas renderer outside the builder', asyn
   } finally { await page.close() }
 })
 
+test('compact KPI cards align their titles regardless of comparison details', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+    const offsets = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_kpi.envelope
+      const measure = async (rich: boolean) => {
+        const host = document.createElement('lv-visualization-host') as any
+        host.style.cssText = 'display:block;width:320px;height:170px'
+        const envelope = structuredClone(source)
+        envelope.visualID = rich ? 'rich-kpi' : 'simple-kpi'
+        if (rich) envelope.spec.comparison = { field: { dataset: 'primary', field: 'value' }, reducer: 'first', label: 'Budget' }
+        else envelope.spec.presentation.note = undefined
+        host.envelope = envelope
+        document.body.append(host)
+        await host.ensureMounted()
+        const root = host.shadowRoot as ShadowRoot
+        const card = root.querySelector<HTMLElement>('.lv-kpi-card')!
+        const label = root.querySelector<HTMLElement>('.lv-visualization-label')!
+        return label.getBoundingClientRect().top - card.getBoundingClientRect().top
+      }
+      return { rich: await measure(true), simple: await measure(false) }
+    })
+    expect(Math.abs(offsets.rich - offsets.simple)).toBeLessThan(2)
+  } finally { await page.close() }
+})
+
 test('deferred hosts retain the latest valid envelope and mount once on eligibility', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
