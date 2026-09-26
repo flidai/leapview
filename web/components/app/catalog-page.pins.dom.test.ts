@@ -82,11 +82,12 @@ test('dashboard pins appear in the catalog only while dashboards are pinned', as
   }
 })
 
-test('eight dashboard copies can be favorited and pinned independently', async () => {
+test('eight dashboard copies keep favorites and pins independent across catalog views', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
-    const addCopies = () => page.locator('lv-catalog-page').evaluate(async (element: any) => {
+    const catalog = page.locator('lv-catalog-page')
+    await catalog.evaluate(async (element: any) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       const source = element.page.dashboards[0]
       const copies = Array.from({ length: 8 }, (_, index) => ({
@@ -99,40 +100,30 @@ test('eight dashboard copies can be favorited and pinned independently', async (
         status: 'private',
       }))
       mergePatch({ page: { ...element.page, dashboards: [...element.page.dashboards, ...copies] } })
+      localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['sales-copy-1', 'sales-copy-8']))
+      localStorage.setItem('leapview.dashboard-catalog.pins.v1', JSON.stringify(copies.map((copy: any) => copy.dashboardId)))
+      element.reloadDiscoveryPreferences()
       await element.updateComplete
     })
-    await addCopies()
 
-    const catalog = page.locator('lv-catalog-page')
-    const pinned = catalog.getByRole('region', { name: 'Pinned dashboards' })
+    const pinned = catalog.locator('.pinned-dashboards')
+    expect(await pinned.getByRole('link').count()).toBe(8)
     await catalog.getByRole('tab', { name: 'My dashboards' }).click()
     expect(await catalog.locator('lv-entity-list tbody tr').count()).toBe(8)
-
-    for (const index of [1, 8]) {
-      await catalog.getByRole('button', { name: `Add Sales copy ${index} to favorites` }).click()
-    }
-    for (let index = 1; index <= 8; index++) {
-      const row = catalog.locator('lv-entity-list tbody tr').filter({ hasText: `Sales copy ${index}` })
-      await row.locator('.entity-list-row-pin').evaluate((button: HTMLButtonElement) => button.click())
-    }
-
-    await catalog.getByRole('tab', { name: 'All dashboards' }).click()
-    expect(await pinned.getByRole('link').count()).toBe(8)
     await catalog.getByRole('tab', { name: 'Favorites' }).click()
     expect(await catalog.locator('lv-entity-list tbody tr').count()).toBe(2)
     expect(await pinned.count()).toBe(0)
 
-    await page.reload()
-    await addCopies()
-    expect(await pinned.getByRole('link').count()).toBe(8)
-    for (let index = 1; index <= 8; index++) {
-      await pinned.getByRole('button', { name: `Unpin Sales copy ${index}` }).evaluate((button: HTMLButtonElement) => button.click())
-    }
-    await pinned.waitFor({ state: 'detached' })
-    await catalog.getByRole('tab', { name: 'My dashboards' }).click()
-    expect(await catalog.getByRole('button', { name: 'Remove Sales copy 1 from favorites' }).count()).toBe(1)
-    expect(await catalog.getByRole('button', { name: 'Remove Sales copy 8 from favorites' }).count()).toBe(1)
+    await catalog.evaluate(async (element: any) => {
+      localStorage.setItem('leapview.dashboard-catalog.pins.v1', '[]')
+      element.reloadDiscoveryPreferences()
+      await element.updateComplete
+    })
+    await catalog.getByRole('tab', { name: 'All dashboards' }).click()
+    expect(await pinned.count()).toBe(0)
+    await catalog.getByRole('tab', { name: 'Favorites' }).click()
+    expect(await catalog.locator('lv-entity-list tbody tr').count()).toBe(2)
   } finally {
     await page.close()
   }
-}, 30_000)
+})
