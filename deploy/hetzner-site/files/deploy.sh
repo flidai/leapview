@@ -259,7 +259,7 @@ recover_pending_transaction() {
 
   local timestamp
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  if [[ "$LEAPVIEW_SITE_IMAGE" == "$candidate" && "$deployed" == "$candidate" ]]; then
+  if [[ ( "$phase" == activating || "$phase" == activated ) && "$LEAPVIEW_SITE_IMAGE" == "$candidate" && "$deployed" == "$candidate" ]]; then
     if ! finish_successful_transaction "$old" "$candidate" "$timestamp"; then
       return 74
     fi
@@ -273,12 +273,14 @@ recover_pending_transaction() {
     return 0
   fi
 
-  if [[ "$LEAPVIEW_SITE_IMAGE" != "$old" ]]; then
-    set_site_env_reference "$old" || return 74
-  fi
+  # Persist rollback intent first. This phase accepts either environment pin,
+  # so an interrupted/failed environment replacement remains recoverable.
   if ! atomic_transaction "$old" "$candidate" rollback-started; then
     echo "could not persist rollback recovery phase" >&2
     return 74
+  fi
+  if [[ "$LEAPVIEW_SITE_IMAGE" != "$old" ]]; then
+    set_site_env_reference "$old" || return 74
   fi
   if "$site_root/provision.sh"; then
     if ! clear_transaction_scratch "$old" "$candidate"; then
@@ -411,7 +413,8 @@ fi
 restore_env="$(mktemp "$site_root/deployment.env.restore.XXXXXX")" || exit 77
 if ! cp "$rollback_env" "$restore_env" || ! chmod 0600 "$restore_env" || ! mv -f "$restore_env" "$site_root/deployment.env"; then
   rm -f "$restore_env"
-  atomic_transaction "$previous_image" "$candidate_image" rollback-failed || true
+  # Keep rollback-started until the environment has been restored. The
+  # rollback-failed phase requires the old image to have already been selected.
   echo "candidate failed; deployment.env restoration failed" >&2
   exit 77
 fi

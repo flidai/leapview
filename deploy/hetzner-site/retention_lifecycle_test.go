@@ -326,3 +326,94 @@ func TestRetentionRecoveryClearsResolvedTransactionScratch(t *testing.T) {
 		t.Fatal("resolved transaction scratch still pins candidate")
 	}
 }
+
+func assertRetentionRollbackRecovered(t *testing.T, f retentionFixture) {
+	t.Helper()
+	status, out := f.run(t, "deploy.sh", []string{"--recover"})
+	if status != 0 {
+		t.Fatalf("recovery after clearing the fault: %d %s", status, out)
+	}
+	if !strings.Contains(readPath(t, filepath.Join(f.root, "deployment.env")), f.current) ||
+		strings.TrimSpace(readPath(t, filepath.Join(f.root, "deployed-image"))) != f.current {
+		t.Fatal("recovery did not restore and verify the previous active image")
+	}
+	if strings.TrimSpace(readPath(t, filepath.Join(f.root, "previous-image"))) != f.previous {
+		t.Fatal("recovery changed the previous successful rollback image")
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "deployment-in-progress")); !os.IsNotExist(err) {
+		t.Fatal("verified recovery did not clear its transaction")
+	}
+}
+
+func TestRetentionRecoveryRetriesFailedRollbackPhaseWrite(t *testing.T) {
+	f := newRetentionFixture(t)
+	writeRetentionTransaction(t, f, "activating")
+	envPath := filepath.Join(f.root, "deployment.env")
+	writeFile(t, envPath, strings.ReplaceAll(readPath(t, envPath), f.current, f.candidate), 0600)
+	writeExecutable(t, filepath.Join(f.bin, "mv"), `#!/usr/bin/env bash
+if [[ "${FAIL_PHASE_WRITE:-}" == yes && "${@: -1}" == "$FIXTURE_ROOT/deployment-in-progress" ]]; then exit 1; fi
+exec /usr/bin/mv "$@"
+`)
+	status, out := f.run(t, "deploy.sh", []string{"--recover"}, "FAIL_PHASE_WRITE=yes")
+	if status != 74 {
+		t.Fatalf("phase-write failure: %d %s", status, out)
+	}
+	if !strings.Contains(readPath(t, envPath), f.candidate) {
+		t.Fatal("environment changed before rollback intent was recorded")
+	}
+	assertRetentionRollbackRecovered(t, f)
+}
+
+func TestRetentionRecoverySurvivesInterruptedEnvironmentRestore(t *testing.T) {
+	for _, fault := range []string{"write_failure", "interruption_after_rename"} {
+		t.Run(fault, func(t *testing.T) {
+			f := newRetentionFixture(t)
+			writeRetentionTransaction(t, f, "activating")
+			envPath := filepath.Join(f.root, "deployment.env")
+			writeFile(t, envPath, strings.ReplaceAll(readPath(t, envPath), f.current, f.candidate), 0600)
+			writeExecutable(t, filepath.Join(f.bin, "mv"), `#!/usr/bin/env bash
+if [[ -n "${RESTORE_FAULT:-}" && "${@: -1}" == "$FIXTURE_ROOT/deployment.env" ]]; then
+ if [[ "$RESTORE_FAULT" == write_failure ]]; then exit 1; fi
+ /usr/bin/mv "$@" || exit "$?"
+ kill -TERM "$PPID"
+ exit 0
+fi
+exec /usr/bin/mv "$@"
+`)
+			status, out := f.run(t, "deploy.sh", []string{"--recover"}, "RESTORE_FAULT="+fault)
+			if status == 0 {
+				t.Fatalf("injected recovery failure was ignored: %s", out)
+			}
+			if !strings.Contains(readPath(t, filepath.Join(f.root, "deployment-in-progress")), "phase=rollback-started\n") {
+				t.Fatal("environment restoration left an incompatible transaction phase")
+			}
+			assertRetentionRollbackRecovered(t, f)
+		})
+	}
+}
+
+func TestRetentionDeploymentRetriesFailedRollbackEnvironmentRestore(t *testing.T) {
+	for _, operation := range []string{"cp", "chmod", "mv"} {
+		t.Run(operation, func(t *testing.T) {
+			f := newRetentionFixture(t)
+			writeExecutable(t, filepath.Join(f.bin, operation), `#!/usr/bin/env bash
+if [[ "${FAIL_RESTORE:-}" == yes && "$*" == *deployment.env.restore.* ]]; then exit 1; fi
+exec /usr/bin/`+operation+` "$@"
+`)
+			status, out := f.run(t, "deploy.sh", []string{f.candidate}, "CANDIDATE_STATUS=76", "FAIL_RESTORE=yes")
+			if status != 77 {
+				t.Fatalf("rollback environment failure: %d %s", status, out)
+			}
+			assertRetentionRollbackRecovered(t, f)
+		})
+	}
+}
+
+func TestRetentionRecoveryHonorsRecordedRollbackIntent(t *testing.T) {
+	f := newRetentionFixture(t)
+	writeRetentionTransaction(t, f, "rollback-started")
+	envPath := filepath.Join(f.root, "deployment.env")
+	writeFile(t, envPath, strings.ReplaceAll(readPath(t, envPath), f.current, f.candidate), 0600)
+	writeFile(t, filepath.Join(f.root, "deployed-image"), f.candidate+"\n", 0644)
+	assertRetentionRollbackRecovered(t, f)
+}
