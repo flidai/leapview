@@ -12,18 +12,23 @@ import (
 )
 
 type AccessAdministrationSignal struct {
-	Principals          []AccessPrincipalSignal      `json:"principals"`
-	Groups              []AccessGroupSignal          `json:"groups"`
-	Sessions            []AccessSessionSignal        `json:"sessions"`
-	RoleAssignments     []AccessRoleAssignmentSignal `json:"roleAssignments"`
-	Activity            []AccessActivitySignal       `json:"activity"`
-	SelectedPrincipalID string                       `json:"selectedPrincipalId,omitempty"`
-	SelectedGroupID     string                       `json:"selectedGroupId,omitempty"`
-	TemporaryPassword   string                       `json:"temporaryPassword,omitempty"`
-	RedirectTo          string                       `json:"redirectTo,omitempty"`
-	Message             string                       `json:"message,omitempty"`
-	Error               string                       `json:"error,omitempty"`
-	Loading             bool                         `json:"loading"`
+	Principals                    []AccessPrincipalSignal            `json:"principals"`
+	Groups                        []AccessGroupSignal                `json:"groups"`
+	Sessions                      []AccessSessionSignal              `json:"sessions"`
+	RoleAssignments               []AccessRoleAssignmentSignal       `json:"roleAssignments"`
+	RolePresets                   []AccessRolePresetSignal           `json:"rolePresets"`
+	PermissionCatalog             []AccessRolePermissionDetailSignal `json:"permissionCatalog"`
+	RoleMutationUnavailableReason string                             `json:"roleMutationUnavailableReason,omitempty"`
+	ProjectID                     string                             `json:"projectId,omitempty"`
+	PolicyRevision                int64                              `json:"policyRevision"`
+	Activity                      []AccessActivitySignal             `json:"activity"`
+	SelectedPrincipalID           string                             `json:"selectedPrincipalId,omitempty"`
+	SelectedGroupID               string                             `json:"selectedGroupId,omitempty"`
+	TemporaryPassword             string                             `json:"temporaryPassword,omitempty"`
+	RedirectTo                    string                             `json:"redirectTo,omitempty"`
+	Message                       string                             `json:"message,omitempty"`
+	Error                         string                             `json:"error,omitempty"`
+	Loading                       bool                               `json:"loading"`
 }
 
 type AccessPrincipalCapabilitiesSignal struct {
@@ -91,14 +96,48 @@ type AccessSessionSignal struct {
 }
 
 type AccessRoleAssignmentSignal struct {
-	ProjectID    string   `json:"projectId"`
-	ResourceID   string   `json:"resourceId,omitempty"`
-	ResourceKind string   `json:"resourceKind,omitempty"`
-	Role         string   `json:"role"`
-	Capabilities []string `json:"capabilities"`
-	SourceType   string   `json:"sourceType"`
-	SourceID     string   `json:"sourceId"`
-	SourceName   string   `json:"sourceName"`
+	BindingID      string   `json:"bindingId"`
+	ProjectID      string   `json:"projectId"`
+	ResourceID     string   `json:"resourceId,omitempty"`
+	ResourceKind   string   `json:"resourceKind,omitempty"`
+	Role           string   `json:"role"`
+	Capabilities   []string `json:"capabilities"`
+	Permissions    []string `json:"permissions"`
+	Status         string   `json:"status"`
+	SourceType     string   `json:"sourceType"`
+	SourceID       string   `json:"sourceId"`
+	SourceName     string   `json:"sourceName"`
+	SubjectType    string   `json:"subjectType"`
+	SubjectID      string   `json:"subjectId"`
+	SubjectName    string   `json:"subjectName"`
+	PolicyRevision int64    `json:"policyRevision"`
+}
+
+type AccessRolePresetSignal struct {
+	Role        string                             `json:"role"`
+	Name        string                             `json:"name"`
+	Description string                             `json:"description"`
+	Profile     string                             `json:"profile"`
+	Permissions []string                           `json:"permissions"`
+	Details     []AccessRolePermissionDetailSignal `json:"details"`
+}
+
+type AccessRolePermissionDetailSignal struct {
+	Action        string   `json:"action"`
+	DisplayName   string   `json:"displayName"`
+	Family        string   `json:"family"`
+	Scope         string   `json:"scope"`
+	ResourceKinds []string `json:"resourceKinds,omitempty"`
+	Description   string   `json:"description"`
+	Prerequisites []string `json:"prerequisites,omitempty"`
+}
+
+type RoleBindingAdministrationState struct {
+	ProjectID         string
+	PolicyRevision    int64
+	Assignments       []AccessRoleAssignmentSignal
+	RolePresets       []AccessRolePresetSignal
+	PermissionCatalog []AccessRolePermissionDetailSignal
 }
 
 type AccessActivitySignal struct {
@@ -111,14 +150,19 @@ type AccessActivitySignal struct {
 }
 
 type AccessAdministrationCommand struct {
-	Action       string   `json:"action"`
-	PrincipalID  string   `json:"principalId,omitempty"`
-	PrincipalIDs []string `json:"principalIds,omitempty"`
-	GroupID      string   `json:"groupId,omitempty"`
-	SessionID    string   `json:"sessionId,omitempty"`
-	Email        string   `json:"email,omitempty"`
-	DisplayName  string   `json:"displayName,omitempty"`
-	Revision     string   `json:"revision,omitempty"`
+	Action           string   `json:"action"`
+	PrincipalID      string   `json:"principalId,omitempty"`
+	PrincipalIDs     []string `json:"principalIds,omitempty"`
+	GroupID          string   `json:"groupId,omitempty"`
+	SessionID        string   `json:"sessionId,omitempty"`
+	Email            string   `json:"email,omitempty"`
+	DisplayName      string   `json:"displayName,omitempty"`
+	Revision         string   `json:"revision,omitempty"`
+	Role             string   `json:"role,omitempty"`
+	BindingID        string   `json:"bindingId,omitempty"`
+	SubjectType      string   `json:"subjectType,omitempty"`
+	SubjectID        string   `json:"subjectId,omitempty"`
+	ExpectedRevision int64    `json:"expectedRevision,omitempty"`
 }
 
 type AccessAdministrationResult struct {
@@ -138,6 +182,10 @@ func NormalizeAccessAdministrationCommand(command AccessAdministrationCommand) A
 	command.Email = access.NormalizeEmail(command.Email)
 	command.DisplayName = strings.TrimSpace(command.DisplayName)
 	command.Revision = strings.TrimSpace(command.Revision)
+	command.Role = strings.TrimSpace(command.Role)
+	command.BindingID = strings.TrimSpace(command.BindingID)
+	command.SubjectType = strings.TrimSpace(command.SubjectType)
+	command.SubjectID = strings.TrimSpace(command.SubjectID)
 	return command
 }
 
@@ -163,10 +211,88 @@ func normalizeAccessAdministrationIDs(values []string) []string {
 // synthesize or persist these projections.
 type AuthorizationProjectionReader func(context.Context, string) ([]AccessRoleAssignmentSignal, error)
 
+// RoleBindingAdministrationReader supplies the target-owned role catalog and
+// current policy. It remains access-owned; admin only projects it for the UI.
+type RoleBindingAdministrationReader func(context.Context) (RoleBindingAdministrationState, error)
+
+func permissionDefinitionDetail(definition access.PermissionDefinition) AccessRolePermissionDetailSignal {
+	detail := AccessRolePermissionDetailSignal{Action: string(definition.Action), DisplayName: definition.DisplayName, Family: definition.Family, Scope: string(definition.Scope), Description: definition.Description}
+	for _, kind := range definition.ResourceKinds {
+		detail.ResourceKinds = append(detail.ResourceKinds, string(kind))
+	}
+	for _, prerequisite := range definition.Prerequisites {
+		detail.Prerequisites = append(detail.Prerequisites, string(prerequisite))
+	}
+	return detail
+}
+
+func RoleBindingAdministrationStateFromAccess(value access.RoleBindingAdministrationState) RoleBindingAdministrationState {
+	state := RoleBindingAdministrationState{ProjectID: value.Scope.ProjectID, PolicyRevision: value.Revision, Assignments: []AccessRoleAssignmentSignal{}, RolePresets: []AccessRolePresetSignal{}, PermissionCatalog: []AccessRolePermissionDetailSignal{}}
+	definitions := make(map[access.Action]access.PermissionDefinition)
+	for _, definition := range access.PermissionCatalog() {
+		definitions[definition.Action] = definition
+		state.PermissionCatalog = append(state.PermissionCatalog, permissionDefinitionDetail(definition))
+	}
+	activeIDs := make(map[string]struct{}, len(value.ActiveBindingIDs))
+	for _, id := range value.ActiveBindingIDs {
+		activeIDs[id] = struct{}{}
+	}
+	for _, preset := range value.RolePresets {
+		permissions := make([]string, 0, len(preset.Actions))
+		details := make([]AccessRolePermissionDetailSignal, 0, len(preset.Actions))
+		for _, action := range preset.Actions {
+			permissions = append(permissions, string(action))
+			definition, ok := definitions[action]
+			if !ok {
+				continue
+			}
+			details = append(details, permissionDefinitionDetail(definition))
+		}
+		state.RolePresets = append(state.RolePresets, AccessRolePresetSignal{Role: string(preset.Role), Name: accessRoleName(string(preset.Role)), Description: preset.Description, Profile: preset.Profile, Permissions: permissions, Details: details})
+	}
+	for _, binding := range value.RoleBindings {
+		role := string(binding.PermissionRole)
+		permissions := make([]string, 0, len(binding.Permissions))
+		for _, pair := range binding.Permissions {
+			permissions = append(permissions, string(pair.Action))
+		}
+		capabilities := make([]string, 0, len(binding.Capabilities))
+		for _, capability := range binding.Capabilities {
+			capabilities = append(capabilities, string(capability))
+		}
+		if role == "" {
+			role = string(binding.Role)
+		}
+		status := "Activation status unavailable"
+		if value.ActiveSnapshotReady {
+			status = "Pending activation"
+			if _, active := activeIDs[binding.ID]; active {
+				status = "Active"
+			}
+		}
+		state.Assignments = append(state.Assignments, AccessRoleAssignmentSignal{
+			BindingID: binding.ID, ProjectID: value.Scope.ProjectID, Role: role,
+			Capabilities: capabilities, Permissions: permissions,
+			Status:      status,
+			SubjectType: string(binding.Subject.Kind), SubjectID: binding.Subject.ID,
+			PolicyRevision: value.Revision,
+		})
+	}
+	return state
+}
+
+func accessRoleName(role string) string {
+	parts := strings.Fields(strings.NewReplacer("_", " ", "-", " ").Replace(role))
+	for index := range parts {
+		parts[index] = strings.ToUpper(parts[index][:1]) + parts[index][1:]
+	}
+	return strings.Join(parts, " ")
+}
+
 func LoadAccessAdministration(ctx context.Context, repository access.Repository, actorID, selectedPrincipalID, selectedGroupID string, projectionReaders ...AuthorizationProjectionReader) (AccessAdministrationSignal, error) {
 	state := AccessAdministrationSignal{
 		Principals: []AccessPrincipalSignal{}, Groups: []AccessGroupSignal{}, Sessions: []AccessSessionSignal{},
-		RoleAssignments: []AccessRoleAssignmentSignal{}, Activity: []AccessActivitySignal{},
+		RoleAssignments: []AccessRoleAssignmentSignal{}, RolePresets: []AccessRolePresetSignal{}, PermissionCatalog: []AccessRolePermissionDetailSignal{}, Activity: []AccessActivitySignal{},
 		SelectedPrincipalID: strings.TrimSpace(selectedPrincipalID), SelectedGroupID: strings.TrimSpace(selectedGroupID),
 	}
 	if repository == nil {
@@ -291,6 +417,48 @@ func LoadAccessAdministration(ctx context.Context, repository access.Repository,
 		}
 	}
 	return state, nil
+}
+
+// ApplyRoleBindingAdministrationState enriches access-owned policy rows with
+// presentation names from identity storage. The binding identity and exact
+// permission expansion are preserved unchanged.
+func ApplyRoleBindingAdministrationState(state *AccessAdministrationSignal, policy RoleBindingAdministrationState) {
+	if state == nil {
+		return
+	}
+	state.ProjectID = policy.ProjectID
+	state.PolicyRevision = policy.PolicyRevision
+	state.RolePresets = append([]AccessRolePresetSignal(nil), policy.RolePresets...)
+	state.PermissionCatalog = append([]AccessRolePermissionDetailSignal(nil), policy.PermissionCatalog...)
+	principalNames := make(map[string]string, len(state.Principals))
+	for _, principal := range state.Principals {
+		principalNames[principal.ID] = firstAccessValue(principal.DisplayName, principal.Email, principal.ID)
+	}
+	groupNames := make(map[string]string, len(state.Groups))
+	for _, group := range state.Groups {
+		groupNames[group.ID] = firstAccessValue(group.Name, group.ID)
+	}
+	state.RoleAssignments = make([]AccessRoleAssignmentSignal, 0, len(policy.Assignments))
+	for _, assignment := range policy.Assignments {
+		assignment.SourceType = assignment.SubjectType
+		assignment.SourceID = assignment.SubjectID
+		switch assignment.SubjectType {
+		case string(access.SubjectKindGroup):
+			assignment.SubjectName = firstAccessValue(groupNames[assignment.SubjectID], assignment.SubjectID)
+		case string(access.SubjectKindPrincipal):
+			assignment.SubjectName = firstAccessValue(principalNames[assignment.SubjectID], assignment.SubjectID)
+		default:
+			assignment.SubjectName = assignment.SubjectID
+		}
+		assignment.SourceName = assignment.SubjectName
+		if assignment.Capabilities == nil {
+			assignment.Capabilities = []string{}
+		}
+		if assignment.Permissions == nil {
+			assignment.Permissions = []string{}
+		}
+		state.RoleAssignments = append(state.RoleAssignments, assignment)
+	}
 }
 
 func ApplyAccessAdministrationCommand(ctx context.Context, repository access.Repository, actorID string, command AccessAdministrationCommand) (AccessAdministrationResult, error) {

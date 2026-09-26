@@ -107,8 +107,12 @@ model RoleBindingResponse {
   subjectType: string;
   subjectId: string;
   role: string;
-  @doc("The immutable capability bundle derived from role by the target authority.")
-  capabilities: Capability[];
+  @doc("The versioned typed permission profile captured with this assignment.")
+  permissionProfile?: PermissionCatalogProfile;
+  @doc("The exact immutable action-target expansion captured at assignment time.")
+  permissions?: PermissionPair[];
+  @doc("Legacy read-only capability evidence. New role bindings never populate this field.")
+  capabilities?: Capability[];
   policyRevision: int64;
   policyDigest: string;
 }
@@ -128,9 +132,45 @@ model RoleBindingCreateRequest {
   name?: string;
   subjectType: string;
   subjectId: string;
+  @doc("A versioned named role from the typed permission catalog. The server captures its exact expansion.")
   role: string;
+  @doc("A live bounded envelope authorizing this exact recipient and role expansion. Omission is accepted only for the three canonical bindings of the durable project-claim bootstrap principal while claim bootstrap remains open.")
+  grantAdminEnvelopeId?: string;
   @doc("Compare-and-swap fence. Use 0 when creating the first policy revision.")
   expectedRevision: int64;
+}
+
+model RoleBindingDeleteRequest {
+  @doc("Compare-and-swap fence for the policy revision containing the binding.")
+  expectedRevision: int64;
+}
+
+model RoleBindingMutationResponse {
+  targetId: string;
+  projectId: ResourceId;
+  environment: string;
+  policyRevision: int64;
+  policyDigest: string;
+}
+
+model ProjectClaimPublisherExchangeResponse {
+  claimCredentialId: string;
+  publisherToken: string;
+  publisherTokenExpiresAt: utcDateTime;
+}
+
+model ProjectClaimPublisherAcknowledgeRequest {
+  claimCredentialId: string;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model ProjectClaimPublisherAuditPayload {
+  @apigen.auditInternal
+  claimCredentialId: string;
+  @apigen.auditInternal
+  publisherCredentialId: string;
+  @apigen.auditInternal
+  revokedPublisherCredentialIds: string[];
 }
 
 model GroupCreateRequest {
@@ -209,6 +249,14 @@ model DeviceAuthorizationNotFoundFailure {}
   publicDetail: "The authoring session is invalid.",
 })
 model InvalidAuthoringCredentialFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "forbidden",
+  statusCode: 403,
+  code: "PROJECT_CLAIM_PUBLISHER_FORBIDDEN",
+  publicDetail: "The project claim publisher exchange is not available to this credential.",
+})
+model ProjectClaimPublisherForbiddenFailure {}
 
 @apigen.failureDefinition(#{
   kind: "not_found",
@@ -326,7 +374,9 @@ model AuthoringSessionRevokedAuditPayload {
   @apigen.auditInternal
   projectId: ResourceId;
   @apigen.auditPublic
-  capabilities: Capability[];
+  permissionProfile: PermissionCatalogProfile;
+  @apigen.auditPublic
+  permissions: PermissionPair[];
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
@@ -458,6 +508,121 @@ model GrantListResponse {
   page: PageInfo;
 }
 
+// Durable resource shares are exact, server-bound grants. Issuer identity,
+// issuance ceiling, instance identity, and the request digest are all derived
+// by the trusted service and are intentionally absent from this request.
+model ResourceShareGrantIssueRequest {
+  resourceUid: string;
+  resourceKind: ResourceKind;
+  resourceId: ResourceId;
+  recipientType: string;
+  recipientId: string;
+  permissions: PermissionPair[];
+  @doc("Optional bounded lifetime in seconds. The server derives issuance and expiry timestamps.")
+  ttlSeconds?: int64;
+}
+
+model ResourceShareGrantRevokeRequest {
+  reason?: string;
+}
+
+model ResourceShareGrantResponse {
+  id: string;
+  profile: string;
+  instanceId: string;
+  projectId: ResourceId;
+  resourceUid: string;
+  resourceKind: ResourceKind;
+  resourceId: ResourceId;
+  recipientType: string;
+  recipientId: string;
+  permissions: PermissionPair[];
+  issuedAt: utcDateTime;
+  expiresAt?: utcDateTime;
+  fingerprint: string;
+  idempotencyKey: string;
+  requestDigest: string;
+  revokedAt?: utcDateTime;
+  revokedByPrincipalId?: string;
+  revocationReason?: string;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model ResourceShareGrantAuditPayload {
+  @apigen.auditInternal
+  grantId: string;
+  @apigen.auditInternal
+  projectId: ResourceId;
+  @apigen.auditPublic
+  resourceKind: ResourceKind;
+  @apigen.auditInternal
+  resourceId: ResourceId;
+  @apigen.auditInternal
+  resourceUid: string;
+  @apigen.auditPublic
+  recipientType: string;
+  @apigen.auditPii
+  recipientId: string;
+  @apigen.auditInternal
+  fingerprint: string;
+}
+
+alias ResourceShareGrantCreated = CreatedJson<ResourceShareGrantResponse>;
+alias ResourceShareGrantRevoked = OkJson<ResourceShareGrantResponse>;
+
+// Grant-administration envelopes are project-bound, exact delegation
+// authorities. The server derives issuer, bound principal, credential
+// evidence, and the coherent manage+delegate ceiling; none are caller input.
+model GrantAdminEnvelopeIssueRequest {
+  permissions: PermissionPair[];
+  recipientSelector: string;
+  roleVersion: string;
+  targetResourceKind?: ResourceKind;
+  targetResourceId?: ResourceId;
+  @doc("Required bounded lifetime in seconds; the server derives issuance and expiry timestamps.")
+  ttlSeconds: int64;
+}
+
+model GrantAdminEnvelopeRevokeRequest {
+  reason?: string;
+}
+
+model GrantAdminEnvelopeResponse {
+  id: string;
+  profile: string;
+  projectId: ResourceId;
+  permissions: PermissionPair[];
+  targetResourceKind?: ResourceKind;
+  targetResourceId?: ResourceId;
+  recipientSelector: string;
+  roleVersion: string;
+  issuedAt: utcDateTime;
+  expiresAt: utcDateTime;
+  fingerprint: string;
+  idempotencyKey: string;
+  requestDigest: string;
+  revokedAt?: utcDateTime;
+  revokedByPrincipalId?: string;
+  revocationReason?: string;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model GrantAdminEnvelopeAuditPayload {
+  @apigen.auditInternal
+  envelopeId: string;
+  @apigen.auditInternal
+  projectId: ResourceId;
+  @apigen.auditPublic
+  recipientSelector: string;
+  @apigen.auditPublic
+  roleVersion: string;
+  @apigen.auditInternal
+  fingerprint: string;
+}
+
+alias GrantAdminEnvelopeCreated = CreatedJson<GrantAdminEnvelopeResponse>;
+alias GrantAdminEnvelopeRevoked = OkJson<GrantAdminEnvelopeResponse>;
+
 /** Mutable target policy intent; publication activates its graph-bound grants. */
 model TargetGrantCreateRequest extends GrantRequest {
   id: string;
@@ -505,6 +670,54 @@ model RoleBindingNotFoundFailure {}
   publicDetail: "The authorization policy conflicts with current state.",
 })
 model RoleBindingConflictFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "RESOURCE_SHARE_GRANT_INVALID",
+  publicDetail: "The durable resource-share request is invalid.",
+})
+model ResourceShareGrantInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "RESOURCE_SHARE_GRANT_NOT_FOUND",
+  publicDetail: "The durable resource-share grant was not found.",
+})
+model ResourceShareGrantNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "conflict",
+  statusCode: 409,
+  code: "RESOURCE_SHARE_GRANT_CONFLICT",
+  publicDetail: "The durable resource-share request conflicts with current state.",
+})
+model ResourceShareGrantConflictFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "GRANT_ADMIN_ENVELOPE_INVALID",
+  publicDetail: "The grant-administration envelope request is invalid.",
+})
+model GrantAdminEnvelopeInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "GRANT_ADMIN_ENVELOPE_NOT_FOUND",
+  publicDetail: "The grant-administration envelope was not found.",
+})
+model GrantAdminEnvelopeNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "conflict",
+  statusCode: 409,
+  code: "GRANT_ADMIN_ENVELOPE_CONFLICT",
+  publicDetail: "The grant-administration envelope request conflicts with current state.",
+})
+model GrantAdminEnvelopeConflictFailure {}
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model RoleBindingAuditPayload {
@@ -577,7 +790,8 @@ model AuthoringSessionResponse {
   clientId: string;
   targetId: string;
   projectId: ResourceId;
-  capabilities: Capability[];
+  permissionProfile: PermissionCatalogProfile;
+  permissions: PermissionPair[];
   createdAt: utcDateTime;
   lastUsedAt?: utcDateTime;
   expiresAt: utcDateTime;
@@ -635,14 +849,14 @@ alias ListPrincipalSessionsOK = OkJson<SessionListResponse>;
 interface Principals {
   @summary("List principals")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   listPrincipals(@query email?: string, @query q?: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListPrincipalsOK | CommonErrors;
 
   @summary("Create a local principal")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "principal.local_user.created" })
   @apigen.failsWith(PrincipalAlreadyExistsFailure)
   @apigen.auditPayload(PrincipalCreatedAuditPayload)
@@ -652,15 +866,15 @@ interface Principals {
   @summary("Get a principal")
   @route("/{principal}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   getPrincipal(@path principal: string): GetPrincipalOK | CommonErrors;
 
   @summary("Update a principal")
   @route("/{principal}")
   @patch
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{
     auditAction: "principal.updated",
     failures: #[
@@ -675,8 +889,8 @@ interface Principals {
   @summary("Delete a principal")
   @route("/{principal}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{
     auditAction: "principal.deleted",
     failures: #[
@@ -692,8 +906,8 @@ interface Principals {
   @summary("Reset a local principal password")
   @route("/{principal}/password-reset")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "principal.local_password.reset" })
   @apigen.failsWith(PrincipalNotFoundFailure)
   @apigen.auditPayload(PrincipalPasswordResetAuditPayload)
@@ -704,8 +918,8 @@ interface Principals {
   @doc("Sets an independent LeapView administrator block. External provisioning cannot clear this block.")
   @route("/{principal}/disable")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{
     auditAction: "principal.blocked",
     failures: #[
@@ -721,8 +935,8 @@ interface Principals {
   @doc("Clears only the LeapView administrator block. An externally disabled principal remains disabled.")
   @route("/{principal}/enable")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{
     auditAction: "principal.unblocked",
     failures: #[
@@ -737,15 +951,15 @@ interface Principals {
   @summary("List a principal's sessions")
   @route("/{principal}/sessions")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   listPrincipalSessions(@path principal: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListPrincipalSessionsOK | CommonErrors;
 
   @summary("Revoke a principal's session")
   @route("/{principal}/sessions/{session}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "session.revoked" })
   @apigen.failsWith(SessionNotFoundFailure)
   @apigen.auditPayload(PrincipalSessionRevokedAuditPayload)
@@ -764,14 +978,14 @@ alias CreateServicePrincipalSecretCreated = CreatedJson<ServicePrincipalSecretCr
 interface ServicePrincipals {
   @summary("List service principals")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   listServicePrincipals(@query limit?: ListLimit, @query pageToken?: PageToken): ListServicePrincipalsOK | CommonErrors;
 
   @summary("Create a service principal")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "service_principal.created" })
   @apigen.failsWith(ServicePrincipalInvalidFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
@@ -781,15 +995,15 @@ interface ServicePrincipals {
   @summary("Get a service principal")
   @route("/{servicePrincipal}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   getServicePrincipal(@path servicePrincipal: string): OkJson<PrincipalResponse> | CommonErrors;
 
   @summary("Update a service principal")
   @route("/{servicePrincipal}")
   @patch
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{
     auditAction: "service_principal.updated",
     failures: #[
@@ -803,8 +1017,8 @@ interface ServicePrincipals {
   @summary("Delete a service principal")
   @route("/{servicePrincipal}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "service_principal.deleted" })
   @apigen.failsWith(ServicePrincipalNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalAuditPayload)
@@ -814,8 +1028,8 @@ interface ServicePrincipals {
   @summary("Create a service principal secret")
   @route("/{servicePrincipal}/secrets")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "service_principal_secret.created" })
   @apigen.failsWith(ServicePrincipalSecretInvalidFailure)
   @apigen.auditPayload(ServicePrincipalSecretAuditPayload)
@@ -825,22 +1039,22 @@ interface ServicePrincipals {
   @summary("List service-principal secrets")
   @route("/{servicePrincipal}/secrets")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   listServicePrincipalSecrets(@path servicePrincipal: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ServicePrincipalSecretListResponse> | CommonErrors;
 
   @summary("Get service-principal secret metadata")
   @route("/{servicePrincipal}/secrets/{secret}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   getServicePrincipalSecret(@path servicePrincipal: string, @path secret: string): OkJson<ServicePrincipalSecretResponse> | CommonErrors;
 
   @summary("Revoke a service principal secret")
   @route("/{servicePrincipal}/secrets/{secret}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "service_principal_secret.revoked" })
   @apigen.failsWith(ServicePrincipalSecretNotFoundFailure)
   @apigen.auditPayload(ServicePrincipalSecretAuditPayload)
@@ -861,14 +1075,14 @@ alias AddGroupMemberOK = OkJson<StatusResponse>;
 interface Groups {
   @summary("List groups")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   listGroups(@query limit?: ListLimit, @query pageToken?: PageToken): ListGroupsOK | CommonErrors;
 
   @summary("Create a group")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "group.created" })
   @apigen.failsWith(GroupInvalidFailure)
   @apigen.auditPayload(GroupAuditPayload)
@@ -878,8 +1092,8 @@ interface Groups {
   @summary("Delete a group")
   @route("/{group}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "group.deleted" })
   @apigen.failsWith(GroupNotFoundFailure)
   @apigen.failsWith(GroupNotMutableFailure)
@@ -890,15 +1104,15 @@ interface Groups {
   @summary("Get a group")
   @route("/{group}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   getGroup(@path group: string): GetGroupOK | CommonErrors;
 
   @summary("Update a group")
   @route("/{group}")
   @patch
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "group.updated" })
   @apigen.failsWith(GroupNotFoundFailure)
   @apigen.failsWith(GroupNotMutableFailure)
@@ -909,15 +1123,15 @@ interface Groups {
   @summary("List group members")
   @route("/{group}/members")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   listGroupMembers(@path group: string, @query limit?: ListLimit, @query pageToken?: PageToken): ListGroupMembersOK | CommonErrors;
 
   @summary("Remove a group member")
   @route("/{group}/members/{principal}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{
     auditAction: "group.member_removed",
     failures: #[
@@ -932,8 +1146,8 @@ interface Groups {
   @summary("Add a group member")
   @route("/{group}/members/{principal}")
   @put
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{
     auditAction: "group.member_added",
     failures: #[
@@ -948,15 +1162,40 @@ interface Groups {
 
 alias ListProjectRolesOK = OkJson<RoleListResponse>;
 
+alias ExchangeProjectClaimPublisherOK = CreatedJson<ProjectClaimPublisherExchangeResponse>;
+
+@tag("Access")
+@summary("Exchange the one-use project-claim credential for a bounded publisher credential")
+@route("/projects/{project}/project-claim-publisher/exchange")
+@post
+@apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "instance.project.claim", resolver: "instance" })
+@extension("x-leapview-object-scope", "instance")
+@apigen.command(#{ auditAction: "project.claim_publisher.exchanged", guarantee: "transactional" })
+@apigen.auditPayload(ProjectClaimPublisherAuditPayload)
+@apigen.failsWith(ProjectClaimPublisherForbiddenFailure)
+op exchangeProjectClaimPublisher(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): ExchangeProjectClaimPublisherOK | CommonErrors;
+
+@tag("Access")
+@summary("Acknowledge receipt of the project-claim publisher credential")
+@route("/projects/{project}/project-claim-publisher/acknowledge")
+@post
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.manage", resolver: "project" })
+@extension("x-leapview-object-scope", "project")
+@apigen.command(#{ auditAction: "project.claim_publisher.acknowledged", guarantee: "transactional" })
+@apigen.auditPayload(ProjectClaimPublisherAuditPayload)
+@apigen.failsWith(ProjectClaimPublisherForbiddenFailure)
+op acknowledgeProjectClaimPublisher(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ProjectClaimPublisherAcknowledgeRequest): EmptyResponse | CommonErrors;
+
 @tag("Access")
 @summary("List project roles")
 @route("/projects/{project}/roles")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.read", resolver: "project" })
 @extension("x-leapview-object-scope", "project")
 op listProjectRoles(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRolesOK | CommonErrors;
 
 alias ListProjectRoleBindingsOK = OkJson<RoleBindingListResponse>;
+alias DeleteProjectRoleBindingOK = OkJson<RoleBindingMutationResponse>;
 
 model CreateProjectRoleBindingCreated {
   ...Response<201>;
@@ -967,7 +1206,7 @@ model CreateProjectRoleBindingCreated {
 @summary("List target-owned project role bindings")
 @route("/projects/{project}/role-bindings")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.read", resolver: "project" })
 @extension("x-leapview-object-scope", "project")
 op listProjectRoleBindings(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRoleBindingsOK | CommonErrors;
 
@@ -975,14 +1214,29 @@ op listProjectRoleBindings(@path project: ResourceId, @query limit?: ListLimit, 
 @summary("Create a target-owned project role binding")
 @route("/projects/{project}/role-bindings")
 @post
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.manage", resolver: "project" })
 @extension("x-leapview-object-scope", "project")
 @apigen.command(#{ auditAction: "role_binding.created", guarantee: "transactional" })
 @apigen.failsWith(RoleBindingInvalidFailure)
 @apigen.failsWith(RoleBindingConflictFailure)
 @apigen.failsWith(RoleBindingNotFoundFailure)
 @apigen.auditPayload(RoleBindingAuditPayload)
+@apigen.ui("role-binding.create")
 op createProjectRoleBinding(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingCreateRequest): CreateProjectRoleBindingCreated | CommonErrors;
+
+@tag("Access")
+@summary("Remove a target-owned project role binding")
+@route("/projects/{project}/role-bindings/{binding}")
+@delete
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.manage", resolver: "project" })
+@extension("x-leapview-object-scope", "project")
+@apigen.command(#{ auditAction: "role_binding.removed", guarantee: "transactional" })
+@apigen.failsWith(RoleBindingInvalidFailure)
+@apigen.failsWith(RoleBindingConflictFailure)
+@apigen.failsWith(RoleBindingNotFoundFailure)
+@apigen.auditPayload(RoleBindingAuditPayload)
+@apigen.ui("role-binding.remove")
+op deleteProjectRoleBinding(@path @apigen.target project: ResourceId, @path binding: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingDeleteRequest): DeleteProjectRoleBindingOK | CommonErrors;
 
 alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
 
@@ -990,26 +1244,64 @@ alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
 @summary("List effective capabilities")
 @route("/projects/{project}/effective-capabilities")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.read", resolver: "project" })
 @extension("x-leapview-object-scope", "project")
 op listEffectiveCapabilities(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId): ListEffectiveCapabilitiesOK | CommonErrors;
 
+@tag("Access")
+@summary("Issue an exact durable resource-share grant")
+@route("/projects/{project}/resource-share-grants")
+@post
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_SHARE", action: "resource.share", resolver: "resource-share" })
+@extension("x-leapview-object-scope", "resource-share")
+@apigen.command(#{ auditAction: "resource_share_grant.issued", guarantee: "transactional" })
+@apigen.failsWith(ResourceShareGrantInvalidFailure)
+@apigen.failsWith(ResourceShareGrantConflictFailure)
+@apigen.auditPayload(ResourceShareGrantAuditPayload)
+op issueResourceShareGrant(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ResourceShareGrantIssueRequest): ResourceShareGrantCreated | CommonErrors;
 alias ListGrantsOK = OkJson<TargetGrantListResponse>;
 alias CreateGrantCreated = CreatedJson<TargetGrantResponse>;
 
+@tag("Access")
+@summary("Revoke a durable resource-share grant")
+@route("/resource-share-grants/{grant}")
+@delete
+// Revocation is issuer-bound by the durable grant handler. It deliberately
+// requires only a live authenticated credential here: a share outlives the
+// issuer's current resource.share assignment, and losing that assignment must
+// not prevent the issuer from explicitly revoking the independent grant.
+@apigen.authz(#{ mode: "authenticated" })
+@extension("x-leapview-object-scope", "principal")
+@apigen.command(#{ auditAction: "resource_share_grant.revoked", guarantee: "transactional" })
+@apigen.failsWith(ResourceShareGrantInvalidFailure)
+@apigen.failsWith(ResourceShareGrantNotFoundFailure)
+@apigen.auditPayload(ResourceShareGrantAuditPayload)
+op revokeResourceShareGrant(@path @apigen.target grant: string, @body body: ResourceShareGrantRevokeRequest): ResourceShareGrantRevoked | CommonErrors;
+
+@tag("Access")
+@summary("Issue a project-bound grant-administration envelope")
+@route("/projects/{project}/grant-admin-envelopes")
+@post
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.manage", resolver: "project" })
+@extension("x-leapview-object-scope", "project")
+@apigen.command(#{ auditAction: "grant_admin_envelope.issued", guarantee: "transactional" })
+@apigen.failsWith(GrantAdminEnvelopeInvalidFailure)
+@apigen.failsWith(GrantAdminEnvelopeConflictFailure)
+@apigen.auditPayload(GrantAdminEnvelopeAuditPayload)
+op issueGrantAdminEnvelope(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GrantAdminEnvelopeIssueRequest): GrantAdminEnvelopeCreated | CommonErrors;
 @tag("Access")
 @route("/projects/{project}/grants")
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface Grants {
   @summary("List grants")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.read", resolver: "project" })
   @extension("x-leapview-object-scope", "project")
   listGrants(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListGrantsOK | CommonErrors;
 
   @summary("Create a grant")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.manage", resolver: "project" })
   @extension("x-leapview-object-scope", "project")
   @apigen.ui("project.access.grant.create")
   @apigen.command(#{
@@ -1021,39 +1313,19 @@ interface Grants {
   @apigen.auditPayload(GrantAuditPayload)
   createGrant(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: TargetGrantCreateRequest): CreateGrantCreated | CommonErrors;
 
-  @summary("Get a resource capability grant")
-  @route("/{grant}")
-  @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  getGrant(@path project: ResourceId, @path grant: string): OkJson<GrantResponse> | CommonErrors;
-
-  @summary("Update a resource capability grant")
-  @route("/{grant}")
-  @patch
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.command(#{
-    auditAction: "grant.updated",
-    failures: #[
-      #{ kind: "invalid", statusCode: 422, code: "GRANT_INVALID", publicDetail: "The grant is invalid." },
-    ],
-  })
-  @apigen.failsWith(GrantNotFoundFailure)
-  @apigen.auditPayload(GrantAuditPayload)
-  updateGrant(@path @apigen.target project: ResourceId, @path grant: string, @header("If-Match") ifMatch: string, @body body: GrantRequest): OkJson<GrantResponse> | CommonErrors;
-
-  @summary("Delete a grant")
-  @route("/{grant}")
-  @delete
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.ui("project.access.grant.delete")
-  @apigen.command(#{ auditAction: "grant.deleted" })
-  @apigen.failsWith(GrantNotFoundFailure)
-  @apigen.auditPayload(GrantAuditPayload)
-  deleteGrant(@path @apigen.target project: ResourceId, @path grant: string): EmptyResponse | CommonErrors;
 }
+
+@tag("Access")
+@summary("Revoke a project-bound grant-administration envelope")
+@route("/projects/{project}/grant-admin-envelopes/{envelope}")
+@delete
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.manage", resolver: "project" })
+@extension("x-leapview-object-scope", "project")
+@apigen.command(#{ auditAction: "grant_admin_envelope.revoked", guarantee: "transactional" })
+@apigen.failsWith(GrantAdminEnvelopeInvalidFailure)
+@apigen.failsWith(GrantAdminEnvelopeNotFoundFailure)
+@apigen.auditPayload(GrantAdminEnvelopeAuditPayload)
+op revokeGrantAdminEnvelope(@path @apigen.target project: ResourceId, @path envelope: string, @body body: GrantAdminEnvelopeRevokeRequest): GrantAdminEnvelopeRevoked | CommonErrors;
 
 @tag("Access")
 @summary("Check multiple authorization decisions")
@@ -1319,13 +1591,13 @@ alias SemanticAttributeImpactPreviewOK = OkJson<SemanticAttributeImpactPreviewRe
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface SemanticAttributeDefinitions {
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   listSemanticAttributeDefinitions(@query q?: string, @query ownerKind?: SemanticAttributeOwnerKindValue, @query limit?: ListLimit, @query pageToken?: PageToken): ListSemanticAttributeDefinitionsOK | CommonErrors;
 
   @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   // The repository's durable audit event is semantic_attribute.register.
   // Replays use a distinct durable replay action but retain this canonical
   // operation action in the generated contract.
@@ -1337,15 +1609,15 @@ interface SemanticAttributeDefinitions {
 
   @route("/{attribute}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
   getSemanticAttributeDefinition(@path attribute: string): GetSemanticAttributeDefinitionOK | CommonErrors;
 
   @route("/{attribute}")
   @patch
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "semantic_attribute.metadata_update" })
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
   @apigen.failsWith(SemanticAttributeInvalidFailure)
@@ -1354,8 +1626,8 @@ interface SemanticAttributeDefinitions {
 
   @route("/{attribute}/disable")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "semantic_attribute.disable" })
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeDefinitionAuditPayload)
@@ -1363,8 +1635,8 @@ interface SemanticAttributeDefinitions {
 
   @route("/{attribute}/restore")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "semantic_attribute.enable" })
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeDefinitionAuditPayload)
@@ -1377,14 +1649,14 @@ interface SemanticAttributeDefinitions {
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface PrincipalSemanticAttributeAssignments {
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   listPrincipalSemanticAttributeAssignments(@path principal: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticAttributeAssignmentListResponse> | CommonErrors;
 
   @route("/{attribute}")
   @put
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "semantic_attribute.assignment.set" })
   @apigen.failsWith(SemanticAttributeInvalidFailure)
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
@@ -1393,8 +1665,8 @@ interface PrincipalSemanticAttributeAssignments {
 
   @route("/{attribute}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "semantic_attribute.assignment.tombstone" })
   @apigen.failsWith(SemanticAttributeAssignmentNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeAssignmentAuditPayload)
@@ -1407,14 +1679,14 @@ interface PrincipalSemanticAttributeAssignments {
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface GroupSemanticAttributeAssignments {
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   listGroupSemanticAttributeAssignments(@path group: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticAttributeAssignmentListResponse> | CommonErrors;
 
   @route("/{attribute}")
   @put
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "semantic_attribute.assignment.set" })
   @apigen.failsWith(SemanticAttributeInvalidFailure)
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
@@ -1423,8 +1695,8 @@ interface GroupSemanticAttributeAssignments {
 
   @route("/{attribute}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "semantic_attribute.assignment.tombstone" })
   @apigen.failsWith(SemanticAttributeAssignmentNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeAssignmentAuditPayload)
@@ -1437,13 +1709,13 @@ interface GroupSemanticAttributeAssignments {
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface SemanticAttributeClaimMappings {
   @get
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   listSemanticAttributeClaimMappings(@path attribute: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticAttributeClaimMappingListResponse> | CommonErrors;
 
   @post
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "semantic_attribute.claim_mapping.set" })
   @apigen.failsWith(SemanticAttributeInvalidFailure)
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
@@ -1452,8 +1724,8 @@ interface SemanticAttributeClaimMappings {
 
   @route("/{mapping}")
   @delete
-  @apigen.authz(#{ mode: "authenticated" })
-  @extension("x-leapview-object-scope", "platform")
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.manage", resolver: "instance" })
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "semantic_attribute.claim_mapping.tombstone" })
   @apigen.failsWith(SemanticAttributeClaimMappingNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeClaimMappingAuditPayload)
@@ -1465,8 +1737,8 @@ interface SemanticAttributeClaimMappings {
 @route("/semantic-attributes/{attribute}/impact-preview")
 @post
 @apigen.query
-@apigen.authz(#{ mode: "authenticated" })
-@extension("x-leapview-object-scope", "platform")
+@apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.access.read", resolver: "instance" })
+@extension("x-leapview-object-scope", "instance")
   @apigen.failsWith(SemanticAttributeInvalidFailure)
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
 op previewSemanticAttributeImpact(@path @apigen.target attribute: string, @body body: SemanticAttributeImpactPreviewRequest): SemanticAttributeImpactPreviewOK | CommonErrors;

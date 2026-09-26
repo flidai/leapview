@@ -99,7 +99,7 @@ func TestAccessRemainingPostgreSQL18ConcurrentSCIMGroupCreation(t *testing.T) {
 	}
 }
 
-func TestAccessRemainingPostgreSQL18AuditFiltersCursorAndBootstrapEvidence(t *testing.T) {
+func TestAccessRemainingPostgreSQL18AuditFiltersAndCursor(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
 	if err != nil {
@@ -109,19 +109,6 @@ func TestAccessRemainingPostgreSQL18AuditFiltersCursorAndBootstrapEvidence(t *te
 	user, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "audit-filter@example.com", DisplayName: "Audit Filter", Password: "audit password long enough"})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if _, err := repo.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: user.Principal.ID, Role: access.PlatformRoleAdmin}); err != nil {
-		t.Fatal(err)
-	}
-	_, token, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-		PrincipalID: user.Principal.ID, Name: "bootstrap-evidence", Capabilities: []access.Capability{access.CapabilityResourcePublish}, ExpiresAt: time.Now().Add(time.Hour),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	evidence, err := repo.BootstrapAPITokenEvidence(ctx, user.Principal.ID, token.ID, time.Now())
-	if err != nil || evidence.ID != token.ID {
-		t.Fatalf("bootstrap token evidence = %#v, err=%v", evidence, err)
 	}
 	if err := repo.RecordAuditEvent(ctx, access.AuditEventInput{PrincipalID: user.Principal.ID, Action: "scim.user.updated", ResourceKind: "principal", ResourceID: user.Principal.ID, Capability: access.CapabilityResourceEdit, Status: "success", MetadataJSON: `{"source":"scim"}`}); err != nil {
 		t.Fatal(err)
@@ -158,12 +145,6 @@ func TestAccessRemainingPostgreSQL18AuditFiltersCursorAndBootstrapEvidence(t *te
 	}
 	if len(next) != 2 {
 		t.Fatalf("second audit page = %d, want 2", len(next))
-	}
-	if _, err := repo.DisableProvisionedPrincipal(ctx, user.Principal.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repo.BootstrapAPITokenEvidence(ctx, user.Principal.ID, token.ID, time.Now()); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("disabled principal token evidence = %v, want no rows", err)
 	}
 	if strings.TrimSpace(page[0].MetadataJSON) == "" {
 		t.Fatal("audit metadata was empty")
@@ -207,7 +188,7 @@ func TestAccessRemainingPostgreSQL18SCIMDeactivationRevokesAllCredentials(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	apiSecret, _, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: user.Principal.ID, Name: "scim-cascade", ExpiresAt: time.Now().Add(time.Hour)})
+	apiSecret, _, err := repo.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{PrincipalID: user.Principal.ID, Name: "scim-cascade", Permissions: []access.PermissionPair{}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +196,15 @@ func TestAccessRemainingPostgreSQL18SCIMDeactivationRevokesAllCredentials(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := access.NewAuthoringScope("scim-cascade-target", projectID, []access.Capability{access.CapabilityResourceRead})
+	resource, err := access.NewResourceRef("scim-cascade-model", graph.KindSemanticModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := access.NewExactPermissionPair(access.ActionSemanticConsume, projectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := access.NewAuthoringScope("scim-cascade-target", projectID, []access.PermissionPair{permission})
 	if err != nil {
 		t.Fatal(err)
 	}

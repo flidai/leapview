@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS jobs.job_history (
     estimated_memory_bytes bigint NOT NULL CHECK (estimated_memory_bytes > 0),
     payload                jsonb NOT NULL CHECK (jsonb_typeof(payload) IN ('object', 'array')),
     request_digest         text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    -- {} is the migration sentinel for pre-authority rows. It is not a valid
+    -- envelope and the jobs module closes it before any handler dispatch.
+    authority_envelope     jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(authority_envelope) = 'object'),
     river_job_id           bigint UNIQUE,
     status                 text NOT NULL DEFAULT 'queued'
                            CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
@@ -115,12 +118,12 @@ BEGIN
     IF ROW(OLD.id, OLD.kind, OLD.workload_class, OLD.principal_id, OLD.group_ids,
            OLD.partition_key, OLD.resource_kind, OLD.resource_id,
            OLD.estimated_memory_bytes, OLD.payload, OLD.request_digest,
-           OLD.created_at)
+           OLD.authority_envelope, OLD.created_at)
        IS DISTINCT FROM
        ROW(NEW.id, NEW.kind, NEW.workload_class, NEW.principal_id, NEW.group_ids,
            NEW.partition_key, NEW.resource_kind, NEW.resource_id,
            NEW.estimated_memory_bytes, NEW.payload, NEW.request_digest,
-           NEW.created_at) THEN
+           NEW.authority_envelope, NEW.created_at) THEN
         RAISE EXCEPTION 'product job identity is immutable';
     END IF;
     IF OLD.river_job_id IS NOT NULL AND NEW.river_job_id IS DISTINCT FROM OLD.river_job_id THEN

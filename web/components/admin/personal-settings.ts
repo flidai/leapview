@@ -1,8 +1,9 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, query, state } from 'lit/decorators.js'
-import { ArrowLeft, CalendarDays, Camera, Check, ChevronDown, KeyRound, Plus, Search, Trash2, X } from 'lucide'
+import { ArrowLeft, CalendarDays, Camera, Check, ChevronDown, KeyRound, Trash2, X } from 'lucide'
 import type {
   PersonalCapabilityOptionSignal,
+  PersonalPermissionPairSignal,
   PersonalSettingsSignal,
   PersonalTokenSignal,
 } from '../../generated/signals'
@@ -12,21 +13,26 @@ import { emptyStateStyles, renderEmptyState } from '../shared/empty-state'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/one-time-secret'
 import '../shared/select-menu'
+import '../shared/entity-list'
+import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
 import type { SelectMenu } from '../shared/select-menu'
 import { renderSettingsActions, renderSettingsRow, renderSettingsSection, settingsLayoutStyles } from '../shared/settings-layout'
 import { submitAuthForm } from '../shared/auth-form'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import { avatarResponseError } from './avatar-response'
-import { formatDate, humanizeCapability, humanizeSessionKind, sessionFact } from './personal-settings-format'
+import { formatDate, humanizeSessionKind, sessionFact } from './personal-settings-format'
+import { permissionPairKey, tokenPermissionPolicies, uniquePermissionPairs } from './personal-settings-permissions'
+import type { TokenPermissionPolicy } from './personal-settings-permissions'
 import { renderAuthoringSessionRow, renderBrowserSessionRow, type PendingSessionRevocation, type SelectedSession } from './personal-settings-session-rows'
 import { personalSettingsStyles } from './personal-settings.styles'
+import './personal-settings-token-permission-picker'
 import '../shared/drawer'
 import '../shared/user-avatar'
 const emptySettings: PersonalSettingsSignal = {
   active: 'profile',
   profile: { id: '', email: '', displayName: '', theme: 'system', identitySource: '', canEditDisplayName: false, hasLocalPassword: false },
   security: { localPasswordEnabled: false, sessions: [], authoringSessions: [] },
-  tokens: { items: [], capabilities: [] },
+  tokens: { items: [], capabilities: [], permissionOptionsReady: false },
 }
 
 type ThemeOption = {
@@ -36,24 +42,8 @@ type ThemeOption = {
   tone: 'system' | 'light' | 'dark'
 }
 
-type TokenPermissionAccess = 'read' | 'write'
-
 type TokenExpirationPreset = '7' | '30' | '60' | '90' | 'custom'
 
-type TokenPermissionAccessOption = {
-  value: TokenPermissionAccess
-  label: 'Read-only' | 'Read and write'
-  capabilities: string[]
-}
-
-type TokenPermissionDefinition = {
-  id: string
-  label: string
-  description: string
-  category: string
-  searchText: string
-  access: TokenPermissionAccessOption[]
-}
 
 const systemThemeOption: ThemeOption = { value: 'system', label: 'System', group: 'Automatic', tone: 'system' }
 
@@ -70,6 +60,51 @@ const themeOptions: readonly ThemeOption[] = [
 
 const themeGroups: readonly ThemeOption['group'][] = ['Automatic', 'Standard', 'Accessibility']
 
+const tokenListColumns: EntityListColumn[] = [
+  { id: 'name', label: 'Token', width: '16%' },
+  { id: 'description', label: 'Description', width: '15%' },
+  { id: 'permissions', label: 'Permissions', width: '12%' },
+  { id: 'lastUsed', label: 'Last used', width: '13%', render: 'datetime' },
+  { id: 'created', label: 'Created', width: '13%', render: 'datetime' },
+  { id: 'modified', label: 'Last modified', width: '13%', render: 'datetime' },
+  { id: 'status', label: 'Status', width: '12%', render: 'status' },
+  { id: 'actions', label: 'Actions', width: '6%', render: 'actions', align: 'center' },
+]
+
+function tokenStatus(token: PersonalTokenSignal): string {
+  return token.revokedAt ? 'Revoked' : token.expiresAt && Date.parse(token.expiresAt) <= Date.now() ? 'Expired' : 'Active'
+}
+
+function tokenListItem(token: PersonalTokenSignal): EntityListItem {
+  const count = token.permissionProfile ? token.permissions.length : token.capabilities.length
+  const modifiedAt = token.revokedAt || token.modifiedAt || token.createdAt
+  return {
+    id: token.id,
+    title: token.name,
+    href: `/admin/api-tokens/${encodeURIComponent(token.id)}/edit`,
+    icon: 'key',
+    actions: token.revokedAt ? [] : [{ label: `Delete ${token.name}`, action: 'delete', icon: 'trash' }],
+    columns: {
+      description: token.description || '—',
+      permissions: count ? `${count} ${count === 1 ? 'permission' : 'permissions'}` : 'No permissions',
+      lastUsed: token.lastUsedAt ? formatDateOnly(token.lastUsedAt) : 'Never',
+      created: formatDateOnly(token.createdAt),
+      modified: formatDateOnly(modifiedAt),
+      status: tokenStatus(token),
+    },
+    columnTitles: {
+      lastUsed: token.lastUsedAt ? formatDate(token.lastUsedAt) : '',
+      created: formatDate(token.createdAt),
+      modified: formatDate(modifiedAt),
+    },
+    sortValues: {
+      lastUsed: token.lastUsedAt || '',
+      created: token.createdAt,
+      modified: modifiedAt,
+    },
+  }
+}
+
 class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private profileName = ''
   @state() private profileTitle = ''
@@ -78,20 +113,27 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private newPassword = ''
   @state() private tokenName = ''
   @state() private tokenDescription = ''
-  @state() private tokenPermissionSelections: Record<string, TokenPermissionAccess> = {}
+  @state() private tokenSelectedPermissions: PersonalPermissionPairSignal[] = []
   @state() private tokenExpirationPreset: TokenExpirationPreset = '30'
   @state() private tokenCustomExpiration = ''
   @state() private tokenPendingDeletion: PersonalTokenSignal | null = null
+  @state() private tokenPendingRotation: PersonalTokenSignal | null = null
   @state() private pendingSessionRevocation: PendingSessionRevocation | null = null
   @state() private selectedSession: SelectedSession | null = null
   @state() private passwordDialogOpen = false
   @state() private logoutAllDialogOpen = false
-  @property({ attribute: 'token-view' }) tokenView: 'list' | 'create' = 'list'
+  @property({ attribute: 'token-view' }) tokenView: 'list' | 'create' | 'edit' = 'list'
   @state() private tokenConfirmationOpen = false
   @state() private tokenCreatePending = false
+  @state() private tokenEditPending = false
+  @state() private tokenRotatePending = false
+  @state() private tokenEditUnavailable = false
+  private tokenEditLoadedId = ''
+  private tokenEditExpectedModifiedAt = ''
+  private tokenEditOriginalExpiresAt = ''
+  private tokenEditExpirationTouched = false
   @state() private tokenPermissionMenuOpen = false
-  @state() private tokenPermissionSearch = ''
-  @state() private tokenPermissionAccessMenu = ''
+  @state() private tokenPermissionsIncomplete = false
   @state() private message = ''
   @state() private error = ''
   @state() private avatarMenuOpen = false
@@ -105,6 +147,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @query('.theme-trigger') private themeTrigger?: HTMLButtonElement
   @query('[data-token-confirm-dialog]') private tokenConfirmationDialog?: HTMLDialogElement
   @query('[data-token-delete-dialog]') private tokenDeleteDialog?: HTMLDialogElement
+  @query('[data-token-rotate-dialog]') private tokenRotateDialog?: HTMLDialogElement
   @query('[data-session-revoke-dialog]') private sessionRevokeDialog?: HTMLDialogElement
   @query('[data-password-dialog]') private passwordDialog?: HTMLDialogElement
   @query('[data-logout-all-dialog]') private logoutAllDialog?: HTMLDialogElement
@@ -139,6 +182,27 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
 
   override updated(): void {
     const settings = this.settings
+    if (this.tokenView === 'edit') {
+      const tokenID = window.location.pathname.match(/^\/admin\/api-tokens\/([^/]+)\/edit$/)?.[1] ?? ''
+      const token = settings.tokens.items.find((item) => item.id === tokenID)
+      if (token && settings.tokens.permissionOptionsReady && token.id !== this.tokenEditLoadedId) {
+        this.tokenEditLoadedId = token.id
+        this.tokenEditExpectedModifiedAt = token.modifiedAt || token.createdAt
+        this.tokenEditOriginalExpiresAt = token.expiresAt
+        this.tokenEditExpirationTouched = false
+        this.tokenName = token.name
+        this.tokenDescription = token.description
+        this.tokenExpirationPreset = 'custom'
+        this.tokenCustomExpiration = token.expiresAt.slice(0, 10)
+        this.tokenSelectedPermissions = this.authorizedSelectedPermissions(token.permissions, settings.tokens.capabilities)
+        this.tokenEditUnavailable = this.tokenSelectedPermissions.length !== uniquePermissionPairs(token.permissions).length
+      } else if (token && this.tokenEditPending && token.modifiedAt && token.modifiedAt !== this.tokenEditExpectedModifiedAt) {
+        window.location.assign('/admin/api-tokens')
+        return
+      }
+    } else {
+      this.reconcileTokenPermissionState(settings.tokens.capabilities)
+    }
     if (settings.profile.id && settings.profile.id !== this.observedProfileID) {
       this.observedProfileID = settings.profile.id
       this.profileTitle = ''
@@ -156,25 +220,28 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     }
     const newToken = settings.tokens.newToken ?? ''
     if (newToken && newToken !== this.handledNewToken) {
-      const navigateToTokenList = this.tokenView === 'create' && window.location.pathname === '/admin/api-tokens/new'
+      const navigateToTokenList = this.tokenView === 'create' || this.tokenView === 'edit'
       this.handledNewToken = newToken
       this.tokenCreatePending = false
+      this.tokenRotatePending = false
       this.tokenView = 'list'
       this.tokenConfirmationOpen = false
       this.tokenName = ''
       this.tokenDescription = ''
-      this.tokenPermissionSelections = {}
+      this.tokenSelectedPermissions = []
+      this.tokenPermissionsIncomplete = false
       this.tokenExpirationPreset = '30'
       this.tokenCustomExpiration = ''
       this.closeExpirationMenu()
       this.closePermissionMenu()
-      this.closeTokenPermissionAccessMenu()
       if (navigateToTokenList) window.history.replaceState(window.history.state, '', '/admin/api-tokens')
     }
     const confirmation = this.tokenConfirmationDialog
     if (this.tokenConfirmationOpen && confirmation && !confirmation.open) confirmation.showModal()
     const deletion = this.tokenDeleteDialog
     if (this.tokenPendingDeletion && deletion && !deletion.open) deletion.showModal()
+    const rotation = this.tokenRotateDialog
+    if (this.tokenPendingRotation && rotation && !rotation.open) rotation.showModal()
     const sessionRevocation = this.sessionRevokeDialog
     if (this.pendingSessionRevocation && sessionRevocation && !sessionRevocation.open) sessionRevocation.showModal()
     const password = this.passwordDialog
@@ -414,7 +481,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
         <section class="session-drawer-section"><h3>Details</h3><dl class="session-drawer-facts">
           ${sessionFact('Client type', humanizeSessionKind(session.kind))}
           ${sessionFact('Project', session.projectId || 'All available projects')}
-          ${sessionFact('Capabilities', session.capabilities.map(humanizeCapability).join(', ') || 'Scoped access')}
+          ${sessionFact('Permissions', session.permissions.map((permission) => permission.action.replaceAll('.', ' ')).join(', ') || 'Scoped access')}
           ${sessionFact('Created', formatDate(session.createdAt))}
           ${sessionFact('Last active', session.lastUsedAt ? formatDate(session.lastUsedAt) : 'Never')}
           ${sessionFact('Expires', formatDate(session.expiresAt))}
@@ -438,32 +505,35 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
 
   private renderTokens(tokens: PersonalSettingsSignal['tokens']) {
     if (this.tokenView === 'list') return this.renderTokenList(tokens)
-    const permissions = tokenPermissionDefinitions(tokens.capabilities)
-    const selected = permissions.filter((permission) => this.tokenPermissionAccess(permission))
-    const categories = groupTokenPermissions(this.filteredTokenPermissions(permissions))
-    const categoryStats = new Map(groupTokenPermissions(permissions).map(([category, categoryPermissions]) => [category, {
-      selected: categoryPermissions.filter((permission) => this.tokenPermissionAccess(permission)).length,
-      total: categoryPermissions.length,
-    }]))
+    const editing = this.tokenView === 'edit'
+    const tokenID = editing ? window.location.pathname.match(/^\/admin\/api-tokens\/([^/]+)\/edit$/)?.[1] ?? '' : ''
+    const editedToken = editing ? tokens.items.find((item) => item.id === tokenID) : undefined
+    if (editing && tokens.permissionOptionsReady && (!editedToken || tokenStatus(editedToken) !== 'Active')) return renderEmptyState({
+      icon: lucideIcon(KeyRound, { size: 28, strokeWidth: 1.8 }),
+      title: 'Token not available',
+      description: 'This token was deleted or cannot be edited.',
+    })
+    const policies = tokenPermissionPolicies(tokens.capabilities)
     const expirationOptions = tokenExpirationOptions()
-    const canCreate = Boolean(this.tokenName.trim() && this.tokenExpirationIsValid() && !this.tokenCreatePending)
+    const canCreate = Boolean(this.tokenName.trim() && this.tokenExpirationIsValid() && !this.tokenCreatePending && !this.tokenEditPending && !this.tokenPermissionsIncomplete && !this.tokenEditUnavailable && (!editing || this.tokenEditLoadedId === tokenID))
     return html`
-      <section class="token-page" aria-label="Create personal access token">
+      <section class="token-page" aria-label=${editing ? 'Edit personal access token' : 'Create personal access token'}>
         <div class="token-create-header">
           <a class="token-back" href="/admin/api-tokens" aria-label="Back to personal access tokens">${lucideIcon(ArrowLeft, { size: 16, strokeWidth: 2 })}</a>
-          <div class="token-page-heading"><h2>New personal access token</h2></div>
+          <div class="token-page-heading"><h2>${editing ? 'Edit personal access token' : 'New personal access token'}</h2></div>
         </div>
         <form class="token-form" @submit=${this.requestTokenCreation}>
-          <p class="token-page-intro">Create a scoped token suitable for personal API, CLI, and automation access.</p>
+          <p class="token-page-intro">${editing ? 'Update the token without changing its secret. Changes to access take effect immediately.' : 'Create a scoped token suitable for personal API, CLI, and automation access.'}</p>
+          ${this.tokenEditUnavailable ? html`<p class="error" role="alert">This token contains permissions no longer available in your current authority. It cannot be edited here without losing them. Ask an administrator to review access, or create a replacement token.</p>` : nothing}
           <div class="token-details">
             <label class="token-field" for="token-name">
               <span class="settings-label">Token name *</span>
-              <input id="token-name" required autocomplete="off" placeholder="For example, Sales reporting" .value=${this.tokenName} @input=${this.onTokenNameInput}>
+              <input id="token-name" required autocomplete="off" .value=${this.tokenName} @input=${this.onTokenNameInput}>
               <span class="settings-description">A unique name for this token. It may be visible to administrators.</span>
             </label>
             <label class="token-field" for="token-description">
               <span class="settings-label">Description <span class="muted">(optional)</span></span>
-              <textarea id="token-description" maxlength="1024" placeholder="What will this token be used for?" .value=${this.tokenDescription} @input=${this.onTokenDescriptionInput}></textarea>
+              <textarea id="token-description" maxlength="1024" .value=${this.tokenDescription} @input=${this.onTokenDescriptionInput}></textarea>
               <span class="settings-description">Explain what this token will be used for so you can identify it later.</span>
             </label>
             <div class="token-field token-expiration-field">
@@ -478,75 +548,32 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
               >
                 <span slot="leading">${lucideIcon(CalendarDays, { size: 16, strokeWidth: 2 })}</span>
               </lv-select-menu>
-              ${this.tokenExpirationPreset === 'custom' ? html`<input class="custom-expiration" id="token-custom-expiration" type="date" min=${dateInputValueInDays(1)} max=${dateInputValueInDays(90)} .value=${this.tokenCustomExpiration} @input=${this.onTokenCustomExpirationInput} required>` : nothing}
+              ${this.tokenExpirationPreset === 'custom' ? html`<input class="custom-expiration" id="token-custom-expiration" type="date" min=${dateInputValueInDays(editing ? 0 : 1)} max=${editing && this.tokenEditOriginalExpiresAt.slice(0, 10) > dateInputValueInDays(90) ? this.tokenEditOriginalExpiresAt.slice(0, 10) : dateInputValueInDays(90)} .value=${this.tokenCustomExpiration} @input=${this.onTokenCustomExpirationInput} required>` : nothing}
               <span class="settings-description">The token will expire on the selected date. Maximum lifetime is 90 days.</span>
             </div>
           </div>
           <div class="permissions">
             <div class="permissions-heading">
               <h3>Permissions</h3>
-              <p class="token-page-intro">Choose the minimal permissions necessary for your needs.</p>
+              <p class="token-page-intro">Choose only the permissions and resource scopes this token needs.</p>
             </div>
             <div class="permissions-card">
-              <div class="permissions-header">
-                <div class="permissions-title"><span class="settings-label">Token permissions</span><span class="count" aria-label="${selected.length} selected permissions">${selected.length}</span></div>
-                <div class="permission-picker">
-                  <button class="permission-trigger" type="button" aria-haspopup="dialog" aria-controls="token-permission-menu" aria-expanded=${String(this.tokenPermissionMenuOpen)} @click=${this.togglePermissionMenu} @keydown=${this.handlePermissionTriggerKeydown}>
-                    ${lucideIcon(Plus, { size: 16, strokeWidth: 2 })}<span>Add permissions</span>
-                  </button>
-                  ${this.tokenPermissionMenuOpen ? html`
-                      <div class="permission-backdrop" aria-hidden="true" @click=${() => this.closePermissionMenu(true)}></div>
-                      <div id="token-permission-menu" class="permission-menu" role="dialog" aria-labelledby="token-permission-menu-title">
-                        <div class="permission-menu-header">
-                          <div class="permission-menu-title">
-                            <div class="permission-menu-heading">
-                              <span class="settings-label" id="token-permission-menu-title">Select token permissions</span>
-                              <span class="permission-menu-count" aria-live="polite">${selected.length} selected</span>
-                            </div>
-                            <button class="permission-menu-close" type="button" aria-label="Close permission picker" @click=${() => this.closePermissionMenu(true)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button>
-                          </div>
-                          <label class="permission-search">
-                            ${lucideIcon(Search, { size: 16, strokeWidth: 2 })}
-                            <input type="search" aria-label="Search permissions" placeholder="Search permissions" .value=${this.tokenPermissionSearch} @input=${this.onTokenPermissionSearch}>
-                          </label>
-                        </div>
-                        <div class="permission-list">
-                          ${categories.length ? categories.map(([category, categoryPermissions], categoryIndex) => html`
-                            <div class="permission-group" role="group" aria-labelledby=${`token-permission-category-${categoryIndex}`}>
-                              <div class="permission-category" id=${`token-permission-category-${categoryIndex}`}>
-                                <span>${category}</span>
-                                <span class="permission-category-count">${categoryStats.get(category)?.selected ?? 0} / ${categoryStats.get(category)?.total ?? categoryPermissions.length}</span>
-                              </div>
-                              ${categoryPermissions.map((permission) => {
-                                const permissionSelected = Boolean(this.tokenPermissionAccess(permission))
-                                const descriptionID = `token-permission-description-${permission.id}`
-                                return html`
-                                  <label class="permission-option" data-selected=${String(permissionSelected)}>
-                                    <input aria-label=${permission.label} aria-describedby=${descriptionID} type="checkbox" value=${permission.id} .checked=${permissionSelected} @change=${() => this.toggleTokenPermission(permission)}>
-                                    <span class="settings-field"><span class="settings-label">${permission.label}</span><span class="settings-description" id=${descriptionID}>${permission.description}</span></span>
-                                  </label>
-                                `
-                              })}
-                            </div>
-                          `) : html`<div class="permission-empty">No permissions match your search.</div>`}
-                        </div>
-                      </div>
-                  ` : nothing}
-                </div>
-              </div>
-              <div class="selected-permissions" aria-live="polite">
-                ${selected.length ? selected.map((permission) => this.renderSelectedTokenPermission(permission)) : html`
-                  <div class="selected-permissions-empty">
-                    ${lucideIcon(KeyRound, { size: 28, strokeWidth: 1.8 })}
-                    <div class="settings-field"><span class="settings-label">No permissions added yet</span><span class="settings-description">Without explicit permissions, this token follows your current access.</span></div>
-                  </div>
-                `}
-              </div>
+              <lv-personal-token-permission-picker
+                .policies=${policies}
+                .selectedPermissions=${this.tokenSelectedPermissions}
+                .permissionOptionsReady=${tokens.permissionOptionsReady}
+                .open=${this.tokenPermissionMenuOpen}
+                @lv-personal-token-permission-picker-toggle=${this.togglePermissionMenu}
+                @lv-personal-token-permission-picker-close=${this.handlePermissionPickerClose}
+                @lv-personal-token-permissions-change=${this.handleTokenPermissionsChange}
+                @lv-personal-token-permission-incomplete-change=${this.handleTokenPermissionsIncompleteChange}
+              ></lv-personal-token-permission-picker>
             </div>
           </div>
-          <div class="actions token-actions"><button class="primary" type="submit" ?disabled=${!canCreate}>Generate token</button><a class="button-link" href="/admin/api-tokens">Cancel</a></div>
+          <div class="actions token-actions"><button class="primary" type="submit" ?disabled=${!canCreate}>${editing ? this.tokenEditPending ? 'Saving…' : 'Save changes' : 'Generate token'}</button>${editing ? html`<button type="button" ?disabled=${this.tokenEditUnavailable || this.tokenEditPending || this.tokenRotatePending} @click=${() => { if (editedToken) this.tokenPendingRotation = editedToken }}>Rotate secret</button>` : nothing}<a class="button-link" href="/admin/api-tokens">Cancel</a></div>
         </form>
         ${this.tokenConfirmationOpen ? this.renderTokenConfirmation() : nothing}
+        ${this.tokenPendingRotation ? this.renderTokenRotateConfirmation(this.tokenPendingRotation) : nothing}
       </section>
     `
   }
@@ -559,7 +586,17 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
           <a class="button-link primary" href="/admin/api-tokens/new">Generate new token</a>
         </div>
         <p class="token-page-intro">Tokens are scoped credentials for API, CLI, and automation access. Keep them secret and delete any you no longer use.</p>
-        ${tokens.items.length ? html`<div class="card token-list">${tokens.items.map((token, index) => this.renderToken(token, tokens.capabilities, index === 0 ? tokens.newToken : undefined))}</div>` : renderEmptyState({
+        ${tokens.newToken && tokens.items[0] ? html`<div class="token-new-secret"><strong>New token: ${tokens.items[0].name}</strong><lv-one-time-secret secret=${tokens.newToken} message="Copy your personal access token now. You won’t be able to see it again." copy-label="Copy personal access token"></lv-one-time-secret></div>` : nothing}
+        ${tokens.items.length ? html`<lv-entity-list
+          .items=${tokens.items.map(tokenListItem)}
+          .columns=${tokenListColumns}
+          row-action="open"
+          client-filter
+          min-width="64rem"
+          list-label="Personal access tokens"
+          search-placeholder="Search tokens"
+          @lv-entity-list-row-action=${(event: CustomEvent<{ action: string, item: EntityListItem }>) => this.handleTokenListAction(event, tokens.items)}
+        ></lv-entity-list>` : renderEmptyState({
           icon: lucideIcon(KeyRound, { size: 28, strokeWidth: 1.8 }),
           title: 'No personal access tokens yet',
           description: 'Generate a token when a tool or script needs to access LeapView.',
@@ -570,6 +607,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 
   private renderTokenConfirmation() {
+    const policies = tokenPermissionPolicies(this.settings.tokens.capabilities)
+    const selectedPolicies = policies.filter((policy) => this.tokenPermissionPolicyOptions(policy).length > 0)
     return html`
       <dialog data-token-confirm-dialog aria-labelledby="token-confirm-title" @cancel=${this.cancelTokenConfirmation} @click=${this.closeTokenConfirmationOnBackdrop}>
         <section class="token-confirm">
@@ -580,6 +619,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
           <div class="token-confirm-body">
             <p>Your new personal access token <strong>${this.tokenName.trim()}</strong> will be ready for use immediately.</p>
             <p>It will expire on <strong>${formatLongDate(this.tokenExpirationDate())}</strong>.</p>
+            <div class="token-confirm-permissions">
+              <span class="settings-label">Permission summary</span>
+              ${selectedPolicies.length ? html`<ul>${selectedPolicies.map((policy) => html`<li><strong>${policy.label}</strong><span>${this.tokenPermissionPolicySummary(policy)}</span></li>`)}</ul>` : html`<p class="settings-description">Authentication only — no project or resource authority.</p>`}
+            </div>
             ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
           </div>
           <div class="token-confirm-actions"><button type="button" @click=${this.cancelTokenConfirmation}>Cancel</button><button class="primary" type="button" ?disabled=${this.tokenCreatePending} @click=${this.createToken}>${this.tokenCreatePending ? 'Generating…' : 'Generate token'}</button></div>
@@ -605,76 +648,24 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     `
   }
 
-  private renderSelectedTokenPermission(permission: TokenPermissionDefinition) {
-    const access = this.tokenPermissionAccess(permission)
-    if (!access) return nothing
-    const accessMenuOpen = this.tokenPermissionAccessMenu === permission.id
-    const accessControlID = `token-permission-access-${permission.id}`
-    return html`
-      <div class="selected-permission" data-permission=${permission.id}>
-        <div class="settings-field"><span class="settings-label">${permission.label}</span><span class="settings-description">${permission.description}</span></div>
-        <div class="permission-row-actions">
-          <div class="permission-access-picker">
-            ${permission.access.length > 1 ? html`
-              <button
-                class="permission-access-trigger"
-                type="button"
-                aria-label=${`Access for ${permission.label}: ${access.label}`}
-                aria-haspopup="listbox"
-                aria-controls=${accessControlID}
-                aria-expanded=${String(accessMenuOpen)}
-                data-permission=${permission.id}
-                @click=${() => this.toggleTokenPermissionAccessMenu(permission.id)}
-                @keydown=${(event: KeyboardEvent) => this.handleTokenPermissionAccessTriggerKeydown(event, permission.id)}
-              >
-                <span><span class="permission-access-prefix">Access: </span><span class="permission-access-value">${access.label}</span></span>
-                ${lucideIcon(ChevronDown, { size: 16, strokeWidth: 2 })}
-              </button>
-            ` : html`
-              <span class="permission-access-fixed" aria-label=${`Access for ${permission.label}: ${access.label}`}>
-                <span class="permission-access-prefix">Access: </span><span class="permission-access-value">${access.label}</span>
-              </span>
-            `}
-            ${accessMenuOpen ? html`
-              <div id=${accessControlID} class="permission-access-menu" role="listbox" aria-label=${`Access for ${permission.label}`} @keydown=${this.handleTokenPermissionAccessOptionKeydown}>
-                ${permission.access.map((option) => html`
-                  <button
-                    class="permission-access-option"
-                    type="button"
-                    role="option"
-                    aria-selected=${String(option.value === access.value)}
-                    data-access=${option.value}
-                    @click=${() => this.chooseTokenPermissionAccess(permission, option)}
-                  >
-                    <span>${option.label}</span>
-                    <span class="permission-access-check" aria-hidden="true">${option.value === access.value ? lucideIcon(Check, { size: 16, strokeWidth: 2 }) : nothing}</span>
-                  </button>
-                `)}
-              </div>
-            ` : nothing}
-          </div>
-          <button class="permission-remove" type="button" aria-label=${`Remove ${permission.label}`} @click=${() => this.removeTokenPermission(permission)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button>
-        </div>
-      </div>
-    `
+  private renderTokenRotateConfirmation(token: PersonalTokenSignal) {
+    return html`<dialog data-token-rotate-dialog aria-labelledby="token-rotate-title" @cancel=${this.cancelTokenRotation} @click=${this.closeTokenRotationOnBackdrop}>
+      <section class="token-confirm">
+        <header class="token-confirm-header"><h2 id="token-rotate-title">Rotate this token?</h2><button class="token-confirm-close" type="button" aria-label="Close token rotation confirmation" @click=${this.cancelTokenRotation}>${lucideIcon(X, { size: 18, strokeWidth: 2 })}</button></header>
+        <div class="token-delete-warning"><p>A new secret will replace <strong>${token.name}</strong>. The old secret stops working immediately; update every application that uses it. The new secret is shown only once.</p></div>
+        <div class="token-delete-actions"><button class="primary" type="button" ?disabled=${this.tokenRotatePending} @click=${this.confirmTokenRotation}>Rotate token</button></div>
+      </section>
+    </dialog>`
   }
 
-  private renderToken(token: PersonalTokenSignal, capabilities: PersonalCapabilityOptionSignal[], newToken?: string) {
-    const options = new Map(capabilities.map((capability) => [capability.value, capability.label]))
-    const labels = token.capabilities.map((capability) => options.get(capability) ?? humanizeCapability(capability))
-    const usage = token.lastUsedAt ? `Last used ${formatDateOnly(token.lastUsedAt)}` : 'Never used'
-    return html`
-      <div class="token-row">
-        <span class="token-row-icon" aria-hidden="true">${lucideIcon(KeyRound, { size: 16, strokeWidth: 2 })}</span>
-        <div class="token-row-content">
-          <span class="token-name">${token.name}</span>
-          ${token.description ? html`<span class="token-description">${token.description}</span>` : nothing}
-          <span class="token-meta">${usage}${token.expiresAt ? ` · Expires ${formatDateOnly(token.expiresAt)}` : ''} · ${labels.join(', ') || 'Follows current access'}</span>
-          ${newToken ? html`<lv-one-time-secret secret=${newToken} message="Copy your personal access token now. You won’t be able to see it again." copy-label="Copy personal access token"></lv-one-time-secret>` : nothing}
-        </div>
-        ${token.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.requestTokenDeletion(token)}>Delete</button>`}
-      </div>
-    `
+  private handleTokenListAction(event: CustomEvent<{ action: string, item: EntityListItem }>, tokens: PersonalTokenSignal[]): void {
+    const { action, item } = event.detail
+    if (action === 'delete') {
+      const token = tokens.find((candidate) => candidate.id === item.id)
+      if (token && !token.revokedAt) this.requestTokenDeletion(token)
+      return
+    }
+    if (action === 'open' && item.href) window.location.assign(item.href)
   }
 
   private saveProfile = (event: Event): void => { event.preventDefault(); this.send('lv-personal-profile-command', { action: 'save', displayName: this.profileName.trim() }) }
@@ -747,8 +738,23 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
   private requestTokenCreation = (event: Event): void => {
     event.preventDefault()
-    if (!this.tokenName.trim() || !this.tokenExpirationIsValid()) return
+    if (!this.tokenName.trim() || !this.tokenExpirationIsValid() || this.tokenPermissionsIncomplete || this.tokenEditUnavailable) return
+    if (this.tokenView === 'edit') {
+      this.saveTokenEdits()
+      return
+    }
     this.tokenConfirmationOpen = true
+  }
+  private saveTokenEdits(): void {
+    if (!this.tokenEditLoadedId || !this.tokenEditExpectedModifiedAt || this.tokenEditPending) return
+    this.tokenEditPending = true
+    this.send('lv-personal-token-command', {
+      action: 'update', tokenId: this.tokenEditLoadedId,
+      expectedModifiedAt: this.tokenEditExpectedModifiedAt,
+      name: this.tokenName.trim(), description: this.tokenDescription.trim(),
+      expiresAt: this.tokenEditExpirationTouched ? this.tokenExpirationDate().toISOString() : this.tokenEditOriginalExpiresAt,
+      permissions: this.selectedTokenPermissions(),
+    })
   }
   private cancelTokenConfirmation = (event?: Event): void => {
     event?.preventDefault()
@@ -759,15 +765,15 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (event.target === event.currentTarget) this.cancelTokenConfirmation(event)
   }
   private createToken = (): void => {
-    if (!this.tokenName.trim() || !this.tokenExpirationIsValid() || this.tokenCreatePending) return
+    if (!this.tokenName.trim() || !this.tokenExpirationIsValid() || this.tokenCreatePending || this.tokenPermissionsIncomplete) return
     const command: Record<string, unknown> = {
       action: 'create',
       name: this.tokenName.trim(),
       description: this.tokenDescription.trim(),
       expiresAt: this.tokenExpirationDate().toISOString(),
+      // An explicit empty array creates an authentication-only credential.
+      permissions: this.selectedTokenPermissions(),
     }
-    const capabilities = this.selectedTokenCapabilities()
-    if (capabilities.length) command.capabilities = capabilities
     this.send('lv-personal-token-command', command)
     this.tokenCreatePending = true
   }
@@ -779,6 +785,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
   private tokenExpirationIsValid(): boolean {
     const expiration = this.tokenExpirationDate()
+    if (this.tokenView === 'edit' && !this.tokenEditExpirationTouched) return Date.parse(this.tokenEditOriginalExpiresAt) > Date.now()
     return !Number.isNaN(expiration.valueOf()) && expiration.valueOf() > Date.now() && expiration.valueOf() <= endOfDayInDays(90).valueOf()
   }
   private requestTokenDeletion(token: PersonalTokenSignal): void {
@@ -796,6 +803,15 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (!token) return
     this.tokenPendingDeletion = null
     this.send('lv-personal-token-command', { action: 'revoke', tokenId: token.id })
+  }
+  private cancelTokenRotation = (event?: Event): void => { event?.preventDefault(); this.tokenPendingRotation = null }
+  private closeTokenRotationOnBackdrop = (event: MouseEvent): void => { if (event.target === event.currentTarget) this.cancelTokenRotation(event) }
+  private confirmTokenRotation = (): void => {
+    const token = this.tokenPendingRotation
+    if (!token || this.tokenRotatePending) return
+    this.tokenPendingRotation = null
+    this.tokenRotatePending = true
+    this.send('lv-personal-token-command', { action: 'rotate', tokenId: token.id, expectedModifiedAt: token.modifiedAt || token.createdAt })
   }
   private requestSessionRevocation(session: PendingSessionRevocation): void {
     this.pendingSessionRevocation = session
@@ -874,8 +890,6 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (permissionPicker && !path.includes(permissionPicker)) this.closePermissionMenu()
     const themePicker = this.renderRoot.querySelector('.theme-picker')
     if (themePicker && !path.includes(themePicker)) this.closeThemeMenu()
-    const insidePermissionAccessPicker = path.some((node) => node instanceof Element && node.classList.contains('permission-access-picker'))
-    if (!insidePermissionAccessPicker) this.closeTokenPermissionAccessMenu()
   }
   private handleWindowKeydown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape' && this.avatarMenuOpen) {
@@ -890,16 +904,14 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
       event.preventDefault()
       this.closeThemeMenu(true)
     }
-    if (event.key === 'Escape' && this.tokenPermissionAccessMenu) {
-      event.preventDefault()
-      this.closeTokenPermissionAccessMenu(true)
-    }
   }
   private handleDatastarFetch = (event: Event): void => {
-    if (!this.tokenCreatePending) return
-    const failure = browserCommandFailure(event, 'Token creation')
+    if (!this.tokenCreatePending && !this.tokenEditPending && !this.tokenRotatePending) return
+    const failure = browserCommandFailure(event, this.tokenEditPending ? 'Token update' : this.tokenRotatePending ? 'Token rotation' : 'Token creation')
     if (!failure) return
     this.tokenCreatePending = false
+    this.tokenEditPending = false
+    this.tokenRotatePending = false
     this.error = failure.message
   }
   private uploadAvatar = async (event: Event): Promise<void> => {
@@ -939,9 +951,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private onNewPasswordInput = (event: Event): void => { this.newPassword = (event.currentTarget as HTMLInputElement).value }
   private onTokenNameInput = (event: Event): void => { this.tokenName = (event.currentTarget as HTMLInputElement).value }
   private onTokenDescriptionInput = (event: Event): void => { this.tokenDescription = (event.currentTarget as HTMLTextAreaElement).value }
-  private onTokenCustomExpirationInput = (event: Event): void => { this.tokenCustomExpiration = (event.currentTarget as HTMLInputElement).value }
+  private onTokenCustomExpirationInput = (event: Event): void => { this.tokenCustomExpiration = (event.currentTarget as HTMLInputElement).value; this.tokenEditExpirationTouched = true }
   private chooseExpirationPreset = (event: CustomEvent<{ value: TokenExpirationPreset }>): void => {
     this.tokenExpirationPreset = event.detail.value
+    this.tokenEditExpirationTouched = true
     if (event.detail.value !== 'custom') this.tokenCustomExpiration = ''
   }
   private handleExpirationMenuToggle = (event: CustomEvent<{ open: boolean }>): void => {
@@ -949,24 +962,22 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.closeAvatarMenu()
     this.closeThemeMenu()
     this.closePermissionMenu()
-    this.closeTokenPermissionAccessMenu()
   }
   private closeExpirationMenu(returnFocus = false): void {
     this.expirationSelect?.close(returnFocus)
-  }
-  private filteredTokenPermissions(permissions: TokenPermissionDefinition[]): TokenPermissionDefinition[] {
-    const query = this.tokenPermissionSearch.trim().toLocaleLowerCase()
-    if (!query) return permissions
-    return permissions.filter((permission) => `${permission.label} ${permission.description} ${permission.category} ${permission.searchText}`.toLocaleLowerCase().includes(query))
   }
   private togglePermissionMenu = (): void => {
     if (this.tokenPermissionMenuOpen) this.closePermissionMenu()
     else this.openPermissionMenu()
   }
-  private handlePermissionTriggerKeydown = (event: KeyboardEvent): void => {
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-    event.preventDefault()
-    this.openPermissionMenu()
+  private handlePermissionPickerClose = (event: CustomEvent<{ returnFocus: boolean }>): void => {
+    this.closePermissionMenu(event.detail.returnFocus)
+  }
+  private handleTokenPermissionsChange = (event: CustomEvent<{ permissions: PersonalPermissionPairSignal[] }>): void => {
+    this.tokenSelectedPermissions = this.authorizedSelectedPermissions(event.detail.permissions, this.settings.tokens.capabilities)
+  }
+  private handleTokenPermissionsIncompleteChange = (event: CustomEvent<{ hasIncompletePolicy: boolean }>): void => {
+    this.tokenPermissionsIncomplete = event.detail.hasIncompletePolicy
   }
   private openPermissionMenu(): void {
     if (this.tokenPermissionMenuOpen) return
@@ -974,8 +985,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.closeAvatarMenu()
     this.closeThemeMenu()
     this.closeExpirationMenu()
-    this.closeTokenPermissionAccessMenu()
     void this.updateComplete.then(() => {
+      this.permissionTrigger?.scrollIntoView({ block: 'nearest' })
       this.fitPermissionMenu()
       this.renderRoot.querySelector<HTMLInputElement>('.permission-search input')?.focus()
     })
@@ -985,13 +996,22 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     const menu = this.renderRoot.querySelector<HTMLElement>('.permission-menu')
     if (!menu) return
     menu.style.removeProperty('--permission-menu-max-height')
-    const availableHeight = Math.max(0, window.innerHeight - menu.getBoundingClientRect().top - 16)
+    menu.dataset.placement = 'below'
+    const trigger = this.permissionTrigger?.getBoundingClientRect()
+    if (!trigger) return
+    const viewportPadding = 16
+    const menuGap = 6
+    const availableBelow = Math.max(0, window.innerHeight - trigger.bottom - menuGap - viewportPadding)
+    const availableAbove = Math.max(0, trigger.top - menuGap - viewportPadding)
+    const minimumUsefulHeight = 224
+    const placeAbove = availableBelow < minimumUsefulHeight && availableAbove > availableBelow
+    menu.dataset.placement = placeAbove ? 'above' : 'below'
+    const availableHeight = placeAbove ? availableAbove : availableBelow
     menu.style.setProperty('--permission-menu-max-height', `${availableHeight}px`)
   }
   private closePermissionMenu(returnFocus = false): void {
     if (!this.tokenPermissionMenuOpen) return
     this.tokenPermissionMenuOpen = false
-    this.tokenPermissionSearch = ''
     if (returnFocus) void this.updateComplete.then(() => this.permissionTrigger?.focus())
   }
   private closeThemeMenu(returnFocus = false): void {
@@ -999,154 +1019,43 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.themeMenuOpen = false
     if (returnFocus) void this.updateComplete.then(() => this.themeTrigger?.focus())
   }
-  private onTokenPermissionSearch = (event: Event): void => { this.tokenPermissionSearch = (event.currentTarget as HTMLInputElement).value }
-  private tokenPermissionAccess(permission: TokenPermissionDefinition): TokenPermissionAccessOption | undefined {
-    const selectedAccess = this.tokenPermissionSelections[permission.id]
-    return permission.access.find((option) => option.value === selectedAccess)
+  private tokenPermissionPolicyOptions(policy: TokenPermissionPolicy) {
+    const selected = new Set(this.tokenSelectedPermissions.map(permissionPairKey))
+    return [...policy.options, ...(policy.future ? [policy.future] : [])].filter((option) => option.permissions.every((pair) => selected.has(permissionPairKey(pair))))
   }
-  private toggleTokenPermission(permission: TokenPermissionDefinition): void {
-    if (this.tokenPermissionAccess(permission)) {
-      this.removeTokenPermission(permission)
-      return
-    }
-    const defaultAccess = permission.access[0]
-    if (!defaultAccess) return
-    this.tokenPermissionSelections = { ...this.tokenPermissionSelections, [permission.id]: defaultAccess.value }
+  private tokenPermissionPolicySummary(policy: TokenPermissionPolicy): string {
+    if (policy.targetScope !== 'resource') return policy.description
+    const selected = new Set(this.tokenSelectedPermissions.map(permissionPairKey))
+    if (policy.future && policy.future.permissions.every((pair) => selected.has(permissionPairKey(pair)))) return `All current and future ${policy.category.toLocaleLowerCase()}`
+    const selectedOptions = policy.options.filter((option) => option.permissions.every((pair) => selected.has(permissionPairKey(pair))))
+    if (selectedOptions.length === policy.options.length && selectedOptions.length > 0) return `All ${selectedOptions.length} current ${policy.category.toLocaleLowerCase()}`
+    const labels = selectedOptions.map((option) => option.label)
+    if (labels.length <= 3) return labels.join(', ')
+    return `${labels.slice(0, 2).join(', ')} and ${labels.length - 2} more`
   }
-  private removeTokenPermission(permission: TokenPermissionDefinition): void {
-    const selections = { ...this.tokenPermissionSelections }
-    delete selections[permission.id]
-    this.tokenPermissionSelections = selections
-    if (this.tokenPermissionAccessMenu === permission.id) this.closeTokenPermissionAccessMenu()
+  private selectedTokenPermissions(): PersonalPermissionPairSignal[] {
+    return this.tokenSelectedPermissions
   }
-  private chooseTokenPermissionAccess(permission: TokenPermissionDefinition, access: TokenPermissionAccessOption): void {
-    this.tokenPermissionSelections = { ...this.tokenPermissionSelections, [permission.id]: access.value }
-    this.closeTokenPermissionAccessMenu(true)
+  private reconcileTokenPermissionState(capabilities: PersonalCapabilityOptionSignal[]): void {
+    const reconciled = this.authorizedSelectedPermissions(this.tokenSelectedPermissions, capabilities)
+    const currentKeys = this.tokenSelectedPermissions.map(permissionPairKey)
+    const nextKeys = reconciled.map(permissionPairKey)
+    if (currentKeys.length !== nextKeys.length || currentKeys.some((key, index) => key !== nextKeys[index])) this.tokenSelectedPermissions = reconciled
   }
-  private selectedTokenCapabilities(): string[] {
-    const selected = new Set(tokenPermissionDefinitions(this.settings.tokens.capabilities).flatMap((permission) => {
-      const access = this.tokenPermissionAccess(permission)
-      return access?.capabilities ?? []
-    }))
-    return this.settings.tokens.capabilities.map((capability) => capability.value).filter((capability) => selected.has(capability))
-  }
-  private toggleTokenPermissionAccessMenu(permissionID: string): void {
-    if (this.tokenPermissionAccessMenu === permissionID) this.closeTokenPermissionAccessMenu()
-    else this.openTokenPermissionAccessMenu(permissionID)
-  }
-  private openTokenPermissionAccessMenu(permissionID: string): void {
-    this.tokenPermissionAccessMenu = permissionID
-    this.closeAvatarMenu()
-    this.closeThemeMenu()
-    this.closePermissionMenu()
-    this.closeExpirationMenu()
-    void this.focusSelectedTokenPermissionAccess()
-  }
-  private handleTokenPermissionAccessTriggerKeydown(event: KeyboardEvent, permissionID: string): void {
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-    event.preventDefault()
-    this.openTokenPermissionAccessMenu(permissionID)
-  }
-  private focusSelectedTokenPermissionAccess = async (): Promise<void> => {
-    await this.updateComplete
-    const options = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('.permission-access-option'))
-    ;(options.find((option) => option.getAttribute('aria-selected') === 'true') ?? options[0])?.focus()
-  }
-  private handleTokenPermissionAccessOptionKeydown = (event: KeyboardEvent): void => {
-    const options = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('.permission-access-option'))
-    const index = options.indexOf(this.shadowRoot?.activeElement as HTMLButtonElement)
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault()
-      const offset = event.key === 'ArrowDown' ? 1 : -1
-      options[(index + offset + options.length) % options.length]?.focus()
-    } else if (event.key === 'Home' || event.key === 'End') {
-      event.preventDefault()
-      options[event.key === 'Home' ? 0 : options.length - 1]?.focus()
-    } else if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      this.closeTokenPermissionAccessMenu(true)
-    } else if (event.key === 'Tab') {
-      this.closeTokenPermissionAccessMenu()
-    }
-  }
-  private closeTokenPermissionAccessMenu(returnFocus = false): void {
-    if (!this.tokenPermissionAccessMenu) return
-    const permissionID = this.tokenPermissionAccessMenu
-    this.tokenPermissionAccessMenu = ''
-    if (returnFocus) void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLButtonElement>(`.permission-access-trigger[data-permission="${permissionID}"]`)?.focus())
+  private authorizedSelectedPermissions(permissions: PersonalPermissionPairSignal[], capabilities: PersonalCapabilityOptionSignal[]): PersonalPermissionPairSignal[] {
+    const policies = tokenPermissionPolicies(capabilities)
+    const authorized = new Set(policies.flatMap((policy) => [...policy.options, ...(policy.future ? [policy.future] : [])].flatMap((option) => option.permissions.map(permissionPairKey))))
+    let selected = uniquePermissionPairs(permissions).filter((permission) => authorized.has(permissionPairKey(permission)))
+    const selectedKeys = new Set(selected.map(permissionPairKey))
+    const partialBundlePairs = new Set(policies.flatMap((policy) => policy.options.filter((option) => option.permissions.length > 1).flatMap((option) => {
+      const chosen = option.permissions.filter((pair) => selectedKeys.has(permissionPairKey(pair))).length
+      return chosen > 0 && chosen < option.permissions.length ? option.permissions.map(permissionPairKey) : []
+    })))
+    if (partialBundlePairs.size) selected = selected.filter((permission) => !partialBundlePairs.has(permissionPairKey(permission)))
+    return selected
   }
 }
 
-function tokenPermissionDefinitions(capabilities: PersonalCapabilityOptionSignal[]): TokenPermissionDefinition[] {
-  const options = new Map(capabilities.map((capability) => [capability.value, capability]))
-  const permissions: TokenPermissionDefinition[] = []
-  const baseReadCapabilities = ['RESOURCE_USE', 'RESOURCE_READ'].filter((value) => options.has(value))
-  const addPermission = (
-    id: string,
-    writeCapabilityValue: string,
-    label: string,
-  ): void => {
-    const writeCapability = options.get(writeCapabilityValue)
-    if (!writeCapability) return
-    const access: TokenPermissionAccessOption[] = []
-    if (baseReadCapabilities.length) {
-      access.push({ value: 'read', label: 'Read-only', capabilities: [...baseReadCapabilities] })
-    }
-    access.push({
-      value: 'write',
-      label: 'Read and write',
-      capabilities: uniqueCapabilities([...baseReadCapabilities, writeCapability.value]),
-    })
-    permissions.push({
-      id,
-      label,
-      description: writeCapability.description,
-      category: writeCapability.category,
-      searchText: `${writeCapability.value} ${writeCapability.label}`,
-      access,
-    })
-  }
-
-  addPermission('project-administration', 'PROJECT_ADMIN', 'Project administration')
-
-  const use = options.get('RESOURCE_USE')
-  const read = options.get('RESOURCE_READ')
-  const edit = options.get('RESOURCE_EDIT')
-  if (use || read || edit) {
-    const access: TokenPermissionAccessOption[] = []
-    const readCapabilities = [use?.value, read?.value].filter((value): value is string => Boolean(value))
-    if (readCapabilities.length) access.push({ value: 'read', label: 'Read-only', capabilities: uniqueCapabilities(readCapabilities) })
-    if (edit) access.push({ value: 'write', label: 'Read and write', capabilities: uniqueCapabilities([...readCapabilities, edit.value]) })
-    permissions.push({
-      id: 'resource-content',
-      label: 'Resource access',
-      description: 'Open and view project resources, or add access to create and update them.',
-      category: use?.category ?? read?.category ?? edit?.category ?? 'Resource',
-      searchText: [use, read, edit].filter(Boolean).map((capability) => `${capability?.value} ${capability?.label} ${capability?.description}`).join(' '),
-      access,
-    })
-  }
-
-  addPermission('resource-management', 'RESOURCE_MANAGE', 'Resource management')
-  addPermission('resource-sharing', 'RESOURCE_SHARE', 'Resource sharing')
-  addPermission('resource-publishing', 'RESOURCE_PUBLISH', 'Resource publishing')
-  return permissions
-}
-
-function groupTokenPermissions(permissions: TokenPermissionDefinition[]): Array<[string, TokenPermissionDefinition[]]> {
-  const groups = new Map<string, TokenPermissionDefinition[]>()
-  for (const permission of permissions) {
-    const values = groups.get(permission.category) ?? []
-    values.push(permission)
-    groups.set(permission.category, values)
-  }
-  return [...groups.entries()]
-}
-
-function uniqueCapabilities(capabilities: string[]): string[] {
-  return [...new Set(capabilities)]
-}
 
 function themeOption(value: string): ThemeOption {
   return themeOptions.find((option) => option.value === value) ?? systemThemeOption

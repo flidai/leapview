@@ -73,14 +73,19 @@ func TestVolumeTLSMountQualification(t *testing.T) {
 			t.Fatal(err)
 		}
 		args := append([]string{"run", "--rm", "--network", "none", "--read-only"}, mounts...)
-		args = append(args, "--entrypoint", "/bin/sh", nativePGImage, "-c", "cat /state/ca.pem; if printf corrupted > /state/ca.pem 2>/dev/null; then exit 1; fi")
-		output := docker(args...)
+		args = append(args, "--entrypoint", "/bin/sh", nativePGImage, "-c")
+		output := docker(append(append([]string(nil), args...), "cat /state/ca.pem")...)
 		want := "live-ca"
 		if source == restored {
 			want = "restored-ca"
 		}
-		if !strings.HasPrefix(output, want) {
+		if output != want {
 			t.Fatalf("wrong TLS source: got %q, want %q", output, want)
+		}
+		// Run the rejected write separately: Docker's combined stdout/stderr can
+		// interleave bytes from the certificate read and the shell diagnostic.
+		if output, err := exec.CommandContext(t.Context(), "docker", append(append([]string(nil), args...), "printf corrupted > /state/ca.pem")...).CombinedOutput(); err == nil {
+			t.Fatalf("read-only TLS mount accepted a write: %q", output)
 		}
 		data, err := os.ReadFile(filepath.Join(source, "ca.pem"))
 		if err != nil || string(data) != want {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,12 +30,12 @@ func (m *Module) AuthoringDeviceAuthorization(w http.ResponseWriter, r *http.Req
 		writeAuthoringOAuthError(w, http.StatusUnauthorized, "invalid_client", "unknown device client")
 		return
 	}
-	capabilities, err := authoringOAuthCapabilities(r.Form.Get("scope"))
+	actions, err := authoringOAuthActions(r.Form.Get("scope"))
 	if err != nil {
 		writeAuthoringOAuthError(w, http.StatusBadRequest, "invalid_scope", err.Error())
 		return
 	}
-	scope, err := m.authoringOAuthScope(r.Context(), service.InstanceID(), r.Form.Get("project_id"), capabilities)
+	scope, err := m.authoringOAuthScope(r.Context(), service.InstanceID(), r.Form.Get("project_id"), actions)
 	if err != nil {
 		writeAuthoringOAuthScopeError(w, err)
 		return
@@ -126,11 +127,11 @@ func requireAuthoringCLIClient(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (m *Module) exchangeAuthoringClientCredentials(r *http.Request, service authoringOAuthAuthentication) (access.AuthoringTokenSet, error) {
-	capabilities, err := authoringOAuthCapabilities(r.Form.Get("scope"))
+	actions, err := authoringOAuthActions(r.Form.Get("scope"))
 	if err != nil {
 		return access.AuthoringTokenSet{}, fmt.Errorf("%w: %v", access.ErrAuthoringScopeDenied, err)
 	}
-	scope, err := m.authoringOAuthScope(r.Context(), service.InstanceID(), r.Form.Get("project_id"), capabilities)
+	scope, err := m.authoringOAuthScope(r.Context(), service.InstanceID(), r.Form.Get("project_id"), actions)
 	if err != nil {
 		return access.AuthoringTokenSet{}, err
 	}
@@ -147,10 +148,17 @@ func (m *Module) exchangeAuthoringClientCredentials(r *http.Request, service aut
 }
 
 func writeAuthoringOAuthToken(w http.ResponseWriter, tokens access.AuthoringTokenSet) {
-	capabilities := make([]string, len(tokens.Session.Scope.Capabilities))
-	for index, capability := range tokens.Session.Scope.Capabilities {
-		capabilities[index] = string(capability)
+	permissions := access.ClonePermissionPairs(tokens.Session.Scope.Permissions)
+	seen := make(map[access.Action]struct{}, len(permissions))
+	scopes := make([]string, 0, len(permissions))
+	for _, permission := range permissions {
+		if _, exists := seen[permission.Action]; exists {
+			continue
+		}
+		seen[permission.Action] = struct{}{}
+		scopes = append(scopes, string(permission.Action))
 	}
+	sort.Strings(scopes)
 	setAuthoringOAuthNoStore(w)
 	response := map[string]any{
 		"access_token": tokens.AccessToken,
@@ -160,7 +168,9 @@ func writeAuthoringOAuthToken(w http.ResponseWriter, tokens access.AuthoringToke
 		"session_kind": tokens.Session.Kind,
 		"target_id":    tokens.Session.Scope.TargetID,
 		"project_id":   tokens.Session.Scope.ProjectID.String(),
-		"scope":        strings.Join(capabilities, " "),
+		"scope":        strings.Join(scopes, " "),
+		"permission_profile": access.PermissionCatalogProfile,
+		"permissions": permissions,
 	}
 	if tokens.RefreshToken != "" {
 		response["refresh_token"] = tokens.RefreshToken
@@ -181,7 +191,7 @@ type authoringOAuthAuthentication interface {
 // by this instance. The project ID in an OAuth request is untrusted input: a
 // syntactically valid foreign ID must never reach an issuance service, since
 // those services persist the resulting scope.
-func (m *Module) authoringOAuthScope(ctx context.Context, targetID, requestedProjectID string, capabilities []access.Capability) (access.AuthoringScope, error) {
+func (m *Module) authoringOAuthScope(ctx context.Context, targetID, requestedProjectID string, actions []access.Action) (access.AuthoringScope, error) {
 	requested, err := graph.NewResourceID(requestedProjectID)
 	if err != nil {
 		return access.AuthoringScope{}, access.ErrAuthoringScopeDenied
@@ -212,7 +222,11 @@ func (m *Module) authoringOAuthScope(ctx context.Context, targetID, requestedPro
 			return access.AuthoringScope{}, access.ErrAuthoringScopeDenied
 		}
 	}
-	scope, err := access.NewAuthoringScope(targetID, requested, capabilities)
+	permissions, err := access.ProjectPermissionPairsForActions(requested, actions)
+	if err != nil {
+		return access.AuthoringScope{}, fmt.Errorf("%w: %v", access.ErrAuthoringScopeDenied, err)
+	}
+	scope, err := access.NewAuthoringScope(targetID, requested, permissions)
 	if err != nil {
 		return access.AuthoringScope{}, fmt.Errorf("%w: %v", access.ErrAuthoringScopeDenied, err)
 	}
@@ -235,20 +249,21 @@ func (m *Module) authoringOAuthService(w http.ResponseWriter) (authoringOAuthAut
 	return m.handler.AuthoringAuth, true
 }
 
-func authoringOAuthCapabilities(scope string) ([]access.Capability, error) {
+func authoringOAuthActions(scope string) ([]access.Action, error) {
 	values := strings.Fields(scope)
 	if len(values) == 0 {
-		return nil, fmt.Errorf("at least one authoring capability is required")
+		return nil, fmt.Errorf("at least one authoring action is required")
 	}
-	capabilities := make([]access.Capability, 0, len(values))
+	actions := make([]access.Action, 0, len(values))
 	for _, value := range values {
-		capability, err := access.ParseCapability(value)
-		if err != nil {
-			return nil, fmt.Errorf("unsupported authoring capability %q", value)
+		action := access.Action(value)
+		definition, exists := access.Permission(action)
+		if !exists || definition.Scope == access.PermissionScopeInstance {
+			return nil, fmt.Errorf("unsupported authoring action %q", value)
 		}
-		capabilities = append(capabilities, capability)
+		actions = append(actions, action)
 	}
-	return capabilities, nil
+	return actions, nil
 }
 
 func writeAuthoringOAuthServiceError(w http.ResponseWriter, err error) {

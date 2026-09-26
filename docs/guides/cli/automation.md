@@ -8,6 +8,11 @@ Use `LEAPVIEW_WORKLOAD_CLIENT_ID`, `LEAPVIEW_WORKLOAD_CLIENT_SECRET`, and `LEAPV
 
 The automation principal needs `RESOURCE_USE`, `RESOURCE_READ`, `RESOURCE_EDIT`, and `RESOURCE_PUBLISH` for its exact project. It must not receive human login, approval, activation, secret-provider administration, connection-secret, or source-data credentials. Target-owned connection resolution and row-level policy evaluation still run under the automation principal. Use a deliberately restricted automation role; do not impersonate an end user to make a candidate pass.
 
+These names are the current short-lived authoring/workload compatibility
+profile. They are not permission choices for newly issued personal API tokens,
+which use explicit typed action-target pairs and currently fail closed for
+delivery operations that have not yet migrated to typed enforcement.
+
 Keep the target and project identity in reviewable pipeline configuration:
 
 ```sh

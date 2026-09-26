@@ -79,8 +79,8 @@ func DecodeInitialCredentials(contents []byte) (InitialCredentials, error) {
 	if err := json.Unmarshal(contents, &credentials); err != nil ||
 		credentials.Email == "" ||
 		credentials.TemporaryPassword == "" ||
-		credentials.PublisherToken == "" ||
-		credentials.PublisherTokenExpiresAt == "" {
+		credentials.ProjectClaimToken == "" ||
+		credentials.ProjectClaimTokenExpiresAt == "" {
 		return InitialCredentials{}, fmt.Errorf("initialization credential recovery file is invalid")
 	}
 	return credentials, nil

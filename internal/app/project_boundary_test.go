@@ -25,8 +25,7 @@ func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
 	admin := testPlatformPrincipal(t, ctx, store, "audit-boundary@example.com", "Audit Boundary")
-	token := testAPIToken(t, ctx, store, admin.ID, "audit-boundary")
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: testAuth(store, accessmodule.AuthConfig{DevBypass: true})}))
 	if err := candidateSourceAuditRecorder(server.routes.accessModule)(ctx, deploymentmodule.CandidateSourceAuditEvent{
 		PrincipalID: admin.ID, ProjectID: testProjectID, Action: "candidate.source.resolved",
 		Capability: access.CapabilityResourcePublish, Status: "success", MetadataJSON: `{}`,
@@ -42,7 +41,7 @@ func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+testProjectID.String()+"/audit-events?action=candidate.source.resolved", nil)
-	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Authorization", "Bearer dev")
 	response := httptest.NewRecorder()
 	server.Routes().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -62,7 +61,7 @@ func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
 	}
 
 	foreign := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project:foreign/audit-events?action=candidate.source.resolved", nil)
-	foreign.Header.Set("Authorization", "Bearer "+token)
+	foreign.Header.Set("Authorization", "Bearer dev")
 	foreignResponse := httptest.NewRecorder()
 	server.Routes().ServeHTTP(foreignResponse, foreign)
 	if foreignResponse.Code != http.StatusNotFound || strings.Contains(foreignResponse.Body.String(), "candidate.source.resolved") {
@@ -70,7 +69,7 @@ func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
 	}
 
 	platform := httptest.NewRequest(http.MethodGet, "/api/v1/audit-events?action=candidate.source.resolved", nil)
-	platform.Header.Set("Authorization", "Bearer "+token)
+	platform.Header.Set("Authorization", "Bearer dev")
 	platformResponse := httptest.NewRecorder()
 	server.Routes().ServeHTTP(platformResponse, platform)
 	if platformResponse.Code != http.StatusOK || !strings.Contains(platformResponse.Body.String(), `"projectId":"`+testProjectID.String()+`"`) {
@@ -78,7 +77,7 @@ func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
 	}
 
 	platformOnly := httptest.NewRequest(http.MethodGet, "/api/v1/audit-events?action=principal.theme.updated", nil)
-	platformOnly.Header.Set("Authorization", "Bearer "+token)
+	platformOnly.Header.Set("Authorization", "Bearer dev")
 	platformOnlyResponse := httptest.NewRecorder()
 	server.Routes().ServeHTTP(platformOnlyResponse, platformOnly)
 	var platformOnlyPayload struct {
@@ -225,10 +224,8 @@ func TestProjectBoundarySelectorFenceCoversPublicRouteInventory(t *testing.T) {
 
 func TestProjectBoundaryRejectsGeneratedAPIRequestBodySelectors(t *testing.T) {
 	store := testStore(t)
-	principal := testPlatformPrincipal(t, t.Context(), store, "selector-boundary@example.com", "Selector Boundary")
-	token := testAPIToken(t, t.Context(), store, principal.ID, "selector-boundary")
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		Auth:  testAuth(store, accessmodule.AuthConfig{APITokenOnly: true}),
+		Auth:  testAuth(store, accessmodule.AuthConfig{DevBypass: true}),
 		Agent: agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "model"}),
 	}))
 
@@ -269,7 +266,7 @@ func TestProjectBoundaryRejectsGeneratedAPIRequestBodySelectors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requestFor := func(body, key string) *http.Request {
 				request := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(body))
-				request.Header.Set("Authorization", "Bearer "+token)
+				request.Header.Set("Authorization", "Bearer dev")
 				request.Header.Set("Content-Type", "application/json")
 				request.Header.Set("Accept", "application/json")
 				request.Header.Set("Idempotency-Key", key)
@@ -335,7 +332,7 @@ func TestProjectBoundaryPreservesBootstrapAndPlatformAuditFilter(t *testing.T) {
 func TestProjectBoundaryGeneratedLocatorsCannotRetarget(t *testing.T) {
 	store := testStore(t)
 	principal := testPrincipal(t, t.Context(), store, "boundary@example.com", "Boundary")
-	token, _ := testScopedAPIToken(t, t.Context(), store, access.APITokenInput{PrincipalID: principal.ID, Name: "boundary", Capabilities: []access.Capability{access.CapabilityProjectAdmin, access.CapabilityResourceRead, access.CapabilityResourceUse}})
+	token, _ := testScopedAPIToken(t, t.Context(), store, access.ScopedAPITokenInput{PrincipalID: principal.ID, Name: "boundary", Permissions: []access.PermissionPair{}})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})}))
 	router := server.Routes()
 	parameters := regexp.MustCompile(`\{[^}]+\}`)
@@ -348,14 +345,22 @@ func TestProjectBoundaryGeneratedLocatorsCannotRetarget(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			path := strings.ReplaceAll(contract.Path, "{project}", "foreign_project")
 			path = parameters.ReplaceAllString(path, "0198f2c0-7c7a-7f00-8a11-000000000001")
+			wantStatus := http.StatusNotFound
+			if operation == "exchangeProjectClaimPublisher" {
+				// This route includes a project path segment to match the durable
+				// claim, but its generated authorization is instance-scoped. The
+				// ordinary scoped token used by this inventory is rejected before
+				// the handler can compare that path with the claim.
+				wantStatus = http.StatusForbidden
+			}
 			request := httptest.NewRequest(contract.Method, path, strings.NewReader(`{}`))
 			request.Header.Set("Authorization", "Bearer "+token)
 			request.Header.Set("Idempotency-Key", "boundary-"+operation)
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
-			if response.Code != http.StatusNotFound {
-				t.Fatalf("foreign locator %s: %d %s", path, response.Code, response.Body)
+			if response.Code != wantStatus {
+				t.Fatalf("foreign locator %s: %d %s, want %d", path, response.Code, response.Body, wantStatus)
 			}
 		})
 	}

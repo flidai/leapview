@@ -39,22 +39,21 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 		case routeDashboard:
 			return protectPageStreamResource(
 				routes.accessModule, runtime.runtimeHostModule,
-				access.CapabilityResourceRead, dashboardPageStreamResource,
+				access.ActionDashboardRead, dashboardPageStreamResource,
 				next,
 			), true
 		case routeDashboardBuilder:
-			// DashboardBuilderUpdates performs the repository-backed EDIT
-			// decision while constructing the exact draft projection. Keep the
-			// Keep authorization in the builder handler, where the draft lifecycle is
-			// available, but reject malformed selectors at the stream boundary.
+			// Drafts exist before the active serving graph. Authenticate and reject
+			// malformed selectors here; Builder makes the exact durable and typed
+			// dashboard decision before emitting the projection.
 			return routes.accessModule.Authenticate(validateDashboardBuilderPageStream(next)), true
 		case routeChat:
 			return routes.accessModule.Authenticate(next), true
 		case routeAdmin:
 			switch strings.TrimSpace(section) {
-			case "", "profile", "security", "api-tokens", "api-token-new", "archived-chats":
+			case "", "profile", "security", "api-tokens", "api-token-new", "api-token-edit", "archived-chats":
 				return routes.accessModule.Authenticate(next), true
-			case "general", "service-accounts", "service-accounts-new", "authentication", "storage", "storage-detail", "agent", "system", "principals", "principal-detail", "groups", "group-detail", "queries", "audit", "publications":
+			case "general", "access", "service-accounts", "service-accounts-detail", "service-accounts-new", "authentication", "storage", "storage-detail", "agent", "system", "principals", "principal-detail", "groups", "group-detail", "queries", "audit", "publications":
 				return routes.accessModule.RequirePlatformAdmin(next), true
 			default:
 				return nil, false
@@ -128,7 +127,7 @@ func dashboardBuilderPageStreamDashboardID(r *http.Request) string {
 func protectPageStreamResource(
 	accessModule *accessmodule.Module,
 	runtimeHost *runtimehostmodule.Module,
-	capability access.Capability,
+	action access.Action,
 	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
 	next http.Handler,
 ) http.Handler {
@@ -144,6 +143,6 @@ func protectPageStreamResource(
 			http.NotFound(w, r)
 			return
 		}
-		protectProjectResources(accessModule, runtimeHost, capability, resolve, next.ServeHTTP).ServeHTTP(w, r)
+		protectProjectResourcesWithTypedAction(accessModule, runtimeHost, action, resolve, next.ServeHTTP).ServeHTTP(w, r)
 	})
 }

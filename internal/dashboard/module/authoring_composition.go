@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringaccessadapter "github.com/flidai/leapview/internal/dashboard/authoring/accessadapter"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
@@ -27,21 +28,22 @@ type DashboardID = authoring.DashboardID
 type DraftID = authoring.DraftID
 type RevisionID = authoring.RevisionID
 
-// AuthorizeResource is the canonical access decision port needed to authorize
-// dashboard authoring operations.
-type AuthorizeResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error)
-type AuthorizeProjectCapability func(context.Context, string, projectgraph.ResourceID, access.Capability) (bool, error)
+// AuthorizeTypedResource evaluates an exact action/resource pair for dashboard
+// authoring operations.
+type AuthorizeTypedResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Action) (typed bool, allowed bool, err error)
+type AuthorizeTypedProject func(context.Context, string, projectgraph.ResourceID, access.Action) (typed bool, allowed bool, err error)
 
-// AuthoringConfig contains only capability composition ports. Project export
+// AuthoringConfig contains only typed authorization composition ports. Project export
 // behavior is injected as a function so dashboard authoring does not import
 // the project compiler, and runtime acquisition remains topology-neutral.
 type AuthoringConfig struct {
 	// Persistence is the opaque native dashboard authority bundle. It is
 	// the concrete authoring repository and uses UUIDv7 identity generators.
-	Persistence                *NativePersistence
-	AuthorizeResource          AuthorizeResource
-	AuthorizeProjectCapability AuthorizeProjectCapability
-	AcquireRuntime             func(context.Context) (runtimehost.Lease, error)
+	Persistence            *NativePersistence
+	AuthorizeTypedResource AuthorizeTypedResource
+	AuthorizeTypedProject  AuthorizeTypedProject
+	AcquireRuntime         func(context.Context) (runtimehost.Lease, error)
+	PreviewGovernor        dataquery.Governor
 }
 
 // BuildAuthoring constructs the complete dashboard authoring application and
@@ -53,8 +55,8 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 	if config.Persistence != nil && !config.Persistence.valid() {
 		return nil, fmt.Errorf("dashboard authoring native persistence is not configured")
 	}
-	if config.AuthorizeResource == nil || config.AuthorizeProjectCapability == nil {
-		return nil, fmt.Errorf("dashboard authoring resource and project capability authorizers are required")
+	if config.AuthorizeTypedResource == nil || config.AuthorizeTypedProject == nil {
+		return nil, fmt.Errorf("dashboard authoring typed resource and project authorizers are required")
 	}
 	if config.AcquireRuntime == nil {
 		return nil, fmt.Errorf("dashboard authoring runtime provider is required")
@@ -67,8 +69,8 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 		revision:  func() (authoring.RevisionID, error) { return authoringpostgres.NewRevisionID() },
 	}
 	authorizer, err := authoringaccessadapter.New(authoringaccessadapter.Options{
-		AuthorizeResource:          authoringaccessadapter.AuthorizeResource(config.AuthorizeResource),
-		AuthorizeProjectCapability: authoringaccessadapter.AuthorizeProjectCapability(config.AuthorizeProjectCapability),
+		AuthorizeTypedResource: authoringaccessadapter.AuthorizeTypedResource(config.AuthorizeTypedResource),
+		AuthorizeTypedProject:  authoringaccessadapter.AuthorizeTypedProject(config.AuthorizeTypedProject),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build dashboard authoring access adapter: %w", err)
@@ -96,11 +98,12 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 		return nil, fmt.Errorf("build dashboard authoring service: %w", err)
 	}
 	application, err := authoringapplication.New(authoringapplication.Options{
-		Authoring:      service,
-		Repository:     repository,
-		Authorizer:     authorizer,
-		Compiler:       compiler,
-		AcquireRuntime: config.AcquireRuntime,
+		Authoring:       service,
+		Repository:      repository,
+		Authorizer:      authorizer,
+		Compiler:        compiler,
+		AcquireRuntime:  config.AcquireRuntime,
+		PreviewGovernor: config.PreviewGovernor,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build dashboard authoring application: %w", err)

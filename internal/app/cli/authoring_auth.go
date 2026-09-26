@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -191,7 +192,7 @@ func establishLocalAuthoringSessionsWith(ctx context.Context, authenticator loca
 	loginRequest := accesscli.LoginRequest{
 		Name: request.TargetName, Origin: request.Origin, InstanceID: request.InstanceID,
 		Environment: request.Environment, ProjectID: request.ProjectID,
-		Capabilities: []string{"PROJECT_ADMIN", "RESOURCE_USE", "RESOURCE_READ", "RESOURCE_EDIT", "RESOURCE_PUBLISH", "RESOURCE_MANAGE"},
+		Actions: access.DefaultAuthoringActions(),
 	}
 	var notify func(accesscli.DeviceChallenge)
 	if approval, ok := authenticator.(localSessionAutomaticApproval); ok {

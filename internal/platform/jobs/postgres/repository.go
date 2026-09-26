@@ -177,6 +177,17 @@ func RiverCompletionDone(ctx context.Context) bool {
 	return completion != nil && completion.done.Load()
 }
 
+// RiverExecutionFence returns the exact operational claim bound to ctx. It is
+// intentionally read-only; product authorization uses this only to close a
+// claimed job when admission fails before MarkRunning.
+func RiverExecutionFence(ctx context.Context) (jobs.Fence, bool) {
+	completion := completionFromContext(ctx)
+	if completion == nil || completion.owner == "" || completion.generation <= 0 {
+		return jobs.Fence{}, false
+	}
+	return jobs.Fence{Owner: completion.owner, Generation: completion.generation}, true
+}
+
 var _ jobs.Repository = (*Repository)(nil)
 
 func queries(db DBTX) *jobdb.Queries { return jobdb.New(db) }
@@ -257,33 +268,37 @@ func (r *Repository) riverClient() (*river.Client[pgx.Tx], error) {
 	return r.client, nil
 }
 
-func validateInput(input jobs.EnqueueInput) ([]string, []byte, string, error) {
+func validateInput(input jobs.EnqueueInput) ([]string, []byte, []byte, string, error) {
 	groups, err := jobs.CanonicalActor(input.PrincipalID, input.GroupIDs)
 	if err != nil {
-		return nil, nil, "", errors.New("invalid async job actor")
+		return nil, nil, nil, "", errors.New("invalid async job actor")
 	}
 	if input.ID == "" || input.Kind == "" || input.PartitionKey == "" || input.ResourceKind == "" || input.ResourceID == "" || input.EstimatedMemoryBytes <= 0 || len(input.Payload) == 0 || len(input.Payload) > maxPayloadBytes {
-		return nil, nil, "", errors.New("invalid async job")
+		return nil, nil, nil, "", errors.New("invalid async job")
 	}
 	if _, ok := admittedKinds[input.Kind]; !ok {
-		return nil, nil, "", errors.Join(jobs.ErrUnknownKind, errors.New(input.Kind))
+		return nil, nil, nil, "", errors.Join(jobs.ErrUnknownKind, errors.New(input.Kind))
 	}
 	if input.WorkloadClass != "control" && input.WorkloadClass != "background" {
-		return nil, nil, "", errors.New("invalid async job workload class")
+		return nil, nil, nil, "", errors.New("invalid async job workload class")
 	}
 	canonical, err := canonicalJSON(input.Payload)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("invalid async job payload: %w", err)
+		return nil, nil, nil, "", fmt.Errorf("invalid async job payload: %w", err)
 	}
 	if len(canonical) == 0 || (canonical[0] != '{' && canonical[0] != '[') {
-		return nil, nil, "", errors.New("async job payload must be an object or array")
+		return nil, nil, nil, "", errors.New("async job payload must be an object or array")
+	}
+	authority, err := jobs.MarshalAuthority(input.Authority)
+	if err != nil {
+		return nil, nil, nil, "", fmt.Errorf("invalid async job authority: %w", err)
 	}
 	h := sha256.New()
-	for _, value := range []string{input.ID, input.Kind, input.WorkloadClass, input.PrincipalID, strings.Join(groups, "\x00"), input.PartitionKey, input.ResourceKind, input.ResourceID, fmt.Sprintf("%d", input.EstimatedMemoryBytes), string(canonical)} {
+	for _, value := range []string{input.ID, input.Kind, input.WorkloadClass, input.PrincipalID, strings.Join(groups, "\x00"), input.PartitionKey, input.ResourceKind, input.ResourceID, fmt.Sprintf("%d", input.EstimatedMemoryBytes), string(canonical), string(authority)} {
 		h.Write([]byte(value))
 		h.Write([]byte{0})
 	}
-	return groups, canonical, "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	return groups, canonical, authority, "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func riverArgs(kind string, common ExecutionArgs) (river.JobArgs, error) {
@@ -329,7 +344,7 @@ func (r *Repository) EnqueueTx(ctx context.Context, tx Tx, input jobs.EnqueueInp
 	if tx == nil {
 		return jobs.Job{}, errors.New("enqueue transaction is required")
 	}
-	groups, canonicalPayload, digest, err := validateInput(input)
+	groups, canonicalPayload, authority, digest, err := validateInput(input)
 	if err != nil {
 		return jobs.Job{}, err
 	}
@@ -339,7 +354,7 @@ func (r *Repository) EnqueueTx(ctx context.Context, tx Tx, input jobs.EnqueueInp
 		PrincipalID: input.PrincipalID, GroupIds: groupsJSON,
 		PartitionKey: input.PartitionKey, ResourceKind: input.ResourceKind,
 		ResourceID: input.ResourceID, EstimatedMemoryBytes: input.EstimatedMemoryBytes,
-		Payload: canonicalPayload, RequestDigest: digest,
+		Payload: canonicalPayload, RequestDigest: digest, AuthorityEnvelope: authority,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
@@ -422,6 +437,10 @@ func (r *Repository) get(ctx context.Context, db DBTX, id string) (jobs.Job, err
 	result.EstimatedMemoryBytes = row.EstimatedMemoryBytes
 	result.Payload = []byte(row.Payload)
 	result.RequestDigest = row.RequestDigest
+	result.Authority, err = jobs.UnmarshalAuthority([]byte(row.AuthorityEnvelope))
+	if err != nil {
+		return jobs.Job{}, err
+	}
 	result.Status = jobs.Status(row.Status)
 	result.Attempts = int(row.AttemptCount)
 	result.CreatedAt = row.CreatedAt.UTC().Format(time.RFC3339Nano)

@@ -25,3 +25,11 @@ condition = "AND"
 regexTarget = "line"
 regexes = ['''(?:l3MinIOKMS|targetL3KMS)\s*=\s*"leapview-sse-key:''']
 paths = ['''^internal/analytics/cache/l3/(s3_store_minio_test|target_cache_minio_test)\.go$''']
+
+[[allowlists]]
+description = "Deterministic PostgreSQL credential in ADR-0026 candidate-history test revisions"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+regexes = ['''Password:\s*"adr0026-qualification-secret"''']
+paths = ['''^internal/analytics/materialize/adr0026_qualification_test\.go$''']

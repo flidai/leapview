@@ -368,6 +368,9 @@ func (p *Protocol) serveIdempotent(w http.ResponseWriter, r *http.Request, next 
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_REQUEST_BODY", "The request body could not be read", nil)
 		return
 	}
+	r.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	digest := apiRequestDigest(r, body)
 	callerScope := ""
@@ -507,11 +510,11 @@ func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !execute {
-		if !replayAuthorized(r, replayAuthorize) {
-			apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
-			return
-		}
 		if record.Status == 0 {
+			if !replayAuthorized(r, replayAuthorize) {
+				apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
+				return
+			}
 			record, execute, err = waitForAPIIdempotency(r, p.store, scope, digest, owner, p.lease, IdempotencyLifetime, reclaimExpired)
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -615,7 +618,25 @@ func canonicalCredentialScope(config Config, r *http.Request) string {
 }
 
 func replayAuthorized(r *http.Request, authorize func(*http.Request) bool) bool {
-	return authorize == nil || authorize(r)
+	if authorize == nil {
+		return true
+	}
+	if r == nil || r.GetBody == nil {
+		return authorize(r)
+	}
+	body, err := r.GetBody()
+	if err != nil {
+		return false
+	}
+	r.Body = body
+	allowed := authorize(r)
+	_ = body.Close()
+	restored, err := r.GetBody()
+	if err != nil {
+		return false
+	}
+	r.Body = restored
+	return allowed
 }
 
 func waitForAPIIdempotency(r *http.Request, store idempotency.Store, scope, digest, owner string, lease, lifetime time.Duration, reclaimExpired bool) (idempotency.Record, bool, error) {

@@ -5,26 +5,46 @@ using LeapViewAPI.Protocol;
 namespace LeapViewAPI.Access;
 
 model EffectiveCapabilitiesResponse {
+  @doc("Project-scoped capabilities from the active authorization snapshot. Durable instance/platform authority is intentionally reported through its separate administration contract.")
   capabilities: Capability[];
 }
 
 model APITokenCreateRequest {
   name: string;
   description?: string;
-  @doc("Omit to keep the token dynamically constrained by the principal's effective capabilities at request time. An explicit list must be a subset of the principal's current effective capabilities.")
-  capabilities?: Capability[];
+  @doc("Required explicit action-target attenuation pairs. An empty list creates an authentication-only token; omitted or null permissions are invalid. A pair's catalog profile and target are persisted without expanding independent action/resource lists.")
+  permissions: PermissionPair[];
   expiresAt?: utcDateTime;
+}
+
+model APITokenUpdateRequest {
+  name: string;
+  description?: string;
+  permissions: PermissionPair[];
+  expiresAt: utcDateTime;
+  @doc("The modifiedAt value returned by the most recent read; stale edits are rejected.")
+  expectedModifiedAt: utcDateTime;
+}
+
+model APITokenRotateRequest {
+  @doc("The modifiedAt value returned by the most recent read; stale rotations are rejected.")
+  expectedModifiedAt: utcDateTime;
 }
 
 model APITokenResponse {
   id: string;
   name: string;
   description: string;
-  @doc("Present when the token has an explicit capability allowlist. When omitted, the principal's effective capabilities are evaluated dynamically at request time.")
+  @doc("The versioned catalog profile for typed action-target permissions. Legacy capability-only rows omit this value.")
+  permissionProfile?: PermissionCatalogProfile;
+  @doc("The exact action-target pairs persisted for this token. Legacy capability-only rows expose an explicit empty array.")
+  permissions: PermissionPair[];
+  @doc("Legacy capability allowlist retained during migration. Legacy NULL values are returned as an empty deny-all list.")
   capabilities?: Capability[];
   expiresAt?: utcDateTime;
   revokedAt?: utcDateTime;
   createdAt: utcDateTime;
+  modifiedAt: utcDateTime;
   lastUsedAt?: utcDateTime;
 }
 
@@ -260,6 +280,26 @@ interface CurrentAPITokens {
   @apigen.command(#{ auditAction: "api_token.created" })
   @apigen.ui("current-user.api-token.create")
   createCurrentAPIToken(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: APITokenCreateRequest): CreateCurrentAPITokenCreated | CommonErrors;
+
+  @summary("Update current API token")
+  @route("/{token}")
+  @patch
+  @extension("x-leapview-object-scope", "principal")
+  @apigen.failsWith(APITokenInvalidFailure)
+  @apigen.failsWith(APITokenNotFoundFailure)
+  @apigen.command(#{ auditAction: "api_token.updated" })
+  @apigen.ui("current-user.api-token.update")
+  updateCurrentAPIToken(@path @apigen.target token: string, @header("If-Match") ifMatch: string, @body body: APITokenUpdateRequest): OkJson<APITokenResponse> | CommonErrors;
+
+  @summary("Rotate current API token")
+  @route("/{token}/rotate")
+  @post
+  @extension("x-leapview-object-scope", "principal")
+  @apigen.failsWith(APITokenInvalidFailure)
+  @apigen.failsWith(APITokenNotFoundFailure)
+  @apigen.command(#{ auditAction: "api_token.rotated" })
+  @apigen.ui("current-user.api-token.rotate")
+  rotateCurrentAPIToken(@path @apigen.target token: string, @header("If-Match") ifMatch: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: APITokenRotateRequest): CreatedJson<APITokenCreateResponse> | CommonErrors;
 
   @summary("Revoke current API token")
   @route("/{token}")

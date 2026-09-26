@@ -56,6 +56,64 @@ func TestAuthorizationSnapshotRoundTripAndDigest(t *testing.T) {
 	require.NotEmpty(t, digest)
 }
 
+func TestRestrictToCurrentRoleBindingsRevokesWithoutImportingNewAuthority(t *testing.T) {
+	project := testGraph(t)
+	bob := mustSubject(t, access.SubjectKindPrincipal, "bob")
+	charlie := mustSubject(t, access.SubjectKindPrincipal, "charlie")
+	identity := testIdentity()
+	viewer, err := access.NewTypedRoleBinding("binding_1", "viewer", bob, access.PermissionRoleViewer, identity.ProjectID)
+	require.NoError(t, err)
+	directPair, err := access.NewExactPermissionPair(access.ActionDashboardRead, identity.ProjectID, snapshotResourceRef(t, "dashboard_main", graph.KindDashboard))
+	require.NoError(t, err)
+	direct, err := NewTypedGrant("grant_1", "reader", mustSubject(t, access.SubjectKindPrincipal, "alice"), []access.PermissionPair{directPair})
+	require.NoError(t, err)
+	snapshot, err := NewAuthorizationSnapshotWithRoleBindings(identity, project, []RoleBinding{viewer}, []Grant{direct}, nil)
+	require.NoError(t, err)
+	resource, err := access.NewExactPermissionPair(access.ActionDashboardRead, identity.ProjectID, snapshotResourceRef(t, "dashboard_main", graph.KindDashboard))
+	require.NoError(t, err)
+	allowed, err := snapshot.AllowsTyped(bob, resource)
+	require.NoError(t, err)
+	require.True(t, allowed)
+
+	newViewer, err := access.NewTypedRoleBinding("binding_2", "new viewer", charlie, access.PermissionRoleViewer, identity.ProjectID)
+	require.NoError(t, err)
+	restricted, err := snapshot.RestrictToCurrentRoleBindings([]RoleBinding{newViewer})
+	require.NoError(t, err)
+	require.Empty(t, restricted.RoleBindings())
+	allowed, err = restricted.AllowsTyped(bob, resource)
+	require.NoError(t, err)
+	require.False(t, allowed)
+	allowed, err = restricted.AllowsTyped(charlie, resource)
+	require.NoError(t, err)
+	require.False(t, allowed)
+	alice := mustSubject(t, access.SubjectKindPrincipal, "alice")
+	allowed, err = restricted.AllowsTyped(alice, resource)
+	require.NoError(t, err)
+	require.True(t, allowed, "an independent durable grant remains effective")
+
+	current := viewer
+	current.Name = "renamed viewer"
+	restricted, err = snapshot.RestrictToCurrentRoleBindings([]RoleBinding{current})
+	require.NoError(t, err)
+	require.Len(t, restricted.RoleBindings(), 1)
+	require.Equal(t, viewer.Name, restricted.RoleBindings()[0].Name)
+	current, err = access.NewTypedRoleBinding("binding_1", "project admin", bob, access.PermissionRoleProjectAdmin, identity.ProjectID)
+	require.NoError(t, err)
+	restricted, err = snapshot.RestrictToCurrentRoleBindings([]RoleBinding{current})
+	require.NoError(t, err)
+	require.Empty(t, restricted.RoleBindings(), "a changed role must await a new generation")
+	current.PermissionRole = access.PermissionRoleViewer
+	restricted, err = snapshot.RestrictToCurrentRoleBindings([]RoleBinding{current})
+	require.Error(t, err, "invalid current role expansion must fail closed")
+}
+
+func snapshotResourceRef(t *testing.T, id string, kind graph.Kind) access.ResourceRef {
+	t.Helper()
+	resource, err := access.NewResourceRef(graph.ResourceID(id), kind)
+	require.NoError(t, err)
+	return resource
+}
+
 func mustSubject(t *testing.T, kind access.SubjectKind, id string) access.SubjectRef {
 	t.Helper()
 	subject, err := access.NewSubjectRef(kind, id)
@@ -215,27 +273,35 @@ func TestAuthorizationSnapshotPolicyGetterDeepCopiesCompiledTree(t *testing.T) {
 	require.Equal(t, "acme", second[0].Compiled.RowFilter.Filters[0].Groups[0].Filters[0].Values[0])
 }
 
-func TestAuthorizationSnapshotAllowsExactKindCapabilityAndSubjectOnly(t *testing.T) {
+func TestAuthorizationSnapshotAllowsExactTypedActionTargetAndSubjectOnly(t *testing.T) {
 	project := testGraph(t)
-	grant := testGrant(t, project)
-	snapshot, err := NewAuthorizationSnapshot(testIdentity(), project, []Grant{{ID: "grant_1", Canonical: grant}}, nil)
+	identity := testIdentity()
+	subject := mustSubject(t, access.SubjectKindPrincipal, "alice")
+	resource := snapshotResourceRef(t, "dashboard_main", graph.KindDashboard)
+	readPair, err := access.NewExactPermissionPair(access.ActionDashboardRead, identity.ProjectID, resource)
 	require.NoError(t, err)
-	subject := grant.Subject()
-	resource := grant.Resource()
-	allowed, err := snapshot.Allows(subject, resource, access.CapabilityResourceRead)
+	grant, err := NewTypedGrant("grant_1", "reader", subject, []access.PermissionPair{readPair})
+	require.NoError(t, err)
+	snapshot, err := NewAuthorizationSnapshot(identity, project, []Grant{grant}, nil)
+	require.NoError(t, err)
+	allowed, err := snapshot.AllowsTyped(subject, readPair)
 	require.NoError(t, err)
 	require.True(t, allowed)
-	denied, err := snapshot.Allows(subject, resource, access.CapabilityResourceEdit)
+	updatePair, err := access.NewExactPermissionPair(access.ActionDashboardUpdate, identity.ProjectID, resource)
+	require.NoError(t, err)
+	denied, err := snapshot.AllowsTyped(subject, updatePair)
 	require.NoError(t, err)
 	require.False(t, denied)
 	modelRef, err := access.NewResourceRef("model_orders", graph.KindModel)
 	require.NoError(t, err)
-	denied, err = snapshot.Allows(subject, modelRef, access.CapabilityResourceRead)
+	modelReadPair, err := access.NewExactPermissionPair(access.ActionModelRead, identity.ProjectID, modelRef)
+	require.NoError(t, err)
+	denied, err = snapshot.AllowsTyped(subject, modelReadPair)
 	require.NoError(t, err)
 	require.False(t, denied)
 	group, err := access.NewSubjectRef(access.SubjectKindGroup, "alice")
 	require.NoError(t, err)
-	denied, err = snapshot.Allows(group, resource, access.CapabilityResourceRead)
+	denied, err = snapshot.AllowsTyped(group, readPair)
 	require.NoError(t, err)
 	require.False(t, denied)
 }

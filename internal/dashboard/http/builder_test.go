@@ -283,7 +283,7 @@ func TestDashboardDraftCreateAndForkAuthorizationFailuresRenderBrowserRecovery(t
 			if recorder.Code != nethttp.StatusForbidden || !strings.Contains(recorder.Header().Get("Content-Type"), "text/html") {
 				t.Fatalf("response = %d %q body=%s", recorder.Code, recorder.Header().Get("Content-Type"), recorder.Body.String())
 			}
-			for _, want := range []string{"You don't have access to this dashboard", "Return to Insights", "No changes were made"} {
+			for _, want := range []string{"You don't have access to this dashboard", "Open your profile", "No changes were made"} {
 				if !strings.Contains(recorder.Body.String(), want) {
 					t.Fatalf("response missing %q: %s", want, recorder.Body.String())
 				}
@@ -821,7 +821,11 @@ func withBuilderURLParams(r *nethttp.Request, workspace, dashboard string) *neth
 
 func TestDashboardBuilderCommandTranslatesPublishWithExactRevision(t *testing.T) {
 	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
-	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	var typedAction access.Action
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }, AuthorizeTypedDashboardAction: func(_ context.Context, _, _ projectgraph.ResourceID, action access.Action) (bool, bool, error) {
+		typedAction = action
+		return true, true, nil
+	}}
 	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{
 		"builderCommand": map[string]any{
 			"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1",
@@ -840,6 +844,9 @@ func TestDashboardBuilderCommandTranslatesPublishWithExactRevision(t *testing.T)
 	}
 	if fake.executed.Provenance.Origin != authoring.OriginUI || fake.executed.Provenance.ActorID != "principal-1" {
 		t.Fatalf("provenance = %#v", fake.executed.Provenance)
+	}
+	if typedAction != access.ActionDashboardPublish {
+		t.Fatalf("typed action = %q, want %q", typedAction, access.ActionDashboardPublish)
 	}
 }
 

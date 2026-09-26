@@ -196,6 +196,9 @@ func (s Service) PrepareInitial(request Request, initial dashboard.Filters) (Pre
 
 func (s Service) PrepareVisualWindow(request Request, authoritative dashboard.Filters) (PreparedRefresh, error) {
 	filters := report.NormalizeFilters(s.Metrics, request.DashboardID, request.PageID, authoritative)
+	if err := s.requireVisualizationOnPage(request, request.VisualWindowCommand.VisualID); err != nil {
+		return PreparedRefresh{}, fmt.Errorf("invalid visual window: %w", err)
+	}
 	tableRequest, err := s.visualWindowTableRequest(request.DashboardID, request.VisualWindowCommand)
 	if err != nil {
 		return PreparedRefresh{}, err

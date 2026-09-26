@@ -83,8 +83,8 @@ WHERE EXISTS (
 );
 
 -- name: InsertAuthorizationSnapshot :execresult
-INSERT INTO access.authorization_snapshot(project_id, environment, generation_id, digest)
-VALUES (sqlc.arg(project_id), sqlc.arg(environment), sqlc.arg(generation_id), sqlc.arg(digest))
+INSERT INTO access.authorization_snapshot(project_id, environment, generation_id, digest, permission_profile)
+VALUES (sqlc.arg(project_id), sqlc.arg(environment), sqlc.arg(generation_id), sqlc.arg(digest), sqlc.arg(permission_profile))
 ON CONFLICT (project_id, environment, generation_id) DO NOTHING;
 
 -- name: GetAuthorizationSnapshotDigest :one
@@ -94,19 +94,27 @@ WHERE project_id = sqlc.arg(project_id)
   AND environment = sqlc.arg(environment)
   AND generation_id = sqlc.arg(generation_id);
 
+-- name: GetAuthorizationSnapshotAuthority :one
+SELECT digest, permission_profile
+FROM access.authorization_snapshot
+WHERE project_id = sqlc.arg(project_id)
+  AND environment = sqlc.arg(environment)
+  AND generation_id = sqlc.arg(generation_id);
+
 -- name: InsertAuthorizationRoleBinding :exec
 INSERT INTO access.authorization_role_binding
-    (id, project_id, environment, generation_id, subject_kind, subject_id, role, capabilities, name)
+    (id, project_id, environment, generation_id, subject_kind, subject_id, role, capabilities, permission_profile, permissions, permission_role, name)
 VALUES (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(environment), sqlc.arg(generation_id),
-        sqlc.arg(subject_kind), sqlc.arg(subject_id), sqlc.arg(role), sqlc.arg(capabilities)::jsonb, sqlc.arg(name));
+        sqlc.arg(subject_kind), sqlc.arg(subject_id), sqlc.arg(role), sqlc.narg(capabilities)::jsonb,
+        sqlc.narg(permission_profile), sqlc.narg(permissions)::jsonb, sqlc.narg(permission_role), sqlc.arg(name));
 
 -- name: InsertAuthorizationGrant :exec
 INSERT INTO access.authorization_grant
     (id, project_id, environment, generation_id, subject_kind, subject_id,
-     resource_id, resource_kind, capability, name)
+     resource_id, resource_kind, capability, permission_profile, permissions, name)
 VALUES (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(environment), sqlc.arg(generation_id),
         sqlc.arg(subject_kind), sqlc.arg(subject_id), sqlc.arg(resource_id),
-        sqlc.arg(resource_kind), sqlc.arg(capability), sqlc.arg(name));
+        sqlc.narg(resource_kind), sqlc.narg(capability), sqlc.narg(permission_profile), sqlc.narg(permissions)::jsonb, sqlc.arg(name));
 
 -- name: InsertAuthorizationDataPolicy :exec
 INSERT INTO access.authorization_data_policy

@@ -201,9 +201,27 @@ task dev
 
 `task dev` provisions a loopback-only PostgreSQL 18 service scoped to the
 worktree, runs the local physical-pool qualification/bootstrap once, and
-starts one native PostgreSQL target with the private authoring watcher. The
-generated credentials remain in `.tmp/postgres-dev.env` (mode 0600); do not
-reuse them outside this worktree. For a durable rollout, use the canonical `plan`, `build`, and
+starts one native PostgreSQL target with the private authoring watcher. On a
+new database, first run `LEAPVIEW_DEV_ONCE=1 task dev:bypass` to stage the
+bundled managed-data fixture. Subsequent `task dev` starts a credentialed
+server without publishing, and `task dev:publish` creates a fresh release with
+scoped authority while reusing staged data. The generated credentials
+remain in `.tmp/postgres-dev.env` (mode 0600); do not
+reuse them outside this worktree. The browser uses a real local session by
+default. Open the login page and choose **Continue as Local Developer**; the
+loopback-only shortcut creates the same durable, audited browser session as
+password login. Use `task dev:credentials` only to reveal the worktree-private
+login stored under `.tmp/dev-auth/` when explicitly testing the password flow;
+its separate, expiring publisher token is not displayed. The development URL
+is pinned across restarts and localhost cookies are isolated per worktree.
+Managed development sessions
+last up to 30 days, while production retains its eight-hour lifetime. Sign-out,
+browser-data clearing, database reset, or expiry requires another click.
+`task dev:auth-smoke` checks browser login,
+group-role activation after a fresh release, revocation, and cleanup. Use
+`task dev:bypass` only for fixture seeding or when intentionally testing a
+flow that does not need credential-bound authority. For a durable rollout,
+use the canonical `plan`, `build`, and
 `publish CANDIDATE_ID` commands shown above. Use `task dev:status`,
 `task dev:logs`, and `task dev:stop` for lifecycle operations. Run `task ci`
 before handing off substantial changes.

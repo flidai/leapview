@@ -354,29 +354,41 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	if credentials.Email == "" || credentials.TemporaryPassword == "" ||
-		credentials.PublisherToken == "" || credentials.PublisherTokenExpires == "" {
+		credentials.ProjectClaimToken == "" || credentials.ProjectClaimTokenExpiresAt == "" {
 		return fmt.Errorf("initial credential contract is incomplete")
 	}
 	credentials.QualificationPassword, err = randomHex(24)
 	if err != nil {
 		return err
 	}
-	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
-		return err
-	}
-	report.Assertions.OneTimeCredentials = true
 	if err := nativeTopology.AssertBootstrapOpen(ctx, "one-time credential delivery"); err != nil {
 		return err
 	}
 
-	if err := bootstrapQualificationProject(
+	bootstrapResult, err := bootstrapQualificationProject(
 		ctx,
 		c.qualificationContainers.Existing(containerID),
 		"http://localhost:8080",
-		credentials.PublisherToken,
-	); err != nil {
+		credentials.ProjectClaimToken,
+	)
+	if err != nil {
 		return err
 	}
+	credentials.ClaimCredentialID = bootstrapResult.ClaimCredentialID
+	credentials.PublisherToken = bootstrapResult.PublisherToken
+	credentials.PublisherTokenExpires = bootstrapResult.PublisherTokenExpiresAt
+	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
+		return err
+	}
+	if err := acknowledgeQualificationProjectClaim(ctx, c.qualificationContainers.Existing(containerID), "http://localhost:8080", credentials.PublisherToken, credentials.ClaimCredentialID); err != nil {
+		return err
+	}
+	credentials.ProjectClaimToken = ""
+	credentials.ProjectClaimTokenExpiresAt = ""
+	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
+		return err
+	}
+	report.Assertions.OneTimeCredentials = true
 	syncOutput, err := c.qualificationContainers.Existing(containerID).Exec(
 		ctx, nil,
 		"env",

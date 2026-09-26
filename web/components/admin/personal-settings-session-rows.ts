@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { Monitor, Terminal } from 'lucide'
 import type { PersonalAuthoringSessionSignal, PersonalSessionSignal } from '../../generated/signals'
 import { lucideIcon } from '../shared/lucide-icons'
-import { formatRelativeActivity, formatSessionDate, humanizeCapability, humanizeSessionKind } from './personal-settings-format'
+import { formatRelativeActivity, formatSessionDate, humanizeSessionKind } from './personal-settings-format'
 
 export type PendingSessionRevocation = {
   id: string
@@ -40,7 +40,7 @@ export function renderAuthoringSessionRow(
   onRevoke: (session: PendingSessionRevocation) => void,
 ) {
   const label = session.clientId || humanizeSessionKind(session.kind)
-  const access = [session.projectId || 'All projects', session.capabilities.map(humanizeCapability).join(', ') || 'Scoped access'].join(' · ')
+  const access = [session.projectId || 'All projects', session.permissions.map((permission) => permission.action.replaceAll('.', ' ')).join(', ') || 'Scoped access'].join(' · ')
   return html`<tr>
     <td><button class="security-session-device" type="button" aria-label=${`View details for ${label}`} @click=${() => onSelect({ id: session.id, kind: 'authoring' })}>
       <span class="security-session-icon" aria-hidden="true">${lucideIcon(Terminal, { size: 16, strokeWidth: 1.75 })}</span>

@@ -45,11 +45,18 @@ func TestPostgresAgentAdminJourney(t *testing.T) {
 	if _, err := fixture.Graph.Access.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: owner.ID, Role: access.PlatformRoleAdmin}); err != nil {
 		t.Fatalf("grant owner platform-admin role: %v", err)
 	}
-	ownerToken, _, err := fixture.Graph.Access.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: owner.ID, Name: "journey-owner", ExpiresAt: time.Now().Add(time.Hour)})
+	platformSettingsRead, err := access.NewInstancePermissionPair(access.ActionPlatformSettingsRead, postgresJourneyTargetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerToken, _, err := fixture.Graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
+		PrincipalID: owner.ID, Name: "journey-owner",
+		Permissions: []access.PermissionPair{platformSettingsRead}, ExpiresAt: time.Now().Add(time.Hour),
+	})
 	if err != nil {
 		t.Fatalf("create owner API token: %v", err)
 	}
-	viewerToken, _, err := fixture.Graph.Access.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: viewer.ID, Name: "journey-viewer", ExpiresAt: time.Now().Add(time.Hour)})
+	viewerToken, _, err := fixture.Graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{PrincipalID: viewer.ID, Name: "journey-viewer", Permissions: []access.PermissionPair{}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("create viewer API token: %v", err)
 	}
@@ -61,7 +68,7 @@ func TestPostgresAgentAdminJourney(t *testing.T) {
 		}, nil
 	})))
 	auth, err := accessmodule.NewAuth(fixture.AccessPersistence.Repository, accessmodule.AuthConfig{
-		APITokenOnly: true, CSRFKey: strings.Repeat("journey-auth", 4),
+		LocalAuth: true, CSRFKey: strings.Repeat("journey-auth", 4),
 	})
 	if err != nil {
 		t.Fatalf("construct auth: %v", err)
@@ -229,7 +236,12 @@ func TestPostgresAgentAdminJourney(t *testing.T) {
 	if viewerAdminResponse.Code != http.StatusForbidden {
 		t.Fatalf("viewer admin storage status=%d body=%s", viewerAdminResponse.Code, viewerAdminResponse.Body.String())
 	}
-	ownerAdmin := journeyAgentRequest(t, http.MethodGet, "/admin/storage", ownerToken, "")
+	ownerSessionToken, err := fixture.Graph.Access.CreateSession(ctx, owner.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("create owner browser session: %v", err)
+	}
+	ownerAdmin := httptest.NewRequest(http.MethodGet, "/admin/storage", nil)
+	ownerAdmin.AddCookie(&http.Cookie{Name: auth.SessionCookieName(), Value: ownerSessionToken})
 	ownerAdminResponse := httptest.NewRecorder()
 	handler.ServeHTTP(ownerAdminResponse, ownerAdmin)
 	if ownerAdminResponse.Code != http.StatusOK || !strings.Contains(ownerAdminResponse.Body.String(), "section=\"storage\"") || !strings.Contains(ownerAdminResponse.Body.String(), "/updates?route=admin&amp;section=storage") {

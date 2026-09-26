@@ -101,5 +101,5 @@ func (service *nativeCandidateArtifactPhases) resolveTargetAuthorizationPolicy(
 }
 
 func targetAuthorizationManifestPolicy(policy access.AuthorizationPolicy) (projectmanifest.AccessPolicy, error) {
-	return projectmanifest.FromAuthorizationPolicy(policy)
+	return projectmanifest.AccessPolicyFromAuthorizationPolicy(policy)
 }

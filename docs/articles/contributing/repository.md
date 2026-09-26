@@ -53,12 +53,24 @@ Use the worktree-safe commands:
 
 ```sh
 task dev
+task dev:credentials
+task dev:auth-smoke
 task dev:status
 task dev:logs
 task dev:stop
 ```
 
-The workflow stores process state beneath `.tmp/` and selects a worktree-local port. Do not kill unrelated processes or reuse persistent state from another worktree implicitly.
+The workflow stores process state beneath `.tmp/` and pins a worktree-local port across restarts; a conflict fails visibly instead of moving the URL. Local browser cookies are also namespaced per worktree. Do not kill unrelated processes or reuse persistent state from another worktree implicitly.
+The default requires real local authentication and reuses staged managed data.
+Choose **Continue as Local Developer** on the login page to create an ordinary
+durable, audited browser session; use `task dev:credentials` only when
+explicitly testing password login. Seed a
+new database once with `LEAPVIEW_DEV_ONCE=1 task dev:bypass`; that explicit
+bypass mode cannot issue durable grants or test credential-bound authorization.
+The normal local session lasts up to 30 days and survives server restarts; production keeps its eight-hour lifetime. `task dev` only starts the server; use `task dev:publish` for a fresh authorized
+release.
+`task dev:auth-smoke` uses a real browser session to grant a temporary group
+role, publish a fresh candidate, check activation, revoke, and clean up.
 
 ## Generation
 

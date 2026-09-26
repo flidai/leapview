@@ -3,9 +3,39 @@ package module
 import (
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+func TestBuilderContextCredentialRequiresExactDashboardUpdate(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_1")
+	dashboardID := projectgraph.ResourceID("dashboard_1")
+	resource, err := access.NewResourceRef(dashboardID, projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := access.NewExactPermissionPair(access.ActionDashboardRead, projectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	update, err := access.NewExactPermissionPair(access.ActionDashboardUpdate, projectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := agent.Scope{Credential: agent.CredentialScope{Restricted: true, PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{read}}}
+	allowsEdit := func(id projectgraph.ResourceID) bool {
+		return CredentialAllowsResource(contextModuleScope(scope, projectID.String()), id, projectgraph.KindDashboard, access.CapabilityResourceEdit)
+	}
+	if allowsEdit(dashboardID) {
+		t.Fatal("dashboard read credential admitted builder edit")
+	}
+	scope.Credential.Permissions = []access.PermissionPair{update}
+	if !allowsEdit(dashboardID) || allowsEdit("dashboard_other") {
+		t.Fatal("builder edit did not require the exact dashboard update pair")
+	}
+}
 
 func TestResolvedBuilderTurnContextUsesAuthorizedDraftRevision(t *testing.T) {
 	pageID := "overview"

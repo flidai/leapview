@@ -14,7 +14,7 @@ import (
 )
 
 func TestDashboardNativeArrowContractUsesGovernedMaskedProjection(t *testing.T) {
-	_, identity, _, physical, _ := canonicalGraph(t)
+	_, identity, semantic, physical, _ := canonicalGraph(t)
 	row, err := accesspolicy.Compile("rls", "row_filter", `{"field":"orders.region","operator":"equals","values":["EU"]}`)
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func TestDashboardNativeArrowContractUsesGovernedMaskedProjection(t *testing.T) 
 		id         string
 		resource   access.ResourceRef
 		capability access.Capability
-	}{{"physical", physical, access.CapabilityResourceUse}}, policies)
+	}{{"semantic", semantic, access.CapabilityResourceUse}}, policies)
 	capture := &canonicalArrowCapture{schema: func(request dataquery.Query) *arrow.Schema {
 		if len(request.Filters) != 1 || len(request.ColumnMasks) != 1 || request.EffectivePolicyFingerprint == "" {
 			t.Fatalf("executor received ungoverned request: %#v", request)
@@ -51,6 +51,8 @@ func TestDashboardNativeArrowContractUsesGovernedMaskedProjection(t *testing.T) 
 	sink := &canonicalSchemaCaptureSink{}
 	request := dataquery.Query{
 		ProjectID: canonicalProject,
+		Surface:   dataquery.SurfaceDashboard,
+		Operation: dataquery.OperationDashboardRows,
 		ModelID:   "semantic_sales",
 		Target:    "orders",
 		Kind:      dataquery.KindSemanticRows,

@@ -96,16 +96,16 @@ type bootstrapTusAccess struct {
 	err              error
 }
 
-func (a bootstrapTusAccess) AuthorizeBootstrapRequest(context.Context, *http.Request, access.Capability) (bool, error) {
+func (a bootstrapTusAccess) AuthorizeTypedBootstrapRequest(context.Context, *http.Request, []access.PermissionPair) (bool, error) {
 	return a.allowed, a.err
 }
 
-func (a bootstrapTusAccess) AuthorizeAuthoringBootstrapRequest(context.Context, *http.Request, string, access.Capability) (bool, error) {
+func (a bootstrapTusAccess) AuthorizeTypedAuthoringBootstrapRequest(context.Context, *http.Request, string, []access.PermissionPair) (bool, error) {
 	return a.authoringAllowed, a.err
 }
 
-func (a bootstrapTusAccess) AuthorizeManagedDataStagingRequest(context.Context, *http.Request, string, access.Capability) (bool, error) {
-	return a.authoringAllowed, a.err
+func (a bootstrapTusAccess) RequestAllowsTypedPermissions(*http.Request, projectgraph.ResourceID, []access.PermissionPair) bool {
+	return a.authoringAllowed
 }
 
 func (a tusAccess) Authenticate(next http.Handler) http.Handler { return next }
@@ -139,11 +139,15 @@ func tusSnapshot(t *testing.T, principalID string, connectionID projectgraph.Res
 		if err != nil {
 			t.Fatal(err)
 		}
-		canonical, err := access.NewCanonicalGrant(graph, subject, resource, access.CapabilityResourceEdit)
+		pair, err := access.NewExactPermissionPair(access.ActionConnectionManage, identity.ProjectID, resource)
 		if err != nil {
 			t.Fatal(err)
 		}
-		grants = []accesssnapshot.Grant{{ID: "grant:connection-edit", Name: "connection_edit", Canonical: canonical}}
+		grant, err := accesssnapshot.NewTypedGrant("typed:connection-manage", "connection_manage", subject, []access.PermissionPair{pair})
+		if err != nil {
+			t.Fatal(err)
+		}
+		grants = []accesssnapshot.Grant{grant}
 	}
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, grants, nil)
 	if err != nil {
@@ -162,18 +166,23 @@ func tusEmptySnapshot(t *testing.T, principalID string, withRole bool) (projectg
 	if err != nil {
 		t.Fatal(err)
 	}
-	var bindings []accesssnapshot.RoleBinding
+	var grants []accesssnapshot.Grant
 	if withRole {
 		subject, subjectErr := access.NewSubjectRef(access.SubjectKindPrincipal, principalID)
 		if subjectErr != nil {
 			t.Fatal(subjectErr)
 		}
-		bindings = []accesssnapshot.RoleBinding{{
-			ID: "binding:data-deployer", Subject: subject, Role: access.ProjectRoleDataDeployer,
-			Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDataDeployer),
-		}}
+		projectPair, err := access.NewProjectPermissionPair(access.ActionConnectionCreate, identity.ProjectID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		grant, err := accesssnapshot.NewTypedGrant("typed:connection-staging", "connection_staging", subject, []access.PermissionPair{projectPair})
+		if err != nil {
+			t.Fatal(err)
+		}
+		grants = []accesssnapshot.Grant{grant}
 	}
-	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, bindings, nil, nil)
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, grants, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +219,7 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, err := access.NewCanonicalGrant(graph, subject, resourceA, access.CapabilityResourcePublish)
+	dashboardPair, err := access.NewExactPermissionPair(access.ActionDashboardPublish, identity.ProjectID, resourceA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,11 +227,15 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	modelGrant, err := access.NewCanonicalGrant(graph, subject, modelResource, access.CapabilityResourceEdit)
+	modelPair, err := access.NewExactPermissionPair(access.ActionModelUpdate, identity.ProjectID, modelResource)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{{ID: "grant_a", Canonical: grant}, {ID: "grant_model", Canonical: modelGrant}}, nil)
+	grant, err := accesssnapshot.NewTypedGrant("typed_delivery_resources", "typed delivery resources", subject, []access.PermissionPair{dashboardPair, modelPair})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{grant}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,43 +244,53 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 		t.Fatal(err)
 	}
 	subjects := []access.SubjectRef{subject}
-	if allowed, err := deliverySnapshotAllows(snapshot, subjects, []access.ResourceRef{resourceA}, access.CapabilityResourcePublish); err != nil || !allowed {
+	resourceAction := func(resource access.ResourceRef) (access.Action, bool) {
+		switch resource.Kind() {
+		case projectgraph.KindDashboard:
+			return access.ActionDashboardPublish, true
+		case projectgraph.KindModel:
+			return access.ActionModelUpdate, true
+		default:
+			return "", false
+		}
+	}
+	if allowed, err := deliverySnapshotAllows(snapshot, subjects, identity.ProjectID, []access.ResourceRef{resourceA}, resourceAction); err != nil || !allowed {
 		t.Fatalf("grant on A did not authorize A: allowed=%t err=%v", allowed, err)
 	}
-	if allowed, err := deliverySnapshotAllows(snapshot, subjects, []access.ResourceRef{resourceB}, access.CapabilityResourcePublish); err != nil || allowed {
+	if allowed, err := deliverySnapshotAllows(snapshot, subjects, identity.ProjectID, []access.ResourceRef{resourceB}, resourceAction); err != nil || allowed {
 		t.Fatalf("grant on A authorized B: allowed=%t err=%v", allowed, err)
 	}
-	if allowed, err := deliverySnapshotAllows(snapshot, subjects, []access.ResourceRef{resourceA, modelResource}, access.CapabilityResourcePublish); err != nil || !allowed {
+	if allowed, err := deliverySnapshotAllows(snapshot, subjects, identity.ProjectID, []access.ResourceRef{resourceA, modelResource}, resourceAction); err != nil || !allowed {
 		t.Fatalf("dashboard publish plus model edit did not authorize mixed plan: allowed=%t err=%v", allowed, err)
 	}
 	unknown, err := access.NewResourceRef(projectgraph.ResourceID("dashboard_unknown"), projectgraph.KindDashboard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if allowed, err := deliverySnapshotAllows(snapshot, subjects, []access.ResourceRef{unknown}, access.CapabilityResourcePublish); err == nil || allowed {
+	if allowed, err := deliverySnapshotAllows(snapshot, subjects, identity.ProjectID, []access.ResourceRef{unknown}, resourceAction); err != nil || allowed {
 		t.Fatalf("unknown resource did not fail closed: allowed=%t err=%v", allowed, err)
 	}
-	readGrant, err := access.NewCanonicalGrant(graph, subject, resourceA, access.CapabilityResourceRead)
+	readPair, err := access.NewExactPermissionPair(access.ActionDashboardRead, identity.ProjectID, resourceA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	readSnapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{{ID: "grant_dashboard_read", Canonical: readGrant}}, nil)
+	readGrant, err := accesssnapshot.NewTypedGrant("typed_dashboard_read", "typed dashboard read", subject, []access.PermissionPair{readPair})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if allowed, err := deliverySnapshotAllows(readSnapshot, subjects, []access.ResourceRef{resourceA}, access.CapabilityResourceUse); err != nil || !allowed {
+	readSnapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{readGrant}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed, err := deliverySnapshotAllows(readSnapshot, subjects, identity.ProjectID, []access.ResourceRef{resourceA}, func(access.ResourceRef) (access.Action, bool) {
+		return access.ActionDashboardRead, true
+	}); err != nil || !allowed {
 		t.Fatalf("dashboard read did not authorize delivery build: allowed=%t err=%v", allowed, err)
 	}
-	if allowed, err := deliverySnapshotAllows(readSnapshot, subjects, []access.ResourceRef{resourceB}, access.CapabilityResourceUse); err != nil || allowed {
+	if allowed, err := deliverySnapshotAllows(readSnapshot, subjects, identity.ProjectID, []access.ResourceRef{resourceB}, func(access.ResourceRef) (access.Action, bool) {
+		return access.ActionDashboardRead, true
+	}); err != nil || allowed {
 		t.Fatalf("dashboard read on A authorized delivery build for B: allowed=%t err=%v", allowed, err)
-	}
-
-	roleSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{ID: "role_deployer", Subject: subject, Role: access.ProjectRoleDeployer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDeployer)}}, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !accesssnapshot.RoleAllowsCapability(roleSnapshot, subjects, access.CapabilityResourcePublish) {
-		t.Fatal("explicit deployer role did not authorize publish")
 	}
 	addedImpact, err := deliveryAuthorizationResources(deployment.DeliveryPlan{Evidence: deployment.DeliveryPlanEvidence{
 		GraphImpact: deployment.DeliveryGraphImpact{Added: []deployment.DeliveryImpactResource{{ID: "connection_new", Kind: string(projectgraph.KindConnection), Change: "added"}}},
@@ -278,48 +301,79 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 	if !addedImpact.HasAdditions || len(addedImpact.Existing) != 0 {
 		t.Fatalf("added impact = %#v, want role-gated addition without current resources", addedImpact)
 	}
-	if allowed, err := deliveryAuthorizationImpactAllows(snapshot, subjects, addedImpact, access.CapabilityResourcePublish); err != nil || allowed {
-		t.Fatalf("resource grant authorized a new resource without project role: allowed=%t err=%v", allowed, err)
+	if allowed, err := deliveryAuthorizationImpactAllows(snapshot, subjects, identity.ProjectID, addedImpact, access.ActionConnectionCreate, resourceAction); err != nil || allowed {
+		t.Fatalf("resource grant authorized a new resource without project create authority: allowed=%t err=%v", allowed, err)
 	}
-	if allowed, err := deliveryAuthorizationImpactAllows(roleSnapshot, subjects, addedImpact, access.CapabilityResourcePublish); err != nil || !allowed {
-		t.Fatalf("deployer role did not authorize a new resource: allowed=%t err=%v", allowed, err)
-	}
-	viewerSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{ID: "role_viewer", Subject: subject, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}}, nil, nil)
+	createPair, err := access.NewProjectPermissionPair(access.ActionConnectionCreate, identity.ProjectID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if accesssnapshot.RoleAllowsCapability(viewerSnapshot, subjects, access.CapabilityResourcePublish) {
-		t.Fatal("viewer role unexpectedly authorized publish")
-	}
-	projectResource, err := access.NewResourceRef(identity.ProjectID, projectgraph.KindProjectNamespace)
+	createGrant, err := accesssnapshot.NewTypedGrant("typed_connection_create", "typed connection create", subject, []access.PermissionPair{createPair})
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectAdminGrant, err := access.NewCanonicalGrant(graph, subject, projectResource, access.CapabilityProjectAdmin)
+	createSnapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{createGrant}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectGrantSnapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{{ID: "grant_project_admin", Canonical: projectAdminGrant}}, nil)
+	if allowed, err := deliveryAuthorizationImpactAllows(createSnapshot, subjects, identity.ProjectID, addedImpact, access.ActionConnectionCreate, resourceAction); err != nil || !allowed {
+		t.Fatalf("typed project connection.create did not authorize the new resource: allowed=%t err=%v", allowed, err)
+	}
+}
+
+func TestDeliveryProjectTypedAuthorizationUsesReleaseOperatorAndRequiredPairs(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if allowed, err := deliveryProjectAllows(projectGrantSnapshot, subjects, identity.ProjectID, access.CapabilityProjectAdmin); err != nil || !allowed {
-		t.Fatalf("project-admin grant did not authorize project decision: allowed=%t err=%v", allowed, err)
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if allowed, err := deliveryProjectAllows(viewerSnapshot, subjects, identity.ProjectID, access.CapabilityProjectAdmin); err != nil || allowed {
-		t.Fatalf("viewer role authorized project decision: allowed=%t err=%v", allowed, err)
+	operator := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "operator"}
+	approver := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "approver"}
+	legacy := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "legacy-deployer"}
+	binding, err := access.NewTypedRoleBinding("release-operator", "release operator", operator, access.PermissionRoleReleaseOperator, identity.ProjectID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if allowed, err := deliverySnapshotAllows(viewerSnapshot, subjects, []access.ResourceRef{projectResource}, access.CapabilityResourceRead); err != nil || !allowed {
-		t.Fatalf("viewer role did not authorize delivery read for project-root impact: allowed=%t err=%v", allowed, err)
+	approvalBinding, err := access.NewTypedRoleBinding("release-approver", "release approver", approver, access.PermissionRoleReleaseApprover, identity.ProjectID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if allowed, err := deliverySnapshotAllows(viewerSnapshot, subjects, []access.ResourceRef{projectResource}, access.CapabilityResourcePublish); err != nil || allowed {
-		t.Fatalf("viewer role authorized delivery publish for project-root impact: allowed=%t err=%v", allowed, err)
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{
+		binding,
+		approvalBinding,
+		{ID: "legacy-deployer", Subject: legacy, Role: access.ProjectRoleDeployer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDeployer)},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if allowed, err := deliverySnapshotAllows(roleSnapshot, subjects, []access.ResourceRef{projectResource}, access.CapabilityResourcePublish); err != nil || !allowed {
-		t.Fatalf("deployer role did not authorize delivery publish for project-root impact: allowed=%t err=%v", allowed, err)
-	}
-	if allowed, err := deliverySnapshotAllows(projectGrantSnapshot, subjects, []access.ResourceRef{projectResource}, access.CapabilityResourceRead); err != nil || allowed {
-		t.Fatalf("direct project-admin grant substituted for a project role's delivery-read capability: allowed=%t err=%v", allowed, err)
+	for _, test := range []struct {
+		operation string
+		subject   access.SubjectRef
+		allowed   bool
+	}{
+		{operation: "createDeliveryPlan", subject: operator, allowed: true},
+		{operation: "buildDeliveryPlan", subject: operator, allowed: true},
+		{operation: "publishDeliveryCandidate", subject: operator, allowed: true},
+		{operation: "requestDeliveryPublicationApproval", subject: operator, allowed: true},
+		{operation: "rollbackDeliveryGeneration", subject: operator, allowed: true},
+		{operation: "getDeliveryCandidateStatus", subject: operator, allowed: true},
+		{operation: "getDeliveryOperatorSnapshot", subject: operator, allowed: true},
+		{operation: "getDeliveryOperatorSnapshot", subject: approver, allowed: true},
+		{operation: "approveDeliveryPublicationApproval", subject: approver, allowed: true},
+		{operation: "denyDeliveryPublicationApproval", subject: approver, allowed: true},
+		{operation: "revokeDeliveryPublicationApproval", subject: approver, allowed: true},
+		{operation: "buildDeliveryPlan", subject: approver, allowed: false},
+		{operation: "approveDeliveryPublicationApproval", subject: operator, allowed: false},
+		{operation: "createDeliveryPlan", subject: approver, allowed: false},
+		{operation: "createDeliveryPlan", subject: legacy, allowed: false},
+	} {
+		allowed, err := deliveryProjectAllowsTypedOperation(snapshot, []access.SubjectRef{test.subject}, identity.ProjectID, test.operation, accessAPIGenOperationContracts())
+		if err != nil || allowed != test.allowed {
+			t.Fatalf("%s for %s = %t, %v; want %t", test.operation, test.subject.ID, allowed, err, test.allowed)
+		}
 	}
 }
 

@@ -21,30 +21,30 @@ func (s publicationStateStore) ByID(_ context.Context, id servingstate.ID) (serv
 	return state, nil
 }
 
-func TestPublicationAuthorizationUsesDashboardResourceCapabilities(t *testing.T) {
+func TestPublicationAuthorizationUsesExactDashboardPublishAction(t *testing.T) {
 	states := publicationStateStore{"generation_1": {
 		ID: "generation_1", ProjectID: "leapview-showcase", Environment: "prod",
 		DashboardPublicationsJSON: `{"executive":{"dashboard":"executive-sales"},"website":{"dashboard":"visual-showcase"}}`,
 	}}
 	type decision struct {
-		project    projectgraph.ResourceID
-		resource   projectgraph.ResourceID
-		capability access.Capability
+		project  projectgraph.ResourceID
+		resource projectgraph.ResourceID
+		action   access.Action
 	}
 	var authorized []decision
 	err := authorizePublicationDeployment(t.Context(), "principal:release", "prod", "generation_1", PublicationAuthorizationConfig{
 		States: states,
-		AuthorizeResource: func(_ context.Context, actor string, project projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+		AuthorizeResource: func(_ context.Context, actor string, project projectgraph.ResourceID, resource access.ResourceRef, action access.Action) (bool, error) {
 			require.Equal(t, "principal:release", actor)
 			require.Equal(t, projectgraph.KindDashboard, resource.Kind())
-			authorized = append(authorized, decision{project: project, resource: resource.ID(), capability: capability})
+			authorized = append(authorized, decision{project: project, resource: resource.ID(), action: action})
 			return true, nil
 		},
 	})
 	require.NoError(t, err)
 	require.ElementsMatch(t, []decision{
-		{project: "leapview-showcase", resource: "executive-sales", capability: access.CapabilityResourcePublish},
-		{project: "leapview-showcase", resource: "visual-showcase", capability: access.CapabilityResourcePublish},
+		{project: "leapview-showcase", resource: "executive-sales", action: access.ActionDashboardPublish},
+		{project: "leapview-showcase", resource: "visual-showcase", action: access.ActionDashboardPublish},
 	}, authorized)
 }
 
@@ -55,7 +55,7 @@ func TestPublicationAuthorizationRejectsDeniedDashboard(t *testing.T) {
 	}}
 	err := authorizePublicationDeployment(t.Context(), "principal:viewer", "prod", "generation_1", PublicationAuthorizationConfig{
 		States: states,
-		AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
+		AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Action) (bool, error) {
 			return false, nil
 		},
 	})
@@ -69,7 +69,7 @@ func TestPublicationAuthorizationSkipsNonProductionAndEmptySnapshots(t *testing.
 	}
 	config := PublicationAuthorizationConfig{
 		States: states,
-		AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
+		AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Action) (bool, error) {
 			t.Fatal("authorization called for an ungoverned deployment")
 			return false, nil
 		},
@@ -87,7 +87,7 @@ func TestPublicationAuthorizationRejectsInvalidEvidence(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			err := authorizePublicationDeployment(t.Context(), "principal:release", "prod", "generation_1", PublicationAuthorizationConfig{
 				States: publicationStateStore{"generation_1": state},
-				AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
+				AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Action) (bool, error) {
 					return true, nil
 				},
 			})

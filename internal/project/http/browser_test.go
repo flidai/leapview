@@ -1435,7 +1435,7 @@ func TestSourcesRequiresVisibleSourceRatherThanUnrelatedResource(t *testing.T) {
 	if recorder.Code != stdhttp.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
 	}
-	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Return to Insights") {
+	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Open your profile") {
 		t.Fatalf("forbidden source recovery body = %q", body)
 	}
 }
@@ -1451,7 +1451,7 @@ func TestExploreRequiresVisibleSemanticModel(t *testing.T) {
 	if recorder.Code != stdhttp.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
 	}
-	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Return to Insights") {
+	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Open your profile") {
 		t.Fatalf("forbidden Explorer recovery body = %q", body)
 	}
 }

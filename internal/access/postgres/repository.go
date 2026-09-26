@@ -22,7 +22,21 @@ import (
 )
 
 //go:embed schema.sql
-var schemaSQL string
+var schemaBaseSQL string
+
+//go:embed permission_contract.sql
+var permissionContractSQL string
+
+const permissionContractMarker = "-- LEAPVIEW_PERMISSION_CONTRACT_SQL"
+
+var schemaSQL = composeSchemaSQL(schemaBaseSQL, permissionContractSQL)
+
+func composeSchemaSQL(base, contract string) string {
+	if strings.Count(base, permissionContractMarker) != 1 {
+		panic("access schema must contain exactly one permission contract marker")
+	}
+	return strings.Replace(base, permissionContractMarker, strings.TrimSpace(contract), 1)
+}
 
 // Tx is the native caller-owned transaction surface required by mutation
 // boundaries. Commit and Rollback are part of the shape so a pool cannot be

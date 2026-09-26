@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadAccessAdministrationDerivesSourceAwareCapabilities(t *testing.T) {
@@ -71,6 +72,63 @@ func TestLoadAccessAdministrationDerivesSourceAwareCapabilities(t *testing.T) {
 	if !ok || groupSignal.Capabilities.CanUpdate || groupSignal.Capabilities.CanDelete || groupSignal.Capabilities.CanManageMembers {
 		t.Fatalf("external group = %#v", groupSignal)
 	}
+}
+
+func TestApplyRoleBindingAdministrationStatePreservesExactPolicyAndNamesSubjects(t *testing.T) {
+	state := AccessAdministrationSignal{
+		Principals: []AccessPrincipalSignal{{ID: "principal-1", DisplayName: "Ada"}},
+		Groups:     []AccessGroupSignal{{ID: "group-1", Name: "Analytics"}},
+	}
+	ApplyRoleBindingAdministrationState(&state, RoleBindingAdministrationState{
+		ProjectID: "project-demo", PolicyRevision: 4,
+		RolePresets: []AccessRolePresetSignal{{Role: "viewer", Name: "Viewer", Permissions: []string{"dashboard.read"}}},
+		Assignments: []AccessRoleAssignmentSignal{{BindingID: "binding-1", ProjectID: "project-demo", Role: "viewer", SubjectType: "group", SubjectID: "group-1", Permissions: []string{"dashboard.read"}, PolicyRevision: 4}},
+	})
+	require.Equal(t, "project-demo", state.ProjectID)
+	require.Equal(t, int64(4), state.PolicyRevision)
+	require.Len(t, state.RoleAssignments, 1)
+	require.Equal(t, "Analytics", state.RoleAssignments[0].SubjectName)
+	require.Equal(t, []string{"dashboard.read"}, state.RoleAssignments[0].Permissions)
+}
+
+func TestRoleBindingAdministrationStateDistinguishesConfiguredAndActiveRoles(t *testing.T) {
+	policy := access.RoleBindingAdministrationState{
+		Scope: access.AuthorizationPolicyScope{ProjectID: "project-demo"},
+		RoleBindings: []access.RoleBinding{
+			{ID: "existing", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "ada"}},
+			{ID: "new", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "bob"}},
+		},
+	}
+	unknown := RoleBindingAdministrationStateFromAccess(policy)
+	require.Equal(t, "Activation status unavailable", unknown.Assignments[0].Status)
+	policy.ActiveSnapshotReady = true
+	policy.ActiveBindingIDs = []string{"existing"}
+	known := RoleBindingAdministrationStateFromAccess(policy)
+	require.Equal(t, "Active", known.Assignments[0].Status)
+	require.Equal(t, "Pending activation", known.Assignments[1].Status)
+}
+
+func TestRoleBindingAdministrationStateProjectsCanonicalRoleDetails(t *testing.T) {
+	state := RoleBindingAdministrationStateFromAccess(access.RoleBindingAdministrationState{
+		Scope: access.AuthorizationPolicyScope{ProjectID: "project-demo"},
+		RolePresets: []access.PermissionRolePreset{{
+			Role: access.PermissionRoleViewer, Profile: access.PermissionCatalogProfile,
+			Description: "View approved dashboards.", Actions: []access.Action{access.ActionDashboardRead},
+		}},
+	})
+	require.Len(t, state.RolePresets, 1)
+	require.Equal(t, access.PermissionCatalogProfile, state.RolePresets[0].Profile)
+	require.Equal(t, []AccessRolePermissionDetailSignal{{
+		Action: "dashboard.read", DisplayName: "View dashboard", Family: "Dashboard", Scope: "resource",
+		ResourceKinds: []string{"dashboard"}, Description: "View an approved dashboard definition and shell.",
+	}}, state.RolePresets[0].Details)
+	require.Len(t, state.PermissionCatalog, len(access.PermissionCatalog()))
+	require.Equal(t, state.RolePresets[0].Details[0], state.PermissionCatalog[0])
+	require.Contains(t, state.PermissionCatalog, AccessRolePermissionDetailSignal{
+		Action: "dashboard.create", DisplayName: "Create dashboards", Family: "Dashboard", Scope: "project",
+		ResourceKinds: []string{"dashboard"},
+		Description:   "Create a dashboard in the bound Project.",
+	})
 }
 
 func TestApplyAccessAdministrationCommandRevokesAllPrincipalSessions(t *testing.T) {

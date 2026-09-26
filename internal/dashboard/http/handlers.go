@@ -48,6 +48,53 @@ type publicPresentationContextKey struct{}
 // exposing the catalog when composition omitted the authorization callback.
 var ErrDashboardAuthorizationUnavailable = errors.New("dashboard authorization is unavailable")
 
+// authorizeDashboardRead is the API-side counterpart to the browser route
+// guard. Generated API handlers are mounted under bearer authentication but
+// do not pass through the browser resource middleware, so they must establish
+// dashboard.read before exposing a definition or starting a query.
+func (h Handler) authorizeDashboardRead(r *nethttp.Request, dashboardID string) error {
+	if h.AuthorizeListResource == nil {
+		return ErrDashboardAuthorizationUnavailable
+	}
+	resourceID, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardID))
+	if err != nil {
+		return fmt.Errorf("invalid dashboard resource ID %q: %w", dashboardID, err)
+	}
+	resource, err := access.NewResourceRef(resourceID, projectgraph.KindDashboard)
+	if err != nil {
+		return err
+	}
+	principalID := ""
+	if h.CurrentPrincipalID != nil {
+		principalID = h.CurrentPrincipalID(r)
+	}
+	allowed, err := h.AuthorizeListResource(r.Context(), principalID, resource, access.CapabilityResourceRead)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return fmt.Errorf("%w: dashboard %q", access.ErrForbidden, dashboardID)
+	}
+	return nil
+}
+
+func dashboardReadAuthorizationStatus(err error) int {
+	if errors.Is(err, access.ErrForbidden) {
+		return nethttp.StatusForbidden
+	}
+	if errors.Is(err, ErrDashboardAuthorizationUnavailable) {
+		return nethttp.StatusServiceUnavailable
+	}
+	return nethttp.StatusServiceUnavailable
+}
+
+func requireDashboardReadAuthorization(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("dashboard resource authorization: %w", err)
+}
+
 type PublicPresentation struct {
 	PublicID      string
 	PublicationID string
@@ -190,25 +237,29 @@ type Handler struct {
 	CurrentUsagePrincipal      func(r *nethttp.Request) (string, bool)
 	RecordDashboardView        func(context.Context, usage.View) error
 	AuthorizeListResource      func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error)
-	CSRFToken                  func(r *nethttp.Request) string
-	Layout                     func(r *nethttp.Request) webpage.Provider
-	Presentation               reportui.Presentation
-	Assets                     staticasset.Resolver
-	Environment                func(*nethttp.Request) string
-	DataRefreshedAt            func(context.Context, string, string, string) string
-	QueryFreshness             func(context.Context, string, string, string) (api.QueryFreshness, bool)
-	CommandGuard               func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
-	SharedCommandPrepare       SharedCommandPrepare
-	SessionStore               dashboardsession.Store
-	SessionKey                 SessionKeyFactory
-	OptionCursorSecret         []byte
-	OptionCache                *dashboardfilter.OptionCache
-	AgentBootstrap             func(*nethttp.Request, string) reportui.AgentBootstrap
-	AgentCommands              reportui.AgentCommandBindings
-	RouteScope                 reportui.RouteScope
-	StreamNamespace            string
-	SpatialTileStreamClosed    func(Metrics, string)
-	Authoring                  AuthoringApplication
+	// AuthorizeTypedDashboardAction evaluates the request credential's exact
+	// dashboard action pair. It returns typed=false for browser sessions so
+	// durable authoring authorization remains the source of truth there.
+	AuthorizeTypedDashboardAction func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (typed bool, allowed bool, err error)
+	CSRFToken                     func(r *nethttp.Request) string
+	Layout                        func(r *nethttp.Request) webpage.Provider
+	Presentation                  reportui.Presentation
+	Assets                        staticasset.Resolver
+	Environment                   func(*nethttp.Request) string
+	DataRefreshedAt               func(context.Context, string, string, string) string
+	QueryFreshness                func(context.Context, string, string, string) (api.QueryFreshness, bool)
+	CommandGuard                  func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
+	SharedCommandPrepare          SharedCommandPrepare
+	SessionStore                  dashboardsession.Store
+	SessionKey                    SessionKeyFactory
+	OptionCursorSecret            []byte
+	OptionCache                   *dashboardfilter.OptionCache
+	AgentBootstrap                func(*nethttp.Request, string) reportui.AgentBootstrap
+	AgentCommands                 reportui.AgentCommandBindings
+	RouteScope                    reportui.RouteScope
+	StreamNamespace               string
+	SpatialTileStreamClosed       func(Metrics, string)
+	Authoring                     AuthoringApplication
 }
 
 func (h Handler) catalogWithDashboardAppearance(ctx context.Context, source dashboard.Catalog, dashboardID string) dashboard.Catalog {

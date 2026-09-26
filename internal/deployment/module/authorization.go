@@ -15,7 +15,7 @@ type PublicationAuthorizationConfig struct {
 	States interface {
 		ByID(context.Context, servingstate.ID) (servingstate.State, error)
 	}
-	AuthorizeResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error)
+	AuthorizeResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Action) (bool, error)
 	Bypass            func(string) bool
 }
 
@@ -66,7 +66,7 @@ func authorizePublicationDeployment(ctx context.Context, actor, environment, gen
 		if err != nil {
 			return err
 		}
-		allowed, err := config.AuthorizeResource(ctx, actor, state.ProjectID, resource, access.CapabilityResourcePublish)
+		allowed, err := config.AuthorizeResource(ctx, actor, state.ProjectID, resource, access.ActionDashboardPublish)
 		if err != nil {
 			return err
 		}

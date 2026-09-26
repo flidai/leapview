@@ -126,6 +126,11 @@ type DashboardAuthoringCreateInput struct {
 	Slug            *string `json:"slug,omitempty" yaml:"slug,omitempty"`
 }
 
+type DashboardAuthoringCreateReceipt struct {
+	ID     string `json:"id" yaml:"id"`
+	Status string `json:"status" yaml:"status"`
+}
+
 type DashboardAuthoringDraftGetInput struct {
 	DashboardID string `json:"dashboardId" yaml:"dashboardId"`
 }

@@ -61,10 +61,10 @@ type PhysicalPoolBootstrapResult struct {
 // InitialCredentials are the one-time credentials returned by instance
 // initialization.
 type InitialCredentials struct {
-	Email                   string `json:"email"`
-	TemporaryPassword       string `json:"temporaryPassword"`
-	PublisherToken          string `json:"publisherToken"`
-	PublisherTokenExpiresAt string `json:"publisherTokenExpiresAt"`
+	Email                       string `json:"email"`
+	TemporaryPassword           string `json:"temporaryPassword"`
+	ProjectClaimToken           string `json:"projectClaimToken"`
+	ProjectClaimTokenExpiresAt  string `json:"projectClaimTokenExpiresAt"`
 }
 
 type InitializationInput struct {

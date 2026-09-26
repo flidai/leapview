@@ -58,10 +58,10 @@ func TestGlobalAgentAPIListsPrincipalConversations(t *testing.T) {
 		t.Fatalf("global conversation response retains workspaceId: %s", listRec.Body.String())
 	}
 
-	scopedToken, _, err := testAccessRepository(store).CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-		PrincipalID:  principal.ID,
-		Name:         "agent-workspace-bound",
-		Capabilities: []access.Capability{access.CapabilityResourceUse, access.CapabilityResourceRead},
+	scopedToken, _, err := store.fixture.Graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
+		PrincipalID: principal.ID,
+		Name:        "agent-identity-only",
+		Permissions: []access.PermissionPair{},
 	})
 	if err != nil {
 		t.Fatalf("create workspace-bound token: %v", err)
@@ -106,7 +106,7 @@ func TestAgentConfigurationCommandUsesGeneratedPublicContract(t *testing.T) {
 	ctx := t.Context()
 	store := testStore(t)
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
-	token := testAPIToken(t, ctx, store, owner.ID, "agent-config")
+	token := testTypedInstanceAPIToken(t, ctx, store, owner.ID, "agent-config", access.ActionPlatformSettingsRead, access.ActionPlatformSettingsUpdate)
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	agentService := agent.NewService(nil, agent.Config{APIKey: "key", Model: "fake-model"})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService}))

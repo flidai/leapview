@@ -259,6 +259,8 @@ func renderGeneratedServer(doc ir.Document, opts Options, plan emissionPlan) ([]
 	b.WriteString("type GenCommandFailure struct {\n\tKind string\n\tStatusCode int\n\tCode string\n\tPublicDetail string\n}\n\n")
 	b.WriteString("type GenOperationTarget struct {\n\tParameter string\n\tType string\n}\n\n")
 	b.WriteString("type GenUIActionContract struct {\n\tActionID string\n}\n\n")
+	b.WriteString("// GenAuthzContract captures the operation authorization annotation.\n")
+	b.WriteString("type GenAuthzContract struct {\n\tMode string\n\tPrivilege string\n\tAction string\n\tResolver string\n}\n\n")
 	b.WriteString("type GenCommandContract struct {\n")
 	b.WriteString("\tOwner string\n\tAudit GenAuditPolicy\n\tExecution *GenAsyncExecutionContract\n\tFailures []GenCommandFailure\n\tAdditionalExposures []GenOperationSurface\n\tUI *GenUIActionContract\n\tTarget *GenOperationTarget\n")
 	b.WriteString("\tIdempotency string\n\tConcurrency string\n\tAuthzMode string\n\tPrivilege string\n")
@@ -273,6 +275,7 @@ func renderGeneratedServer(doc ir.Document, opts Options, plan emissionPlan) ([]
 	b.WriteString("\tDocumentedStatusCodes []int\n")
 	b.WriteString("\tRequestBodyRequired bool\n")
 	b.WriteString("\tAuthzMode string\n")
+	b.WriteString("\tAuthz *GenAuthzContract\n")
 	b.WriteString("\tProtected bool\n")
 	b.WriteString("\tManual bool\n")
 	b.WriteString("\tCommand *GenCommandContract\n")
@@ -285,7 +288,8 @@ func renderGeneratedServer(doc ir.Document, opts Options, plan emissionPlan) ([]
 			return nil, fmt.Errorf("render operation %q extensions: %w", endpoint.OperationID, err)
 		}
 		command := renderGenCommandContract(endpoint.Command)
-		fmt.Fprintf(&b, "\t%q: {OperationID: %q, Kind: %q, Namespace: %q, Method: %q, Path: %q, Tags: %s, DocumentedStatusCodes: %s, RequestBodyRequired: %t, AuthzMode: %q, Protected: %t, Manual: %t, Command: %s, Extensions: %s},\n",
+		authz := renderGenAuthzContract(endpoint)
+		fmt.Fprintf(&b, "\t%q: {OperationID: %q, Kind: %q, Namespace: %q, Method: %q, Path: %q, Tags: %s, DocumentedStatusCodes: %s, RequestBodyRequired: %t, AuthzMode: %q, Authz: %s, Protected: %t, Manual: %t, Command: %s, Extensions: %s},\n",
 			endpoint.OperationID,
 			endpoint.OperationID,
 			endpoint.Kind,
@@ -296,6 +300,7 @@ func renderGeneratedServer(doc ir.Document, opts Options, plan emissionPlan) ([]
 			renderGoIntSlice(documentedStatusCodes(doc, endpoint)),
 			endpoint.RequestBody != nil && endpoint.RequestBody.Required,
 			endpointAuthzMode(endpoint),
+			authz,
 			endpointProtected(endpoint),
 			endpointManual(endpoint),
 			command,
@@ -380,6 +385,7 @@ func renderGeneratedServer(doc ir.Document, opts Options, plan emissionPlan) ([]
 	b.WriteString("func cloneAPIGenOperationContract(contract GenOperationContract) GenOperationContract {\n")
 	b.WriteString("\tcontract.Tags = append([]string(nil), contract.Tags...)\n")
 	b.WriteString("\tcontract.DocumentedStatusCodes = append([]int(nil), contract.DocumentedStatusCodes...)\n")
+	b.WriteString("\tif contract.Authz != nil { authz := *contract.Authz; contract.Authz = &authz }\n")
 	b.WriteString("\tif contract.Command != nil { command := *contract.Command; command.Failures = make([]GenCommandFailure, len(contract.Command.Failures)); copy(command.Failures, contract.Command.Failures); command.AdditionalExposures = append([]GenOperationSurface(nil), contract.Command.AdditionalExposures...); if contract.Command.Audit.Payload != nil { payload := *contract.Command.Audit.Payload; payload.Fields = append([]GenAuditField(nil), contract.Command.Audit.Payload.Fields...); command.Audit.Payload = &payload }; if contract.Command.UI != nil { ui := *contract.Command.UI; command.UI = &ui }; if contract.Command.Target != nil { target := *contract.Command.Target; command.Target = &target }; if contract.Command.Execution != nil { execution := *contract.Command.Execution; command.Execution = &execution }; contract.Command = &command }\n")
 	b.WriteString("\tcontract.Extensions = cloneAPIGenAnyMap(contract.Extensions)\n")
 	b.WriteString("\treturn contract\n")
@@ -1703,19 +1709,19 @@ func endpointManual(endpoint ir.Endpoint) bool {
 }
 
 func endpointAuthzMode(endpoint ir.Endpoint) string {
-	if len(endpoint.Extensions) == 0 {
-		return ""
-	}
-	raw, ok := endpoint.Extensions["x-authz"]
+	metadata, ok := ir.AuthzMetadataFromExtensions(endpoint.Extensions)
 	if !ok {
 		return ""
 	}
-	extension, ok := raw.(map[string]any)
+	return metadata.Mode
+}
+
+func renderGenAuthzContract(endpoint ir.Endpoint) string {
+	metadata, ok := ir.AuthzMetadataFromExtensions(endpoint.Extensions)
 	if !ok {
-		return ""
+		return "nil"
 	}
-	mode, _ := extension["mode"].(string)
-	return mode
+	return fmt.Sprintf("&GenAuthzContract{Mode: %q, Privilege: %q, Action: %q, Resolver: %q}", metadata.Mode, metadata.Privilege, metadata.Action, metadata.Resolver)
 }
 
 func endpointPathParams(endpoint ir.Endpoint) []ir.Parameter {

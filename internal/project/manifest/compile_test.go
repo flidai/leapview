@@ -1,7 +1,9 @@
 package manifest
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
@@ -80,17 +82,115 @@ func TestCompileAuthorizationSnapshotRejectsKindCapabilityAndImplicitRoles(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowed, err := snapshot.Allows(bindings[0].Subject, resource, access.CapabilityResourcePublish)
-	if err != nil || !allowed {
-		t.Fatalf("captured role did not authorize exact dashboard capability: allowed=%v err=%v", allowed, err)
+	dashboardPublish, err := access.NewExactPermissionPair(access.ActionDashboardPublish, compileTestIdentity().ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typed, err := snapshot.EffectiveTypedPermissions([]access.SubjectRef{bindings[0].Subject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access.PermissionSetAllows(typed, dashboardPublish) {
+		t.Fatal("legacy admin role was implicitly expanded into typed dashboard.publish authority")
 	}
 	model, err := access.NewResourceRef("model_orders", graph.KindModel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowed, err = snapshot.Allows(bindings[0].Subject, model, access.CapabilityResourcePublish)
-	if !errors.Is(err, access.ErrCapabilityNotAllowed) || allowed {
-		t.Fatalf("captured role authorized unsupported model capability: allowed=%v err=%v", allowed, err)
+	if _, err := access.NewExactPermissionPair(access.ActionDashboardPublish, compileTestIdentity().ProjectID, model); err == nil {
+		t.Fatal("typed dashboard.publish action accepted a model target")
+	}
+}
+
+func TestCompileAuthorizationSnapshotPreservesTypedRoleBinding(t *testing.T) {
+	project := compileTestGraph(t)
+	identity := compileTestIdentity()
+	typed, err := access.NewTypedRoleBinding(
+		"binding_viewer",
+		"viewer",
+		access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "alice"},
+		access.PermissionRoleViewer,
+		identity.ProjectID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{RoleBindings: map[string]RoleBinding{
+		typed.ID: {
+			ID: typed.ID, Name: typed.Name, Subject: Subject{Kind: "principal", PrincipalID: "alice"},
+			PermissionProfile: typed.PermissionProfile, PermissionRole: typed.PermissionRole, Permissions: typed.Permissions,
+		},
+	}}
+
+	snapshot, err := CompileAuthorizationSnapshot(identity, project, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := snapshot.RoleBindings()
+	if len(bindings) != 1 {
+		t.Fatalf("role bindings = %#v", bindings)
+	}
+	got := bindings[0]
+	if got.Role != "" || got.Capabilities != nil || got.PermissionProfile != typed.PermissionProfile || got.PermissionRole != typed.PermissionRole {
+		t.Fatalf("typed binding lost typed representation: %#v", got)
+	}
+	if len(got.Permissions) != len(typed.Permissions) {
+		t.Fatalf("typed permission count = %d, want %d", len(got.Permissions), len(typed.Permissions))
+	}
+	for i := range typed.Permissions {
+		if got.Permissions[i].Key() != typed.Permissions[i].Key() {
+			t.Fatalf("typed permission %d = %#v, want %#v", i, got.Permissions[i], typed.Permissions[i])
+		}
+	}
+	effective, err := snapshot.EffectiveTypedPermissions([]access.SubjectRef{got.Subject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effective) != len(typed.Permissions) {
+		t.Fatalf("effective typed permissions = %d, want %d", len(effective), len(typed.Permissions))
+	}
+
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"permissionProfile":"`+access.PermissionCatalogProfile+`"`) || !strings.Contains(string(encoded), `"permissionRole":"viewer"`) {
+		t.Fatalf("typed policy JSON lost typed fields: %s", encoded)
+	}
+	if strings.Contains(string(encoded), `"role":`) {
+		t.Fatalf("typed policy JSON carried a legacy role: %s", encoded)
+	}
+	encodedAgain, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != string(encodedAgain) {
+		t.Fatalf("typed policy JSON is not deterministic: %s != %s", encoded, encodedAgain)
+	}
+}
+
+func TestCompileAuthorizationSnapshotRejectsNonCanonicalTypedRoleBinding(t *testing.T) {
+	project := compileTestGraph(t)
+	identity := compileTestIdentity()
+	typed, err := access.NewTypedRoleBinding(
+		"binding_viewer",
+		"viewer",
+		access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "alice"},
+		access.PermissionRoleViewer,
+		identity.ProjectID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typed.Permissions[0].Action = access.ActionDashboardUpdate
+	policy := AccessPolicy{RoleBindings: map[string]RoleBinding{
+		typed.ID: {
+			ID: typed.ID, Subject: Subject{Kind: "principal", PrincipalID: "alice"},
+			PermissionProfile: typed.PermissionProfile, PermissionRole: typed.PermissionRole, Permissions: typed.Permissions,
+		},
+	}}
+	if _, err := CompileAuthorizationSnapshot(identity, project, policy); err == nil {
+		t.Fatal("accepted typed role binding with altered exact permission pair")
 	}
 }
 

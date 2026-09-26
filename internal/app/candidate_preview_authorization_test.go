@@ -30,6 +30,7 @@ func TestProtectCandidateProjectResourcesAllowsFreshTargetPreview(t *testing.T) 
 		accessValue,
 		runtime,
 		access.CapabilityProjectAdmin,
+		access.ActionDeliveryRead,
 		activeProjectResource,
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			called = true
@@ -66,6 +67,7 @@ func TestProtectCandidateProjectResourcesRequiresAuthenticationOnFreshTarget(t *
 		candidatePreviewAccessFake{},
 		runtime,
 		access.CapabilityProjectAdmin,
+		access.ActionDeliveryRead,
 		activeProjectResource,
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			t.Fatal("unauthenticated candidate preview reached handler")
@@ -94,6 +96,7 @@ func TestProtectCandidateProjectResourcesDeniesFreshTargetNonAdmin(t *testing.T)
 		accessValue,
 		runtime,
 		access.CapabilityProjectAdmin,
+		access.ActionDeliveryRead,
 		activeProjectResource,
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			t.Fatal("fresh non-admin candidate preview reached handler")
@@ -122,6 +125,7 @@ func TestProtectCandidateProjectResourcesFailsClosedWhenFreshAdminLookupUnavaila
 		accessValue,
 		runtime,
 		access.CapabilityProjectAdmin,
+		access.ActionDeliveryRead,
 		activeProjectResource,
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			t.Fatal("fresh candidate preview reached handler after admin lookup failure")
@@ -159,6 +163,7 @@ func TestProtectCandidateProjectResourcesPreservesActiveProjectDenial(t *testing
 		accessValue,
 		runtime,
 		access.CapabilityProjectAdmin,
+		access.ActionDeliveryRead,
 		activeProjectResource,
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			t.Fatal("active unauthorized candidate preview reached handler")

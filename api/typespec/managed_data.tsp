@@ -77,7 +77,7 @@ interface ManagedConnections {
   @summary("Describe a project managed connection")
   @route("/{connection}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "connection.read", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   getManagedConnection(@path project: ResourceId, @path @apigen.target connection: ResourceId): OkJson<ManagedConnectionResponse> | CommonErrors;
 }
@@ -288,7 +288,7 @@ interface ManagedDataLifecycle {
   @summary("Get the active managed-data revision")
   @route("/active-revision")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "connection.read", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   getActiveManagedDataRevision(
     @path project: ResourceId,
@@ -298,7 +298,7 @@ interface ManagedDataLifecycle {
   @summary("List immutable managed-data revisions")
   @route("/revisions")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "connection.read", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   listManagedDataRevisions(
     @path project: ResourceId,
@@ -310,7 +310,7 @@ interface ManagedDataLifecycle {
   @summary("Get an immutable managed-data revision")
   @route("/revisions/{revision}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "connection.read", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   getManagedDataRevision(
     @path project: ResourceId,
@@ -321,7 +321,7 @@ interface ManagedDataLifecycle {
   @summary("Create a managed-data upload session from a canonical manifest")
   @route("/upload-sessions")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)
@@ -344,7 +344,7 @@ interface ManagedDataLifecycle {
   @summary("List managed-data upload sessions")
   @route("/upload-sessions")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "connection.read", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   listManagedDataUploadSessions(
     @path project: ResourceId,
@@ -356,7 +356,7 @@ interface ManagedDataLifecycle {
   @summary("Get a managed-data upload session")
   @route("/upload-sessions/{uploadSession}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "connection.read", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   getManagedDataUploadSession(
     @path project: ResourceId,
@@ -367,7 +367,7 @@ interface ManagedDataLifecycle {
   @summary("Cancel a managed-data upload session")
   @route("/upload-sessions/{uploadSession}/cancel")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)
@@ -390,7 +390,7 @@ interface ManagedDataLifecycle {
   @summary("Finalize a managed-data upload session")
   @route("/upload-sessions/{uploadSession}/finalize")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)
@@ -421,7 +421,7 @@ interface ManagedDataLifecycle {
   @summary("List or stream upload-session events")
   @route("/upload-sessions/{uploadSession}/events")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "connection.read", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   listManagedDataUploadSessionEvents(
     @path project: ResourceId,

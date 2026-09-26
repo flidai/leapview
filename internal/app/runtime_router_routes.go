@@ -162,10 +162,10 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 			})).ServeHTTP)
 		}
 		candidateProjectGuard := func(next http.HandlerFunc) http.HandlerFunc {
-			return protectCandidateProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityProjectAdmin, activeProjectResource, next)
+			return protectCandidateProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityProjectAdmin, access.ActionDeliveryRead, activeProjectResource, next)
 		}
 		candidateReviewGuard := func(next http.HandlerFunc) http.HandlerFunc {
-			return protectProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityResourceEdit, activeProjectResource, next)
+			return protectProjectResources(dependencies.access, dependencies.runtimeHost, access.ActionDeliveryRead, activeProjectResource, next)
 		}
 		mountDevelopmentSessionRoutes(r, dependencies.developmentSession, dependencies.candidates, dependencies.rateLimits.Updates(), candidateProjectGuard)
 		r.Get("/candidates/{candidate}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
@@ -192,11 +192,23 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 			adminGuard.BrowserMutationMiddleware = dependencies.apiProtocol.BrowserMutationMiddleware
 		}
 		dependencies.admin.MountAuthenticated(r, adminGuard)
-		dependencies.dashboard.MountAuthenticated(r, dashboardmodule.RouteGuard{ProtectWithResources: func(capability access.Capability, resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
-			return protectProjectResources(dependencies.access, dependencies.runtimeHost, capability, resolve, next)
-		}, ProtectWithAuthoring: func(capability access.Capability, next http.HandlerFunc) http.HandlerFunc {
-			return protectProjectAuthoringResource(dependencies.access, dependencies.runtimeHost, dependencies.dashboard.Authoring(), capability, next)
-		}})
+		dependencies.dashboard.MountAuthenticated(r, dashboardmodule.RouteGuard{
+			ProtectWithResources: func(_ access.Capability, resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
+				return protectProjectResourcesWithTypedAction(dependencies.access, dependencies.runtimeHost, "", resolve, next)
+			},
+			ProtectWithResourceAction: func(capability access.Capability, action access.Action, resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
+				return protectProjectResourcesWithTypedAction(dependencies.access, dependencies.runtimeHost, action, resolve, next)
+			},
+			ProtectWithAuthoring: func(_ access.Capability, next http.HandlerFunc) http.HandlerFunc {
+				return protectProjectAuthoringResourceWithTypedAction(dependencies.access, dependencies.runtimeHost, dependencies.dashboard.Authoring(), "", next)
+			},
+			ProtectWithAuthoringAction: func(capability access.Capability, action access.Action, next http.HandlerFunc) http.HandlerFunc {
+				return protectProjectAuthoringResourceWithTypedAction(dependencies.access, dependencies.runtimeHost, dependencies.dashboard.Authoring(), action, next)
+			},
+			ProtectWithAuthoringCommand: func(next http.HandlerFunc) http.HandlerFunc {
+				return dependencies.access.Authenticate(next).ServeHTTP
+			},
+		})
 		dependencies.access.MountAuthenticatedBrowser(r)
 	})
 }

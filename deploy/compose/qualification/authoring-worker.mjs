@@ -67,7 +67,7 @@ async function resolvePrincipalFromDirectory(page, email) {
   return id
 }
 
-async function issueToken(context, page, capabilities) {
+async function issueToken(context, page, actions) {
   const challenge = await requireJSON(
     await context.request.post(
       new URL('/oauth/device/code', baseURL).href,
@@ -75,11 +75,11 @@ async function issueToken(context, page, capabilities) {
         form: {
           client_id: 'leapview-cli',
           project_id: projectID,
-          scope: capabilities.join(' '),
+          scope: actions.join(' '),
         },
       },
     ),
-    `device authorization for ${capabilities.join(', ')}`,
+    `device authorization for ${actions.join(', ')}`,
   )
   const deviceURL = new URL(challenge.verification_uri_complete, baseURL)
   await page.goto(deviceURL.href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
@@ -98,7 +98,7 @@ async function issueToken(context, page, capabilities) {
         },
       },
     ),
-    `device token exchange for ${capabilities.join(', ')}`,
+    `device token exchange for ${actions.join(', ')}`,
   )
   return { accessToken: tokens.access_token }
 }
@@ -125,7 +125,7 @@ const methods = {
     return issueToken(
       administratorContext,
       administratorPage,
-      params.capabilities,
+      params.actions,
     )
   },
 
@@ -175,7 +175,7 @@ const methods = {
     }, {
       action: 'create',
       name: params.name,
-      capabilities: params.capabilities,
+      permissions: params.permissions,
       expiresAt: params.expiresAt,
     })
     // The grouped permission picker intentionally expands read/admin choices
@@ -205,7 +205,7 @@ const methods = {
     if (!reviewerContext || !reviewerPage) {
       throw new Error('reviewer must sign in before requesting a token')
     }
-    return issueToken(reviewerContext, reviewerPage, params.capabilities)
+    return issueToken(reviewerContext, reviewerPage, params.actions)
   },
 
   async authorizeCLI(params) {

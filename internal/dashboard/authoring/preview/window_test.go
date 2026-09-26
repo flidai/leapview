@@ -2,8 +2,10 @@ package preview
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
@@ -11,8 +13,16 @@ import (
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 )
 
-func (r *previewRuntime) QueryVisualizationWindowForDefinition(_ context.Context, compiled dashboarddefinition.Definition, _ string, _ dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
+func (r *previewRuntime) QueryVisualizationWindowForDefinition(ctx context.Context, compiled dashboarddefinition.Definition, _ string, _ dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
 	r.windowQueryCalls++
+	governor, ok := dataquery.GovernorFromContext(ctx)
+	if !ok {
+		return visualizationir.VisualizationEnvelope{}, errors.New("preview query governor was not propagated")
+	}
+	r.governorSeen = true
+	if _, _, err := governor.GovernDataQuery(ctx, dataquery.Query{}); err != nil {
+		return visualizationir.VisualizationEnvelope{}, err
+	}
 	definition, ok := compiled.Visualizations[request.VisualID]
 	if !ok {
 		return visualizationir.VisualizationEnvelope{}, nil

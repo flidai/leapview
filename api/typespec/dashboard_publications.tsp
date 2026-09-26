@@ -70,14 +70,15 @@ interface DashboardPublications {
   @summary("Get a dashboard publication")
   @route("/{publication}")
   @get
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "dashboard.read", resolver: "dashboard" })
+  @extension("x-leapview-object-scope", "dashboard")
   getDashboardPublication(@path project: ResourceId, @path publication: string): OkJson<DashboardPublicationResponse> | CommonErrors;
 
   @summary("Suspend a dashboard publication immediately")
   @route("/{publication}/suspend")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH", action: "dashboard.publish", resolver: "dashboard" })
+  @extension("x-leapview-object-scope", "dashboard")
   @apigen.ui("dashboard.publication.suspend")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
@@ -94,8 +95,8 @@ interface DashboardPublications {
   @summary("Resume a configured dashboard publication")
   @route("/{publication}/resume")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH", action: "dashboard.publish", resolver: "dashboard" })
+  @extension("x-leapview-object-scope", "dashboard")
   @apigen.ui("dashboard.publication.resume")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
@@ -112,8 +113,8 @@ interface DashboardPublications {
   @summary("Rotate a dashboard publication public ID")
   @route("/{publication}/rotate")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH", action: "dashboard.publish", resolver: "dashboard" })
+  @extension("x-leapview-object-scope", "dashboard")
   @apigen.ui("dashboard.publication.rotate")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)

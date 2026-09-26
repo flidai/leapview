@@ -16,6 +16,8 @@ import (
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
 	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -172,6 +174,83 @@ func TestInitializeActiveTargetAuthorizationPolicyImportsExactActiveScope(t *tes
 	}
 }
 
+func TestInitializeActiveTargetAuthorizationPolicyImportsTypedActiveScope(t *testing.T) {
+	db := authorizationPolicyUpgradeDB(t)
+	typed, err := access.NewTypedRoleBinding(
+		"binding-typed-viewer",
+		"Typed viewer",
+		access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: authorizationPolicyUpgradePrincipalID},
+		access.PermissionRoleViewer,
+		projectgraph.ResourceID(authorizationPolicyUpgradeProjectID),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyJSON, err := json.Marshal(projectmanifest.AccessPolicy{RoleBindings: map[string]projectmanifest.RoleBinding{
+		typed.ID: {
+			ID:                typed.ID,
+			Name:              typed.Name,
+			Subject:           projectmanifest.Subject{Kind: "principal", PrincipalID: typed.Subject.ID},
+			PermissionProfile: typed.PermissionProfile,
+			Permissions:       typed.Permissions,
+			PermissionRole:    typed.PermissionRole,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedAuthorizationPolicyUpgradeFixtureWithPolicy(t, db, string(policyJSON))
+	targets := deploymentpostgres.New(db)
+	states := servingstatepostgres.New(db)
+	scope := access.AuthorizationPolicyScope{TargetID: authorizationPolicyUpgradeTargetID, ProjectID: authorizationPolicyUpgradeProjectID, Environment: authorizationPolicyUpgradeEnvironment}
+	policies, err := accesspostgres.NewAuthorizationPolicyRepository(db, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := func(ctx context.Context) (accesspostgres.Tx, error) { return db.Begin(ctx) }
+	if err := appaccesspostgres.InitializeActiveTargetAuthorizationPolicy(t.Context(), begin, targets, states, policies, scope.TargetID, scope.Environment); err != nil {
+		t.Fatal(err)
+	}
+
+	policy, err := policies.AuthorizationPolicy(t.Context(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Revision != 1 || len(policy.RoleBindings) != 1 {
+		t.Fatalf("initialized typed policy = %#v, want revision 1 with one binding", policy)
+	}
+	got := policy.RoleBindings[0]
+	if got.ID != typed.ID || got.Name != typed.Name || got.Subject != typed.Subject || got.Role != "" || got.Capabilities != nil || got.PermissionProfile != typed.PermissionProfile || got.PermissionRole != typed.PermissionRole || len(got.Permissions) != len(typed.Permissions) {
+		t.Fatalf("initialized typed binding = %#v, want exact typed binding %#v", got, typed)
+	}
+	for i := range typed.Permissions {
+		if got.Permissions[i].Key() != typed.Permissions[i].Key() {
+			t.Fatalf("initialized typed permission %d = %#v, want %#v", i, got.Permissions[i], typed.Permissions[i])
+		}
+	}
+
+	var role, profile, permissionRole string
+	var encodedPermissions []byte
+	if err := db.QueryRow(t.Context(), `SELECT COALESCE(role,''), COALESCE(permission_profile,''), permissions, COALESCE(permission_role,'') FROM access.authorization_policy_role_binding WHERE target_id=$1 AND project_id=$2 AND environment=$3 AND revision=1 AND id=$4`, scope.TargetID, scope.ProjectID, scope.Environment, typed.ID).Scan(&role, &profile, &encodedPermissions, &permissionRole); err != nil {
+		t.Fatal(err)
+	}
+	if role != "" || profile != typed.PermissionProfile || permissionRole != string(typed.PermissionRole) {
+		t.Fatalf("persisted typed columns = role %q profile %q permission role %q", role, profile, permissionRole)
+	}
+	persistedPermissions, err := access.DecodePermissionPairs(encodedPermissions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persistedPermissions) != len(typed.Permissions) {
+		t.Fatalf("persisted typed permissions = %d, want %d", len(persistedPermissions), len(typed.Permissions))
+	}
+	for i := range typed.Permissions {
+		if persistedPermissions[i].Key() != typed.Permissions[i].Key() {
+			t.Fatalf("persisted typed permission %d = %#v, want %#v", i, persistedPermissions[i], typed.Permissions[i])
+		}
+	}
+}
+
 func TestInitializeActiveTargetAuthorizationPolicyLeavesLegacyEmptyPolicyUninitialized(t *testing.T) {
 	db := authorizationPolicyUpgradeDB(t)
 	seedAuthorizationPolicyUpgradeFixtureWithPolicy(t, db, `{}`)
@@ -263,7 +342,7 @@ func TestAuthorizationRoleBindingsFromServingPolicyRejectsAmbiguousEvidence(t *t
 		`{"roleBindings":{"key":{"id":"key","name":"Viewer","role":"viewer","subject":{"kind":"principal","principalId":"principal","email":"invented@example.com"}}}}`,
 		`{"unknown":true}`,
 	} {
-		if _, _, err := projectmodule.DecodeAuthorizationRoleBindingsJSON(encoded); err == nil {
+		if _, _, err := projectmodule.DecodeAuthorizationRoleBindingsJSON(encoded, projectgraph.ResourceID(authorizationPolicyUpgradeProjectID)); err == nil {
 			t.Fatalf("accepted ambiguous active serving policy %s", encoded)
 		}
 	}

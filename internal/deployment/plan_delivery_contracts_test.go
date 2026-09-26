@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 )
@@ -84,6 +85,44 @@ func TestNewDeliveryPlanDefaultsSourceOwnerBeforeDigest(t *testing.T) {
 	}
 	if replay.SourceOwnerID != plan.SourceOwnerID || replay.Digest != plan.Digest {
 		t.Fatalf("defaulted replay identity = owner %q digest %q, want owner %q digest %q", replay.SourceOwnerID, replay.Digest, plan.SourceOwnerID, plan.Digest)
+	}
+}
+
+func TestDeliveryPlanReplaysPersistedCompoundAuthorization(t *testing.T) {
+	model, _ := access.NewResourceRef("model_orders", graph.KindModel)
+	source, _ := access.NewResourceRef("source_orders", graph.KindSource)
+	connection, _ := access.NewResourceRef("connection_warehouse", graph.KindConnection)
+	projectID := graph.ResourceID("project_delivery")
+	modelUpdate, _ := access.NewExactPermissionPair(access.ActionModelUpdate, projectID, model)
+	sourceRead, _ := access.NewExactPermissionPair(access.ActionSourceRead, projectID, source)
+	connectionUse, _ := access.NewExactPermissionPair(access.ActionConnectionUse, projectID, connection)
+	deliveryPlan, _ := access.NewProjectPermissionPair(access.ActionDeliveryPlan, projectID)
+	authority, snapshot, subject := compoundAuthorityFixture(t, modelUpdate, sourceRead, connectionUse, deliveryPlan)
+	execution, err := EvaluateDeliveryAuthorizationPlan(authority, snapshot, []access.SubjectRef{subject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := deliveryTestPlan(t)
+	plan.ProjectID, plan.TargetID, plan.Authorization = projectID, "target_prod", &execution
+	plan.Digest, plan.AuthorizationDigest = "", ""
+	plan, err = NewDeliveryPlan(plan)
+	if err != nil {
+		t.Fatalf("persist compound authorization: %v", err)
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replay DeliveryPlan
+	if err := json.Unmarshal(encoded, &replay); err != nil {
+		t.Fatal(err)
+	}
+	if err := replay.Validate(); err != nil {
+		t.Fatalf("replayed compound authorization was rejected: %v", err)
+	}
+	replay.Authorization.Dependencies[0].EvidenceDigest = deliveryTestDigest('c')
+	if err := replay.Validate(); !errors.Is(err, ErrDeliveryConflict) {
+		t.Fatalf("tampered persisted authorization was accepted: %v", err)
 	}
 }
 

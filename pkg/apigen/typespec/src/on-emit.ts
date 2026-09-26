@@ -1,6 +1,7 @@
 import {
   getAllTags,
   getDoc,
+  getExamples,
   getDiscriminatedUnion,
   getDiscriminatedUnionFromInheritance,
   getDiscriminator,
@@ -10,6 +11,7 @@ import {
   getSummary,
   isArrayModelType,
   isRecordModelType,
+  serializeValueAsJson,
   type EmitContext,
   type Enum,
   type Model,
@@ -170,6 +172,13 @@ interface Command {
   privilege?: string;
 }
 
+interface AuthzMetadata {
+  mode?: string;
+  privilege?: string;
+  action?: string;
+  resolver?: string;
+}
+
 interface Contract {
   name: string;
   schema: SchemaRef;
@@ -275,6 +284,7 @@ interface Schema {
   discriminator?: { property_name: string; mapping: Record<string, string> };
   enum?: string[];
   exact_numbers?: boolean;
+  example?: unknown;
   extensions?: Record<string, unknown>;
 }
 
@@ -520,6 +530,10 @@ class IRBuilder {
     const doc = getDoc(this.program, model);
     if (doc) {
       schema.description = doc;
+    }
+    const examples = getExamples(this.program, model);
+    if (examples.length > 0) {
+      schema.example = serializeValueAsJson(this.program, examples[0].value, model);
     }
     const extensions = validatedMetadata(this.program, this, model);
     if (extensions) {
@@ -989,7 +1003,7 @@ function endpoint(
   for (const [key, value] of operationVendorExtensions(program, builder, operation.operation)) {
     extensions[key] = value;
   }
-  const authz = getAuthz({ program }, operation.operation);
+  const authz = getAuthz({ program }, operation.operation) as AuthzMetadata | undefined;
   if (authz !== undefined) {
     extensions["x-authz"] = authz;
   }
@@ -1361,7 +1375,7 @@ function commandMetadata(
     builder.invalidCommand("PATCH commands require a required If-Match header", operation.operation);
   }
 
-  const authz = getAuthz({ program }, operation.operation) as Record<string, unknown> | undefined;
+  const authz = getAuthz({ program }, operation.operation) as AuthzMetadata | undefined;
   const authzMode = typeof authz?.mode === "string" ? authz.mode : undefined;
   const privilege = typeof authz?.privilege === "string" ? authz.privilege : undefined;
   return prune({

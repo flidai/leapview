@@ -18,6 +18,7 @@ import (
 	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	refreshdb "github.com/flidai/leapview/internal/refresh/postgres/internal/db"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -82,6 +83,7 @@ type RunInput struct {
 	MatchingScheduleIDs                                      []string
 	MaterializationScope                                     []string
 	PrincipalID, JobID                                       string
+	Authority                                                jobs.AuthorityEnvelope
 }
 type Run struct {
 	RunInput

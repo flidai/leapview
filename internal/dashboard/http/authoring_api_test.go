@@ -521,6 +521,71 @@ func TestAuthoringAPIMutationDoesNotSpoofToolCallProvenance(t *testing.T) {
 
 }
 
+func TestAuthoringAPICreateReturnsBoundedReceipt(t *testing.T) {
+	app := &fakeHeadlessAuthoring{}
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales"}`))
+	req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000107")
+	rec := httptest.NewRecorder()
+	testAuthoringRouter(app).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want created (%s)", rec.Code, rec.Body.String())
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 2 {
+		t.Fatalf("create receipt fields = %#v, want only id and status", fields)
+	}
+	var receipt struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ID != "created-dashboard" || receipt.Status != "draft" {
+		t.Fatalf("receipt = %#v, want created dashboard draft", receipt)
+	}
+	if got, want := rec.Header().Get("Location"), "/api/v1/projects/sales/authoring/dashboards/created-dashboard"; got != want {
+		t.Fatalf("location = %q, want %q", got, want)
+	}
+}
+
+func TestAuthoringAPIForkReturnsBoundedReceipt(t *testing.T) {
+	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{ID: "forked-dashboard", Draft: &authoring.Draft{ID: "forked-draft"}}}}
+	req := httptest.NewRequest(http.MethodPost, "/projects/target/authoring/forks", strings.NewReader(`{"source":{"kind":"project","dashboardId":"source-dashboard"}}`))
+	req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000108")
+	rec := httptest.NewRecorder()
+	testAuthoringRouter(app).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want created (%s)", rec.Code, rec.Body.String())
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 2 {
+		t.Fatalf("fork receipt fields = %#v, want only id and status", fields)
+	}
+	var receipt struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ID != "forked-dashboard" || receipt.Status != "draft" {
+		t.Fatalf("fork receipt = %#v, want forked dashboard draft", receipt)
+	}
+	if _, ok := fields["lifecycle"]; ok {
+		t.Fatal("fork receipt exposed lifecycle details")
+	}
+	if _, ok := fields["revision"]; ok {
+		t.Fatal("fork receipt exposed revision details")
+	}
+}
+
 func TestAuthoringAPICreateAuditBindsResultIdentityAndOrigin(t *testing.T) {
 	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{
 		ID: "created-dashboard", Draft: &authoring.Draft{ID: "created-draft"},
@@ -563,6 +628,49 @@ func TestAuthoringAPICommandAuditUsesDomainPrivilegeAndIdentity(t *testing.T) {
 	}
 	if !strings.Contains(event.MetadataJSON, `"origin":"agent"`) || !strings.Contains(event.MetadataJSON, `"draftId":"draft-command"`) {
 		t.Fatalf("audit metadata = %s", event.MetadataJSON)
+	}
+}
+
+func TestAuthoringAPICommandRequiresIndependentTypedDashboardAction(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		kind   string
+		field  string
+		action access.Action
+	}{
+		{name: "edit", kind: "setVisibility", field: `"setVisibility":{"visibility":"organization"}`, action: access.ActionDashboardUpdate},
+		{name: "publish", kind: "publish", field: `"publish":{}`, action: access.ActionDashboardPublish},
+		{name: "archive", kind: "archive", field: `"archive":{}`, action: access.ActionDashboardDelete},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app := &fakeHeadlessAuthoring{}
+			var got access.Action
+			api := AuthoringAPI{
+				Application: app,
+				ActorID:     func(*http.Request) string { return "principal_1" },
+				AuthorizeTypedDashboardAction: func(_ context.Context, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, bool, error) {
+					if projectID != "sales" || dashboardID != "dash-command" {
+						t.Fatalf("typed action target = %q/%q", projectID, dashboardID)
+					}
+					got = action
+					return true, false, nil
+				},
+			}
+			body := `{"kind":"` + test.kind + `","dashboardId":"dash-command","draftId":"draft-command","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"` + strings.Repeat("a", 64) + `"},` + test.field + `}`
+			req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(body))
+			req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000120")
+			rec := httptest.NewRecorder()
+			testAuthoringRouterWithAPI(api).ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want forbidden (%s)", rec.Code, rec.Body.String())
+			}
+			if got != test.action {
+				t.Fatalf("typed action = %q, want %q", got, test.action)
+			}
+			if app.command.ID != "" {
+				t.Fatalf("denied command reached application: %#v", app.command)
+			}
+		})
 	}
 }
 

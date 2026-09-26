@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesspg "github.com/flidai/leapview/internal/access/postgres"
 	deploymentpg "github.com/flidai/leapview/internal/deployment/postgres"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
 	"github.com/flidai/leapview/internal/servingstate"
 	servingstatepg "github.com/flidai/leapview/internal/servingstate/postgres"
@@ -64,7 +65,7 @@ func InitializeActiveTargetAuthorizationPolicy(
 	if string(state.ID) != target.ActiveGenerationID || state.ProjectID.String() != target.ProjectID || string(state.Environment) != target.Environment || state.Status != servingstate.StatusActive {
 		return errors.New("active serving policy does not match authorization policy upgrade target")
 	}
-	bindings, migratable, err := projectmodule.DecodeAuthorizationRoleBindingsJSON(state.AccessPolicyJSON)
+	bindings, migratable, err := projectmodule.DecodeAuthorizationRoleBindingsJSON(state.AccessPolicyJSON, projectgraph.ResourceID(target.ProjectID))
 	if err != nil {
 		return err
 	}

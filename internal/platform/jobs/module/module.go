@@ -5,6 +5,7 @@ package module
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -21,6 +22,15 @@ type Config struct {
 	Persistence *Persistence
 	Production  bool
 	Admission   jobs.Admitter
+	// AuthorityRevalidator rechecks the immutable job envelope against current
+	// grants and credential lifecycle after dequeue. It is intentionally
+	// separate from infrastructure admission: River credentials transport work
+	// but never supply product authority.
+	AuthorityRevalidator jobs.AuthorityRevalidator
+	// RequiredAuthorityKinds identifies migrated producers whose zero envelope
+	// must fail closed. Nonzero envelopes are validated/revalidated for every
+	// kind, while unmigrated zero-envelope producers retain their contracts.
+	RequiredAuthorityKinds map[string]struct{}
 	// LeaseTimeout is the module fallback for handlers that do not publish a
 	// narrower execution lease. It is not River's worker deadline; handlers
 	// that can outlive a lease must renew their capability-owned fence.
@@ -216,6 +226,12 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 		return river.JobSnooze(50 * time.Millisecond)
 	}
 	defer releasePartition()
+	if err := m.revalidateAuthority(ctx, history.Kind, history.Authority); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return m.failTerminalWithCode(ctx, history.ID, m.executionFence(ctx, rowAttempt), "ASYNC_JOB_AUTHORITY_INVALID")
+	}
 	class := history.WorkloadClass
 	if history.Kind == "refresh_pipeline" {
 		class = "refresh"
@@ -315,6 +331,10 @@ func (m *Module) workAndWait(ctx context.Context, riverJobID int64, rowAttempt i
 }
 
 func (m *Module) failTerminal(ctx context.Context, id string, fence jobs.Fence) error {
+	return m.failTerminalWithCode(ctx, id, fence, "ASYNC_JOB_FAILED")
+}
+
+func (m *Module) failTerminalWithCode(ctx context.Context, id string, fence jobs.Fence, code string) error {
 	// Check the River fence before reading product terminal state. A stale
 	// worker can otherwise observe a successor's terminal product update and
 	// return JobCancel while that successor's River row is still running.
@@ -325,13 +345,58 @@ func (m *Module) failTerminal(ctx context.Context, id string, fence jobs.Fence) 
 	if err == nil && (history.Status == jobs.StatusFailed || history.Status == jobs.StatusCancelled) {
 		return river.JobCancel(errors.New("ASYNC_JOB_FAILED"))
 	}
-	if err := m.repository.Fail(context.WithoutCancel(ctx), id, fence, []byte(`{"code":"ASYNC_JOB_FAILED"}`)); err != nil {
+	problem := []byte(`{"code":"` + code + `"}`)
+	if err := m.repository.Fail(context.WithoutCancel(ctx), id, fence, problem); err != nil {
 		if errors.Is(err, jobpostgres.ErrStaleRiverClaim) {
 			return errWaitForStaleRiverClaim
 		}
 		return river.JobCancel(errors.New("ASYNC_JOB_FAILURE_PERSISTENCE_FAILED"))
 	}
 	return river.JobCancel(errors.New("ASYNC_JOB_FAILED"))
+}
+
+func (m *Module) executionFence(ctx context.Context, attempt int) jobs.Fence {
+	owner := strings.TrimSpace(m.config.OwnerID)
+	if completion, ok := jobpostgres.RiverExecutionFence(ctx); ok && completion.Owner != "" {
+		owner = completion.Owner
+	}
+	return jobs.Fence{Owner: owner, Generation: int64(attempt)}
+}
+
+func (m *Module) revalidateAuthority(ctx context.Context, kind string, authority jobs.AuthorityEnvelope) error {
+	if authority.IsZero() {
+		if _, required := m.config.RequiredAuthorityKinds[kind]; !required {
+			return nil
+		}
+		return jobs.ErrAuthorityRequired
+	}
+	if err := authority.Validate(); err != nil {
+		return err
+	}
+	if len(authority.Permissions) == 0 {
+		return jobs.ErrAuthorityNoPermissions
+	}
+	if authority.Mode == jobs.CallerAuthorityMode && !time.Now().Before(authority.Credential.ExpiresAt) {
+		return fmt.Errorf("%w: caller credential expired", jobs.ErrAuthorityInvalid)
+	}
+	if authority.Mode == jobs.DelegatedWorkloadMode && authority.ExecutionGrant != nil && !time.Now().Before(authority.ExecutionGrant.ExpiresAt) {
+		return fmt.Errorf("%w: execution grant expired", jobs.ErrAuthorityInvalid)
+	}
+	if m.config.AuthorityRevalidator == nil {
+		return jobs.ErrAuthorityRevalidator
+	}
+	return m.config.AuthorityRevalidator.Revalidate(ctx, authority)
+}
+
+// RevalidateAuthority exposes the same live authority check used at River
+// dequeue to capability-owned execution services. Callers use it only at
+// their own protected unit/output boundaries; infrastructure credentials are
+// never substituted for the product envelope.
+func (m *Module) RevalidateAuthority(ctx context.Context, kind string, authority jobs.AuthorityEnvelope) error {
+	if m == nil {
+		return jobs.ErrAuthorityRevalidator
+	}
+	return m.revalidateAuthority(ctx, kind, authority)
 }
 
 func (m *Module) waitForStaleRiverClaim(ctx context.Context, riverJobID int64) error {

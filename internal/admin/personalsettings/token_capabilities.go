@@ -1,48 +1,110 @@
 package personalsettings
 
-import "github.com/flidai/leapview/internal/access"
+import (
+	"fmt"
+	"sort"
+	"strings"
 
-type capabilityDescriptor struct {
-	label       string
-	description string
-	category    string
-}
+	"github.com/flidai/leapview/internal/access"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+)
 
-// capabilityOptionsSignal presents the canonical project/resource actions as
-// one flat list. The browser may group by category, but no nested container
-// selector is part of the token contract.
-func capabilityOptionsSignal(effective []access.Capability) []CapabilityOptionSignal {
-	allowed := make(map[access.Capability]struct{}, len(effective))
-	for _, capability := range effective {
-		allowed[capability] = struct{}{}
-	}
-	options := make([]CapabilityOptionSignal, 0, len(effective))
-	for _, capability := range access.CanonicalCapabilities() {
-		if _, ok := allowed[capability]; !ok {
+// permissionOptionsSignal projects an already-authorized typed action-target pair into one
+// picker option. The pair remains attached to the option so the browser cannot
+// turn independent action and resource lists into a Cartesian product.
+// Structurally invalid, non-selectable, or duplicate pairs are omitted.
+func permissionOptionsSignal(permissionPairs []access.PermissionPair) []CapabilityOptionSignal {
+	options := make([]CapabilityOptionSignal, 0, len(permissionPairs))
+	seen := make(map[string]struct{}, len(permissionPairs))
+	for _, pair := range permissionPairs {
+		if err := pair.Validate(); err != nil {
 			continue
 		}
-		descriptor := describeCapability(capability)
+		definition, ok := access.Permission(pair.Action)
+		if !ok || !definition.UISelectable {
+			continue
+		}
+		key := permissionPairOptionKey(pair)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		permissions := []PermissionPairSignal{permissionPairSignal(pair)}
+		label, description, category := permissionOptionPresentation(definition, pair)
 		options = append(options, CapabilityOptionSignal{
-			Value: string(capability), Label: descriptor.label,
-			Description: descriptor.description, Category: descriptor.category,
+			Value:       key,
+			ActionLabel: definition.DisplayName,
+			ActionDescription: &definition.Description,
+			Label:       label,
+			Description: description,
+			Category:    category,
+			Permissions: &permissions,
 		})
 	}
+	sort.SliceStable(options, func(i, j int) bool { return options[i].Value < options[j].Value })
 	return options
 }
 
-var capabilityDescriptors = map[access.Capability]capabilityDescriptor{
-	access.CapabilityProjectAdmin:    {"Project administration", "Manage project-level access and settings.", "Administration"},
-	access.CapabilityResourceUse:     {"Use resource", "Open and use the project resource.", "Resource"},
-	access.CapabilityResourceRead:    {"Read resource", "View the resource and its governed data.", "Resource"},
-	access.CapabilityResourceEdit:    {"Edit resource", "Create and update the resource.", "Resource"},
-	access.CapabilityResourceManage:  {"Manage resource", "Delete and administer the resource.", "Resource"},
-	access.CapabilityResourceShare:   {"Share resource", "Share the resource with other principals.", "Resource"},
-	access.CapabilityResourcePublish: {"Publish resource", "Publish the resource to serving.", "Resource"},
+func permissionPairOptionKey(pair access.PermissionPair) string {
+	target := pair.Target
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%t|%s", pair.Action, target.Scope, target.InstanceID, target.ProjectID, target.ResourceKind, target.ResourceID, target.IncludeFuture, pair.Profile)
 }
 
-func describeCapability(capability access.Capability) capabilityDescriptor {
-	if descriptor, ok := capabilityDescriptors[capability]; ok {
-		return descriptor
+func permissionOptionPresentation(definition access.PermissionDefinition, pair access.PermissionPair) (string, string, string) {
+	actionLabel := definition.DisplayName
+	switch pair.Target.Scope {
+	case access.PermissionScopeResource:
+		kind := permissionResourceKindLabel(pair.Target.ResourceKind)
+		return permissionResourceName(pair.Target.ResourceID, kind), kind + " · " + actionLabel, permissionResourceKindCategory(pair.Target.ResourceKind)
+	case access.PermissionScopeProject:
+		if pair.Target.IncludeFuture {
+			return actionLabel, "Current and future " + strings.ToLower(permissionResourceKindCategory(pair.Target.ResourceKind)), permissionResourceKindCategory(pair.Target.ResourceKind)
+		}
+		if len(definition.ResourceKinds) == 1 && definition.ResourceKinds[0] != projectgraph.KindProjectNamespace {
+			return actionLabel, "Current project", permissionResourceKindCategory(definition.ResourceKinds[0])
+		}
+		return actionLabel, "Current project", definition.Family
+	case access.PermissionScopeInstance:
+		return actionLabel, "This instance", definition.Family
+	default:
+		return actionLabel, definition.Description, definition.Family
 	}
-	return capabilityDescriptor{label: string(capability), description: "Use this API capability.", category: "Other"}
+}
+
+func permissionResourceName(resourceID projectgraph.ResourceID, fallback string) string {
+	value := string(resourceID)
+	if separator := strings.LastIndexAny(value, ":/"); separator >= 0 {
+		value = value[separator+1:]
+	}
+	value = strings.Join(strings.Fields(strings.NewReplacer("_", " ", "-", " ").Replace(value)), " ")
+	if value == "" {
+		return fallback
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
+}
+
+func permissionResourceKindLabel(kind projectgraph.Kind) string {
+	switch kind {
+	case projectgraph.KindSemanticModel:
+		return "Semantic model"
+	case projectgraph.KindConnection:
+		return "Connection"
+	case projectgraph.KindSource:
+		return "Source"
+	case projectgraph.KindModel:
+		return "Model"
+	case projectgraph.KindPipeline:
+		return "Pipeline"
+	case projectgraph.KindDashboard:
+		return "Dashboard"
+	default:
+		return "Resource"
+	}
+}
+
+func permissionResourceKindCategory(kind projectgraph.Kind) string {
+	if kind == projectgraph.KindSemanticModel {
+		return "Semantic models"
+	}
+	return permissionResourceKindLabel(kind) + "s"
 }

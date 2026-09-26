@@ -1907,6 +1907,7 @@ model LoginPageEnvelope {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "login" })
 model LoginPageSignal {
   `backgroundModuleSrc`: string;
+  `developmentLogin`: boolean;
   `kind`: RouteKind;
   `localAuth`: boolean;
   `mustChangePassword`: boolean;

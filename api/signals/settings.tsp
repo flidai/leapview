@@ -82,6 +82,11 @@ model AccessAdministrationSignal {
   `projects`?: AccessProjectSignal[];
   `sessions`: AccessSessionSignal[];
   `roleAssignments`: AccessRoleAssignmentSignal[];
+  `rolePresets`: AccessRolePresetSignal[];
+  `permissionCatalog`: AccessRolePermissionDetailSignal[];
+  `roleMutationUnavailableReason`?: string;
+  `projectId`?: string;
+  `policyRevision`: int64;
   `activity`: AccessActivitySignal[];
   `selectedPrincipalId`?: string;
   `selectedGroupId`?: string;
@@ -144,7 +149,17 @@ model AccessGroupSignal {
 model AccessGroupReferenceSignal { `id`: string; `name`: string; `provider`: string; }
 model AccessPrincipalReferenceSignal { `id`: string; `email`: string; `displayName`: string; }
 model AccessSessionSignal { `id`: string; `kind`: string; `createdAt`?: string; `lastSeenAt`?: string; `expiresAt`?: string; }
-model AccessRoleAssignmentSignal { `projectId`: string; `resourceId`?: string; `resourceKind`?: string; `role`: string; `capabilities`: string[]; `sourceType`: string; `sourceId`: string; `sourceName`: string; }
+model AccessRoleAssignmentSignal { `bindingId`: string; `projectId`: string; `resourceId`?: string; `resourceKind`?: string; `role`: string; `capabilities`: string[]; `permissions`: string[]; `status`: string; `sourceType`: string; `sourceId`: string; `sourceName`: string; `subjectType`: string; `subjectId`: string; `subjectName`: string; `policyRevision`: int64; }
+model AccessRolePermissionDetailSignal {
+  `action`: string;
+  `displayName`: string;
+  `family`: string;
+  `scope`: string;
+  `resourceKinds`?: string[];
+  `description`: string;
+  `prerequisites`?: string[];
+}
+model AccessRolePresetSignal { `role`: string; `name`: string; `description`: string; `profile`: string; `permissions`: string[]; `details`: AccessRolePermissionDetailSignal[]; }
 model AccessActivitySignal { `id`: string; `action`: string; `actorId`?: string; `actorName`?: string; `status`?: string; `createdAt`: string; }
 
 @apigen.contract(#{ kind: "ui-command", tags: #["admin", "settings", "command"] })
@@ -158,6 +173,11 @@ model AccessAdministrationCommand {
   `email`?: string;
   `displayName`?: string;
   `revision`?: string;
+  `role`?: string;
+  `bindingId`?: string;
+  `subjectType`?: string;
+  `subjectId`?: string;
+  `expectedRevision`?: int64;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "settings", "signal"] })

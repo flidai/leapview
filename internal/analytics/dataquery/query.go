@@ -288,9 +288,14 @@ const (
 	OperationDashboardSpatialMetadata   = "dashboard_spatial_metadata"
 	OperationAPIQuery                   = "api_query"
 	OperationAPIPreview                 = "api_preview"
-	OperationAgentQuery                 = "agent_query"
-	OperationPreviewWindow              = "preview_window"
-	OperationSemanticExplore            = "semantic_explore"
+	// OperationDashboardDraftPreview marks queries emitted while rendering an
+	// authored draft. A draft is a new query shape, even though its compiled
+	// report uses the dashboard execution surface; authorization therefore
+	// requires semantic.query (and its semantic.consume prerequisite).
+	OperationDashboardDraftPreview = "dashboard_draft_preview"
+	OperationAgentQuery            = "agent_query"
+	OperationPreviewWindow         = "preview_window"
+	OperationSemanticExplore       = "semantic_explore"
 
 	StatusSuccess  = "success"
 	StatusError    = "error"

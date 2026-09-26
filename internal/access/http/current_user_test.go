@@ -15,18 +15,45 @@ import (
 
 type currentUserRepository struct {
 	access.Repository
-	principal  access.Principal
-	management access.PrincipalIdentityManagement
-	audit      access.AuditEventInput
-	password   struct{ current, next string }
+	principal        access.Principal
+	servicePrincipal access.Principal
+	management       access.PrincipalIdentityManagement
+	audit            access.AuditEventInput
+	tokenInput       access.ScopedAPITokenInput
+	password         struct{ current, next string }
 }
 
 func (r *currentUserRepository) IsPlatformAdmin(context.Context, string) (bool, error) {
 	return true, nil
 }
 
-func (r *currentUserRepository) CreateAPITokenWithMetadata(_ context.Context, input access.APITokenInput) (string, access.APIToken, error) {
+func (r *currentUserRepository) CreateScopedAPITokenWithMetadata(_ context.Context, input access.ScopedAPITokenInput) (string, access.APIToken, error) {
+	r.tokenInput = input
 	return "secret", access.APIToken{ID: "token_created", PrincipalID: input.PrincipalID, Name: input.Name, CreatedAt: "2026-08-10T12:00:00Z"}, nil
+}
+
+func (r *currentUserRepository) PrincipalForServicePrincipalSecret(_ context.Context, _, _ string) (access.Principal, error) {
+	if r.servicePrincipal.ID == "" {
+		return access.Principal{}, sql.ErrNoRows
+	}
+	return r.servicePrincipal, nil
+}
+
+func TestOAuthTokenCreationUsesExplicitEmptyTypedPermissionSet(t *testing.T) {
+	repository := &currentUserRepository{servicePrincipal: access.Principal{ID: "service-principal"}}
+	handler := Handler{
+		Repository: func() (access.Repository, error) { return repository, nil },
+	}
+	request := httptest.NewRequest(stdhttp.MethodPost, "/oauth/token", strings.NewReader("grant_type=client_credentials&client_id=service-principal&client_secret=secret&scope=ignored"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	handler.OAuthToken(response, request)
+	if response.Code != stdhttp.StatusOK {
+		t.Fatalf("OAuth token status = %d body=%s", response.Code, response.Body.String())
+	}
+	if repository.tokenInput.Permissions == nil || len(repository.tokenInput.Permissions) != 0 {
+		t.Fatalf("OAuth token permissions = %#v, want explicit empty list", repository.tokenInput.Permissions)
+	}
 }
 
 func (r *currentUserRepository) PrincipalByID(_ context.Context, principalID string) (access.Principal, error) {

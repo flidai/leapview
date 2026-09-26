@@ -77,6 +77,7 @@ type AccessInitializer interface {
 // Bootstrap is the native platform authority used to check the initialization
 // marker and permanently bind the instance environment.
 type Bootstrap interface {
+	InstanceID(context.Context) (string, error)
 	InstanceEnvironment(context.Context) (string, error)
 	BindInstanceEnvironment(context.Context, string) error
 }

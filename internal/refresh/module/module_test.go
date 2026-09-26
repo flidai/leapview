@@ -90,6 +90,36 @@ func TestBuildConstructsOwnedHTTPHandler(t *testing.T) {
 		t.Fatal("serving identity resolver missing")
 	}
 }
+
+func TestCaptureAuthorityAcceptsBrowserSessionEvidence(t *testing.T) {
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	identity := projectgraphIdentity("project_sales", "prod", "generation")
+	m := &Module{
+		service: refreshrun.Service{RequireAuthority: true},
+		currentSessionEvidence: func(context.Context) (access.CredentialEvidence, bool) {
+			return access.CredentialEvidence{Class: "session", ID: "session-1", Fingerprint: "fingerprint-1", PrincipalID: "principal-1", ExpiresAt: expiresAt}, true
+		},
+	}
+	authority, err := m.captureAuthority(t.Context(), identity, "pipeline_daily", "principal-1")
+	if err != nil {
+		t.Fatalf("capture browser-session authority: %v", err)
+	}
+	if authority.Credential == nil || authority.Credential.Class != "session" || authority.Credential.ID != "session-1" || authority.Credential.Fingerprint != "fingerprint-1" {
+		t.Fatalf("captured browser-session evidence = %#v", authority.Credential)
+	}
+}
+
+func TestCaptureAuthorityRejectsAuthoringCredential(t *testing.T) {
+	m := &Module{
+		service: refreshrun.Service{RequireAuthority: true},
+		currentCredential: func(context.Context) (access.APICredential, bool) {
+			return access.APICredential{Principal: access.Principal{ID: "principal-1"}, Authoring: &access.AuthoringSession{ID: "authoring-1"}}, true
+		},
+	}
+	if _, err := m.captureAuthority(t.Context(), projectgraphIdentity("project_sales", "prod", "generation"), "pipeline_daily", "principal-1"); !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("authoring credential capture error = %v, want forbidden", err)
+	}
+}
 func TestBuildRequiresCanonicalAuthorizer(t *testing.T) {
 	if _, err := Build(t.Context(), Config{}); err == nil {
 		t.Fatal("Build accepted a missing canonical authorizer")

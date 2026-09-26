@@ -1,17 +1,25 @@
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { chmod, mkdir, open, readFile, rm } from 'node:fs/promises'
+import { chromium } from '@playwright/test'
 
 const portFile = '.tmp/dev-server.port'
 const qaHome = '.tmp/qa-ui-framework/home'
+const qaSessionPath = `${qaHome}/browser-session.json`
 const qaPostgresEnv = {
   LEAPVIEW_POSTGRES_PROJECT_SUFFIX: '-qa-ui-framework',
   LEAPVIEW_POSTGRES_TEST_MODE: '1',
   LEAPVIEW_POSTGRES_DEV_ENV_FILE: `${qaHome}/postgres-dev.env`,
+}
+const qaRuntimeEnv = {
+  LEAPVIEW_HOME: qaHome,
+  LEAPVIEW_MANAGED_DATA_DIR: `${qaHome}/managed-data`,
+  LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES: '67108864',
 }
 const managedServerReadyAttempts = 1800
 let startedServer = false
 let cleanedUp = false
 let devTask: Bun.Subprocess | null = null
 let devTaskExitCode: number | null = null
+let createdSessionState = false
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
@@ -29,12 +37,18 @@ try {
 async function main(): Promise<void> {
   try {
     const baseURL = await resolveBaseURL()
+    const storageState = await prepareBrowserSession(baseURL)
+    const browserEnv = {
+      LEAPVIEW_BASE_URL: baseURL,
+      ...(storageState ? { LEAPVIEW_QA_STORAGE_STATE: storageState } : {}),
+      LEAPVIEW_QA_DISPOSABLE: startedServer ? '1' : '0',
+    }
     const qaScope = Bun.env.LEAPVIEW_UI_QA_SCOPE?.trim() || 'all'
     if (qaScope !== 'all' && qaScope !== 'visual') {
       throw new Error(`Unsupported LEAPVIEW_UI_QA_SCOPE=${JSON.stringify(qaScope)}; expected "all" or "visual"`)
     }
     if (qaScope === 'all') {
-      await run(['bun', 'run', 'qa:datastar-lit-routes'], { LEAPVIEW_BASE_URL: baseURL })
+      await run(['bun', 'run', 'qa:datastar-lit-routes'], browserEnv)
     }
     const visualCommand = [
       'bun',
@@ -44,13 +58,56 @@ async function main(): Promise<void> {
       '--config',
       'scripts/playwright.visual.config.ts',
     ]
-    const visualEnv = { LEAPVIEW_BASE_URL: baseURL }
+    const visualEnv = browserEnv
     if (Bun.env.LEAPVIEW_UPDATE_VISUAL_BASELINES === '1') {
       await run([...visualCommand, '--update-snapshots'], visualEnv)
     }
     await run(visualCommand, visualEnv)
   } finally {
     await cleanup()
+  }
+}
+
+async function prepareBrowserSession(baseURL: string): Promise<string | null> {
+  const supplied = Bun.env.LEAPVIEW_QA_STORAGE_STATE?.trim()
+  if (supplied) return supplied
+  const address = new URL(baseURL)
+  if (address.protocol !== 'http:' || !['localhost', '127.0.0.1', '::1'].includes(address.hostname)) return null
+
+  const browser = await chromium.launch()
+  try {
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    const response = await page.goto(new URL('/login', baseURL).toString(), { waitUntil: 'domcontentloaded' })
+    if (!response?.ok()) throw new Error(`QA development login returned HTTP ${response?.status() ?? 'unknown'}`)
+    if (new URL(page.url()).pathname === '/login') {
+      const shortcut = page.getByRole('button', { name: 'Continue as Local Developer', exact: true })
+      if (!await shortcut.isVisible()) {
+        throw new Error('Local QA requires the managed development quick login or LEAPVIEW_QA_STORAGE_STATE')
+      }
+      await shortcut.click()
+      await page.waitForURL((url) => url.pathname !== '/login')
+    }
+    const root = await page.goto(new URL('/', baseURL).toString(), { waitUntil: 'domcontentloaded' })
+    if (!root?.ok() || new URL(page.url()).pathname !== '/') {
+      throw new Error('QA browser session cannot open Insights after local sign-in')
+    }
+    await page.locator('lv-catalog-page').waitFor()
+    const state = await context.storageState()
+    if (state.cookies.length === 0) return null
+    await mkdir(qaHome, { recursive: true, mode: 0o700 })
+    await chmod(qaHome, 0o700)
+    const file = await open(qaSessionPath, 'w', 0o600)
+    try {
+      await file.chmod(0o600)
+      await file.writeFile(JSON.stringify(state))
+    } finally {
+      await file.close()
+    }
+    createdSessionState = true
+    return qaSessionPath
+  } finally {
+    await browser.close()
   }
 }
 
@@ -65,12 +122,10 @@ async function resolveBaseURL(): Promise<string> {
   await prepareManagedHome()
   devTask = spawn(['task', 'dev'], {
     ...qaPostgresEnv,
+    ...qaRuntimeEnv,
     LEAPVIEW_DEV_LOG_LINES: '0',
     LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts),
     LEAPVIEW_DEV_SKIP_PUBLISH: '1',
-    LEAPVIEW_HOME: qaHome,
-    LEAPVIEW_MANAGED_DATA_DIR: `${qaHome}/managed-data`,
-    LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES: '67108864',
   }, 'ignore')
   void devTask.exited.then((code) => {
     devTaskExitCode = code
@@ -99,11 +154,13 @@ async function removeManagedHome(): Promise<void> {
 }
 
 async function deployManagedProject(): Promise<void> {
-  const command = ['task', 'dev:publish']
+  // A disposable QA database has no pinned managed-data revision yet. The
+  // ordinary dev:publish task skips data sync and is only safe after seeding.
+  const command = ['./scripts/dev-server.sh', 'publish']
   let lastError: unknown
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await run(command, qaPostgresEnv)
+      await run(command, { ...qaPostgresEnv, ...qaRuntimeEnv, LEAPVIEW_DEV_SKIP_DATA_SYNC: '0' })
       return
     } catch (error) {
       lastError = error
@@ -167,24 +224,29 @@ async function reachable(baseURL: string): Promise<boolean> {
 }
 
 async function cleanup(): Promise<void> {
-  if (!startedServer || cleanedUp) return
+  if (cleanedUp) return
   cleanedUp = true
   try {
+    if (!startedServer) return
     await run(['task', 'dev:stop'])
   } finally {
-    if (devTask && devTaskExitCode === null) {
-      const exited = await Promise.race([
-        devTask.exited.then(() => true),
-        sleep(5000).then(() => false),
-      ])
-      if (!exited) {
-        devTask.kill()
-      }
-    }
     try {
-      await destroyManagedPostgres()
+      if (startedServer) {
+        if (devTask && devTaskExitCode === null) {
+          const exited = await Promise.race([
+            devTask.exited.then(() => true),
+            sleep(5000).then(() => false),
+          ])
+          if (!exited) devTask.kill()
+        }
+        try {
+          await destroyManagedPostgres()
+        } finally {
+          await removeManagedHome()
+        }
+      }
     } finally {
-      await removeManagedHome()
+      if (createdSessionState) await rm(qaSessionPath, { force: true })
     }
   }
 }

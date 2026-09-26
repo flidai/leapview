@@ -186,6 +186,7 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 		AuthorizationPolicyRevision: targetPolicy.revision,
 		AuthorizationPolicyDigest:   targetPolicy.digest,
 		AuthorizationFingerprint:    authorizationFingerprint,
+		AuthorizationSnapshot:       targetPolicy.snapshot,
 		Generation: release.CandidateGenerationArtifact{
 			Identity: request.ServingIdentity, ServingArtifactID: request.Artifact.ServingArtifactID,
 			ArtifactDigest: digest, BundleManifestJSON: validation.ManifestJSON,

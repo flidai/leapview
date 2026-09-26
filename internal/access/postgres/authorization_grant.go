@@ -72,7 +72,7 @@ func (r *Repository) upsertAuthorizationGrantCore(ctx context.Context, db DBTX, 
 	if err != nil {
 		return access.AuthorizationPolicy{}, err
 	}
-	if replay, ok, replayErr := r.checkAuthorizationPolicyOperation(ctx, db, input, requestDigest); ok || replayErr != nil {
+	if replay, ok, replayErr := r.checkAuthorizationPolicyOperation(ctx, db, input.Scope, input.IdempotencyKey, requestDigest); ok || replayErr != nil {
 		return replay, replayErr
 	}
 	if err := access.ValidateAuthorizationGrant(grantInput.Grant); err != nil {
@@ -96,7 +96,7 @@ func (r *Repository) upsertAuthorizationGrantCore(ctx context.Context, db DBTX, 
 	head := policyHeadFromLockRow(headRow)
 	// A second caller with the same key can have waited on the head lock after
 	// the first caller committed. Re-check idempotency after locking before CAS.
-	if replay, ok, replayErr := r.checkAuthorizationPolicyOperation(ctx, db, input, requestDigest); ok || replayErr != nil {
+	if replay, ok, replayErr := r.checkAuthorizationPolicyOperation(ctx, db, input.Scope, input.IdempotencyKey, requestDigest); ok || replayErr != nil {
 		return replay, replayErr
 	}
 	if input.ExpectedRevision != head.Revision {
@@ -127,11 +127,11 @@ func (r *Repository) upsertAuthorizationGrantCore(ctx context.Context, db DBTX, 
 		return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy revision: %w", err)
 	}
 	for _, binding := range bindings {
-		encoded, marshalErr := json.Marshal(binding.Capabilities)
+		caps, permissions, profile, permissionRole, marshalErr := authorizationRoleBindingEncoding(binding)
 		if marshalErr != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("encode authorization policy role binding %q: %w", binding.ID, marshalErr)
 		}
-		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: nextRevision, ID: binding.ID, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID, Role: string(binding.Role), Capabilities: encoded, Name: binding.Name}); err != nil {
+		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: nextRevision, ID: binding.ID, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID, Role: nullableString(string(binding.Role)), Capabilities: caps, PermissionProfile: profile, Permissions: permissions, PermissionRole: permissionRole, Name: binding.Name}); err != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy role binding %q: %w", binding.ID, err)
 		}
 	}

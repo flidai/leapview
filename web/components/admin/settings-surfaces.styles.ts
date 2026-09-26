@@ -66,6 +66,38 @@ export const settingsSurfaceStyles = css`
   .inline-value code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .text-button { min-height: auto; flex: 0 0 auto; border-color: transparent; background: transparent; color: var(--lv-fg-link); padding: var(--base-size-2); }
   .role-source { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .role-grant-dialog { width: min(42rem, calc(100vw - var(--base-size-32))); }
+  .role-grant-modal { box-sizing: border-box; width: 100%; min-width: 0; }
+  .role-scope { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: var(--base-size-12); }
+  .role-scope > span { color: var(--lv-fg-muted); }
+  .role-options { display: grid; gap: var(--base-size-8); margin: 0; border: 0; padding: 0; }
+  .role-options legend { margin-bottom: var(--base-size-8); color: var(--lv-fg-default); font-weight: var(--base-text-weight-semibold); }
+  .role-option-card { display: grid; gap: var(--base-size-8); }
+  .role-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--base-size-8); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); padding: var(--base-size-12); color: var(--lv-fg-default); cursor: pointer; }
+  .role-option.selected { border-color: var(--lv-border-accent); background: var(--lv-bg-accent-muted); }
+  .role-option input { min-height: auto; margin-top: 3px; }
+  .role-option > span { display: grid; gap: var(--base-size-4); }
+  .role-option small { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .role-option .role-permission-summary { color: var(--lv-fg-accent); }
+  .role-inspector { display: grid; gap: var(--base-size-8); padding: 0 var(--base-size-12) var(--base-size-8); }
+  .role-inspector summary { color: var(--lv-fg-link); cursor: pointer; font: var(--lv-type-caption); }
+  .role-definition-facts { display: grid; grid-template-columns: minmax(8rem, .45fr) minmax(0, 1fr); gap: var(--base-size-6) var(--base-size-12); border-block: var(--lv-border-muted); padding-block: var(--base-size-8); }
+  .role-definition-facts > span { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .role-definition-facts > strong { min-width: 0; overflow-wrap: anywhere; font: var(--lv-type-body-compact); }
+  .role-permission-list { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; }
+  .role-permission-list li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--base-size-12); min-width: 0; padding: var(--base-size-6) 0; border-bottom: var(--lv-border-muted); font: var(--lv-type-body-compact); }
+  .role-permission-list li:last-child { border-bottom: 0; }
+  .role-permission-list code { color: var(--lv-fg-default); overflow-wrap: anywhere; }
+  .role-permission-list span { color: var(--lv-fg-muted); overflow-wrap: anywhere; }
+  .role-catalogue { display: grid; gap: var(--base-size-12); }
+  .catalog-drawer-title, .catalog-drawer-body { display: grid; gap: var(--base-size-12); min-width: 0; }
+  .catalog-drawer-title h2 { margin: 0; overflow-wrap: anywhere; }
+  .catalog-drawer-title > code { color: var(--lv-fg-muted); }
+  .catalog-drawer-body > .primary { width: fit-content; }
+  .role-catalogue-heading { display: flex; align-items: start; justify-content: space-between; gap: var(--base-size-12); }
+  .role-catalogue-heading > div { display: grid; gap: var(--base-size-4); }
+  .role-inspector > .muted { font: var(--lv-type-caption); }
+  .access-overview { gap: var(--base-size-20); }
   .detail-subsection { display: grid; gap: var(--base-size-12); }
   .detail-empty-row { display: grid; grid-template-columns: minmax(10rem, 0.45fr) minmax(0, 1fr); gap: var(--base-size-16); color: var(--lv-fg-muted); }
   .detail-empty-row strong { color: var(--lv-fg-muted); font-weight: var(--base-text-weight-normal); }
@@ -148,5 +180,7 @@ export const settingsSurfaceStyles = css`
     .audit-drawer-fact { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
     .audit-footer { align-items: stretch; }
     .audit-footer .audit-load-more { width: 100%; }
+    .role-catalogue-heading { flex-direction: column; }
+    .role-definition-facts { grid-template-columns: minmax(6.5rem, .6fr) minmax(0, 1fr); }
   }
 `

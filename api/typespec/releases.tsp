@@ -191,14 +191,14 @@ model ReleaseArtifactDigestMismatchFailure {}
 interface Releases {
   @summary("List project releases")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "delivery.read", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   listReleases(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ReleaseListResponse> | CommonErrors;
 
   @summary("Create a draft project release")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH", action: "delivery.plan", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.failsWith(ReleaseConflictFailure)
   @apigen.command(#{
     auditAction: "release.created",
@@ -211,15 +211,15 @@ interface Releases {
   @summary("Get a project release")
   @route("/{release}")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "delivery.read", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   getRelease(@path project: ResourceId, @path release: string): OkJson<ReleaseResponse> | CommonErrors;
 
   @summary("Finalize and validate a release")
   @route("/{release}/finalize")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH", action: "delivery.build", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   @apigen.asyncExecution(Releases.getRelease, Releases.listReleaseEvents, #{
     guarantee: "transactional",
     jobKind: "release.finalize",
@@ -245,7 +245,7 @@ interface Releases {
   @summary("List or stream release events")
   @route("/{release}/events")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
-  @extension("x-leapview-object-scope", "project")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "delivery.read", resolver: "delivery" })
+  @extension("x-leapview-object-scope", "delivery")
   listReleaseEvents(@path project: ResourceId, @path release: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
 }

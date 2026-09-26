@@ -79,7 +79,7 @@ func (o Operations) Initialize(ctx context.Context, request adminoffline.Initial
 	}, adminoffline.Dependencies{
 		Locker:      nativeLocker{home: cfg.HomeDir, acquire: deps.AcquireLock},
 		State:       nativeState{bootstrap: bootstrap, initialized: initializer},
-		Initializer: nativeInitializer{initializer: initializer},
+		Initializer: nativeInitializer{initializer: initializer, bootstrap: bootstrap},
 		Recovery:    nativeRecovery{path: filepath.Join(cfg.HomeDir, adminoffline.CredentialRecoveryFileName)},
 		Now:         deps.Now,
 	})
@@ -346,22 +346,30 @@ func (s nativeState) Initialized(ctx context.Context) (bool, error) {
 
 type nativeInitializer struct {
 	initializer AccessInitializer
+	bootstrap   Bootstrap
 }
 
 func (n nativeInitializer) Initialize(ctx context.Context, input adminoffline.InitializationInput, prepare func(adminoffline.InitialCredentials) error) (adminoffline.InitialCredentials, error) {
 	if n.initializer == nil {
 		return adminoffline.InitialCredentials{}, errors.New("PostgreSQL access initializer is unavailable")
 	}
+	if nilBootstrap(n.bootstrap) {
+		return adminoffline.InitialCredentials{}, errors.New("PostgreSQL bootstrap authority is unavailable")
+	}
+	instanceID, err := n.bootstrap.InstanceID(ctx)
+	if err != nil {
+		return adminoffline.InitialCredentials{}, fmt.Errorf("read PostgreSQL instance identity: %w", err)
+	}
 	result, err := n.initializer.InitializeInstance(ctx, access.InstanceInitializationInput{
-		Email: input.Email, Environment: input.Environment, Now: input.Now,
+		InstanceID: instanceID, Email: input.Email, Environment: input.Environment, Now: input.Now,
 	}, func(credentials access.InitialInstanceCredentials) error {
 		if prepare == nil {
 			return nil
 		}
 		return prepare(adminoffline.InitialCredentials{
 			Email: credentials.Email, TemporaryPassword: credentials.TemporaryPassword,
-			PublisherToken:          credentials.PublisherToken,
-			PublisherTokenExpiresAt: credentials.PublisherTokenExpiresAt.Format(time.RFC3339),
+			ProjectClaimToken:          credentials.ProjectClaimToken,
+			ProjectClaimTokenExpiresAt: credentials.ProjectClaimTokenExpiresAt.Format(time.RFC3339),
 		})
 	})
 	if errors.Is(err, access.ErrInstanceAlreadyInitialized) {
@@ -369,8 +377,8 @@ func (n nativeInitializer) Initialize(ctx context.Context, input adminoffline.In
 	}
 	return adminoffline.InitialCredentials{
 		Email: result.Email, TemporaryPassword: result.TemporaryPassword,
-		PublisherToken:          result.PublisherToken,
-		PublisherTokenExpiresAt: result.PublisherTokenExpiresAt.Format(time.RFC3339),
+		ProjectClaimToken:          result.ProjectClaimToken,
+		ProjectClaimTokenExpiresAt: result.ProjectClaimTokenExpiresAt.Format(time.RFC3339),
 	}, err
 }
 

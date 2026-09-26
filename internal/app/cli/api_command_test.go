@@ -39,9 +39,9 @@ func TestGeneratedCommandHeadersFollowIdempotencyAndConcurrencyPolicy(t *testing
 		t.Fatalf("create command headers = %q/%q", key, ifMatch)
 	}
 
-	update, ok := apiaggregate.GetAPIGenOperationContract("updateGrant")
+	update, ok := apiaggregate.GetAPIGenOperationContract("updateAgentConfig")
 	if !ok || update.Command == nil {
-		t.Fatal("updateGrant command contract is missing")
+		t.Fatal("updateAgentConfig command contract is missing")
 	}
 	key, ifMatch = generatedCommandHeaders(update, &apiCallOptions{idempotencyKey: "ignored", ifMatch: `"revision-1"`})
 	if key != "" || ifMatch != `"revision-1"` {
@@ -112,9 +112,9 @@ func TestAPICommandCallUsesGeneratedContract(t *testing.T) {
 	}
 }
 
-func TestAPICommandInvokesGrantOperation(t *testing.T) {
+func TestAPICommandInvokesResourceShareGrantOperation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects/sales/grants" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects/sales/resource-share-grants" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("X-LeapView-Client"); got != "cli" {
@@ -127,7 +127,7 @@ func TestAPICommandInvokesGrantOperation(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		if body["resourceKind"] != "dashboard" || body["resourceId"] != "dashboard:executive" || body["subjectId"] != "principal-viewer" || body["capability"] != "RESOURCE_READ" {
+		if body["resourceUid"] != "dashboard:executive@v1" || body["resourceKind"] != "dashboard" || body["resourceId"] != "dashboard:executive" || body["recipientId"] != "principal-viewer" {
 			t.Fatalf("body = %#v", body)
 		}
 		w.WriteHeader(http.StatusCreated)
@@ -138,15 +138,15 @@ func TestAPICommandInvokesGrantOperation(t *testing.T) {
 	output := captureStdout(t, func() {
 		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token"})
 		cmd.SetArgs([]string{
-			"call", "createGrant",
+			"call", "issueResourceShareGrant",
 			"--target", server.URL,
 			"--token", "token",
 			"--path", "project=sales",
-			"--body-json", `{"resourceKind":"dashboard","resourceId":"dashboard:executive","subjectType":"principal","subjectId":"principal-viewer","capability":"RESOURCE_READ"}`,
+			"--body-json", `{"resourceUid":"dashboard:executive@v1","resourceKind":"dashboard","resourceId":"dashboard:executive","recipientType":"principal","recipientId":"principal-viewer","permissions":[{"profile":"leapview.permissions/v1","action":"dashboard.read","target":{"scope":"resource","projectId":"sales","resourceKind":"dashboard","resourceId":"dashboard:executive"}}]}`,
 			"--idempotency-key", "grant-commit-a",
 		})
 		if err := cmd.Execute(); err != nil {
-			t.Fatalf("api call createGrant: %v", err)
+			t.Fatalf("api call issueResourceShareGrant: %v", err)
 		}
 	})
 	if strings.TrimSpace(output) != `{"id":"grant-1"}` {

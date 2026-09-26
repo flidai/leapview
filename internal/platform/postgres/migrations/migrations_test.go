@@ -27,7 +27,19 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql,018_refresh_run_notifications.sql,019_refresh_schedule_notifications.sql,020_release_transition_operation.sql,021_api_token_descriptions.sql,022_approval_resource_uid_restore.sql,023_recovery_qualification_ledger.sql,024_schema_23_convergence.sql,025_profile_application.sql,026_development_session.sql,027_authorization_policy_grants.sql,028_dashboard_authoring_delete.sql,029_agent_configuration.sql,030_browser_session_client_label.sql,031_privacy_action_execution.sql,032_restore_lifecycle_actions.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), strings.Join([]string{
+		"001_control_plane.sql", "002_project_free_source_bundle.sql", "003_dashboard_authoring_runtime_lock.sql", "004_dashboard_authoring_capability_evidence.sql",
+		"005_resource_uid_registry.sql", "006_recovery_successor_v3.sql", "007_contract_publication_evidence.sql", "008_managed_provider_version_observation.sql",
+		"009_managed_data_retention_lifecycle.sql", "010_remove_unreachable_fenced_attempt_state.sql", "011_agent_conversation_transcript_revision.sql",
+		"012_recovery_capture_core_transport.sql", "013_agent_conversation_delete.sql", "014_release_policy_authority.sql", "015_oci_artifact_admission_authority.sql",
+		"016_migration_capability_authority.sql", "017_target_authorization_policy.sql", "018_refresh_run_notifications.sql", "019_refresh_schedule_notifications.sql",
+		"020_release_transition_operation.sql", "021_api_token_descriptions.sql", "022_approval_resource_uid_restore.sql", "023_recovery_qualification_ledger.sql",
+		"024_schema_23_convergence.sql", "025_profile_application.sql", "026_development_session.sql", "027_authorization_policy_grants.sql", "028_dashboard_authoring_delete.sql",
+		"029_agent_configuration.sql", "030_browser_session_client_label.sql", "031_privacy_action_execution.sql", "032_restore_lifecycle_actions.sql",
+		"033_platform_admin_token_capability.sql", "034_typed_api_token_permissions.sql", "035_job_authority_envelope.sql",
+		"036_typed_permission_validation_hardening.sql", "037_typed_authorization_assignments.sql", "038_durable_authority_grants.sql",
+		"039_resource_share_no_onward_delegation.sql", "040_reject_active_legacy_api_tokens.sql", "041_typed_authoring_permissions.sql", "042_edit_api_tokens.sql",
+	}, ","); got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -51,59 +63,157 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 	}
 }
 
-func TestDashboardAuthoringDeleteMigrationIsForwardOnlyAndDraftScoped(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "028_dashboard_authoring_delete.sql")
+func TestTypedPermissionValidationHardeningMigrationIsExactAndImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "036_typed_permission_validation_hardening.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	migration := string(contents)
 	for _, required := range []string{
-		"dashboard.authoring_delete_commands",
-		"dashboard.authoring_delete_dashboard",
-		"only private draft dashboards can be deleted",
-		"authoring delete compare-and-swap conflict",
-		"destructive down is forbidden",
+		"CREATE OR REPLACE FUNCTION access.valid_permission_pairs",
+		"jsonb_object_keys(item)",
+		"jsonb_object_keys(target)",
+		"jsonb_typeof(item->'profile')",
+		"jsonb_typeof(item->'action')",
+		"jsonb_typeof(target->'scope')",
+		"jsonb_typeof(target->'resourceKind')",
+		"jsonb_typeof(target->'resourceId')",
+		"semantic_model",
+		"resource.share",
+		"workload.delegate",
+		"typed permission validation hardening is immutable",
 	} {
 		if !strings.Contains(migration, required) {
-			t.Errorf("dashboard delete migration missing %q", required)
+			t.Errorf("typed permission hardening migration missing %q", required)
 		}
 	}
-	down := migration[strings.Index(migration, "-- +goose Down"):]
-	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
-		t.Error("dashboard delete migration Down must refuse instead of deleting evidence")
-	}
 	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
-		t.Error("dashboard delete migration must restore the migrator role")
+		t.Error("typed permission hardening migration must restore the migrator role")
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP FUNCTION") {
+		t.Error("typed permission hardening Down must refuse instead of deleting the validator")
 	}
 }
 
-func TestDevelopmentSessionMigrationIsOwnerScopedAndImmutable(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "026_development_session.sql")
+func TestJobAuthorityEnvelopeMigrationMakesEvidenceImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "035_job_authority_envelope.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	migration := string(contents)
 	for _, required := range []string{
-		"project.development_session", "owner_id", "checkout_id", "worktree_id",
-		"attempted_artifact_digest", "last_valid_candidate_id", "last_valid_preview_url",
-		"UNIQUE (owner_id, checkout_id, worktree_id, project_id, target_id, environment)",
-		"development_session_mutation_guard", "revision must increase monotonically",
-		"GRANT SELECT, INSERT, UPDATE ON project.development_session TO leapview_control_runtime",
-		"development session authority migration is immutable",
+		"ADD COLUMN IF NOT EXISTS authority_envelope jsonb NOT NULL",
+		"CHECK (jsonb_typeof(authority_envelope) = 'object')",
+		"ALTER COLUMN authority_envelope DROP DEFAULT",
+		"OLD.authority_envelope",
+		"NEW.authority_envelope",
 	} {
 		if !strings.Contains(migration, required) {
-			t.Errorf("development session migration missing %q", required)
+			t.Errorf("job authority migration missing %q", required)
 		}
 	}
-	if strings.Contains(strings.ToUpper(migration[strings.Index(migration, "-- +goose Down"):]), "DROP TABLE") {
-		t.Error("development session migration Down must refuse instead of deleting evidence")
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("job authority envelope migration must restore the migrator role")
+	}
+}
+
+func TestTypedTokenPermissionMigrationRevokesUnscopedLegacyCredentials(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "034_typed_api_token_permissions.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"access.valid_permission_pairs",
+		"permission_profile text",
+		"permissions jsonb",
+		"legacy_scope_cannot_be_safely_converted",
+		"UPDATE access.api_token",
+		"SET revoked_at = clock_timestamp()",
+		"OLD.permission_profile IS DISTINCT FROM NEW.permission_profile",
+		"OLD.permissions IS DISTINCT FROM NEW.permissions",
+		"typed API token permission migration revokes unsafe legacy credentials and is irreversible",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("typed API token migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("typed API token migration must restore the migrator role")
+	}
+	if down := migration[strings.Index(migration, "-- +goose Down"):]; strings.Contains(strings.ToUpper(down), "DROP COLUMN") {
+		t.Error("typed API token migration must refuse destructive rollback after revocation")
+	}
+}
+
+func TestActiveAPITokenScopeHardeningIsForwardOnly(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "040_reject_active_legacy_api_tokens.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"INSERT INTO audit.audit_event", "UPDATE access.api_token", "SET revoked_at = clock_timestamp()",
+		"CREATE OR REPLACE FUNCTION access.valid_permission_pairs", "instance.project.claim",
+		"DROP CONSTRAINT api_token_typed_permissions_check", "permissions IS NOT NULL AND capabilities IS NULL",
+		"revoked_at IS NOT NULL", "active typed API token invariant is immutable",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("active typed API token migration missing %q", required)
+		}
+	}
+}
+
+func TestEditableAPITokenMigrationPreservesCredentialIdentity(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "042_edit_api_tokens.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"ADD COLUMN modified_at", "UPDATE access.api_token SET modified_at = created_at",
+		"CREATE OR REPLACE FUNCTION access.reject_token_identity_rewrite",
+		"OLD.token_fingerprint<>NEW.token_fingerprint", "OLD.verifier<>NEW.verifier",
+		"OLD.principal_id<>NEW.principal_id", "OLD.permission_profile IS DISTINCT FROM NEW.permission_profile",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("editable API token migration missing %q", required)
+		}
 	}
 	up := migration[:strings.Index(migration, "-- +goose Down")]
 	if !strings.HasSuffix(strings.TrimSpace(up), "RESET ROLE;") {
-		t.Error("development session migration Up must restore the Goose migrator role before version recording")
+		t.Error("editable API token migration must restore the migrator role")
+	}
+	if !strings.Contains(migration, "editable API token migration is forward-only") {
+		t.Error("editable API token migration must refuse rollback")
+	}
+}
+
+func TestTypedAuthoringPermissionMigrationRetiresLegacyCredentials(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "041_typed_authoring_permissions.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"ALTER COLUMN capabilities DROP NOT NULL",
+		"ADD COLUMN permission_profile text NOT NULL DEFAULT 'leapview.permissions/v1'",
+		"ADD COLUMN permissions jsonb NOT NULL DEFAULT '[]'::jsonb",
+		"device_authorization.retired",
+		"SET expires_at = LEAST(expires_at, clock_timestamp())",
+		"authoring_session.revoked",
+		"SET revoked_at = COALESCE(revoked_at, clock_timestamp())",
+		"SET active = FALSE",
+		"OLD.permissions IS DISTINCT FROM NEW.permissions",
+		"typed authoring permissions migration is irreversible",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("typed authoring migration missing %q", required)
+		}
 	}
 	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
-		t.Error("development session migration must restore the migrator role")
+		t.Error("typed authoring migration must restore the migrator role")
 	}
 }
 

@@ -52,7 +52,7 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 		t.Fatalf("initialize fresh PostgreSQL target: %v", err)
 	}
 	credentials, err := adminoffline.DecodeInitialCredentials(firstCredentials.Bytes())
-	if err != nil || credentials.Email != cfg.BootstrapEmail || credentials.TemporaryPassword == "" || credentials.PublisherToken == "" {
+	if err != nil || credentials.Email != cfg.BootstrapEmail || credentials.TemporaryPassword == "" || credentials.ProjectClaimToken == "" || credentials.ProjectClaimTokenExpiresAt == "" {
 		t.Fatalf("decode one-time credentials: credentials=%#v err=%v", credentials, err)
 	}
 	var replayCredentials bytes.Buffer
@@ -95,7 +95,7 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	if replayBootstrap.String() != firstBootstrap.String() || !strings.Contains(firstBootstrap.String(), "applied: true") {
 		t.Fatalf("physical-pool replay drift: first=%q replay=%q", firstBootstrap.String(), replayBootstrap.String())
 	}
-	for _, secret := range []string{roles.controlRuntime.Password, roles.controlMigrator.Password, roles.catalogRuntime.Password, roles.catalogMigrator.Password, credentials.TemporaryPassword, credentials.PublisherToken} {
+	for _, secret := range []string{roles.controlRuntime.Password, roles.controlMigrator.Password, roles.catalogRuntime.Password, roles.catalogMigrator.Password, credentials.TemporaryPassword, credentials.ProjectClaimToken} {
 		if strings.Contains(firstBootstrap.String(), secret) {
 			t.Fatal("physical-pool bootstrap output exposed credential material")
 		}
@@ -119,7 +119,7 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	if err := target.Start(t.Context()); err != nil {
 		t.Fatalf("start production application after native onboarding: %v", err)
 	}
-	firstInstance := assertPostgresOnboardingTarget(t, target, credentials.PublisherToken, credentials.Email)
+	firstInstance := assertPostgresOnboardingTarget(t, target, credentials.ProjectClaimToken, credentials.Email)
 	if err := target.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown onboarded production application: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	if err := secondTarget.Start(t.Context()); err != nil {
 		t.Fatalf("start rebuilt production application after native onboarding restart: %v", err)
 	}
-	secondInstance := assertPostgresOnboardingTarget(t, secondTarget, credentials.PublisherToken, credentials.Email)
+	secondInstance := assertPostgresOnboardingTarget(t, secondTarget, credentials.ProjectClaimToken, credentials.Email)
 	if secondInstance != firstInstance {
 		t.Fatalf("restart changed instance API identity: first=%#v second=%#v", firstInstance, secondInstance)
 	}
@@ -171,7 +171,7 @@ type postgresOnboardingPersistenceSnapshot struct {
 	Contract   physicalpool.AdmissionContract
 }
 
-func assertPostgresOnboardingTarget(t *testing.T, target *Application, publisherToken, expectedEmail string) apigenapi.InstanceResponse {
+func assertPostgresOnboardingTarget(t *testing.T, target *Application, claimToken, expectedEmail string) apigenapi.InstanceResponse {
 	t.Helper()
 	requestHTTP := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	requestHTTP.Host = "localhost"
@@ -196,13 +196,12 @@ func assertPostgresOnboardingTarget(t *testing.T, target *Application, publisher
 		t.Fatalf("onboarded production instance API = %#v", instance)
 	}
 
-	// A publisher token is an initialized, read-only credential smoke through
-	// the public API. Governed semantic-model/dashboard reads are intentionally
-	// not attempted: clean onboarding has no claimed project or active serving
-	// generation, and creating that fixture would broaden this restart proof.
+	// The short-lived claim credential remains a valid authenticated identity
+	// while the project-claim exchange is pending. Governed reads are not
+	// attempted: clean onboarding has no claimed project or serving generation.
 	meRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
 	meRequest.Host = "localhost"
-	meRequest.Header.Set("Authorization", "Bearer "+publisherToken)
+	meRequest.Header.Set("Authorization", "Bearer "+claimToken)
 	meResponse := httptest.NewRecorder()
 	target.Handler().ServeHTTP(meResponse, meRequest)
 	if meResponse.Code != http.StatusOK {

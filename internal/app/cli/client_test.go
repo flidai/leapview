@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/stretchr/testify/require"
@@ -225,6 +226,12 @@ func TestCapabilityAPIClientExchangesEphemeralWorkloadIdentity(t *testing.T) {
 	t.Setenv("LEAPVIEW_WORKLOAD_CLIENT_ID", "sp-ci")
 	t.Setenv("LEAPVIEW_WORKLOAD_CLIENT_SECRET", "service-secret")
 	t.Setenv("LEAPVIEW_WORKLOAD_PROJECT", "analytics")
+	actions := access.DefaultAuthoringActions()
+	scopes := make([]string, len(actions))
+	for index, action := range actions {
+		scopes[index] = string(action)
+	}
+	wantScope := strings.Join(scopes, " ")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -257,14 +264,14 @@ func TestCapabilityAPIClientExchangesEphemeralWorkloadIdentity(t *testing.T) {
 				r.Form.Get("client_id") != "sp-ci" ||
 				r.Form.Get("client_secret") != "service-secret" ||
 				r.Form.Get("project_id") != "analytics" ||
-				r.Form.Get("scope") != "RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH" ||
+				r.Form.Get("scope") != wantScope ||
 				r.Form.Get("lifetime_seconds") != "900" {
 				t.Fatalf("workload form = %v", r.Form)
 			}
 			_, _ = w.Write([]byte(`{
 				"access_token":"ephemeral-access","token_type":"Bearer","expires_in":900,
 				"session_id":"session-1","session_kind":"workload","target_id":"lvinst_prod",
-				"project_id":"analytics","scope":"RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH"
+				"project_id":"analytics","scope":"` + wantScope + `"
 			}`))
 		default:
 			t.Fatalf("unexpected path %q", r.URL.Path)

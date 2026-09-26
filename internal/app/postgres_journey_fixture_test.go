@@ -55,6 +55,10 @@ const (
 type PostgresJourneyFixtureOptions struct {
 	TargetID  string
 	ProjectID projectgraph.ResourceID
+	// BrowserSessionAuth composes the fixture with native browser-session
+	// authentication so route tests can exercise session authority evidence.
+	// The default remains disabled-auth for route smoke tests.
+	BrowserSessionAuth bool
 
 	// SkipRouteAssembly leaves the graph and native capability handles
 	// available without constructing HTTP routes. The default assembles routes.
@@ -231,6 +235,17 @@ func (f *PostgresJourneyFixture) buildCapabilities(t *testing.T, options Postgre
 		PublicURL: "http://localhost", InstanceID: options.TargetID,
 		CurrentProjectID: func(context.Context) (projectgraph.ResourceID, error) { return options.ProjectID, nil },
 	}
+	if options.BrowserSessionAuth {
+		auth, authErr := accessmodule.NewAuth(f.Graph.Access, accessmodule.AuthConfig{
+			LocalAuth: true, CSRFKey: strings.Repeat("journey-csrf", 4),
+		})
+		if authErr != nil {
+			t.Fatalf("build PostgreSQL journey browser authentication: %v", authErr)
+		}
+		accessConfig.ExistingAuth = auth
+		accessConfig.Auth.Disabled = false
+		accessConfig.MCPIssuerURL = "http://localhost"
+	}
 	f.AccessModule, err = accessmodule.Build(t.Context(), accessConfig)
 	if err != nil {
 		t.Fatalf("build PostgreSQL journey access module: %v", err)
@@ -309,11 +324,11 @@ func (f *PostgresJourneyFixture) assembleNativeDashboard(t *testing.T, options P
 	}
 	authoring, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
 		Persistence: f.Graph.DashboardPersistence,
-		AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
-			return true, nil
+		AuthorizeTypedResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Action) (bool, bool, error) {
+			return true, true, nil
 		},
-		AuthorizeProjectCapability: func(context.Context, string, projectgraph.ResourceID, access.Capability) (bool, error) {
-			return true, nil
+		AuthorizeTypedProject: func(context.Context, string, projectgraph.ResourceID, access.Action) (bool, bool, error) {
+			return true, true, nil
 		},
 		AcquireRuntime: acquire,
 	})

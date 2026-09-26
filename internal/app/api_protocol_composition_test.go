@@ -150,7 +150,7 @@ func TestConfigureAPIProtocolBypassesOnlyConfiguredCommandDurability(t *testing.
 	platform := &platformServices{}
 	if err := configureAPIProtocol(&capabilityRoutes{}, testAPIProtocolRuntime(), platform, &httpPolicy{}, runtimeAssemblyInputs{InstanceID: "target:test", DefaultEnvironment: "test"}, t.Context(), apiProtocolPersistence{
 		Idempotency: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
-		BypassDurableIdempotency: map[string]struct{}{"createRefreshRun": {}},
+		BypassDurableIdempotency: map[string]struct{}{"createRefreshRun": {}, "exchangeProjectClaimPublisher": {}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -169,6 +169,28 @@ func TestConfigureAPIProtocolBypassesOnlyConfiguredCommandDurability(t *testing.
 	}
 	if store.claims.Load() != 0 {
 		t.Fatalf("configured bypass claimed durable idempotency %d times", store.claims.Load())
+	}
+
+	// The one-time publisher secret must never be stored or replayed from the
+	// idempotency table. Reusing the same key dispatches a fresh exchange so
+	// the domain transaction can revoke the previous publisher and rotate it.
+	exchangePath := "/api/v1/projects/project:claimed/project-claim-publisher/exchange"
+	for index, secret := range []string{"token-one", "token-two"} {
+		exchangeRequest := httptest.NewRequest(http.MethodPost, exchangePath, nil)
+		exchangeRequest.Header.Set("Authorization", "Bearer credential")
+		exchangeRequest.Header.Set("Idempotency-Key", "same-exchange-key")
+		exchangeRequest.Header.Set("Content-Type", "application/json")
+		exchangeResponse := httptest.NewRecorder()
+		platform.apiProtocol.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"publisherToken":"` + secret + `"}`))
+		})).ServeHTTP(exchangeResponse, exchangeRequest)
+		if exchangeResponse.Code != http.StatusCreated || !strings.Contains(exchangeResponse.Body.String(), secret) {
+			t.Fatalf("exchange %d response = %d %s", index, exchangeResponse.Code, exchangeResponse.Body.String())
+		}
+	}
+	if store.claims.Load() != 0 {
+		t.Fatalf("publisher exchange persisted idempotency state %d times", store.claims.Load())
 	}
 }
 

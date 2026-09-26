@@ -70,6 +70,7 @@ func NewCommand(ctx context.Context) *cobra.Command {
 	root.AddCommand(accesscli.LoginCommand(ctx, authentication, applicationTargetDiscovery{}, applicationProjectIdentity{profiles: cliapi.NewProfileStore(clientConfigPath())}))
 	root.AddCommand(accesscli.LogoutCommand(ctx, authentication))
 	root.AddCommand(bootstrapProjectCommand(ctx, opts))
+	root.AddCommand(acknowledgeProjectClaimPublisherCommand(ctx, opts))
 	root.AddCommand(adminCommand(ctx, opts))
 	root.AddCommand(healthcheckCommand(ctx, opts))
 	normalizeCommandGroups(root)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
@@ -106,6 +107,23 @@ func TestDashboardPageStreamResourceRequiresExactDashboardID(t *testing.T) {
 }
 
 func TestDashboardBuilderPageStreamAuthorizesPrivateDraftWithoutPublishedGraphResource(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_draft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := access.NewTypedRoleBinding("editor", "Editor", access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "owner"}, access.PermissionRoleEditor, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{binding}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
 		name       string
 		url        string
@@ -120,10 +138,10 @@ func TestDashboardBuilderPageStreamAuthorizesPrivateDraftWithoutPublishedGraphRe
 		t.Run(test.name, func(t *testing.T) {
 			authorizer := &repositoryDashboardAuthorizerFake{}
 			guarded := protectProjectAuthoringResourceWithSelector(
-				tusAccess{principal: accessmodule.Principal{ID: "owner"}, ok: true},
-				tusRuntime{project: "project_demo"},
+				tusAccess{principal: accessmodule.Principal{ID: "owner"}, ok: true, subjects: []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: "owner"}}},
+				tusRuntime{project: projectID, lease: tusLease{identity: identity, snapshot: snapshot}},
 				authorizer,
-				access.CapabilityResourceEdit,
+				access.ActionDashboardUpdate,
 				dashboardBuilderPageStreamDashboardID,
 				func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
 			)
@@ -133,6 +151,34 @@ func TestDashboardBuilderPageStreamAuthorizesPrivateDraftWithoutPublishedGraphRe
 				t.Errorf("status = %d, edit calls = %d; want %d and %d", recorder.Code, authorizer.editCalls, test.wantStatus, test.wantCalls)
 			}
 		})
+	}
+}
+
+func TestDashboardBuilderPageStreamRejectsUnpublishedDraftWithoutTypedAssignment(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_draft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer := &repositoryDashboardAuthorizerFake{}
+	guarded := protectProjectAuthoringResourceWithSelector(
+		tusAccess{principal: accessmodule.Principal{ID: "owner"}, ok: true, subjects: []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: "owner"}}},
+		tusRuntime{project: projectID, lease: tusLease{identity: identity, snapshot: snapshot}},
+		authorizer, access.ActionDashboardUpdate, dashboardBuilderPageStreamDashboardID,
+		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+	)
+	recorder := httptest.NewRecorder()
+	guarded(recorder, httptest.NewRequest(http.MethodGet, "/updates?route=dashboard_builder&dashboard=dashboard_owned", nil))
+	if recorder.Code != http.StatusForbidden || authorizer.editCalls != 0 {
+		t.Fatalf("status = %d, repository calls = %d; want forbidden before repository authorization", recorder.Code, authorizer.editCalls)
 	}
 }
 

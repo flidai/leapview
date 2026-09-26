@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // These aliases keep the vertical slice readable while making the generated
@@ -22,6 +23,7 @@ type AuthoringSessionSignal = uisignals.PersonalAuthoringSessionSignal
 type TokensSignal = uisignals.PersonalTokensSignal
 type TokenSignal = uisignals.PersonalTokenSignal
 type CapabilityOptionSignal = uisignals.PersonalCapabilityOptionSignal
+type PermissionPairSignal = uisignals.PersonalPermissionPairSignal
 type ProfileCommand = uisignals.PersonalProfileCommand
 type ThemeCommand = uisignals.PersonalThemeCommand
 type PasswordCommand = uisignals.PersonalPasswordCommand
@@ -63,14 +65,15 @@ func sessionSignal(value access.Session, currentSessionID string) SessionSignal 
 }
 
 func authoringSessionSignal(value access.AuthoringSession) AuthoringSessionSignal {
-	capabilities := make([]string, 0, len(value.Scope.Capabilities))
-	for _, capability := range value.Scope.Capabilities {
-		capabilities = append(capabilities, string(capability))
+	permissions := make([]uisignals.PersonalPermissionPairSignal, 0, len(value.Scope.Permissions))
+	for _, permission := range value.Scope.Permissions {
+		permissions = append(permissions, permissionPairSignal(permission))
 	}
 	return AuthoringSessionSignal{
 		ID: value.ID, Kind: string(value.Kind), ClientID: displayClientName(value.ClientID),
 		TargetID: value.Scope.TargetID, ProjectID: value.Scope.ProjectID.String(),
-		Capabilities: capabilities, CreatedAt: formatTime(value.CreatedAt),
+		PermissionProfile: access.PermissionCatalogProfile, Permissions: permissions,
+		CreatedAt:  formatTime(value.CreatedAt),
 		LastUsedAt: formatTime(value.LastUsedAt), ExpiresAt: formatTime(value.ExpiresAt),
 		RevokedAt: formatTime(value.RevokedAt),
 	}
@@ -93,10 +96,65 @@ func tokenSignal(value access.APIToken) TokenSignal {
 	for _, capability := range value.Capabilities {
 		capabilities = append(capabilities, string(capability))
 	}
+	permissions := make([]uisignals.PersonalPermissionPairSignal, 0, len(value.Permissions))
+	for _, permission := range value.Permissions {
+		permissions = append(permissions, permissionPairSignal(permission))
+	}
+	var profile *string
+	if value.PermissionProfile != "" {
+		profileValue := value.PermissionProfile
+		profile = &profileValue
+	}
 	return TokenSignal{
-		ID: value.ID, Name: value.Name, Description: value.Description, Capabilities: capabilities, CreatedAt: value.CreatedAt, LastUsedAt: value.LastUsedAt,
+		ID: value.ID, Name: value.Name, Description: value.Description, PermissionProfile: profile, Permissions: permissions,
+		Capabilities: capabilities, CreatedAt: value.CreatedAt, ModifiedAt: value.ModifiedAt, LastUsedAt: value.LastUsedAt,
 		ExpiresAt: value.ExpiresAt, RevokedAt: value.RevokedAt,
 	}
+}
+
+func permissionPairSignal(value access.PermissionPair) uisignals.PersonalPermissionPairSignal {
+	target := uisignals.PersonalPermissionTargetSignal{Scope: string(value.Target.Scope)}
+	if value.Target.InstanceID != "" {
+		instanceID := value.Target.InstanceID
+		target.InstanceID = &instanceID
+	}
+	if value.Target.ProjectID != "" {
+		projectID := value.Target.ProjectID.String()
+		target.ProjectID = &projectID
+	}
+	if value.Target.ResourceKind != "" {
+		resourceKind := string(value.Target.ResourceKind)
+		target.ResourceKind = &resourceKind
+	}
+	if value.Target.ResourceID != "" {
+		resourceID := value.Target.ResourceID.String()
+		target.ResourceID = &resourceID
+	}
+	if value.Target.IncludeFuture {
+		includeFuture := true
+		target.IncludeFuture = &includeFuture
+	}
+	return uisignals.PersonalPermissionPairSignal{Action: string(value.Action), Target: target, Profile: value.Profile}
+}
+
+func permissionPairFromSignal(value uisignals.PersonalPermissionPairSignal) access.PermissionPair {
+	target := access.PermissionTarget{Scope: access.PermissionScope(value.Target.Scope)}
+	if value.Target.InstanceID != nil {
+		target.InstanceID = *value.Target.InstanceID
+	}
+	if value.Target.ProjectID != nil {
+		target.ProjectID = projectgraph.ResourceID(*value.Target.ProjectID)
+	}
+	if value.Target.ResourceKind != nil {
+		target.ResourceKind = projectgraph.Kind(*value.Target.ResourceKind)
+	}
+	if value.Target.ResourceID != nil {
+		target.ResourceID = projectgraph.ResourceID(*value.Target.ResourceID)
+	}
+	if value.Target.IncludeFuture != nil {
+		target.IncludeFuture = *value.Target.IncludeFuture
+	}
+	return access.PermissionPair{Action: access.Action(value.Action), Target: target, Profile: value.Profile}
 }
 
 func formatTime(value time.Time) string {

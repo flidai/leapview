@@ -14,8 +14,8 @@ func TestGenerationAdmissionRequiresExactTargetGrants(t *testing.T) {
 	input := validGenerationAdmissionInput(t)
 	resource, _ := access.NewResourceRef("connection-admission", graph.KindConnection)
 	grant := access.AuthorizationGrant{ID: "read-connection", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: admissionPolicySubjectID}, Resource: resource, Capability: access.CapabilityResourceRead}
-	policy := access.AuthorizationPolicy{RoleBindings: []access.RoleBinding{admissionAuthorizationBinding()}, Grants: []access.AuthorizationGrant{grant}}
-	doc, err := manifest.FromAuthorizationPolicy(policy)
+	policy := access.AuthorizationPolicy{Scope: access.AuthorizationPolicyScope{TargetID: "target-demo", ProjectID: string(input.Bundle.ProjectID), Environment: string(input.Bundle.Environment)}, RoleBindings: []access.RoleBinding{admissionAuthorizationBinding()}, Grants: []access.AuthorizationGrant{grant}}
+	doc, err := manifest.AccessPolicyFromAuthorizationPolicy(policy)
 	if err != nil {
 		t.Fatal(err)
 	}

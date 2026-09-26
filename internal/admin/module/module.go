@@ -77,57 +77,63 @@ type StorageConfig struct {
 }
 
 type Config struct {
-	PlatformAdmin                func(context.Context, string) (bool, error)
-	Access                       AccessReader
-	AgentDetails                 func(context.Context) (api.AdminAgentResponse, error)
-	QueryAuditReader             QueryAuditReaderProvider
-	CSRFToken                    func(*http.Request) string
-	CurrentPrincipal             func(*http.Request) (Principal, bool)
-	CurrentCredential            func(*http.Request) (access.APICredential, bool)
-	Publications                 PublicationService
-	AgentConfigCommand           uicommand.Binding
-	PublicationCommands          map[string]uicommand.Binding
-	AuthConfigured               bool
-	LocalPasswordEnabled         bool
-	AccessConfigured             bool
-	Storage                      StorageConfig
-	Layout                       func(*http.Request) webpage.Provider
-	EnsureClientID               func(http.ResponseWriter, *http.Request) bool
-	Broker                       *pagestream.Broker
-	Product                      *product.Service
-	ProductCommands              product.CommandExecutor
-	ProductUICommands            productsettings.CommandContract
-	ProductCommandFailure        product.CommandFailureWriter
-	ProductStatus                product.Status
-	SettingsAccess               SettingsAccess
-	AuthorizationProjection      adminsettings.AuthorizationProjectionReader
-	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
-	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
-	PersonalAvatar               PersonalAvatar
-	AuthoringSessions            AuthoringSessions
-	CurrentSession               func(*http.Request) (string, bool)
+	Access                            AccessReader
+	AgentDetails                      func(context.Context) (api.AdminAgentResponse, error)
+	QueryAuditReader                  QueryAuditReaderProvider
+	CSRFToken                         func(*http.Request) string
+	CurrentPrincipal                  func(*http.Request) (Principal, bool)
+	CurrentCredential                 func(*http.Request) (access.APICredential, bool)
+	Publications                      PublicationService
+	AgentConfigCommand                uicommand.Binding
+	PublicationCommands               map[string]uicommand.Binding
+	AuthConfigured                    bool
+	LocalPasswordEnabled              bool
+	AccessConfigured                  bool
+	Storage                           StorageConfig
+	Layout                            func(*http.Request) webpage.Provider
+	EnsureClientID                    func(http.ResponseWriter, *http.Request) bool
+	Broker                            *pagestream.Broker
+	Product                           *product.Service
+	ProductCommands                   product.CommandExecutor
+	ProductUICommands                 productsettings.CommandContract
+	ProductCommandFailure             product.CommandFailureWriter
+	ProductStatus                     product.Status
+	SettingsAccess                    SettingsAccess
+	AuthorizationProjection           adminsettings.AuthorizationProjectionReader
+	RoleBindingAdministration         func(context.Context) (access.RoleBindingAdministrationState, error)
+	RoleBindingMutation               func(*http.Request, access.RoleBindingAdministrationCommand) (access.RoleBindingAdministrationState, error)
+	CurrentEffectiveCapabilities      func(context.Context, string) ([]access.Capability, error)
+	CurrentEffectivePermissionOptions func(context.Context, string) ([]access.PermissionPair, error)
+	AuthorizeTypedDashboardAction     func(context.Context, string, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (bool, error)
+	PlatformAdmin                     func(context.Context, string) (bool, error)
+	CurrentProjectID                  func(context.Context) (projectgraph.ResourceID, error)
+	PersonalAvatar                    PersonalAvatar
+	AuthoringSessions                 AuthoringSessions
+	CurrentSession                    func(*http.Request) (string, bool)
 }
 
 type Module struct {
-	handler                      adminhttp.Handler
-	access                       AccessReader
-	currentPrincipal             func(*http.Request) (Principal, bool)
-	currentCredential            func(*http.Request) (access.APICredential, bool)
-	currentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
-	currentProjectID             func(context.Context) (projectgraph.ResourceID, error)
-	publications                 PublicationService
-	product                      *product.Handler
-	publicationCommands          map[string]uicommand.Binding
-	productCommands              productsettings.CommandContract
+	handler                       adminhttp.Handler
+	access                        AccessReader
+	currentPrincipal              func(*http.Request) (Principal, bool)
+	currentCredential             func(*http.Request) (access.APICredential, bool)
+	currentEffectiveCapabilities  func(context.Context, string) ([]access.Capability, error)
+	currentProjectID              func(context.Context) (projectgraph.ResourceID, error)
+	authorizeTypedDashboardAction func(context.Context, string, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (bool, error)
+	publications                  PublicationService
+	product                       *product.Handler
+	publicationCommands           map[string]uicommand.Binding
+	productCommands               productsettings.CommandContract
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
 	m := &Module{
 		access: config.Access, currentPrincipal: config.CurrentPrincipal,
-		currentCredential:            config.CurrentCredential,
-		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
-		currentProjectID:             config.CurrentProjectID,
-		publications:                 config.Publications, publicationCommands: config.PublicationCommands, productCommands: config.ProductUICommands,
+		currentCredential:             config.CurrentCredential,
+		currentEffectiveCapabilities:  config.CurrentEffectiveCapabilities,
+		currentProjectID:              config.CurrentProjectID,
+		authorizeTypedDashboardAction: config.AuthorizeTypedDashboardAction,
+		publications:                  config.Publications, publicationCommands: config.PublicationCommands, productCommands: config.ProductUICommands,
 	}
 	var agentStatus func(context.Context) (product.AgentStatus, error)
 	if config.AgentDetails != nil {
@@ -169,21 +175,23 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	m.handler = adminhttp.Handler{
 		ReadModel: readModel, Layout: config.Layout,
 		EnsureClientID: config.EnsureClientID, Broker: config.Broker,
-		PublicationMutation:     m.mutatePublication,
-		SettingsRepository:      config.SettingsAccess,
-		AuthorizationProjection: config.AuthorizationProjection,
-		CurrentCredential:       config.CurrentCredential,
+		PublicationMutation:       m.mutatePublication,
+		SettingsRepository:        config.SettingsAccess,
+		AuthorizationProjection:   config.AuthorizationProjection,
+		RoleBindingAdministration: config.RoleBindingAdministration,
+		RoleBindingMutation:       config.RoleBindingMutation,
+		CurrentCredential:         config.CurrentCredential,
 	}
 	if config.SettingsAccess != nil {
 		personalService := &personalsettings.Service{
 			Repository: config.SettingsAccess, IdentityManagement: config.SettingsAccess,
 			Preferences: config.SettingsAccess,
 			Avatar:      config.PersonalAvatar, Authoring: config.AuthoringSessions,
-			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
-			LocalPasswordEnabled:         config.LocalPasswordEnabled,
+			CurrentEffectivePermissionOptions: config.CurrentEffectivePermissionOptions,
+			LocalPasswordEnabled:              config.LocalPasswordEnabled,
 		}
 		m.handler.PersonalSettings = &personalsettings.Handler{
-			Service: personalService, CurrentSession: config.CurrentSession,
+			Service: personalService, CurrentSession: config.CurrentSession, CurrentCredential: config.CurrentCredential,
 			CurrentPrincipal: func(r *http.Request) (string, bool) {
 				if config.CurrentPrincipal == nil {
 					return "", false

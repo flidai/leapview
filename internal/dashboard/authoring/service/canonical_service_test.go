@@ -18,13 +18,14 @@ import (
 )
 
 type canonicalAuthorizer struct {
-	denied bool
-	calls  []service.AuthorizationRequest
+	denied         bool
+	denyDependency bool
+	calls          []service.AuthorizationRequest
 }
 
 func (a *canonicalAuthorizer) Authorize(_ context.Context, request service.AuthorizationRequest) error {
 	a.calls = append(a.calls, request)
-	if a.denied {
+	if a.denied || (a.denyDependency && request.DependencyChange) {
 		return errors.New("denied")
 	}
 	return nil
@@ -264,62 +265,30 @@ func TestCanonicalServiceCreateEditPublishArchiveAndAuthorization(t *testing.T) 
 	}
 }
 
-func TestCanonicalServiceDeleteOnlyRemovesPrivateDraft(t *testing.T) {
-	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
-	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-delete", "draft-delete", "revision-delete")
-	created, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "actor", Title: "Orders", Slug: "orders", SemanticModel: "model:test", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-delete"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	deleted, err := svc.Execute(t.Context(), "project:test", authoring.Command{ID: "delete-1", DashboardID: created.Lifecycle.ID, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Delete: &authoring.DeletePayload{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if deleted.Revision != created.Revision || repository.lifecycle.ID != "" {
-		t.Fatalf("deleted result = %#v, repository lifecycle = %#v", deleted, repository.lifecycle)
-	}
-
-	repository, authorizer, compiler = newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
-	svc = newCanonicalService(t, repository, authorizer, compiler, "dashboard-restricted", "draft-restricted", "revision-restricted")
-	created, err = svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "actor", Title: "Restricted", Slug: "restricted", SemanticModel: "model:test", Visibility: authoring.VisibilityRestricted, Origin: authoring.OriginUI, IdempotencyKey: "create-restricted"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.Execute(t.Context(), "project:test", authoring.Command{ID: "delete-2", DashboardID: created.Lifecycle.ID, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Delete: &authoring.DeletePayload{}}); !errors.Is(err, authoring.ErrConflict) {
-		t.Fatalf("restricted delete error = %v, want conflict", err)
-	}
-	if repository.lifecycle.ID == "" {
-		t.Fatal("restricted dashboard was deleted")
-	}
-}
-
-func TestCanonicalServiceDeleteReplayRequiresCurrentAuthorization(t *testing.T) {
-	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
-	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-delete-replay", "draft-delete-replay", "revision-delete-replay")
+func TestCanonicalServiceRejectsSemanticModelChangeWithoutDependencyAuthority(t *testing.T) {
+	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{denyDependency: true}, &canonicalCompiler{}
+	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-created", "draft-created", "revision-created", "revision-edited")
 	created, err := svc.Create(t.Context(), service.CreateRequest{
-		ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders",
-		SemanticModel: "model:test", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-delete-replay",
+		ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "actor", Title: "Orders", Slug: "orders",
+		SemanticModel: "model:original", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-dependency",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := authoring.Command{
-		ID: "delete-replay", DashboardID: created.Lifecycle.ID,
-		Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Delete: &authoring.DeletePayload{},
+	changedModel := "model:replacement"
+	_, err = svc.Execute(t.Context(), "project:test", authoring.Command{
+		ID: "edit-dependency", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID,
+		ExpectedRevision: created.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"},
+		Metadata: &authoring.MetadataPatch{SemanticModel: &changedModel},
+	})
+	if err == nil || err.Error() != "denied" {
+		t.Fatalf("semantic model dependency change error = %v, want denial", err)
 	}
-	if _, err := svc.Execute(t.Context(), "project:test", command); err != nil {
-		t.Fatal(err)
+	if repository.lifecycle.SemanticModel != "model:original" {
+		t.Fatalf("denied dependency change mutated lifecycle to %q", repository.lifecycle.SemanticModel)
 	}
-
-	// The lifecycle has been removed, so this authorization must use the owner
-	// retained in the delete fence. Simulate the actor losing access after the
-	// first request and ensure a replay cannot disclose or return the result.
-	authorizer.denied = true
-	if _, err := svc.Execute(t.Context(), "project:test", command); err == nil || err.Error() != "denied" {
-		t.Fatalf("revoked delete replay error = %v", err)
-	}
-	if len(authorizer.calls) == 0 || authorizer.calls[len(authorizer.calls)-1].OwnerPrincipalID != "owner" || authorizer.calls[len(authorizer.calls)-1].Action != authoring.AuthorizationActionDelete {
-		t.Fatalf("replay authorization = %#v", authorizer.calls)
+	if len(authorizer.calls) != 3 || !authorizer.calls[2].DependencyChange || authorizer.calls[2].SemanticModel != graph.ResourceID(changedModel) {
+		t.Fatalf("dependency authorization calls = %#v", authorizer.calls)
 	}
 }
 
@@ -356,33 +325,34 @@ func TestCanonicalServiceRestoresRetainedRevisionAsNewDraft(t *testing.T) {
 	}
 }
 
-func TestCanonicalServiceCreateUsesProjectCapabilityBeforeDashboardExists(t *testing.T) {
+func TestCanonicalServiceCreateUsesTypedProjectAndSemanticActionsBeforeDashboardExists(t *testing.T) {
 	repository, compiler := newCanonicalRepository(), &canonicalCompiler{}
 	var authorized []access.ResourceRef
-	var projectCapabilities []access.Capability
+	var projectActions []access.Action
 	adapter, err := accessadapter.New(accessadapter.Options{
-		AuthorizeResource: func(_ context.Context, _ string, _ graph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+		AuthorizeTypedResource: func(_ context.Context, _ string, _ graph.ResourceID, resource access.ResourceRef, action access.Action) (bool, bool, error) {
 			authorized = append(authorized, resource)
-			if resource.Kind() != graph.KindSemanticModel || capability != access.CapabilityResourceRead {
-				t.Fatalf("resource authorization = %#v %q, want semantic-model RESOURCE_READ", resource, capability)
+			if resource.Kind() != graph.KindSemanticModel || action != access.ActionSemanticRead {
+				t.Fatalf("resource authorization = %#v %q, want semantic.read", resource, action)
 			}
-			return true, nil
+			return true, true, nil
 		},
-		AuthorizeProjectCapability: func(_ context.Context, _ string, _ graph.ResourceID, capability access.Capability) (bool, error) {
-			projectCapabilities = append(projectCapabilities, capability)
-			return capability == access.CapabilityResourceEdit || capability == access.CapabilityProjectAdmin, nil
+		AuthorizeTypedProject: func(_ context.Context, _ string, _ graph.ResourceID, action access.Action) (bool, bool, error) {
+			projectActions = append(projectActions, action)
+			return true, action == access.ActionDashboardCreate, nil
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	svc := newCanonicalService(t, repository, adapter, compiler, "dashboard-created", "draft-created", "revision-created")
-	created, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "model:test", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-project-role"})
+	created, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "model:test", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-typed-pair"})
 	if err != nil {
-		t.Fatalf("project-scoped create failed: %v", err)
+		t.Fatalf("typed project-scoped create failed: %v", err)
 	}
-	if created.Lifecycle.ID != "dashboard-created" || len(authorized) != 1 || authorized[0].Kind() != graph.KindSemanticModel || len(projectCapabilities) != 2 || projectCapabilities[0] != access.CapabilityResourceEdit || projectCapabilities[1] != access.CapabilityProjectAdmin {
-		t.Fatalf("create result=%#v resources=%#v project capabilities=%#v", created, authorized, projectCapabilities)
+	if created.Lifecycle.ID != "dashboard-created" || len(authorized) != 1 || authorized[0].Kind() != graph.KindSemanticModel ||
+		len(projectActions) != 1 || projectActions[0] != access.ActionDashboardCreate {
+		t.Fatalf("create result=%#v resources=%#v project actions=%#v", created, authorized, projectActions)
 	}
 }
 

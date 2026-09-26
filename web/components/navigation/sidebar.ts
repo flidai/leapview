@@ -19,6 +19,7 @@ import {
 	Plug,
 	Search,
 	Settings,
+  ShieldCheck,
   TableProperties,
 	Users,
 	UsersRound,
@@ -111,6 +112,7 @@ type IconName =
   | 'users'
   | 'users-round'
   | 'user'
+  | 'shield-check'
   | 'search'
   | 'collapse'
   | 'expand'
@@ -1668,6 +1670,7 @@ function icon(name: string) {
     users: Users,
     'users-round': UsersRound,
     user: User,
+    'shield-check': ShieldCheck,
     search: Search,
     collapse: PanelLeft,
     expand: PanelLeft,

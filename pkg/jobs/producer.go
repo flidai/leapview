@@ -30,6 +30,7 @@ type JSONEnqueueInput struct {
 	ResourceKind         string
 	ResourceID           string
 	EstimatedMemoryBytes int64
+	Authority            AuthorityEnvelope
 	Payload              any
 }
 
@@ -47,7 +48,7 @@ func EnqueueJSON(ctx context.Context, queue Enqueuer, input JSONEnqueueInput) er
 		PrincipalID: input.PrincipalID, GroupIDs: input.GroupIDs,
 		PartitionKey: input.PartitionKey,
 		ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
-		EstimatedMemoryBytes: input.EstimatedMemoryBytes, Payload: payload,
+		EstimatedMemoryBytes: input.EstimatedMemoryBytes, Authority: input.Authority, Payload: payload,
 	})
 	return err
 }

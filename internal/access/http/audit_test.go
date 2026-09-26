@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -216,17 +218,43 @@ func TestUpdateAndDeletePrincipalPersistRequiredSuccessAudits(t *testing.T) {
 	updateRequest.Body = io.NopCloser(strings.NewReader(`{"displayName":"Updated"}`))
 	updateRequest.Header.Set("Content-Type", "application/json")
 	updateRequest.Header.Set("If-Match", "*")
+	updateOperation := accessgen.GenCommandOperationUpdatePrincipal().APIGenOperationID()
+	updateContract, ok := accessgen.GetAPIGenCommandRuntimeContract(updateOperation)
+	if !ok {
+		t.Fatalf("missing generated command contract for %s", updateOperation)
+	}
+	updateContext, updateGuard, err := apigencommand.Begin(updateRequest.Context(), updateContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateRequest = updateRequest.WithContext(updateContext)
 	updated := httptest.NewRecorder()
 	handler.UpdatePrincipal(updated, updateRequest)
 	if updated.Code != stdhttp.StatusOK {
 		t.Fatalf("update status = %d, body=%s", updated.Code, updated.Body.String())
 	}
+	if !updateGuard.Completed() {
+		t.Fatal("principal update bypassed its generated transactional command")
+	}
 
 	deleteRequest := requestWithRouteParam(stdhttp.MethodDelete, "/api/v1/principals/"+created.Principal.ID, "principal", created.Principal.ID)
+	deleteOperation := accessgen.GenCommandOperationDeletePrincipal().APIGenOperationID()
+	deleteContract, ok := accessgen.GetAPIGenCommandRuntimeContract(deleteOperation)
+	if !ok {
+		t.Fatalf("missing generated command contract for %s", deleteOperation)
+	}
+	deleteContext, deleteGuard, err := apigencommand.Begin(deleteRequest.Context(), deleteContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteRequest = deleteRequest.WithContext(deleteContext)
 	deleted := httptest.NewRecorder()
 	handler.DeletePrincipal(deleted, deleteRequest)
 	if deleted.Code != stdhttp.StatusNoContent {
 		t.Fatalf("delete status = %d, body=%s", deleted.Code, deleted.Body.String())
+	}
+	if !deleteGuard.Completed() {
+		t.Fatal("principal deletion bypassed its generated transactional command")
 	}
 
 	for _, action := range []string{"principal.updated", "principal.deleted"} {

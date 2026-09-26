@@ -21,6 +21,10 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.ListCurrentAPITokens(w, r)
 	case "createCurrentAPIToken":
 		m.handler.CreateCurrentAPIToken(w, r)
+	case "updateCurrentAPIToken":
+		m.handler.UpdateCurrentAPIToken(w, r)
+	case "rotateCurrentAPIToken":
+		m.handler.RotateCurrentAPIToken(w, r)
 	case "revokeCurrentAPIToken":
 		m.handler.RevokeCurrentAPIToken(w, r)
 	case "listCurrentSessions":
@@ -101,6 +105,20 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.ListProjectRoleBindings(w, r)
 	case "createProjectRoleBinding":
 		m.handler.CreateProjectRoleBinding(w, r)
+	case "exchangeProjectClaimPublisher":
+		m.handler.ExchangeProjectClaimPublisher(w, r)
+	case "acknowledgeProjectClaimPublisher":
+		m.handler.AcknowledgeProjectClaimPublisher(w, r)
+	case "issueResourceShareGrant":
+		m.handler.IssueResourceShareGrant(w, r)
+	case "revokeResourceShareGrant":
+		m.handler.RevokeResourceShareGrant(w, r)
+	case "issueGrantAdminEnvelope":
+		m.handler.IssueGrantAdminEnvelope(w, r)
+	case "revokeGrantAdminEnvelope":
+		m.handler.RevokeGrantAdminEnvelope(w, r)
+	case "deleteProjectRoleBinding":
+		m.handler.DeleteProjectRoleBinding(w, r)
 	case "listGroupSemanticAttributeAssignments":
 		m.handler.ListGroupSemanticAttributeAssignments(w, r)
 	case "removeGroupSemanticAttributeAssignment":

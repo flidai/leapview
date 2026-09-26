@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	nethttp "net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -42,5 +43,15 @@ func TestParseAPILimitRejectsOverLimit(t *testing.T) {
 	}
 	if _, err := parseAPILimit("201"); err == nil {
 		t.Fatal("over-limit request was accepted")
+	}
+}
+
+func TestDecodeOptionalJSONBodyRejectsCallerSuppliedQuery(t *testing.T) {
+	request := httptest.NewRequest(nethttp.MethodPost, "/", strings.NewReader(`{"query":{"sql":"select * from secrets"}}`))
+	var input struct {
+		FilterState map[string]any `json:"filterState"`
+	}
+	if err := decodeOptionalJSONBody(request, &input); err == nil {
+		t.Fatal("caller-supplied arbitrary query content was accepted")
 	}
 }

@@ -10,7 +10,7 @@ let baseURL = ''
 let browser: Browser
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/dashboard-builder-test')
-const documentWithProductFonts = () => testDocument()
+const documentWithProductFonts = (agentReady = false) => testDocument({ agentReady })
   .replaceAll('system-ui', '"Inter Variable", Inter, system-ui')
   .replace('<head>', '<head><style>@font-face{font-family:"Inter Variable";src:url("/static/files/inter-latin-wght-normal.woff2") format("woff2");font-weight:100 900;}</style>')
 
@@ -33,7 +33,7 @@ beforeAll(async () => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
-      response.end(documentWithProductFonts())
+      response.end(documentWithProductFonts(url.searchParams.has('agent-ready')))
       return
     }
     const fileRoot = url.pathname.startsWith('/static/') ? projectRoot : root
@@ -159,14 +159,12 @@ test('visual inspector controls stay within the pane at desktop and narrow width
 test('builder agent uses the compact main-agent welcome layout and starter prompts only fill the composer', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 650 } })
   try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      mergePatch({ agent: { transcript: [], status: { enabled: true, running: false }, composer: { value: '', disabled: false } }, agentContext: { pageTitle: 'Overview' } })
+    await page.addInitScript(() => {
       ;(window as any).agentSubmits = 0
       document.addEventListener('lv-chat-submit', () => (window as any).agentSubmits++)
     })
+    await page.goto(`${baseURL}/?agent-ready=1`)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const builder = page.locator('lv-dashboard-builder')
     await builder.locator('[data-pane-toggle="agent"]').click()
     const drawer = builder.locator('lv-chat-drawer[open]')
@@ -209,14 +207,12 @@ test('builder agent uses the compact main-agent welcome layout and starter promp
 test('unrelated builder clicks neither open nor refocus the Agent', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
-    await page.goto(baseURL, { waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      mergePatch({ agent: { transcript: [], status: { enabled: true, running: false }, composer: { value: '', disabled: false } } })
+    await page.addInitScript(() => {
       ;(window as any).unrelatedAgentSubmits = 0
       document.addEventListener('lv-chat-submit', () => (window as any).unrelatedAgentSubmits++)
     })
+    await page.goto(`${baseURL}/?agent-ready=1`, { waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const builder = page.locator('lv-dashboard-builder')
     const agentToggle = builder.locator('[data-pane-toggle="agent"]')
     const search = builder.getByRole('searchbox', { name: 'Search fields' })

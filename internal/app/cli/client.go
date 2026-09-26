@@ -10,6 +10,7 @@ import (
 	"time"
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
+	"github.com/flidai/leapview/internal/access"
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/app/api/clienttransport"
 	"github.com/flidai/leapview/internal/app/config"
@@ -63,12 +64,7 @@ func (client capabilityAPIClient) Resolve(ctx context.Context, credentials cliap
 		workload, err := accesscli.ExchangeWorkloadIdentity(ctx, accesscli.StandardOAuthClient{HTTPClient: client.http()}, accesscli.WorkloadIdentityRequest{
 			Origin: target, InstanceID: instance.Id, ProjectID: cfg.WorkloadProject,
 			ClientID: cfg.WorkloadClientID, ClientSecret: cfg.WorkloadClientSecret,
-			Capabilities: []string{
-				"RESOURCE_USE",
-				"RESOURCE_READ",
-				"RESOURCE_EDIT",
-				"RESOURCE_PUBLISH",
-			},
+			Actions:  access.DefaultAuthoringActions(),
 			Lifetime: 15 * time.Minute,
 		}, nil)
 		if err != nil {

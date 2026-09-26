@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/securestore"
 	"golang.org/x/oauth2"
@@ -34,7 +35,7 @@ type LoginRequest struct {
 	InstanceID   string
 	Environment  string
 	ProjectID    string
-	Capabilities []string
+	Actions      []access.Action
 	Headless     bool
 	// BeforeExchange lets a trusted local launcher complete the browser-side
 	// authorization with an already-authenticated local session. Remote login
@@ -60,7 +61,7 @@ type WorkloadIdentityRequest struct {
 	ProjectID    string
 	ClientID     string
 	ClientSecret string
-	Capabilities []string
+	Actions      []access.Action
 	Lifetime     time.Duration
 }
 
@@ -99,8 +100,8 @@ func (auth Authenticator) Login(ctx context.Context, request LoginRequest, notif
 	if request.Name == "" || request.Origin == "" || request.InstanceID == "" || request.ProjectID == "" {
 		return LoginResult{}, fmt.Errorf("login target name, origin, instance identity, and project are required")
 	}
-	if len(request.Capabilities) == 0 {
-		return LoginResult{}, fmt.Errorf("login requires at least one authoring capability")
+	if len(request.Actions) == 0 {
+		return LoginResult{}, fmt.Errorf("login requires at least one authoring action")
 	}
 	if existing, err := auth.Profiles.Get(request.Name); err == nil {
 		if existing.InstanceID != request.InstanceID || existing.Origin != request.Origin || existing.ProjectID != request.ProjectID {
@@ -111,7 +112,7 @@ func (auth Authenticator) Login(ctx context.Context, request LoginRequest, notif
 	}
 	authorization, err := auth.OAuth.Begin(ctx, DeviceAuthorizationRequest{
 		Origin: request.Origin, ProjectID: request.ProjectID,
-		Capabilities: append([]string(nil), request.Capabilities...),
+		Actions:      append([]access.Action(nil), request.Actions...),
 	})
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("begin device authorization: %w", err)
@@ -267,9 +268,9 @@ func ExchangeWorkloadIdentity(
 	}
 	if strings.TrimSpace(request.Origin) == "" || strings.TrimSpace(request.InstanceID) == "" ||
 		strings.TrimSpace(request.ProjectID) == "" || strings.TrimSpace(request.ClientID) == "" ||
-		strings.TrimSpace(request.ClientSecret) == "" || len(request.Capabilities) == 0 ||
+		strings.TrimSpace(request.ClientSecret) == "" || len(request.Actions) == 0 ||
 		request.Lifetime <= 0 {
-		return WorkloadIdentityResult{}, fmt.Errorf("workload target, instance, project, client credentials, capabilities, and lifetime are required")
+		return WorkloadIdentityResult{}, fmt.Errorf("workload target, instance, project, client credentials, actions, and lifetime are required")
 	}
 	token, err := client.Workload(ctx, request)
 	if err != nil {

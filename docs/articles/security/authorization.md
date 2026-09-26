@@ -2,9 +2,9 @@
 
 LeapView authorization assigns privileges on securable resources to principals, service principals, and groups. Authentication and provisioning establish identities; the grant engine determines what those identities may do.
 
-## Securable hierarchy
+## Securable resources
 
-Securable objects include the server-bound Project, dashboards, semantic models, sources, Models, datasets, tables, and columns. Objects participate in a parent hierarchy, so effective access may include inherited privileges as well as direct grants. This hierarchy does not provide Project enumeration or switching.
+Securable objects include the server-bound Project, dashboards, semantic models, sources, Models, datasets, tables, and columns. Project-wide role assignments and exact resource grants can both contribute authority, but repository paths, graph dependencies, and descriptive ownership do not confer privileges. The server binding does not provide Project enumeration or request-time Project switching.
 
 The portable source graph has exactly six source-root kinds: `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`. Groups, role bindings, grants, data policies, and dashboard-publication declarations are target policy or publication inputs compiled into authorization and publication snapshots; they are not additional source-root catalog nodes.
 
@@ -14,13 +14,45 @@ Review the effective privilege result rather than assuming a direct binding is t
 
 Project role bindings apply reusable privilege sets such as viewer, member, editor, contributor, deployer, admin, or owner. Bind a stable group wherever access follows team membership. Role bindings are administered on the target through **Admin → Access** or the [Access API](/docs/api/access); they are not files in the analytics source root.
 
-Roles express common responsibilities. Owners and grant managers should be rare; routine project deployment should use a dedicated deployer identity rather than an owner token.
+Roles express common responsibilities. Their typed catalog expansions are reviewable action lists, not an implicit bypass around resource targets, credential attenuation, prerequisites, or data policies. Owners and grant managers should be rare; routine project deployment should use a dedicated deployer identity rather than an owner token.
 
 ## Explicit grants
 
 Use a target-owned grant when one subject needs one privilege on a specific securable object outside the standard role shape. Create and review grants through **Admin → Access** or the [Access API](/docs/api/access), using the exact compiled resource ID and the narrowest supported capability.
 
 Choose the narrowest object and privilege that supports the task. Avoid accumulating one-off direct user grants; they are harder to review and can survive team changes.
+
+## Typed action-target permissions
+
+The typed permission profile is `leapview.permissions/v1`. A credential or
+assignment carries individual action-target pairs, preserving which operation
+is allowed on which audience. Do not model a credential as one list of actions
+plus another list of resources; that representation can accidentally authorize
+every combination of the two lists.
+
+An exact resource target includes the bound Project, resource kind, and
+resource ID. Project-scoped actions include the Project but no resource ID;
+creation actions use this scope because their resource does not exist yet. A
+future-resource selection is explicit with a Project target, a resource kind,
+and `includeFuture: true`. Without that flag, a current selection is retained
+as exact resource pairs and does not automatically cover resources created
+later. Instance-scoped platform actions name the instance and are separate
+from Project administration.
+
+Named roles and workflow presets are presentation conveniences over their
+expanded typed actions. Review the expansion and every target before granting
+it. `PROJECT_ADMIN` does not imply platform administration; platform actions
+require their own instance audience and the principal's durable platform
+authority. See the generated [typed permission catalog](/docs/reference/permissions)
+for the current profile, actions, prerequisites, and role expansions.
+
+Personal token settings receive only exact, already-authorized action-target
+pairs from the active authorization snapshot. The current migration projection
+is deliberately limited to qualified dashboard consumption and exact Pipeline
+execution; it never expands broad legacy Project roles into operational,
+administrative, sharing, publication, or platform actions. An unavailable or
+unproven typed option set fails closed. Legacy capability rows remain a bounded
+migration and bootstrap concern, not a public issuance input.
 
 ## Data policies
 

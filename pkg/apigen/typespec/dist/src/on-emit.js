@@ -1,4 +1,4 @@
-import { getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getOverloadedOperation, getOverloads, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
+import { getAllTags, getDoc, getExamples, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getOverloadedOperation, getOverloads, getService, getSummary, isArrayModelType, isRecordModelType, serializeValueAsJson, } from "@typespec/compiler";
 import { getServers, isOverloadSameEndpoint, isSharedRoute, resolveAuthentication, } from "@typespec/http";
 import { getExtensions, getOperationId, getTagsMetadata, resolveInfo } from "@typespec/openapi";
 import { getAuthz, getAsyncExecution, getAuthoredCommand, getAuditPayload, getAuditSchema, getCLI, getCommand, getCommandDefaults, getContracts, getMetadata, getMinProperties, getUniqueItems, getNamedFailures, getPropertyNames, getResponseShape, getSensitivity, getTool, getTransportErrors, getUI, getUnauditedReason, hasExactNumbers, isTarget, isManual, isQuery, } from "./decorators.js";
@@ -201,6 +201,10 @@ class IRBuilder {
         const doc = getDoc(this.program, model);
         if (doc) {
             schema.description = doc;
+        }
+        const examples = getExamples(this.program, model);
+        if (examples.length > 0) {
+            schema.example = serializeValueAsJson(this.program, examples[0].value, model);
         }
         const extensions = validatedMetadata(this.program, this, model);
         if (extensions) {

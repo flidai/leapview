@@ -112,6 +112,10 @@ type EnqueueInput struct {
 	WorkloadClass string
 	PrincipalID   string
 	GroupIDs      []string
+	// Authority is the immutable product-security envelope captured at
+	// admission. An omitted envelope is retained only for migration
+	// compatibility and must be rejected by a configured worker revalidator.
+	Authority AuthorityEnvelope
 	// PartitionKey scopes principal FIFO/fairness. Refresh producers set this
 	// to their authoritative project/environment partition; every producer must
 	// provide its own stable capability/scope partition.
@@ -127,6 +131,7 @@ type Job struct {
 	ID, Kind, WorkloadClass, PrincipalID, PartitionKey, ResourceKind, ResourceID string
 	RequestDigest                                                                string
 	GroupIDs                                                                     []string
+	Authority                                                                    AuthorityEnvelope
 	EstimatedMemoryBytes                                                         int64
 	Payload                                                                      []byte
 	Status                                                                       Status

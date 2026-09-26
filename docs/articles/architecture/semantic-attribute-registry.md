@@ -52,13 +52,16 @@ flow is:
 3. the request credential, if present, can only attenuate that role.
 
 A browser/session request with no API credential inherits the durable role. An
-authoring credential is denied on this platform-admin surface. An API token
-with nil capabilities inherits the role, an explicit empty capability list is
-deny-all, and a non-empty list must contain `PROJECT_ADMIN`. A credential for
-another principal is denied. No project authorization snapshot can create a
-platform role. The explicit local-development `DevBypass` is accepted only by
-the non-production development configuration; it is not a production
-authorization path.
+authoring credential is denied on this platform-admin surface. A typed API
+token can only attenuate that role with instance-scoped action-target pairs;
+an explicit empty `permissions` list is deny-all, and a pair for a Project
+action cannot authorize this instance-wide surface. A credential for another
+principal is denied. No project authorization snapshot or token pair can
+create a platform role. Existing capability-only API tokens are revoked by
+the typed-permission migration because their resource audience cannot be
+converted safely; issue a replacement with explicit pairs. The explicit
+local-development `DevBypass` is accepted only by the non-production
+development configuration; it is not a production authorization path.
 
 This flow means a credential may reduce a platform administrator's authority,
 never elevate a non-administrator. Definition, assignment, mapping, preview,

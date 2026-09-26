@@ -45,6 +45,8 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 		}
 		projectID, _ := m.activeProjectID(r.Context())
 		scope.ProjectID = projectID
+		catalogScope := ToolsScope(scope)
+		catalogScope.ProjectID = projectID
 		references := make([]agent.TurnReference, 0, len(candidate.References))
 		for _, reference := range candidate.References {
 			kind, err := projectgraph.ParseKind(strings.TrimSpace(reference.Reference.Kind))
@@ -55,7 +57,7 @@ func (m *Module) ResolveTurnContext(r *http.Request, scope agent.Scope, candidat
 			if err != nil {
 				continue
 			}
-			item, err := m.catalog.Get(r.Context(), agenttools.Scope{ProjectID: projectID, PrincipalID: scope.PrincipalID}, agenttools.CatalogGetRequest{
+			item, err := (credentialCatalog{base: m.catalog}).Get(r.Context(), catalogScope, agenttools.CatalogGetRequest{
 				Ref: agenttools.CatalogRef{ID: id.String(), Kind: agenttools.CatalogType(kind)},
 			})
 			if err != nil {
@@ -77,13 +79,13 @@ func (m *Module) resolveBuilderTurnContext(ctx context.Context, scope agent.Scop
 	if m.dashboardAuthoring == nil || strings.TrimSpace(scope.PrincipalID) == "" {
 		return agent.TurnContext{}, errors.New("dashboard authoring is unavailable")
 	}
-	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceEdit) {
-		return agent.TurnContext{}, errors.New("credential cannot edit this dashboard")
-	}
 	dashboardID := strings.TrimSpace(candidate.DashboardID)
 	draftID := strings.TrimSpace(candidate.DraftID)
 	if dashboardID == "" || draftID == "" {
 		return agent.TurnContext{}, errors.New("builder context requires dashboard and draft")
+	}
+	if !CredentialAllowsResource(contextModuleScope(scope, projectID), projectgraph.ResourceID(dashboardID), projectgraph.KindDashboard, access.CapabilityResourceEdit) {
+		return agent.TurnContext{}, errors.New("credential cannot edit this dashboard")
 	}
 	builder, err := m.dashboardAuthoring.Builder(ctx, builderview.Request{
 		ProjectID: projectgraph.ResourceID(projectID), ActorID: scope.PrincipalID,
@@ -135,9 +137,6 @@ func (m *Module) resolveDataTurnContext(ctx context.Context, scope agent.Scope, 
 		return agent.TurnContext{}, errors.New("data context requires semantic model and dataset")
 	}
 	scope.ProjectID = projectID
-	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceUse) {
-		return agent.TurnContext{}, errors.New("credential cannot view this data")
-	}
 	resolvedModel, err := m.resolveContextResource(ctx, scope, modelID, projectgraph.KindSemanticModel, access.CapabilityResourceUse)
 	if err != nil {
 		return agent.TurnContext{}, errors.New("semantic model is unknown or unauthorized")
@@ -236,9 +235,6 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 		return agent.TurnContext{}, errors.New("dashboard context requires dashboard and page")
 	}
 	scope.ProjectID = projectID
-	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceRead) {
-		return agent.TurnContext{}, errors.New("credential cannot view this dashboard")
-	}
 	resolvedDashboard, err := m.resolveContextResource(ctx, scope, dashboardID, projectgraph.KindDashboard, access.CapabilityResourceRead)
 	if err != nil {
 		return agent.TurnContext{}, errors.New("dashboard is unknown or unauthorized")
@@ -323,11 +319,21 @@ func (m *Module) resolveContextResource(ctx context.Context, scope agent.Scope, 
 	if err != nil {
 		return "", err
 	}
-	return m.resolveResource(ctx, Scope{
-		ProjectID: projectID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
+	return m.resolveResource(ctx, contextModuleScope(scope, projectID), id, kind, capability)
+}
+
+func contextModuleScope(scope agent.Scope, projectID string) Scope {
+	return Scope{
+		ProjectID: projectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
-		Credential:    CredentialScope{ProjectID: scope.Credential.ProjectID, Capabilities: append([]string(nil), scope.Credential.Capabilities...), Restricted: scope.Credential.Restricted},
-	}, id, kind, capability)
+		Credential: CredentialScope{
+			ProjectID:         scope.Credential.ProjectID,
+			Capabilities:      append([]string(nil), scope.Credential.Capabilities...),
+			PermissionProfile: scope.Credential.PermissionProfile,
+			Permissions:       clonePermissionPairs(scope.Credential.Permissions),
+			Restricted:        scope.Credential.Restricted,
+		},
+	}
 }
 
 func dashboardFiltersFromTurnContext(raw map[string]any) (dashboard.Filters, error) {
@@ -469,16 +475,4 @@ func resolvedVisualMetadata(component dashboard.PageVisual, visualID string, vis
 		visualType = string(spec.Mark)
 	}
 	return title, strings.TrimSpace(visualType), true
-}
-
-func contextCredentialAllowsCapability(scope agent.Scope, capability access.Capability) bool {
-	if !scope.Credential.Restricted || scope.Credential.Capabilities == nil {
-		return true
-	}
-	for _, allowed := range scope.Credential.Capabilities {
-		if strings.EqualFold(strings.TrimSpace(allowed), string(capability)) {
-			return true
-		}
-	}
-	return false
 }

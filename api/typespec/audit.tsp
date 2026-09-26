@@ -30,7 +30,7 @@ alias ListAuditEventsOK = OkJson<AuditEventListResponse>;
 @summary("List project audit events")
 @route("/projects/{project}/audit-events")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "audit.read", resolver: "project" })
 @extension("x-leapview-object-scope", "project")
 op listAuditEvents(@path project: ResourceId, @query actor?: string, @query action?: string, @query resourceKind?: AuditTargetKind, @query resourceId?: ResourceId, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListAuditEventsOK | CommonErrors;
 
@@ -38,6 +38,6 @@ op listAuditEvents(@path project: ResourceId, @query actor?: string, @query acti
 @summary("List product audit events")
 @route("/audit-events")
 @get
-@apigen.authz(#{ mode: "authenticated" })
-@extension("x-leapview-object-scope", "platform")
+@apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.audit.read", resolver: "instance" })
+@extension("x-leapview-object-scope", "instance")
 op listPlatformAuditEvents(@query project?: ResourceId, @query actor?: string, @query action?: string, @query resourceKind?: AuditTargetKind, @query resourceId?: ResourceId, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListAuditEventsOK | CommonErrors;

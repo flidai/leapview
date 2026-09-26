@@ -138,7 +138,7 @@ func TestLoginUsesOAuthDeviceFlowAndNativeCredentialReference(t *testing.T) {
 	result, err := auth.Login(context.Background(), LoginRequest{
 		Name: "prod", Origin: "https://prod.example.com", InstanceID: "lvinst_prod",
 		Environment: "production", ProjectID: "analytics",
-		Capabilities: []string{"RESOURCE_EDIT", "RESOURCE_PUBLISH"},
+		Actions: []access.Action{access.ActionDashboardUpdate, access.ActionDashboardPublish},
 	}, func(challenge DeviceChallenge) { shown = challenge.UserCode })
 	require.NoError(t, err)
 	if shown != "ABCD-EFGH" || opened != "https://prod.example.com/device?user_code=ABCD-EFGH" {
@@ -149,7 +149,7 @@ func TestLoginUsesOAuthDeviceFlowAndNativeCredentialReference(t *testing.T) {
 	}
 	if oauthClient.request.Origin != "https://prod.example.com" ||
 		oauthClient.request.ProjectID != "analytics" ||
-		strings.Join(oauthClient.request.Capabilities, ",") != "RESOURCE_EDIT,RESOURCE_PUBLISH" {
+		strings.Join(authoringActionStrings(oauthClient.request.Actions), ",") != "dashboard.update,dashboard.publish" {
 		t.Fatalf("device request=%+v", oauthClient.request)
 	}
 	profile, err := profiles.Get("prod")
@@ -174,7 +174,7 @@ func TestHeadlessLoginShowsCodeWithoutOpeningBrowser(t *testing.T) {
 	var challenge DeviceChallenge
 	_, err := auth.Login(context.Background(), LoginRequest{
 		Name: "ci", Origin: "https://example.test", InstanceID: "lvinst_prod",
-		ProjectID: "project", Capabilities: []string{"RESOURCE_EDIT"}, Headless: true,
+		ProjectID: "project", Actions: []access.Action{access.ActionDashboardUpdate}, Headless: true,
 	}, func(value DeviceChallenge) { challenge = value })
 	require.NoError(t, err)
 	if opened || challenge.UserCode == "" || challenge.VerificationURI == "" {
@@ -193,7 +193,7 @@ func TestHeadlessLoginCanCompleteTrustedLocalAuthorizationBeforeExchange(t *test
 	approved := ""
 	_, err := auth.Login(context.Background(), LoginRequest{
 		Name: "local", Origin: "http://127.0.0.1:8080", InstanceID: "lvinst_prod",
-		ProjectID: "project", Capabilities: []string{"RESOURCE_EDIT"}, Headless: true,
+		ProjectID: "project", Actions: []access.Action{access.ActionDashboardUpdate}, Headless: true,
 		BeforeExchange: func(_ context.Context, challenge DeviceChallenge) error {
 			approved = challenge.UserCode
 			return nil
@@ -210,7 +210,7 @@ func TestLoginFailsClosedWhenNativeStoreIsUnavailable(t *testing.T) {
 	auth.Secrets = &memorySecrets{err: errors.New("keychain locked")}
 	_, err := auth.Login(context.Background(), LoginRequest{
 		Name: "prod", Origin: "https://example.test", InstanceID: "lvinst_prod",
-		ProjectID: "project", Capabilities: []string{"RESOURCE_EDIT"},
+		ProjectID: "project", Actions: []access.Action{access.ActionDashboardUpdate},
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "keychain locked") {
 		t.Fatalf("Login error = %v", err)
@@ -330,18 +330,26 @@ func TestExchangeWorkloadIdentityUsesExactGeneratedScopeWithoutPersistence(t *te
 	request := WorkloadIdentityRequest{
 		Origin: "https://prod.example.com", InstanceID: "lvinst_prod", ProjectID: "analytics",
 		ClientID: "sp-ci", ClientSecret: "service-secret",
-		Capabilities: []string{"RESOURCE_EDIT", "RESOURCE_PUBLISH"}, Lifetime: 10 * time.Minute,
+		Actions: []access.Action{access.ActionDashboardUpdate, access.ActionDashboardPublish}, Lifetime: 10 * time.Minute,
 	}
 	result, err := ExchangeWorkloadIdentity(context.Background(), oauthClient, request, func() time.Time { return now })
 	require.NoError(t, err)
 	if oauthClient.workloadRequest.Origin != request.Origin ||
-		strings.Join(oauthClient.workloadRequest.Capabilities, ",") != "RESOURCE_EDIT,RESOURCE_PUBLISH" {
+		strings.Join(authoringActionStrings(oauthClient.workloadRequest.Actions), ",") != "dashboard.update,dashboard.publish" {
 		t.Fatalf("workload request = %+v", oauthClient.workloadRequest)
 	}
 	if result.AccessToken != "workload-access" || result.ExpiresAt != now.Add(10*time.Minute) ||
 		result.SessionID != "session-1" {
 		t.Fatalf("result = %+v", result)
 	}
+}
+
+func authoringActionStrings(actions []access.Action) []string {
+	values := make([]string, len(actions))
+	for index, action := range actions {
+		values[index] = string(action)
+	}
+	return values
 }
 
 func testAuthenticator(t *testing.T, now time.Time) (Authenticator, *cliapi.ProfileStore, *memorySecrets) {

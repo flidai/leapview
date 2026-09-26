@@ -58,7 +58,7 @@ func TestPostgres18AuthoringRefreshReplayFailuresRollbackAtomically(t *testing.T
 	if _, err := db.admin.Exec(t.Context(), `INSERT INTO access.principal(id,principal_type,status,email,display_name) VALUES ($1::uuid,'user','active','replay-failure@example.com','Replay Failure')`, principalID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.admin.Exec(t.Context(), `INSERT INTO access.authoring_session(id,kind,client_id,principal_id,target_id,project_id,capabilities,created_at,expires_at) VALUES ($1,'human_cli','leapview-cli',$2::uuid,'instance_replay_failure','project_replay_failure','["RESOURCE_READ"]'::jsonb,$3,$4)`, sessionID, principalID, now, now.Add(4*time.Hour)); err != nil {
+	if _, err := db.admin.Exec(t.Context(), `INSERT INTO access.authoring_session(id,kind,client_id,principal_id,target_id,project_id,permission_profile,permissions,created_at,expires_at) VALUES ($1,'human_cli','leapview-cli',$2::uuid,'instance_replay_failure','project_replay_failure','leapview.permissions/v1','[]'::jsonb,$3,$4)`, sessionID, principalID, now, now.Add(4*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.admin.Exec(t.Context(), `INSERT INTO access.authoring_credential(id,session_id,access_token_hash,refresh_token_hash,access_expires_at,refresh_expires_at,active,created_at,replaced_at) VALUES ('authoring_replay_old',$1,$2,$3,$4,$5,false,$6,$6)`, sessionID, hashHex("authoring-replay-failure-access"), refreshHash, now.Add(time.Hour), now.Add(3*time.Hour), now); err != nil {

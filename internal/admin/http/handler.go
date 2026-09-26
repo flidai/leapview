@@ -40,8 +40,10 @@ type Handler struct {
 		access.Repository
 		adminsettings.ServiceAccountReader
 	}
-	AuthorizationProjection adminsettings.AuthorizationProjectionReader
-	CurrentCredential       func(*nethttp.Request) (access.APICredential, bool)
+	AuthorizationProjection   adminsettings.AuthorizationProjectionReader
+	RoleBindingAdministration func(context.Context) (access.RoleBindingAdministrationState, error)
+	RoleBindingMutation       func(*nethttp.Request, access.RoleBindingAdministrationCommand) (access.RoleBindingAdministrationState, error)
+	CurrentCredential         func(*nethttp.Request) (access.APICredential, bool)
 }
 
 type publicationCommandSignals struct {
@@ -97,9 +99,48 @@ func (h Handler) NewAPIToken(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	h.renderPage(w, r, "api-token-new")
 }
+func (h Handler) EditAPIToken(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	h.renderPage(w, r, "api-token-edit")
+}
 func (h Handler) General(w nethttp.ResponseWriter, r *nethttp.Request) { h.renderPage(w, r, "general") }
+func (h Handler) AccessOverview(w nethttp.ResponseWriter, r *nethttp.Request) {
+	h.renderPage(w, r, "access")
+}
 func (h Handler) ServiceAccounts(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "service-accounts")
+}
+func (h Handler) ServiceAccountDetail(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.SettingsRepository == nil {
+		nethttp.Error(w, "service accounts are unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+	accountID := strings.TrimSpace(chi.URLParam(r, "serviceAccount"))
+	state, err := adminsettings.LoadServiceAccounts(r.Context(), h.SettingsRepository, "")
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	found := false
+	for _, account := range state.Items {
+		if account.ID == accountID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		nethttp.NotFound(w, r)
+		return
+	}
+	data, err := h.readModel().SettingsData(r)
+	if err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		return
+	}
+	data.SelectedServiceAccountID = accountID
+	h.writePage(w, r, "service-accounts-detail", data)
 }
 func (h Handler) NewServiceAccount(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "service-accounts-new")
@@ -436,7 +477,7 @@ func (h Handler) BootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.Request) 
 	if active == "" {
 		active = "profile"
 	}
-	if (active == "profile" || active == "security" || active == "api-tokens" || active == "api-token-new" || active == "archived-chats") && h.rejectAuthoringCredential(w, r) {
+	if (active == "profile" || active == "security" || active == "api-tokens" || active == "api-token-new" || active == "api-token-edit" || active == "archived-chats") && h.rejectAuthoringCredential(w, r) {
 		return
 	}
 	var listState entityListSignals
@@ -505,7 +546,7 @@ func (h Handler) rejectAuthoringCredential(w nethttp.ResponseWriter, r *nethttp.
 
 func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals map[string]any) error {
 	switch active {
-	case "profile", "security", "api-tokens", "api-token-new":
+	case "profile", "security", "api-tokens", "api-token-new", "api-token-edit":
 		if h.PersonalSettings == nil {
 			return nil
 		}
@@ -526,17 +567,33 @@ func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals m
 		}
 		signals["productSettings"] = productsettings.Payload(state)
 		signals["productSettingsCommand"] = map[string]any{}
-	case "service-accounts", "service-accounts-new":
+	case "service-accounts", "service-accounts-detail", "service-accounts-new":
 		if h.SettingsRepository == nil {
 			return nil
 		}
-		state, err := adminsettings.LoadServiceAccounts(r.Context(), h.SettingsRepository, "")
+		selectedID := ""
+		if active == "service-accounts-detail" {
+			selectedID = strings.TrimSpace(r.URL.Query().Get("serviceAccount"))
+		}
+		state, err := adminsettings.LoadServiceAccounts(r.Context(), h.SettingsRepository, selectedID)
 		if err != nil {
 			return err
 		}
 		signals["adminServiceAccounts"] = state
 		signals["adminServiceAccountCommand"] = adminsettings.ServiceAccountCommand{}
-	case "principals", "groups", "principal-detail", "group-detail":
+		actorID := ""
+		if h.ReadModel.CurrentPrincipal != nil {
+			if principal, ok := h.ReadModel.CurrentPrincipal(r); ok {
+				actorID = principal.ID
+			}
+		}
+		accessState, err := h.loadAccessAdministration(r, actorID, "", "")
+		if err != nil {
+			return err
+		}
+		signals["adminAccess"] = accessState
+		signals["adminAccessCommand"] = adminsettings.AccessAdministrationCommand{}
+	case "access", "principals", "groups", "principal-detail", "group-detail":
 		if h.SettingsRepository == nil {
 			return nil
 		}
@@ -548,7 +605,7 @@ func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals m
 		}
 		selectedPrincipalID := strings.TrimSpace(r.URL.Query().Get("principal"))
 		selectedGroupID := strings.TrimSpace(r.URL.Query().Get("group"))
-		state, err := h.loadAccessAdministration(r.Context(), actorID, selectedPrincipalID, selectedGroupID)
+		state, err := h.loadAccessAdministration(r, actorID, selectedPrincipalID, selectedGroupID)
 		if err != nil {
 			return err
 		}
@@ -607,8 +664,12 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 		return h.readModel().StorageData(r), nil
 	case "storage-detail":
 		return h.readModel().StorageTableData(r, r.URL.Query().Get("schema"), r.URL.Query().Get("table"))
-	case "profile", "security", "api-tokens", "api-token-new", "archived-chats", "general", "service-accounts", "service-accounts-new", "authentication", "audit", "system":
-		return h.readModel().SettingsData(r)
+	case "profile", "security", "api-tokens", "api-token-new", "api-token-edit", "archived-chats", "general", "access", "service-accounts", "service-accounts-detail", "service-accounts-new", "authentication", "audit", "system":
+		data, err := h.readModel().SettingsData(r)
+		if active == "service-accounts-detail" && err == nil {
+			data.SelectedServiceAccountID = strings.TrimSpace(r.URL.Query().Get("serviceAccount"))
+		}
+		return data, err
 	}
 	data, err := h.adminData(r)
 	if err != nil {

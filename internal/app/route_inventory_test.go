@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "5fd03c7c5535e919400ae2669006764296b1ff11fcd6c37622f099e7ac09fb0e"
+	const expectedRouteContractDigest = "4f66b8063a03aaed14e2913393b14bffb2ee9ccd6b6ece196dbf9021bd62e8e2"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -136,7 +136,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	switch {
 	case strings.HasPrefix(path, "/product/logo/"):
 		authenticated.owner = "admin"
-	case path == "/admin" || path == "/admin/profile" || path == "/admin/security" || path == "/admin/api-tokens" || path == "/admin/api-tokens/new" || path == "/admin/archived-chats" || path == "/admin/personal-settings/command":
+	case path == "/admin" || path == "/admin/profile" || path == "/admin/security" || path == "/admin/api-tokens" || path == "/admin/api-tokens/new" || path == "/admin/api-tokens/{token}/edit" || path == "/admin/archived-chats" || path == "/admin/personal-settings/command":
 		authenticated.owner = "admin"
 	case path == "/admin/agent" || path == "/admin/agent/config":
 		authenticated.owner = "agent"
@@ -167,7 +167,10 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case path == "/dashboards/new" || path == "/dashboards/{dashboard}/fork":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_EDIT"
-	case path == "/dashboards/{dashboard}/preview" || path == "/dashboards/{dashboard}/export.yaml":
+	case path == "/dashboards/{dashboard}/preview":
+		authenticated.owner = "dashboard"
+		authenticated.privilege = "RESOURCE_EDIT"
+	case path == "/dashboards/{dashboard}/export.yaml":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_READ"
 	case path == "/dashboards/{asset}/appearance":
@@ -252,9 +255,11 @@ GET /.well-known/oauth-authorization-server
 GET /.well-known/oauth-protected-resource
 GET /.well-known/oauth-protected-resource/mcp
 GET /admin
+GET /admin/access
 GET /admin/api-tokens
 GET /admin/archived-chats
 GET /admin/api-tokens/new
+GET /admin/api-tokens/{token}/edit
 GET /admin/agent
 GET /admin/audit
 GET /admin/authentication
@@ -269,6 +274,7 @@ GET /admin/queries
 GET /admin/security
 GET /admin/service-accounts
 GET /admin/service-accounts/new
+GET /admin/service-accounts/{serviceAccount}
 GET /admin/storage
 GET /admin/storage/tables/{schema}/{table}
 GET /admin/system
@@ -353,6 +359,7 @@ POST /admin/queries/command
 POST /admin/service-accounts/command
 POST /auth/desktop/disconnect
 POST /auth/desktop/redeem
+POST /auth/development/login
 POST /auth/local/login
 POST /auth/local/password
 POST /auth/logout

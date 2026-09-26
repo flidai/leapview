@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
@@ -29,25 +30,39 @@ func TestCreateRefreshAuditIntentUsesAccessOutcomeVocabulary(t *testing.T) {
 
 func TestRefreshRunLifecycleOperationContracts(t *testing.T) {
 	contracts := refreshgen.GetAPIGenOperationContracts()
-	commands := map[string]string{
-		"createRefreshRun": refreshQueuedAuditAction,
-		"cancelRefreshRun": refreshCancelledAuditAction,
+	commands := map[string]struct {
+		auditAction string
+		privilege   string
+	}{
+		"createRefreshRun": {auditAction: refreshQueuedAuditAction, privilege: string(access.CapabilityResourceUse)},
+		"cancelRefreshRun": {auditAction: refreshCancelledAuditAction},
 	}
-	for operationID, auditAction := range commands {
+	for operationID, expected := range commands {
 		contract, ok := contracts[operationID]
 		if !ok || contract.Command == nil {
 			t.Fatalf("command contract %q = %#v", operationID, contract)
 		}
 		if refreshGeneratedOperationKind(contract) != "command" ||
 			contract.Command.Owner != "LeapViewAPI.Refresh" ||
-			contract.Command.Audit.SuccessAction != auditAction ||
+			contract.Command.Audit.SuccessAction != expected.auditAction ||
 			!contract.Command.Audit.Required ||
 			contract.Command.Audit.Guarantee != "transactional" ||
 			(contract.Command.Target == nil || contract.Command.Target.Parameter != "project") ||
 			contract.Command.Idempotency != "required" ||
-			contract.Command.Privilege != "" {
+			contract.Command.Privilege != expected.privilege {
 			t.Errorf("command contract %q = %#v", operationID, contract)
 		}
+	}
+	createAuthz := contracts["createRefreshRun"].Authz
+	if createAuthz == nil || createAuthz.Action != string(access.ActionPipelineRun) || createAuthz.Resolver != string(access.TypedOperationResolverPipeline) {
+		t.Fatalf("create refresh typed authz = %#v, want pipeline.run/pipeline", createAuthz)
+	}
+	requirement, err := CreateRefreshRunTypedOperationRequirement()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requirement.Action != access.ActionPipelineRun || requirement.Resolver != access.TypedOperationResolverPipeline {
+		t.Fatalf("create refresh requirement = %#v, want generated pipeline.run/pipeline", requirement)
 	}
 	create := contracts["createRefreshRun"].Command
 	if create.UI == nil || create.UI.ActionID != "refresh.run" || len(create.AdditionalExposures) != 1 || string(create.AdditionalExposures[0]) != "ui" {

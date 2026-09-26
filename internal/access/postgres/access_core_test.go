@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -168,7 +169,18 @@ func TestAccessCorePostgreSQL18PrincipalCredentialsAndRevocation(t *testing.T) {
 		t.Fatalf("labeled browser session = %#v", sessions)
 	}
 
-	apiSecret, apiToken, err := repo.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: p.Principal.ID, Name: "ci", Description: "Deploys the reporting project", Capabilities: []access.Capability{access.CapabilityResourceRead}, ExpiresAt: time.Now().Add(time.Hour)})
+	resource, err := access.NewResourceRef("core-test-model", projectgraph.KindSemanticModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := access.NewExactPermissionPair(access.ActionSemanticConsume, "analytics", resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiSecret, apiToken, err := repo.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{
+		PrincipalID: p.Principal.ID, Name: "ci", Description: "Deploys the reporting project",
+		Permissions: []access.PermissionPair{permission}, ExpiresAt: time.Now().Add(time.Hour),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,6 +195,162 @@ func TestAccessCorePostgreSQL18PrincipalCredentialsAndRevocation(t *testing.T) {
 	}
 	if _, err := repo.PrincipalForAPIToken(t.Context(), apiSecret); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("revoked api token = %v", err)
+	}
+}
+
+func TestCleanSchemaRejectsActiveCapabilityOnlyAPITokenRows(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := repo.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "omitted-capabilities@example.com", DisplayName: "Omitted Capabilities"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.admin.QueryRow(t.Context(), `SELECT count(*) FROM access.api_token`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("unexpected initial token rows: %d", count)
+	}
+	legacyID, err := newUUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.admin.Exec(t.Context(), `
+INSERT INTO access.api_token(id, principal_id, name, token_fingerprint, verifier, capabilities, expires_at)
+VALUES ($1::uuid, $2::uuid, 'legacy-direct', decode(repeat('11',32),'hex'), decode(repeat('22',32),'hex'), '[]'::jsonb, clock_timestamp() + interval '1 hour')`,
+		legacyID, principal.ID); err == nil {
+		t.Fatal("clean schema accepted an active capability-only token row")
+	}
+}
+
+func TestLegacyCapabilityOnlyTokenRowsAreDeniedAndNotDecoded(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := repo.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "legacy-token@example.com", DisplayName: "Legacy Token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := tokenSecret("lv_pat_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := secretVerifier(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := newUUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a row left by the pre-typed schema. Existing installations may
+	// still have the old permissive CHECK constraint, so authentication must
+	// deny this shape independently of the clean-schema constraint.
+	if _, err := db.admin.Exec(t.Context(), `ALTER TABLE access.api_token DROP CONSTRAINT access_api_token_typed_scope_check`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.admin.Exec(t.Context(), `
+INSERT INTO access.api_token(id, principal_id, name, token_fingerprint, verifier, capabilities, expires_at)
+VALUES ($1::uuid, $2::uuid, 'legacy', $3, $4, '["RESOURCE_READ"]'::jsonb, clock_timestamp() + interval '1 hour')`,
+		id, principal.ID, repo.secretFingerprint(secret), verifier); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CredentialForAPIToken(t.Context(), secret); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("legacy capability-only token credential = %v, want pgx.ErrNoRows", err)
+	}
+	legacy, err := repo.apiToken(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.PermissionProfile != "" || legacy.Permissions != nil || legacy.Capabilities == nil || len(legacy.Capabilities) != 0 {
+		t.Fatalf("legacy token decoded into current authority: %#v", legacy)
+	}
+}
+
+func TestCreateScopedAPITokenPersistsExactPermissionPairs(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := repo.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "scoped-token@example.com", DisplayName: "Scoped Token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := access.NewResourceRef("orders_semantic", projectgraph.KindSemanticModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := access.NewExactPermissionPair(access.ActionSemanticConsume, "analytics", resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, token, err := repo.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{
+		PrincipalID: principal.ID,
+		Name:        "dashboard-consumer",
+		Permissions: []access.PermissionPair{permission},
+		ExpiresAt:   time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token.PermissionProfile != access.PermissionCatalogProfile || len(token.Permissions) != 1 || token.Permissions[0] != permission {
+		t.Fatalf("persisted typed token = %#v", token)
+	}
+	if token.Capabilities == nil || len(token.Capabilities) != 0 {
+		t.Fatalf("typed token legacy capabilities = %#v, want explicit empty", token.Capabilities)
+	}
+	credential, err := repo.CredentialForAPIToken(t.Context(), secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential.Token.PermissionProfile != access.PermissionCatalogProfile || len(credential.Token.Permissions) != 1 {
+		t.Fatalf("resolved typed credential = %#v", credential.Token)
+	}
+	if _, _, err := repo.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{
+		PrincipalID: principal.ID, Name: "omitted", ExpiresAt: time.Now().Add(time.Hour),
+	}); !errors.Is(err, access.ErrTokenPermissionsNeeded) {
+		t.Fatalf("omitted typed permissions error = %v, want %v", err, access.ErrTokenPermissionsNeeded)
+	}
+
+	var valid bool
+	if err := db.runtime.QueryRow(t.Context(), `SELECT access.valid_permission_pairs('leapview.permissions/v1', $1::jsonb)`, `[{"profile":"leapview.permissions/v1","action":"semantic.consume","target":{"scope":"resource","projectId":"analytics","resourceKind":"dashboard","resourceId":"orders_semantic"}}]`).Scan(&valid); err != nil {
+		t.Fatal(err)
+	}
+	if valid {
+		t.Fatal("database validator accepted semantic permission on a dashboard target")
+	}
+}
+
+func TestCreateScopedAPITokenDefaultsOmittedExpiry(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := repo.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "scoped-default-expiry@example.com", DisplayName: "Scoped Default Expiry"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now().UTC()
+	_, token, err := repo.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{
+		PrincipalID: principal.ID, Name: "default-expiry", Permissions: []access.PermissionPair{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, token.ExpiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expiresAt.Before(before.Add(defaultAPITokenTTL)) || expiresAt.After(time.Now().UTC().Add(defaultAPITokenTTL)) {
+		t.Fatalf("scoped token expiry = %s, want default TTL %s", expiresAt, defaultAPITokenTTL)
 	}
 }
 
@@ -464,7 +632,7 @@ func TestAccessCoreCleanTargetInvariants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apiSecret, _, err := repo.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: u1.Principal.ID, Name: "disable-check", ExpiresAt: time.Now().Add(time.Hour)})
+	apiSecret, _, err := repo.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{PrincipalID: u1.Principal.ID, Name: "disable-check", Permissions: []access.PermissionPair{}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,7 +710,7 @@ func TestAccessCoreDatabaseClockExpiryBoundary(t *testing.T) {
 	if err := db.runtime.QueryRow(t.Context(), `SELECT clock_timestamp()+interval '2 hours'`).Scan(&apiExpiry); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := repo.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: p.Principal.ID, Name: "db-clock-api", ExpiresAt: apiExpiry}); err != nil {
+	if _, _, err := repo.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{PrincipalID: p.Principal.ID, Name: "db-clock-api", Permissions: []access.PermissionPair{}, ExpiresAt: apiExpiry}); err != nil {
 		t.Fatalf("database-clock API expiry: %v", err)
 	}
 	sp, err := repo.CreateServicePrincipal(t.Context(), access.ServicePrincipalInput{DisplayName: "db-clock-service"})
@@ -560,7 +728,10 @@ func TestAccessCoreDatabaseClockExpiryBoundary(t *testing.T) {
 	if err := db.runtime.QueryRow(t.Context(), `SELECT clock_timestamp()-interval '1 second'`).Scan(&expired); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := repo.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: p.Principal.ID, Name: "expired-api", ExpiresAt: expired}); err == nil || !strings.Contains(err.Error(), "expiry is invalid") {
+	if _, _, err := repo.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{PrincipalID: p.Principal.ID, Name: "expired-api", Permissions: []access.PermissionPair{}, ExpiresAt: expired}); err == nil || !strings.Contains(err.Error(), "expiry is invalid") {
 		t.Fatalf("expired API expiry error = %v", err)
+	}
+	if _, _, err := repo.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{PrincipalID: p.Principal.ID, Name: "expired-scoped-api", Permissions: []access.PermissionPair{}, ExpiresAt: expired}); err == nil || !strings.Contains(err.Error(), "expiry is invalid") {
+		t.Fatalf("expired scoped API expiry error = %v", err)
 	}
 }

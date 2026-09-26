@@ -179,8 +179,8 @@ func localBrowserSessionRequest(t *testing.T, origin, email, password string) lo
 	t.Helper()
 	root := t.TempDir()
 	credentials := adminoffline.InitialCredentials{
-		Email: email, TemporaryPassword: password, PublisherToken: "publisher-token",
-		PublisherTokenExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		Email: email, TemporaryPassword: password, ProjectClaimToken: "project-claim-token",
+		ProjectClaimTokenExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 	}
 	encoded, err := json.Marshal(credentials)
 	require.NoError(t, err)

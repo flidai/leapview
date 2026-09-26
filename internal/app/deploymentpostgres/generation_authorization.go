@@ -15,9 +15,9 @@ import (
 // revision locked by admission is exactly the immutable serving document and
 // graph-bound authorization fingerprint retained by the generation.
 func validateGenerationAuthorizationSnapshot(policy access.AuthorizationPolicy, admission GenerationAdmissionInput) error {
-	manifestPolicy, err := projectmanifest.FromAuthorizationPolicy(policy)
+	manifestPolicy, err := projectmanifest.AccessPolicyFromAuthorizationPolicy(policy)
 	if err != nil {
-		return fmt.Errorf("%w: target authorization policy: %v", deploymentnative.ErrInvalid, err)
+		return fmt.Errorf("%w: project target authorization policy: %v", deploymentnative.ErrInvalid, err)
 	}
 	encoded, err := json.Marshal(manifestPolicy)
 	if err != nil {

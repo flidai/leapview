@@ -300,10 +300,10 @@ func TestMCPAcceptsOAuthTokensAndRejectsGeneralAPITokens(t *testing.T) {
 	store := testStore(t)
 	principal := testPrincipal(t, ctx, store, "mcp@example.com", "MCP User")
 	repo := testAccessRepository(store)
-	apiSecret, _, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-		PrincipalID:  principal.ID,
-		Name:         "rest-api-only",
-		Capabilities: []access.Capability{access.CapabilityResourceUse, access.CapabilityResourceRead},
+	apiSecret, _, err := store.fixture.Graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
+		PrincipalID: principal.ID,
+		Name:        "rest-api-only",
+		Permissions: []access.PermissionPair{},
 	})
 	if err != nil {
 		t.Fatalf("create REST API token: %v", err)

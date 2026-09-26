@@ -1441,6 +1441,7 @@ test('admin sidebar replaces global navigation and provides a back to app action
           current: link.getAttribute('aria-current'),
         })),
         groupLabels: Array.from(root.querySelectorAll('.nav-group:not(.primary-action)')).map((group) => group.getAttribute('aria-label')),
+        accessItems: Array.from(root.querySelectorAll<HTMLAnchorElement>('#mobile-navigation .nav-group[aria-label="Access"] a.nav-item')).map((link) => ({ label: link.getAttribute('aria-label'), icon: link.querySelector('.nav-icon svg')?.innerHTML })),
         visibleGroupLabels: Array.from(root.querySelectorAll('.nav-group-label')).map((label) => label.textContent?.trim()),
         brandAction: (() => {
           const action = root.querySelector('.brand-back') as HTMLAnchorElement | null
@@ -1495,6 +1496,8 @@ test('admin sidebar replaces global navigation and provides a back to app action
     })
 
     expect(state.groupLabels).toEqual(['Personal', 'Product', 'Access', 'Data & sharing', 'Operations'])
+    expect(state.accessItems.map((item) => item.label)).toEqual(['Users', 'Groups', 'Service accounts', 'Roles & permissions', 'Authentication'])
+    expect(new Set(state.accessItems.slice(0, 2).concat(state.accessItems[3]).map((item) => item.icon)).size).toBe(3)
     expect(state.adminMode).toBe(true)
     expect(state.width).toBe(248)
     expect(state.visibleGroupLabels).toEqual(['Personal', 'Product', 'Access', 'Data & sharing', 'Operations'])
