@@ -38,7 +38,8 @@ A read-only inventory of all accessible dev/staging/prod folders found the site
 SSH key but no Tailscale CI credential. The old infrastructure workflow identity
 `7e92da75-ac4f-49f2-8924-4561c3547902` returned identity-not-found; it is not
 reused by this integration.
-This is sufficient for read-only inspection and operator-run isolated testing.
+This also supports the approved operator-run test on the public-site VPS; see the
+manual test checkpoint below. CI/CD setup is deferred at Jacob’s request.
 It is separate from access for GitHub-hosted runners.
 
 Jacob reports existing GitHub access credentials. The current operator token
@@ -104,7 +105,13 @@ This draft deliberately does not provide an automatic stale-lock reset.
 1. Finish disposable-host integration tests for this exact adapter, including
    interruptions, public acceptance failures, offline rollback and maintenance
    failures. The earlier trial proves mechanisms, not this new implementation.
-2. Complete required CI/review and confirm the existing GitHub credential names
+2. Fix and qualify registry authentication: Kamal 2.12.0 `redeploy --skip-push`
+   calls `build pull`, which performs a remote registry login. The current dummy
+   registry credentials fail on the real host. The manual experiment uses an
+   explicitly verified anonymous Docker pull followed by supported `app boot`;
+   it does not qualify the draft automated pull path. See the pinned
+   [build-pull implementation](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/build.rb). Complete required CI/review
+   and confirm the existing GitHub credential names
    and scope. Establish the read-only hosted-runner route.
 3. Set the repository mode to `paused` and drain every old production workflow
    before merging. Old workflow runs do not honor the new variable. Verify both
@@ -128,8 +135,10 @@ gates, skips image publication and registry admission, and selects only the
 recorded verified prior version. It uses its saved admission/runtime evidence
 and local image; it does not depend on the registry being online.
 
-No production cleanup, migration, credential creation or mode change has been
-performed by this PR. Public DNS, CFO demo and application releases are out of scope.
+The manual experiment below performed scoped host cleanup and a temporary public
+cutover, then restored Compose. No permanent Kamal handover, new credential,
+repository mode change or automated deployment was performed. Public DNS, CFO
+demo and application releases are out of scope.
 
 ## Validation
 
@@ -142,7 +151,7 @@ handover state stopped the command before admission, tagging, pulling or cleanup
 
 Ruby dependencies are pinned, covered by Dependabot, and scanned by the existing
 pinned Trivy source-security tool with a separate vulnerability scan of Ruby lock
-roots. These checks must pass in hosted CI before production credentials are used.
+roots. These checks must pass in hosted CI before automated production activation is enabled.
 
 Sources: [Kamal redeploy](https://kamal-deploy.org/docs/commands/redeploy/),
 [Tailscale GitHub Action](https://tailscale.com/docs/integrations/github/github-action).
@@ -150,3 +159,49 @@ Sources: [Kamal redeploy](https://kamal-deploy.org/docs/commands/redeploy/),
 Local full CI was attempted after initializing generated outputs. It reached
 PostgreSQL conformance and failed because the shared Docker daemon has no
 `docker0` bridge. Focused tests passing do not substitute for that required check.
+
+
+## Manual VPS test — 26 September 2026
+
+Jacob deferred CI/CD and allowed temporary website interruption for testing.
+The operator used the existing Infisical SSH key and Tailscale connection; no new
+credentials were requested or created. Evidence: [manual-vps.json](evidence/manual-vps.json).
+
+- Saved the legacy configuration locally with restricted permissions. Disabled
+  the legacy reconciliation timer and drained its service, then acquired both
+  existing deployment locks for cleanup. Removed 66 inventoried obsolete site
+  image identities, preserving the exact live image, prior image and every
+  container reference. Root usage fell from 100% to about 10%.
+- Pulled two admitted experimental images by immutable digest, verified their
+  existing workflow tag mappings, and booted them using Kamal 2.12.0 `app boot`.
+  The private proxy was bootstrapped with its pinned digest and no published ports.
+- Temporarily connected Caddy to the Kamal network and changed only its upstream.
+  A timed host-local restore job protected against operator disconnection.
+  Verified public HTTPS, www redirect, health/readiness, actual container manifest
+  and runtime, build identity, installation docs, release metadata and 16 assets.
+- A deliberately unreachable candidate port failed readiness; the working version
+  continued serving. Correcting that configuration deployed the second image.
+  Local rollback to the first image and restoration to the second both passed.
+- Removed only the two recorded stopped duplicate containers, then invoked
+  native Kamal pruning. Exactly one running version and one distinct stopped
+  prior version remained, with both admitted images available.
+- Restored the original Caddy configuration and public Compose image, stopped the
+  recovery timer, and removed the trial containers, images, private proxy and
+  network. The legacy updater remains disabled while automation is deferred;
+  do not re-enable it blindly because it can pull/promote a moving production tag.
+
+The availability probe recorded 111 requests over about 68 seconds. Four requests
+failed around the two Caddy restarts; no failed samples were observed during the
+Kamal candidate rejection or version switches. This is sampled evidence, not a
+zero-downtime guarantee. The experiment used the trial package and does not make
+those images production-admitted or establish a permanent deployment.
+
+Two integration findings came from the real host: remote registry login needs
+valid authentication (still outstanding), and this Docker 29/containerd store
+also lists canonical digest references inside `RepoTags`. The ownership guard
+now accepts those only when they are also present in `RepoDigests`; foreign and
+unrecorded digest aliases remain rejected. A regression test covers that shape.
+
+Next: resolve the registry-authentication path, qualify the complete adapter,
+review the production image/configuration, and perform the permanent controller
+handover. CI/CD remains deferred. The test itself does not satisfy those gates.
