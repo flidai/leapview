@@ -219,7 +219,7 @@ def _decode_json_list(output: str, context: str) -> list[dict[str, Any]]:
     return result
 
 
-def _docker(*arguments: str, allow_not_found: bool = False) -> str:
+def _docker(*arguments: str) -> str:
     try:
         result = subprocess.run(
             ["docker", *arguments],
@@ -231,8 +231,6 @@ def _docker(*arguments: str, allow_not_found: bool = False) -> str:
     except OSError as exc:
         raise RetentionError(f"cannot run Docker: {exc}", EXIT_INSPECTION) from exc
     if result.returncode != 0:
-        if allow_not_found:
-            return ""
         message = result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
         raise RetentionError(f"docker {' '.join(arguments)} failed: {message}", EXIT_INSPECTION)
     return result.stdout
@@ -546,6 +544,8 @@ def _emit(document: dict[str, Any], stream: Any = sys.stdout) -> None:
 def execute(args: argparse.Namespace) -> int:
     site_root = Path(args.site_root)
     removed: list[str] = []
+    implicitly_removed: list[str] = []
+    already_absent: list[str] = []
     storage: Path | None = None
     free_before: int | None = None
     try:
@@ -572,8 +572,49 @@ def execute(args: argparse.Namespace) -> int:
             _read_transaction_scratch(site_root, state)
             images, containers = inventory_docker()
             plan = build_plan(images, containers, state, args.candidate_ref, args.require_candidate)
+            current_images, current_containers = images, containers
             for group in plan["proposed_removals"]:
+                group_id = group["id"]
+                directly_removed_from_group = False
                 for reference in group["aliases"]:
+                    # Docker may remove several aliases for one image when a
+                    # tag is removed. Refresh the exact alias map before each
+                    # targeted operation so a now-absent RepoDigest is not
+                    # mistaken for a failed removal.
+                    state = load_state(site_root)
+                    _read_transaction_scratch(site_root, state)
+                    if state["transaction"] is not None:
+                        raise RetentionError(
+                            "a deployment transaction appeared during cleanup; preserving remaining images",
+                            EXIT_UNSAFE,
+                        )
+                    current_plan = build_plan(
+                        current_images,
+                        current_containers,
+                        state,
+                        args.candidate_ref,
+                        args.require_candidate,
+                    )
+                    by_id, aliases = _image_maps(current_images)
+                    matching_ids = aliases.get(reference, set())
+                    if not matching_ids:
+                        absent = implicitly_removed if directly_removed_from_group else already_absent
+                        absent.append(reference)
+                        continue
+                    if matching_ids != {group_id}:
+                        raise RetentionError(
+                            f"image reference changed identity during cleanup: {reference}",
+                            EXIT_UNSAFE,
+                        )
+                    still_eligible = any(
+                        removal["id"] == group_id and reference in removal["aliases"]
+                        for removal in current_plan["proposed_removals"]
+                    )
+                    if not still_eligible or group_id not in by_id:
+                        raise RetentionError(
+                            f"image became protected or ambiguous during cleanup: {reference}",
+                            EXIT_UNSAFE,
+                        )
                     try:
                         result = subprocess.run(
                             ["docker", "image", "rm", reference],
@@ -586,8 +627,31 @@ def execute(args: argparse.Namespace) -> int:
                         raise RetentionError(f"cannot run targeted docker image removal: {exc}", EXIT_REMOVE) from exc
                     if result.returncode != 0:
                         message = result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
+                        try:
+                            current_images, current_containers = inventory_docker()
+                            _, after_aliases = _image_maps(current_images)
+                        except RetentionError as inspect_exc:
+                            raise RetentionError(
+                                f"docker image rm {reference} failed: {message}; could not verify its result: {inspect_exc}",
+                                EXIT_REMOVE,
+                            ) from inspect_exc
+                        if reference not in after_aliases:
+                            absent = implicitly_removed if directly_removed_from_group else already_absent
+                            absent.append(reference)
+                            continue
                         raise RetentionError(f"docker image rm {reference} failed: {message}", EXIT_REMOVE)
                     removed.append(reference)
+                    directly_removed_from_group = True
+                    # Verify every successful removal before processing another
+                    # alias. This also catches a daemon that reports success
+                    # without dropping the requested name.
+                    current_images, current_containers = inventory_docker()
+                    _, after_aliases = _image_maps(current_images)
+                    if reference in after_aliases:
+                        raise RetentionError(
+                            f"docker image rm reported success but the reference remains: {reference}",
+                            EXIT_REMOVE,
+                        )
         free_after = _free_bytes(storage)
         document = {
             "mode": args.operation,
@@ -601,6 +665,8 @@ def execute(args: argparse.Namespace) -> int:
             "protected": plan["protected"],
             "proposed_removals": plan["proposed_removals"],
             "removed_references": removed,
+            "implicitly_removed_references": implicitly_removed,
+            "already_absent_references": already_absent,
             "preserved_ambiguous": plan["preserved_ambiguous"],
             "first_install": state["first_install"],
             "transaction": state["transaction"],
@@ -615,6 +681,8 @@ def execute(args: argparse.Namespace) -> int:
             "mode": args.operation,
             "status": "unsafe-or-failed",
             "removed_references": removed,
+            "implicitly_removed_references": implicitly_removed,
+            "already_absent_references": already_absent,
         }
         if storage is not None:
             document["storage_path"] = str(storage)

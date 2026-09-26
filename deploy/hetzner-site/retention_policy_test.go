@@ -171,3 +171,105 @@ assert r.parser().parse_args([]).operation == "plan"
 		t.Fatalf("retention helper default operation: %v\n%s", err, output)
 	}
 }
+
+func TestRetentionHelperHandlesImplicitlyRemovedDigestAliases(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	program := `
+import contextlib, copy, importlib.util, io, json, pathlib, sys, tempfile, types
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("retention", sys.argv[1])
+r = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(r)
+r._emit = lambda document, stream=None: print(
+    json.dumps(document, sort_keys=True, separators=(",", ":")),
+    file=stream if stream is not None else sys.stdout)
+
+def digest(char):
+    return "ghcr.io/flidai/leapview-site@sha256:" + char * 64
+
+active, previous, obsolete = digest("a"), digest("b"), digest("c")
+caddy = "caddy@sha256:" + "d" * 64
+active_id, previous_id, obsolete_id, caddy_id = ("sha256:" + char * 64 for char in "1234")
+tags = ["ghcr.io/flidai/leapview-site:cycle-00", "ghcr.io/flidai/leapview-site:cycle-00-alias"]
+
+def make_images():
+    return [
+        {"Id": active_id, "RepoTags": [], "RepoDigests": [active]},
+        {"Id": previous_id, "RepoTags": [], "RepoDigests": [previous]},
+        {"Id": obsolete_id, "RepoTags": list(tags), "RepoDigests": [obsolete]},
+        {"Id": caddy_id, "RepoTags": ["caddy:2"], "RepoDigests": [caddy]},
+    ]
+
+def make_state():
+    return {"active": active, "deployed": active, "previous": previous, "caddy": caddy,
+        "first_install": False, "transaction": None,
+        "references": {active: [("active", active), ("deployed", active)],
+            previous: [("rollback", previous)], caddy: [("configured Caddy image", caddy)]}}
+
+def setup():
+    state = make_state()
+    images = make_images()
+    calls = []
+    r._acquire_lock = lambda site_root, lock_fd: (9, False)
+    r._release_lock = lambda fd, owns_fd: None
+    r._storage_path = lambda explicit: pathlib.Path("/tmp")
+    r._free_bytes = lambda path: 100000
+    r.load_state = lambda site_root: state
+    r._read_transaction_scratch = lambda site_root, loaded: None
+    r.inventory_docker = lambda: (copy.deepcopy(images), [])
+    return state, images, calls
+
+state, images, calls = setup()
+def remove_with_docker_alias_semantics(arguments, **kwargs):
+    reference = arguments[3]
+    calls.append(reference)
+    image = next(item for item in images if item["Id"] == obsolete_id)
+    if reference == tags[0]:
+        image["RepoTags"].remove(reference)
+    elif reference == tags[1]:
+        image["RepoTags"].remove(reference)
+        image["RepoDigests"].remove(obsolete)  # Docker implicitly drops the digest.
+    else:
+        raise AssertionError("helper tried to remove an alias Docker already removed: " + reference)
+    return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+r.subprocess.run = remove_with_docker_alias_semantics
+with tempfile.TemporaryDirectory() as root:
+    args = r.parser().parse_args(["apply", "--site-root", root, "--min-free-bytes", "1"])
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        status = r.execute(args)
+document = json.loads(output.getvalue())
+assert status == 0, document
+assert calls == tags, calls
+assert document["removed_references"] == tags, document
+assert document["implicitly_removed_references"] == [obsolete], document
+assert document["already_absent_references"] == [], document
+
+# A genuine rm failure remains visible when a fresh inventory still resolves
+# the requested alias; it must not be converted into an implicit success.
+state, images, calls = setup()
+def failed_remove(arguments, **kwargs):
+    calls.append(arguments[3])
+    return types.SimpleNamespace(returncode=1, stdout="", stderr="permission denied")
+r.subprocess.run = failed_remove
+with tempfile.TemporaryDirectory() as root:
+    args = r.parser().parse_args(["apply", "--site-root", root, "--min-free-bytes", "1"])
+    output = io.StringIO()
+    errors = io.StringIO()
+    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+        status = r.execute(args)
+document = json.loads(errors.getvalue())
+assert status == r.EXIT_REMOVE, (status, document)
+assert "permission denied" in document["error"], document
+assert document["removed_references"] == [], document
+assert document["implicitly_removed_references"] == [], document
+`
+	command := exec.Command(python, "-c", program, "files/site_image_retention.py")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("implicit image alias removal: %v\n%s", err, output)
+	}
+}
