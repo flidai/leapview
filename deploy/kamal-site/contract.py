@@ -31,9 +31,13 @@ def validate_record(record):
 def validate_scope(image):
     if image.get('Config', {}).get('Labels', {}).get('service') != SERVICE:
         return
-    if any(not tag.startswith(REPOSITORY + ':') for tag in image.get('RepoTags', [])):
+    # Docker 29's containerd store can also list a RepoDigest in RepoTags.
+    digests = image.get('RepoDigests', [])
+    canonical = re.compile(re.escape(REPOSITORY) + r'@sha256:[a-f0-9]{64}').fullmatch
+    if any(not (tag.startswith(REPOSITORY + ':') or (tag in digests and canonical(tag)))
+           for tag in image.get('RepoTags', [])):
         raise ValueError('service image has an unrelated repository alias')
-    if any(not ref.startswith(REPOSITORY + '@sha256:') for ref in image.get('RepoDigests', [])):
+    if any(not canonical(ref) for ref in digests):
         raise ValueError('service image has an unrelated repository digest')
 
 

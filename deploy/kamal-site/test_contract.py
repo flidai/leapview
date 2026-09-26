@@ -39,6 +39,19 @@ class ContractTest(unittest.TestCase):
             bad = copy.deepcopy(image); bad[key] = value
             with self.assertRaises(ValueError): validate_image(r, bad)
 
+    def test_containerd_digest_alias_in_repo_tags_is_owned(self):
+        r = record()
+        image = {'RepoDigests': [r['image']], 'RepoTags': [r['image']],
+                 'Os': 'linux', 'Architecture': 'amd64',
+                 'Config': {'Labels': {'service': 'leapview-site', 'org.opencontainers.image.revision': r['revision']}}}
+        validate_image(r, image)
+        for alias in ('ghcr.io/foreign/site@sha256:' + 'a' * 64,
+                      'ghcr.io/flidai/leapview-site@sha256:invalid',
+                      'ghcr.io/flidai/leapview-site@sha256:' + 'e' * 64):
+            with self.subTest(alias=alias):
+                bad = copy.deepcopy(image); bad['RepoTags'].append(alias)
+                with self.assertRaises(ValueError): validate_image(r, bad)
+
     def test_cleanup_protects_distinct_verified_prior(self):
         current, prior, rejected = ('k' + x * 64 for x in 'abc')
         def c(cid, version, running=False):
