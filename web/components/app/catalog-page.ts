@@ -8,6 +8,7 @@ import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import '../shared/entity-list'
 import { catalogPinnedStyles } from './catalog-pins.styles'
+import { catalogColumns } from './catalog-columns'
 import { catalogPinsStorageKey, dashboardIsPinned, nextDashboardPins } from './catalog-pins'
 import { renderCatalogPinnedDashboards } from './catalog-pins-view'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
@@ -270,19 +271,35 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     const page = this.page
     if (!page) return html`<slot></slot>`
     const sourceDashboards = page.dashboards as CatalogDashboard[]
-    const dashboards = this.visibleDashboards(sourceDashboards)
-    const pinnedDashboards = sourceDashboards.filter(dashboard => dashboardIsPinned(this.pinnedDashboardIDs, dashboard))
+    const visibleDashboards = this.visibleDashboards(sourceDashboards)
+    const pinnedDashboards = this.catalogScope === 'all' ? visibleDashboards.filter(dashboard => dashboardIsPinned(this.pinnedDashboardIDs, dashboard)) : []
+    const dashboards = this.catalogScope === 'all' ? visibleDashboards.filter(dashboard => !dashboardIsPinned(this.pinnedDashboardIDs, dashboard)) : visibleDashboards
     const models = this.createDraftModels()
     return html`
       <section aria-label="LeapView dashboard catalog">
         ${renderPageHeader(page.title, '', '', this.createDraftHref ? html`<a class="catalog-create-draft" href=${this.createDraftHref} aria-haspopup="dialog" aria-controls="catalog-create-draft-dialog" @click=${this.handleCreateDraftTrigger}>${lucideIcon(lucideIconByCanonicalName('plus'), { size: 16, strokeWidth: 2 })}<span>New dashboard</span></a>` : undefined)}
-        ${this.catalogScope === 'all' ? renderCatalogPinnedDashboards(pinnedDashboards, id => this.recordDashboardOpenByID(id), id => this.toggleDashboardPinByID(id)) : null}
+        ${pinnedDashboards.length ? renderCatalogPinnedDashboards(this.renderDashboardList(pinnedDashboards, page, true)) : null}
         <nav class="catalog-tabs" aria-label="Dashboard views" role="tablist">
           ${this.renderCatalogTab('all', 'All dashboards')}
           ${this.renderCatalogTab('favorites', 'Favorites')}
           ${this.renderCatalogTab('mine', 'My dashboards')}
         </nav>
+        ${this.renderDashboardList(dashboards, page, false)}
+        ${this.renderDashboardActionMenu(sourceDashboards)}
+        ${this.renderDashboardDetails(sourceDashboards)}
+        ${this.renderCopyDraftDialog(sourceDashboards)}
+        ${this.copyLinkMessage ? html`<div class="catalog-copy-status" role="status">${this.copyLinkMessage}</div>` : ''}
+        ${this.createDraftHref ? this.renderCreateDraftDialog(models) : ''}
+      </section>
+    `
+  }
+
+
+  private renderDashboardList(dashboards: CatalogDashboard[], page: CatalogPageSignal, pinned: boolean) {
+    return html`
         <lv-entity-list
+          list-label=${pinned ? 'Pinned dashboards' : this.catalogScope === 'favorites' ? 'Favorite dashboards' : this.catalogScope === 'mine' ? 'My dashboards' : 'All dashboards'}
+          .showToolbar=${!pinned}
           .items=${dashboards.map((dashboard) => {
             const appearance = { icon: dashboard.appearanceIcon || 'layout-dashboard', color: dashboard.appearanceColor || 'purple' }
             const owner = this.dashboardOwner(dashboard)
@@ -300,7 +317,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
             iconTreatment: 'framed' as const,
-            badges: this.catalogScope === 'mine' ? undefined : dashboardDiscoveryStatusBadges(dashboard.status),
+            badges: !pinned && this.catalogScope === 'mine' ? undefined : dashboardDiscoveryStatusBadges(dashboard.status),
             actions: [{ label: `More actions for ${dashboard.title}`, action: 'open-dashboard-menu', icon: 'more' as const }],
             columns: {
               dataModel: semanticModelTitle(dashboard.semanticModel),
@@ -326,11 +343,11 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
               lastOpened: formatExactTime(lastOpenedAt),
             },
           })})}
-          .columns=${this.catalogColumns()}
-          initial-query=${page.listQuery ?? ''}
-          active-filter=${page.listFilter ?? 'all'}
+          .columns=${catalogColumns(pinned ? 'all' : this.catalogScope)}
+          initial-query=${pinned ? '' : page.listQuery ?? ''}
+          active-filter=${pinned ? 'all' : page.listFilter ?? 'all'}
           search-placeholder="Search dashboards"
-          empty-text=${this.catalogEmptyText()}
+          empty-text=${!pinned && this.catalogScope === 'all' && this.pinnedDashboardIDs.length && dashboards.length === 0 ? 'All dashboards are pinned above.' : this.catalogEmptyText()}
           title-emphasis="normal"
           sticky-identity
           hover-sort-indicators
@@ -339,36 +356,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           @lv-entity-list-item-activate=${this.recordDashboardOpen}
           @lv-entity-list-row-action=${this.handleDashboardRowAction}
         ></lv-entity-list>
-        ${this.renderDashboardActionMenu(sourceDashboards)}
-        ${this.renderDashboardDetails(sourceDashboards)}
-        ${this.renderCopyDraftDialog(sourceDashboards)}
-        ${this.copyLinkMessage ? html`<div class="catalog-copy-status" role="status">${this.copyLinkMessage}</div>` : ''}
-        ${this.createDraftHref ? this.renderCreateDraftDialog(models) : ''}
-      </section>
     `
-  }
-
-  private catalogColumns() {
-    if (this.catalogScope === 'mine') {
-      return [
-        { id: 'name', label: 'Dashboard', width: '32%' },
-        { id: 'dataModel', label: 'Data model', width: '16%' },
-        { id: 'popularity', label: 'Popularity', width: '10%', align: 'center' as const, render: 'popularity' as const },
-        { id: 'status', label: 'Status', width: '17%', render: 'quiet-status' as const },
-        { id: 'updated', label: 'Updated', width: '9%', render: 'datetime' as const },
-        { id: 'lastOpened', label: 'Last opened', width: '11%', render: 'datetime' as const },
-        { id: 'actions', label: 'Actions', width: '80px', align: 'center' as const, sortable: false, render: 'actions' as const },
-      ]
-    }
-    return [
-      { id: 'name', label: 'Dashboard', width: '36%' },
-      { id: 'dataModel', label: 'Data model', width: '15%' },
-      { id: 'owner', label: 'Owner', width: '9%', align: 'center' as const, render: 'person-avatar' as const },
-      { id: 'popularity', label: 'Popularity', width: '10%', align: 'center' as const, render: 'popularity' as const },
-      { id: 'updated', label: 'Updated', width: '11%', render: 'datetime' as const },
-      { id: 'lastOpened', label: 'Last opened', width: '14%', render: 'datetime' as const },
-      { id: 'actions', label: 'Actions', width: '80px', align: 'center' as const, sortable: false, render: 'actions' as const },
-    ]
   }
 
   private dashboardOwner(dashboard: CatalogDashboard): { name: string, imageUrl?: string } {

@@ -50,7 +50,9 @@ test('dashboard pins appear in the catalog only while dashboards are pinned', as
   try {
     await page.goto(baseURL)
     const section = page.locator('lv-catalog-page .pinned-dashboards')
+    const allDashboards = page.locator('lv-catalog-page lv-entity-list[list-label="All dashboards"]')
     expect(await section.count()).toBe(0)
+    expect(await allDashboards.locator('tbody tr').count()).toBe(4)
 
     const pin = page.getByRole('button', { name: 'Pin Operations Health', exact: true })
     const actionCell = pin.locator('xpath=ancestor::td')
@@ -64,9 +66,17 @@ test('dashboard pins appear in the catalog only while dashboards are pinned', as
 
     await pin.click()
     await section.getByRole('link', { name: 'Operations Health' }).waitFor()
-    expect(await page.locator('lv-catalog-page .entity-list-row-pin[aria-pressed="true"]').first().evaluate((button) => getComputedStyle(button).opacity)).toBe('1')
+    expect(await section.getByRole('table', { name: 'Pinned dashboards' }).count()).toBe(1)
+    expect(await section.getByRole('searchbox').count()).toBe(0)
+    expect(await section.getByRole('columnheader', { name: 'Data model' }).count()).toBe(1)
+    expect(await section.getByRole('columnheader', { name: 'Owner' }).count()).toBe(1)
+    expect(await section.getByRole('columnheader', { name: 'Popularity' }).count()).toBe(1)
+    expect(await section.locator('tbody tr').count()).toBe(1)
+    expect(await allDashboards.locator('tbody tr').count()).toBe(3)
+    expect(await section.locator('.entity-list-row-pin[aria-pressed="true"]').first().evaluate((button) => getComputedStyle(button).opacity)).toBe('1')
     await page.getByRole('button', { name: 'Pin Executive Sales Dashboard', exact: true }).click()
     expect(await section.getByRole('link').count()).toBe(2)
+    expect(await allDashboards.locator('tbody tr').count()).toBe(2)
     expect(await section.getByRole('link', { name: 'Executive Sales Dashboard' }).getAttribute('href')).toBe('/dashboards/executive-sales')
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pins.v1') ?? '[]'))).toEqual(['operations-health', 'executive-sales'])
 
@@ -74,8 +84,10 @@ test('dashboard pins appear in the catalog only while dashboards are pinned', as
     await section.getByRole('link', { name: 'Executive Sales Dashboard' }).waitFor()
     await section.getByRole('button', { name: 'Unpin Operations Health' }).click()
     expect(await section.getByRole('link', { name: 'Operations Health' }).count()).toBe(0)
+    expect(await allDashboards.locator('tbody tr').count()).toBe(3)
     await section.getByRole('button', { name: 'Unpin Executive Sales Dashboard' }).click()
     await section.waitFor({ state: 'detached' })
+    expect(await allDashboards.locator('tbody tr').count()).toBe(4)
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pins.v1') ?? '[]'))).toEqual([])
   } finally {
     await page.close()
@@ -108,6 +120,8 @@ test('eight dashboard copies keep favorites and pins independent across catalog 
 
     const pinned = catalog.locator('.pinned-dashboards')
     expect(await pinned.getByRole('link').count()).toBe(8)
+    expect(await pinned.locator('tbody tr').count()).toBe(8)
+    expect(await catalog.locator('lv-entity-list[list-label="All dashboards"] tbody tr').count()).toBe(4)
     await catalog.getByRole('tab', { name: 'My dashboards' }).click()
     expect(await catalog.locator('lv-entity-list tbody tr').count()).toBe(8)
     await catalog.getByRole('tab', { name: 'Favorites' }).click()
