@@ -1,6 +1,6 @@
 import { typographyTestTokens } from '../test-typography-tokens'
 
-export function testDocument(dashboardCopies = 0, preloadPins = false): string {
+export function testDocument(): string {
   const page = {
     kind: 'catalog',
     title: 'Dashboards',
@@ -73,16 +73,6 @@ export function testDocument(dashboardCopies = 0, preloadPins = false): string {
       },
     ],
   }
-  const source = page.dashboards[0]
-  page.dashboards.push(...Array.from({ length: dashboardCopies }, (_, index) => ({
-    ...source,
-    id: `sales-copy-${index + 1}`,
-    dashboardId: `sales-copy-${index + 1}`,
-    title: `Sales copy ${index + 1}`,
-    href: `/dashboards/sales-copy-${index + 1}`,
-    catalogScope: 'mine',
-    status: 'private_draft',
-  })))
   return `
     <!doctype html>
     <html>
@@ -94,10 +84,6 @@ export function testDocument(dashboardCopies = 0, preloadPins = false): string {
         </style>
       </head>
       <body>
-        ${preloadPins ? `<script>
-          localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['sales-copy-1', 'sales-copy-8']))
-          localStorage.setItem('leapview.dashboard-catalog.pins.v1', JSON.stringify(Array.from({ length: 8 }, (_, index) => \`sales-copy-\${index + 1}\`)))
-        </script>` : ''}
         <main data-signals="${escapeHTML(JSON.stringify({ page, chrome: { sidebar: { userName: 'Jacob Nielsen', userAvatarUrl: '/profile/avatars/jacob/avatar-digest' } } }))}">
           <lv-catalog-page></lv-catalog-page>
         </main>
