@@ -1,0 +1,329 @@
+name: Qualify isolated Kamal site image
+
+# Experimental branch-only build. Push keeps the OIDC source digest equal to
+# the selected PR head; pull_request would attest the synthetic merge commit.
+on:
+  push:
+    branches: [ganesh/site-kamal-trial]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-site-kamal-trial
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/flidai/leapview-site-kamal-trial
+
+jobs:
+  identity:
+    name: Verify opt-in PR and resolve trial identity
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/ganesh/site-kamal-trial'
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      revision: ${{ steps.identity.outputs.revision }}
+      build_time: ${{ steps.identity.outputs.build_time }}
+
+    steps:
+      - name: Checkout exact pushed PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Resolve authoritative site identity
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_EVENT_NAME" = push
+          test "$GITHUB_REF" = refs/heads/ganesh/site-kamal-trial
+          revision="$(git rev-parse HEAD)"
+          test "$revision" = "$GITHUB_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=flidai:ganesh/site-kamal-trial" > trial-prs.json
+          jq --exit-status --arg sha "$revision" --arg repo "$GITHUB_REPOSITORY" '
+            [.[] | select(.head.sha == $sha and .head.repo.full_name == $repo
+              and .base.ref == "main" and any(.labels[]; .name == "kamal-trial"))]
+            | length == 1
+          ' trial-prs.json >/dev/null
+          canonical_version="$(tr -d '[:space:]' < VERSION)"
+          test -n "$canonical_version"
+          build_time="$(git show -s --format=%cI HEAD)"
+          version="${canonical_version}+site.${revision:0:12}"
+          {
+            echo "version=$version"
+            echo "revision=$revision"
+            echo "build_time=$build_time"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up policy validation Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Validate security coverage before building
+        run: go run ./internal/app/tools/securitypolicy -root .
+
+  platform:
+    name: Build public site image (${{ matrix.arch }})
+    needs: identity
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Checkout published source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish native site image
+        id: publish
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: Dockerfile.site
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          labels: |
+            service=leapview-site-trial
+            org.opencontainers.image.version=${{ needs.identity.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.identity.outputs.revision }}
+            org.opencontainers.image.created=${{ needs.identity.outputs.build_time }}
+            dev.leapview.build.dirty=false
+          build-args: |
+            BUILD_VERSION=${{ needs.identity.outputs.version }}
+            BUILD_REVISION=${{ needs.identity.outputs.revision }}
+          cache-from: type=gha,scope=public-site-kamal-trial-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=public-site-kamal-trial-${{ matrix.arch }}
+          sbom: true
+          provenance: mode=max
+
+      - name: Attest native site image provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+
+      - name: Admit exact native site image
+        id: admission
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ${{ env.IMAGE_NAME }}@${{ steps.publish.outputs.digest }}
+          repository: ${{ env.IMAGE_NAME }}
+          expected-workflow: flidai/leapview/.github/workflows/site-kamal-trial.yml
+          source-revision: ${{ needs.identity.outputs.revision }}
+          platform: linux/${{ matrix.arch }}
+          output: ${{ runner.temp }}/oci-admission-${{ matrix.arch }}.json
+
+      - name: Record admitted native site image digest
+        env:
+          IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
+        run: |
+          mkdir -p platform-digests
+          printf '%s\n' "$IMAGE_REFERENCE" > "platform-digests/${{ matrix.arch }}.txt"
+
+      - name: Upload native site image digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kamal-trial-platform-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          retention-days: 7
+          if-no-files-found: error
+          path: platform-digests/${{ matrix.arch }}.txt
+
+      - name: Retain native admission evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kamal-trial-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ runner.temp }}/oci-admission-${{ matrix.arch }}.json
+
+  image:
+    name: Assemble and verify public site image
+    needs: [identity, platform]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    outputs:
+      image_reference: ${{ steps.admission.outputs.image }}
+      image_digest: ${{ steps.admission.outputs.digest }}
+      revision: ${{ needs.identity.outputs.revision }}
+
+    steps:
+      - name: Checkout published source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download native site image digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: kamal-trial-platform-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: platform-digests
+          merge-multiple: true
+
+      - name: Assemble multi-platform site image
+        id: assemble
+        env:
+          REVISION: ${{ needs.identity.outputs.revision }}
+        run: |
+          mapfile -t image_references < <(sort -u platform-digests/*.txt)
+          test "${#image_references[@]}" -eq 2
+          image_tag="${IMAGE_NAME}:trial-${REVISION}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker buildx imagetools create --tag "$image_tag" "${image_references[@]}"
+          digest="sha256:$(docker buildx imagetools inspect --raw "$image_tag" | sha256sum | awk '{print $1}')"
+          image_reference="${IMAGE_NAME}@${digest}"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image_reference=$image_reference" >> "$GITHUB_OUTPUT"
+
+      - name: Attest multi-platform site image provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.assemble.outputs.digest }}
+          push-to-registry: true
+
+      - name: Admit the exact public-site image
+        id: admission
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ${{ steps.assemble.outputs.image_reference }}
+          repository: ${{ env.IMAGE_NAME }}
+          expected-workflow: flidai/leapview/.github/workflows/site-kamal-trial.yml
+          source-revision: ${{ needs.identity.outputs.revision }}
+
+      - name: Verify admitted multi-platform trial index
+        env:
+          IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
+        run: |
+          manifest="$(docker buildx imagetools inspect --raw "$IMAGE_REFERENCE")"
+          platform_count="$(
+            jq '[.manifests[] | select(
+              .platform.os == "linux" and
+              (.platform.architecture == "amd64" or .platform.architecture == "arm64")
+            )] | length' <<< "$manifest"
+          )"
+          test "$platform_count" -eq 2
+
+      - name: Verify published site runtime
+        env:
+          EXPECTED_VERSION: ${{ needs.identity.outputs.version }}
+          EXPECTED_REVISION: ${{ needs.identity.outputs.revision }}
+          IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
+        run: |
+          docker pull "$IMAGE_REFERENCE"
+          label_version="$(docker image inspect "$IMAGE_REFERENCE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          label_revision="$(docker image inspect "$IMAGE_REFERENCE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          runtime_user="$(docker image inspect "$IMAGE_REFERENCE" --format '{{.Config.User}}')"
+          test "$label_version" = "$EXPECTED_VERSION"
+          test "$label_revision" = "$EXPECTED_REVISION"
+          test "$(docker image inspect "$IMAGE_REFERENCE" --format '{{index .Config.Labels "service"}}')" = leapview-site-trial
+          test -n "$runtime_user"
+          test "$runtime_user" != root
+          test "$runtime_user" != 0
+
+          docker run --detach \
+            --name leapview-site-publication \
+            --publish 127.0.0.1:8081:8081 \
+            --env LEAPVIEW_SITE_BASE_URL=https://leapview.dev \
+            "$IMAGE_REFERENCE" \
+            -addr=:8081 \
+            -image-reference="$IMAGE_REFERENCE"
+          trap 'docker rm --force leapview-site-publication >/dev/null 2>&1 || true' EXIT
+
+          ready=false
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:8081/healthz >/dev/null && \
+              curl --fail --silent --show-error http://127.0.0.1:8081/readyz >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            docker logs leapview-site-publication
+            exit 1
+          fi
+
+          curl --fail --silent --show-error http://127.0.0.1:8081/release.json > deployed-release.json
+          cmp docs/public-release.json deployed-release.json
+          curl --fail --silent --show-error http://127.0.0.1:8081/build.json > deployed-build.json
+          jq --exit-status \
+            --arg revision "$EXPECTED_REVISION" \
+            --arg image "$IMAGE_REFERENCE" \
+            '.schemaVersion == 1 and .revision == $revision and .image == $image' \
+            deployed-build.json >/dev/null
+          curl --fail --silent --show-error http://127.0.0.1:8081/docs/installation > installation.html
+          while IFS= read -r required; do
+            grep --fixed-strings --quiet -- "$required" installation.html
+          done < <(jq --raw-output '
+            .version,
+            .tag,
+            .revision,
+            .image,
+            .releaseUrl,
+            (.artifacts[] | .archiveUrl, .checksumUrl)
+          ' docs/public-release.json)
+
+      - name: Record immutable public site image
+        env:
+          IMAGE_REFERENCE: ${{ steps.assemble.outputs.image_reference }}
+          REVISION: ${{ needs.identity.outputs.revision }}
+        run: |
+          printf '%s\n' "$IMAGE_REFERENCE" > site-image-reference.txt
+          {
+            echo "### Isolated trial image (not production-qualified)"
+            echo
+            echo "\`$IMAGE_REFERENCE\`"
+            echo
+            echo "Source revision: \`$REVISION\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload immutable public site image reference
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kamal-trial-image-${{ needs.identity.outputs.revision }}
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            site-image-reference.txt
+            ${{ runner.temp }}/oci-admission.json
