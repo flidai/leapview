@@ -290,3 +290,22 @@ test('mobile account menu fits above the footer and keeps search available after
     }
   } finally { await page.close() }
 }, 30_000)
+
+test('pinned chats have a section only while a chat is pinned', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    const pinned = page.locator('lv-sidebar details.pinned-history')
+    expect(await pinned.getByRole('link', { name: 'Pinned title loading' }).count()).toBe(1)
+    expect(await page.getByRole('heading', { name: 'Pinned chats', exact: true }).count()).toBe(1)
+    expect(await pinned.getByRole('button', { name: 'Unpin Pinned title loading' }).count()).toBe(1)
+    await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
+      sidebar.config = { ...sidebar.config, history: { ...sidebar.config.history, items: sidebar.config.history.items.map((item: any) => ({ ...item, pinned: false })) } }
+      await sidebar.updateComplete
+    })
+    expect(await pinned.count()).toBe(0)
+    expect(await page.locator('lv-sidebar details.chats-history').count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+})

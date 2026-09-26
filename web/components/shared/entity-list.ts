@@ -26,6 +26,7 @@ import {
   LockKeyhole,
   EllipsisVertical,
   Plus,
+  Pin,
   Plug,
   Play,
   RefreshCw,
@@ -69,6 +70,8 @@ export type EntityListItem = {
   badges?: EntityListBadge[]
   favorite?: boolean
   favoriteLabel?: string
+  pinned?: boolean
+  pinLabel?: string
   actions?: EntityListRowAction[]
 }
 
@@ -573,7 +576,8 @@ const entityListStyles = `
     flex: 1 1 auto;
   }
 
-  .entity-list-favorite {
+  .entity-list-favorite,
+  .entity-list-pin {
     display: inline-grid;
     width: var(--control-medium-size, 32px);
     height: var(--control-medium-size, 32px);
@@ -591,6 +595,9 @@ const entityListStyles = `
   .entity-list-favorite:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
   .entity-list-favorite[aria-pressed='true'] { color: var(--button-star-iconColor, var(--lv-fg-warning)); }
   .entity-list-favorite[aria-pressed='true'] svg { fill: currentColor; }
+  .entity-list-pin:hover { color: var(--lv-fg-default); background: var(--lv-bg-control-hover); }
+  .entity-list-pin:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+  .entity-list-pin[aria-pressed='true'] { color: var(--lv-fg-accent); }
 
   .entity-list-copy {
     display: grid;
@@ -1194,15 +1201,24 @@ class EntityList extends LitElement {
         @click=${(event: Event) => this.toggleFavorite(event, item)}
       >${lucideIcon(Star, { size: 16, strokeWidth: 1.8 })}</button>
     ` : ''
+    const pin = item.pinLabel ? html`
+      <button
+        type="button"
+        class="entity-list-pin"
+        aria-label=${item.pinLabel}
+        aria-pressed=${String(Boolean(item.pinned))}
+        @click=${(event: Event) => this.togglePin(event, item)}
+      >${lucideIcon(Pin, { size: 16, strokeWidth: 1.8 })}</button>
+    ` : ''
     return html`
       <th scope="row">
         ${item.iconButtonLabel
-          ? html`<span class="entity-list-identity-row">${favorite}${icon}${item.href
+          ? html`<span class="entity-list-identity-row">${favorite}${pin}${icon}${item.href
             ? html`<a class="entity-list-identity" data-item-id=${item.id} href=${item.href} @click=${(event: Event) => this.activateIdentity(event, item)}>${copy}</a>`
             : html`<span class="entity-list-identity">${copy}</span>`}</span>`
           : item.href
-            ? html`<span class="entity-list-identity-row">${favorite}<a class="entity-list-identity" data-item-id=${item.id} href=${item.href} @click=${(event: Event) => this.activateIdentity(event, item)}>${icon}${copy}</a></span>`
-            : html`<span class="entity-list-identity-row">${favorite}<span class="entity-list-identity">${icon}${copy}</span></span>`}
+            ? html`<span class="entity-list-identity-row">${favorite}${pin}<a class="entity-list-identity" data-item-id=${item.id} href=${item.href} @click=${(event: Event) => this.activateIdentity(event, item)}>${icon}${copy}</a></span>`
+            : html`<span class="entity-list-identity-row">${favorite}${pin}<span class="entity-list-identity">${icon}${copy}</span></span>`}
       </th>
     `
   }
@@ -1320,6 +1336,16 @@ class EntityList extends LitElement {
     event.preventDefault()
     event.stopPropagation()
     this.dispatchEvent(new CustomEvent('lv-entity-list-favorite-toggle', {
+      bubbles: true,
+      composed: true,
+      detail: { item },
+    }))
+  }
+
+  private togglePin(event: Event, item: EntityListItem): void {
+    event.preventDefault()
+    event.stopPropagation()
+    this.dispatchEvent(new CustomEvent('lv-entity-list-pin-toggle', {
       bubbles: true,
       composed: true,
       detail: { item },
