@@ -133,20 +133,22 @@ func TestBootstrapConsumesArtifactsWithoutBuildingOrInitializingProduct(t *testi
 	cloudInit := readFile(t, "cloud-init.yaml.tftpl")
 	provision := readFile(t, filepath.Join("files", "provision.sh"))
 	for _, fragment := range []string{
-		"compose_b64", "caddyfile_b64", "deployment_env_b64", "provision_b64", "deploy_b64",
+		"compose_b64", "caddyfile_b64", "deployment_env_b64", "provision_b64", "deploy_b64", "retention_b64",
 		"reconcile_b64", "reconcile_service_b64", "reconcile_timer_b64",
 	} {
 		requireContains(t, main, fragment)
 		requireContains(t, cloudInit, fragment)
 	}
 	for _, fragment := range []string{
-		`docker pull "$LEAPVIEW_SITE_IMAGE"`,
-		`docker pull "$CADDY_IMAGE"`,
+		`ensure_image "$LEAPVIEW_SITE_IMAGE"`,
+		`ensure_image "$CADDY_IMAGE"`,
 		"config --quiet",
 		"up --detach",
 	} {
 		requireContains(t, provision, fragment)
 	}
+	requireContains(t, readFile(t, filepath.Join("files", "deploy.sh")), "python3")
+	requireContains(t, readFile(t, filepath.Join("files", "reconcile.sh")), "python3")
 	for _, forbidden := range []string{
 		"git clone", "docker build", "leapviewctl init", "admin", "duckdb", "backup",
 	} {
@@ -164,10 +166,14 @@ func TestRoutineDeploymentRestoresThePreviousReleaseWhenQualificationFails(t *te
 	}
 	writeExecutable(t, filepath.Join(bin, "docker"), "#!/usr/bin/env bash\nexit 0\n")
 	writeExecutable(t, filepath.Join(bin, "flock"), "#!/usr/bin/env bash\nexit 0\n")
+	writeRetentionStub(t, bin)
 
 	previous := siteImage("1")
+	older := siteImage("f")
 	candidate := siteImage("2")
 	writeFile(t, filepath.Join(root, "deployment.env"), "LEAPVIEW_SITE_IMAGE="+previous+"\nCADDY_IMAGE=caddy:2.10.2-alpine@sha256:"+strings.Repeat("3", 64)+"\n", 0o600)
+	writeFile(t, filepath.Join(root, "deployed-image"), previous+"\n", 0o644)
+	writeFile(t, filepath.Join(root, "previous-image"), older+"\n", 0o644)
 	writeExecutable(t, filepath.Join(root, "provision.sh"), `#!/usr/bin/env bash
 set -euo pipefail
 site_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -213,10 +219,14 @@ func TestRoutineDeploymentRecordsSuccessfulReleaseEvidence(t *testing.T) {
 	}
 	writeExecutable(t, filepath.Join(bin, "docker"), "#!/usr/bin/env bash\nexit 0\n")
 	writeExecutable(t, filepath.Join(bin, "flock"), "#!/usr/bin/env bash\nexit 0\n")
+	writeRetentionStub(t, bin)
 
 	previous := siteImage("4")
+	older := siteImage("e")
 	candidate := siteImage("5")
 	writeFile(t, filepath.Join(root, "deployment.env"), "LEAPVIEW_SITE_IMAGE="+previous+"\nCADDY_IMAGE=caddy:2.10.2-alpine@sha256:"+strings.Repeat("6", 64)+"\n", 0o600)
+	writeFile(t, filepath.Join(root, "deployed-image"), previous+"\n", 0o644)
+	writeFile(t, filepath.Join(root, "previous-image"), older+"\n", 0o644)
 	writeExecutable(t, filepath.Join(root, "provision.sh"), `#!/usr/bin/env bash
 set -euo pipefail
 site_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -254,7 +264,7 @@ func TestOperatorDeploymentPinsTheServerIdentityAndQualifiesThePublicRoute(t *te
 		"deploy/hetzner-site/ssh-host-key.sha256",
 		"SITE_SSH_PRIVATE_KEY",
 		"chmod 0600",
-		"deploy/hetzner-site/files/compose.yaml",
+		"files/$file",
 		"/opt/leapview-site/compose.yaml",
 		"/opt/leapview-site/deploy.sh",
 		"leapview-site-reconcile.timer",
@@ -345,6 +355,7 @@ func TestPullReconcilerActivatesEachDesiredDigestOnce(t *testing.T) {
 	}
 	desired := siteImage("8")
 	writeExecutable(t, filepath.Join(bin, "flock"), "#!/usr/bin/env bash\nexit 0\n")
+	writeRetentionStub(t, bin)
 	writeExecutable(t, filepath.Join(bin, "docker"), `#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1 $2" == "pull ghcr.io/flidai/leapview-site:production" ]]; then
@@ -358,10 +369,13 @@ exit 64
 `)
 	writeExecutable(t, filepath.Join(root, "deploy.sh"), `#!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == "--recover" ]]; then exit 0; fi
 printf '%s\n' "$1" > "$(dirname "$0")/deployed-image"
 printf 'called\n' >> "$(dirname "$0")/deploy-calls"
 `)
+	writeFile(t, filepath.Join(root, "deployment.env"), "LEAPVIEW_SITE_IMAGE="+siteImage("7")+"\nCADDY_IMAGE=caddy:2.10.2-alpine@sha256:"+strings.Repeat("3", 64)+"\n", 0o600)
 	writeFile(t, filepath.Join(root, "deployed-image"), siteImage("7")+"\n", 0o644)
+	writeFile(t, filepath.Join(root, "previous-image"), siteImage("6")+"\n", 0o644)
 
 	reconciler := materializeReconcileScript(t, root)
 	for range 2 {
@@ -387,6 +401,7 @@ func TestPullReconcilerSuppressesRepeatedFailedDigest(t *testing.T) {
 	}
 	desired := siteImage("a")
 	writeExecutable(t, filepath.Join(bin, "flock"), "#!/usr/bin/env bash\nexit 0\n")
+	writeRetentionStub(t, bin)
 	writeExecutable(t, filepath.Join(bin, "docker"), `#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == "pull" ]]; then exit 0; fi
@@ -394,10 +409,13 @@ if [[ "$1 $2" == "image inspect" ]]; then printf '%s\n' "`+desired+`"; exit 0; f
 exit 64
 `)
 	writeExecutable(t, filepath.Join(root, "deploy.sh"), `#!/usr/bin/env bash
+if [[ "${1:-}" == "--recover" ]]; then exit 0; fi
 printf 'called\n' >> "$(dirname "$0")/deploy-calls"
-exit 23
+exit 76
 `)
+	writeFile(t, filepath.Join(root, "deployment.env"), "LEAPVIEW_SITE_IMAGE="+siteImage("9")+"\nCADDY_IMAGE=caddy:2.10.2-alpine@sha256:"+strings.Repeat("3", 64)+"\n", 0o600)
 	writeFile(t, filepath.Join(root, "deployed-image"), siteImage("9")+"\n", 0o644)
+	writeFile(t, filepath.Join(root, "previous-image"), siteImage("8")+"\n", 0o644)
 
 	reconciler := materializeReconcileScript(t, root)
 	first := exec.Command("bash", reconciler)
@@ -535,6 +553,16 @@ func writeFile(t *testing.T, path, contents string, mode os.FileMode) {
 func writeExecutable(t *testing.T, path, contents string) {
 	t.Helper()
 	writeFile(t, path, contents, 0o700)
+}
+
+func writeRetentionStub(t *testing.T, bin string) {
+	t.Helper()
+	writeExecutable(t, filepath.Join(bin, "python3"), `#!/usr/bin/env bash
+if [[ "$*" == *site_image_retention.py* ]]; then
+  exit "${RETENTION_STATUS:-0}"
+fi
+exec /usr/bin/python3 "$@"
+`)
 }
 
 func siteImage(digit string) string {

@@ -129,15 +129,105 @@ re-qualifies the previous image if the candidate fails. Finally, the operator
 checks the server's recorded digest, public health and readiness routes, and
 the `www` redirect.
 
-The reconciliation service records a failed desired digest and does not retry
-that same candidate every minute. A later promotion clears that suppression.
+The reconciliation service records a confirmed failed application candidate and
+does not retry that same candidate every minute. Infrastructure failures remain
+retryable. A later promotion clears that suppression.
 If hosted activation does not converge, the workflow restores the previous
 desired-state digest while the server-side deployment command restores and
 re-qualifies the active image.
 
 Successful and failed deployment decisions are appended to root-readable
 `/opt/leapview-site/deployment-history.tsv`. Rollback environment snapshots are
-retained as `/opt/leapview-site/deployment.env.rollback.*`.
+retained as `/opt/leapview-site/deployment.env.rollback.*`. Recovery can append a
+repeated history entry if an interruption occurred after the original append;
+the current/previous image files and transaction record determine recovery state.
+
+## Bounded site-image retention
+
+The site host retains the active site image and one previous successful site
+image. Locally cached immutable rollback images can be started without contacting
+the registry. A deployment also protects its incoming candidate until its outcome is
+known. Caddy and every image referenced by a running or stopped container are
+protected independently. References from other repositories are never cleanup
+targets. Historical `deployment.env.rollback.*` files are recovery records;
+they do not indefinitely pin every historical image. Recovering an older
+snapshot can require re-admitting and downloading that exact immutable image.
+
+The Python 3 standard-library helper defaults to a dry-run inventory:
+
+```sh
+sudo python3 /opt/leapview-site/site_image_retention.py plan
+```
+
+Review its protected images, deletion candidates and filesystem free space.
+Use `apply` for targeted local image removal; it does not remove registry
+artifacts, volumes or certificate state:
+
+```sh
+sudo python3 /opt/leapview-site/site_image_retention.py apply
+```
+
+Inspection failures or contradictory/missing active or rollback identities
+block deletion. The explicit first-install marker is only for an installation
+that has never had a predecessor. Do not create that marker to work around
+missing state on an existing host. Docker aliases and container references
+must be resolved before deleting an image; `<none>` in the tag column does not
+mean an image is disposable.
+
+Cleanup, pulls and deployment use the same host mutation lock. Maintenance
+runs before a pull and after successful activation. The default free-space
+floor is 5 GiB on containerd's filesystem (or Docker's storage filesystem for
+legacy installations). Detection queries Docker's active backend and the
+containerd root configuration. Imported or unsupported containerd configuration
+requires an explicit `--storage-path` for manual maintenance, or
+`LEAPVIEW_SITE_STORAGE_PATH` in the reconciliation service environment. Do not
+add updater settings to `deployment.env`, which holds only the two image pins.
+This is a conservative initial policy; measure candidate download/extraction
+requirements and actual filesystem headroom rather than summing Docker image
+sizes. A larger future image may require a higher floor.
+
+Capacity, registry and lock failures remain retryable. An obsolete-image
+cleanup failure after healthy activation is reported as a maintenance warning;
+it does not roll back the working website. Future pulls remain blocked when
+headroom is insufficient. If state is ambiguous after interruption, preserve
+extra images and resolve it before applying cleanup. The reconciler first attempts
+recovery of a recorded transaction. An operator can run the same recovery without
+selecting a new candidate:
+
+```sh
+sudo /opt/leapview-site/deploy.sh --recover
+```
+
+A malformed or contradictory record requires investigation; do not delete it to
+force cleanup. The installer likewise leaves reconciliation stopped if it cannot
+fully restore a consistent script set, and reports the retained staging path.
+
+### Recovering a full existing site host
+
+1. Confirm the actual site container, deployed-image, previous-image, Caddy,
+   public build identity and health. Record the before inventory and free bytes.
+2. Coordinate with any GitHub promotion and pause the reconciliation timer;
+   wait for active deployment work under the host locks. Keep serving containers
+   running. Do not terminate an in-progress deployment service.
+3. Run the reviewed helper in plan mode and inspect the concrete removal set.
+   If the full disk prevents staging the helper, use a reviewed in-memory
+   operator invocation; do not manually delete files from containerd's store.
+4. Apply only the reviewed obsolete site-image removals, preserving all protected
+   references. Verify free bytes, active/rollback image availability and public
+   health. Do not use broad `docker system prune`, forced image deletion or
+   volume pruning.
+5. Install the reviewed scripts through the operator path. It checks the staged
+   bundle, waits for the locks, and restores the previous script set on an
+   ordinary installation failure. Then resume reconciliation and run the normal
+   site deployment for the current verified main image.
+6. Verify `/build.json` matches the selected image/revision, `/healthz` and
+   `/readyz` succeed, and public documentation links work. Record post-deployment
+   inventory and free bytes. If cleanup did not resolve activation, diagnose
+   that independent failure before retrying.
+
+This retention change preserves the existing Compose replacement and rollback
+behavior; it does not promise uninterrupted traffic switching. It does not
+modify the stateful product demo hosts.
 
 ## Break-glass destruction
 

@@ -5,6 +5,7 @@ package_reboot_if_required: true
 packages:
   - ca-certificates
   - curl
+  - python3
   - docker.io
   - docker-compose-v2
   - unattended-upgrades
@@ -35,6 +36,11 @@ write_files:
     permissions: "0700"
     encoding: b64
     content: ${deploy_b64}
+  - path: /opt/leapview-site/site_image_retention.py
+    owner: root:root
+    permissions: "0700"
+    encoding: b64
+    content: ${retention_b64}
   - path: /opt/leapview-site/reconcile.sh
     owner: root:root
     permissions: "0700"
