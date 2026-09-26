@@ -5,6 +5,7 @@ import type { InlineVisualizationDataState } from '../../../../generated/visuali
 import { defaultRendererContext } from '../host-controller'
 import { EChartsHandle, echartsOption, responsiveEChartsPatch } from './echarts'
 import { CategoryColorRegistry } from './echarts/category-colors'
+import { responsiveEChartsLayoutKey } from './echarts/view-state'
 import { hierarchyFixture, networkFixture } from './echarts-test-fixtures'
 
 test('ECharts treemap and sunburst convert canonical decimal strings for layout and preserve raw tooltip values', () => {
@@ -224,16 +225,17 @@ test('ECharts tree survives empty, loaded, and cleared data frames', () => {
 test('a single-category tree shows its value without an artificial parent or connector', () => {
   const envelope = hierarchyFixture('tree') as any
   envelope.dataState.datasets[0].rows = [['Base', null, '15743364.25']]
+  expect(responsiveEChartsLayoutKey(envelope, 256, 105)).not.toBe(responsiveEChartsLayoutKey(envelope, 320, 240))
   for (const orientation of ['vertical', 'horizontal'] as const) {
     envelope.spec.presentation.orientation = orientation
     const option = echartsOption(envelope, defaultRendererContext) as any
     expect(option.series[0].data).toHaveLength(1)
     expect(option.series[0].data[0].name).toBe('Base')
     expect(option.series[0].label.formatter({ data: option.series[0].data[0] })).toContain('15743364.25')
-    for (const [width, height] of [[320, 240], [1200, 720]] as const) {
+    for (const [width, height] of [[256, 105], [320, 240], [1200, 720]] as const) {
       const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
       try {
-        chart.setOption({ ...option, animation: false })
+        chart.setOption({ ...option, ...responsiveEChartsPatch(option, width, height), animation: false })
         const svg = chart.renderToSVGString()
         expect(svg).toContain('Base')
         expect(svg).toContain('15743364.25')

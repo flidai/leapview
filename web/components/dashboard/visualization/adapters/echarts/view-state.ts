@@ -32,6 +32,9 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
     && (envelope.spec.presentation.layout === 'standard' || envelope.spec.presentation.layout === 'circular')) {
     return `${compact ? 'compact' : 'roomy'}:graph-${graphLabelWidth(width)}`
   }
+  if (envelope.spec.kind === 'hierarchy' && envelope.spec.mark === 'tree') {
+    return `${compact ? 'compact' : 'roomy'}:tree-${height < 180 ? 'short' : 'normal'}`
+  }
   if (envelope.spec.kind !== 'proportional') return compact ? 'compact' : 'roomy'
   if (envelope.spec.mark === 'funnel') {
     const outsideLabels = envelope.spec.presentation.labelPosition !== 'inside'
@@ -57,6 +60,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   const proportionalSeries = responsiveProportionalSeries(option.series, width, height)
   const gaugeSeries = responsiveGaugeSeries(option.series, width, height)
   const graphSeries = responsiveGraphSeries(option.series, width, compact)
+  const treeSeries = responsiveSingleNodeTreeSeries(option.series, width, height)
   const gaugeGraphic = responsiveGaugeGraphic(option.graphic, width)
   const responsivePie = hasPieSeries(option.series)
   const patch: Record<string, any> = {}
@@ -82,6 +86,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   if (proportionalSeries !== undefined) patch.series = proportionalSeries
   if (gaugeSeries !== undefined) patch.series = gaugeSeries
   if (graphSeries !== undefined) patch.series = graphSeries
+  if (treeSeries !== undefined) patch.series = treeSeries
   if (gaugeGraphic !== undefined) patch.graphic = gaugeGraphic
   if (option.legend !== undefined && (option.grid !== undefined || responsivePie)) {
     patch.legend = compact ? compactLegend(option.legend, width) : desktopLegend(option.legend)
@@ -158,6 +163,38 @@ function responsiveGraphSeries(value: unknown, width: number, compact: boolean):
     }
   })
   return hasResponsiveGraph ? series : undefined
+}
+
+function responsiveSingleNodeTreeSeries(value: unknown, width: number, height: number): unknown[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  let hasSingleNodeTree = false
+  const series = value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const source = entry as Record<string, any>
+    if (source.type !== 'tree' || !Array.isArray(source.data) || source.data.length !== 1
+      || source.data[0]?.children?.length || !source.label || typeof source.label !== 'object') return entry
+    hasSingleNodeTree = true
+    if (height >= 180) return source
+    const label = {
+      ...source.label,
+      position: 'right',
+      align: 'left',
+      distance: 10,
+      fontSize: 14,
+      lineHeight: 20,
+      width: Math.max(40, Math.floor(width * 0.67)),
+      overflow: 'truncate',
+    }
+    return {
+      ...source,
+      left: '15%',
+      right: '75%',
+      symbolSize: 14,
+      label,
+      leaves: { ...source.leaves, label },
+    }
+  })
+  return hasSingleNodeTree ? series : undefined
 }
 
 function graphLabelWidth(width: number): number {
