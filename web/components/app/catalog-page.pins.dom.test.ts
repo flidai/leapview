@@ -53,6 +53,7 @@ test('dashboard pins appear in the catalog only while dashboards are pinned', as
     const allDashboards = page.locator('lv-catalog-page lv-entity-list[list-label="All dashboards"]')
     const allRows = allDashboards.getByRole('table', { name: 'All dashboards' }).locator('tbody tr')
     expect(await section.count()).toBe(0)
+    expect(await allDashboards.locator('.catalog-regular-heading').count()).toBe(0)
     expect(await allRows.count()).toBe(4)
 
     const pin = page.getByRole('button', { name: 'Pin Operations Health', exact: true })
@@ -74,14 +75,17 @@ test('dashboard pins appear in the catalog only while dashboards are pinned', as
     expect(await section.getByRole('columnheader', { name: 'Popularity' }).count()).toBe(1)
     expect(await section.locator('tbody tr').count()).toBe(1)
     expect(await allRows.count()).toBe(3)
+    expect(await allDashboards.getByRole('heading', { name: 'Dashboards', exact: true }).count()).toBe(1)
     const positions = await allDashboards.evaluate((list) => {
       const search = list.querySelector('.entity-toolbar')!.getBoundingClientRect()
       const pinned = list.querySelector('.pinned-dashboards')!.getBoundingClientRect()
+      const regularHeading = list.querySelector('.catalog-regular-heading')!.getBoundingClientRect()
       const rows = list.querySelector('.entity-list-items[aria-label="Scrollable All dashboards table"]')!.getBoundingClientRect()
-      return { search: search.bottom, pinnedTop: pinned.top, pinnedBottom: pinned.bottom, rowsTop: rows.top }
+      return { search: search.bottom, pinnedTop: pinned.top, pinnedBottom: pinned.bottom, regularHeadingTop: regularHeading.top, regularHeadingBottom: regularHeading.bottom, rowsTop: rows.top }
     })
     expect(positions.search).toBeLessThan(positions.pinnedTop)
-    expect(positions.pinnedBottom).toBeLessThan(positions.rowsTop)
+    expect(positions.pinnedBottom).toBeLessThan(positions.regularHeadingTop)
+    expect(positions.regularHeadingBottom).toBeLessThan(positions.rowsTop)
     expect(await section.locator('.entity-list-row-pin[aria-pressed="true"]').first().evaluate((button) => getComputedStyle(button).opacity)).toBe('1')
     await section.getByRole('button', { name: 'Add Operations Health to favorites' }).click()
     expect(await section.getByRole('button', { name: 'Remove Operations Health from favorites' }).count()).toBe(1)
@@ -107,6 +111,7 @@ test('dashboard pins appear in the catalog only while dashboards are pinned', as
     expect(await allRows.count()).toBe(3)
     await section.getByRole('button', { name: 'Unpin Executive Sales Dashboard' }).click()
     await section.waitFor({ state: 'detached' })
+    expect(await allDashboards.locator('.catalog-regular-heading').count()).toBe(0)
     expect(await allRows.count()).toBe(4)
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pins.v1') ?? '[]'))).toEqual([])
   } finally {
@@ -144,6 +149,7 @@ test('eight dashboard copies keep favorites and pins independent across catalog 
     expect(await catalog.getByRole('table', { name: 'All dashboards' }).locator('tbody tr').count()).toBe(4)
     await catalog.getByRole('tab', { name: 'My dashboards' }).evaluate((tab: HTMLButtonElement) => tab.click())
     expect(await pinned.getByRole('link').count()).toBe(8)
+    expect(await catalog.locator('.catalog-regular-heading').count()).toBe(0)
     expect(await pinned.getByRole('columnheader', { name: 'Status' }).count()).toBe(1)
     expect(await pinned.getByRole('columnheader', { name: 'Owner' }).count()).toBe(0)
     expect(await catalog.getByRole('table', { name: 'My dashboards' }).locator('tbody tr').count()).toBe(0)

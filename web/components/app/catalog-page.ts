@@ -299,7 +299,10 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
         <lv-entity-list
           list-label=${pinned ? 'Pinned dashboards' : this.catalogScope === 'favorites' ? 'Favorite dashboards' : this.catalogScope === 'mine' ? 'My dashboards' : 'All dashboards'}
           .showToolbar=${!pinned}
-          .beforeRows=${!pinned && pinnedDashboards.length ? renderCatalogPinnedDashboards(this.renderDashboardList(pinnedDashboards, page, true)) : null}
+          .beforeRows=${!pinned && pinnedDashboards.length ? html`
+            ${renderCatalogPinnedDashboards(this.renderDashboardList(pinnedDashboards, page, true))}
+            ${dashboards.length ? html`<h2 class="catalog-regular-heading">Dashboards</h2>` : ''}
+          ` : null}
           .items=${dashboards.map((dashboard) => {
             const appearance = { icon: dashboard.appearanceIcon || 'layout-dashboard', color: dashboard.appearanceColor || 'purple' }
             const owner = this.dashboardOwner(dashboard)
