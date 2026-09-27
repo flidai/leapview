@@ -9,5 +9,8 @@ import (
 )
 
 func adminCommand(ctx context.Context, _ *rootOptions) *cobra.Command {
-	return admincli.Command(ctx, adminpostgres.New(adminpostgres.Dependencies{}))
+	command := admincli.Command(ctx, adminpostgres.New(adminpostgres.Dependencies{}))
+	command.AddCommand(accessTransitionInventoryCommand(ctx))
+	command.AddCommand(accessTransitionCommand(ctx))
+	return command
 }

@@ -22,8 +22,10 @@ type AccessApprovalAuthorizer struct {
 	CurrentProject                   func(context.Context) (string, error)
 	EffectivePermissions             func(context.Context, string) ([]access.PermissionPair, error)
 	CandidatePermissions             func(context.Context, string, string) (string, string, []access.PermissionPair, error)
+	CandidateSnapshotDigest          func(context.Context, string) (string, error)
 	bootstrapAuthorization           func(context.Context) (accessmodule.BootstrapAuthorization, bool)
 	publicationApprovalAuthorization func(context.Context) (accessmodule.PublicationApprovalBootstrapAuthorization, bool)
+	accessTransitionAuthorization    func(context.Context) (accessmodule.AccessTransitionApprovalAuthorization, bool)
 }
 
 // SetCandidateResolver installs the immutable candidate-generation permission
@@ -45,6 +47,7 @@ func NewAccessApprovalAuthorizer(targetID string, resolveTarget func(context.Con
 		TargetID: targetID, ResolveTarget: resolveTarget,
 		bootstrapAuthorization:           accessmodule.BootstrapAuthorizationFromContext,
 		publicationApprovalAuthorization: accessmodule.PublicationApprovalBootstrapAuthorizationFromContext,
+		accessTransitionAuthorization:    accessmodule.AccessTransitionApprovalAuthorizationFromContext,
 	}, nil
 }
 
@@ -98,6 +101,40 @@ func (a *AccessApprovalAuthorizer) AuthorizeApproval(ctx context.Context, input 
 				return fmt.Errorf("%w: resolve candidate approval permissions: %v", depauth.ErrApprovalUnauthorized, err)
 			}
 			if project != target.ProjectID || environment != target.Environment || !approvalPermissionAllowed(permissions, requiredAction, target.ProjectID) {
+				return depauth.ErrApprovalUnauthorized
+			}
+			return nil
+		}
+	}
+	if a.accessTransitionAuthorization != nil {
+		if marker, marked := a.accessTransitionAuthorization(ctx); marked {
+			if marker.TargetID != target.TargetID || marker.ProjectID.String() != target.ProjectID || marker.Environment != target.Environment ||
+				marker.ExpectedActiveGenerationID != target.ActiveGenerationID || input.Request.TargetID != marker.TargetID ||
+				input.Request.GenerationID != marker.CandidateGenerationID ||
+				input.Request.CandidateID != marker.CandidateID || input.Request.PublicationID != marker.PublicationID || a.CandidatePermissions == nil || a.CandidateSnapshotDigest == nil {
+				return depauth.ErrApprovalUnauthorized
+			}
+			var requiredPrincipal string
+			switch input.Action {
+			case depauth.ApprovalActionRequest:
+				requiredPrincipal = marker.PublisherPrincipalID
+			case depauth.ApprovalActionApprove:
+				requiredPrincipal = marker.ReviewerPrincipalID
+			default:
+				return depauth.ErrApprovalUnauthorized
+			}
+			if input.Actor.PrincipalID != requiredPrincipal {
+				return depauth.ErrApprovalUnauthorized
+			}
+			if input.Action == depauth.ApprovalActionApprove && (input.Current == nil || input.Current.RequestedBy.PrincipalID != marker.PublisherPrincipalID || input.Current.GenerationID != marker.CandidateGenerationID || input.Current.PublicationID != marker.PublicationID) {
+				return depauth.ErrApprovalUnauthorized
+			}
+			digest, err := a.CandidateSnapshotDigest(ctx, marker.CandidateGenerationID)
+			if err != nil || digest != marker.CandidateSnapshotDigest {
+				return depauth.ErrApprovalUnauthorized
+			}
+			project, environment, permissions, err := a.CandidatePermissions(ctx, marker.CandidateGenerationID, input.Actor.PrincipalID)
+			if err != nil || project != target.ProjectID || environment != target.Environment || !approvalPermissionAllowed(permissions, requiredAction, target.ProjectID) {
 				return depauth.ErrApprovalUnauthorized
 			}
 			return nil

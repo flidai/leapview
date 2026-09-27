@@ -27,8 +27,8 @@ func nativeRequestFixture(t *testing.T) NativeRequest {
 	r.Plan.PredecessorRevision = r.PredecessorRevision
 	r.Plan.CandidateRevision = r.CandidateRevision
 	r.Plan.PendingMigrationDigests = map[string]string{}
-	before := SourceCompatibility{Schema: 28, Migrations: map[string]string{}, Engines: map[string]string{"river": "same", "duckdb": "same"}, RolePolicy: hex64('a')}
-	after := SourceCompatibility{Schema: r.Plan.CandidateSchema, Migrations: map[string]string{}, Engines: before.Engines, RolePolicy: before.RolePolicy}
+	before := SourceCompatibility{PermissionProfile: "leapview.permissions/v1", Schema: 28, Migrations: map[string]string{}, Engines: map[string]string{"river": "same", "duckdb": "same"}, RolePolicy: hex64('a')}
+	after := SourceCompatibility{PermissionProfile: "leapview.permissions/v1", Schema: r.Plan.CandidateSchema, Migrations: map[string]string{}, Engines: before.Engines, RolePolicy: before.RolePolicy}
 	files, err := fs.ReadDir(migrations.MigrationFS(), ".")
 	if err != nil {
 		t.Fatal(err)
@@ -108,3 +108,30 @@ const nativeCaddy = "leapview-cfo-caddy-1"
 const nativeNetwork = "leapview-cfo_default"
 
 const nativePGImage = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
+
+func TestNativeRequestSeparatelyBindsProtectedWorkflowAndImageRevision(t *testing.T) {
+	r := nativeRequestFixture(t)
+	original, err := r.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.CandidateAttestationRevision = strings.Repeat("3", 40)
+	if _, err := r.Identity(); err == nil {
+		t.Fatal("accepted admission from a different protected workflow revision")
+	}
+	r.Admission = []byte(strings.Replace(string(r.Admission), r.CandidateRevision, r.CandidateAttestationRevision, 1))
+	bound, err := r.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.ArtifactAdmissionDigest == original.ArtifactAdmissionDigest {
+		t.Fatal("operation identity omitted the protected workflow revision")
+	}
+	if r.Qualification.Revision != r.CandidateRevision {
+		t.Fatal("image qualification identity was replaced by the signing workflow identity")
+	}
+	r.CandidateAttestationRevision = "main"
+	if _, err := r.Identity(); err == nil {
+		t.Fatal("accepted a mutable protected workflow revision")
+	}
+}
