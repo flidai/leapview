@@ -1643,11 +1643,11 @@ test('insights and develop navigation expose the stable route contract with grou
       return {
         insights: links('Insights'),
         develop: [...links('Catalog'), ...links('Operations')],
-        subtitles: Array.from(root.querySelectorAll('.nav-group-label')).filter((label: Element) => {
+        subtitles: Array.from(root.querySelectorAll('.nav-group:not(.pinned-items) .nav-group-label')).filter((label: Element) => {
           const style = getComputedStyle(label)
           return style.display !== 'none' && style.visibility !== 'hidden'
         }).map((label: Element) => label.textContent?.trim()),
-        subtitleColors: Array.from(root.querySelectorAll('.nav-group-label')).map((label: Element) => getComputedStyle(label).color),
+        subtitleColors: Array.from(root.querySelectorAll('.nav-group:not(.pinned-items) .nav-group-label')).map((label: Element) => getComputedStyle(label).color),
       }
     })
     const developState = await navigationState()
@@ -2035,7 +2035,7 @@ async function sidebarAreaState(page: import('@playwright/test').Page) {
         href: item.getAttribute('href'),
       })),
       items: Array.from(root.querySelectorAll('#mobile-navigation > .nav-group:not(.primary-action) .nav-text strong')).map((item) => item.textContent?.trim()),
-      visibleGroupLabels: Array.from(root.querySelectorAll('#mobile-navigation > .nav-group .nav-group-label')).filter((item) => {
+      visibleGroupLabels: Array.from(root.querySelectorAll('#mobile-navigation > .nav-group:not(.pinned-items) .nav-group-label')).filter((item) => {
         const style = getComputedStyle(item)
         return style.display !== 'none' && style.visibility !== 'hidden'
       }).map((item) => item.textContent?.trim()),

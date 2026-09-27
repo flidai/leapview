@@ -30,10 +30,11 @@ import {
 	type IconNode,
 } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
+import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { leapViewBrandName } from '../shared/brand-mark'
 import { sidebarControlStyles } from './sidebar-controls'
 import { sidebarBrandLayoutStyles } from './sidebar-brand-layout.styles'
-import { renderSidebarChatHistory, sidebarChatHistoryStyles, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
+import { renderSidebarChatHistory, renderSidebarChatHistoryItem, sidebarChatHistoryStyles, sidebarPinnedChats, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
 import { renderSidebarAccount, sidebarAccountStyles } from './sidebar-account'
 import { catalogPinLinksStorageKey, catalogPinsChangedEvent, catalogPinsStorageKey, readPinnedDashboardLinks, type PinnedDashboardLink } from '../app/catalog-pins'
 import { readStringList } from '../app/catalog-preferences'
@@ -1382,7 +1383,7 @@ class LeapViewSidebar extends LitElement {
               ${group.items.map((item) => item.disabled ? this.renderDisabledItem(item) : this.renderLink(item))}
             </section>
           `) : this.searchQuery.trim() ? html`<p class="search-empty">No matching pages</p>` : null}
-          ${this.renderPinnedDashboards()}
+          ${this.renderPinnedItems()}
           ${this.renderHistory()}
           <div class="mobile-footer"><div class="footer-row">${this.renderUserCard(true)}${this.renderFooterSearch()}</div></div>
         </nav>
@@ -1645,17 +1646,20 @@ class LeapViewSidebar extends LitElement {
     if (event.key === catalogPinLinksStorageKey || event.key === catalogPinsStorageKey || event.key === null) this.refreshPinnedDashboards()
   }
 
-  private renderPinnedDashboards() {
-    if (this.config.admin || !this.pinnedDashboardLinks.length) return null
+  private renderPinnedItems() {
+    if (this.config.admin) return null
+    const chats = sidebarPinnedChats(this.config.history, this.pendingRemovalIds)
+    if (!this.pinnedDashboardLinks.length && !chats.length) return null
     return html`
-      <section class="nav-group pinned-dashboards" aria-label="Pinned dashboards">
-        <strong class="nav-group-label">Pinned dashboards</strong>
+      <section class="nav-group pinned-items" aria-label="Pinned">
+        <strong class="nav-group-label" role="heading" aria-level="2">Pinned</strong>
         ${this.pinnedDashboardLinks.map(dashboard => html`
           <a class="nav-item" href=${dashboard.href} aria-label=${dashboard.title} aria-current=${this.config.dashboardId === dashboard.id ? 'page' : 'false'} title=${dashboard.title} @click=${(event: MouseEvent) => this.followInternalLink(event, dashboard.href)}>
-            <span class="nav-icon">${icon('dashboard')}</span>
+            <span class="nav-icon">${lucideIcon(lucideIconByCanonicalName(dashboard.icon || 'layout-dashboard'))}</span>
             <span class="nav-text"><strong>${dashboard.title}</strong></span>
           </a>
         `)}
+        ${chats.map(chat => renderSidebarChatHistoryItem(chat, (event, href) => this.followInternalLink(event, href), (action, item) => this.chatAction(action, item)))}
       </section>
     `
   }

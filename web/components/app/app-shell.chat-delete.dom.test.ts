@@ -291,13 +291,13 @@ test('mobile account menu fits above the footer and keeps search available after
   } finally { await page.close() }
 }, 30_000)
 
-test('pinned chats have a section only while a chat is pinned', async () => {
+test('the shared pinned section appears only while a chat or dashboard is pinned', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
     await page.goto(`${baseURL}/sidebar-history`)
-    const pinned = page.locator('lv-sidebar details.pinned-history')
+    const pinned = page.locator('lv-sidebar .pinned-items')
     expect(await pinned.getByRole('link', { name: 'Pinned title loading' }).count()).toBe(1)
-    expect(await page.getByRole('heading', { name: 'Pinned chats', exact: true }).count()).toBe(1)
+    expect(await page.getByRole('heading', { name: 'Pinned', exact: true }).count()).toBe(1)
     expect(await pinned.getByRole('button', { name: 'Unpin Pinned title loading' }).count()).toBe(1)
     await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
       sidebar.config = { ...sidebar.config, history: { ...sidebar.config.history, items: sidebar.config.history.items.map((item: any) => ({ ...item, pinned: false })) } }
@@ -315,19 +315,24 @@ test('pinned dashboard shortcuts appear only while dashboards are pinned', async
   try {
     await page.goto(`${baseURL}/sidebar-history`)
     const sidebar = page.locator('lv-sidebar')
-    const shortcuts = sidebar.locator('.pinned-dashboards')
-    expect(await shortcuts.count()).toBe(0)
+    const shortcuts = sidebar.locator('.pinned-items')
+    expect(await shortcuts.count()).toBe(1)
+    expect(await shortcuts.getByRole('link', { name: 'Sales report' }).count()).toBe(0)
     await page.evaluate(() => {
       localStorage.setItem('leapview.dashboard-catalog.pins.v1', JSON.stringify(['sales', 'operations']))
       localStorage.setItem('leapview.dashboard-catalog.pin-links.v1', JSON.stringify([
-        { id: 'sales', title: 'Sales report', href: '/dashboards/sales' },
-        { id: 'operations', title: 'Operations report', href: '/dashboards/operations' },
+        { id: 'sales', title: 'Sales report', href: '/dashboards/sales', icon: 'chart-no-axes-combined' },
+        { id: 'operations', title: 'Operations report', href: '/dashboards/operations', icon: 'package-check' },
       ]))
       window.dispatchEvent(new Event('leapview-dashboard-pins-change'))
     })
     await shortcuts.getByRole('link', { name: 'Sales report' }).waitFor()
-    expect(await shortcuts.getByRole('link').count()).toBe(2)
+    expect(await shortcuts.getByRole('link').count()).toBe(3)
+    expect(await page.getByRole('heading', { name: 'Pinned', exact: true }).count()).toBe(1)
     expect(await shortcuts.getByRole('link', { name: 'Operations report' }).getAttribute('href')).toBe('/dashboards/operations')
+    const icons = await shortcuts.locator('a.nav-item:not(.history-item) .nav-icon svg').evaluateAll(nodes => nodes.map(node => node.innerHTML))
+    expect(icons[0]).not.toBe(icons[1])
+    expect(await shortcuts.locator('a.nav-item:not(.history-item) .nav-icon svg[style]').count()).toBe(0)
     await page.reload()
     await shortcuts.getByRole('link', { name: 'Sales report' }).waitFor()
     await page.evaluate(() => {
@@ -335,7 +340,8 @@ test('pinned dashboard shortcuts appear only while dashboards are pinned', async
       localStorage.setItem('leapview.dashboard-catalog.pin-links.v1', '[]')
       window.dispatchEvent(new Event('leapview-dashboard-pins-change'))
     })
-    await shortcuts.waitFor({ state: 'detached' })
+    await shortcuts.getByRole('link', { name: 'Sales report' }).waitFor({ state: 'detached' })
+    expect(await shortcuts.getByRole('link', { name: 'Pinned title loading' }).count()).toBe(1)
   } finally {
     await page.close()
   }

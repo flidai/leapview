@@ -126,7 +126,6 @@ export function renderSidebarChatHistory(
   const regularItems = items.filter(item => !item.pinned)
   return html`
     <div class="history-sections">
-      ${pinnedItems.length > 0 ? renderSidebarChatHistorySection('pinned-history', 'Pinned chats', pinnedItems, '', followInternalLink, chatAction) : null}
       ${renderSidebarChatHistorySection(
         'chats-history',
         history.label || 'Chats',
@@ -137,6 +136,11 @@ export function renderSidebarChatHistory(
       )}
     </div>
   `
+}
+
+export function sidebarPinnedChats(history: SidebarHistory | undefined, pendingRemovalIds: readonly string[]): SidebarHistoryItem[] {
+  const pending = new Set(pendingRemovalIds)
+  return (Array.isArray(history?.items) ? history.items : []).filter(item => item.pinned && !pending.has(item.id))
 }
 
 function renderSidebarChatHistorySection(
@@ -161,7 +165,7 @@ function renderSidebarChatHistorySection(
   `
 }
 
-function renderSidebarChatHistoryItem(
+export function renderSidebarChatHistoryItem(
   item: SidebarHistoryItem,
   followInternalLink: (event: MouseEvent, href: string) => void,
   chatAction: (action: string, item: SidebarHistoryItem) => void,

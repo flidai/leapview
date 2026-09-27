@@ -66,7 +66,7 @@ test('dashboard pins share one searchable table across views and keep sidebar li
     expect(await pinned.evaluate(button => getComputedStyle(button).color)).not.toBe(unpinnedColor)
     expect(await allTable.locator('tbody tr').count()).toBe(4)
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1') ?? '[]'))).toEqual([
-      { id: 'operations-health', title: 'Operations Health', href: '/dashboards/operations-health' },
+      { id: 'operations-health', title: 'Operations Health', href: '/dashboards/operations-health', icon: 'package-check' },
     ])
 
     await catalog.getByRole('button', { name: 'Add Operations Health to favorites' }).click()

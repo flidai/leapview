@@ -2,7 +2,7 @@ export const catalogPinsStorageKey = 'leapview.dashboard-catalog.pins.v1'
 export const catalogPinLinksStorageKey = 'leapview.dashboard-catalog.pin-links.v1'
 export const catalogPinsChangedEvent = 'leapview-dashboard-pins-change'
 
-export type PinnedDashboardLink = { id: string, title: string, href: string }
+export type PinnedDashboardLink = { id: string, title: string, href: string, icon?: string }
 
 export function readPinnedDashboardLinks(): PinnedDashboardLink[] {
   try {
@@ -11,17 +11,18 @@ export function readPinnedDashboardLinks(): PinnedDashboardLink[] {
     return links.filter((link): link is PinnedDashboardLink =>
       Boolean(link && typeof link === 'object' && typeof link.id === 'string' &&
         typeof link.title === 'string' && typeof link.href === 'string' &&
+        (link.icon === undefined || typeof link.icon === 'string') &&
         link.id.trim() && link.title.trim() && link.href.startsWith('/') && !link.href.startsWith('//')))
   } catch {
     return []
   }
 }
 
-export function syncPinnedDashboardLinks(pinnedIDs: string[], dashboards: (PinnedDashboardLink & { dashboardId: string })[], preserveMissing = false): void {
+export function syncPinnedDashboardLinks(pinnedIDs: string[], dashboards: (PinnedDashboardLink & { dashboardId: string, appearanceIcon?: string })[], preserveMissing = false): void {
   const previous = readPinnedDashboardLinks()
   const links = pinnedIDs.flatMap(id => {
     const dashboard = dashboards.find(candidate => candidate.dashboardId === id || candidate.id === id)
-    if (dashboard) return [{ id: dashboard.dashboardId, title: dashboard.title, href: dashboard.href }]
+    if (dashboard) return [{ id: dashboard.dashboardId, title: dashboard.title, href: dashboard.href, icon: dashboard.appearanceIcon || 'layout-dashboard' }]
     const existing = preserveMissing ? previous.find(link => link.id === id || id.endsWith(`:${link.id}`)) : undefined
     return existing ? [existing] : []
   })
