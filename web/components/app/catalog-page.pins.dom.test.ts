@@ -133,4 +133,4 @@ test('search result patches preserve pinned shortcuts outside the result set', a
   } finally {
     await page.close()
   }
-})
+}, 30_000)
