@@ -67,6 +67,7 @@ func applicationLayout(access *accessmodule.Module, agent *agentmodule.Module, p
 		config.RoleLabel = access.CurrentRoleLabel(r)
 		config.ColorMode = string(access.CurrentTheme(r))
 		if principal, ok := access.CurrentPrincipal(r); ok {
+			config.PrincipalID = principal.ID
 			config.UserName = sidebarUserName(principal.DisplayName, principal.Email, principal.ID)
 			if avatars := access.PersonalAvatar(); avatars != nil {
 				if metadata, err := avatars.Current(r.Context(), principal.ID); err == nil {

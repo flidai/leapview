@@ -320,8 +320,8 @@ test('pinned dashboard shortcuts appear only while dashboards are pinned', async
     expect(await shortcuts.count()).toBe(1)
     expect(await shortcuts.getByRole('link', { name: 'Sales report' }).count()).toBe(0)
     await page.evaluate(() => {
-      localStorage.setItem('leapview.dashboard-catalog.pins.v1', JSON.stringify(['sales', 'operations']))
-      localStorage.setItem('leapview.dashboard-catalog.pin-links.v1', JSON.stringify([
+      localStorage.setItem('leapview.dashboard-catalog.pins.v1:current-user', JSON.stringify(['sales', 'operations']))
+      localStorage.setItem('leapview.dashboard-catalog.pin-links.v1:current-user', JSON.stringify([
         { id: 'sales', title: 'Sales report', href: '/dashboards/sales', icon: 'chart-no-axes-combined' },
         { id: 'operations', title: 'Operations report', href: '/dashboards/operations', icon: 'package-check' },
       ]))
@@ -331,14 +331,24 @@ test('pinned dashboard shortcuts appear only while dashboards are pinned', async
     expect(await shortcuts.getByRole('link').count()).toBe(3)
     expect(await page.getByRole('heading', { name: 'Pinned', exact: true }).count()).toBe(1)
     expect(await shortcuts.getByRole('link', { name: 'Operations report' }).getAttribute('href')).toBe('/dashboards/operations')
+    await sidebar.evaluate(async (element: any) => {
+      element.config = { ...element.config, principalId: 'other-user' }
+      await element.updateComplete
+    })
+    expect(await shortcuts.getByRole('link', { name: 'Sales report' }).count()).toBe(0)
+    await sidebar.evaluate(async (element: any) => {
+      element.config = { ...element.config, principalId: 'current-user' }
+      await element.updateComplete
+    })
+    expect(await shortcuts.getByRole('link', { name: 'Sales report' }).count()).toBe(1)
     const icons = await shortcuts.locator('a.nav-item:not(.history-item) .nav-icon svg').evaluateAll(nodes => nodes.map(node => node.innerHTML))
     expect(icons[0]).not.toBe(icons[1])
     expect(await shortcuts.locator('a.nav-item:not(.history-item) .nav-icon svg[style]').count()).toBe(0)
     await page.reload()
     await shortcuts.getByRole('link', { name: 'Sales report' }).waitFor()
     await page.evaluate(() => {
-      localStorage.setItem('leapview.dashboard-catalog.pins.v1', '[]')
-      localStorage.setItem('leapview.dashboard-catalog.pin-links.v1', '[]')
+      localStorage.setItem('leapview.dashboard-catalog.pins.v1:current-user', '[]')
+      localStorage.setItem('leapview.dashboard-catalog.pin-links.v1:current-user', '[]')
       window.dispatchEvent(new Event('leapview-dashboard-pins-change'))
     })
     await shortcuts.getByRole('link', { name: 'Sales report' }).waitFor({ state: 'detached' })

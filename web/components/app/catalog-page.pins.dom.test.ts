@@ -65,7 +65,7 @@ test('dashboard pins share one searchable table across views and keep sidebar li
     expect(await pinned.evaluate(button => getComputedStyle(button).opacity)).toBe('1')
     expect(await pinned.evaluate(button => getComputedStyle(button).color)).not.toBe(unpinnedColor)
     expect(await allTable.locator('tbody tr').count()).toBe(4)
-    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1') ?? '[]'))).toEqual([
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1:jacob') ?? '[]'))).toEqual([
       { id: 'operations-health', title: 'Operations Health', href: '/dashboards/operations-health', icon: 'package-check' },
     ])
 
@@ -76,7 +76,7 @@ test('dashboard pins share one searchable table across views and keep sidebar li
     await catalog.getByRole('button', { name: 'Pin Executive Sales Dashboard' }).click()
     await catalog.getByRole('button', { name: 'Unpin Operations Health' }).click()
     await catalog.getByRole('button', { name: 'Unpin Executive Sales Dashboard' }).click()
-    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1') ?? '[]'))).toEqual([])
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1:jacob') ?? '[]'))).toEqual([])
 
     await catalog.evaluate(async (element: any) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -88,11 +88,11 @@ test('dashboard pins share one searchable table across views and keep sidebar li
       }))
       mergePatch({ page: { ...element.page, dashboards: [...element.page.dashboards, ...copies] } })
       localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['sales-copy-1', 'sales-copy-8']))
-      localStorage.setItem('leapview.dashboard-catalog.pins.v1', JSON.stringify(copies.map((copy: any) => copy.dashboardId)))
+      localStorage.setItem('leapview.dashboard-catalog.pins.v1:jacob', JSON.stringify(copies.map((copy: any) => copy.dashboardId)))
       element.reloadDiscoveryPreferences()
     })
     expect(await catalog.getByRole('table', { name: 'All dashboards' }).locator('tbody tr').count()).toBe(12)
-    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1') ?? '[]').length)).toBe(8)
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1:jacob') ?? '[]').length)).toBe(8)
     await catalog.getByRole('tab', { name: 'My dashboards' }).click()
     expect(await catalog.getByRole('table', { name: 'My dashboards' }).locator('tbody tr').count()).toBe(8)
     expect(await catalog.getByRole('button', { name: 'Unpin Sales copy 1' }).count()).toBe(1)
@@ -108,3 +108,29 @@ test('dashboard pins share one searchable table across views and keep sidebar li
     await page.close()
   }
 }, 30_000)
+
+test('search result patches preserve pinned shortcuts outside the result set', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const catalog = page.locator('lv-catalog-page')
+    await catalog.getByRole('button', { name: 'Pin Operations Health' }).click()
+    await catalog.getByRole('button', { name: 'Pin Executive Sales Dashboard' }).click()
+    const links = () => page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1:jacob') ?? '[]').map((link: any) => link.id))
+    expect(await links()).toEqual(['operations-health', 'executive-sales'])
+    await catalog.evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { dashboards: element.page.dashboards.filter((dashboard: any) => dashboard.dashboardId === 'operations-health'), listQuery: 'operations' } })
+      await element.updateComplete
+    })
+    expect(await links()).toEqual(['operations-health', 'executive-sales'])
+    await catalog.evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { dashboards: [], listQuery: 'no matches' } })
+      await element.updateComplete
+    })
+    expect(await links()).toEqual(['operations-health', 'executive-sales'])
+  } finally {
+    await page.close()
+  }
+})

@@ -36,7 +36,7 @@ import { sidebarControlStyles } from './sidebar-controls'
 import { sidebarBrandLayoutStyles } from './sidebar-brand-layout.styles'
 import { renderSidebarChatHistory, renderSidebarChatHistoryItem, sidebarChatHistoryStyles, sidebarPinnedChats, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
 import { renderSidebarAccount, sidebarAccountStyles } from './sidebar-account'
-import { catalogPinLinksStorageKey, catalogPinsChangedEvent, catalogPinsStorageKey, readPinnedDashboardLinks, type PinnedDashboardLink } from '../app/catalog-pins'
+import { catalogPinsChangedEvent, readPinnedDashboardLinks, scopedCatalogPinLinksStorageKey, scopedCatalogPinsStorageKey, type PinnedDashboardLink } from '../app/catalog-pins'
 import { readStringList } from '../app/catalog-preferences'
 
 type NavItem = {
@@ -72,6 +72,7 @@ type SidebarConfig = {
   modelTitle?: string
   modelId?: string
   dashboardId?: string
+  principalId?: string
   userRole?: string
   compact?: boolean
   primaryAction?: SidebarAction
@@ -1098,6 +1099,7 @@ class LeapViewSidebar extends LitElement {
     if (changedProperties.has('config')) {
       this.syncSidebarWidth()
       this.restorePeekAfterNavigation()
+      if (this.config.principalId !== previousConfig?.principalId) this.refreshPinnedDashboards()
     }
   }
 
@@ -1638,12 +1640,14 @@ class LeapViewSidebar extends LitElement {
   }
 
   private refreshPinnedDashboards = (): void => {
-    const pinnedIDs = readStringList(catalogPinsStorageKey)
-    this.pinnedDashboardLinks = readPinnedDashboardLinks().filter(link => pinnedIDs.some(id => id === link.id || id.endsWith(`:${link.id}`)))
+    const principalID = this.config.principalId?.trim() ?? ''
+    const pinnedIDs = principalID ? readStringList(scopedCatalogPinsStorageKey(principalID)) : []
+    this.pinnedDashboardLinks = readPinnedDashboardLinks(principalID).filter(link => pinnedIDs.some(id => id === link.id || id.endsWith(`:${link.id}`)))
   }
 
   private onPinnedDashboardStorage = (event: StorageEvent): void => {
-    if (event.key === catalogPinLinksStorageKey || event.key === catalogPinsStorageKey || event.key === null) this.refreshPinnedDashboards()
+    const principalID = this.config.principalId?.trim()
+    if (principalID && (event.key === scopedCatalogPinLinksStorageKey(principalID) || event.key === scopedCatalogPinsStorageKey(principalID) || event.key === null)) this.refreshPinnedDashboards()
   }
 
   private renderPinnedItems() {

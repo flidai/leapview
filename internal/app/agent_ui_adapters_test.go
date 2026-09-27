@@ -30,6 +30,9 @@ func TestApplicationLayoutUsesCurrentPrincipalIdentity(t *testing.T) {
 	if chrome.Sidebar.UserName == nil || *chrome.Sidebar.UserName != "Local Developer" {
 		t.Fatalf("sidebar user name = %v, want Local Developer", chrome.Sidebar.UserName)
 	}
+	if chrome.Sidebar.PrincipalID == nil || *chrome.Sidebar.PrincipalID != accessmodule.LocalDeveloperPrincipal().ID {
+		t.Fatalf("sidebar principal ID = %v, want current principal", chrome.Sidebar.PrincipalID)
+	}
 }
 
 func TestAdminLayoutRequestRecognizesDocumentsAndAdminStreams(t *testing.T) {

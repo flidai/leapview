@@ -2167,6 +2167,7 @@ model SidebarSignal {
   `primaryAction`?: SidebarActionSignal;
   `productLogoUrl`?: string;
   `productName`: string;
+  `principalId`?: string;
   `userAvatarUrl`?: string;
   `userName`?: string;
   `userRole`?: string;
