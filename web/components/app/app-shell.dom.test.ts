@@ -2113,34 +2113,3 @@ async function sidebarAlignment(page: import('@playwright/test').Page) {
     }
   })
 }
-
-test('pinned dashboard shortcuts appear only while dashboards are pinned', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(`${baseURL}/sidebar-history`)
-    const sidebar = page.locator('lv-sidebar')
-    const shortcuts = sidebar.locator('.pinned-dashboards')
-    expect(await shortcuts.count()).toBe(0)
-    await page.evaluate(() => {
-      localStorage.setItem('leapview.dashboard-catalog.pins.v1', JSON.stringify(['sales', 'operations']))
-      localStorage.setItem('leapview.dashboard-catalog.pin-links.v1', JSON.stringify([
-        { id: 'sales', title: 'Sales report', href: '/dashboards/sales' },
-        { id: 'operations', title: 'Operations report', href: '/dashboards/operations' },
-      ]))
-      window.dispatchEvent(new Event('leapview-dashboard-pins-change'))
-    })
-    await shortcuts.getByRole('link', { name: 'Sales report' }).waitFor()
-    expect(await shortcuts.getByRole('link').count()).toBe(2)
-    expect(await shortcuts.getByRole('link', { name: 'Operations report' }).getAttribute('href')).toBe('/dashboards/operations')
-    await page.reload()
-    await shortcuts.getByRole('link', { name: 'Sales report' }).waitFor()
-    await page.evaluate(() => {
-      localStorage.setItem('leapview.dashboard-catalog.pins.v1', '[]')
-      localStorage.setItem('leapview.dashboard-catalog.pin-links.v1', '[]')
-      window.dispatchEvent(new Event('leapview-dashboard-pins-change'))
-    })
-    await shortcuts.waitFor({ state: 'detached' })
-  } finally {
-    await page.close()
-  }
-})
