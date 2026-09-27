@@ -2,13 +2,18 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, type Browser, type Page } from '@playwright/test'
 
 let server: Server
 let baseURL = ''
 let browser: Browser
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/project-page-test')
+
+async function openRun(page: Page, url: string): Promise<void> {
+  await page.goto(url)
+  await page.waitForFunction(() => Boolean((document.querySelector('lv-pipeline-run-page') as any)?.signals?.page?.execution))
+}
 
 beforeAll(async () => {
   server = createServer(async (request, response) => {
@@ -52,7 +57,7 @@ afterAll(async () => {
 test('publishing remains a secondary detail while the primary run is Running', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?status=prepared`)
+    await openRun(page, `${baseURL}/?status=prepared`)
     const state = await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => {
       element.signals.page.execution.publicationOutcome = 'pending'
       element.requestUpdate()
@@ -77,7 +82,7 @@ test('publishing remains a secondary detail while the primary run is Running', a
 test('run investigation uses Primer status colors for each execution outcome', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?status=running`)
+    await openRun(page, `${baseURL}/?status=running`)
     const colors = await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => {
       element.style.setProperty('--lv-fg-warning', '#d29922')
       element.style.setProperty('--lv-fg-success', '#3fb950')
@@ -101,7 +106,7 @@ test('run investigation uses Primer status colors for each execution outcome', a
 test('run detail duration ticks until the persisted finish arrives', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?status=running`)
+    await openRun(page, `${baseURL}/?status=running`)
     const host = page.locator('lv-pipeline-run-page')
     await host.evaluate(async (element: any) => {
       element.signals.page.execution.startedAt = new Date(Date.now() - 3200).toISOString()
@@ -137,7 +142,7 @@ test('run detail duration ticks until the persisted finish arrives', async () =>
 test('pipeline run investigation separates execution and publication and exposes diagnostics truthfully', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/`)
+    await openRun(page, `${baseURL}/`)
     await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => element.updateComplete)
     const snapshot = await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => {
       await element.updateComplete
@@ -195,15 +200,15 @@ test('pipeline run investigation separates execution and publication and exposes
       ],
     })
 
-    await page.goto(`${baseURL}/?section=execution&status=failed`)
+    await openRun(page, `${baseURL}/?section=execution&status=failed`)
     await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => element.updateComplete)
-    await page.goto(`${baseURL}/?section=details&status=failed`)
+    await openRun(page, `${baseURL}/?section=details&status=failed`)
     await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => element.updateComplete)
     const terminalMissingFinish = await page.locator('lv-pipeline-run-page .facts .fact').filter({ hasText: 'Finished' }).locator('strong').textContent()
     expect(terminalMissingFinish?.trim()).toBe('Not recorded')
     expect(await page.getByRole('region', { name: 'Attempts' }).getByText('Attempt 1 · Failed').count()).toBe(1)
 
-    await page.goto(`${baseURL}/?section=events`)
+    await openRun(page, `${baseURL}/?section=events`)
     await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => element.updateComplete)
     const eventUnavailable = await page.locator('lv-pipeline-run-page .graph-message').textContent()
     expect(eventUnavailable?.trim()).toBe('Run events could not be loaded.')
@@ -215,7 +220,7 @@ test('pipeline run investigation separates execution and publication and exposes
 test('run graph shows recorded model states and only an active model moves', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?status=running`)
+    await openRun(page, `${baseURL}/?status=running`)
     await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => element.updateComplete)
     const graph = page.locator('lv-pipeline-run-page lv-asset-lineage-graph')
     await graph.locator('.asset-lineage-node-selected').waitFor()
@@ -302,7 +307,7 @@ test('run graph shows recorded model states and only an active model moves', asy
 test('run graph keeps scope separate from Fit and expansion', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?status=running`)
+    await openRun(page, `${baseURL}/?status=running`)
     await page.locator('lv-pipeline-run-page').evaluate(async (element: any) => element.updateComplete)
     const graph = page.locator('lv-pipeline-run-page lv-asset-lineage-graph')
     const heading = page.locator('lv-pipeline-run-page .graph-panel h3')
@@ -340,7 +345,7 @@ test('run graph keeps scope separate from Fit and expansion', async () => {
 test('identical run and model failures appear once and point to the failed model', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?status=failed`)
+    await openRun(page, `${baseURL}/?status=failed`)
     const host = page.locator('lv-pipeline-run-page')
     await host.evaluate(async (element: any) => element.updateComplete)
     expect(await host.locator('.run-error').textContent()).toContain('Model query failed')
@@ -356,7 +361,7 @@ test('identical run and model failures appear once and point to the failed model
 test('run update indicator follows only its page stream and recovers on a fresh page patch', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?status=running`)
+    await openRun(page, `${baseURL}/?status=running`)
     const host = page.locator('lv-pipeline-run-page')
     await host.evaluate(async (element: any) => element.updateComplete)
     const graph = host.locator('lv-asset-lineage-graph')

@@ -292,7 +292,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
         ${this.renderDashboardActionMenu(sourceDashboards)}
         ${this.renderDashboardDetails(sourceDashboards)}
         ${this.renderCopyDraftDialog(sourceDashboards)}
-        ${this.copyLinkMessage ? html`<div class="catalog-copy-status" role="status">${this.copyLinkMessage}</div>` : ''}
         ${this.createDraftHref ? this.renderCreateDraftDialog(models) : ''}
       </section>
     `
