@@ -7,10 +7,8 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import '../shared/entity-list'
-import { catalogPinnedStyles } from './catalog-pins.styles'
 import { catalogColumns } from './catalog-columns'
-import { catalogPinsStorageKey, dashboardIsPinned, nextDashboardPins } from './catalog-pins'
-import { renderCatalogPinnedDashboards } from './catalog-pins-view'
+import { catalogPinsStorageKey, dashboardIsPinned, nextDashboardPins, syncPinnedDashboardLinks } from './catalog-pins'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
 
@@ -46,7 +44,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   private createDraftTrigger: HTMLAnchorElement | null = null
   private copyDraftTrigger: HTMLElement | null = null
   private actionMenuTrigger: HTMLElement | null = null
-  static styles = [pageHeaderStyles, catalogPinnedStyles, css`
+  static styles = [pageHeaderStyles, css`
     :host {
       display: block;
       min-width: 0;
@@ -242,6 +240,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   updated(): void {
     const page = this.page
     if (page) checkSignalContract('catalog page', page, { kind: 'required', dashboards: 'required' })
+    if (page) syncPinnedDashboardLinks(this.pinnedDashboardIDs, page.dashboards, Boolean(page.listQuery?.trim()))
 
     if (!this.autoOpenChecked && this.createDraftHref) {
       this.autoOpenChecked = true
@@ -272,8 +271,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     if (!page) return html`<slot></slot>`
     const sourceDashboards = page.dashboards as CatalogDashboard[]
     const visibleDashboards = this.visibleDashboards(sourceDashboards)
-    const pinnedDashboards = visibleDashboards.filter(dashboard => dashboardIsPinned(this.pinnedDashboardIDs, dashboard))
-    const dashboards = visibleDashboards.filter(dashboard => !dashboardIsPinned(this.pinnedDashboardIDs, dashboard))
     const models = this.createDraftModels()
     return html`
       <section aria-label="LeapView dashboard catalog">
@@ -283,7 +280,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           ${this.renderCatalogTab('favorites', 'Favorites')}
           ${this.renderCatalogTab('mine', 'My dashboards')}
         </nav>
-        ${this.renderDashboardList(dashboards, page, false, pinnedDashboards)}
+        ${this.renderDashboardList(visibleDashboards, page)}
         ${this.renderDashboardActionMenu(sourceDashboards)}
         ${this.renderDashboardDetails(sourceDashboards)}
         ${this.renderCopyDraftDialog(sourceDashboards)}
@@ -294,18 +291,11 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   }
 
 
-  private renderDashboardList(dashboards: CatalogDashboard[], page: CatalogPageSignal, pinned: boolean, pinnedDashboards: CatalogDashboard[] = []): TemplateResult {
+  private renderDashboardList(dashboards: CatalogDashboard[], page: CatalogPageSignal): TemplateResult {
     return html`
         <lv-entity-list
-          list-label=${pinned ? 'Pinned dashboards' : this.catalogScope === 'favorites' ? 'Favorite dashboards' : this.catalogScope === 'mine' ? 'My dashboards' : 'All dashboards'}
-          .showToolbar=${!pinned}
-          .beforeRows=${!pinned && pinnedDashboards.length ? html`
-            ${renderCatalogPinnedDashboards(this.renderDashboardList(pinnedDashboards, page, true))}
-            ${dashboards.length ? html`
-              <h2 class="catalog-visually-hidden">Dashboards</h2>
-              <div class="catalog-section-divider" aria-hidden="true"></div>
-            ` : ''}
-          ` : null}
+          list-label=${this.catalogScope === 'favorites' ? 'Favorite dashboards' : this.catalogScope === 'mine' ? 'My dashboards' : 'All dashboards'}
+          .showToolbar=${true}
           .items=${dashboards.map((dashboard) => {
             const appearance = { icon: dashboard.appearanceIcon || 'layout-dashboard', color: dashboard.appearanceColor || 'purple' }
             const owner = this.dashboardOwner(dashboard)
@@ -349,11 +339,11 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
               lastOpened: formatExactTime(lastOpenedAt),
             },
           })})}
-          .columns=${catalogColumns(this.catalogScope, pinned)}
-          initial-query=${pinned ? '' : page.listQuery ?? ''}
-          active-filter=${pinned ? 'all' : page.listFilter ?? 'all'}
+          .columns=${catalogColumns(this.catalogScope)}
+          initial-query=${page.listQuery ?? ''}
+          active-filter=${page.listFilter ?? 'all'}
           search-placeholder="Search dashboards"
-          empty-text=${!pinned && pinnedDashboards.length && dashboards.length === 0 ? 'All dashboards in this view are pinned above.' : this.catalogEmptyText()}
+          empty-text=${this.catalogEmptyText()}
           title-emphasis="normal"
           sticky-identity
           hover-sort-indicators

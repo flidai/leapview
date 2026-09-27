@@ -1,5 +1,5 @@
-export function catalogColumns(scope: 'all' | 'favorites' | 'mine', pinned = false) {
-  const nameLabel = pinned ? 'Pinned dashboard' : 'Dashboard'
+export function catalogColumns(scope: 'all' | 'favorites' | 'mine') {
+  const nameLabel = 'Dashboard'
   if (scope === 'mine') {
     return [
       { id: 'name', label: nameLabel, width: '32%' },

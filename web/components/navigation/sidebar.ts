@@ -35,6 +35,8 @@ import { sidebarControlStyles } from './sidebar-controls'
 import { sidebarBrandLayoutStyles } from './sidebar-brand-layout.styles'
 import { renderSidebarChatHistory, sidebarChatHistoryStyles, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
 import { renderSidebarAccount, sidebarAccountStyles } from './sidebar-account'
+import { catalogPinLinksStorageKey, catalogPinsChangedEvent, catalogPinsStorageKey, readPinnedDashboardLinks, type PinnedDashboardLink } from '../app/catalog-pins'
+import { readStringList } from '../app/catalog-preferences'
 
 type NavItem = {
   id: string
@@ -182,6 +184,7 @@ class LeapViewSidebar extends LitElement {
   @state() private searchQuery = ''
   @state() private liveUserAvatarUrl: string | undefined
   @state() private sidebarWidth = SIDEBAR_DEFAULT_WIDTH
+  @state() private pinnedDashboardLinks: PinnedDashboardLink[] = []
   private collapseStateInitialized = false
   private loadedWidthStorageKey = ''
   private mobileMediaQuery?: MediaQueryList
@@ -1059,6 +1062,9 @@ class LeapViewSidebar extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback()
+    this.refreshPinnedDashboards()
+    window.addEventListener(catalogPinsChangedEvent, this.refreshPinnedDashboards)
+    window.addEventListener('storage', this.onPinnedDashboardStorage)
     document.addEventListener('keydown', this.onKeyDown)
     document.addEventListener('pointerdown', this.closeChatMenusOnOutsidePointerDown)
     document.addEventListener('leapview-avatar-change', this.onAvatarChange as EventListener)
@@ -1069,6 +1075,8 @@ class LeapViewSidebar extends LitElement {
   }
 
   disconnectedCallback(): void {
+    window.removeEventListener(catalogPinsChangedEvent, this.refreshPinnedDashboards)
+    window.removeEventListener('storage', this.onPinnedDashboardStorage)
     document.removeEventListener('keydown', this.onKeyDown)
     document.removeEventListener('pointerdown', this.closeChatMenusOnOutsidePointerDown)
     document.removeEventListener('leapview-avatar-change', this.onAvatarChange as EventListener)
@@ -1374,6 +1382,7 @@ class LeapViewSidebar extends LitElement {
               ${group.items.map((item) => item.disabled ? this.renderDisabledItem(item) : this.renderLink(item))}
             </section>
           `) : this.searchQuery.trim() ? html`<p class="search-empty">No matching pages</p>` : null}
+          ${this.renderPinnedDashboards()}
           ${this.renderHistory()}
           <div class="mobile-footer"><div class="footer-row">${this.renderUserCard(true)}${this.renderFooterSearch()}</div></div>
         </nav>
@@ -1625,6 +1634,30 @@ class LeapViewSidebar extends LitElement {
 
   private renderHistory() {
     return renderSidebarChatHistory(this.config.history, this.pendingRemovalIds, (event, href) => this.followInternalLink(event, href), (action, item) => this.chatAction(action, item))
+  }
+
+  private refreshPinnedDashboards = (): void => {
+    const pinnedIDs = readStringList(catalogPinsStorageKey)
+    this.pinnedDashboardLinks = readPinnedDashboardLinks().filter(link => pinnedIDs.some(id => id === link.id || id.endsWith(`:${link.id}`)))
+  }
+
+  private onPinnedDashboardStorage = (event: StorageEvent): void => {
+    if (event.key === catalogPinLinksStorageKey || event.key === catalogPinsStorageKey || event.key === null) this.refreshPinnedDashboards()
+  }
+
+  private renderPinnedDashboards() {
+    if (this.config.admin || !this.pinnedDashboardLinks.length) return null
+    return html`
+      <section class="nav-group pinned-dashboards" aria-label="Pinned dashboards">
+        <strong class="nav-group-label">Pinned dashboards</strong>
+        ${this.pinnedDashboardLinks.map(dashboard => html`
+          <a class="nav-item" href=${dashboard.href} aria-label=${dashboard.title} aria-current=${this.config.dashboardId === dashboard.id ? 'page' : 'false'} title=${dashboard.title} @click=${(event: MouseEvent) => this.followInternalLink(event, dashboard.href)}>
+            <span class="nav-icon">${icon('dashboard')}</span>
+            <span class="nav-text"><strong>${dashboard.title}</strong></span>
+          </a>
+        `)}
+      </section>
+    `
   }
 
   private chatAction(action: string, item: SidebarHistoryItem) {

@@ -45,128 +45,65 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
-test('dashboard pins and favorites stay independent across catalog views with eight copies', async () => {
+test('dashboard pins share one searchable table across views and keep sidebar links in sync', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
-    const section = page.locator('lv-catalog-page .pinned-dashboards')
-    const allDashboards = page.locator('lv-catalog-page lv-entity-list[list-label="All dashboards"]')
-    const allRows = allDashboards.getByRole('table', { name: 'All dashboards' }).locator('tbody tr')
-    expect(await section.count()).toBe(0)
-    expect(await allDashboards.locator('.catalog-section-divider').count()).toBe(0)
-    expect(await allRows.count()).toBe(4)
-
-    const pin = page.getByRole('button', { name: 'Pin Operations Health', exact: true })
-    const actionCell = pin.locator('xpath=ancestor::td')
-    expect(await actionCell.count()).toBe(1)
-    expect(await pin.evaluate((button) => getComputedStyle(button).opacity)).toBe('0')
-    await pin.focus()
-    expect(await pin.evaluate((button) => getComputedStyle(button).opacity)).toBe('1')
-    await pin.evaluate((button: HTMLElement) => button.blur())
-    await actionCell.locator('xpath=ancestor::tr').hover()
-    expect(await pin.evaluate((button) => getComputedStyle(button).opacity)).toBe('1')
-
-    await pin.click()
-    await section.getByRole('link', { name: 'Operations Health' }).waitFor()
-    expect(await section.getByRole('table', { name: 'Pinned dashboards' }).count()).toBe(1)
-    expect(await section.getByRole('searchbox').count()).toBe(0)
-    expect(await section.getByRole('columnheader', { name: 'Data model' }).count()).toBe(1)
-    expect(await section.getByRole('columnheader', { name: 'Owner' }).count()).toBe(1)
-    expect(await section.getByRole('columnheader', { name: 'Popularity' }).count()).toBe(1)
-    expect(await section.locator('tbody tr').count()).toBe(1)
-    expect(await allRows.count()).toBe(3)
-    expect(await section.locator('h2.catalog-visually-hidden').textContent()).toBe('Pinned dashboards')
-    expect(await allDashboards.locator('h2.catalog-visually-hidden').last().textContent()).toBe('Dashboards')
-    expect(await section.locator('h2.catalog-visually-hidden').evaluate((heading) => getComputedStyle(heading).position)).toBe('absolute')
-    expect(await section.getByRole('columnheader', { name: 'Pinned dashboard' }).count()).toBe(1)
-    expect(await allDashboards.getByRole('table', { name: 'All dashboards' }).getByRole('columnheader', { name: 'Dashboard' }).count()).toBe(1)
-    expect(await allDashboards.locator('.catalog-section-divider').count()).toBe(1)
-    const positions = await allDashboards.evaluate((list) => {
-      const search = list.querySelector('.entity-toolbar')!.getBoundingClientRect()
-      const pinned = list.querySelector('.pinned-dashboards')!.getBoundingClientRect()
-      const divider = list.querySelector('.catalog-section-divider')!.getBoundingClientRect()
-      const rows = list.querySelector('.entity-list-items[aria-label="Scrollable All dashboards table"]')!.getBoundingClientRect()
-      return { search: search.bottom, pinnedTop: pinned.top, pinnedBottom: pinned.bottom, dividerTop: divider.top, dividerBottom: divider.bottom, rowsTop: rows.top }
-    })
-    expect(positions.search).toBeLessThan(positions.pinnedTop)
-    expect(positions.pinnedBottom).toBeLessThan(positions.dividerTop)
-    expect(positions.dividerBottom).toBeLessThan(positions.rowsTop)
-    expect(await section.locator('.entity-list-row-pin[aria-pressed="true"]').first().evaluate((button) => getComputedStyle(button).opacity)).toBe('1')
-    await section.getByRole('button', { name: 'Add Operations Health to favorites' }).click()
-    expect(await section.getByRole('button', { name: 'Remove Operations Health from favorites' }).count()).toBe(1)
-    await page.getByRole('tab', { name: 'Favorites' }).click()
-    expect(await section.getByRole('link', { name: 'Operations Health' }).count()).toBe(1)
-    expect(await page.getByRole('table', { name: 'Favorite dashboards' }).getByRole('link', { name: 'Operations Health' }).count()).toBe(0)
-    await section.getByRole('button', { name: 'Unpin Operations Health' }).click()
-    expect(await section.count()).toBe(0)
-    expect(await page.getByRole('table', { name: 'Favorite dashboards' }).getByRole('link', { name: 'Operations Health' }).count()).toBe(1)
-    await page.getByRole('table', { name: 'Favorite dashboards' }).getByRole('button', { name: 'Pin Operations Health' }).click()
-    expect(await section.getByRole('link', { name: 'Operations Health' }).count()).toBe(1)
-    await page.getByRole('tab', { name: 'All dashboards' }).click()
-    await page.getByRole('button', { name: 'Pin Executive Sales Dashboard', exact: true }).click()
-    expect(await section.getByRole('link').count()).toBe(2)
-    expect(await allRows.count()).toBe(2)
-    expect(await section.getByRole('link', { name: 'Executive Sales Dashboard' }).getAttribute('href')).toBe('/dashboards/executive-sales')
-    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pins.v1') ?? '[]'))).toEqual(['operations-health', 'executive-sales'])
-
-    await page.reload()
-    await section.getByRole('link', { name: 'Executive Sales Dashboard' }).waitFor()
-    await section.getByRole('button', { name: 'Unpin Operations Health' }).click()
-    expect(await section.getByRole('link', { name: 'Operations Health' }).count()).toBe(0)
-    expect(await allRows.count()).toBe(3)
-    await section.getByRole('button', { name: 'Unpin Executive Sales Dashboard' }).click()
-    await section.waitFor({ state: 'detached' })
-    expect(await allDashboards.locator('.catalog-section-divider').count()).toBe(0)
-    expect(await allRows.count()).toBe(4)
-    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pins.v1') ?? '[]'))).toEqual([])
-
     const catalog = page.locator('lv-catalog-page')
+    const allTable = catalog.getByRole('table', { name: 'All dashboards' })
+    expect(await catalog.locator('lv-entity-list').count()).toBe(1)
+    expect(await allTable.locator('tbody tr').count()).toBe(4)
+    expect(await catalog.getByRole('searchbox').count()).toBe(1)
+
+    const pin = catalog.getByRole('button', { name: 'Pin Operations Health' })
+    expect(await pin.evaluate(button => getComputedStyle(button).opacity)).toBe('0')
+    await pin.focus()
+    expect(await pin.evaluate(button => getComputedStyle(button).opacity)).toBe('1')
+    const unpinnedColor = await pin.evaluate(button => getComputedStyle(button).color)
+    await pin.click()
+    const pinned = catalog.getByRole('button', { name: 'Unpin Operations Health' })
+    expect(await pinned.evaluate(button => getComputedStyle(button).opacity)).toBe('1')
+    expect(await pinned.evaluate(button => getComputedStyle(button).color)).not.toBe(unpinnedColor)
+    expect(await allTable.locator('tbody tr').count()).toBe(4)
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1') ?? '[]'))).toEqual([
+      { id: 'operations-health', title: 'Operations Health', href: '/dashboards/operations-health' },
+    ])
+
+    await catalog.getByRole('button', { name: 'Add Operations Health to favorites' }).click()
+    await catalog.getByRole('tab', { name: 'Favorites' }).click()
+    expect(await catalog.getByRole('table', { name: 'Favorite dashboards' }).getByRole('button', { name: 'Unpin Operations Health' }).count()).toBe(1)
+    await catalog.getByRole('tab', { name: 'All dashboards' }).click()
+    await catalog.getByRole('button', { name: 'Pin Executive Sales Dashboard' }).click()
+    await catalog.getByRole('button', { name: 'Unpin Operations Health' }).click()
+    await catalog.getByRole('button', { name: 'Unpin Executive Sales Dashboard' }).click()
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1') ?? '[]'))).toEqual([])
+
     await catalog.evaluate(async (element: any) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       const source = element.page.dashboards[0]
       const copies = Array.from({ length: 8 }, (_, index) => ({
-        ...source,
-        id: `sales-copy-${index + 1}`,
-        dashboardId: `sales-copy-${index + 1}`,
-        title: `Sales copy ${index + 1}`,
-        href: `/dashboards/sales-copy-${index + 1}`,
-        catalogScope: 'mine',
-        status: 'private_draft',
+        ...source, id: `sales-copy-${index + 1}`, dashboardId: `sales-copy-${index + 1}`,
+        title: `Sales copy ${index + 1}`, href: `/dashboards/sales-copy-${index + 1}`,
+        catalogScope: 'mine', status: 'private_draft',
       }))
       mergePatch({ page: { ...element.page, dashboards: [...element.page.dashboards, ...copies] } })
       localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['sales-copy-1', 'sales-copy-8']))
       localStorage.setItem('leapview.dashboard-catalog.pins.v1', JSON.stringify(copies.map((copy: any) => copy.dashboardId)))
       element.reloadDiscoveryPreferences()
     })
-    const pinned = catalog.locator('.pinned-dashboards')
-    await pinned.getByRole('link', { name: 'Sales copy 8' }).waitFor()
-    expect(await pinned.getByRole('link').count()).toBe(8)
-    expect(await pinned.locator('tbody tr').count()).toBe(8)
-    expect(await catalog.getByRole('table', { name: 'All dashboards' }).locator('tbody tr').count()).toBe(4)
-    await catalog.getByRole('tab', { name: 'My dashboards' }).evaluate((tab: HTMLButtonElement) => tab.click())
-    expect(await pinned.getByRole('link').count()).toBe(8)
-    expect(await catalog.locator('.catalog-section-divider').count()).toBe(0)
-    expect(await pinned.getByRole('columnheader', { name: 'Status' }).count()).toBe(1)
-    expect(await pinned.getByRole('columnheader', { name: 'Owner' }).count()).toBe(0)
-    expect(await catalog.getByRole('table', { name: 'My dashboards' }).locator('tbody tr').count()).toBe(0)
-    await pinned.getByRole('button', { name: 'Unpin Sales copy 1' }).evaluate((button: HTMLButtonElement) => button.click())
-    expect(await pinned.getByRole('link').count()).toBe(7)
-    expect(await catalog.getByRole('table', { name: 'My dashboards' }).getByRole('link', { name: 'Sales copy 1' }).count()).toBe(1)
-    await catalog.getByRole('table', { name: 'My dashboards' }).getByRole('button', { name: 'Pin Sales copy 1' }).evaluate((button: HTMLButtonElement) => button.click())
-    expect(await pinned.getByRole('link').count()).toBe(8)
-    await catalog.getByRole('tab', { name: 'Favorites' }).evaluate((tab: HTMLButtonElement) => tab.click())
-    expect(await pinned.getByRole('link').count()).toBe(2)
-    expect(await catalog.getByRole('table', { name: 'Favorite dashboards' }).locator('tbody tr').count()).toBe(0)
-
-    await catalog.evaluate((element: any) => {
-      localStorage.setItem('leapview.dashboard-catalog.pins.v1', '[]')
-      element.reloadDiscoveryPreferences()
-    })
-    await pinned.waitFor({ state: 'detached' })
-    await catalog.getByRole('tab', { name: 'All dashboards' }).evaluate((tab: HTMLButtonElement) => tab.click())
-    expect(await pinned.count()).toBe(0)
-    await catalog.getByRole('tab', { name: 'Favorites' }).evaluate((tab: HTMLButtonElement) => tab.click())
-    expect(await catalog.locator('lv-entity-list tbody tr').count()).toBe(2)
+    expect(await catalog.getByRole('table', { name: 'All dashboards' }).locator('tbody tr').count()).toBe(12)
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1') ?? '[]').length)).toBe(8)
+    await catalog.getByRole('tab', { name: 'My dashboards' }).click()
+    expect(await catalog.getByRole('table', { name: 'My dashboards' }).locator('tbody tr').count()).toBe(8)
+    expect(await catalog.getByRole('button', { name: 'Unpin Sales copy 1' }).count()).toBe(1)
+    await catalog.getByRole('tab', { name: 'Favorites' }).click()
+    expect(await catalog.getByRole('table', { name: 'Favorite dashboards' }).locator('tbody tr').count()).toBe(2)
+    expect(await catalog.getByRole('button', { name: 'Unpin Sales copy 8' }).count()).toBe(1)
+    await catalog.getByRole('searchbox').fill('Sales copy 1')
+    expect(await catalog.getByRole('searchbox').inputValue()).toBe('Sales copy 1')
+    await page.reload()
+    expect(await catalog.getByRole('button', { name: 'Unpin Sales copy 1' }).count()).toBe(0)
+    expect(await catalog.locator('lv-entity-list').count()).toBe(1)
   } finally {
     await page.close()
   }
