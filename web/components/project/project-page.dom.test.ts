@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, type Browser, type Page } from '@playwright/test'
 import { testDocument, type ProjectTableElement } from './project-page.dom.fixture'
 
 let server: Server
@@ -10,6 +10,11 @@ let baseURL = ''
 let browser: Browser
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/project-page-test')
+
+async function openFixture(page: Page, rootName: string, component = 'lv-project-asset-page'): Promise<void> {
+  await page.goto(`${baseURL}/?root=${rootName}`)
+  await page.waitForFunction((name) => customElements.get(name), component)
+}
 
 beforeAll(async () => {
   server = createServer(async (request, response) => {
@@ -49,8 +54,7 @@ afterAll(async () => {
 test('project asset list renders current resource signals and filter event', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=project`)
-    await page.waitForFunction(() => customElements.get('lv-project-page'))
+    await openFixture(page, 'project', 'lv-project-page')
     const state = await page.locator('lv-project-page').evaluate(async (element: any) => {
       await element.updateComplete
       let detail: unknown = null
@@ -110,8 +114,7 @@ test('fixed project areas keep canonical asset links', async () => {
 test('semantic model breadcrumb uses the plain list-page icon identity', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=semantic-detail`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'semantic-detail')
     const icon = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)!
@@ -152,8 +155,7 @@ test('semantic model breadcrumb uses the plain list-page icon identity', async (
 test('semantic model overview separates summary metadata from model inspection', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=semantic-detail`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'semantic-detail')
     const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       element.style.setProperty('--lv-border-muted', '1px solid currentColor')
@@ -253,8 +255,7 @@ test('semantic model overview separates summary metadata from model inspection',
 test('semantic model Definition page exposes every view directly and synchronizes URL history', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=semantic-definition`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'semantic-definition')
     const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot! as ShadowRoot
@@ -309,8 +310,7 @@ test('semantic model Definition page exposes every view directly and synchronize
 test('semantic model Definition uses a full-width horizontal section bar', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=semantic-definition`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'semantic-definition')
     const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot! as ShadowRoot
@@ -361,8 +361,7 @@ test('semantic model Definition uses a full-width horizontal section bar', async
 test('narrow Definition deep links and history keep the selected section visible', async () => {
   const page = await browser.newPage({ viewport: { width: 240, height: 800 } })
   try {
-    await page.goto(`${baseURL}/?root=semantic-definition&view=source`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'semantic-definition&view=source')
     const selectedSection = () => page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
@@ -390,8 +389,7 @@ test('narrow Definition deep links and history keep the selected section visible
     await page.setViewportSize({ width: 240, height: 800 })
     expect(await selectedSection()).toEqual({ label: 'Source', scrollLeft: expect.any(Number), visible: true })
 
-    await page.goto(`${baseURL}/?root=dashboard-definition&view=source`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'dashboard-definition&view=source')
     expect(await selectedSection()).toEqual({ label: 'Source', scrollLeft: expect.any(Number), visible: true })
   } finally {
     await page.close()
@@ -401,8 +399,7 @@ test('narrow Definition deep links and history keep the selected section visible
 test('simple source Definition exposes both views in the horizontal section bar', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=source-definition`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'source-definition')
     const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot! as ShadowRoot
@@ -444,8 +441,7 @@ test('simple source Definition exposes both views in the horizontal section bar'
 test('semantic model Definition page supports direct object links and remembers the last view', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=semantic-definition&view=dimensions`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'semantic-definition&view=dimensions')
     const direct = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       return element.shadowRoot!.querySelector('.semantic-model-nav-item[data-active="true"]')?.textContent?.replace(/\s+/g, ' ').trim()
@@ -467,8 +463,7 @@ test('semantic model Definition page supports direct object links and remembers 
 test('semantic model offers a permission-gated dashboard creation entry', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=semantic-detail`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'semantic-detail')
     const action = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       element.setAttribute('create-dashboard-href', '/dashboards/new?semanticModel=semantic%3Aorders')
       await element.updateComplete
@@ -527,8 +522,7 @@ test('asset data section embeds the shared explorer without a duplicate route he
 test('connections list and asset detail render without workspace terminology', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=connections`)
-    await page.waitForFunction(() => customElements.get('lv-connections-page'))
+    await openFixture(page, 'connections', 'lv-connections-page')
     const connections = await page.locator('lv-connections-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)!
@@ -538,8 +532,7 @@ test('connections list and asset detail render without workspace terminology', a
     expect(connections.rows).toBe(1)
     expect(connections.text.toLowerCase()).not.toContain('workspace')
 
-    await page.goto(`${baseURL}/?root=detail`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'detail')
     const detail = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)!
@@ -549,8 +542,7 @@ test('connections list and asset detail render without workspace terminology', a
     expect(detail.tabs).toEqual(expect.arrayContaining(['Overview', 'Definition']))
     expect(detail.text.toLowerCase()).not.toContain('workspace')
 
-    await page.goto(`${baseURL}/?root=connection-detail`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'connection-detail')
     const connection = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)!
@@ -587,8 +579,7 @@ test('connections list and asset detail render without workspace terminology', a
 test('asset Definition tab renders an outline and highlighted Transform SQL', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=model-definition`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'model-definition')
     const definition = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)!
@@ -692,8 +683,7 @@ test('model Refreshes tab renders compact history and opens signal-driven run de
 test('semantic model exposes the same Refreshes history surface', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=semantic-refreshes`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'semantic-refreshes')
     const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)!
@@ -912,8 +902,7 @@ test('model field rows open a signal-driven responsive drawer and synchronize br
 test('unavailable pipeline shows guidance without an unrelated connections action', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=pipeline-unavailable`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'pipeline-unavailable')
     const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)!
@@ -936,8 +925,7 @@ test('unavailable pipeline shows guidance without an unrelated connections actio
 test('dashboard Overview owns the persisted appearance editor and emits complete updates', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=dashboard-detail`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'dashboard-detail')
     const host = page.locator('lv-project-asset-page')
     const panels = await host.evaluate(async (element: any) => {
       await element.updateComplete
@@ -1000,8 +988,7 @@ test('dashboard Overview owns the persisted appearance editor and emits complete
 test('dashboard Definition starts with authored structure and excludes the appearance editor', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=dashboard-definition`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'dashboard-definition')
     const definition = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot! as ShadowRoot
@@ -1026,8 +1013,7 @@ test('dashboard Definition starts with authored structure and excludes the appea
 test('pipeline detail run action emits canonical pipeline command detail', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=pipeline-detail`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'pipeline-detail')
     const detail = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       let command: unknown = null
@@ -1349,8 +1335,7 @@ test('pipeline detail includes queued requests as rows and hides one after its r
 test('pipeline Definition presents authored YAML before technical identity', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=pipeline-definition`)
-    await page.waitForFunction(() => customElements.get('lv-pipeline-detail-page'))
+    await openFixture(page, 'pipeline-definition', 'lv-pipeline-detail-page')
     const definition = await page.locator('lv-pipeline-detail-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot as ShadowRoot
@@ -1386,8 +1371,7 @@ test('pipeline Definition presents authored YAML before technical identity', asy
 test('pipeline Overview reports executions independently of a published data snapshot', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=pipeline-detail`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'pipeline-detail')
     const overview = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot! as ShadowRoot
@@ -1414,8 +1398,7 @@ test('pipeline Overview reports executions independently of a published data sna
 test('pipeline Overview exposes a failed run and its diagnostic link', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=pipeline-failed`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'pipeline-failed')
     const overview = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot! as ShadowRoot
@@ -1442,8 +1425,7 @@ test('pipeline Overview exposes a failed run and its diagnostic link', async () 
 test('pipeline terminal command failure clears loading and offers reload guidance', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=pipelines`)
-    await page.waitForFunction(() => customElements.get('lv-pipelines-page'))
+    await openFixture(page, 'pipelines', 'lv-pipelines-page')
     await page.getByRole('button', { name: 'Run Sales refresh now' }).click()
     const state = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
       await element.updateComplete
@@ -1481,8 +1463,7 @@ test('pipeline terminal command failure clears loading and offers reload guidanc
 test('connection terminal command failure keeps the drawer state and offers reload guidance', async () => {
   const page = await browser.newPage()
   try {
-    await page.goto(`${baseURL}/?root=connection-admin`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await openFixture(page, 'connection-admin')
     const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const admin = (element.shadowRoot as ShadowRoot)?.querySelector('lv-connection-administration') as any

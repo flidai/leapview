@@ -238,10 +238,6 @@ const entityListStyles = `
   .entity-list-column-link:hover, .entity-list-column-link:focus-visible { text-decoration: underline; }
   .entity-list-mobile-cell-label { display: none; }
 
-  .entity-list-cell.is-center .entity-list-row-actions {
-    justify-content: center;
-  }
-
   .entity-list-items {
     min-width: 0;
     overflow: hidden;
