@@ -263,6 +263,21 @@ test('scope controls graph inclusion separately from Fit, and Expand opens a ful
       }
     })
     await graph.locator('.asset-lineage-node-selected').filter({ hasText: 'Selected model with a long complete title' }).waitFor()
+    // Rendering a node precedes React Flow's measurement and scheduled fit.
+    // Wait for the viewport outcome, not merely the node's DOM insertion.
+    await graph.locator('.asset-lineage-node-selected').evaluate(async (selected) => {
+      await new Promise<void>((resolve, reject) => {
+        const deadline = performance.now() + 5000
+        const check = () => {
+          const bounds = selected.closest('.react-flow')!.getBoundingClientRect()
+          const rect = selected.getBoundingClientRect()
+          if (rect.top >= bounds.top && rect.bottom <= bounds.bottom && rect.left < bounds.right && rect.right > bounds.left) resolve()
+          else if (performance.now() >= deadline) reject(new Error('Selected model did not enter the graph viewport'))
+          else requestAnimationFrame(check)
+        }
+        check()
+      })
+    })
     const state = await graph.evaluate((element) => {
       const flow = element.querySelector('.react-flow') as HTMLElement
       const selected = element.querySelector('.asset-lineage-node-selected') as HTMLElement
