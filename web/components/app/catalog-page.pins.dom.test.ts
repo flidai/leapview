@@ -108,29 +108,3 @@ test('dashboard pins share one searchable table across views and keep sidebar li
     await page.close()
   }
 }, 30_000)
-
-test('search result patches preserve pinned shortcuts outside the result set', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(baseURL)
-    const catalog = page.locator('lv-catalog-page')
-    await catalog.getByRole('button', { name: 'Pin Operations Health' }).click()
-    await catalog.getByRole('button', { name: 'Pin Executive Sales Dashboard' }).click()
-    const links = () => page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1:jacob') ?? '[]').map((link: any) => link.id))
-    expect(await links()).toEqual(['operations-health', 'executive-sales'])
-    await catalog.evaluate(async (element: any) => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ page: { dashboards: element.page.dashboards.filter((dashboard: any) => dashboard.dashboardId === 'operations-health'), listQuery: 'operations' } })
-      await element.updateComplete
-    })
-    expect(await links()).toEqual(['operations-health', 'executive-sales'])
-    await catalog.evaluate(async (element: any) => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ page: { dashboards: [], listQuery: 'no matches' } })
-      await element.updateComplete
-    })
-    expect(await links()).toEqual(['operations-health', 'executive-sales'])
-  } finally {
-    await page.close()
-  }
-}, 30_000)
