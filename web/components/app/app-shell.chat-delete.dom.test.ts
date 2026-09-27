@@ -297,6 +297,7 @@ test('the shared pinned section appears only while a chat or dashboard is pinned
     await page.goto(`${baseURL}/sidebar-history`)
     const pinned = page.locator('lv-sidebar .pinned-items')
     expect(await pinned.getByRole('link', { name: 'Pinned title loading' }).count()).toBe(1)
+    expect(await pinned.locator('.pinned-chat-icon svg').count()).toBe(1)
     expect(await page.getByRole('heading', { name: 'Pinned', exact: true }).count()).toBe(1)
     expect(await pinned.getByRole('button', { name: 'Unpin Pinned title loading' }).count()).toBe(1)
     await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
