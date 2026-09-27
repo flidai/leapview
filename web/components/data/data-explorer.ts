@@ -33,6 +33,7 @@ import {
   toggleVisibleColumns,
 } from './data-explorer-controller'
 import { dataExplorerURL, updateDataExplorerURL } from './data-explorer-url'
+import { renderSelectedFieldRows, renderSelectedFilterRow, renderSemanticFieldPane, semanticLayoutStyles } from './data-explorer-semantic-layout'
 import {
   emptySavedExplorations,
   renderSavedExplorations,
@@ -777,61 +778,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-app);
     }
 
-    .semantic-result {
-      display: grid;
-      min-width: 0;
-      min-height: 0;
-      grid-template-rows: auto auto auto minmax(18rem, 1fr);
-      overflow-x: hidden;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-    }
-
-    .semantic .explorer { grid-template-columns: minmax(0, 1fr); }
-    .semantic .explorer > .browser, .semantic .browser-resizer { display: none; }
-    .semantic-workspace { grid-template-columns: 240px minmax(0, 1fr); }
-    .semantic-fields { overflow: auto; padding: 16px; background: var(--lv-bg-panel-muted); }
-    .semantic-fields { border-right: var(--lv-border-muted); }
-    .semantic-fields input, .semantic-fields select { width: 100%; margin-bottom: 12px; }
-    .semantic-fields input[type='search'] { padding: 8px 10px; border: var(--lv-border-muted); border-radius: 6px; background: var(--lv-bg-panel); color: var(--lv-fg-default); font: var(--lv-type-body); }
-    .semantic-fields { min-height: 0; }
-    .semantic-fields summary { display: block; cursor: pointer; padding: 10px 0; font: var(--lv-type-caption); color: var(--lv-fg-muted); }
-    .semantic-fields summary::before { content: '▸'; margin-right: 6px; }
-    .semantic-fields details[open] > summary::before { content: '▾'; }
-    .semantic-field:has(input:checked) { background: var(--lv-bg-panel); border-radius: 4px; }
-    .semantic-fields h3 { font: var(--lv-type-caption); color: var(--lv-fg-muted); margin: 20px 0 10px; }
-    .semantic-field { display: flex; gap: 8px; align-items: center; padding: 5px 0; }
-    .semantic-field label { display: flex; gap: 8px; flex: 1; min-width: 0; align-items: center; font: var(--lv-type-body); }
-    .semantic-field input { width: auto; margin: 0; }
-    .semantic-field button { flex: none; }
-    .semantic-workspace .query-label { min-width: 0; }
-    @media(max-width:1100px) {
-      .semantic-workspace { grid-template-columns: 200px minmax(0, 1fr); }
-    }
-
-    .explore-main {
-      grid-template-rows: auto auto minmax(0, 1fr) auto;
-    }
-
-    .query-bar {
-      display: grid;
-      gap: var(--base-size-8);
-      border-bottom: var(--lv-border-muted);
-      padding: var(--base-size-12) var(--base-size-16);
-      background: var(--lv-bg-app);
-    }
-
-    .selected-fields-heading { display: flex; align-items: center; flex-wrap: wrap; gap: var(--base-size-8); }
-    .selected-fields-heading > strong { font: var(--lv-type-section-title); }
-    .selected-fields-heading .query-actions { margin-left: auto; }
-    .selected-fields-heading select { width: auto; min-width: 100px; }
-    .selected-field-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: var(--base-size-12); align-items: start; }
-    .selected-field-row > .query-label { padding-top: 4px; }
-    .selected-field-values { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
-    .selected-field-values .chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; }
-    .selected-field-values .chip svg { flex: none; }
-    .selected-field-values .query-summary { padding: 4px 0; }
-
     .query-row {
       display: grid;
       grid-template-columns: auto minmax(0, 1fr) auto;
@@ -976,6 +922,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
 
     ${savedExplorationStyles}
+    ${semanticLayoutStyles}
 
     .content {
       display: grid;
@@ -1113,10 +1060,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
       .header { grid-template-columns: minmax(0, 1fr); }
       .header-actions { flex-wrap: wrap; gap: var(--base-size-4); }
-      .semantic-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(24rem, 1fr); }
-      .semantic-fields { max-height: 12rem; border-right: 0; border-bottom: var(--lv-border-muted); }
-      .semantic-result { min-height: 24rem; }
-
       .explorer {
         grid-template-columns: 1fr;
       }
@@ -1888,39 +1831,19 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       : undefined
     const exploreRunning = currentStatus?.loading === true || this.exploreExecutionState === 'pending' || this.exploreExecutionState === 'running'
     return html`
-      <div class="content semantic-workspace" aria-label="Data exploration">
-        <aside class="semantic-fields" aria-label="Semantic model fields">
-          <label>Semantic model
-            <select aria-label="Semantic model" .value=${spec.modelId} @change=${(event: Event) => {
-              const modelId = (event.target as HTMLSelectElement).value
-              const next = this.dataExplorer.objects.find((candidate) => candidate.semanticModelId === modelId)
-              if (next) this.selectObject(next)
-            }}>
-              ${explore.semanticModels.map((model) => html`<option value=${model.id} .selected=${model.id === spec.modelId}>${model.title}</option>`)}
-            </select>
-          </label>
-          <input type="search" aria-label="Search semantic fields" placeholder="Search fields" .value=${this.semanticFieldSearch} @input=${(event: Event) => this.semanticFieldSearch = (event.target as HTMLInputElement).value} />
-          ${(['dimension', 'metric'] as const).map((kind) => html`
-            <h3>${kind === 'dimension' ? 'Dimensions' : 'Metrics'}</h3>
-            ${Array.from(new Set(explore.fields.filter((field) => field.kind === kind && (field.compatible !== false || queryFields.has(field.id))).map((field) => field.datasetId || 'Shared'))).map((group) => {
-              const fields = explore.fields.filter((field) => field.kind === kind && (field.compatible !== false || queryFields.has(field.id)) && (field.datasetId || 'Shared') === group && (field.label + ' ' + field.id).toLowerCase().includes(this.semanticFieldSearch.toLowerCase()))
-              if (!fields.length) return nothing
-              return html`<details ?open=${Boolean(this.semanticFieldSearch) || fields.some((field) => queryFields.has(field.id))}>
-                <summary>${label(group)} · ${fields.length}</summary>
-                ${fields.map((field) => html`
-              <div class="semantic-field" title=${field.compatibilityReason || field.id}>
-                <label><input type="checkbox" .checked=${queryFields.has(field.id)} ?disabled=${field.compatible === false}
-                  @change=${() => {
-                    const key = kind === 'dimension' ? 'dimensions' : 'metrics'
-                    this.emitExploreSpec(queryFields.has(field.id) ? removeExplorationField(spec, field.id, kind) : { ...spec, [key]: [...spec[key], { field: field.id }] }, command)
-                  }} />${field.label || field.id}</label>
-                ${kind === 'dimension' && field.compatible !== false ? html`<button class="field-action" aria-label=${'Filter ' + field.label} @click=${() => this.handleExploreFilterOpen(new CustomEvent('filter', { detail: field.id }), command)}>${lucideIcon(Filter, { size: 13 })}</button>` : nothing}
-              </div>
-                `)}
-              </details>`
-            })}
-          `)}
-        </aside>
+      <div class="content semantic-layout" aria-label="Data exploration">
+        ${renderSemanticFieldPane(spec, explore, queryFields, this.semanticFieldSearch, {
+          model: (modelId) => {
+            const next = this.dataExplorer.objects.find((candidate) => candidate.semanticModelId === modelId)
+            if (next) this.selectObject(next)
+          },
+          search: (value) => this.semanticFieldSearch = value,
+          toggle: (field, kind) => {
+            const key = kind === 'dimension' ? 'dimensions' : 'metrics'
+            this.emitExploreSpec(queryFields.has(field.id) ? removeExplorationField(spec, field.id, kind) : { ...spec, [key]: [...spec[key], { field: field.id }] }, command)
+          },
+          filter: (id) => this.handleExploreFilterOpen(new CustomEvent('filter', { detail: id }), command),
+        })}
         <section class="semantic-result" aria-label="Governed result table">
             <section class="query-bar" aria-label="Table controls">
               <div class="selected-fields-heading">
@@ -1940,27 +1863,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                   <button type="button" class="icon-button" title="Return to all table columns" aria-label="Return to all table columns" @click=${() => this.selectObject(object)}>${lucideIcon(RotateCcw, { size: 16 })}</button>
                 </div>
               </div>
-              ${(['dimension', 'metric'] as const).map((kind) => html`
-                <div class="selected-field-row">
-                  <span class="query-label">${kind === 'dimension' ? 'Group by' : 'Measures'}</span>
-                  <div class="selected-field-values">
-                    ${spec[kind === 'dimension' ? 'dimensions' : 'metrics'].length
-                      ? spec[kind === 'dimension' ? 'dimensions' : 'metrics'].map((field) => html`
-                          <button type="button" class="chip" aria-label=${`Remove ${fieldLabel(field.field, explore.fields)}`} title=${`Remove ${fieldLabel(field.field, explore.fields)}`} @click=${() => this.emitExploreSpec(removeExplorationField(spec, field.field, kind), command)}>${fieldLabel(field.field, explore.fields)} ${lucideIcon(X, { size: 12 })}</button>
-                        `)
-                      : html`<span class="query-summary">None selected</span>`}
-                  </div>
-                </div>
-              `)}
-              <div class="selected-field-row">
-                <span class="query-label">Filters</span>
-                <div class="selected-field-values">
-                  ${spec.filters.length
-                    ? spec.filters.map((filter, index) => this.renderExploreFilterChip(filter, index, explore.fields, command))
-                    : html`<span class="query-summary">No filters</span>`}
-                  ${spec.filters.length ? html`<button type="button" class="chip" @click=${() => this.emitExploreSpec({ ...spec, filters: [] }, command)}>Clear filters</button>` : nothing}
-                </div>
-              </div>
+              ${renderSelectedFieldRows(spec, explore.fields, (id, kind) => this.emitExploreSpec(removeExplorationField(spec, id, kind), command))}
+              ${renderSelectedFilterRow(spec,
+                (filter, index) => this.renderExploreFilterChip(filter, index, explore.fields, command),
+                () => this.emitExploreSpec({ ...spec, filters: [] }, command))}
             </section>
             <lv-data-explorer-query-controls
               .filtersOnly=${true}
