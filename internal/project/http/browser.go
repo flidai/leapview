@@ -39,6 +39,7 @@ import (
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	g "maragu.dev/gomponents"
 )
 
@@ -448,6 +449,9 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !ok {
 		return
 	}
+	if strings.TrimSpace(projectsignals.ValueOrZero(explorer.Command.ClientID)) == "" {
+		explorer.Command.ClientID = projectsignals.Optional("explorer-" + uuid.NewString())
+	}
 	savedState := h.savedExplorationStateForBrowser(r, r.URL.Query().Get("saved"), savedExplorationIncludeArchived(r))
 	savedState.Commands = projectui.DataExplorerSavedExplorationCommandBindings{
 		Create: h.SavedExplorationCommands.Create, Update: h.SavedExplorationCommands.Update,
@@ -794,6 +798,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		defer unsubscribe()
 	}
 	patch := map[string]any{"status": projectsignals.DashboardStatus{}, "runtime": projectsignals.RouteRuntimeSignal{Kind: projectsignals.RouteKindData}}
+	var dataExplorerBootstrapCommand *projectsignals.DataExplorerCommand
 	switch route {
 	case "catalog":
 		catalog, options, err := h.dashboardCatalogPage(r, r.URL.Query().Get("q"))
@@ -809,6 +814,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			if !ok {
 				return
 			}
+			dataExplorerBootstrapCommand = &explorer.Command
 			savedState := h.savedExplorationStateForBrowser(r, r.URL.Query().Get("saved"), savedExplorationIncludeArchived(r))
 			savedState.Commands = projectui.DataExplorerSavedExplorationCommandBindings{
 				Create: h.SavedExplorationCommands.Create, Update: h.SavedExplorationCommands.Update,
@@ -844,6 +850,25 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		} else {
 			return
 		}
+	}
+	if dataExplorerBootstrapCommand != nil && strings.TrimSpace(projectsignals.ValueOrZero(dataExplorerBootstrapCommand.ClientID)) != "" {
+		if _, err := uitransport.EnsureClientID(w, r); err != nil {
+			return
+		}
+		stream := pagestream.NewSignalStream(w, r)
+		release, current := h.dataExplorerResponseLease(r, *dataExplorerBootstrapCommand)
+		var err error
+		if current {
+			err = stream.Patch(pagestream.SignalPatch(patch))
+		}
+		if release != nil {
+			release()
+		}
+		if err != nil {
+			return
+		}
+		stream.Wait(r.Context())
+		return
 	}
 	if livePipeline && wake != nil {
 		uitransport.PatchAndWatch(w, r, pagestream.SignalPatch(patch), wake, func() (pagestream.SignalPatch, error) {

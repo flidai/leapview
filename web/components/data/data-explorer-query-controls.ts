@@ -36,6 +36,7 @@ export type DataExplorerFilterControlDetail = {
  * state. That keeps the route element focused on the server signal loop.
  */
 export class DataExplorerQueryControls extends LitElement {
+  @property({ type: Boolean }) filtersOnly = false
   @property({ attribute: false }) command: DataExploreCommand = emptyDataExploreCommand
   @property({ attribute: false }) fields: DataExploreFieldSignal[] = []
   @property({ attribute: false }) suggestions?: DataExploreFilterSuggestionsSignal
@@ -90,6 +91,7 @@ export class DataExplorerQueryControls extends LitElement {
 
   render() {
     const spec = this.command?.spec ?? emptyDataExploreCommand.spec
+    if (this.filtersOnly) return this.filterField ? this.renderFilterEditor(spec) : nothing
     const query = this.fieldQuery.toLowerCase()
     const fields = this.fields.filter((field) => !query || [field.id, field.label, field.datasetId, field.type, field.description].some((value) => String(value ?? '').toLowerCase().includes(query)))
     const selected = new Set([...spec.dimensions, ...spec.metrics].map((ref) => ref.field))

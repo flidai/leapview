@@ -100,6 +100,9 @@ func TestDataExplorerDocumentDefersSemanticExecutionToCanonicalUpdates(t *testin
 			t.Fatalf("document shell missing normalized updates URL component %q:\n%s", want, document.Body.String())
 		}
 	}
+	if !strings.Contains(document.Body.String(), "clientId=explorer-") {
+		t.Fatalf("document shell updates URL is missing its tab identity:\n%s", document.Body.String())
+	}
 
 	streamContext, cancel := context.WithCancel(t.Context())
 	request := httptest.NewRequestWithContext(streamContext, http.MethodGet, "/updates?route=data&surface=explore&"+values.Encode(), nil)

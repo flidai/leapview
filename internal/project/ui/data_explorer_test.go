@@ -33,7 +33,7 @@ func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 }
 
 func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
-	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("explore"), RequestSeq: 80, ResetVersion: 9, Explore: &uisignals.DataExploreCommand{
+	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("explore"), ClientID: uisignals.Optional("explorer-tab-1"), RequestSeq: 80, ResetVersion: 9, Explore: &uisignals.DataExploreCommand{
 		SemanticModelID: uisignals.Pointer("semantic:sales"), DatasetID: uisignals.Pointer("orders"),
 		Dimensions: []string{"orders.month"}, Metrics: []string{"revenue"},
 		Filters: []uisignals.DataExploreFilterSignal{{Field: "orders.state", Operator: "equals", Values: []string{"paid"}}},
@@ -48,6 +48,9 @@ func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
 	values := updates.Query()
 	if values.Get("route") != "data" || values.Get("surface") != "explore" || values.Get("mode") != "explore" || values.Get("v") != "2" {
 		t.Fatalf("routing values = %#v", values)
+	}
+	if values.Get("clientId") != "explorer-tab-1" {
+		t.Fatalf("updates client identity = %q, want %q", values.Get("clientId"), "explorer-tab-1")
 	}
 	var spec map[string]any
 	if err := json.Unmarshal([]byte(values.Get("state")), &spec); err != nil {

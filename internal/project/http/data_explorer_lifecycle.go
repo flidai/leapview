@@ -168,8 +168,8 @@ func (h *BrowserHandler) hasDataExplorerClientIdentity(r *stdhttp.Request, comma
 }
 
 func (l *dataExplorerLifecycle) acceptSemantic(key string, requestSeq int64) bool {
-	if requestSeq <= 0 {
-		return true
+	if requestSeq < 0 {
+		return false
 	}
 	releaseResponseGate := l.lockResponseGate(key)
 	defer releaseResponseGate()

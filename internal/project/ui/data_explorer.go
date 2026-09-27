@@ -127,6 +127,9 @@ func dataExplorerUpdatesURL(command uisignals.DataExplorerCommand, savedID ...st
 
 func dataExplorerUpdatesURLWithOptions(command uisignals.DataExplorerCommand, savedID string, includeArchived bool) string {
 	values := url.Values{"route": {string(uisignals.RouteKindData)}, "surface": {"explore"}}
+	if clientID := strings.TrimSpace(uisignals.ValueOrZero(command.ClientID)); clientID != "" {
+		values.Set("clientId", clientID)
+	}
 	if strings.TrimSpace(savedID) != "" {
 		values.Set("saved", strings.TrimSpace(savedID))
 	}

@@ -617,7 +617,8 @@ test('data explorer builds a governed semantic exploration and filter command', 
         modes: Array.from(root.querySelectorAll('.mode-button')).map((button) => ({ text: button.textContent?.trim(), pressed: button.getAttribute('aria-pressed') })),
         hasBreadcrumb: Boolean(root.querySelector('[aria-label="Breadcrumb"]')),
         resourceTables: root.querySelector('.resource-group')?.textContent?.replace(/\s+/g, ' ').trim(),
-        querySummary: Array.from(root.querySelectorAll('.selection-shelf .query-summary')).map((item) => item.textContent?.replace(/\s+/g, ' ').trim()),
+        querySummary: Array.from(root.querySelectorAll('.selected-fields-heading .query-summary')).map((item) => item.textContent?.replace(/\s+/g, ' ').trim()),
+        filterChips: Array.from(root.querySelectorAll('.selected-field-row:last-child .chip')).map((item) => item.textContent?.replace(/\s+/g, ' ').trim()),
         grain: root.querySelector('.result-meta')?.textContent?.replace(/\s+/g, ' ').trim(),
         tableRows: table.result.rows,
         resultLayout: { overflowY: getComputedStyle(resultPane).overflowY, scrollable: resultPane.scrollHeight > resultPane.clientHeight, tableHeight: table.getBoundingClientRect().height },
@@ -674,7 +675,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.hasBreadcrumb).toBe(false)
     expect(state.resourceTables).toContain('orders')
     expect(state.querySummary).toContain('3 columns')
-    expect(state.querySummary).toContain('No filters')
+    expect(state.filterChips.some((chip) => chip?.includes('Status') && chip.includes('delivered'))).toBe(true)
     expect(state.grain).toContain('Grain: order_id')
     expect(state.tableRows).toEqual([{ status: 'delivered', revenue: 1200 }])
     expect(state.resultLayout).toMatchObject({ overflowY: 'auto' })
