@@ -56,12 +56,15 @@ class PreflightTests(unittest.TestCase):
                     commands.append(args)
                     if args[0] == 'ssh-keyscan': return b'host public-key'
                     if args[0] == 'ssh-keygen': return '256 ' + runner.FINGERPRINT + ' host'
-                    if args[-1] == 'inspect': return json.dumps({'revision':revision}).encode()
+                    if args[-1] == 'inspect': return json.dumps({'revision':revision, 'image':'ghcr.io/flidai/leapview@sha256:'+'c'*64}).encode()
                     self.fail('Unexpected preflight command: ' + repr(args))
                 env = {'DEMO_IMAGE':'ghcr.io/flidai/leapview@sha256:'+'a'*64,
                        'SOURCE_REVISION':revision, 'DEMO_HOST':runner.HOST,
                        'DEMO_SSH_PRIVATE_KEY':'test-only',
-                       'GITHUB_STEP_SUMMARY':str(pathlib.Path(directory)/'summary')}
+                       'DEMO_PERMISSION_PROFILE':'leapview.permissions/v1',
+                       'DEMO_PREDECESSOR_PERMISSION_PROFILE':'legacy-capabilities/v1',
+                       'GITHUB_STEP_SUMMARY':str(pathlib.Path(directory)/'summary'),
+                       'RUNNER_TEMP':directory, 'GITHUB_RUN_ID':'123', 'GITHUB_RUN_ATTEMPT':'1'}
                 report = {'mode':mode, 'currentSchema':28, 'candidateSchema':30}
                 previous_umask = os.umask(0o077)
                 try:
@@ -70,9 +73,10 @@ class PreflightTests(unittest.TestCase):
                          patch.object(runner.subprocess, 'run') as run, \
                          patch.object(runner.subprocess, 'Popen') as popen, \
                          patch.object(runner, 'inspect_transition', return_value=report), \
-                         patch.object(runner.upgrade, 'prepare'), \
+                         patch.object(runner, 'read_contract', return_value={'permissionProfile':'leapview.permissions/v1'}), \
+                         patch.object(runner.upgrade, 'prepare', return_value=('helper', 'request', {'operationDigest':'sha256:'+'d'*64})), \
                          patch.object(runner, 'verify_public_revision') as public, patch('sys.stdout', io.StringIO()):
-                        if mode == 'image-only': runner.main()
+                        if mode in ('image-only', 'database-upgrade-required'): runner.main()
                         else:
                             with self.assertRaisesRegex(RuntimeError, mode): runner.main()
                         popen.assert_not_called()
@@ -307,20 +311,24 @@ class PublicIdentityTests(unittest.TestCase):
     def test_public_endpoint_must_match_exact_revision(self):
         deploy=load('demo_compose_deploy')
         for revision, succeeds in [('a'*40,True),('b'*40,False)]:
-            with patch.dict(os.environ,DEMO_PUBLISHER_CLIENT_ID='id',DEMO_PUBLISHER_CLIENT_SECRET='secret',DEMO_PROJECT_ID='project'):
+            with patch.dict(os.environ,DEMO_PUBLISHER_CLIENT_ID='id',DEMO_PUBLISHER_CLIENT_SECRET='secret',DEMO_PROJECT_ID='project',DEMO_PERMISSION_PROFILE='leapview.permissions/v1'):
                 responses=[io.BytesIO(b'{"access_token":"test"}'),io.BytesIO(json.dumps({'buildRevision':revision,'buildDirty':False}).encode())]
-                with patch.object(deploy.urllib.request,'urlopen',side_effect=responses):
+                with patch.object(deploy,'demo_urlopen',side_effect=responses) as urlopen:
                     if succeeds: deploy.verify_public_revision('a'*40)
                     else:
                         with self.assertRaises(RuntimeError): deploy.verify_public_revision('a'*40)
+                    form = urlopen.call_args_list[0].args[0].data.decode()
+                    self.assertIn('scope=delivery.read', form)
 
 class RuntimePinTests(unittest.TestCase):
     def test_successful_record_overrides_legacy_variable(self):
         record=load('demo_runtime_record')
         with tempfile.NamedTemporaryFile() as output, patch.dict(os.environ, GITHUB_OUTPUT=output.name, DEMO_RUNTIME_REVISION='a'*40):
-            with patch.object(record,'api',side_effect=[[{'id':1,'sha':'b'*40}],[{'state':'success'}]]):
+            with patch.object(record,'api',side_effect=[[{'id':1,'sha':'b'*40}],[{'state':'success'}]]), \
+                 patch.object(record,'read_contract',return_value={'permissionProfile':'legacy-capabilities/v1'}):
                 record.resolve()
             self.assertIn('revision='+'b'*40, pathlib.Path(output.name).read_text())
+            self.assertIn('permission_profile=legacy-capabilities/v1', pathlib.Path(output.name).read_text())
     def test_incomplete_deployment_never_falls_back_to_stale_variable(self):
         record=load('demo_runtime_record')
         for state in ['failure','error','in_progress','pending']:
@@ -331,7 +339,9 @@ class RuntimePinTests(unittest.TestCase):
     def test_bootstrap_without_records_uses_existing_pin(self):
         record=load('demo_runtime_record')
         with tempfile.NamedTemporaryFile() as output, patch.dict(os.environ, GITHUB_OUTPUT=output.name, DEMO_RUNTIME_REVISION='a'*40):
-            with patch.object(record,'api',return_value=[]): record.resolve()
+            with patch.object(record,'api',return_value=[]), \
+                 patch.object(record,'read_contract',return_value={'permissionProfile':'legacy-capabilities/v1'}):
+                record.resolve()
             self.assertIn('revision='+'a'*40,pathlib.Path(output.name).read_text())
 
 if __name__ == '__main__': unittest.main()

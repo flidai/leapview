@@ -46,7 +46,7 @@ func TestCrossLanguageQualityPRLaneContract(t *testing.T) {
 	for _, want := range []string{
 		"quality_validation: ${{ steps.plan.outputs.quality_validation }}",
 		"quality-validation:",
-		"quality-validation]",
+		"quality-validation, host-recovery-validation]",
 		"QUALITY_RESULT: ${{ needs.quality-validation.result }}",
 		`"quality-validation": env.QUALITY_RESULT`,
 	} {

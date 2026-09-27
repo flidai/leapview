@@ -145,6 +145,7 @@ func TestHealthRegistryMatchesCurrentWorkflows(t *testing.T) {
 			var config struct {
 				Jobs map[string]struct {
 					Name     string `yaml:"name"`
+					Uses     string `yaml:"uses"`
 					Strategy struct {
 						Matrix yaml.Node `yaml:"matrix"`
 					} `yaml:"strategy"`
@@ -182,6 +183,27 @@ func TestHealthRegistryMatchesCurrentWorkflows(t *testing.T) {
 					}
 					if id != "agent-tool-evaluation" {
 						actual = append(actual, normalized)
+					}
+				}
+				if strings.HasPrefix(job.Uses, "./.github/workflows/") {
+					reusablePath := filepath.Join(root, ".github", "workflows", strings.TrimPrefix(job.Uses, "./.github/workflows/"))
+					reusableData, err := os.ReadFile(reusablePath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var reusable struct {
+						Jobs map[string]struct {
+							Name string `yaml:"name"`
+						} `yaml:"jobs"`
+					}
+					if err := yaml.Unmarshal(reusableData, &reusable); err != nil {
+						t.Fatal(err)
+					}
+					for _, child := range reusable.Jobs {
+						if child.Name == "" {
+							continue
+						}
+						actual = append(actual, HealthJobName(job.Name+" / "+child.Name))
 					}
 				}
 			}
