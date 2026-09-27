@@ -76,7 +76,8 @@ export const sidebarChatHistoryStyles = css`
 
   .history-row { position: relative; display: flex; align-items: center; min-width: 0; border-radius: var(--lv-radius-default); }
   .history-row .history-item { flex: 1; min-width: 0; }
-  .pinned-chat-icon { display: inline-flex; flex-shrink: 0; color: var(--lv-fg-muted); }
+  .pinned-items .history-item.pinned { grid-template-columns: calc(var(--control-xsmall-size) + var(--base-size-2)) minmax(0, 1fr) auto; }
+  .pinned-chat-icon { display: inline-flex; justify-content: center; flex-shrink: 0; color: var(--lv-fg-muted); }
   .history-actions { position: absolute; right: var(--base-size-4); z-index: 3; display: flex; align-items: center; gap: var(--base-size-2); opacity: 0; }
   .history-action { display: inline-grid; width: var(--control-small-size); height: var(--control-small-size); place-items: center; padding: 0; border: 0; border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); color: var(--lv-fg-muted); cursor: pointer; }
   .history-row:hover .history-actions,
