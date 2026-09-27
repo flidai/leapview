@@ -26,6 +26,7 @@ type Config struct {
 	ProductLogoURL       string
 	UserAvatarURL        string
 	UserName             string
+	PrincipalID          string
 	ColorMode            string
 	AdminAccess          *AdminNavigationAccess
 	ProductNavigation    *ProductNavigationAccess
@@ -77,6 +78,7 @@ type Sidebar struct {
 	PrimaryAction    *Action  `json:"primaryAction,omitempty"`
 	ProductLogoURL   *string  `json:"productLogoUrl,omitempty"`
 	ProductName      string   `json:"productName"`
+	PrincipalID      *string  `json:"principalId,omitempty"`
 	UserAvatarURL    *string  `json:"userAvatarUrl,omitempty"`
 	UserName         *string  `json:"userName,omitempty"`
 	UserRole         *string  `json:"userRole,omitempty"`
@@ -154,7 +156,7 @@ func Provider(config Config) webpage.Provider {
 			DashboardID: optional(context.SectionID), DashboardTitle: context.SectionTitle,
 			ModelID: optional(context.RelatedID), ModelTitle: optional(context.RelatedTitle),
 			PageTitle: context.PageTitle, ProductLogoURL: optional(config.ProductLogoURL), ProductName: firstNonEmpty(config.Presentation.ProductName, "LeapView"),
-			UserAvatarURL: optional(config.UserAvatarURL), UserName: optional(config.UserName), UserRole: optional(config.RoleLabel),
+			PrincipalID: optional(config.PrincipalID), UserAvatarURL: optional(config.UserAvatarURL), UserName: optional(config.UserName), UserRole: optional(config.RoleLabel),
 			UserSettingsHref: "/admin/profile",
 			Groups:           navigation,
 		}

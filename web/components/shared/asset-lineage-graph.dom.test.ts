@@ -51,7 +51,10 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
     await page.waitForFunction(() => customElements.get('lv-asset-lineage-graph'))
     await page.waitForFunction(() => {
       const host = document.querySelector('lineage-test-host') as HTMLElement & { shadowRoot: ShadowRoot }
-      return Boolean(host?.shadowRoot?.querySelector('.react-flow__node'))
+      const graph = host?.shadowRoot?.querySelector('lv-asset-lineage-graph')
+      return Boolean(graph?.querySelector('.react-flow__node')
+        && graph.querySelector('.react-flow__edge')
+        && graph.querySelector('.react-flow__controls-button svg'))
     })
 
     const state = await page.evaluate(() => {

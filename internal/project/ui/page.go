@@ -112,7 +112,7 @@ func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSign
 
 func CatalogListPatchForCatalogs(catalogs []catalog.Catalog, options CatalogListOptions) map[string]any {
 	page := catalogPageForCatalogs(catalogs, options)
-	return map[string]any{"page": map[string]any{"dashboards": page.Dashboards}}
+	return map[string]any{"page": map[string]any{"dashboards": page.Dashboards, "listQuery": page.ListQuery}}
 }
 
 func catalogPageForCatalogs(catalogs []catalog.Catalog, options CatalogListOptions) uisignals.CatalogPageSignal {

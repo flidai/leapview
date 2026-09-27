@@ -84,7 +84,7 @@ export function testDocument(): string {
         </style>
       </head>
       <body>
-        <main data-signals="${escapeHTML(JSON.stringify({ page, chrome: { sidebar: { userName: 'Jacob Nielsen', userAvatarUrl: '/profile/avatars/jacob/avatar-digest' } } }))}">
+        <main data-signals="${escapeHTML(JSON.stringify({ page, chrome: { sidebar: { principalId: 'jacob', userName: 'Jacob Nielsen', userAvatarUrl: '/profile/avatars/jacob/avatar-digest' } } }))}">
           <lv-catalog-page></lv-catalog-page>
         </main>
         <script type="module" src="/catalog-page-under-test.js"></script>
