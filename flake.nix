@@ -24,7 +24,7 @@
         buildInputs = [ pkgs.stdenv.cc.cc.lib ];
         inherit (toolchain) GOTOOLCHAIN PLAYWRIGHT_BROWSERS_PATH;
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
-        LEAPVIEW_NIX_PLAYWRIGHT_VERSION = toolchain.playwrightVersion;
+        LEAPVIEW_TEST_NIX_PLAYWRIGHT_VERSION = toolchain.playwrightVersion;
         BUN_FEATURE_FLAG_NO_ORPHANS = "1";
       };
       checks.${system}.toolchain = import ./nix/check-toolchain.nix {

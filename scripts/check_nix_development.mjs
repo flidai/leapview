@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
-const expectedPlaywright = process.env.LEAPVIEW_NIX_PLAYWRIGHT_VERSION
+const expectedPlaywright = process.env.LEAPVIEW_TEST_NIX_PLAYWRIGHT_VERSION
 assert.ok(expectedPlaywright, 'Run this check with nix develop -c task nix:smoke')
 assert.equal(require('playwright-core/package.json').version, expectedPlaywright,
   'Update the locked Nix Playwright input alongside bun.lock; browser revisions must match')

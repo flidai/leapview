@@ -2,6 +2,7 @@ name: Nix development
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'flake.nix'
       - 'flake.lock'
@@ -25,6 +26,7 @@ concurrency:
 
 jobs:
   development:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
