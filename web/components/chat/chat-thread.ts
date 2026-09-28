@@ -15,7 +15,7 @@ import '../shared/visual-artifact'
 
 type ChatRenderUnit =
   | { kind: 'user'; item: ChatTranscriptItemSignal }
-  | { kind: 'agent'; items: ChatTranscriptItemSignal[] }
+  | { kind: 'agent'; items: ChatTranscriptItemSignal[]; prompt?: ChatTranscriptItemSignal }
 
 const jsonConverter = <T,>(fallback: T) => ({
   fromAttribute(value: string | null): T {
@@ -79,8 +79,10 @@ class ChatThread extends LitElement {
       return (status === 'error' && !activeRunItem && !recoveredErrors.has(item)) || (status === 'complete' && Boolean(item.artifact))
     })
     const unavailable = !this.status.enabled && transcript.length === 0
-    const empty = visibleTranscript.length === 0 && !this.status.running
+    const empty = transcript.length === 0 && !this.status.running
     const showWorking = this.status.running
+    const visibleItems = new Set(visibleTranscript)
+    const units = groupTranscript(transcript)
 
     return html`
       <div class="thread">
@@ -90,7 +92,7 @@ class ChatThread extends LitElement {
             ${unavailable ? this.renderEmptyState('Agent unavailable', this.status.error || 'Agent is not configured.') : nothing}
             ${!unavailable && this.status.error ? html`<div class="alert" role="alert">${this.status.error}</div>` : nothing}
             ${empty && !unavailable ? this.renderEmptyState('Start a conversation') : nothing}
-            ${groupTranscript(visibleTranscript).map((unit) => this.renderUnit(unit))}
+            ${units.map((unit, index) => this.renderUnit(unit, visibleItems, earlierAssistantMessages, index === units.length - 1))}
             ${showWorking ? html`
               <div class="working" role="status" aria-label="Working" aria-live="polite">
                 <span class="working-dots" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -154,9 +156,13 @@ class ChatThread extends LitElement {
     `
   }
 
-  private renderUnit(unit: ChatRenderUnit) {
+  private renderUnit(unit: ChatRenderUnit, visibleItems: Set<ChatTranscriptItemSignal>, earlierAssistantMessages: Set<ChatTranscriptItemSignal>, latest: boolean) {
     if (unit.kind === 'user') return this.renderUserTurn(unit.item)
-    return this.renderAgentTurn(unit.items)
+    const items = unit.items.filter(item => visibleItems.has(item))
+    const running = this.status.running && latest && (!this.status.runId || unit.items.some(item => item.runId === this.status.runId))
+    const steps = unit.items.filter(item => item.kind === 'tool' || earlierAssistantMessages.has(item) || (running && (item.kind === 'assistant' || item.kind === 'summary')))
+    if (items.length === 0 && steps.length === 0) return nothing
+    return this.renderAgentTurn(items, steps, unit.prompt, unit.items, running)
   }
 
 	private renderUserTurn(item: ChatTranscriptItemSignal) {
@@ -185,16 +191,31 @@ class ChatThread extends LitElement {
 		`
 	}
 
-  private renderAgentTurn(items: ChatTranscriptItemSignal[]) {
+  private renderAgentTurn(items: ChatTranscriptItemSignal[], steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean) {
     const text = items.filter(item => item.kind === 'assistant').map(item => item.markdown || item.text || '').filter(Boolean).join('\n\n')
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
+          ${steps.length > 0 ? this.renderRunSteps(steps, prompt, allItems, running) : nothing}
           ${items.map((item) => this.renderAgentItem(item))}
         </div>
         ${text && !this.status.running ? this.messageActions(items[0].id, text, undefined, false) : nothing}
       </article>
     `
+  }
+
+  private renderRunSteps(steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean) {
+    const start = Date.parse(prompt?.createdAt || allItems[0]?.createdAt || '')
+    const end = Date.parse(allItems[allItems.length - 1]?.createdAt || '')
+    const elapsed = Number.isFinite(start) && Number.isFinite(end) && end >= start ? formatElapsed(end - start) : ''
+    const label = running ? 'Working' : elapsed ? `Worked for ${elapsed}` : 'View steps'
+    return html`<details class="run-steps">
+      <summary>${label}${lucideIcon(ChevronRight, { size: 16 })}</summary>
+      <ol class="run-step-list">
+        ${steps.map(item => item.kind === 'tool' ? html`<li class="run-step"><span>${toolStepName(item)}</span><span class="run-step-status">${toolStepStatus(this.toolStatus(item))}</span></li>`
+          : html`<li class="run-step">${item.markdown || item.text || ''}</li>`)}
+      </ol>
+    </details>`
   }
 
   private messageActions(id: string, text: string, prompt: ChatTranscriptItemSignal | undefined, user: boolean) {
@@ -458,9 +479,10 @@ function hasKeys(value: Record<string, unknown> | undefined): boolean {
 function groupTranscript(transcript: ChatTranscriptItemSignal[]): ChatRenderUnit[] {
   const units: ChatRenderUnit[] = []
   let agentItems: ChatTranscriptItemSignal[] = []
+  let prompt: ChatTranscriptItemSignal | undefined
   const flushAgent = () => {
     if (agentItems.length === 0) return
-    units.push({ kind: 'agent', items: agentItems })
+    units.push({ kind: 'agent', items: agentItems, prompt })
     agentItems = []
   }
 
@@ -468,12 +490,33 @@ function groupTranscript(transcript: ChatTranscriptItemSignal[]): ChatRenderUnit
     if (item.kind === 'user') {
       flushAgent()
       units.push({ kind: 'user', item })
+      prompt = item
       continue
     }
     agentItems.push(item)
   }
   flushAgent()
   return units
+}
+
+function formatElapsed(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(minutes / 60)
+  if (hours > 0) return `${hours}h ${minutes % 60}m`
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`
+  return `${seconds}s`
+}
+
+function toolStepName(item: ChatTranscriptItemSignal): string {
+  return item.title?.trim() || (item.name || 'Tool').replace(/[_-]+/g, ' ').replace(/\b\w/g, character => character.toUpperCase())
+}
+
+function toolStepStatus(status: string): string {
+  if (status === 'complete') return 'Completed'
+  if (status === 'error') return 'Failed'
+  if (status === 'interrupted') return 'Interrupted'
+  return 'Working'
 }
 
 if (!customElements.get('lv-chat-thread')) customElements.define('lv-chat-thread', ChatThread)

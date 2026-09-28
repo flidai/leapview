@@ -472,15 +472,40 @@ test('chat thread hides processing rows while retaining finished errors and answ
   expect(state.errors).toEqual(['Catalog lookup failed.', 'The dashboard could not be loaded.'])
   expect(state.text).toContain('Find the sales dashboard.')
   expect(state.assistantMarkdown).toBe('I could not load that dashboard.')
-  expect(state.text).not.toContain('Catalog Search')
-  expect(state.text).not.toContain('Catalog Get')
-  expect(state.text).not.toContain('Catalog List')
   expect(state.text).not.toContain('secret tool result')
   expect(state.transcriptTools).toEqual([
     { name: 'catalog_search', inputJson: '{"query":"sales"}', resultJson: 'items[1]{id}: sales' },
     { name: 'catalog_get', inputJson: '{"id":"dashboard:sales"}', resultJson: '{"error":"secret tool result"}' },
     { name: 'catalog_list', inputJson: undefined, resultJson: 'items[1]{id}: dashboard:sales' },
   ])
+  await page.close()
+})
+
+test('chat thread expands completed steps with an elapsed label while keeping answers visible', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const thread = page.locator('lv-chat-thread')
+  await thread.evaluate(async (element: any) => {
+    element.status = { enabled: true, running: false }
+    element.transcript = [
+      { id: 'u1', kind: 'user', text: 'Show revenue', createdAt: '2026-09-28T10:00:00Z' },
+      { id: 't1', kind: 'tool', name: 'catalog_search', status: 'complete', createdAt: '2026-09-28T10:00:02Z', inputJson: '{"secret":"hidden"}' },
+      { id: 'a1', kind: 'assistant', markdown: 'Looking for the model.', createdAt: '2026-09-28T10:00:03Z' },
+      { id: 't2', kind: 'tool', name: 'query_visual', status: 'complete', createdAt: '2026-09-28T10:00:07Z' },
+      { id: 'a2', kind: 'assistant', markdown: 'Here is the chart.', createdAt: '2026-09-28T10:00:11Z' },
+    ]
+    await element.updateComplete
+  })
+  const details = thread.locator('.run-steps')
+  expect(await details.count()).toBe(1)
+  expect(await details.getAttribute('open')).toBeNull()
+  expect(await details.locator('summary').textContent()).toContain('Worked for 11s')
+  expect(await thread.locator('.agent-markdown').evaluate((node: any) => node.value)).toBe('Here is the chart.')
+  await details.locator('summary').click()
+  expect(await details.getAttribute('open')).not.toBeNull()
+  const steps = await details.locator('.run-step').allTextContents()
+  expect(steps).toEqual(['Catalog SearchCompleted', 'Looking for the model.', 'Query VisualCompleted'])
+  expect((await details.textContent()) || '').not.toContain('secret')
   await page.close()
 })
 
@@ -523,6 +548,8 @@ test('chat thread waits until the active run ends before showing unresolved erro
     const visible = () => ({
       errors: Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim()),
       answers: Array.from(thread.shadowRoot.querySelectorAll('.agent-markdown')).map((node: any) => node.value),
+      stepsLabel: Array.from(thread.shadowRoot.querySelectorAll('.run-steps summary')).at(-1)?.textContent?.trim(),
+      stepsText: Array.from(thread.shadowRoot.querySelectorAll('.run-step-list')).at(-1)?.textContent?.replace(/\s+/g, ' ').trim(),
     })
     thread.status = { enabled: true, running: true, runId: 'run-new' }
     thread.transcript = transcript
@@ -540,9 +567,9 @@ test('chat thread waits until the active run ends before showing unresolved erro
     return { running, failed, recovered: visible() }
   })
   expect(states).toEqual({
-    running: { errors: ['Earlier failure.'], answers: [] },
-    failed: { errors: ['Earlier failure.', 'Temporary visual failure.'], answers: ['Retrying the visual.'] },
-    recovered: { errors: ['Earlier failure.'], answers: ['Open the chart.'] },
+    running: { errors: ['Earlier failure.'], answers: [], stepsLabel: 'Working', stepsText: 'Retrying the visual.Query VisualFailed' },
+    failed: { errors: ['Earlier failure.', 'Temporary visual failure.'], answers: ['Retrying the visual.'], stepsLabel: 'View steps', stepsText: 'Query VisualFailed' },
+    recovered: { errors: ['Earlier failure.'], answers: ['Open the chart.'], stepsLabel: 'View steps', stepsText: 'Retrying the visual.Query VisualFailedQuery VisualCompleted' },
   })
   await page.close()
 })
@@ -647,7 +674,8 @@ test('chat thread keeps structured tool history when durable history replaces li
     return {
       rows: root.querySelectorAll('.tool-call').length,
       transcript: element.transcript.map((item: any) => ({ name: item.name, status: item.status, resultJson: item.resultJson })),
-      visibleText: root.textContent,
+      stepsOpen: root.querySelector('.run-steps')?.hasAttribute('open'),
+      stepText: root.querySelector('.run-step-list')?.textContent,
     }
   })
   expect(state.rows).toBe(0)
@@ -655,8 +683,9 @@ test('chat thread keeps structured tool history when durable history replaces li
     { name: 'catalog_search', status: 'complete', resultJson: 'items[1]{id}: sales' },
     { name: 'catalog_list', status: 'complete', resultJson: 'items[1]{id}: sales' },
   ])
-  expect(state.visibleText).not.toContain('Catalog Search')
-  expect(state.visibleText).not.toContain('Catalog List')
+  expect(state.stepsOpen).toBe(false)
+  expect(state.stepText).toContain('Catalog Search')
+  expect(state.stepText).toContain('Catalog List')
   await page.close()
 })
 

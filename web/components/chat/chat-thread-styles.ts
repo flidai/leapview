@@ -173,6 +173,44 @@ export const chatThreadStyles = css`
       gap: var(--lv-chat-agent-item-gap);
     }
 
+    .run-steps {
+      min-width: 0;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-secondary);
+    }
+
+    .run-steps summary {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--lv-space-xs);
+      width: fit-content;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .run-steps summary::-webkit-details-marker { display: none; }
+    .run-steps summary svg { transition: transform 160ms ease; }
+    .run-steps[open] summary svg { transform: rotate(90deg); }
+    .run-steps summary:focus-visible { outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; }
+
+    .run-step-list {
+      display: grid;
+      gap: var(--lv-space-xs);
+      margin: var(--lv-space-sm) 0 0;
+      padding: 0 0 0 var(--lv-space-lg);
+      list-style: decimal;
+    }
+
+    .run-step {
+      padding-left: var(--lv-space-xs);
+      overflow-wrap: anywhere;
+    }
+
+    .run-step-status {
+      margin-left: var(--lv-space-sm);
+      color: var(--lv-fg-muted);
+    }
+
     .agent-markdown {
       display: block;
     }
