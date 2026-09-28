@@ -349,17 +349,20 @@ test('data explorer lists server-saved explorations with links back to the saved
       })
       document.body.append(element)
       const root = element.shadowRoot as ShadowRoot
-      for (let index = 0; index < 30 && !root.querySelector('.saved-count'); index += 1) {
+      for (let index = 0; index < 30 && !root.querySelector('lv-data-explorer-saved')?.shadowRoot?.querySelector('.saved-count'); index += 1) {
         await element.updateComplete
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
-      root.querySelector<HTMLButtonElement>('.saved-button')?.click()
-      await element.updateComplete
-      const link = root.querySelector<HTMLAnchorElement>('.saved-item')
+      const savedElement = root.querySelector('lv-data-explorer-saved') as any
+      const savedRoot = savedElement.shadowRoot as ShadowRoot
+      savedRoot.querySelector<HTMLButtonElement>('.saved-button')?.click()
+      await savedElement.updateComplete
+      const link = savedRoot.querySelector<HTMLAnchorElement>('.saved-item')
       return {
         title: link?.querySelector('.saved-item-title')?.textContent?.trim(),
         href: link?.getAttribute('href'),
         updatedAt: link?.querySelector('time')?.getAttribute('datetime'),
+        popoverPosition: getComputedStyle(savedRoot.querySelector('.saved-popover')!).position,
       }
     })
 
@@ -367,6 +370,7 @@ test('data explorer lists server-saved explorations with links back to the saved
       title: 'Orders by month',
       href: '/explore?saved=explore_1',
       updatedAt: '2026-09-27T10:30:00Z',
+      popoverPosition: 'absolute',
     })
   } finally {
     await page.close()

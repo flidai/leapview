@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { Bookmark, ChevronRight, Code2, Columns3, Database, Eye, Filter, Play, Plus, RotateCcw, Search, Server, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
+import { ChevronRight, Code2, Columns3, Database, Eye, Filter, Play, Plus, RotateCcw, Search, Server, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
 import type {
   AgentReferenceSignal,
   DataExploreCommand,
@@ -30,7 +30,7 @@ import {
   toggleVisibleColumns,
 } from './data-explorer-controller'
 import { dataExplorerURL } from './data-explorer-url'
-import { loadSavedExplorations, type SavedExploration } from './saved-explorations'
+import './data-explorer-saved'
 import '../chat/chat-drawer'
 import './preview-table'
 import './explore-table'
@@ -81,10 +81,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private filterValue = ''
   @state() private optimisticExplore: DataExploreCommand | null = null
   @state() private agentDrawerOpen = false
-  @state() private savedExplorationsOpen = false
-  @state() private savedExplorations: SavedExploration[] = []
-  @state() private savedExplorationsLoading = false
-  @state() private savedExplorationsError = ''
   @state() private browserCollapsed = false
   @state() private browserWidth = 320
   @state() private exploreVisibleColumns: string[] = []
@@ -92,8 +88,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private expandedGroupIDs = new Set<string>()
   private exploreTimer = 0
   private agentStateInitialized = false
-  private savedExplorationsLoaded = false
-  private savedExplorationsRequest = 0
   private agentRestoreDispatched = false
   private restoredAgentConversationId = ''
   private browserResizeCleanup?: () => void
@@ -847,110 +841,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       width: auto;
     }
 
-    .saved-control {
-      position: relative;
-    }
-
-    .header .saved-button {
-      display: inline-flex;
-      width: auto;
-      gap: var(--base-size-6);
-      padding: 0 var(--base-size-8);
-    }
-
-    .saved-count {
-      display: inline-grid;
-      min-width: 1rem;
-      height: 1rem;
-      place-items: center;
-      border-radius: 999px;
-      background: var(--lv-bg-control-hover);
-      padding: 0 var(--base-size-2);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-micro);
-    }
-
-    .saved-popover {
-      position: absolute;
-      top: calc(100% + var(--base-size-6));
-      right: 0;
-      z-index: var(--zIndex-overlay);
-      display: grid;
-      width: min(23rem, calc(100vw - 2rem));
-      max-height: min(28rem, calc(100svh - 5rem));
-      grid-template-rows: auto minmax(0, 1fr);
-      overflow: hidden;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
-      box-shadow: var(--lv-shadow-floating-sm);
-    }
-
-    .saved-popover-header {
-      display: flex;
-      min-height: var(--control-large-size);
-      align-items: center;
-      gap: var(--base-size-8);
-      border-bottom: var(--lv-border-muted);
-      padding: var(--base-size-6) var(--base-size-8) var(--base-size-6) var(--base-size-12);
-    }
-
-    .saved-popover-header h2 {
-      flex: 1;
-      color: var(--lv-fg-default);
-      font: var(--lv-type-section-title);
-    }
-
-    .header .saved-refresh {
-      width: var(--control-small-size);
-      height: var(--control-small-size);
-    }
-
-    .saved-state {
-      margin: 0;
-      padding: var(--base-size-12);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-body);
-    }
-
-    .saved-error {
-      color: var(--lv-fg-danger);
-    }
-
-    .saved-list {
-      min-height: 0;
-      overflow: auto;
-      padding: var(--base-size-4);
-    }
-
-    .saved-item {
-      display: grid;
-      gap: var(--base-size-2);
-      border-radius: var(--lv-radius-default);
-      padding: var(--base-size-8);
-      color: var(--lv-fg-default);
-      text-decoration: none;
-    }
-
-    .saved-item:hover,
-    .saved-item:focus-visible {
-      background: var(--lv-bg-control-hover);
-      outline: 0;
-    }
-
-    .saved-item-title {
-      overflow: hidden;
-      font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .saved-item time {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
     .content {
       display: grid;
       min-width: 0;
@@ -1121,9 +1011,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.agentStateInitialized = true
     }
     super.connectedCallback()
-    if (!this.embedded && !this.savedExplorationsLoaded && !this.savedExplorationsLoading) {
-      void this.refreshSavedExplorations()
-    }
   }
 
   disconnectedCallback(): void {
@@ -1191,40 +1078,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         <header class="header">
           <h1>${page?.title ?? 'Data Explorer'}</h1>
           <div class="header-actions">
-            ${!this.embedded ? html`
-              <div class="saved-control">
-                <button
-                  type="button"
-                  class="icon-button saved-button"
-                  aria-label="Saved explorations"
-                  aria-haspopup="dialog"
-                  aria-expanded=${String(this.savedExplorationsOpen)}
-                  title="Saved explorations"
-                  @click=${() => this.toggleSavedExplorations()}
-                >${lucideIcon(Bookmark, { size: 15 })}<span>Saved</span>${this.savedExplorations.length ? html`<span class="saved-count">${this.savedExplorations.length}</span>` : nothing}</button>
-                ${this.savedExplorationsOpen ? html`
-                  <section class="saved-popover" role="dialog" aria-label="Saved explorations" @keydown=${this.handleSavedExplorationsKeydown}>
-                    <header class="saved-popover-header">
-                      <h2>Saved explorations</h2>
-                      <button type="button" class="icon-button saved-refresh" aria-label="Refresh saved explorations" title="Refresh saved explorations" ?disabled=${this.savedExplorationsLoading} @click=${() => this.refreshSavedExplorations()}>${lucideIcon(RotateCcw, { size: 14 })}</button>
-                    </header>
-                    ${this.savedExplorationsLoading && !this.savedExplorations.length ? html`<p class="saved-state" role="status">Loading saved explorations…</p>` : nothing}
-                    ${this.savedExplorationsError ? html`<p class="saved-state saved-error" role="alert">${this.savedExplorationsError}</p>` : nothing}
-                    ${!this.savedExplorationsLoading && !this.savedExplorationsError && !this.savedExplorations.length ? html`<p class="saved-state">No saved explorations yet.</p>` : nothing}
-                    ${this.savedExplorations.length ? html`
-                      <nav class="saved-list" aria-label="Saved explorations">
-                        ${this.savedExplorations.map((item) => html`
-                          <a class="saved-item" href=${item.href} @click=${() => this.savedExplorationsOpen = false}>
-                            <span class="saved-item-title">${item.title}</span>
-                            <time datetime=${item.updatedAt}>${formatSavedDate(item.updatedAt)}</time>
-                          </a>
-                        `)}
-                      </nav>
-                    ` : nothing}
-                  </section>
-                ` : nothing}
-              </div>
-            ` : nothing}
+            ${!this.embedded ? html`<lv-data-explorer-saved></lv-data-explorer-saved>` : nothing}
             ${columns.length ? html`
               <details class="header-columns">
                 <summary title="Choose visible columns" aria-label="Choose visible columns">
@@ -1619,37 +1473,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       description: dataset?.description,
       hierarchy: [projectId, semanticModelId], href, locations: [], context: ['active_project_generation'],
     }]
-  }
-
-  private toggleSavedExplorations() {
-    this.savedExplorationsOpen = !this.savedExplorationsOpen
-    if (this.savedExplorationsOpen && !this.savedExplorationsLoaded && !this.savedExplorationsLoading) {
-      void this.refreshSavedExplorations()
-    }
-  }
-
-  private async refreshSavedExplorations() {
-    const request = ++this.savedExplorationsRequest
-    this.savedExplorationsLoading = true
-    this.savedExplorationsError = ''
-    try {
-      const items = await loadSavedExplorations()
-      if (request !== this.savedExplorationsRequest) return
-      this.savedExplorations = items
-      this.savedExplorationsLoaded = true
-    } catch (error) {
-      if (request !== this.savedExplorationsRequest) return
-      this.savedExplorationsError = error instanceof Error ? error.message : 'Saved explorations could not be loaded.'
-    } finally {
-      if (request === this.savedExplorationsRequest) this.savedExplorationsLoading = false
-    }
-  }
-
-  private handleSavedExplorationsKeydown(event: KeyboardEvent) {
-    if (event.key !== 'Escape') return
-    event.stopPropagation()
-    this.savedExplorationsOpen = false
-    this.renderRoot.querySelector<HTMLButtonElement>('.saved-button')?.focus()
   }
 
   private handleAgentNew = () => {
@@ -2130,12 +1953,6 @@ function replaceDataExplorerURL(command: DataExplorerCommand) {
   if (window.location.pathname + window.location.search !== next) {
     window.history.replaceState({}, '', next)
   }
-}
-
-function formatSavedDate(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.valueOf())) return 'Saved exploration'
-  return `Updated ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date)}`
 }
 
 function iconForLayer(layer: string): any {
