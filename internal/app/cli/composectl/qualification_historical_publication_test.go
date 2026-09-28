@@ -1,6 +1,7 @@
 package composectl
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -306,9 +307,9 @@ print(json.dumps(clone_only_environment(dict(os.environ), sys.argv[2])))`, filep
 		"--target-id", seed.TargetID, "--environment", seed.Environment, "--timeout", "90", "--poll-interval", "2")
 	generationCommand.Dir = checkout.Root
 	generationCommand.Env = sortedEnvironment(generationEnvironment)
-	generationOutput, err := generationCommand.CombinedOutput()
+	generationOutput, err := qualificationHistoricalGenerationPollOutput(generationCommand)
 	if err != nil {
-		return result, fmt.Errorf("predecessor generation status poll failed: %s", qualificationHistoricalDiagnosticTail(generationOutput, 8<<10))
+		return result, fmt.Errorf("predecessor generation status poll failed: %w", err)
 	}
 	var generation struct {
 		ID          string `json:"id"`
@@ -332,6 +333,58 @@ print(json.dumps(clone_only_environment(dict(os.environ), sys.argv[2])))`, filep
 	}
 	t.Logf("historical predecessor baseline activated generation %s from publication %s", result.GenerationID, result.PublicationID)
 	return result, nil
+}
+
+func qualificationHistoricalGenerationPollOutput(command *exec.Cmd) ([]byte, error) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		diagnostic := stderr.Bytes()
+		if len(diagnostic) == 0 {
+			diagnostic = []byte(err.Error())
+		}
+		return nil, errors.New(qualificationHistoricalDiagnosticTail(diagnostic, 8<<10))
+	}
+	return stdout.Bytes(), nil
+}
+
+func TestQualificationHistoricalGenerationPollSeparatesStdoutAndStderr(t *testing.T) {
+	command := exec.Command(os.Args[0], "-test.run=^TestQualificationHistoricalGenerationPollHelperProcess$")
+	command.Env = append(os.Environ(), "LEAPVIEW_HISTORICAL_GENERATION_POLL_HELPER=success")
+
+	output, err := qualificationHistoricalGenerationPollOutput(command)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"generation:poll-test","status":"active"}`, string(output))
+}
+
+func TestQualificationHistoricalGenerationPollFailureReportsOnlyRedactedBoundedStderr(t *testing.T) {
+	command := exec.Command(os.Args[0], "-test.run=^TestQualificationHistoricalGenerationPollHelperProcess$")
+	command.Env = append(os.Environ(), "LEAPVIEW_HISTORICAL_GENERATION_POLL_HELPER=failure")
+
+	_, err := qualificationHistoricalGenerationPollOutput(command)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "generation status unavailable")
+	require.Contains(t, err.Error(), "[REDACTED]")
+	require.NotContains(t, err.Error(), "poll-secret-value")
+	require.NotContains(t, err.Error(), "stdout-only-marker")
+	require.LessOrEqual(t, len(err.Error()), 8<<10)
+}
+
+func TestQualificationHistoricalGenerationPollHelperProcess(t *testing.T) {
+	switch os.Getenv("LEAPVIEW_HISTORICAL_GENERATION_POLL_HELPER") {
+	case "success":
+		_, _ = io.WriteString(os.Stderr, "generation status read returned HTTP 503 Content-Type='text/plain; charset=utf-8' body=Service Unavailable\n")
+		_, _ = io.WriteString(os.Stdout, `{"id":"generation:poll-test","status":"active"}`)
+		os.Exit(0)
+	case "failure":
+		_, _ = io.WriteString(os.Stderr, strings.Repeat("diagnostic ", 900)+" generation status unavailable PUBLISHER_TOKEN=poll-secret-value")
+		_, _ = io.WriteString(os.Stdout, "stdout-only-marker")
+		os.Exit(1)
+	default:
+		return
+	}
 }
 
 func qualificationHistoricalLegacyReviewerToken(
