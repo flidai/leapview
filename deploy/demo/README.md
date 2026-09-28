@@ -219,6 +219,10 @@ It names the exact target/project/environment, previous policy and serving
 identities, explicit typed assignments, and distinct publisher/reviewer
 principals. The transition preserves historical rows and requires a new captured
 serving policy. It never infers project-wide authority from legacy capabilities.
+An intent entry may list several actions for one resource; the plan expands it
+into separate grants with deterministic IDs, one exact permission per stored
+grant. Single-action entries retain their supplied grant ID. Duplicate principal
+roles or exact permissions are rejected before policy capture.
 The candidate's read-only `leapview admin transition-access-inventory --project`
 command reads the existing policy revision/digest and active generation from
 schema 32 before migration. Use those returned identities in the private intent;
