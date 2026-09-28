@@ -123,10 +123,6 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
-  - path: .github/actions/site-ssh/action.yml
-    kind: github-actions
-    updater: {ecosystem: github-actions, directory: /}
-    scanners: [trivy, action-pin-policy]
   - path: .github/actions/oci-admission/action.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}

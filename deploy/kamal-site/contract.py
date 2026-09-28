@@ -2,13 +2,10 @@
 import re
 
 REPOSITORY = 'ghcr.io/flidai/leapview-site'
+LOCAL_REPOSITORY = 'localhost:5555/leapview-site'
 SERVICE = 'leapview-site'
 RUNTIME = {'port': 8081, 'user': '65532:65532', 'base_url': 'https://leapview.dev',
            'tmpfs_mib': 64, 'log_size': '10m', 'log_files': 3}
-
-
-def activation_allowed(mode, repository, ref):
-    return mode == 'kamal' and repository == 'flidai/leapview' and ref == 'refs/heads/main'
 
 
 def validate_record(record):
@@ -33,8 +30,8 @@ def validate_scope(image):
         return
     # Docker 29's containerd store can also list a RepoDigest in RepoTags.
     digests = image.get('RepoDigests', [])
-    canonical = re.compile(re.escape(REPOSITORY) + r'@sha256:[a-f0-9]{64}').fullmatch
-    if any(not (tag.startswith(REPOSITORY + ':') or (tag in digests and canonical(tag)))
+    canonical = re.compile('(?:' + re.escape(REPOSITORY) + '|' + re.escape(LOCAL_REPOSITORY) + r')@sha256:[a-f0-9]{64}').fullmatch
+    if any(not (tag.startswith((REPOSITORY + ':', LOCAL_REPOSITORY + ':')) or (tag in digests and canonical(tag)))
            for tag in image.get('RepoTags', [])):
         raise ValueError('service image has an unrelated repository alias')
     if any(not canonical(ref) for ref in digests):
@@ -45,20 +42,21 @@ def validate_image(record, image):
     validate_record(record)
     validate_scope(image)
     labels = image.get('Config', {}).get('Labels', {})
-    if (record['image'] not in image.get('RepoDigests', []) or image.get('Os') != 'linux'
+    if (not {record['image'], LOCAL_REPOSITORY + '@' + record['image'].split('@')[1]}.intersection(image.get('RepoDigests', [])) or image.get('Os') != 'linux'
             or image.get('Architecture') != 'amd64' or labels.get('service') != SERVICE
             or labels.get('org.opencontainers.image.revision') != record['revision']):
         raise ValueError('local image differs from admitted source/platform/service')
 
 
-def validate_container(record, container):
+def validate_container(record, container, *, require_running=True):
     config, host = container['Config'], container['HostConfig']
-    if (not container['State']['Running']
+    if ((require_running and not container['State']['Running'])
             or container.get('ImageManifestDescriptor', {}).get('digest') != record['platform']
             or config.get('Cmd') != ['-addr=:8081', '-image-reference=' + record['image']]
             or config.get('Entrypoint') != ['/leapview-site']
             or config.get('User') != record['runtime']['user']
             or 'LEAPVIEW_SITE_BASE_URL=https://leapview.dev' not in config.get('Env', [])
+            or host.get('RestartPolicy', {}).get('Name') != 'unless-stopped'
             or not host.get('ReadonlyRootfs') or 'ALL' not in host.get('CapDrop', [])
             or 'no-new-privileges=true' not in host.get('SecurityOpt', [])
             or host.get('Tmpfs', {}).get('/tmp') != 'rw,noexec,nosuid,size=64m'):

@@ -248,25 +248,17 @@ func TestRetiredOperatorDeploymentCannotRestartLegacyController(t *testing.T) {
 	if err == nil {
 		t.Fatal("retired deployment entrypoint unexpectedly succeeded")
 	}
-	requireContains(t, string(output), "serialized Deploy public site workflow")
+	requireContains(t, string(output), "manual Kamal operator")
 }
 
-func TestKamalWorkflowIsDefaultOffAndNeverPromotesLegacyTag(t *testing.T) {
+func TestSiteWorkflowOnlyPublishesQualifiedImages(t *testing.T) {
 	workflow := readFile(t, filepath.Join("..", "..", ".github", "workflows", "site-deploy.yml"))
-	for _, fragment := range []string{
-		"branches: [main]", "uses: ./.github/workflows/site-image.yml",
-		"group: public-site-production", "cancel-in-progress: false",
-		"vars.LEAPVIEW_SITE_DEPLOYMENT_MODE == 'kamal'",
-		"environment: leapview-site-production", "./.github/actions/oci-admission",
-		"expected-workflow: flidai/leapview/.github/workflows/site-image.yml",
-		"needs.publish.outputs.image_reference", "needs.publish.outputs.revision",
-		"deploy/kamal-site/deploy.py", "access-check", "rollback",
-	} {
+	for _, fragment := range []string{"branches: [main]", "uses: ./.github/workflows/site-image.yml", "group: public-site-production", "cancel-in-progress: false"} {
 		requireContains(t, workflow, fragment)
 	}
-	for _, forbidden := range []string{"ghcr.io/flidai/leapview-site:production", "rollback_desired_state", "HCLOUD_TOKEN"} {
+	for _, forbidden := range []string{"site-ssh", "activate:", "access:", "kamal", "production-tag", "ghcr.io/flidai/leapview-site:production", "HCLOUD_TOKEN"} {
 		if strings.Contains(workflow, forbidden) {
-			t.Errorf("retired path remains in workflow: %s", forbidden)
+			t.Errorf("activation path remains: %s", forbidden)
 		}
 	}
 }
@@ -390,8 +382,8 @@ func TestTaskExposesTheBoundedSiteDeployment(t *testing.T) {
 	for _, fragment := range []string{
 		"site:deploy:",
 		"site:access-check:",
-		"gh workflow run site-deploy.yml --repo flidai/leapview --ref main -f operation=deploy",
-		"gh workflow run site-deploy.yml --repo flidai/leapview --ref main -f operation=access-check",
+		"python3 -B deploy/kamal-site/deploy.py {{.CLI_ARGS}}",
+		"python3 -B deploy/kamal-site/deploy.py status",
 	} {
 		requireContains(t, taskfile, fragment)
 	}

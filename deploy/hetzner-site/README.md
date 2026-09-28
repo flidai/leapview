@@ -16,17 +16,13 @@ creation-time bootstrap. The `bootstrap_site_image` value is only the image
 used to create a replacement server. Terraform ignores later cloud-init
 changes, so updating that value cannot replace the server or reserved IP.
 
-The existing, pre-migration host uses pull-based deployment. The replacement
-workflow and guarded migration are documented in [the Kamal integration](../kamal-site/README.md).
-Do not enable the replacement before its qualification and handover gates pass.
-
-Legacy deployment was pull-based. The protected GitHub Actions workflow
-builds and verifies the site image, then promotes that immutable manifest to the
-`ghcr.io/flidai/leapview-site:production` desired-state tag. A root-owned systemd
-timer on the origin resolves the tag to its immutable digest and invokes the
-bounded deployment command locally. No hosted runner receives production SSH or
-infrastructure credentials, and SSH remains restricted to reviewed operator
-CIDRs for bootstrap and break-glass operations.
+The pre-migration host serves the original Compose application behind Caddy.
+The legacy updater is disabled. Its old mutable-tag polling path is retained only
+for protected migration recovery; do not restart it. The build workflow now only
+publishes and qualifies immutable production images. Manual Kamal activation and
+the persistent Caddy-only topology are documented in
+[the operator runbook](../kamal-site/README.md). Qualification, review and controlled
+handover must complete before that topology is installed on production.
 
 ## Remote state
 
@@ -90,28 +86,17 @@ docker compose --env-file deployment.env logs --tail=200
 
 ## Routine site deployment
 
-Merges to protected `main` invoke `.github/workflows/site-deploy.yml`. The
-workflow calls the canonical multi-platform image publisher, enters the
-`leapview-site-production` GitHub environment, rejects a superseded source
-revision, and moves only the verified digest to the `production` desired-state
-tag. The host polls once per minute, activates the resolved digest, and reports
-the serving source revision and image at `/build.json`. The workflow succeeds
-only after that identity and the public health endpoints match.
+Merges to protected `main` invoke `.github/workflows/site-deploy.yml` to build and
+qualify images. Automatic VPS activation is deferred. There is no promotion to
+the old `production` desired-state tag and no CI SSH/access job.
 
-Configure required reviewers and prevent administrator bypass for the
-production environment. Protect `main` with the CI and merge-queue checks before
-enabling automatic promotion.
+Use `task site:deploy -- status` for read-only operator inventory, then the manual
+`prepare`, `deploy`, `rollback` and `maintain` commands described in
+[the Kamal runbook](../kamal-site/README.md). The old `scripts/deploy_site.sh` is
+retired. Preserve the legacy Compose/env/Caddy recovery copies through migration
+acceptance. After handover the active Compose definition contains only Caddy and
+must never recreate the legacy application.
 
-### Deployment controller migration
-
-The old `scripts/deploy_site.sh` entrypoint is retired. Routine operator requests
-must use `task site:deploy`, which dispatches the same gated, serialized GitHub
-workflow as automatic main deployments. `task site:access-check` requests a
-read-only network/SSH inventory. See [the Kamal integration runbook](../kamal-site/README.md)
-for prerequisites, exact draft status and migration/rollback gates.
-
-The installed legacy controller continues operating until the explicit handover.
-Its history and rollback environment snapshots must be retained during migration.
 The reviewed non-secret SSH host-key fingerprint remains in
 `ssh-host-key.sha256`; verify any intentional replacement against the provider
 control plane before changing it.

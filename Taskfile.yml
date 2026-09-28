@@ -1952,14 +1952,14 @@ tasks:
       - terraform -chdir=deploy/hetzner-site test
 
   site:deploy:
-    desc: Request the serialized, gated public-site deployment workflow
+    desc: Run the manual public-site operator (pass commands after --)
     cmds:
-      - gh workflow run site-deploy.yml --repo flidai/leapview --ref main -f operation=deploy
+      - python3 -B deploy/kamal-site/deploy.py {{.CLI_ARGS}}
 
   site:access-check:
-    desc: Check private runner SSH access without changing the public-site host
+    desc: Inspect the public-site host over the operator's pinned SSH connection
     cmds:
-      - gh workflow run site-deploy.yml --repo flidai/leapview --ref main -f operation=access-check
+      - python3 -B deploy/kamal-site/deploy.py status
 
   node:audit:
     desc: Scan JavaScript dependencies for known vulnerabilities

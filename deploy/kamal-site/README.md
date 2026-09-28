@@ -1,207 +1,217 @@
-# Public-site Kamal integration — not yet activated
+# Manual public-site Kamal deployment
 
-This replaces production-tag polling with a serialized deployment of an admitted
-image. The isolated compatibility/failure experiment is recorded in PR #751.
-This integration is a separate draft: its complete controller lifecycle has not
-been qualified against a disposable host yet. Do not enable it or write a
-handover marker based solely on unit tests.
+Implementation and qualification are in progress. **Production remains on
+Compose/Caddy. Do not write a handover marker from synthetic test evidence.**
+The [accepted completion plan](completion-plan.md) defines the remaining gates.
+Automatic VPS activation is deferred; `site-deploy.yml` only publishes and
+qualifies production images. No registry deployment tags or credentials are used.
 
-## Routine flow
+## Operator commands
 
-`main` -> existing site image build/admission -> explicit repository mode gate ->
-private, pinned SSH -> host handover/capacity checks -> unique digest-bound tag ->
-Kamal `redeploy --skip-push` -> actual container identity and public acceptance ->
-record verified version -> exact stopped-attempt/duplicate cleanup -> native prune.
+Use the working Infisical site SSH key over the existing Tailscale route. Export
+`SITE_SSH_KEY` as the protected key file's path (or provide
+`SITE_SSH_PRIVATE_KEY` through the secret manager). The operator verifies the
+reviewed SSH fingerprint in `deploy/hetzner-site/ssh-host-key.sha256`.
+No fabricated `GITHUB_*` variables or new CI network identity are needed.
 
-A missing, invalid or `paused` `LEAPVIEW_SITE_DEPLOYMENT_MODE` prevents activation.
-There is no fallback write to the old `production` tag. Builds can still complete.
-`kamal` mode additionally requires the host's protected handover record, disabled
-legacy timer, inactive legacy service, pinned private proxy, verified active/prior
-records and measured filesystem capacity. The code does not create readiness.
+Install the locked Ruby dependencies using `BUNDLE_GEMFILE=deploy/kamal-site/Gemfile`
+and Bundler 2.6.9. The operator also needs Python 3, Docker/buildx, Go and an
+authenticated `gh`; live admission uses the repository's pinned Trivy verifier.
+Run from the repository root:
 
-All routine requests use the `public-site-production` GitHub concurrency group.
-`task site:deploy` dispatches that workflow. `task site:access-check` selects the
-read-only connectivity operation; it can run while deployment is paused. The old
-`scripts/deploy_site.sh` exits without SSH or mutation. The installed legacy
-scripts must be updated during handover so that a readiness marker also blocks
-accidental legacy execution. Old checked-out scripts cannot be made safe by a
-repository variable: drain existing jobs and inspect active operators explicitly.
+```sh
+task site:deploy -- status
+task site:deploy -- prepare --image ghcr.io/flidai/leapview-site@sha256:FULL_DIGEST
+task site:deploy -- deploy --record /absolute/path/printed-by-prepare.json
+task site:deploy -- rollback
+task site:deploy -- maintain
+```
 
-Kamal remains responsible for pulls, starting containers, health switching,
-rollback and image pruning. `host.py` stores bounded deployment records and guards
-those operations. It does not delete Docker storage files or prune volumes.
+`prepare` requires the production repository/service label, a successfully
+completed main production workflow whose qualification artifact names the exact
+image, live OCI provenance/SBOM/vulnerability verification, and exact index,
+amd64 manifest and config digests. It fetches release metadata at that immutable
+source revision. Its output is a version-specific mode-0600 operator-owned file.
+A new deployment repeats live verification and compares the prepared record.
+Editing a JSON claim is not an admission bypass. Trial images are rejected.
 
-## Access: reuse existing credentials where possible
+`deploy` holds both legacy flock locks before preflight or host image mutation.
+It persists the pending version, anonymously pulls the exact digest, creates a
+host-local `localhost:5555/leapview-site:k<DIGEST>` tag and verifies the selected
+platform. This is a naming namespace only: no local registry runs at port 5555.
+Kamal's local-registry configuration requires no placeholder credentials; the
+adapter rejects registry-login commands. After verification it removes the
+redundant source digest alias without force, preserving the same content under
+the local identity. This avoids Docker 29's extra `<none>` repository row breaking
+Kamal's native pruning.
 
-Operator SSH using the Infisical site key over Tailscale is already verified.
-A read-only inventory of all accessible dev/staging/prod folders found the site
-SSH key but no Tailscale CI credential. The old infrastructure workflow identity
-`7e92da75-ac4f-49f2-8924-4561c3547902` returned identity-not-found; it is not
-reused by this integration.
-This also supports the approved operator-run test on the public-site VPS; see the
-manual test checkpoint below. CI/CD setup is deferred at Jacob’s request.
-It is separate from access for GitHub-hosted runners.
+Supported `kamal app boot` owns boot/readiness switching. Docker boot uses
+`--pull never`; the only candidate pull is the explicit supervised step. Actual
+container identity, runtime, public build/release metadata, health/readiness,
+docs, assets and www redirect must pass before acceptance. Acceptance records
+current and distinct verified prior, then exact known stopped duplicates/failed
+containers are removed, followed by native `kamal prune all`. The final image
+set must equal the recorded current/prior set. Foreign aliases, unknown images
+and unknown containers block mutation; no volume/system pruning is used.
 
-Jacob reports existing GitHub access credentials. The current operator token
-cannot list all organization secrets; the repository, production environment and
-repository-visible organization-secret APIs returned no names. **Confirm the
-existing secret names/location/scope before provisioning replacements.** GitHub
-never returns stored secret values through these APIs.
+An already-active prepared record must exactly match the saved verified record.
+It checks identity and public health, then returns without admission downloads,
+host pull, restart or pruning. `status` does not require a healthy current app,
+ready proxy or handover: missing/broken resources appear as individual errors.
 
-The draft action currently supports `SITE_SSH_PRIVATE_KEY` directly, or an
-Infisical OIDC identity via `SITE_INFISICAL_IDENTITY_ID`. The latter must read only
-`prod:/hetzner-site/operator` and trust the reviewed production workflow on main.
-An infrastructure-admin Infisical identity must not be reused without checking
-its claims and scope. The draft network path uses `SITE_TS_CLIENT_ID` and
-`SITE_TS_AUDIENCE` for a Tailscale OIDC identity with `tag:leapview-site-ci`, scoped
-to `100.73.220.23:22`. If an appropriate existing CI identity uses another auth
-method, adapt the action to its confirmed identifiers and test it before merge;
-these proposed identifier names are not evidence that credentials exist.
+`rollback` selects only the verified prior image, retained container and saved
+runtime. It performs no registry admission or pull. A stopped, unhealthy or
+missing current container does not block it. Missing/contradictory **prior**
+material does block it. After restoring the prior through Kamal, a missing
+former-current container can be recreated, stopped, from its exact verified local
+image/runtime to preserve future recovery. It is never started by this helper.
 
-The intended OIDC binding is GitHub issuer `https://token.actions.githubusercontent.com`,
-subject `repo:flidai/leapview:environment:leapview-site-production`, with claims
-`repository=flidai/leapview`, `ref=refs/heads/main` and
-`workflow_ref=flidai/leapview/.github/workflows/site-deploy.yml@refs/heads/main`.
-Review effective tailnet grants, including existing broad rules. No new public
-SSH firewall access is required. The temporary CI node still uses ordinary
-OpenSSH with the reviewed fingerprint in `deploy/hetzner-site/ssh-host-key.sha256`.
+## Exclusive ownership and interrupted work
 
-## State and failure behavior
+`supervisor.py` runs on the host and holds `/opt/leapview-site/reconcile.lock`
+and `/opt/leapview-site/deploy.lock` throughout an attempt. Kamal retains its own
+activation lock. The supervisor journals attempt/controller identity, host boot
+ID, remote process IDs/start ticks, commands, completion and observed capacity.
+Every SSHKit command and upload goes through the same supervisor. Remote work
+runs independently of the SSH connection carrying its response.
 
-Migration must create a root-owned mode-0700 directory
-`/var/lib/leapview-site/kamal`. `ready.json` requires schema 1,
-`controller: "kamal"`, `handover_verified: true` and a `capacity` entry for each
-backing path reported by the read-only inventory. Each capacity entry contains
-positive measured `candidate_peak_bytes`, explicit `reserve_bytes`, and
-`reserve_inodes`. These are remaining-free-space thresholds before a pull;
-separate paths on one filesystem are checked against the same shared free space.
-**Do not populate these with guessed constants.** Measure admitted site image
-pull/extraction/update peaks and retain reserve for the OS, Caddy and logs.
+EOF, termination or loss of the lock connection revokes further commands. The
+supervisor waits for its children and retains `owner.json` as unresolved. A
+second operator, including `maintain`, cannot take over that journal, even after
+all children finish. No age threshold, automatic stale-lock clearing or automatic
+Kamal unlock exists. A process or Docker client disappearing does not establish
+that a Docker daemon operation stopped.
 
-`state.json` has schema 1, `active`, optional distinct `prior`, optional `pending`,
-`maintenance_pending` and a `records` map keyed by full digest-derived version.
-Each record binds source revision, admitted index, platform and config digests,
-Kamal 2.12.0, runtime contract, release metadata, admission evidence and the actual
-local image ID. Only public-accepted records are marked `verified`. Transport
-paths and credentials are excluded; a fresh runner generates its own SSH config.
-Unknown runtime/tooling contracts are refused rather than silently using new
-settings for an old rollback.
+Explicit recovery, using the pinned operator SSH connection:
 
-An ordinary failed candidate restores the saved active image/configuration and
-checks both the container and public routes. Failed recovery leaves `pending`,
-blocking new pulls. A lost acceptance reply is resolved by reading actual host
-state; the runner refuses to guess a rollback if the committed state changed.
-Post-acceptance cleanup failure leaves the new version live and
-`maintenance_pending`, blocking another pull until recovery.
+1. Record `status`, `owner.json`, `state.json`, Docker image/container inspection,
+   Caddy configuration and actual proxy route/public responses in a protected
+   incident directory. Preserve the attempt ID and all recorded versions.
+2. Prevent the old controller from issuing commands. Stop its local process and
+   revoke its host supervisor with SIGTERM, **only after matching the saved boot
+   ID and PID to the actual supervisor**. Do not kill a reused PID. The supervisor
+   closes its command socket; the old attempt token cannot authorize another
+   session. Do not release Kamal's lock yet.
+3. Wait for every recorded remote process and its process group to exit. Verify
+   PID start ticks, descendants and both flock locks, not just SSH sessions.
+   Acquire both locks nonblocking in reconciliation-then-deployment order. If
+   any work is active or ownership is uncertain, stop: maintenance remains blocked.
+4. Inspect Docker's real image/container state and the actual proxy route.
+   A failed/timed-out pull or switch may have continued in the daemon. If its
+   completion cannot be established, perform a controlled Docker/containerd
+   restart under the locks, then inspect again. Record any public interruption.
+   Never infer daemon quiescence from killing a Docker client.
+5. Only after fencing, quiescence and actual-state reconciliation, archive the
+   ownership journal to the protected incident directory. Preserve it; do not
+   delete the evidence. Release a stale Kamal activation lock only after proving
+   its recorded owner and all mutating work have ended. Keep pending deployment
+   state until the actual verified version/route is established.
+6. Run `maintain`. It first verifies the recorded active container and public
+   response. It can reconcile a stopped/interrupted candidate and finish cleanup;
+   it never activates a candidate. If an unaccepted candidate is still serving,
+   or the recorded active cannot be verified, it refuses. Restore the saved
+   verified active through Kamal with its saved runtime under exclusive ownership,
+   verify identity/public responses, and record that recovery before retrying.
 
-Recovery after a killed runner or lost connection is an operator procedure:
-pause/drain the workflow, inspect the actual proxy/container and saved records,
-verify the prior lock owner is dead, and recover the selected verified version.
-Never blindly release a Kamal lock, clear pending state, or run broad pruning.
-This draft deliberately does not provide an automatic stale-lock reset.
+A failed candidate restores the verified active version. Lost acceptance replies
+never cause a guessed rollback. A cleanup error after acceptance leaves the
+accepted version live and maintenance pending. Resolve ownership as above before
+`maintain`; further deployments stay blocked.
 
-## Merge and migration gates
+## Capacity record
 
-1. Finish disposable-host integration tests for this exact adapter, including
-   interruptions, public acceptance failures, offline rollback and maintenance
-   failures. The earlier trial proves mechanisms, not this new implementation.
-2. Fix and qualify registry authentication: Kamal 2.12.0 `redeploy --skip-push`
-   calls `build pull`, which performs a remote registry login. The current dummy
-   registry credentials fail on the real host. The manual experiment uses an
-   explicitly verified anonymous Docker pull followed by supported `app boot`;
-   it does not qualify the draft automated pull path. See the pinned
-   [build-pull implementation](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/build.rb). Complete required CI/review
-   and confirm the existing GitHub credential names
-   and scope. Establish the read-only hosted-runner route.
-3. Set the repository mode to `paused` and drain every old production workflow
-   before merging. Old workflow runs do not honor the new variable. Verify both
-   manual and push events cause no activation/tag promotion while paused.
-4. Inventory live/rollback/foreign images, Caddy config/volumes and actual physical
-   storage. Disable/drain the old controller under its existing deployment locks.
-   Remove only explicitly inventoried obsolete legacy site image references;
-   preserve all live/rollback/container references. Do not use system/volume prune.
-5. Bootstrap pinned Kamal proxy and the production-qualified candidate privately;
-   preserve the old Compose app for migration rollback. Rehearse Caddy's network
-   and upstream change with its admin API disabled, measuring any interruption.
-6. Verify HTTPS, www, build identity, health/readiness, docs, release metadata and
-   assets. Rehearse return to Compose and restoration to Kamal. Only then write
-   the handover and verified state records. Keep automation paused until ready.
-7. Enable `kamal`, verify two routine deployments, rehearse recorded local
-   rollback and restoration, and measure retained storage. Remove migration-only
-   extra containers/images after acceptance. Keep one application controller.
+The protected handover directory is `/var/lib/leapview-site/kamal` (root:root,
+0700). `ready.json` has `schema: 1`, `controller: "kamal"`,
+`handover_verified: true`, `topology` and `capacity`. `state.json` has schema,
+active/prior/pending, maintenance_pending and version-keyed records.
+Only public-accepted records have `verified: true`; records retain local image ID,
+source/release metadata and the version's runtime/tooling contract.
 
-The manual `rollback` operation uses the same concurrency group and mode/host
-gates, skips image publication and registry admission, and selects only the
-recorded verified prior version. It uses its saved admission/runtime evidence
-and local image; it does not depend on the registry being online.
+Measure real admitted images on the qualified Docker 29/containerd overlayfs
+runtime. Use each distinct filesystem device returned by `status` once, including
+Docker and containerd backing paths. Record these fields per device:
 
-The manual experiment below performed scoped host cleanup and a temporary public
-cutover, then restored Compose. No permanent Kamal handover, new credential,
-repository mode change or automated deployment was performed. Public DNS, CFO
-demo and application releases are out of scope.
+- `paths`: all observed backing paths on that filesystem.
+- `measured_peak_bytes`, `measured_peak_inodes`: largest measured incremental
+  peak over pull/extraction, boot, acceptance and cleanup, including compressed
+  content and extracted snapshots.
+- `candidate_headroom_bytes`: ceiling of 1.5 times measured peak bytes.
+- `reserve_bytes`: at least max(2 GiB, ceiling of 10% filesystem capacity).
+- `reserve_inodes`: at least max(10,000, twice measured incremental inode peak).
+- `qualified_compressed_bytes`: maximum qualified candidate platform layer/config
+  size. Larger images require renewed qualification, not a relaxed check.
 
-## Validation
+Before a pull, require headroom plus byte reserve and measured inode peak plus
+inode reserve. Never remove the only verified rollback to meet these checks.
+Supervisor attempt journals sample free bytes/inodes on each recorded filesystem;
+measurements and policy margins remain separate. Synthetic fixture measurements
+are not a production image envelope. On 28 September read-only inventory found
+Docker/containerd on the same filesystem, with 34,631,495,680 bytes free (32.3 GiB).
 
-Run `python3 -m unittest discover -s deploy/kamal-site -p 'test_*.py'`,
-`go test ./deploy/hetzner-site ./internal/app/securitypolicy ./internal/app/tools/securitysource`,
-and actionlint on `site-deploy.yml`. `task deploy:check` includes the Python tests.
-Kamal configuration parsing and read-only SSH inventory have been checked.
-Enabling the mode locally against the unmigrated host was also tested: missing
-handover state stopped the command before admission, tagging, pulling or cleanup.
+## Permanent Caddy topology and controlled handover
 
-Ruby dependencies are pinned, covered by Dependabot, and scanned by the existing
-pinned Trivy source-security tool with a separate vulnerability scan of Ruby lock
-roots. These checks must pass in hosted CI before automated production activation is enabled.
+The migration installs [topology/compose.yaml](topology/compose.yaml) and
+[topology/Caddyfile](topology/Caddyfile) as the **active** files in
+`/opt/leapview-site`. This definition contains only Caddy; it declares `kamal` as
+an external network and persistently routes to `kamal-proxy:80`. It preserves
+ports 80/443, certificate/config bind volumes, HTTPS, compression and www redirect.
+A one-time `docker network connect` is not the permanent topology.
 
-Sources: [Kamal redeploy](https://kamal-deploy.org/docs/commands/redeploy/),
-[Tailscale GitHub Action](https://tailscale.com/docs/integrations/github/github-action).
+Before changing them, save protected copies of the original Compose definition,
+Caddyfile and deployment.env plus exact image/container inspection and restoration
+commands. Keep migration recovery files outside the routine Compose directory.
+Keep the old Compose app/image until restoration and restart acceptance pass.
+Drain existing production workflows, keep the legacy timer/service disabled,
+and install the guarded legacy entrypoints before handover. The handover marker
+blocks legacy provision/reconcile/deploy entrypoints from restarting the updater.
 
-Local full CI was attempted after initializing generated outputs. It reached
-PostgreSQL conformance and failed because the shared Docker daemon has no
-`docker0` bridge. Focused tests passing do not substitute for that required check.
+Bootstrap the persistent `kamal` network and the private, restartable proxy at the
+qualified digest `basecamp/kamal-proxy@sha256:826a6f66c6ba26ac26197ac8755804403c9bb617b90cfac25c7972154c5328ab`.
+Its runtime version is v0.9.2, its restart policy is `unless-stopped`, and it has no
+published ports. If unavailable, restore that pinned local proxy/runtime/network
+before switching app traffic; this is distinct from broken-current app rollback.
 
+Privately boot production-admitted image A. Install the Caddy-only files with a
+timed restoration safeguard, recreate Caddy, and verify public identity/routes.
+Demonstrate restoration using the protected original Compose/env/Caddy files and
+return to A. Record SHA256 hashes of the active files as `topology.compose_sha256`
+and `topology.caddy_sha256`; readiness verifies hashes, actual Caddy image/mounts,
+restart policies, proxy digest and shared network. Only then write handover state.
 
-## Manual VPS test — 26 September 2026
+Routine Caddy maintenance uses only the active Caddy-only definition:
 
-Jacob deferred CI/CD and allowed temporary website interruption for testing.
-The operator used the existing Infisical SSH key and Tailscale connection; no new
-credentials were requested or created. Evidence: [manual-vps.json](evidence/manual-vps.json).
+```sh
+cd /opt/leapview-site
+docker compose --env-file deployment.env -f compose.yaml up -d --force-recreate caddy
+```
 
-- Saved the legacy configuration locally with restricted permissions. Disabled
-  the legacy reconciliation timer and drained its service, then acquired both
-  existing deployment locks for cleanup. Removed 66 inventoried obsolete site
-  image identities, preserving the exact live image, prior image and every
-  container reference. Root usage fell from 100% to about 10%.
-- Pulled two admitted experimental images by immutable digest, verified their
-  existing workflow tag mappings, and booted them using Kamal 2.12.0 `app boot`.
-  The private proxy was bootstrapped with its pinned digest and no published ports.
-- Temporarily connected Caddy to the Kamal network and changed only its upstream.
-  A timed host-local restore job protected against operator disconnection.
-  Verified public HTTPS, www redirect, health/readiness, actual container manifest
-  and runtime, build identity, installation docs, release metadata and 16 assets.
-- A deliberately unreachable candidate port failed readiness; the working version
-  continued serving. Correcting that configuration deployed the second image.
-  Local rollback to the first image and restoration to the second both passed.
-- Removed only the two recorded stopped duplicate containers, then invoked
-  native Kamal pruning. Exactly one running version and one distinct stopped
-  prior version remained, with both admitted images available.
-- Restored the original Caddy configuration and public Compose image, stopped the
-  recovery timer, and removed the trial containers, images, private proxy and
-  network. The legacy updater remains disabled while automation is deferred;
-  do not re-enable it blindly because it can pull/promote a moving production tag.
+Deploy distinct admitted B, locally roll back to A and restore B. Verify Caddy
+recreation and a controlled **host** restart before deleting migration resources.
+A disposable Docker restart is useful evidence but is not a host-reboot result.
+Check HTTPS recovery and prove the legacy app was not recreated. Preserve Caddy
+data and protected textual recovery/audit records. Report measured interruptions.
+Observe public health/storage for 24 hours before closing #748 as superseded.
+Neither the fallback controller nor automatic activation is installed by this work.
 
-The availability probe recorded 111 requests over about 68 seconds. Four requests
-failed around the two Caddy restarts; no failed samples were observed during the
-Kamal candidate rejection or version switches. This is sampled evidence, not a
-zero-downtime guarantee. The experiment used the trial package and does not make
-those images production-admitted or establish a permanent deployment.
+## Qualification and remaining gates
 
-Two integration findings came from the real host: remote registry login needs
-valid authentication (still outstanding), and this Docker 29/containerd store
-also lists canonical digest references inside `RepoTags`. The ownership guard
-now accepts those only when they are also present in `RepoDigests`; foreign and
-unrecorded digest aliases remain rejected. A regression test covers that shape.
+Run focused tests, workflow lint and `task ci`. The synthetic lifecycle harness
+uses #751's fixture at commit `9786a0fd09f922e2e5da3f544bf9d2670d3d7019`, a private
+PID/network/mount namespace, a disposable ext4 filesystem and a private Docker 29
+engine. It makes test-only source copies; production has no fixture/admission bypass.
 
-Next: resolve the registry-authentication path, qualify the complete adapter,
-review the production image/configuration, and perform the permanent controller
-handover. CI/CD remains deferred. The test itself does not satisfy those gates.
+```sh
+python3 -B -m unittest discover -s deploy/kamal-site -p 'test_*.py'
+sudo unshare --mount --net --pid --fork --mount-proc \
+  python3 -B deploy/kamal-site/qualification.py \
+  --trial /checkout-of-751/deploy/kamal-trial \
+  --state /new/private/qualification-directory \
+  --artifacts /prepared-fixture-proxy-caddy-archives \
+  --gems /locked-gem-home --registry /pinned-registry-binary
+```
+
+The synthetic test cannot qualify production provenance or a real host reboot.
+Keep #752 draft until the complete matrix in the accepted plan, final hosted
+checks and review are satisfied. Then merge in the plan's sequence, qualify two
+eligible production main images and perform controlled migration. Update #751's
+trial evidence separately; do not label a manual migration as completed CI/CD.

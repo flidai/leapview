@@ -1,15 +1,9 @@
-name: Deploy public site
+name: Publish qualified public site image
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      operation:
-        description: Deploy an admitted main image, or test private SSH without host changes
-        type: choice
-        default: deploy
-        options: [deploy, access-check, rollback]
 
 permissions:
   contents: read
@@ -21,98 +15,10 @@ concurrency:
 jobs:
   publish:
     name: Publish verified site image
-    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && inputs.operation != 'access-check' && inputs.operation != 'rollback'
+    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
       attestations: write
       id-token: write
     uses: ./.github/workflows/site-image.yml
-
-  access:
-    name: Read-only private SSH check
-    if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && inputs.operation == 'access-check'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    environment: leapview-site-production
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: ./.github/actions/site-ssh
-        with:
-          tailscale-client-id: ${{ vars.SITE_TS_CLIENT_ID }}
-          tailscale-audience: ${{ vars.SITE_TS_AUDIENCE }}
-          ssh-private-key: ${{ secrets.SITE_SSH_PRIVATE_KEY }}
-          infisical-identity-id: ${{ vars.SITE_INFISICAL_IDENTITY_ID }}
-      - name: Verify host key and inspect runtime without mutation
-        run: python3 -B deploy/kamal-site/deploy.py access-check
-      - name: Remove temporary SSH identity
-        if: always()
-        run: python3 -c 'import os,pathlib; (pathlib.Path(os.environ["RUNNER_TEMP"])/"site-ssh-identity").unlink(missing_ok=True)'
-
-  activate:
-    name: Activate admitted image through Kamal
-    needs: publish
-    if: always() && vars.LEAPVIEW_SITE_DEPLOYMENT_MODE == 'kamal' && github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main' && (needs.publish.result == 'success' || inputs.operation == 'rollback')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    environment: leapview-site-production
-    permissions:
-      contents: read
-      packages: write
-      attestations: read
-      id-token: write
-    env:
-      LEAPVIEW_SITE_DEPLOYMENT_MODE: ${{ vars.LEAPVIEW_SITE_DEPLOYMENT_MODE }}
-      BUNDLE_GEMFILE: deploy/kamal-site/Gemfile
-    steps:
-      - name: Check out the published revision
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.publish.outputs.revision || github.sha }}
-          fetch-depth: 0
-      - name: Reject a superseded candidate
-        if: inputs.operation != 'rollback'
-        env:
-          REVISION: ${{ needs.publish.outputs.revision }}
-        run: |
-          git fetch --no-tags origin main
-          test "$(git rev-parse FETCH_HEAD)" = "$REVISION"
-      - if: inputs.operation != 'rollback'
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - if: inputs.operation != 'rollback'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Re-admit the exact production image
-        if: inputs.operation != 'rollback'
-        uses: ./.github/actions/oci-admission
-        with:
-          image: ${{ needs.publish.outputs.image_reference }}
-          repository: ghcr.io/flidai/leapview-site
-          expected-workflow: flidai/leapview/.github/workflows/site-image.yml
-          source-revision: ${{ needs.publish.outputs.revision }}
-          output: ${{ runner.temp }}/site-admission.json
-      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
-        with:
-          ruby-version: '3.3.8'
-          bundler: '2.6.9'
-          bundler-cache: true
-      - uses: ./.github/actions/site-ssh
-        with:
-          tailscale-client-id: ${{ vars.SITE_TS_CLIENT_ID }}
-          tailscale-audience: ${{ vars.SITE_TS_AUDIENCE }}
-          ssh-private-key: ${{ secrets.SITE_SSH_PRIVATE_KEY }}
-          infisical-identity-id: ${{ vars.SITE_INFISICAL_IDENTITY_ID }}
-      - name: Verify handover and capacity, deploy, accept, then clean up
-        env:
-          ADMISSION_FILE: ${{ runner.temp }}/site-admission.json
-          OPERATION: ${{ inputs.operation || 'deploy' }}
-        run: python3 -B deploy/kamal-site/deploy.py "$OPERATION" --admission "$ADMISSION_FILE"
-      - name: Remove temporary SSH identity
-        if: always()
-        run: python3 -c 'import os,pathlib; (pathlib.Path(os.environ["RUNNER_TEMP"])/"site-ssh-identity").unlink(missing_ok=True)'

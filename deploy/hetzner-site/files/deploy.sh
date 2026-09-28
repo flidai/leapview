@@ -27,6 +27,13 @@ if ! flock -n 9; then
   exit 75
 fi
 
+# Recheck after acquiring the shared lock: handover may have completed
+# between the initial check and lock acquisition.
+if [[ -e /var/lib/leapview-site/kamal/ready.json ]]; then
+  echo "Legacy site controller is retired after Kamal handover" >&2
+  exit 64
+fi
+
 set -a
 # shellcheck disable=SC1091
 source "$site_root/deployment.env"

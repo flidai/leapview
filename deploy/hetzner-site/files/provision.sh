@@ -8,6 +8,14 @@ fi
 
 site_root="/opt/leapview-site"
 cd "$site_root"
+exec 8>"$site_root/reconcile.lock"
+exec 9>"$site_root/deploy.lock"
+flock -n 8 || exit 75
+flock -n 9 || exit 75
+if [[ -e /var/lib/leapview-site/kamal/ready.json ]]; then
+  echo "Legacy site controller is retired after Kamal handover" >&2
+  exit 64
+fi
 set -a
 # shellcheck disable=SC1091
 source ./deployment.env

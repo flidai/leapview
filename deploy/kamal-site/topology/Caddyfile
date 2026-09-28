@@ -1,0 +1,12 @@
+{
+	admin off
+	email support@leapview.dev
+}
+
+leapview.dev, www.leapview.dev {
+	@www host www.leapview.dev
+	redir @www https://leapview.dev{uri} permanent
+
+	encode zstd gzip
+	reverse_proxy kamal-proxy:80
+}

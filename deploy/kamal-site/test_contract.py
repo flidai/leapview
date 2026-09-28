@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from contract import activation_allowed, validate_record, validate_image, cleanup_candidates
+from contract import validate_record, validate_image, cleanup_candidates
 
 
 def record():
@@ -13,13 +13,6 @@ def record():
 
 
 class ContractTest(unittest.TestCase):
-    def test_activation_is_default_off(self):
-        for mode in ('', 'legacy', 'paused', 'KAMAL', None):
-            self.assertFalse(activation_allowed(mode, 'flidai/leapview', 'refs/heads/main'))
-        self.assertTrue(activation_allowed('kamal', 'flidai/leapview', 'refs/heads/main'))
-        self.assertFalse(activation_allowed('kamal', 'fork/leapview', 'refs/heads/main'))
-        self.assertFalse(activation_allowed('kamal', 'flidai/leapview', 'refs/heads/feature'))
-
     def test_record_binds_digest_and_version(self):
         validate_record(record())
         for field, value in [('version', 'k' + 'f' * 64), ('image', 'ghcr.io/flidai/leapview-site:latest'),

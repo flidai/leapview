@@ -17,6 +17,13 @@ if ! flock -n 8; then
   exit 0
 fi
 
+# Recheck after acquiring the shared lock: handover may have completed
+# between the initial check and lock acquisition.
+if [[ -e /var/lib/leapview-site/kamal/ready.json ]]; then
+  echo "Legacy site controller is retired after Kamal handover" >&2
+  exit 64
+fi
+
 docker pull "$desired_tag" >/dev/null
 desired_image=""
 while IFS= read -r image_reference; do
