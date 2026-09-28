@@ -13,7 +13,7 @@ import (
 // changing the authoritative release-transition interface.
 func maintenanceCommand(ctx context.Context, stdin io.Reader, stdout io.Writer) *cobra.Command {
 	root := &cobra.Command{Use: "upgrade", Short: "Operator-authorized single-host maintenance", Args: cobra.NoArgs}
-	for _, action := range []string{"plan", "apply", "recover", "status", "migrate", "rehearse"} {
+	for _, action := range []string{"plan", "apply", "recover", "status", "capture", "verify-copy", "migrate", "rehearse", "migrate-copy"} {
 		var request, journal, credential, digest string
 		cmd := &cobra.Command{Use: action, Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
 			r, err := ReadNativeRequest(request)
@@ -41,7 +41,7 @@ func maintenanceCommand(ctx context.Context, stdin io.Reader, stdout io.Writer) 
 		}}
 		cmd.Flags().StringVar(&request, "request", "", "Private qualified upgrade request")
 		_ = cmd.MarkFlagRequired("request")
-		if action == "migrate" || action == "rehearse" {
+		if action == "migrate" || action == "rehearse" || action == "migrate-copy" {
 			cmd.Flags().StringVar(&journal, "journal", "", "Read-only host journal")
 			cmd.Flags().StringVar(&credential, "credential", "", "Private migration-only connection URL")
 			cmd.Flags().StringVar(&digest, "recovery-digest", "", "Verified paired recovery digest")

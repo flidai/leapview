@@ -46,3 +46,24 @@ func TestSourceCompatibilityUsesHistoryAndEngineIdentities(t *testing.T) {
 		t.Fatalf("engine: %s %v", mode, err)
 	}
 }
+
+func TestPermissionTransitionCannotUseImageOnlyDeploy(t *testing.T) {
+	request := nativeRequestFixture(t)
+	before, after := request.Plan.SourceAfter, request.Plan.SourceAfter
+	before.PermissionProfile = "legacy-capabilities/v1"
+	mode, pending, err := classifySources(before, after)
+	if err != nil || mode != "database-upgrade-required" || len(pending) != 0 {
+		t.Fatalf("permission-only transition: %s %v %v", mode, pending, err)
+	}
+	for _, profile := range []string{"", "guessed-profile", "leapview.permissions/v2"} {
+		before.PermissionProfile = profile
+		if _, _, err := classifySources(before, after); err == nil {
+			t.Fatalf("accepted unknown profile %q", profile)
+		}
+	}
+	before.PermissionProfile = "leapview.permissions/v1"
+	after.PermissionProfile = "legacy-capabilities/v1"
+	if _, _, err := classifySources(before, after); err == nil {
+		t.Fatal("accepted permission downgrade")
+	}
+}
