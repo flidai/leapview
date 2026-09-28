@@ -53,7 +53,20 @@ build proves that the target machine boots or restores successfully.
 
 A subsequent [remote component rehearsal](rehearsal-2026-09-28.md) built both
 complete host configurations and exercised database/file recovery and proxy
-behavior. It did not boot NixOS or deploy LeapView through Kamal.
+behavior. The [application and guest-boot follow-up](rehearsal-application-2026-09-28.md)
+records the subsequent real Kamal and emulated NixOS tests.
+
+An optional, slower integration test (`task managed:hosts:boot-test`) boots
+isolated app/database/outsider guests:
+
+```sh
+nix build path:./deploy/managed/nixos#boot-test --no-link -L
+```
+
+It tests TLS, private-interface filtering and service persistence across guest
+reboots. KVM is optional; software emulation is much slower. The emulated fixture
+starts containerd separately to avoid dockerd's short internal startup deadline.
+It does not exercise Disko, firmware boot or Hetzner networking.
 
 ## Infrastructure and private inventory
 
@@ -156,15 +169,45 @@ Neither Restic nor PostgreSQL PITR alone synchronizes a DuckLake catalog with fi
 ## Kamal integration boundary
 
 Copy `deploy.yml.example`, `ssh_config.example` and `secrets.example` into a private
-operator directory as `deploy.yml`, `ssh_config` and `.kamal/secrets`. Provide the
+operator directory as `deploy.yml`, `ssh_config` and `.kamal/secrets`. Copy
+`probe_host.rb` beside `deploy.yml`, along with the pinned Gemfile/lockfile. Provide the
 required non-secret inventory variables and scoped bootstrap secrets. Pin host
 fingerprints through a trusted channel. Run native config tests with fixtures;
 never print rendered production configuration/secrets into public CI logs.
 
-The template describes a prebootstrapped application. It supplies runtime PostgreSQL
-URLs only. Migrator, maintenance, cloud and backup credentials must be delivered
-only to their separate operations. Root/Docker deployment access remains highly
-privileged. The app volume uses the current release image's UID/GID 999.
+The template describes a prebootstrapped application. It supplies PostgreSQL
+runtime URLs plus distinct, bounded control/DuckLake maintenance URLs for retention.
+Migrator, upgrade-coordinator, schema-owner, cloud and backup credentials belong
+only in their separate operations. Preserve the agent credential encryption key
+independently of database backups; losing it makes stored integration credentials
+unreadable. Root/Docker deployment access remains highly privileged. The app
+volume uses the current release image's UID/GID 999.
+
+Kamal checks the image's `service=leapview` label before running it; the release
+Dockerfile now provides that metadata. `probe_host.rb` supplies the public hostname
+to kamal-proxy's native `--health-check-host` option, which Kamal 2.12 does not expose
+in its configuration schema. Load this adapter for every controller invocation:
+
+```sh
+bundle exec ruby -r ./probe_host.rb -S kamal <command> -c deploy.yml
+```
+
+Without that header, LeapView correctly rejects the internal container hostname.
+Keep allowed-host checks enabled. Remove the adapter when an upgraded Kamal exposes
+an equivalent supported setting, after updating the native command-construction test.
+
+Production `/readyz` requires an active analytical deployment. First onboarding
+therefore needs a restricted bootstrap phase, followed by canonical project/data
+publication and a switch to `/readyz`. A private rehearsal can temporarily use
+`/healthz`; do not treat that liveness response as serving readiness.
+
+The current shared application home permits one process owner. Ordinary Kamal
+replacement starts another container before stopping the old one; it is not a
+safe zero-downtime strategy for this layout. A lifecycle adapter must drain and
+stop the old application before starting its replacement, and retain a restart
+rollback path. Plan for downtime. An old image is usable only while database and
+application-state compatibility still permits it; container retention is not a
+database downgrade mechanism.
 
 **Do not use this as a production `kamal deploy` runbook yet.** Kamal's ordinary image
 reference is `repository:version`. The adapter must verify the approved digest,
@@ -181,6 +224,9 @@ qualify and security-review this pair before enabling releases.
 
 ## Next delivery slices
 
+- Resolve the first-reviewer credential issuance blocker recorded in the
+  [application rehearsal](rehearsal-application-2026-09-28.md), then qualify a
+  protected first publication and `/readyz`-gated releases.
 - Canonical PostgreSQL role/bootstrap and physical-pool admission adapter, with
   operation-only credentials and no default passwords.
 - Kamal lifecycle integration and immutable artifact verification; migration,
