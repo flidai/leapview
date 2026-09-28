@@ -2,6 +2,7 @@ name: Managed deployment scaffold
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - deploy/managed/**
       - .github/workflows/managed-scaffold.yml
@@ -21,6 +22,7 @@ concurrency:
 
 jobs:
   infrastructure:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -37,6 +39,7 @@ jobs:
           tofu validate
           tofu test
   hosts:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -47,6 +50,7 @@ jobs:
       - name: Check host-role contracts
         run: nix build path:./deploy/managed/nixos#checks.x86_64-linux.host-contracts --no-link --no-update-lock-file
   application-template:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     container:

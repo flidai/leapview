@@ -6,8 +6,8 @@ require "pathname"
 
 class ManagedKamalConfigurationTest < Minitest::Test
   def setup
-    ENV["LEAPVIEW_APP_HOST"] = "example-app.invalid"
-    ENV["LEAPVIEW_HOSTNAME"] = "dash.example.com"
+    ENV["KAMAL_APP_HOST"] = "example-app.invalid"
+    ENV["KAMAL_APP_HOSTNAME"] = "dash.example.com"
     ENV["KAMAL_REGISTRY_USERNAME"] = "example"
     ENV["LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID"] = "fixture-pool"
     ENV["LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST"] = "fixture-digest"
@@ -36,7 +36,7 @@ class ManagedKamalConfigurationTest < Minitest::Test
   end
 
   def test_missing_inventory_fails_closed
-    ENV.delete("LEAPVIEW_APP_HOST")
+    ENV.delete("KAMAL_APP_HOST")
     assert_raises(KeyError) do
       Kamal::Configuration.create_from(config_file: Pathname.new(__dir__).join("deploy.yml.example"))
     end
