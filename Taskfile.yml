@@ -1497,6 +1497,34 @@ tasks:
     cmds:
       - task: ci:pr
 
+  managed:check:
+    desc: Validate the managed scaffold without cloud credentials or live deployment
+    cmds:
+      - task: managed:infrastructure:check
+      - task: managed:hosts:check
+      - task: managed:kamal:check
+
+  managed:infrastructure:check:
+    desc: Validate OpenTofu and run mocked provider plans
+    dir: deploy/managed/hetzner
+    cmds:
+      - tofu init -backend=false -input=false -lockfile=readonly
+      - tofu fmt -check -recursive
+      - tofu validate
+      - tofu test
+
+  managed:hosts:check:
+    desc: Evaluate NixOS/deploy-rs configurations and build host-role assertions
+    cmds:
+      - nix flake check path:./deploy/managed/nixos --no-build --no-update-lock-file
+      - nix build path:./deploy/managed/nixos#checks.x86_64-linux.host-contracts --no-link --no-update-lock-file
+
+  managed:kamal:check:
+    desc: Parse the application template with locked Kamal dependencies (no SSH)
+    dir: deploy/managed/kamal
+    cmds:
+      - bundle exec ruby config_test.rb
+
   observability:check:
     desc: Validate all repository-owned Prometheus rules and fixtures
     cmds:

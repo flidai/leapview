@@ -1,0 +1,78 @@
+# Configuration scaffold only: production lifecycle adapter/qualification is pending.
+# Values below are non-secret inventory. Secrets come from .kamal/secrets.
+service: leapview
+image: flidai/leapview
+minimum_version: 2.12.0
+servers:
+  web:
+    hosts:
+      - <%= ENV.fetch("LEAPVIEW_APP_HOST").to_json %>
+    options:
+      read-only: true
+      cap-drop: ALL
+      security-opt: no-new-privileges:true
+      pids-limit: 1024
+      memory: <%= ENV.fetch("LEAPVIEW_APP_MEMORY", "3g").to_json %>
+      tmpfs: /tmp:rw,nosuid,nodev,size=536870912
+proxy:
+  host: <%= ENV.fetch("LEAPVIEW_HOSTNAME").to_json %>
+  app_port: 8080
+  run:
+    version: v0.9.2 # Kamal 2.12 baseline; qualify this pair before production.
+  ssl: true
+  forward_headers: false
+  healthcheck:
+    path: /readyz
+    interval: 3
+    timeout: 5
+  # Explicit streaming baseline; qualify real /updates traffic and upload sizes.
+  response_timeout: 3600
+  buffering:
+    requests: false
+    responses: false
+    max_request_body: 100000000
+registry:
+  server: ghcr.io
+  username: <%= ENV.fetch("KAMAL_REGISTRY_USERNAME").to_json %>
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+builder:
+  arch: amd64
+ssh:
+  user: root
+  config: [ssh_config]
+  forward_agent: false
+volumes:
+  - /var/lib/leapview:/var/lib/leapview
+  - /var/lib/leapview-trust:/etc/leapview/trust:ro
+env:
+  clear:
+    LEAPVIEW_PRODUCTION: "1"
+    LEAPVIEW_ENVIRONMENT: prod
+    LEAPVIEW_ADDR: ":8080"
+    LEAPVIEW_HOME: /var/lib/leapview/home
+    LEAPVIEW_MANAGED_DATA_BACKEND: local
+    LEAPVIEW_MANAGED_DATA_DIR: /var/lib/leapview/home/managed-data
+    LEAPVIEW_LOCAL_AUTH: "1"
+    LEAPVIEW_COOKIE_SECURE: "true"
+    LEAPVIEW_TRUST_PROXY_HEADERS: "true"
+    LEAPVIEW_PUBLIC_URL: <%= ("https://" + ENV.fetch("LEAPVIEW_HOSTNAME")).to_json %>
+    LEAPVIEW_ALLOWED_HOSTS: <%= ENV.fetch("LEAPVIEW_HOSTNAME").to_json %>
+    LEAPVIEW_POSTGRES_REQUIRE_TLS: "true"
+    LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID: <%= ENV.fetch("LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID").to_json %>
+    LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST: <%= ENV.fetch("LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST").to_json %>
+  secret:
+    - LEAPVIEW_CSRF_KEY
+    - LEAPVIEW_METRICS_BEARER_TOKEN
+    - LEAPVIEW_POSTGRES_CONTROL_URL
+    - LEAPVIEW_POSTGRES_DUCKLAKE_URL
+# Migration/maintenance/admin credentials are deliberately absent from the runtime.
+deploy_timeout: 120
+drain_timeout: 30
+stop_timeout: 120
+retain_containers: 3
+logging:
+  driver: local
+  options:
+    max-size: 20m
+    max-file: "5"

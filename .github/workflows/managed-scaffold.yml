@@ -1,0 +1,62 @@
+name: Managed deployment scaffold
+
+on:
+  pull_request:
+    paths:
+      - deploy/managed/**
+      - .github/workflows/managed-scaffold.yml
+  push:
+    branches: [main]
+    paths:
+      - deploy/managed/**
+      - .github/workflows/managed-scaffold.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: managed-scaffold-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  infrastructure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+      - name: Validate and test mocked infrastructure (no cloud credentials)
+        working-directory: deploy/managed/hetzner
+        run: |
+          tofu init -backend=false -input=false -lockfile=readonly
+          tofu fmt -check -recursive
+          tofu validate
+          tofu test
+  hosts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: cachix/install-nix-action@b85815f71a6de0ddee80b8a80a98d43f4bcc66c7 # v31
+      - name: Evaluate locked host and deploy-rs configurations
+        run: nix flake check path:./deploy/managed/nixos --no-build --no-update-lock-file
+      - name: Check host-role contracts
+        run: nix build path:./deploy/managed/nixos#checks.x86_64-linux.host-contracts --no-link --no-update-lock-file
+  application-template:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container:
+      image: ruby:3.4@sha256:c4428c90c4e80ee5848c31912969e73c9f48ac45ec45dfb5f76d1a821358771e
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate with pinned Kamal (no SSH or registry access)
+        working-directory: deploy/managed/kamal
+        env:
+          BUNDLE_FROZEN: "true"
+        run: |
+          bundle install
+          bundle exec ruby config_test.rb

@@ -1,0 +1,16 @@
+# Only sanitized examples and lockfiles belong in the public scaffold.
+**/.terraform/
+**/*.tfstate*
+**/*.tfplan
+**/*.tfvars
+**/*.tfvars.json
+**/backend.tf
+**/backend.hcl
+**/result*
+**/.kamal/
+**/deploy.yml
+**/inventory.nix
+**/secrets/
+**/ssh_config
+**/.bundle/
+**/vendor/
