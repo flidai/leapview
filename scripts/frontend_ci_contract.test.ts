@@ -112,6 +112,12 @@ test('production image qualification generates SQL packages before compiling the
   expect(commands.at(-1)).toContain('go run ./cmd/leapviewctl qualify image')
 })
 
+test('native PostgreSQL qualification generates the complete application fixture before compilation', () => {
+  const commands = tasks['test:qualification:native-postgres'].cmds
+  expect(commands[0]).toEqual({ task: 'generate' })
+  expect(commands.at(-1)).toContain('TestQualificationNativePostgresTopologyContainerBackedContract')
+})
+
 test('hosted demo rejects an unknown dataset before requesting deployment credentials', () => {
   const result = spawnSync('/bin/bash', ['scripts/deploy_demo.sh'], {
     env: { PATH: process.env.PATH, DEMO_DATASET: 'unknown' }, encoding: 'utf8',
