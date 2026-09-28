@@ -103,14 +103,20 @@ test('hosted demo runs the protected version-aware publication adapter against t
   ].join('\n') + '\n')
 })
 
-test('production image qualification generates SQL packages before compiling the qualifier', () => {
-  const commands = tasks['image:qualify:production'].cmds
-  expect(commands.slice(0, 2)).toEqual([
-    { task: 'db:generate' },
-    { task: 'api:generate' },
-  ])
-  expect(commands.at(-1)).toContain('go run ./cmd/leapviewctl qualify image')
-})
+for (const [target, command] of [['production', 'image'], ['site', 'site-image']]) {
+  test(`${target} image qualification generates SQL, API and UI packages before compiling leapviewctl`, () => {
+    const commands = tasks[`image:qualify:${target}`].cmds
+    // The host upgrade command reaches access/module through its transition
+    // intent; that module also compiles the generated login signal package.
+    // Both entrypoints must work without a prior application build/generate.
+    expect(commands.slice(0, 3)).toEqual([
+      { task: 'db:generate' },
+      { task: 'api:generate' },
+      { task: 'ui-signals:generate' },
+    ])
+    expect(commands.at(-1)).toContain(`go run ./cmd/leapviewctl qualify ${command}`)
+  })
+}
 
 test('native PostgreSQL qualification generates the complete application fixture before compilation', () => {
   const commands = tasks['test:qualification:native-postgres'].cmds

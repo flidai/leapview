@@ -1550,6 +1550,7 @@ tasks:
     cmds:
       - task: db:generate
       - task: api:generate
+      - task: ui-signals:generate
       - mkdir -p {{.ROOT_DIR}}/.tmp/qualification/tmp
       - >-
         env TMPDIR={{.ROOT_DIR}}/.tmp/qualification/tmp
@@ -1564,7 +1565,9 @@ tasks:
     requires:
       vars: [IMAGE]
     cmds:
+      - task: db:generate
       - task: api:generate
+      - task: ui-signals:generate
       - >-
         env LEAPVIEWCTL_ROOT={{.ROOT_DIR}}/deploy/compose
         go run ./cmd/leapviewctl qualify site-image
