@@ -507,6 +507,31 @@ test('chat thread hides recovered tool errors only within the same user turn', a
   await page.close()
 })
 
+test('chat thread hides assistant progress before tools and keeps the final answer', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const answers = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'user', kind: 'user', text: 'Show revenue' },
+      { id: 'progress-1', kind: 'assistant', markdown: 'I will query the model.' },
+      { id: 'tool-error', kind: 'tool', name: 'query_visual', status: 'error', error: 'Invalid option.' },
+      { id: 'progress-2', kind: 'assistant', markdown: 'Retrying without the option.' },
+      { id: 'tool-success', kind: 'tool', name: 'query_visual', status: 'complete' },
+      { id: 'final', kind: 'assistant', markdown: 'Open the Revenue chart.' },
+    ]
+    await thread.updateComplete
+    return {
+      answers: Array.from(thread.shadowRoot.querySelectorAll('.agent-markdown')).map((node: any) => node.value),
+      errors: thread.shadowRoot.querySelectorAll('.message.error').length,
+    }
+  })
+  expect(answers).toEqual({ answers: ['Open the Revenue chart.'], errors: 0 })
+  await page.close()
+})
+
 test('drawer keeps answers and failures while hiding every tool processing row', async () => {
   const page = await browser.newPage()
   try {

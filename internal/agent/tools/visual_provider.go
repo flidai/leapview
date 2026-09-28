@@ -135,6 +135,7 @@ type agentVisualResult struct {
 	Type    string                                                      `json:"type"`
 	ID      string                                                      `json:"id"`
 	Patch   map[string]map[string]visualizationir.VisualizationEnvelope `json:"patch"`
+	Result  *agentcontracts.QueryVisualResult                           `json:"result,omitempty"`
 	Filters dashboard.Filters                                           `json:"-"`
 	Summary string                                                      `json:"summary"`
 }
@@ -242,6 +243,7 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 	if err != nil {
 		return apigenAgentToolError("query_visual_failed", err.Error())
 	}
+	result.Result = &compact
 	return agentcore.ToolResult{
 		Content:        compact,
 		DisplayContent: result,
