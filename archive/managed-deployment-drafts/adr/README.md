@@ -1,0 +1,101 @@
+# Architecture decision records
+
+This directory is LeapView's durable architecture decision log. An architecture
+decision record (ADR) captures one consequential choice, the context in which it
+was made, the alternatives considered, and the consequences the repository must
+preserve.
+
+ADRs explain why a decision was made at a point in time. Current architecture
+documentation under `docs/articles/architecture/` explains how the implemented
+system works. Proposals still under discussion belong in a pull request or an
+RFC; implementation progress belongs in Linear.
+
+The log lives outside `docs/` intentionally. Every Markdown file under `docs/`
+is a published customer-documentation source and must appear in site navigation.
+ADRs are repository records; only implemented architecture belongs in the
+customer site.
+
+## Decision log
+
+| ID | Decision | Status | Decision date | Implementation | Amended or superseded by |
+|---|---|---|---|---|---|
+| [ADR-0001](0001-semantic-model-first.md) | Use a semantic-model-first BI contract | Accepted | 2026-06-18 | Complete | [ADR-0006](0006-adopt-ossie-aligned-semantic-contract.md), authored contract only |
+| [ADR-0002](0002-use-maplibre-for-geographic-rendering.md) | Use MapLibre for geographic rendering | Accepted | 2026-07-22 | Complete | — |
+| [ADR-0003](0003-retain-narrow-infisical-resolver.md) | Retain the narrow Infisical resolver | Accepted | 2026-07-31 | Complete | — |
+| [ADR-0004](0004-defer-incremental-project-reconciliation.md) | Defer incremental project reconciliation | Accepted | 2026-08-05 | Deferred pending corrected measurement | [ADR-0005](0005-use-project-wide-resource-graph.md), scope and identity only |
+| [ADR-0005](0005-use-project-wide-resource-graph.md) | Use a project-wide resource graph | Accepted | 2026-08-15 | Complete | [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md), public Project and control-plane authoring boundaries |
+| [ADR-0006](0006-adopt-ossie-aligned-semantic-contract.md) | Adopt an OSSIE-aligned typed semantic contract | Accepted | 2026-08-17 | Complete | [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md), structural authority; [ADR-0017](0017-adopt-a-looker-aligned-semantic-access-contract.md), semantic access contract |
+| [ADR-0007](0007-adopt-plan-driven-project-delivery.md) | Adopt plan-driven project delivery | Accepted | 2026-08-17 | In progress (controlled rollout) | [ADR-0021](0021-adopt-a-local-first-analytics-development-workflow.md), human-facing command orchestration and local runtime startup only |
+| [ADR-0008](0008-isolate-ducklake-candidate-physical-state.md) | Use one immutable DuckLake catalog per candidate | Accepted | 2026-08-17 | In progress (controlled rollout) | [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md), private file-backed catalog mechanics only |
+| [ADR-0009](0009-separate-control-and-physical-transactions.md) | Separate control state from immutable physical catalogs | Accepted | 2026-08-17 | In progress (controlled rollout) | [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md), control-store selection only |
+| [ADR-0010](0010-adopt-strict-typed-data-resource-contracts.md) | Adopt strict typed data-resource contracts | Accepted | 2026-08-18 | Complete | [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md), contract evolution, quality identity, and governance metadata |
+| [ADR-0011](0011-adopt-a-canonical-dashboard-document.md) | Adopt a canonical dashboard document | Accepted | 2026-08-18 | Complete | — |
+| [ADR-0012](0012-separate-duckdb-sql-analysis-from-application-policy.md) | Separate DuckDB SQL analysis from application policy | Accepted | 2026-08-19 | Complete | — |
+| [ADR-0013](0013-separate-workload-admission-from-application-policy.md) | Separate workload admission from application policy | Accepted | 2026-08-19 | Complete | — |
+| [ADR-0014](0014-adopt-an-asset-selected-refresh-pipeline-contract.md) | Adopt an asset-selected refresh pipeline contract | Accepted | 2026-08-20 | Pending | — |
+| [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md) | Adopt durable audit and compliance controls | Accepted | 2026-08-23 | Durable foundation and prioritized producer adoption | — |
+| [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md) | Adopt standards-aligned data contracts and interchange | Accepted | 2026-09-01 | Pending | — |
+| [ADR-0017](0017-adopt-a-looker-aligned-semantic-access-contract.md) | Adopt a Looker-aligned semantic access contract | Accepted | 2026-09-01 | Pending | — |
+| [ADR-0018](0018-retain-project-as-the-durable-deployment-namespace.md) | Retain Project as the durable deployment namespace | Accepted | 2026-09-02 | Pending | [ADR-0019](0019-integrate-dbt-at-the-warehouse-contract-boundary.md), dbt mapping and external-source examples only |
+| [ADR-0019](0019-integrate-dbt-at-the-warehouse-contract-boundary.md) | Integrate dbt at the warehouse contract boundary | Accepted | 2026-09-03 | Pending | — |
+| [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md) | Adopt a PostgreSQL-centered target data architecture | Accepted | 2026-08-28 | In progress (clean-slate target architecture) | [ADR-0021](0021-adopt-a-local-first-analytics-development-workflow.md), local analytics development topology and filesystem storage profile only |
+| [ADR-0021](0021-adopt-a-local-first-analytics-development-workflow.md) | Adopt a local-first analytics development workflow | Accepted | 2026-09-09 | Pending | — |
+| [ADR-0022](0022-adopt-a-managed-service-compliance-and-assurance-baseline.md) | Adopt a managed-service compliance and assurance baseline | Accepted | 2026-09-20 | Pending | [ADR-0023](0023-qualify-managed-service-legal-and-customer-assurance-scope.md), legal coverage, customer qualification and assurance deliverables |
+| [ADR-0023](0023-qualify-managed-service-legal-and-customer-assurance-scope.md) | Qualify managed-service legal and customer assurance scope | Accepted | 2026-09-20 | Pending | — |
+| [ADR-0024](0024-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md) | Share an open deployment stack for self-hosted and managed LeapView | Proposed | Pending review | Pending | — |
+
+## Companion specifications
+
+Mutable implementation and conformance specifications linked by ADRs live
+under [`specifications/`](specifications/). They may evolve with schemas, APIs,
+tests, and operational tooling while the governing accepted decisions remain
+historical records.
+
+- [Project delivery conformance](specifications/project-delivery-conformance.md)
+- [DuckDB SQL analysis conformance](specifications/duckdb-sql-analysis-conformance.md)
+- [Workload admission conformance](specifications/workload-admission-conformance.md)
+- [Superseded Watermill PostgreSQL proof](specifications/watermill-postgresql-proof.md)
+- [Superseded Watermill Router/subscriber runtime](specifications/watermill-router-runtime.md)
+- [Product histories and canonical asynchronous events](specifications/fai-594-product-histories-and-canonical-events.md)
+- [FAI-595 River job admission](specifications/fai-595-river-job-admission.md)
+- [Data-contract versioning conformance](specifications/data-contract-versioning-conformance.md)
+- [OpenLineage projection conformance](specifications/openlineage-conformance.md)
+- [Semantic access-policy conformance](specifications/semantic-access-policy-conformance.md)
+- [Project namespace conformance](specifications/project-namespace-conformance.md)
+- [Analytics development CLI contract](specifications/analytics-development-cli-contract.md)
+- [Deployment stack reuse research](specifications/deployment-stack-reuse-research.md)
+- [Deployment profile qualification](specifications/deployment-profile-qualification.md)
+
+## Conventions
+
+- Copy [`template.md`](template.md) and assign the next unused four-digit ID.
+  IDs are permanent and are never reused, including when an ADR is rejected or
+  superseded.
+- Use a descriptive lowercase filename after the ID. The ID, rather than the
+  filename or heading text, is the stable reference.
+- Keep decision status separate from implementation progress. Allowed decision
+  statuses are `proposed`, `accepted`, `rejected`, `deprecated`, and
+  `superseded`.
+- Use `Supersedes` when the earlier decision no longer governs and `Amends`
+  when only a named boundary changes. Keep related but unchanged decisions under
+  `Related`.
+- Record one cohesive, architecturally significant decision per ADR. Use an ADR
+  when a choice is cross-cutting, expensive to reverse, security-sensitive, or
+  non-obvious enough that future maintainers will need its rationale.
+- Include meaningful rejected alternatives and both positive and negative
+  consequences. Avoid using an ADR as a general design specification or task
+  checklist.
+- Treat the context, decision, alternatives, and consequences of accepted ADRs
+  as immutable historical records. Correct spelling and broken links, and update
+  coarse implementation or supersession metadata, but record a changed outcome
+  in a new ADR and link the old record through `Superseded by`.
+- Link related issues, pull requests, specifications, and other ADRs. Linear
+  remains the authority for delivery status; do not turn an ADR into a progress
+  log.
+- Define confirmation evidence. Prefer schemas, architecture checks, tests, or
+  operational measurements that make violations observable.
+- Update this table in the same pull request that adds or changes ADR status.
+
+The format is intentionally a small subset of
+[MADR](https://adr.github.io/madr/). LeapView stores decisions with the code so
+the record is reviewed and versioned with the architecture it governs.
