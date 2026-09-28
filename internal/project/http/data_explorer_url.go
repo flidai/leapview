@@ -48,6 +48,17 @@ func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *
 			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 		}
 		command.Explore = &explore
+	} else if strings.TrimSpace(values.Get("state")) != "" {
+		if strings.TrimSpace(values.Get("object")) == "" {
+			stdhttp.Error(w, "row filters require a selected object", stdhttp.StatusBadRequest)
+			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+		}
+		explore, err := dataExploreCommandFromQuery(values)
+		if err != nil || len(explore.Spec.Filters) == 0 {
+			stdhttp.Error(w, "invalid row filter URL state", stdhttp.StatusBadRequest)
+			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+		}
+		command.Explore = &explore
 	}
 	return h.dataExplorerSignalsForRestoredCommand(w, r, command, executeQuery)
 }

@@ -1132,15 +1132,17 @@ type DataExploreSemanticModelSignal struct {
 }
 
 type DataExploreSignal struct {
-	Command               DataExploreCommand                  `json:"command" yaml:"command"`
-	Datasets              []DataExploreDatasetSignal          `json:"datasets" yaml:"datasets"`
-	Fields                []DataExploreFieldSignal            `json:"fields" yaml:"fields"`
-	SemanticModels        []DataExploreSemanticModelSignal    `json:"semanticModels" yaml:"semanticModels"`
-	Result                DataExploreResultSignal             `json:"result" yaml:"result"`
-	Status                DataExploreStatusSignal             `json:"status" yaml:"status"`
-	FilterSuggestions     *DataExploreFilterSuggestionsSignal `json:"filterSuggestions,omitempty" yaml:"filterSuggestions,omitempty"`
-	SelectedDataset       *DataExploreDatasetSignal           `json:"selectedDataset,omitempty" yaml:"selectedDataset,omitempty"`
-	SelectedSemanticModel *DataExploreSemanticModelSignal     `json:"selectedSemanticModel,omitempty" yaml:"selectedSemanticModel,omitempty"`
+	Command               DataExploreCommand                                `json:"command" yaml:"command"`
+	Datasets              []DataExploreDatasetSignal                        `json:"datasets" yaml:"datasets"`
+	Fields                []DataExploreFieldSignal                          `json:"fields" yaml:"fields"`
+	SemanticModels        []DataExploreSemanticModelSignal                  `json:"semanticModels" yaml:"semanticModels"`
+	Result                DataExploreResultSignal                           `json:"result" yaml:"result"`
+	Status                DataExploreStatusSignal                           `json:"status" yaml:"status"`
+	Views                 *map[string]visualizationir.VisualizationEnvelope `json:"views,omitempty" yaml:"views,omitempty"`
+	RecommendedView       *string                                           `json:"recommendedView,omitempty" yaml:"recommendedView,omitempty"`
+	FilterSuggestions     *DataExploreFilterSuggestionsSignal               `json:"filterSuggestions,omitempty" yaml:"filterSuggestions,omitempty"`
+	SelectedDataset       *DataExploreDatasetSignal                         `json:"selectedDataset,omitempty" yaml:"selectedDataset,omitempty"`
+	SelectedSemanticModel *DataExploreSemanticModelSignal                   `json:"selectedSemanticModel,omitempty" yaml:"selectedSemanticModel,omitempty"`
 }
 
 type DataExploreSortSignal struct {

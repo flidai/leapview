@@ -37,6 +37,8 @@ export type DataExplorerFilterControlDetail = {
  */
 export class DataExplorerQueryControls extends LitElement {
   @property({ type: Boolean }) filtersOnly = false
+  @property({ type: Boolean, reflect: true }) filterEditorOnly = false
+  @property({ type: Boolean, reflect: true }) compactConfig = false
   @property({ attribute: false }) command: DataExploreCommand = emptyDataExploreCommand
   @property({ attribute: false }) fields: DataExploreFieldSignal[] = []
   @property({ attribute: false }) suggestions?: DataExploreFilterSuggestionsSignal
@@ -74,14 +76,20 @@ export class DataExplorerQueryControls extends LitElement {
     .field-action { display: grid; width: var(--control-small-size); height: var(--control-small-size); place-items: center; color: var(--lv-fg-muted); }
     .config-note { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .filter-editor { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(8rem, 1fr) minmax(12rem, 2fr) auto; gap: var(--base-size-8); align-items: end; border-bottom: var(--lv-border-muted); background: var(--lv-bg-panel-muted); padding: var(--base-size-12) var(--base-size-16); }
+    :host([filtereditoronly]) .filter-editor { grid-template-columns: minmax(0, 1fr); border: 0; border-radius: var(--lv-radius-default); padding: var(--base-size-8); }
     .filter-editor label { display: grid; min-width: 0; gap: var(--base-size-4); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-medium); }
     .filter-editor input, .filter-editor select { min-width: 0; height: var(--control-medium-size); border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); padding: 0 var(--base-size-8); font: var(--lv-type-body); }
     .filter-actions { display: flex; gap: var(--base-size-4); }
     .config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--base-size-8); align-items: end; }
+    :host([compactconfig]) .config-grid { grid-template-columns: minmax(0, 1fr); }
+    :host([compactconfig]) .query-config { border: var(--lv-border-muted); border-radius: var(--lv-radius-default); padding: var(--base-size-8); }
+    :host([compactconfig]) .query-config summary { flex-wrap: wrap; }
     .config-grid label, .sort-list label { display: grid; min-width: 0; gap: var(--base-size-4); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-medium); }
     .config-grid input, .config-grid select, .sort-list select { min-width: 0; height: var(--control-medium-size); border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); padding: 0 var(--base-size-8); font: var(--lv-type-body); }
     .sort-list { display: grid; gap: var(--base-size-6); }
     .sort-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(8rem, 1fr) auto auto auto; gap: var(--base-size-6); align-items: end; }
+    :host([compactconfig]) .sort-item { grid-template-columns: repeat(3, var(--control-medium-size)); }
+    :host([compactconfig]) .sort-item label { grid-column: 1 / -1; }
     .icon-button { display: inline-grid; width: var(--control-medium-size); height: var(--control-medium-size); place-items: center; border: var(--lv-border-default); background: var(--lv-bg-control); }
     .text-button { min-height: var(--control-medium-size); padding: 0 var(--base-size-12); font: var(--lv-type-body); font-weight: var(--base-text-weight-medium); }
     .icon-button:disabled, .text-button:disabled { cursor: not-allowed; opacity: .5; }
@@ -91,7 +99,8 @@ export class DataExplorerQueryControls extends LitElement {
 
   render() {
     const spec = this.command?.spec ?? emptyDataExploreCommand.spec
-    if (this.filtersOnly) return this.filterField ? this.renderFilterEditor(spec) : nothing
+    if (this.filterEditorOnly) return this.filterField ? this.renderFilterEditor(spec) : nothing
+    if (this.filtersOnly) return html`${this.filterField ? this.renderFilterEditor(spec) : nothing}${this.renderConfig(spec)}`
     const query = this.fieldQuery.toLowerCase()
     const fields = this.fields.filter((field) => !query || [field.id, field.label, field.datasetId, field.type, field.description].some((value) => String(value ?? '').toLowerCase().includes(query)))
     const selected = new Set([...spec.dimensions, ...spec.metrics].map((ref) => ref.field))
@@ -165,8 +174,10 @@ export class DataExplorerQueryControls extends LitElement {
   private renderConfig(spec: ExplorationSpec) {
     const timeFields = this.fields.filter((field) => field.kind === 'dimension' && isTemporalType(field.type))
     const sortFields = explorationSortFields(spec)
+    const timeSummary = spec.time ? fieldLabel(spec.time.field, this.fields) : 'No time field'
+    const sortSummary = spec.sort.length ? `${spec.sort.length} sort${spec.sort.length === 1 ? '' : 's'}` : 'No sort'
     return html`<details class="query-config" aria-label="More table options">
-      <summary><span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span><span>More</span><span class="config-note">Time, sort, and row limit</span></summary>
+      <summary><span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span><span>${this.filtersOnly ? 'Time & sort' : 'More'}</span> <span class="config-note">${this.filtersOnly ? `${timeSummary} · ${sortSummary}` : 'Time, sort, and row limit'}</span></summary>
       <div class="config-grid">
         <label>Time field<select aria-label="Time field" .value=${spec.time?.field ?? ''} @change=${(event: Event) => this.changeTimeField((event.target as HTMLSelectElement).value, spec)}><option value="" .selected=${!spec.time?.field}>No time field</option>${timeFields.map((field) => {
           const unavailable = field.compatible === false && !field.rebaseDatasetId
@@ -174,7 +185,7 @@ export class DataExplorerQueryControls extends LitElement {
         })}</select></label>
         <label>Time grain<select aria-label="Time grain" .value=${spec.time?.grain ?? 'day'} ?disabled=${!spec.time} @change=${(event: Event) => this.changeTimeGrain((event.target as HTMLSelectElement).value, spec)}>${explorationTimeGrains.map((grain) => html`<option value=${grain} .selected=${grain === (spec.time?.grain ?? 'day')}>${grain}</option>`)}</select></label>
         <label>Time range<select aria-label="Time range" .value=${spec.time?.range?.kind ?? 'all'} ?disabled=${!spec.time} @change=${(event: Event) => this.changeTimeRange((event.target as HTMLSelectElement).value, spec, timeFields)}><option value="all" .selected=${(spec.time?.range?.kind ?? 'all') === 'all'}>All available</option><option value="relative" disabled .selected=${spec.time?.range?.kind === 'relative'}>Relative (not supported)</option><option value="absolute" .selected=${spec.time?.range?.kind === 'absolute'}>Absolute</option></select></label>
-        <label>Row limit<select aria-label="Row limit" .value=${String(spec.limit)} @change=${(event: Event) => this.emitSpec({ ...spec, limit: boundedExplorationLimit(Number((event.target as HTMLSelectElement).value)) })}>${explorationLimitOptions.map((limit) => html`<option value=${limit} .selected=${limit === spec.limit}>${limit}</option>`)}</select></label>
+        ${this.filtersOnly ? nothing : html`<label>Row limit<select aria-label="Row limit" .value=${String(spec.limit)} @change=${(event: Event) => this.emitSpec({ ...spec, limit: boundedExplorationLimit(Number((event.target as HTMLSelectElement).value)) })}>${explorationLimitOptions.map((limit) => html`<option value=${limit} .selected=${limit === spec.limit}>${limit}</option>`)}</select></label>`}
       </div>
       ${spec.time?.range?.kind === 'relative' ? html`<p class="config-error" role="alert">${unsupportedRelativeTimeRangeMessage}</p>` : nothing}
       ${spec.time?.range?.kind === 'absolute' ? this.renderAbsoluteRange(spec.time.range, spec) : nothing}

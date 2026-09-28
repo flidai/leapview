@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
+import { testVisualizationEnvelopes } from '../dashboard/dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
@@ -323,6 +324,39 @@ test('data explorer renders object browser and emits preview commands', async ()
   }
 })
 
+test('Rows filter dock applies a filter without switching to Analyze', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer') && customElements.get('lv-data-explorer-query-controls'))
+    await page.evaluate(async () => {
+      const element = document.createElement('lv-data-explorer') as any
+      const object = { key: 'model:zip', resourceId: 'model:zip', layer: 'model', semanticModelId: 'semantic-model:visuals', datasetId: 'zip_geolocations', title: 'ZIP locations', columnCount: 2, columns: [{ key: 'city' }, { key: 'state' }] }
+      const spec = { schemaVersion: 1, modelId: 'semantic-model:visuals', datasetId: 'zip_geolocations', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 }
+      const explore = { command: { spec, semanticModelId: spec.modelId, datasetId: spec.datasetId, dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, semanticModels: [], datasets: [], fields: [{ id: 'zip_geolocations.state', label: 'State', kind: 'dimension', datasetId: 'zip_geolocations', type: 'string', compatible: true, selected: false }], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] }, status: { loading: false, stale: false, requestSeq: 0, state: 'idle' } }
+      const command = { mode: 'browse', objectKey: object.key, explore: explore.command, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { kind: 'data', title: 'Data Explorer', tabs: [] }, dataExplorer: { objects: [object], selectedKey: object.key, selectedObject: object, command, explore, preview: { columns: object.columns, totalRows: 1, availableRows: 1, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: [{ city: 'sao paulo', state: 'SP' }] } }, totalRowLabel: '1', sort: {}, error: '' }, warnings: [] } })
+      ;(window as any).rowFilterCommands = []
+      element.addEventListener('lv-data-explorer-command', (event: Event) => (window as any).rowFilterCommands.push((event as CustomEvent).detail))
+      document.body.append(element)
+    })
+    const explorer = page.locator('lv-data-explorer')
+    await explorer.getByRole('button', { name: 'Filters', exact: true }).click()
+    await explorer.getByLabel('Add filter', { exact: true }).selectOption('zip_geolocations.state')
+    const editor = explorer.locator('lv-data-explorer-query-controls')
+    await editor.getByLabel('Value').fill('SP')
+    await editor.getByRole('button', { name: 'Apply' }).click()
+    const command = await page.evaluate(() => (window as any).rowFilterCommands.at(-1))
+    expect(command.mode).toBe('browse')
+    expect(command.explore.spec.filters).toHaveLength(1)
+    expect(command.explore.spec.filters[0].field).toBe('zip_geolocations.state')
+    expect(new URL(page.url()).searchParams.get('mode')).toBe('browse')
+  } finally {
+    await page.close()
+  }
+})
+
 test('data explorer distinguishes same-title aliases with dataset subtitles', async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
   try {
@@ -468,6 +502,7 @@ test('query controls hydrate canonical select values on their first render', asy
       element.filterField = 'orders.net_total'
       element.filterOperator = 'greater_than'
       element.filterValue = '10'
+      element.filtersOnly = true
       document.body.append(element)
       await element.updateComplete
 
@@ -484,6 +519,7 @@ test('query controls hydrate canonical select values on their first render', asy
         rangeFrom: root.querySelector<HTMLInputElement>('[aria-label="Time range from"]')?.value,
         rangeTo: root.querySelector<HTMLInputElement>('[aria-label="Time range to"]')?.value,
         unavailableTimeDisabled: root.querySelector<HTMLOptionElement>('option[value="shipments.created_at"]')?.disabled, progressiveDisclosure: { columnsOpen: root.querySelector<HTMLDetailsElement>('.field-picker')?.open, moreOpen: root.querySelector<HTMLDetailsElement>('.query-config')?.open, exclusiveGroups: Array.from(root.querySelectorAll<HTMLDetailsElement>('.field-group')).every((group) => group.name === 'data-explorer-field-group') },
+        optionsSummary: root.querySelector('.query-config summary')?.textContent?.replace(/\s+/g, ' ').trim(),
       }
     })
 
@@ -491,14 +527,118 @@ test('query controls hydrate canonical select values on their first render', asy
       timeField: 'orders.purchase_date',
       timeGrain: 'day',
       timeRange: 'absolute',
-      rowLimit: '100',
+      rowLimit: undefined,
       sortField: 'orders.purchase_date',
       sortDirection: 'desc',
       filterOperator: 'greater_than',
       rangeFrom: '2026-01-01',
       rangeTo: '2026-01-31',
-      unavailableTimeDisabled: true, progressiveDisclosure: { columnsOpen: false, moreOpen: false, exclusiveGroups: true },
+      unavailableTimeDisabled: true, progressiveDisclosure: { columnsOpen: undefined, moreOpen: false, exclusiveGroups: true },
+      optionsSummary: 'Time & sort Purchase date · 1 sort',
     })
+  } finally {
+    await page.close()
+  }
+})
+
+test('clearing the time field removes it from the live exploration URL', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer') && customElements.get('lv-data-explorer-query-controls'))
+    await page.evaluate(async () => {
+      const object = {
+        key: 'model:orders', resourceId: 'model:orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders',
+        title: 'Orders', columnCount: 2, columns: [{ key: 'status', label: 'Status' }],
+      }
+      const spec = {
+        schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }],
+        metrics: [], filters: [], sort: [], limit: 50, time: { field: 'orders.purchase_date', grain: 'month' },
+      }
+      const command = {
+        spec, semanticModelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], metrics: [], filters: [], sort: [],
+        time: { field: 'orders.purchase_date', grain: 'month' }, limit: 50, requestSeq: 1, resetVersion: 1, columnWidths: {},
+      }
+      const dataset = { id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 2, entities: [] }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [object], selectedKey: object.key, selectedObject: object,
+          command: { mode: 'explore', objectKey: object.key, explore: command },
+          explore: {
+            command, semanticModels: [{ id: 'sales', title: 'Sales', datasets: [dataset] }],
+            datasets: [dataset], selectedSemanticModel: { id: 'sales', title: 'Sales', datasets: [dataset] }, selectedDataset: dataset,
+            fields: [
+              { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
+              { id: 'orders.purchase_date', label: 'Purchase date', kind: 'dimension', datasetId: 'orders', type: 'date', compatible: true, selected: false },
+            ],
+            result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 1, truncated: false, warnings: [] },
+          },
+        },
+      })
+      document.body.append(document.createElement('lv-data-explorer'))
+    })
+    await page.locator('lv-data-explorer .semantic-filter-rail').click()
+    const controls = page.locator('lv-data-explorer .semantic-filter-dock lv-data-explorer-query-controls:not([filtereditoronly])')
+    await controls.locator('.query-config summary').click()
+    await controls.getByRole('combobox', { name: 'Time field' }).selectOption('')
+    const encoded = JSON.parse(new URL(page.url()).searchParams.get('state')!)
+    expect(encoded.time).toBeUndefined()
+  } finally {
+    await page.close()
+  }
+})
+
+test('governed result views switch locally and disappear when the result becomes stale', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    const chartEnvelope = testVisualizationEnvelopes().orders_chart
+    const state = await page.evaluate(async (chart) => {
+      const element = document.createElement('lv-data-explorer') as any
+      const spec = { schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [{ field: 'revenue' }], filters: [], sort: [], limit: 100 }
+      const command = { spec, semanticModelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], metrics: ['revenue'], filters: [], sort: [], limit: 100, requestSeq: 1, resetVersion: 0, columnWidths: {} }
+      const object = { key: 'model:orders:sales', resourceId: 'model:orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columnCount: 1, columns: [{ key: 'status', label: 'Status' }] }
+      const explore = {
+        command, semanticModels: [{ id: 'sales', title: 'Sales', datasets: [] }], datasets: [], fields: [
+          { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
+          { id: 'revenue', label: 'Revenue', kind: 'metric', datasetId: 'orders', type: 'decimal', compatible: true, selected: true },
+        ],
+        result: { columns: [{ key: 'status', label: 'Status' }, { key: 'revenue', label: 'Revenue' }], rows: [{ status: 'delivered', revenue: 42 }], rowsReturned: 1, durationMs: 4, requestSeq: 1, truncated: false, warnings: [], sql: 'select status, sum(revenue)' },
+        status: { state: 'success', requestSeq: 1, loading: false, stale: false }, views: { chart }, recommendedView: 'chart',
+      }
+      const dataExplorer = {
+        objects: [object], selectedKey: object.key, selectedObject: object,
+        preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
+        command: { mode: 'explore', objectKey: object.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 1, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: command },
+        explore, warnings: [],
+      }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { kind: 'data', title: 'Data Explorer', tabs: [] }, dataExplorer })
+      document.body.append(element)
+      const root = element.shadowRoot as ShadowRoot
+      for (let index = 0; index < 20 && !root?.querySelector('lv-data-explore-table'); index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const viewButtons = () => Array.from(root.querySelectorAll<HTMLButtonElement>('[aria-label="Result views"] button'))
+      const initial = { buttons: viewButtons().map((button) => button.textContent?.trim()), table: Boolean(root.querySelector('lv-data-explore-table')) }
+      viewButtons().find((button) => button.textContent?.trim() === 'Chart')?.click()
+      await element.updateComplete
+      const chartView = { host: Boolean(root.querySelector('lv-visualization-host')), table: Boolean(root.querySelector('lv-data-explore-table')) }
+      mergePatch({ dataExplorer: { explore: { views: {}, status: { state: 'stale', requestSeq: 2, loading: false, stale: true } } } })
+      await element.updateComplete
+      const stale = { host: Boolean(root.querySelector('lv-visualization-host')), table: Boolean(root.querySelector('lv-data-explore-table')), buttons: viewButtons().map((button) => button.textContent?.trim()) }
+      mergePatch({ dataExplorer: { explore: { views: {}, result: { requestSeq: 2, rows: [{ status: 'shipped', revenue: 7 }] }, status: { state: 'success', requestSeq: 2, loading: false, stale: false } } } })
+      await element.updateComplete
+      return { initial, chartView, stale, nextRunWithoutChart: { host: Boolean(root.querySelector('lv-visualization-host')), table: Boolean(root.querySelector('lv-data-explore-table')) } }
+    }, chartEnvelope)
+    expect(state.initial).toEqual({ buttons: ['Table', 'Chart', 'SQL / Details'], table: true })
+    expect(state.chartView).toEqual({ host: true, table: false })
+    expect(state.stale).toEqual({ host: false, table: true, buttons: [] })
+    expect(state.nextRunWithoutChart).toEqual({ host: false, table: true })
   } finally {
     await page.close()
   }
@@ -593,7 +733,8 @@ test('data explorer builds a governed semantic exploration and filter command', 
       if (!filterButton) throw new Error(`Status filter button was not rendered: ${root.textContent}`)
       filterButton.click()
       await element.updateComplete
-      const controls = root.querySelector('lv-data-explorer-query-controls') as any
+      const controls = root.querySelector('.semantic-filter-panel lv-data-explorer-query-controls') as any
+      const filterInDock = Boolean(controls) && !root.querySelector('.semantic-result lv-data-explorer-query-controls')
       await controls.updateComplete
       const controlsRoot = controls.shadowRoot as ShadowRoot
       const filterInput = controlsRoot.querySelector<HTMLInputElement>('.filter-editor label:nth-child(3) input')!
@@ -606,6 +747,12 @@ test('data explorer builds a governed semantic exploration and filter command', 
       applyButton.click()
       await element.updateComplete
       await new Promise((resolve) => setTimeout(resolve, 380))
+      root.querySelector<HTMLButtonElement>('.semantic-filter-card button')?.click()
+      await element.updateComplete
+      await controls.updateComplete
+      const editValue = controlsRoot.querySelector<HTMLInputElement>('.filter-editor label:nth-child(3) input')?.value
+      Array.from(controlsRoot.querySelectorAll<HTMLButtonElement>('.filter-editor .text-button')).find((button) => button.textContent?.trim() === 'Cancel')?.click()
+      await element.updateComplete
 
       const table = root.querySelector('lv-data-explore-table') as any
       await table.updateComplete
@@ -618,7 +765,9 @@ test('data explorer builds a governed semantic exploration and filter command', 
         hasBreadcrumb: Boolean(root.querySelector('[aria-label="Breadcrumb"]')),
         resourceTables: root.querySelector('.resource-group')?.textContent?.replace(/\s+/g, ' ').trim(),
         querySummary: Array.from(root.querySelectorAll('.selected-fields-heading .query-summary')).map((item) => item.textContent?.replace(/\s+/g, ' ').trim()),
-        filterChips: Array.from(root.querySelectorAll('.selected-field-row:last-child .chip')).map((item) => item.textContent?.replace(/\s+/g, ' ').trim()),
+        filterChips: Array.from(root.querySelectorAll('.semantic-filter-card')).map((item) => item.textContent?.replace(/\s+/g, ' ').trim()),
+        editValue,
+        filterInDock,
         grain: root.querySelector('.result-meta')?.textContent?.replace(/\s+/g, ' ').trim(),
         tableRows: table.result.rows,
         resultLayout: { overflowY: getComputedStyle(resultPane).overflowY, scrollable: resultPane.scrollHeight > resultPane.clientHeight, tableHeight: table.getBoundingClientRect().height },
@@ -652,15 +801,21 @@ test('data explorer builds a governed semantic exploration and filter command', 
         await element.updateComplete
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
-      const rebaseField = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('Status'))!
-      rebaseField.click()
+      const rebaseField = Array.from(root.querySelectorAll<HTMLInputElement>('.semantic-fields .semantic-field input[type="checkbox"]')).find((input) => input.parentElement?.textContent?.includes('Status'))!
+      const rebaseFieldState = rebaseField && {
+        disabled: rebaseField.disabled,
+        text: rebaseField.parentElement?.textContent?.replace(/\s+/g, ' ').trim(),
+        title: rebaseField.closest('.semantic-field')?.getAttribute('title'),
+        visible: rebaseField.getBoundingClientRect().width > 0,
+      }
+      rebaseField?.click()
       await element.updateComplete
       await new Promise((resolve) => setTimeout(resolve, 380))
       const rebaseCommand = commands.at(-1)?.explore
       return {
         ...initialState,
         unavailableField,
-        rebaseField: { disabled: rebaseField.disabled, text: rebaseField.textContent?.replace(/\s+/g, ' ').trim(), title: rebaseField.title },
+        rebaseField: rebaseFieldState,
         rebaseCommand,
         tableSelectionCommand,
         resetToTableCommand,
@@ -676,7 +831,9 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.resourceTables).toContain('orders')
     expect(state.querySummary).toContain('3 columns')
     expect(state.filterChips.some((chip) => chip?.includes('Status') && chip.includes('delivered'))).toBe(true)
-    expect(state.grain).toContain('Grain: order_id')
+    expect(state.editValue).toBe('delivered')
+    expect(state.filterInDock).toBe(true)
+    expect(state.grain).toContain('Grouped by: Status')
     expect(state.tableRows).toEqual([{ status: 'delivered', revenue: 1200 }])
     expect(state.resultLayout).toMatchObject({ overflowY: 'auto' })
     expect(state.resultLayout.tableHeight).toBeGreaterThan(200)
@@ -687,10 +844,10 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.unavailableField.text).toContain('unavailable')
     expect(state.unavailableField.title).toContain('no grain-preserving relationship path')
     expect(state.rebaseField.disabled).toBe(false)
-    expect(state.rebaseField.text).toContain('changes grain')
+    expect(state.rebaseField.visible).toBe(true)
     expect(state.rebaseField.title).toContain('change grain from Customers to Orders')
-    expect(state.rebaseCommand.datasetId).toBe('customers')
-    expect(state.rebaseCommand.dimensions).toEqual(['customers.state', 'orders.status'])
+    expect(state.rebaseCommand.spec.datasetId).toBe('orders')
+    expect(state.rebaseCommand.spec.dimensions).toEqual([{ field: 'customers.state' }, { field: 'orders.status' }])
     expect(state.tableSelectionCommand.datasetId).toBe('customers')
     expect(state.tableSelectionCommand.dimensions).toEqual(['customers.customer_id', 'customers.state'])
     expect(state.tableSelectionCommand.metrics).toEqual([])

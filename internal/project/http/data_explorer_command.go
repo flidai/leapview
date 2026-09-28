@@ -6,6 +6,9 @@ import (
 	stdhttp "net/http"
 	"strings"
 
+	"github.com/flidai/leapview/internal/analytics/dataquery"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
@@ -39,7 +42,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		exploreCommand.Spec.DatasetID = projectsignals.Optional(value)
 	}
 	command.Explore = &exploreCommand
-	explorer := projectsignals.DataExplorerSignal{Command: command, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, SemanticModels: []projectsignals.DataExploreSemanticModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}, Status: projectsignals.DataExploreStatusSignal{RequestSeq: exploreCommand.RequestSeq, State: "idle"}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: emptyDataExplorerBlocks(command), Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: command.Count, RowHeight: dataExplorerRowHeight, Stale: false}}
+	explorer := projectsignals.DataExplorerSignal{Command: command, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, SemanticModels: []projectsignals.DataExploreSemanticModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}, Status: projectsignals.DataExploreStatusSignal{RequestSeq: exploreCommand.RequestSeq, State: "idle"}, Views: &map[string]visualizationir.VisualizationEnvelope{}, RecommendedView: projectsignals.Optional("table")}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: emptyDataExplorerBlocks(command), Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: command.Count, RowHeight: dataExplorerRowHeight, Stale: false}}
 	_, assets, _, ok := h.assets(w, r)
 	if !ok {
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
@@ -140,7 +143,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		}
 		if strings.TrimSpace(projectsignals.ValueOrZero(command.RunID)) == "" {
 			command.RunID = projectsignals.Optional(effectiveRunID)
-			explorer.Command = command
+			explorer.Command.RunID = command.RunID
 		}
 		modelID := strings.TrimSpace(exploreCommand.Spec.ModelID)
 		exploreCommand, explorer.Explore.Result = dataExplorerSemanticResult(executionContext, h.QueryExecutor, h.ExplorationQueryLowerer, projectID, exploreCommand, explorer.Explore.Fields, definition.SemanticModels[modelID], compiledModels[modelID])
@@ -151,6 +154,18 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 			explorer.Explore.Status = projectsignals.DataExploreStatusSignal{RequestSeq: exploreCommand.RequestSeq, State: "stale", Stale: true, Message: projectsignals.Pointer("a newer exploration request is active")}
 		} else {
 			explorer.Explore.Status = dataExploreStatus(exploreCommand, explorer.Explore.Result, action, true)
+		}
+		if explorer.Explore.Status.State == "success" && len(explorer.Explore.Result.Columns) > 0 {
+			views, recommended, warnings := ProjectDataExplorerViews(exploreCommand.Spec, explorer.Explore.Result, explorer.Explore.Fields)
+			// The native Explorer table already carries these rows and owns its
+			// sort/window request path. Keep the table IR validated by the
+			// projector, but do not duplicate its payload in the live signal.
+			delete(views, "table")
+			if len(views) > 0 {
+				explorer.Explore.Views = &views
+				explorer.Explore.RecommendedView = projectsignals.Optional(recommended)
+			}
+			explorer.Explore.Result.Warnings = append(explorer.Explore.Result.Warnings, warnings...)
 		}
 		explorer.Explore.Command = exploreCommand
 		explorer.Command.Explore = &exploreCommand
@@ -202,6 +217,51 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 			explorer.SelectedKey = projectsignals.Optional(object.Key)
 			explorer.SelectedObject = &object
 			page.SelectedObject = projectsignals.Optional(object.Key)
+			var previewFilters []dataquery.Filter
+			if projectsignals.ValueOrZero(explorer.Command.Mode) != "explore" && object.Layer == "model" {
+				modelID := strings.TrimSpace(projectsignals.ValueOrZero(object.SemanticModelID))
+				datasetID := strings.TrimSpace(projectsignals.ValueOrZero(object.DatasetID))
+				browseCommand := exploreCommand
+				browseCommand.Spec.ModelID = modelID
+				browseCommand.Spec.DatasetID = projectsignals.Optional(datasetID)
+				browseProjection := BuildDataExplorerProjection(assets, definition, browseCommand, compiledModels, consumers)
+				explorer.Explore.Fields = browseProjection.Fields
+				explorer.Explore.Command = browseProjection.Command
+				explorer.Command.Explore = &browseProjection.Command
+				if len(exploreCommand.Spec.Filters) > 0 {
+					filterSpec := defaultExplorationSpec()
+					filterSpec.ModelID = modelID
+					filterSpec.DatasetID = projectsignals.Optional(datasetID)
+					filterSpec.Filters = exploreCommand.Spec.Filters
+					filterErr := exploration.ValidateAgainstModel(definition.SemanticModels[modelID], &filterSpec)
+					fieldByID := make(map[string]projectsignals.DataExploreFieldSignal, len(browseProjection.Fields))
+					if filterErr == nil {
+						for _, field := range browseProjection.Fields {
+							fieldByID[field.ID] = field
+						}
+						for _, filter := range filterSpec.Filters {
+							field, ok := fieldByID[filter.Field]
+							if !ok || field.Kind != "dimension" || !field.Compatible || field.DatasetID != datasetID || !strings.HasPrefix(field.ID, datasetID+".") {
+								filterErr = errors.New("filter field is unavailable: " + filter.Field)
+								break
+							}
+						}
+					}
+					if filterErr == nil {
+						filterErr = validateExplorerFilterDatasets(filterSpec, fieldByID, compiledModels[modelID])
+					}
+					if filterErr == nil && h.ExplorationQueryLowerer != nil {
+						previewFilters, filterErr = h.ExplorationQueryLowerer.Filters(filterSpec)
+					}
+					if filterErr == nil && h.ExplorationQueryLowerer == nil {
+						filterErr = errors.New("filter lowering is unavailable")
+					}
+					if filterErr != nil {
+						explorer.Preview.Error = projectsignals.Pointer("invalid row filter: " + filterErr.Error())
+						break
+					}
+				}
+			}
 			if executeQuery && projectsignals.ValueOrZero(explorer.Command.Mode) != "explore" && action != "configure" && accepted {
 				projectID, err := h.boundProject(r.Context())
 				if err != nil {
@@ -218,9 +278,9 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 				}
 				if strings.TrimSpace(projectsignals.ValueOrZero(command.RunID)) == "" && effectiveRunID != "" {
 					command.RunID = projectsignals.Optional(effectiveRunID)
-					explorer.Command = command
+					explorer.Command.RunID = command.RunID
 				}
-				explorer.Preview = dataExplorerPreview(executionContext, h.QueryExecutor, projectID, object, explorer.Command)
+				explorer.Preview = dataExplorerPreviewWithFilters(executionContext, h.QueryExecutor, projectID, object, explorer.Command, previewFilters)
 				if finish != nil {
 					finish()
 				}

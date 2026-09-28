@@ -10,13 +10,21 @@ export function dataExplorerURL(command: DataExplorerCommand, savedID?: string, 
   if (savedID?.trim()) params.set('saved', savedID.trim())
   if (includeArchived) params.set('includeArchived', 'true')
   if (mode === 'explore') {
-    const spec = explorationSpecFromCommand(command.explore!)
+    // Authored draft edits update spec before the debounced server response.
+    // Compatibility signal members can still describe the previous query.
+    const spec = command.explore!.spec ?? explorationSpecFromCommand(command.explore!)
     if (!spec.modelId.trim()) return '/explore'
     params.set('v', '2')
     params.set('mode', 'explore')
     params.set('state', JSON.stringify(canonicalExplorationSpec(spec)))
   } else if (objectKey) {
     params.set('object', objectKey)
+    const spec = command.explore?.spec
+    if (spec?.filters?.length) {
+      params.set('v', '2')
+      params.set('mode', 'browse')
+      params.set('state', JSON.stringify(canonicalExplorationSpec(spec)))
+    }
   }
   return params.toString() ? `/explore?${params.toString()}` : '/explore'
 }

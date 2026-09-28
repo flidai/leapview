@@ -99,6 +99,10 @@ func normalizeDataExplorerCommand(command projectsignals.DataExplorerCommand) pr
 }
 
 func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand) projectsignals.DataPreviewSignal {
+	return dataExplorerPreviewWithFilters(ctx, executor, projectID, object, command, nil)
+}
+
+func dataExplorerPreviewWithFilters(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand, filters []dataquery.Filter) projectsignals.DataPreviewSignal {
 	command = normalizeDataExplorerCommand(command)
 	columns := explorerPreviewColumns(object)
 	command.Sort = dataExplorerSortForObjectColumns(command.Sort, columns)
@@ -120,7 +124,7 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 	totalKnown := false
 	for index := 0; index < len(starts); index++ {
 		start := starts[index]
-		query, err := dataExplorerPreviewQuery(projectID, object, command, columns, start, command.Count, index == 0)
+		query, err := dataExplorerPreviewQuery(projectID, object, command, columns, filters, start, command.Count, index == 0)
 		if err != nil {
 			preview.Error = projectsignals.Pointer(err.Error())
 			return preview
@@ -174,7 +178,7 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 	return preview
 }
 
-func dataExplorerPreviewQuery(projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand, columns []projectsignals.DataPreviewColumnSignal, start, count int64, includeTotal bool) (dataquery.Query, error) {
+func dataExplorerPreviewQuery(projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand, columns []projectsignals.DataPreviewColumnSignal, filters []dataquery.Filter, start, count int64, includeTotal bool) (dataquery.Query, error) {
 	semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(object.SemanticModelID))
 	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(object.DatasetID))
 	if object.Layer != "model" {
@@ -194,6 +198,16 @@ func dataExplorerPreviewQuery(projectID projectgraph.ResourceID, object projects
 		sortSpec = append(sortSpec, dataquery.Sort{Field: column, Direction: projectsignals.ValueOrZero(command.Sort.Direction)})
 	}
 	query := dataquery.ModelRows(semanticModelID, datasetID, columnNames, sortSpec, int(start), int(count), includeTotal)
+	if len(filters) > 0 {
+		fields := make([]dataquery.Field, 0, len(columnNames))
+		for _, column := range columnNames {
+			fields = append(fields, dataquery.Field{Field: datasetID + "." + column, Alias: column})
+		}
+		for index := range sortSpec {
+			sortSpec[index].Field = datasetID + "." + sortSpec[index].Field
+		}
+		query = dataquery.SemanticRows(semanticModelID, datasetID, fields, nil, filters, sortSpec, int(start), int(count), includeTotal)
+	}
 	return query.WithMetadata(dataquery.Metadata{
 		ProjectID: projectID, Surface: dataquery.SurfaceDataExplorer, Operation: dataquery.OperationPreviewWindow,
 		ObjectType: object.Layer, ObjectID: object.ResourceID,
