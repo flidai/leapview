@@ -548,8 +548,8 @@ test('chat thread waits until the active run ends before showing unresolved erro
     const visible = () => ({
       errors: Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim()),
       answers: Array.from(thread.shadowRoot.querySelectorAll('.agent-markdown')).map((node: any) => node.value),
-      stepsLabel: Array.from(thread.shadowRoot.querySelectorAll('.run-steps summary')).at(-1)?.textContent?.trim(),
-      stepsText: Array.from(thread.shadowRoot.querySelectorAll('.run-step-list')).at(-1)?.textContent?.replace(/\s+/g, ' ').trim(),
+      stepsLabel: (Array.from(thread.shadowRoot.querySelectorAll('.run-steps summary')) as HTMLElement[]).at(-1)?.textContent?.trim(),
+      stepsText: (Array.from(thread.shadowRoot.querySelectorAll('.run-step-list')) as HTMLElement[]).at(-1)?.textContent?.replace(/\s+/g, ' ').trim(),
     })
     thread.status = { enabled: true, running: true, runId: 'run-new' }
     thread.transcript = transcript

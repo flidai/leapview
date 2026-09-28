@@ -23,12 +23,14 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	toon "github.com/toon-format/toon-go"
 )
 
 const (
 	agentVisualToolName = QueryVisualToolName
 	maxVisualRows       = 50
 	maxVisualBytes      = 8 << 20
+	maxVisualModelBytes = 48 << 10
 )
 
 type VisualAuthorizeFunc func(ctx context.Context, scope Scope, request VisualAuthorizationRequest) (agentcore.ToolResult, bool)
@@ -244,10 +246,126 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 		return apigenAgentToolError("query_visual_failed", err.Error())
 	}
 	result.Result = &compact
+	modelContent := compactAgentVisualModelResult(compact, result.Patch["visuals"][result.ID], agentDefinitionLimit(definition))
 	return agentcore.ToolResult{
 		Content:        compact,
+		ModelContent:   modelContent,
 		DisplayContent: result,
 	}
+}
+
+type agentVisualModelProjection struct {
+	agentcontracts.QueryVisualResult
+	Columns          []string                         `json:"columns"`
+	Rows             [][]any                          `json:"rows"`
+	DataCompleteness agentVisualModelDataCompleteness `json:"dataCompleteness"`
+}
+
+type agentVisualModelDataCompleteness struct {
+	ReturnedRows      int32  `json:"returnedRows"`
+	PrimaryResultRows int32  `json:"primaryResultRows"`
+	Status            string `json:"status"`
+}
+
+func compactAgentVisualModelResult(compact agentcontracts.QueryVisualResult, envelope visualizationir.VisualizationEnvelope, rowLimit int) any {
+	columns, sourceRows, available := agentVisualPrimaryInlineRows(envelope)
+	availableRows := len(sourceRows)
+	if rowLimit <= 0 || rowLimit > maxVisualRows {
+		rowLimit = maxVisualRows
+	}
+	if len(sourceRows) > rowLimit {
+		sourceRows = sourceRows[:rowLimit]
+	}
+	rows := cloneAgentVisualRows(sourceRows)
+	projection := agentVisualModelProjection{
+		QueryVisualResult: compact,
+		Columns:           columns,
+		Rows:              rows,
+		DataCompleteness: agentVisualModelDataCompleteness{
+			PrimaryResultRows: int32(availableRows),
+			Status:            agentVisualModelDataStatus(available, availableRows, len(rows), compact.Completeness.Status),
+		},
+	}
+	initialRowCount := len(projection.Rows)
+	low, high := 0, initialRowCount
+	for low < high {
+		middle := low + (high-low+1)/2
+		candidate := projection
+		candidate.Rows = projection.Rows[:middle]
+		if agentVisualModelProjectionBytes(candidate) <= maxVisualModelBytes {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	if low < initialRowCount {
+		projection.Rows = projection.Rows[:low]
+		projection.DataCompleteness.Status = "truncated"
+	}
+	projection.DataCompleteness.ReturnedRows = int32(len(projection.Rows))
+	if agentVisualModelProjectionBytes(projection) > maxVisualModelBytes {
+		// Preserve the existing compact result if even its row-free projection
+		// cannot fit the model result budget.
+		return compact
+	}
+	return projection
+}
+
+func agentVisualPrimaryInlineRows(envelope visualizationir.VisualizationEnvelope) ([]string, [][]any, bool) {
+	state, ok := envelope.DataState.Value.(*visualizationir.InlineVisualizationDataState)
+	if !ok || state == nil {
+		return []string{}, [][]any{}, false
+	}
+	for _, dataset := range state.Datasets {
+		if dataset.ID != "primary" {
+			continue
+		}
+		columns := append([]string{}, dataset.Columns...)
+		return columns, dataset.Rows, true
+	}
+	return []string{}, [][]any{}, false
+}
+
+func agentVisualModelDataStatus(available bool, sourceRows, returnedRows int, completeness string) string {
+	if !available {
+		return "unavailable"
+	}
+	if sourceRows == 0 {
+		return "empty"
+	}
+	if returnedRows < sourceRows {
+		return "truncated"
+	}
+	if completeness == "limit_reached" {
+		return "limit_reached"
+	}
+	return "complete"
+}
+
+func cloneAgentVisualRows(rows [][]any) [][]any {
+	cloned := make([][]any, len(rows))
+	for index, row := range rows {
+		cloned[index] = append([]any(nil), row...)
+	}
+	return cloned
+}
+
+func agentVisualModelProjectionBytes(projection agentVisualModelProjection) int {
+	jsonBody, jsonErr := json.Marshal(projection)
+	if jsonErr != nil {
+		return maxVisualModelBytes + 1
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(jsonBody)))
+	decoder.UseNumber()
+	var normalized any
+	if err := decoder.Decode(&normalized); err != nil {
+		return maxVisualModelBytes + 1
+	}
+	toonBody, toonErr := toon.MarshalString(normalized)
+	if toonErr != nil {
+		return maxVisualModelBytes + 1
+	}
+	return max(len(jsonBody), len(toonBody))
 }
 
 func decodeAgentVisualInput(rawArgs json.RawMessage) (agentVisualInput, error) {

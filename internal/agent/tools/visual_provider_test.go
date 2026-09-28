@@ -117,6 +117,87 @@ func TestCompactAgentVisualResultMarksEnvelopeErrorNotOK(t *testing.T) {
 	}
 }
 
+func TestCompactAgentVisualModelResultProjectsOnlyBoundedPrimaryInlineRows(t *testing.T) {
+	primaryRows := [][]any{{"DE", int64(12)}, {"FR", int64(8)}, {"US", int64(5)}}
+	result := compactAgentVisualModelResult(agentcontracts.QueryVisualResult{}, visualizationir.VisualizationEnvelope{
+		DataState: visualizationir.VisualizationDataState{Value: &visualizationir.InlineVisualizationDataState{
+			Kind: "inline",
+			Datasets: []visualizationir.VisualizationInlineDataset{
+				{ID: "primary", Columns: []string{"country", "orders"}, Rows: primaryRows},
+				{ID: "context", Columns: []string{"ignored"}, Rows: [][]any{{"secondary"}}},
+			},
+		}},
+	}, 2)
+	projection, ok := result.(agentVisualModelProjection)
+	if !ok {
+		t.Fatalf("model result type = %T, want agentVisualModelProjection", result)
+	}
+	if !reflect.DeepEqual(projection.Columns, []string{"country", "orders"}) {
+		t.Fatalf("columns = %#v, want primary columns", projection.Columns)
+	}
+	if !reflect.DeepEqual(projection.Rows, primaryRows[:2]) {
+		t.Fatalf("rows = %#v, want first two primary rows", projection.Rows)
+	}
+	if got := projection.DataCompleteness; got.ReturnedRows != 2 || got.PrimaryResultRows != 3 || got.Status != "truncated" {
+		t.Fatalf("data completeness = %#v, want 2 returned of 3 with truncation", got)
+	}
+}
+
+func TestCompactAgentVisualModelResultDefaultsNonPositiveRowLimit(t *testing.T) {
+	result := compactAgentVisualModelResult(agentcontracts.QueryVisualResult{}, visualizationir.VisualizationEnvelope{
+		DataState: visualizationir.VisualizationDataState{Value: &visualizationir.InlineVisualizationDataState{
+			Kind:     "inline",
+			Datasets: []visualizationir.VisualizationInlineDataset{{ID: "primary", Rows: [][]any{{"o-1"}}}},
+		}},
+	}, 0)
+	projection, ok := result.(agentVisualModelProjection)
+	if !ok || len(projection.Rows) != 1 {
+		t.Fatalf("model result = %#v, want one row using the default row limit", result)
+	}
+}
+
+func TestCompactAgentVisualModelResultHidesNonInlineRows(t *testing.T) {
+	result := compactAgentVisualModelResult(agentcontracts.QueryVisualResult{}, visualizationir.VisualizationEnvelope{
+		DataState: visualizationir.VisualizationDataState{Value: &visualizationir.WindowedVisualizationDataState{
+			Kind:   "windowed",
+			Blocks: map[string]visualizationir.VisualizationWindowBlock{"first": {ID: "first", Rows: [][]any{{"o-1"}}}},
+		}},
+	}, maxVisualRows)
+	projection, ok := result.(agentVisualModelProjection)
+	if !ok {
+		t.Fatalf("model result type = %T, want agentVisualModelProjection", result)
+	}
+	if len(projection.Columns) != 0 || len(projection.Rows) != 0 || projection.DataCompleteness.Status != "unavailable" {
+		t.Fatalf("non-inline projection = %#v, want empty data marked unavailable", projection)
+	}
+}
+
+func TestCompactAgentVisualModelResultRespectsFormattedByteBudget(t *testing.T) {
+	rows := make([][]any, maxVisualRows)
+	for index := range rows {
+		rows[index] = []any{strings.Repeat("x", 2048)}
+	}
+	result := compactAgentVisualModelResult(agentcontracts.QueryVisualResult{}, visualizationir.VisualizationEnvelope{
+		DataState: visualizationir.VisualizationDataState{Value: &visualizationir.InlineVisualizationDataState{
+			Kind:     "inline",
+			Datasets: []visualizationir.VisualizationInlineDataset{{ID: "primary", Columns: []string{"value"}, Rows: rows}},
+		}},
+	}, maxVisualRows)
+	projection, ok := result.(agentVisualModelProjection)
+	if !ok {
+		t.Fatalf("model result type = %T, want bounded projection", result)
+	}
+	if len(projection.Rows) >= maxVisualRows {
+		t.Fatalf("returned rows = %d, want byte-budget truncation below %d", len(projection.Rows), maxVisualRows)
+	}
+	if projection.DataCompleteness.ReturnedRows != int32(len(projection.Rows)) || projection.DataCompleteness.PrimaryResultRows != maxVisualRows || projection.DataCompleteness.Status != "truncated" {
+		t.Fatalf("data completeness = %#v, want accurate byte-budget truncation", projection.DataCompleteness)
+	}
+	if size := agentVisualModelProjectionBytes(projection); size > maxVisualModelBytes {
+		t.Fatalf("formatted model projection size = %d, exceeds %d-byte budget", size, maxVisualModelBytes)
+	}
+}
+
 func TestAgentVisualQueryRequiresServingSnapshot(t *testing.T) {
 	provider := VisualProvider{Resolve: func(_ context.Context, _ Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
 		return id, nil
@@ -335,6 +416,13 @@ func TestAgentVisualRunTrimsRecordsSentinelToBudget(t *testing.T) {
 			}
 			if !content.Ok || content.Completeness.ReturnedRows != int32(rowLimit) || content.Completeness.Status != "limit_reached" {
 				t.Fatalf("compact completeness = %#v, ok=%t; want %d rows and limit_reached", content.Completeness, content.Ok, rowLimit)
+			}
+			modelContent, ok := result.ModelContent.(agentVisualModelProjection)
+			if !ok {
+				t.Fatalf("model content type = %T, want bounded visual projection", result.ModelContent)
+			}
+			if len(modelContent.Rows) != rowLimit || modelContent.DataCompleteness.PrimaryResultRows != int32(rowLimit) || modelContent.DataCompleteness.Status != "limit_reached" {
+				t.Fatalf("model projection completeness = %#v with %d rows, want %d rows and limit_reached", modelContent.DataCompleteness, len(modelContent.Rows), rowLimit)
 			}
 			display, ok := result.DisplayContent.(agentVisualResult)
 			if !ok {

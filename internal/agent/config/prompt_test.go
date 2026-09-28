@@ -18,3 +18,21 @@ func TestDefaultSystemPromptUsesCompleteDataBeforeExploration(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultSystemPromptExplainsVisualValues(t *testing.T) {
+	for _, want := range []string{
+		"separate Markdown bullet items",
+		"include the exact plotted values in a Markdown table",
+		"Preserve the returned row order",
+		"Use dataCompleteness to distinguish complete, truncated, limit_reached, empty, and unavailable",
+		"State clearly when overall completeness is limit_reached",
+		"do not invent values or calculations",
+	} {
+		if !strings.Contains(DefaultSystemPrompt, want) {
+			t.Fatalf("DefaultSystemPrompt does not contain %q", want)
+		}
+	}
+	if strings.Contains(DefaultSystemPrompt, "End with at most one short sentence") {
+		t.Fatal("DefaultSystemPrompt still suppresses the visual explanation")
+	}
+}
