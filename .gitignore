@@ -80,3 +80,8 @@ infisical-export.*
 __pycache__/
 **/__pycache__/
 *.py[cod]
+
+# Local Nix result links and optional direnv cache
+/result
+/result-*
+/.direnv/

@@ -4,6 +4,23 @@ env:
   GOFLAGS: -tags=duckdb_arrow
 
 tasks:
+  nix:check:
+    desc: Check the locked Nix toolchain and real browser integration
+    cmds:
+      - nix flake check --no-update-lock-file
+      - nix develop --no-update-lock-file -c task nix:smoke
+
+  nix:smoke:
+    desc: Exercise the Go toolchains and pinned Chromium inside nix develop
+    deps: [node:deps]
+    cmds:
+      - node scripts/check_nix_development.mjs
+
+  nix:ci:
+    desc: Run the existing PR contract inside the locked Nix development environment
+    cmds:
+      - nix develop --no-update-lock-file -c task ci
+
   dev:
     desc: Start the managed LeapView dev server with real local authentication
     cmds:

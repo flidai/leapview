@@ -41,6 +41,10 @@ The repository also contains a release-oriented
 
 ## Development
 
+For a pinned x86_64 Linux toolchain, enter `nix develop` before running the commands
+below. See the [Nix development guide](nix/README.md) for prerequisites, checks and
+current scope. The existing non-Nix workflow remains available.
+
 Start the worktree-local development server:
 
 ```sh

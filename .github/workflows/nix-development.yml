@@ -1,0 +1,49 @@
+name: Nix development
+
+on:
+  pull_request:
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'package.json'
+      - 'bun.lock'
+      - 'Taskfile.yml'
+      - 'scripts/check_nix_development.mjs'
+      - 'scripts/ensure_playwright*'
+      - '.github/workflows/nix-development.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-development-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  development:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Check the pinned toolchain and native compiler
+        run: nix flake check --no-update-lock-file -L
+      - name: Check formatting
+        run: nix fmt -- --check flake.nix nix/*.nix
+      - name: Exercise the pinned browser and sqlc toolchain
+        run: nix develop --no-update-lock-file -c task nix:smoke
+      - name: Prepare generated and embedded assets for the fresh checkout
+        run: nix develop --no-update-lock-file -c task ci:prepare
+      - name: Run the existing PR contract with the same development environment
+        run: nix develop --no-update-lock-file -c task ci
