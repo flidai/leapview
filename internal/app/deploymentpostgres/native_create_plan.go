@@ -339,19 +339,47 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 			_ = tx.Rollback(context.Background())
 		}
 	}()
+	acquired, err := c.operations.AcquireTx(ctx, tx, operationInput)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	replay, err := nativePlanOperationDisposition(acquired, operationInput)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+
+	// Keep delivery target before authorization policy in the row-lock order.
+	// First-reviewer grants use the same target fence before changing the policy
+	// head, so a plan waiting for that fence must not already hold the policy
+	// share lock. The operation row remains ahead of both locks, preserving
+	// same-key replay serialization.
+	if freshTarget {
+		if _, err := c.repository.CreateTargetTx(ctx, tx, deploymentnative.TargetInput{
+			TargetID: request.TargetID, ProjectID: request.ProjectID.String(), Environment: request.Environment, TargetRevision: 1,
+		}); err != nil {
+			return deploymentmodule.NativeDeliveryPlan{}, err
+		}
+	}
+	target, err := c.repository.TargetForShareTx(ctx, tx, request.TargetID)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	if err := validateNativePlanTarget(target, request); err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	// An exact replay keeps the historical behavior of returning its stored
+	// outcome even if the target has advanced since the caller's preflight.
+	// New work must still reject a fence change during artifact inspection.
+	if !replay && !sameNativePlanTargetFence(preflightTarget, target) {
+		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("%w: target fence changed during source inspection", deployment.ErrDeliveryConflict)
+	}
 	if _, err := accesspostgres.ValidateAuthorizationPolicyRevisionTx(ctx, tx, access.AuthorizationPolicyScope{
 		TargetID: request.TargetID, ProjectID: request.ProjectID.String(), Environment: request.Environment,
 	}, inspected.AuthorizationPolicyRevision, inspected.AuthorizationPolicyDigest); err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("validate native plan authorization policy: %w", err)
 	}
 
-	acquired, err := c.operations.AcquireTx(ctx, tx, operationInput)
-	if err != nil {
-		return deploymentmodule.NativeDeliveryPlan{}, err
-	}
-	if replay, err := nativePlanOperationDisposition(acquired, operationInput); err != nil {
-		return deploymentmodule.NativeDeliveryPlan{}, err
-	} else if replay {
+	if replay {
 		outcome, err := decodeNativePlanOutcome(acquired.Operation.Outcome, operationInput)
 		if err != nil {
 			return deploymentmodule.NativeDeliveryPlan{}, err
@@ -382,24 +410,6 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 		}
 		committed = true
 		return projection, nil
-	}
-
-	if freshTarget {
-		if _, err := c.repository.CreateTargetTx(ctx, tx, deploymentnative.TargetInput{
-			TargetID: request.TargetID, ProjectID: request.ProjectID.String(), Environment: request.Environment, TargetRevision: 1,
-		}); err != nil {
-			return deploymentmodule.NativeDeliveryPlan{}, err
-		}
-	}
-	target, err := c.repository.TargetForShareTx(ctx, tx, request.TargetID)
-	if err != nil {
-		return deploymentmodule.NativeDeliveryPlan{}, err
-	}
-	if err := validateNativePlanTarget(target, request); err != nil {
-		return deploymentmodule.NativeDeliveryPlan{}, err
-	}
-	if !sameNativePlanTargetFence(preflightTarget, target) {
-		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("%w: target fence changed during source inspection", deployment.ErrDeliveryConflict)
 	}
 	_, reuse, err := c.readBaseTx(ctx, tx, target, request.ProjectID)
 	if err != nil {

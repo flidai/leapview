@@ -1683,6 +1683,7 @@ type SidebarSignal struct {
 	PrimaryAction    *SidebarActionSignal  `json:"primaryAction,omitempty" yaml:"primaryAction,omitempty"`
 	ProductLogoURL   *string               `json:"productLogoUrl,omitempty" yaml:"productLogoUrl,omitempty"`
 	ProductName      string                `json:"productName" yaml:"productName"`
+	PrincipalID      *string               `json:"principalId,omitempty" yaml:"principalId,omitempty"`
 	UserAvatarURL    *string               `json:"userAvatarUrl,omitempty" yaml:"userAvatarUrl,omitempty"`
 	UserName         *string               `json:"userName,omitempty" yaml:"userName,omitempty"`
 	UserRole         *string               `json:"userRole,omitempty" yaml:"userRole,omitempty"`

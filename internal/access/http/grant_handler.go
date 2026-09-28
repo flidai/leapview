@@ -23,7 +23,18 @@ type grantCreateRequest struct {
 }
 
 func grantDTO(g access.AuthorizationGrant, p access.AuthorizationPolicy) map[string]any {
-	return map[string]any{"id": g.ID, "name": g.Name, "resourceId": g.Resource.ID(), "resourceKind": g.Resource.Kind(), "subjectType": g.Subject.Kind, "subjectId": g.Subject.ID, "capability": g.Capability, "policyRevision": p.Revision, "policyDigest": p.Digest}
+	dto := map[string]any{
+		"id": g.ID, "name": g.Name, "resourceId": g.Resource.ID(), "resourceKind": g.Resource.Kind(),
+		"subjectType": g.Subject.Kind, "subjectId": g.Subject.ID,
+		"policyRevision": p.Revision, "policyDigest": p.Digest,
+	}
+	if g.PermissionProfile != "" || g.Permissions != nil {
+		dto["permissionProfile"] = g.PermissionProfile
+		dto["permissions"] = access.ClonePermissionPairs(g.Permissions)
+		return dto
+	}
+	dto["capability"] = g.Capability
+	return dto
 }
 func (h Handler) ListGrants(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	repo, err := h.repository()

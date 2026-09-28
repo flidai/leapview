@@ -1239,9 +1239,9 @@ test('chat history can be hidden and reopened with mouse and keyboard without lo
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
     await page.goto(`${baseURL}/sidebar-history`)
-    const heading = page.locator('summary.history-label')
+    const heading = page.locator('details.chats-history > summary.history-label')
     await heading.waitFor({ timeout: 2000 })
-    const history = page.locator('details.history')
+    const history = page.locator('details.chats-history')
     await heading.click()
     expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(false)
     expect(await page.getByRole('link', { name: 'Revenue check', exact: true }).isVisible()).toBe(false)
@@ -1301,7 +1301,7 @@ test('sidebar renders global chat action and recent history', async () => {
             iconRadius: getComputedStyle(icon).borderRadius,
           }
         })(),
-        historyLabel: root.querySelector('.history-label')?.textContent?.trim(),
+        historyLabel: root.querySelector('.chats-history .history-label')?.textContent?.trim(),
         historySpinner: (() => {
           const spinner = root.querySelector('lv-loading-spinner') as HTMLElement | null
           return {
@@ -1311,7 +1311,7 @@ test('sidebar renders global chat action and recent history', async () => {
         })(),
         hasHistorySearch: Boolean(root.querySelector('.history-search')),
         historyStyle: (() => {
-          const history = root.querySelector('.history') as HTMLElement
+          const history = root.querySelector('.chats-history') as HTMLElement
           const style = getComputedStyle(history)
           return {
             borderTopWidth: style.borderTopWidth,
@@ -1319,11 +1319,11 @@ test('sidebar renders global chat action and recent history', async () => {
           }
         })(),
         historyItemMetrics: (() => {
-          const item = root.querySelector('.history-item') as HTMLElement
+          const item = root.querySelector('.chats-history .history-item') as HTMLElement
           const title = item?.querySelector('.history-title') as HTMLElement
           const navIcon = root.querySelector('a[href="/"] .nav-icon') as HTMLElement
           const navText = root.querySelector('a[href="/"] .nav-text') as HTMLElement
-          const label = root.querySelector('.history-label') as HTMLElement
+          const label = root.querySelector('.chats-history .history-label') as HTMLElement
           const mutedProbe = document.createElement('span')
           mutedProbe.style.color = 'var(--lv-fg-muted)'
           root.append(mutedProbe)
@@ -1350,7 +1350,7 @@ test('sidebar renders global chat action and recent history', async () => {
     expect(state.links).toContainEqual({ href: '/chats/c1', text: 'Revenue check', current: 'page', ariaLabel: 'Revenue check', title: 'Revenue check' })
     expect(state.spacing).toEqual({ navGroupGap: '2px', historyListGap: '2px', navItemHeight: 32 })
     expect(state.hasHistorySearch).toBe(false)
-    expect(state.historyStyle).toEqual({ borderTopWidth: '0px', paddingTop: '8px' })
+    expect(state.historyStyle).toEqual({ borderTopWidth: '0px', paddingTop: '0px' })
     expect(state.historyItemMetrics.gridTemplateColumns).not.toMatch(/^26px /)
     expect(state.historyItemMetrics.labelLeft).toBe(state.historyItemMetrics.navIconLeft)
     expect(state.historyItemMetrics.titleLeft).toBe(state.historyItemMetrics.navIconLeft)
@@ -1643,11 +1643,11 @@ test('insights and develop navigation expose the stable route contract with grou
       return {
         insights: links('Insights'),
         develop: [...links('Catalog'), ...links('Operations')],
-        subtitles: Array.from(root.querySelectorAll('.nav-group-label')).filter((label: Element) => {
+        subtitles: Array.from(root.querySelectorAll('.nav-group:not(.pinned-items) .nav-group-label')).filter((label: Element) => {
           const style = getComputedStyle(label)
           return style.display !== 'none' && style.visibility !== 'hidden'
         }).map((label: Element) => label.textContent?.trim()),
-        subtitleColors: Array.from(root.querySelectorAll('.nav-group-label')).map((label: Element) => getComputedStyle(label).color),
+        subtitleColors: Array.from(root.querySelectorAll('.nav-group:not(.pinned-items) .nav-group-label')).map((label: Element) => getComputedStyle(label).color),
       }
     })
     const developState = await navigationState()
@@ -2035,7 +2035,7 @@ async function sidebarAreaState(page: import('@playwright/test').Page) {
         href: item.getAttribute('href'),
       })),
       items: Array.from(root.querySelectorAll('#mobile-navigation > .nav-group:not(.primary-action) .nav-text strong')).map((item) => item.textContent?.trim()),
-      visibleGroupLabels: Array.from(root.querySelectorAll('#mobile-navigation > .nav-group .nav-group-label')).filter((item) => {
+      visibleGroupLabels: Array.from(root.querySelectorAll('#mobile-navigation > .nav-group:not(.pinned-items) .nav-group-label')).filter((item) => {
         const style = getComputedStyle(item)
         return style.display !== 'none' && style.visibility !== 'hidden'
       }).map((item) => item.textContent?.trim()),

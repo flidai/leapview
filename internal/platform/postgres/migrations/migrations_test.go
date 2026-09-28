@@ -38,7 +38,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		"029_agent_configuration.sql", "030_browser_session_client_label.sql", "031_privacy_action_execution.sql", "032_restore_lifecycle_actions.sql",
 		"033_platform_admin_token_capability.sql", "034_typed_api_token_permissions.sql", "035_job_authority_envelope.sql",
 		"036_typed_permission_validation_hardening.sql", "037_typed_authorization_assignments.sql", "038_durable_authority_grants.sql",
-		"039_resource_share_no_onward_delegation.sql", "040_reject_active_legacy_api_tokens.sql", "041_typed_authoring_permissions.sql", "042_edit_api_tokens.sql",
+		"039_resource_share_no_onward_delegation.sql", "040_reject_active_legacy_api_tokens.sql", "041_typed_authoring_permissions.sql", "042_edit_api_tokens.sql", "043_initial_publisher_password_setup.sql", "044_typed_authorization_policy_grants.sql",
 	}, ","); got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
@@ -245,6 +245,31 @@ func TestTargetAuthorizationPolicyMigrationIsAdditiveAndImmutable(t *testing.T) 
 	down := migration[strings.Index(migration, "-- +goose Down"):]
 	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
 		t.Error("target authorization policy Down must refuse instead of deleting evidence")
+	}
+}
+
+func TestTypedAuthorizationPolicyGrantMigrationPreservesRepresentationBoundary(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "044_typed_authorization_policy_grants.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"ALTER TABLE access.authorization_policy_grant",
+		"ALTER COLUMN capability DROP NOT NULL",
+		"ADD COLUMN permission_profile text",
+		"ADD COLUMN permissions jsonb",
+		"permission_profile IS NULL AND permissions IS NULL AND capability IS NOT NULL",
+		"permission_profile IS NOT NULL AND permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL",
+		"permissions <> '[]'::jsonb AND capability IS NULL",
+		"typed authorization policy grants are forward-only",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("typed authorization policy grant migration missing %q", required)
+		}
+	}
+	if strings.Contains(migration, "UPDATE access.authorization_policy_grant") {
+		t.Error("typed grant migration must not infer typed authority from legacy grants")
 	}
 }
 

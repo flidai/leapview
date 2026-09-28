@@ -42509,10 +42509,23 @@ paths:
               example:
                 environment: example
                 items:
-                  - id: example
-                    name: example
-                    policyDigest: example
-                    policyRevision: 1
+                  - id: sales-dashboard-reader
+                    name: Sales dashboard reader
+                    permissionProfile: leapview.permissions/v1
+                    permissions:
+                      - action: dashboard.read
+                        profile: leapview.permissions/v1
+                        target:
+                          projectId: project:analytics
+                          resourceId: dashboard:sales
+                          resourceKind: dashboard
+                          scope: resource
+                    policyDigest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+                    policyRevision: 4
+                    resourceId: dashboard:sales
+                    resourceKind: dashboard
+                    subjectId: principal:analyst
+                    subjectType: principal
                 page:
                   nextCursor: example
                 policyDigest: example
@@ -42798,10 +42811,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/TargetGrantResponse'
               example:
-                id: example
-                name: example
-                policyDigest: example
-                policyRevision: 1
+                id: sales-dashboard-reader
+                name: Sales dashboard reader
+                permissionProfile: leapview.permissions/v1
+                permissions:
+                  - action: dashboard.read
+                    profile: leapview.permissions/v1
+                    target:
+                      projectId: project:analytics
+                      resourceId: dashboard:sales
+                      resourceKind: dashboard
+                      scope: resource
+                policyDigest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+                policyRevision: 4
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                subjectId: principal:analyst
+                subjectType: principal
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -87713,10 +87739,23 @@ components:
           items:
             $ref: '#/components/schemas/TargetGrantResponse'
           example:
-            - id: example
-              name: example
-              policyDigest: example
-              policyRevision: 1
+            - id: sales-dashboard-reader
+              name: Sales dashboard reader
+              permissionProfile: leapview.permissions/v1
+              permissions:
+                - action: dashboard.read
+                  profile: leapview.permissions/v1
+                  target:
+                    projectId: project:analytics
+                    resourceId: dashboard:sales
+                    resourceKind: dashboard
+                    scope: resource
+              policyDigest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+              policyRevision: 4
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              subjectId: principal:analyst
+              subjectType: principal
         page:
           $ref: '#/components/schemas/PageInfo'
         targetId:
@@ -87741,10 +87780,23 @@ components:
       example:
         environment: example
         items:
-          - id: example
-            name: example
-            policyDigest: example
-            policyRevision: 1
+          - id: sales-dashboard-reader
+            name: Sales dashboard reader
+            permissionProfile: leapview.permissions/v1
+            permissions:
+              - action: dashboard.read
+                profile: leapview.permissions/v1
+                target:
+                  projectId: project:analytics
+                  resourceId: dashboard:sales
+                  resourceKind: dashboard
+                  scope: resource
+            policyDigest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+            policyRevision: 4
+            resourceId: dashboard:sales
+            resourceKind: dashboard
+            subjectId: principal:analyst
+            subjectType: principal
         page:
           nextCursor: example
         policyDigest: example
@@ -87753,10 +87805,12 @@ components:
         targetId: example
     TargetGrantResponse:
       type: object
-      allOf:
-        - $ref: '#/components/schemas/GrantRequest'
       required:
         - id
+        - resourceKind
+        - resourceId
+        - subjectType
+        - subjectId
         - policyRevision
         - policyDigest
       properties:
@@ -87766,6 +87820,40 @@ components:
         name:
           type: string
           example: example
+        resourceKind:
+          $ref: '#/components/schemas/ResourceKind'
+        resourceId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        subjectType:
+          type: string
+          example: example
+        subjectId:
+          type: string
+          example: example
+        capability:
+          $ref: '#/components/schemas/Capability'
+          description: Legacy capability grants include this field; typed grants omit
+            it.
+        permissionProfile:
+          $ref: '#/components/schemas/PermissionCatalogProfile'
+          description: Typed exact grants include this profile and the persisted action-target
+            pairs.
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionPair'
+          example:
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
         policyRevision:
           type: integer
           format: int64
@@ -87773,11 +87861,26 @@ components:
         policyDigest:
           type: string
           example: example
+      description: Each response uses either legacy capability or typed permission
+        fields, never both.
       example:
-        id: example
-        name: example
-        policyDigest: example
-        policyRevision: 1
+        id: sales-dashboard-reader
+        name: Sales dashboard reader
+        permissionProfile: leapview.permissions/v1
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
+        policyDigest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        policyRevision: 4
+        resourceId: dashboard:sales
+        resourceKind: dashboard
+        subjectId: principal:analyst
+        subjectType: principal
     TemporalVisualizationFormat:
       type: object
       allOf:

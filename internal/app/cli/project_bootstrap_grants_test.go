@@ -80,3 +80,63 @@ func TestBootstrapReplayVerifiesResourceGrantsAtSamePolicyRevision(t *testing.T)
 		})
 	}
 }
+
+func TestBootstrapReplayVerifiesTypedResourceGrantAtSamePolicyRevision(t *testing.T) {
+	const target, project, environment, principal = "target-typed-grants", "project:demo", "prod", "principal-admin"
+	scope := access.AuthorizationPolicyScope{TargetID: target, ProjectID: project, Environment: environment}
+	bindings := make([]access.RoleBinding, 0, len(bootstrapBindingSpecs))
+	for _, spec := range bootstrapBindingSpecs {
+		binding, err := access.NewTypedRoleBinding(spec.id, spec.name, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principal}, spec.role, graph.ResourceID(project))
+		if err != nil {
+			t.Fatal(err)
+		}
+		bindings = append(bindings, binding)
+	}
+	resource, err := access.NewResourceRef("dashboard:sales", graph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := access.NewExactPermissionPair(access.ActionDashboardRead, graph.ResourceID(project), resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant := access.AuthorizationGrant{
+		ID: "typed-demo-read", Name: "Typed dashboard reader", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "shared"},
+		Resource: resource, PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{permission},
+	}
+	digest, err := access.AuthorizationPolicyDigest(scope, bindings, grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"type": "about:blank", "title": "Conflict", "status": 409, "detail": "policy already exists", "code": "ROLE_BINDING_CONFLICT", "errors": []any{}, "instance": r.URL.Path, "requestId": "request-typed-grants"})
+			return
+		}
+		response := map[string]any{"targetId": target, "projectId": project, "environment": environment, "policyRevision": 4, "policyDigest": digest, "page": map[string]any{}}
+		if strings.HasSuffix(r.URL.Path, "/grants") {
+			response["items"] = []any{map[string]any{
+				"id": grant.ID, "name": grant.Name, "subjectType": "principal", "subjectId": grant.Subject.ID,
+				"resourceId": resource.ID(), "resourceKind": resource.Kind(),
+				"permissionProfile": grant.PermissionProfile, "permissions": grant.Permissions,
+				"policyRevision": 4, "policyDigest": digest,
+			}}
+		} else {
+			items := make([]any, 0, len(bindings))
+			for _, binding := range bindings {
+				items = append(items, map[string]any{"id": binding.ID, "name": binding.Name, "subjectType": "principal", "subjectId": principal, "role": string(binding.PermissionRole), "permissionProfile": binding.PermissionProfile, "permissions": binding.Permissions, "policyRevision": 4, "policyDigest": digest})
+			}
+			response["items"] = items
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+	client := accessgen.NewGenClient(capabilityAPITransport{target: server.URL, token: "instance-admin", client: server.Client()})
+	revision, actual, err := bootstrapProjectOwnerPolicy(t.Context(), client, target, project, environment, principal)
+	if err != nil || revision != 4 || actual != digest {
+		t.Fatalf("typed-grant replay rejected: revision=%d digest=%s err=%v", revision, actual, err)
+	}
+}

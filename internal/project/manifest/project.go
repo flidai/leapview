@@ -142,11 +142,13 @@ type SecurableRef struct {
 	ID   string `json:"id,omitempty"`
 }
 type Grant struct {
-	ID         string       `json:"id"`
-	Name       string       `json:"name"`
-	Object     SecurableRef `json:"object"`
-	Subject    Subject      `json:"subject"`
-	Capability string       `json:"capability"`
+	ID                string                  `json:"id"`
+	Name              string                  `json:"name"`
+	Object            SecurableRef            `json:"object,omitempty"`
+	Subject           Subject                 `json:"subject"`
+	Capability        string                  `json:"capability,omitempty"`
+	PermissionProfile string                  `json:"permissionProfile,omitempty"`
+	Permissions       []access.PermissionPair `json:"permissions,omitempty"`
 }
 type DataPolicy struct {
 	ID             string       `json:"id"`

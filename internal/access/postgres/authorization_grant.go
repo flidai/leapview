@@ -36,8 +36,23 @@ func readAuthorizationPolicyGrants(ctx context.Context, db DBTX, scope access.Au
 		if err != nil {
 			return nil, err
 		}
-		grant := access.AuthorizationGrant{ID: row.ID, Name: row.Name, Subject: access.SubjectRef{Kind: access.SubjectKind(row.SubjectKind), ID: row.SubjectID}, Resource: resource, Capability: access.Capability(row.Capability)}
-		if err := access.ValidateAuthorizationGrant(grant); err != nil {
+		grant := access.AuthorizationGrant{ID: row.ID, Name: row.Name, Subject: access.SubjectRef{Kind: access.SubjectKind(row.SubjectKind), ID: row.SubjectID}, Resource: resource}
+		if row.PermissionProfile != nil || row.Permissions != nil {
+			if row.PermissionProfile == nil || row.Capability != nil {
+				return nil, fmt.Errorf("decode authorization policy grant %q: mixed or incomplete typed representation", row.ID)
+			}
+			pairs, decodeErr := access.DecodePermissionPairs(row.Permissions)
+			if decodeErr != nil {
+				return nil, fmt.Errorf("decode authorization policy grant %q permissions: %w", row.ID, decodeErr)
+			}
+			grant.PermissionProfile, grant.Permissions = *row.PermissionProfile, pairs
+		} else {
+			if row.Capability == nil {
+				return nil, fmt.Errorf("decode authorization policy grant %q: legacy capability is missing", row.ID)
+			}
+			grant.Capability = access.Capability(*row.Capability)
+		}
+		if err := access.ValidateAuthorizationGrantForScope(grant, scope); err != nil {
 			return nil, err
 		}
 		grants = append(grants, grant)
@@ -46,7 +61,22 @@ func readAuthorizationPolicyGrants(ctx context.Context, db DBTX, scope access.Au
 }
 func insertAuthorizationPolicyGrants(ctx context.Context, db DBTX, scope access.AuthorizationPolicyScope, revision int64, grants []access.AuthorizationGrant) error {
 	for _, g := range grants {
-		if err := accessdb.New(db).InsertAuthorizationPolicyGrant(ctx, accessdb.InsertAuthorizationPolicyGrantParams{TargetID: scope.TargetID, ProjectID: scope.ProjectID, Environment: scope.Environment, Revision: revision, ID: g.ID, Name: g.Name, SubjectKind: string(g.Subject.Kind), SubjectID: g.Subject.ID, ResourceKind: string(g.Resource.Kind()), ResourceID: string(g.Resource.ID()), Capability: string(g.Capability)}); err != nil {
+		params := accessdb.InsertAuthorizationPolicyGrantParams{
+			TargetID: scope.TargetID, ProjectID: scope.ProjectID, Environment: scope.Environment, Revision: revision,
+			ID: g.ID, Name: g.Name, SubjectKind: string(g.Subject.Kind), SubjectID: g.Subject.ID,
+			ResourceKind: string(g.Resource.Kind()), ResourceID: string(g.Resource.ID()),
+		}
+		if g.PermissionProfile != "" || g.Permissions != nil {
+			encoded, err := access.EncodePermissionPairs(g.Permissions)
+			if err != nil {
+				return fmt.Errorf("encode authorization policy grant %q permissions: %w", g.ID, err)
+			}
+			params.PermissionProfile = nullableString(g.PermissionProfile)
+			params.Permissions = encoded
+		} else {
+			params.Capability = nullableString(string(g.Capability))
+		}
+		if err := accessdb.New(db).InsertAuthorizationPolicyGrant(ctx, params); err != nil {
 			return err
 		}
 	}
@@ -75,15 +105,11 @@ func (r *Repository) upsertAuthorizationGrantCore(ctx context.Context, db DBTX, 
 	if replay, ok, replayErr := r.checkAuthorizationPolicyOperation(ctx, db, input.Scope, input.IdempotencyKey, requestDigest); ok || replayErr != nil {
 		return replay, replayErr
 	}
-	if err := access.ValidateAuthorizationGrant(grantInput.Grant); err != nil {
+	if err := access.ValidateAuthorizationGrantForScope(grantInput.Grant, grantInput.Scope); err != nil {
 		return access.AuthorizationPolicy{}, err
 	}
 	if err := validateAuthorizationPolicySubject(ctx, db, grantInput.Grant.Subject); err != nil {
 		return access.AuthorizationPolicy{}, err
-	}
-
-	if grantInput.Grant.Resource.Kind() == graph.KindProjectNamespace && string(grantInput.Grant.Resource.ID()) != input.Scope.ProjectID {
-		return access.AuthorizationPolicy{}, fmt.Errorf("%w: grant belongs to another project", access.ErrAuthorizationPolicyInvalidBinding)
 	}
 	queries := accessdb.New(db)
 	headRow, err := queries.LockAuthorizationPolicyHead(ctx, policyScopeLockParams(input.Scope))
