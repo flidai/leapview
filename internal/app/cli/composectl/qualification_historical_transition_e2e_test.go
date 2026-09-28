@@ -161,7 +161,7 @@ func runQualificationHistoricalTransitionScenario(
 		"typed workload roles and the real viewer must stay within their exact authority")
 	qualificationHistoricalStopContainer(t, candidate.Candidate)
 	replacementRuntime := newTestcontainersQualificationRuntime()
-	_, replacementEndpoint := startQualificationHistoricalServer(t, ctx, replacementRuntime,
+	replacementCandidate, replacementEndpoint := startQualificationHistoricalServer(t, ctx, replacementRuntime,
 		fixture.Network, fixture.StateVolume, options.CandidateImage, fixture.ApplicationEnv,
 		fixture.ComposeProject+"-candidate-redeployment")
 	replacementProxy := startQualificationHistoricalTransport(t, ctx, repoRoot, replacementEndpoint)
@@ -171,6 +171,14 @@ func runQualificationHistoricalTransitionScenario(
 	replacementSeed.SourceRoot = historicalQualificationCFOSourceAt(t, repoRoot, options.CandidateRevision)
 	nextPublication, err := runQualificationHistoricalPublication(ctx, t, repoRoot, replacementSeed,
 		replacementProxy, options.CandidateRevision, releasecontract.TypedPermissions)
+	if err != nil {
+		t.Logf("replacement publication candidate HTTP failures (method/path/status only):\n%s",
+			replacementProxy.target.failureTail(16))
+		serverLogs, logsErr := replacementCandidate.Logs(ctx, 128)
+		t.Logf("replacement publication candidate server diagnostics: %s",
+			qualificationHistoricalCandidateFailureLogs(serverLogs, logsErr,
+				fixture.Seed.PublisherClientSecret, fixture.Seed.ReleaseClientSecret, fixture.Seed.ViewerPassword))
+	}
 	require.NoError(t, err, "the normal publication adapter must work after same-image candidate replacement")
 	require.Equal(t, options.CandidateRevision, nextPublication.RuntimeRevision)
 	require.NotEqual(t, candidate.Transition.PublicationID, nextPublication.PublicationID,
@@ -193,6 +201,33 @@ func runQualificationHistoricalTransitionScenario(
 		SubsequentDeploy:        nextPublication.RuntimeRevision == options.CandidateRevision && nextPublication.PublicationID != candidate.Transition.PublicationID,
 	}
 	return checks
+}
+
+func qualificationHistoricalCandidateFailureLogs(contents []byte, err error, secrets ...string) string {
+	if err != nil {
+		contents = append(append([]byte(nil), contents...), []byte("\nlog retrieval failed: "+err.Error())...)
+	}
+	redacted := redactQualificationBytes(contents)
+	filtered := make([]string, 0, 24)
+	for _, line := range strings.Split(string(redacted), "\n") {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "error") || strings.Contains(lower, "warn") || strings.Contains(lower, "fail") ||
+			strings.Contains(lower, "managed-data") || strings.Contains(lower, "panic") || strings.Contains(lower, "exception") {
+			for _, secret := range secrets {
+				if secret != "" {
+					line = strings.ReplaceAll(line, secret, "[REDACTED]")
+				}
+			}
+			filtered = append(filtered, line)
+			if len(filtered) > 24 {
+				filtered = filtered[len(filtered)-24:]
+			}
+		}
+	}
+	if len(filtered) == 0 {
+		return "no matching error, warning, failure, or managed-data log lines"
+	}
+	return qualificationHistoricalDiagnosticTail([]byte(strings.Join(filtered, "\n")), 8<<10)
 }
 
 // TestQualificationHistoricalPredecessorFixture is an opt-in diagnostic for
@@ -683,8 +718,10 @@ type qualificationHistoricalTransport struct {
 }
 
 type qualificationHistoricalProxyTarget struct {
-	mu  sync.RWMutex
-	url *url.URL
+	mu        sync.RWMutex
+	url       *url.URL
+	failureMu sync.Mutex
+	failures  []string
 }
 
 func newQualificationHistoricalProxyTarget(endpoint string) (*qualificationHistoricalProxyTarget, error) {
@@ -713,14 +750,45 @@ func (target *qualificationHistoricalProxyTarget) current() *url.URL {
 	return &copy
 }
 
+func (target *qualificationHistoricalProxyTarget) recordFailure(response *http.Response) {
+	if response == nil || response.StatusCode < http.StatusBadRequest || response.Request == nil {
+		return
+	}
+	entry := fmt.Sprintf("%s %s -> HTTP %d", response.Request.Method, response.Request.URL.EscapedPath(), response.StatusCode)
+	target.failureMu.Lock()
+	target.failures = append(target.failures, entry)
+	if len(target.failures) > 64 {
+		target.failures = append([]string(nil), target.failures[len(target.failures)-64:]...)
+	}
+	target.failureMu.Unlock()
+}
+
+func (target *qualificationHistoricalProxyTarget) failureTail(limit int) string {
+	target.failureMu.Lock()
+	defer target.failureMu.Unlock()
+	if len(target.failures) == 0 {
+		return "no non-2xx candidate responses were recorded"
+	}
+	if limit <= 0 || limit > len(target.failures) {
+		limit = len(target.failures)
+	}
+	return strings.Join(target.failures[len(target.failures)-limit:], "\n")
+}
+
 func qualificationHistoricalReverseProxy(target *qualificationHistoricalProxyTarget) *httputil.ReverseProxy {
-	return &httputil.ReverseProxy{Director: func(request *http.Request) {
-		proxyTarget := target.current()
-		request.URL.Scheme = proxyTarget.Scheme
-		request.URL.Host = proxyTarget.Host
-		request.Host = "demo.leapview.dev"
-		request.Header.Set("X-Forwarded-Proto", "https")
-	}}
+	return &httputil.ReverseProxy{
+		Director: func(request *http.Request) {
+			proxyTarget := target.current()
+			request.URL.Scheme = proxyTarget.Scheme
+			request.URL.Host = proxyTarget.Host
+			request.Host = "demo.leapview.dev"
+			request.Header.Set("X-Forwarded-Proto", "https")
+		},
+		ModifyResponse: func(response *http.Response) error {
+			target.recordFailure(response)
+			return nil
+		},
+	}
 }
 
 func (transport *qualificationHistoricalTransport) setEndpoint(endpoint string) error {

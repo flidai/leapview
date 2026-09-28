@@ -47,14 +47,15 @@ class ClientContractTests(unittest.TestCase):
         self.assertEqual(contract.scope_for(contract.LEGACY_PROFILE, 'release'),
                          'PROJECT_ADMIN RESOURCE_READ')
         self.assertEqual(contract.scope_for(contract.TYPED_PROFILE, 'publisher'),
-                         'connection.manage connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read')
+                         'connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read')
         self.assertEqual(contract.scope_for(contract.TYPED_PROFILE, 'release'),
                          'delivery.approve delivery.read')
         self.assertEqual(contract.scope_for(contract.TYPED_PROFILE, 'inspection'), 'delivery.read')
 
     def test_typed_publisher_scope_includes_graph_reads_without_authoring_or_approval(self):
         actions = set(contract.scope_for(contract.TYPED_PROFILE, 'publisher').split())
-        self.assertTrue({'source.read', 'model.read', 'semantic.consume', 'connection.use'} <= actions)
+        self.assertTrue({'source.read', 'model.read', 'semantic.consume', 'connection.use',
+                         'connection.manage', 'connection.read'} <= actions)
         self.assertFalse({'source.update', 'model.update', 'semantic.update', 'connection.create',
                           'delivery.approve', 'project.access.manage'} & actions)
 

@@ -26,12 +26,12 @@ PROFILES = {
         'inspection': 'RESOURCE_READ',
     },
     TYPED_PROFILE: {
-        # deploy_demo.sh: managed-data upload, candidate source sync, plan,
+        # deploy_demo.sh: managed-data upload and upload-session reads, source sync, plan,
         # build, graph-derived dependency authorization, candidate status,
         # publication and approval request. Exact resource authority still
         # comes from the target's typed grants; these actions are only the
         # short-lived token ceiling for the project.
-        'publisher': 'connection.manage connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read',
+        'publisher': 'connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read',
         # Keep approval separate from publishing; reads are limited to the
         # resulting publication/generation. Their evidence binds ProjectUID.
         'release': 'delivery.approve delivery.read',

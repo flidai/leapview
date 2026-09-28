@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"testing"
 
@@ -81,6 +82,11 @@ func qualificationHistoricalTransitionGrants(t *testing.T, seed qualificationHis
 	for _, dependency := range plan.Dependencies {
 		add(seed.PublisherPrincipalID, dependency.Resource.ID(), dependency.Resource.Kind(), dependency.Action)
 	}
+	// The normal managed-data adapter reads upload-session state as part of
+	// finalization polling, so it needs connection.read in addition to the
+	// planner's connection.use and the explicit upload authority. Keep that
+	// support permission on the one CFO connection only.
+	add(seed.PublisherPrincipalID, projectgraph.ResourceID("connection:finance_files"), projectgraph.KindConnection, access.ActionConnectionRead)
 	add(seed.PublisherPrincipalID, projectgraph.ResourceID("connection:finance_files"), projectgraph.KindConnection, access.ActionConnectionManage)
 	add(seed.ViewerPrincipalID, projectgraph.ResourceID(seed.DashboardID), projectgraph.KindDashboard, access.ActionDashboardRead)
 	add(seed.ViewerPrincipalID, projectgraph.ResourceID("semantic-model:finance"), projectgraph.KindSemanticModel, access.ActionSemanticConsume)
@@ -109,6 +115,28 @@ func qualificationHistoricalTransitionGrants(t *testing.T, seed qualificationHis
 		"semantic-model:finance": {string(access.ActionSemanticConsume)},
 	}, viewerGrants, "the viewer must retain exactly dashboard.read and semantic.consume")
 	return grants
+}
+
+func TestQualificationHistoricalTransitionConnectionReadIsExact(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", "..", ".."))
+	require.NoError(t, err)
+	grants := qualificationHistoricalTransitionGrants(t, qualificationHistoricalSeed{
+		TargetID: "lvinst_historical_transition", ProjectID: "project:historical-transition",
+		DashboardID: "dashboard:cfo-command-center", PublisherPrincipalID: "principal:publisher",
+		ViewerPrincipalID: "principal:viewer", SourceRoot: filepath.Join(repoRoot, "dashboards", "experiments", "cfo-demo"),
+	})
+
+	var connectionGrants []admincli.AccessTransitionGrantIntent
+	for _, grant := range grants {
+		if grant.Principal == "principal:publisher" && grant.ResourceKind == string(projectgraph.KindConnection) {
+			connectionGrants = append(connectionGrants, grant)
+		}
+	}
+	require.Len(t, connectionGrants, 1, "the publisher must receive no connection authority outside the CFO dependency")
+	require.Equal(t, "connection:finance_files", connectionGrants[0].ResourceID)
+	require.ElementsMatch(t, []string{
+		string(access.ActionConnectionManage), string(access.ActionConnectionRead), string(access.ActionConnectionUse),
+	}, connectionGrants[0].Actions, "upload-session reads and finalization stay scoped to the exact connection")
 }
 
 func historicalDependencyKey(action access.Action, kind projectgraph.Kind, resourceID string) string {

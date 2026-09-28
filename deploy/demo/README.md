@@ -130,7 +130,7 @@ project authoring, and release publication. The release principal uses a separat
 inspection. The version-aware client selects scopes before OAuth from the
 independently bound deployed source; it does not authenticate just to discover
 which scopes authentication requires. The typed publisher requests
-`connection.manage connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read`;
+`connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read`;
 the reviewer requests `delivery.approve delivery.read`.
 These publisher actions are only the short-lived token ceiling needed by
 managed-data ingestion and the retained CFO graph. They do not create role or
@@ -234,8 +234,10 @@ For the retained CFO source graph, the publisher's typed policy also needs
 `model:finance_products`, `model:finance_segments`,
 `model:financial_performance`, `model:pnl_lines`, `model:pnl_statement`,
 `model:variance_driver_dimension`, and `model:variance_drivers`,
-`semantic.consume` on `semantic-model:finance`, and both `connection.use` and
-`connection.manage` on `connection:finance_files`. These resource grants are
+`semantic.consume` on `semantic-model:finance`, and `connection.read`, `connection.use`, and
+`connection.manage` on `connection:finance_files`. Managed-data synchronization
+needs read access to recover and poll its upload session as well as manage access
+to stage files. These resource grants are
 independent of the publisher's project-scoped `release_operator` role. The
 schema-32 inventory command does not emit graph dependencies; this list comes
 from the unchanged retained CFO graph. This supported transition path covers

@@ -113,7 +113,7 @@ if [[ "$script" == */scripts/demo_client_contract.py ]]; then
         shift
       done
       case "$role" in
-        publisher) printf '%s\n' 'connection.manage connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read' ;;
+        publisher) printf '%s\n' 'connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read' ;;
         release) printf '%s\n' 'delivery.approve delivery.read' ;;
         *) echo "unexpected client role: $role" >&2; exit 70 ;;
       esac
@@ -197,7 +197,7 @@ esac
                 'TEST_EXPECTED_GENERATION': GENERATION,
                 'TEST_EXPECTED_TARGET_ID': TARGET,
                 'TEST_EXPECTED_ENVIRONMENT': ENVIRONMENT,
-                'TEST_EXPECTED_PUBLISHER_SCOPE': 'connection.manage connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read',
+                'TEST_EXPECTED_PUBLISHER_SCOPE': 'connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read',
                 'TEST_EXPECTED_RELEASE_SCOPE': 'delivery.approve delivery.read',
                 'TEST_EXPECTED_TARGET': 'https://demo.leapview.dev',
                 'TEST_EXPECTED_LOGIN_PATH': '/login',

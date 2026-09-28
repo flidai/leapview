@@ -68,7 +68,11 @@ func TestQualificationHistoricalTransportRetargetAfterServerRestart(t *testing.T
 		_, _ = io.WriteString(w, "first")
 	}))
 	defer first.Close()
-	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/denied" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		_, _ = io.WriteString(w, "restarted")
 	}))
 	defer second.Close()
@@ -91,4 +95,10 @@ func TestQualificationHistoricalTransportRetargetAfterServerRestart(t *testing.T
 
 	require.NoError(t, target.setEndpoint(strings.TrimPrefix(second.URL, "http://")))
 	require.Equal(t, "restarted", getBody(), "the stable viewer proxy must follow a restarted container's new bridge address")
+
+	response, err := http.Get(proxy.URL + "/denied?token=must-not-be-recorded")
+	require.NoError(t, err)
+	_ = response.Body.Close()
+	require.Equal(t, http.StatusForbidden, response.StatusCode)
+	require.Equal(t, "GET /denied -> HTTP 403", target.failureTail(1), "adapter diagnostics must retain only bounded route/status data, never query values")
 }
