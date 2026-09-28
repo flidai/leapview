@@ -16,7 +16,7 @@ tooling, shared LeapView lifecycle commands, and the UBDR occurrence/evidence
 contracts. Linear tracks owners and delivery status. No production capability or
 numeric service guarantee is established by this specification.
 
-| Gate | Required before | Open decisions and evidence |
+| Gate | Required before | Configuration and evidence |
 |---|---|---|
 | Operated VPS, PostgreSQL and local analytical rebuild | Managed launch | Selected stack configuration, region/plan qualification, rebuild time, protected customer state, isolation and eligibility |
 | Bundled Compose dependencies | Advertising bundled single-host production support | Local persistence, rebuild/publication and PostgreSQL dependency lifecycle evidence |
@@ -29,6 +29,26 @@ local persistent storage and bundled PostgreSQL by default. Neither profile requ
 analytical serving. Managed operations additionally require monitoring and off-host
 protection of irreplaceable state; self-hosters configure those integrations.
 Analytical output backups are optional when full reconstruction is qualified.
+
+## First managed deployment milestone
+
+Qualify one complete customer installation before repeating it across customers:
+
+1. Provision both VPS roles from the public OpenTofu/NixOS configuration and deploy
+   the approved application artifact through Kamal.
+2. Run representative queries, SSE, uploads and background pipelines; upgrade and
+   roll back within the supported compatibility window after new writes.
+3. Patch and reboot each host independently, verifying service, mounts, credentials
+   and network exposure after startup.
+4. Replace the application host; preserve authoritative state, restore retained
+   files and rebuild analytical outputs into a fresh catalog/directory as needed.
+5. Replace the PostgreSQL host; restore with pgBackRest and reconcile jobs, file
+   effects and publication. Prevent a returning old primary from accepting writes.
+6. Exercise independent key/artifact recovery and management-service outages. Record
+   achieved RPO/RTO, source freshness, remaining manual steps and operating cost.
+
+Retain release digests, Nix input revisions, infrastructure/configuration identity
+and dated results. A passing managed exercise does not replace Compose qualification.
 
 ## Operated profile qualification
 
@@ -45,7 +65,8 @@ implementation, maintenance process, escalation and recovery evidence for each:
 | Kamal and proxy | Pinned versions, application updates, rollback, HTTPS renewal, trusted client identity and SSE |
 | Self-operated PostgreSQL | Customer database VPS, roles, TLS, version/OS maintenance, PITR, archive monitoring, retention and restoration to a replacement host |
 | Local SSD | Persistent mount layout, isolated paths, integrity, capacity, rebuild/publication and safe cleanup |
-| Hetzner Object Storage | Protection of customer state/retained inputs, pgBackRest compatibility, access isolation, retention, deletion protection, restore/export and keys |
+| Restic | Irreplaceable file inventory, consistent recovery points, encrypted repository, retention, keys and restore exercises |
+| Hetzner Object Storage | Protection of customer state/retained inputs, pgBackRest/Restic compatibility, access isolation, retention, deletion protection, restore/export and keys |
 | Better Stack | Monitoring coverage, redacted logs, alerts, on-call, status pages, retention and processing locations |
 | Tailscale | Customer-scoped operator/runner access, OIDC trust, operator MFA, revocation and recovery access |
 | GitHub Actions, GHCR and Trivy | Environment protections, scoped secret delivery, immutable release images, vulnerability gates and remediation |
@@ -73,6 +94,12 @@ database vendors are not required by this profile.
   survive configuration activation, host reboot and application release overlap.
 - Retain and test known-good generations; qualify garbage collection, disk pressure,
   build/cache unavailability and overdue security-update detection.
+- Verify the NixOS security-notice review and scheduled/expedited input-update
+  process against deployed package revisions. Record remediation deadlines and
+  overdue alerts. Trivy image results do not establish NixOS host coverage.
+- Verify published ports from outside the host and from unauthorized networks,
+  accounting for Docker rules as well as NixOS/provider firewalls. Database,
+  application bypass and metrics endpoints must not be publicly reachable.
 - Pin PostgreSQL major versions; test minor updates and backup service restarts.
   Prove the major-upgrade/data-recovery runbook independently of OS rollback.
 
@@ -85,6 +112,10 @@ for production. Do not require self-hosters to subscribe to them.
   verify actionable alerts and escalation. Check log/trace redaction, metrics
   labels, retention, processing region and access isolation. Exclude credentials,
   query results and sensitive request bodies; do not record credential UI sessions.
+  Use explicit application instrumentation and scoped host/database collection;
+  review any broad filesystem mounts or privileged eBPF use. Bound memory, disk
+  buffers and cardinality. Exercise certificate expiry, pipeline backlog/failures,
+  WAL archival failures, backup age and failed restore-test alerts.
 - **Tailscale:** scope GitHub OIDC trust and ephemeral runner grants to the intended
   customer/environment. Test operator revocation and denied cross-customer access.
   Verify database/SSH authorization separately, record audit coverage, and rehearse
@@ -94,7 +125,10 @@ for production. Do not require self-hosters to subscribe to them.
   least-privilege jobs and per-customer secrets. Scan the actual release digest and
   enforce documented remediation/exception rules. Keep infrastructure, runtime,
   migration and backup privileges separate. Changing a GitHub secret must require
-  explicit deployment/reload; protect Kamal's target-host secret files.
+  explicit deployment/reload; protect Kamal's target-host secret files. Verify fresh
+  recovery can retrieve approved images, matching configuration, Nix recovery
+  artifacts, protected infrastructure state and bootstrap keys when GitHub/GHCR
+  are unavailable, or explicitly include the dependency in the recovery bound.
 - **Customer credentials:** use the same authorized/audited service for UI, API and
   bootstrap. Test secret redaction, version validation/activation, pool refresh,
   in-flight behavior and cross-scope ciphertext rejection. Reject incorrect keys
@@ -199,19 +233,34 @@ restoration is distinct from analytical reconstruction and must preserve authori
 For managed customers, require off-host recoverable copies of customer state,
 retained uploads, necessary authored artifacts and protected configuration/keys.
 Use the selected Hetzner Object Storage destination for managed backups; qualify
-pgBackRest and retained-file protection against its actual API and retention behavior.
+pgBackRest and Restic against its actual API and retention behavior.
 Document shared provider/account risks and independently controlled copies required
 by the recovery commitment. Self-hosters can choose supported alternatives.
 Verify access separation, retention, deletion behavior and restore testing. A
 backup on the same VPS is insufficient for host-loss recovery. State the accepted
 RPO, including upload acknowledgement versus durable-copy completion.
 
+Inventory irreplaceable files and protect them with Restic. Test repository/key
+recovery, partial or interrupted backups, retention/pruning and restoration onto an
+empty application host. Do not use filesystem copying of live PostgreSQL data as a
+substitute for pgBackRest. File backups must coordinate with related application
+records and any DuckLake catalog snapshot; record upload acknowledgement versus
+backup completion and the resulting loss window.
+
+Hetzner object credentials are project-wide by default. Prove customer access
+boundaries with negative tests; separate bucket names are insufficient. Decide
+Object Lock requirements before bucket creation. Qualify both backup tools against
+retention, version/delete-marker recovery, expiration/pruning and key revocation;
+do not assume bucket protection or versioning alone supplies immutable retention.
+An independently controlled copy outside the provider/account failure domain is
+required if complete provider/account loss is within the promised recovery scope.
+
 Backups of fully rebuildable analytical outputs are optional. If used, qualify a
 consistent catalog/file recovery point including cleanup and retention behavior.
 PostgreSQL PITR alone does not recover local Parquet files. If not used,
 prove source reconstruction fits recovery commitments and document upstream-outage
 behavior. Do not restore older control state merely because analytical SSD data
-was lost. Use pgBackRest for PostgreSQL recovery and established tools for
+was lost. Use pgBackRest for PostgreSQL recovery and Restic for
 retained files; backups of PostgreSQL do not include external artifact directories.
 
 Self-hosted startup requires no off-host storage, monitoring service or backup
@@ -298,7 +347,10 @@ Pin Kamal/proxy versions. Record readiness checks, deployment/drain/stop timeout
 SSE buffering and response timeouts, upload limits, resource limits and supported
 release pairs. Deploy CI-built immutable artifacts; verify the image identity
 actually running. Serialize releases per environment and promote customers in
-explicit batches using ordinary CI/inventory controls.
+explicit batches using ordinary CI/inventory controls. Test first-event latency,
+long-lived SSE delivery, reconnects and draining through both direct kamal-proxy
+and optional Cloudflare ingress; explicitly configure buffering and timeouts.
+Test certificate renewal and trusted forwarding in each supported ingress mode.
 
 Retain images, versioned configuration and compatible secret inputs for the
 supported rollback window. Align local pruning and registry retention. Test
@@ -329,8 +381,11 @@ worker cannot commit effects after authority transfers.
 Kamal's normal update briefly overlaps processes even without a warm standby.
 Budget concurrent DuckDB memory, container memory, query admission and temporary
 disk. Qualify file access and catalog compatibility during overlap; do not infer
-safe concurrent writes to a shared local database file. Bound interrupted queries,
-SSE reconnection and upload retries, and preserve queued-work compatibility.
+safe concurrent writes to a shared local database file. Verify identical persistent
+path mappings across release pairs, reader-safe cleanup, catalog compatibility and
+publication fencing. Recovery/rollback must respect committed schema and catalog
+changes. Bound interrupted queries, SSE reconnection and upload retries, and
+preserve queued-work compatibility.
 
 ## Availability and assurance gate
 
@@ -413,3 +468,13 @@ Certification and legal compliance claims require their own scope and evidence.
 
 These are proposed requirements, not claims that the current product or selected
 provider configuration passes qualification.
+
+Additional target-stack references reviewed on 2026-09-28:
+
+- [Trivy OS coverage](https://trivy.dev/docs/latest/coverage/os/) and
+  [Nixpkgs security tracker](https://tracker.security.nixos.org/).
+- [Docker firewall behavior](https://docs.docker.com/engine/network/packet-filtering-firewalls/)
+  and [Better Stack collector](https://betterstack.com/docs/logs/collector/).
+- [Restic](https://restic.readthedocs.io/en/stable/),
+  [Hetzner object credential scope](https://docs.hetzner.com/storage/object-storage/overview/)
+  and [Object Lock/retention](https://docs.hetzner.com/storage/object-storage/faq/buckets-objects/).

@@ -171,12 +171,12 @@ service. Public examples must explain required external dependencies and how an
 operator supplies them independently. This ADR does not change the product's
 license or third-party component licenses.
 
-### Reference technologies and their responsibilities
+### Selected target stack
 
-The following technologies are selected for the target stack in this proposal.
-Implementation and production qualification remain delivery work; pending evidence
-does not leave the technology selection open. The ADR itself remains proposed
-until review. Exact versions, plans and resource sizes are qualified separately.
+The following stack is the agreed target architecture. Implementation and
+production qualification remain delivery work; pending evidence does not leave
+the technology selection open. The ADR remains proposed until PR review. Exact
+versions, plans and resource sizes are qualified separately.
 
 | Layer | Selected technology | Responsibility and inclusion |
 |---|---|---|
@@ -190,19 +190,23 @@ until review. Exact versions, plans and resource sizes are qualified separately.
 | Self-hosted deployment | Docker Compose; optional Caddy | Minimal public installation with bundled PostgreSQL and optional HTTPS. |
 | Managed application deployment | Kamal and kamal-proxy | Health-gated releases, TLS and traffic routing, draining and restart-based rollback. No retained warm release. |
 | Database | Self-operated PostgreSQL | Application state, encrypted customer credentials, jobs and DuckLake metadata. Separate customer database VPS with one primary; bundled locally for Compose. |
-| Background jobs | River / PostgreSQL | Durable jobs and recovery work without an additional Redis service. |
+| Background jobs | River / PostgreSQL | Selected baseline; a separate bounded River/DBOS evaluation may propose a later change. No additional broker. |
 | Analytical storage | DuckDB and DuckLake on local SSD | Local analytical serving; rebuild and republish only where complete source replay is supported. |
 | PostgreSQL backups | pgBackRest and standard scheduling | Base backups, continuous WAL archiving, retention and PITR. |
+| Irreplaceable local-file backups | Restic, when such files exist | Protect retained uploads, source inputs and artifacts outside PostgreSQL; coordinate recovery points where state is related. |
 | Off-host backup destination | Hetzner Object Storage | Encrypted managed PostgreSQL backups and protection for irreplaceable files. Qualify actual storage/retention guarantees. S3 is outside the analytical serving path. |
 | Private administration | Tailscale | Customer-scoped operator and deployment access; prefer GitHub OIDC federation for temporary runner access. |
 | Public edge / WAF | Cloudflare, optional per deployment | Supported managed edge where customer data-processing requirements permit it; qualify SSE, uploads, certificates and origin protection. |
 | CI and release registry | GitHub Actions and GHCR | Build, test and publish immutable images with provenance; deploy approved existing artifacts. |
-| Image security | Trivy | Release image vulnerability scanning with a defined remediation and exception policy. |
+| Image security | Trivy | Scan supported release images and dependencies; define remediation and exception policy. Does not establish NixOS host coverage. |
+| Host security maintenance | NixOS security notices and reviewed input updates | Track applicable vulnerabilities, stage scheduled updates, expedite fixes and alert on overdue patches. |
 | Deployment and bootstrap secrets | GitHub Environments / Secrets | Customer/environment-scoped delivery to Kamal and configuration automation; no runtime GitHub secret lookup. |
 | Customer credentials | Application-encrypted PostgreSQL records | Source credentials, provider keys and integration tokens managed through authorized UI/API/bootstrap operations. |
 | Encryption keys | Per-deployment, versioned keyring | Provision separately from the database; keep an independent encrypted recovery copy and support rotation. |
-| Observability | Better Stack | Managed monitoring, logs, alerts, on-call and status pages. Portable telemetry and public collection configuration; no separately operated Grafana backend required. |
+| Observability | Better Stack with explicit instrumentation and scoped collection | Managed monitoring, redacted logs, metrics, alerts, on-call and status pages; bounded buffering and portable telemetry. |
 | Transactional email | Postmark for managed hosting; configurable SMTP for self-hosting | Provider-replaceable application email with scoped credentials and delivery monitoring. |
+
+### Lifecycle ownership and integration
 
 Compose and Kamal are alternative owners of application container lifecycle.
 They must not reconcile the same containers. Both consume shared LeapView
@@ -218,7 +222,10 @@ continuous monitoring, incident response or data recovery.
 For Compose, Caddy forwards directly to LeapView. Managed installations use
 kamal-proxy for HTTPS and release routing. Qualify SSE buffering and timeouts,
 uploads, client identity, draining and certificate renewal. Private administrative
-and metrics endpoints must remain protected.
+and metrics endpoints must remain protected. Configure streaming deliberately;
+proxy defaults are not evidence of correct SSE delivery. External checks must
+verify actual port exposure through Docker networking and host/provider firewalls.
+Kamal's initial health gate does not replace continuous monitoring.
 
 OpenTofu owns declared provider resources; nixos-anywhere and disko install fresh
 hosts. NixOS modules own OS, Docker, PostgreSQL and backup configuration; deploy-rs
@@ -241,7 +248,10 @@ service restarts and kernel reboots. Pin the PostgreSQL major package explicitly
 Changing `system.stateVersion` is a separate compatibility review, not a routine
 release bump. Retain known-good system generations and recovery artifacts with a
 bounded garbage-collection policy. Track overdue security updates; pinning alone
-does not apply fixes.
+does not apply fixes. Subscribe to applicable NixOS/Nixpkgs security notices and
+track deployed revisions, remediation deadlines and exceptions. Trivy image scans
+do not establish coverage of NixOS host packages. Application images can retain a
+supported conventional base; adopting NixOS does not require Nix-built images.
 
 NixOS owns Docker Engine configuration, not the application containers that Kamal
 manages. Do not also declare those containers through NixOS OCI container units.
@@ -268,12 +278,20 @@ and locked inputs. It adds Nix tooling, module maintenance, build/cache availabi
 and explicit state compatibility work. It does not remove operational responsibility
 for patching, backups, monitoring, reboot qualification or PostgreSQL major upgrades.
 
+### Observability, access and optional edge
+
 Better Stack is the selected managed observability service. Keep application
 health endpoints and telemetry portable; public collection configuration must
 allow self-hosters to choose their own backend. A separate Grafana installation
 is optional. Telemetry export is operator configured and must exclude credentials,
 sensitive request bodies and customer query/data payloads by default. Do not
-enable session replay on credential administration screens.
+enable session replay on credential administration screens. Select explicit
+application instrumentation and scoped host/PostgreSQL metrics and logs. Bound collector memory, disk buffering and
+retention. Broad host-root mounts and privileged eBPF instrumentation require a
+specific reviewed need; they are not the default collection profile. Required
+alerts cover external availability, certificate expiry, resource pressure,
+pipeline backlog/failures, WAL archival failures, backup age and restore-test
+failures. A separate Grafana backend is not required for this managed profile.
 
 Tailscale provides private operator and deployment connectivity. Restrict grants
 by customer and role, require operator identity controls, and qualify revocation,
@@ -287,6 +305,21 @@ certificate issuance/renewal for both direct and proxied ingress. When enabled,
 Cloudflare terminates TLS and can process plaintext BI traffic and submitted
 credentials. Its default service must not be represented as EU-only processing;
 qualify the required regional controls and contract or omit it for that deployment.
+
+### Job execution and deferred infrastructure
+
+River with PostgreSQL remains the selected baseline. The separate
+[pipeline orchestration evaluation](https://linear.app/flid/project/simplify-pipeline-orchestration-with-postgresql-backed-execution-26f982adfb7b)
+compares a thinner River integration with DBOS Go on a representative slice.
+It must demonstrate coordination code removed while preserving authorization,
+admission, idempotency, cancellation, recovery and safe publication. This ADR
+neither selects DBOS nor requires retaining today's custom queue/lease mechanics.
+A justified engine change requires a focused decision and migration plan.
+
+Kubernetes/Argo, Redis/NATS, a separately operated Grafana backend, autonomous image
+updaters, a mandatory external secrets service and a custom fleet controller are
+outside the selected v1 stack. Revisit them only for a demonstrated requirement.
+PgBouncer remains optional after connection behavior and load justify it.
 
 ### Deployment profiles and service boundaries
 
@@ -524,64 +557,57 @@ Test recovery, retention and deletion behavior against promised RPO/RTO. Use
 pgBackRest for the operated PostgreSQL profile; verify base backups and continuous
 WAL availability through actual restoration, not only successful backup commands.
 
+Recovery ownership is explicit:
+
+| State | Selected recovery mechanism |
+|---|---|
+| PostgreSQL application state and catalogs | pgBackRest base backups, continuous WAL and tested PITR |
+| Fully reconstructible analytical output | Full rebuild, validation and republication |
+| Irreplaceable local uploads, source inputs and artifacts | Restic to off-host storage; retain according to the acknowledged durability contract |
+| Essential bootstrap secrets and encryption keyring | Independent encrypted recovery copy, separate from database backup access |
+
+Use Restic for retained files, not as a filesystem backup of a running PostgreSQL
+data directory. It does not automatically establish a consistent DuckLake
+catalog/file recovery point. Define
+coordination and retention for related state, and test restoration together.
+Optional analytical backups require that same consistency evidence.
+
+Enforce customer-specific backup credential boundaries. Hetzner object credentials
+are project-wide by default; separate bucket names alone do not isolate access.
+Decide Object Lock and retention requirements before bucket creation, then qualify
+backup expiration, version recovery and deletion behavior with both backup tools.
+Versioning and bucket deletion protection alone do not establish immutable backups.
+If we promise recovery from complete provider/account loss, retain an independently
+controlled copy outside that failure domain. Same-provider off-host storage alone
+does not satisfy that promise.
+
 Backups of genuinely rebuildable analytical outputs are optional. Use them when
 they reduce recovery time or dependence on upstream availability. S3 analytical
 serving remains a future separately qualified option for multiple hosts, larger
 workloads or different recovery requirements, without becoming a default dependency.
 
-### Service selection and qualification
+### Production qualification boundary
 
-The target stack above selects the v1 providers and tools. Launch qualification
-must establish their configured behavior, versions, service plans and operational
-evidence; it does not defer the selection itself:
+Technology selection is complete for this target. The
+[qualification specification](specifications/deployment-profile-qualification.md)
+owns the detailed checks for configured services, supported versions/plans,
+regions, isolation, costs and measured recovery. Delivery work records dated
+results against a release and configuration; vendor defaults are not evidence.
+Managed-service assurance and customer commitments remain separate decisions.
 
-- **Application VPS and host operations:** qualify the European Hetzner region,
-  dedicated customer assignment, sizing, OS/Docker/proxy maintenance, support and
-  replacement capacity. Record patch/reboot behavior, operator access, costs and
-  recovery evidence. LeapView owns these duties; Kamal does not outsource them.
-- **PostgreSQL:** use one customer database VPS with a qualified PostgreSQL major
-  version, persistent storage, scoped roles, verified TLS and host access controls.
-  NixOS and pgBackRest provide repeatable configuration and recovery mechanics.
-  Qualify minor updates, OS reboots, major upgrades, PITR, retention, archive
-  failures and complete host replacement. Managed database providers such as
-  Ubicloud are researched alternatives, not selected v1 dependencies or support
-  commitments. A future change requires explicit qualification.
-- **Local analytical storage:** qualify native filesystem paths and permissions,
-  integrity, persistent Docker mounts, disk-full behavior, capacity and performance
-  under refresh and release overlap. Test complete disk loss and catalog replacement.
-- **Off-host recovery storage:** qualify Hetzner Object Storage with pgBackRest and
-  retained-file recovery for European regions, tenant isolation, protected copies,
-  retention, key recovery, restoration/export and cost. Match capabilities to the actual backup or upload
-  contract. Immutable runtime objects, if stored there, still need their declared
-  conditional-write semantics; backups need their selected tool's storage guarantees.
-  An S3-compatible label or versioning alone does not establish backup protection.
-- **Better Stack:** qualify monitoring coverage, alert delivery, on-call escalation,
-  status communication, telemetry location, retention, access and payload exclusions.
-- **Tailscale:** qualify customer isolation, operator MFA, scoped OIDC runner access,
-  revocation, audit coverage and recovery access during control-service outages.
-- **GitHub and Trivy:** qualify environment protections on the selected plan,
-  customer-scoped workflows, immutable artifact promotion, vulnerability gates and
-  exceptions, bootstrap delivery and recovery without live GitHub access.
-- **Cloudflare, where enabled:** qualify SSE, upload limits, cache exclusions,
-  origin certificates, trusted forwarding and data-processing requirements. Direct
-  ingress remains supported for deployments that omit this optional service.
-- **Postmark:** qualify SMTP/TLS delivery, sender domains, retries, bounce handling,
-  scoped access and recipient/content processing. European compute hosting does
-  not establish European processing by every supporting service.
-
-The release and provider qualification results belong in a mutable companion
-specification or linked delivery work. This proposal establishes required
-behavior, not evidence that vendor defaults meet it. Managed-service assurance
-and customer qualification require separate decisions; this deployment proposal
-does not establish their legal coverage or customer commitments.
+The first managed milestone is one complete customer deployment, provisioned from
+public automation, upgraded, rolled back, rebooted and recovered after replacement
+of each host. Preserve PostgreSQL state, recover retained files/keys and rebuild
+analytics as applicable. Qualify the independent public Compose path as well.
 
 ### PostgreSQL maintenance and recovery ownership
 
 Use one qualified major version per supported release profile. Minor security and
-bug-fix updates follow reviewed, scheduled maintenance; package holds must have an
-explicit update procedure and overdue-patch reporting. Schedule and stagger host
-reboots with pre/post health checks. Cloud-init is bootstrap, not ongoing fleet
-reconciliation. Derive connection/memory budgets from the actual database VPS;
+bug-fix updates follow reviewed NixOS input updates and scheduled maintenance,
+with expedited security fixes and overdue-patch reporting. Pin the PostgreSQL
+major package explicitly. Schedule and stagger host reboots with pre/post health
+checks; apply ongoing configuration through reviewed NixOS generations. Derive
+connection/memory budgets from the actual database VPS;
 OLAP memory belongs to the separately sized application host. Omit PgBouncer by
 default: session advisory locks require direct or compatible session connections,
 not blanket transaction pooling.
@@ -656,17 +682,17 @@ versioned configuration, CI workflows, the public tooling, existing operational
 services, and documented operator procedures.
 
 A custom fleet API, dashboard, billing integration or Temporal workflow service
-is outside v1 scope. Kamal is the proposed operator deployment toolchain. Add further orchestration only when
-measured operational needs justify its lifecycle and failure modes. Keep routine
+is outside v1 scope. Kamal is the selected operator deployment toolchain. Add
+further orchestration only when measured operational needs justify its lifecycle and failure modes. Keep routine
 customer requests outside any central management service's availability boundary;
 document and test behavior during management outages.
 
 Evaluate existing fleet interfaces and reconcilers before building their
-equivalents. Preserve the existing PostgreSQL/River recovery occurrence and
-evidence contracts; a deployment controller or external job runner does not
-become a second authority for application recovery. Use pgBackRest and supported
-PostgreSQL upgrade tools rather than implementing backup or database upgrade
-engines in LeapView.
+equivalents. Preserve durable recovery occurrence and evidence contracts when
+simplifying River integration or evaluating an alternative engine; a deployment
+controller or external job runner does not become a second authority for application
+recovery. Use pgBackRest, Restic and supported PostgreSQL upgrade tools rather than
+implementing backup or database upgrade engines in LeapView.
 
 Do not use Watchtower-style autonomous image replacement for production releases.
 Application upgrades follow explicit release policy; OS, database, proxy, and
@@ -781,7 +807,7 @@ No new qualification is claimed by drafting or accepting this ADR.
 
 ## Research references
 
-Official documentation reviewed on 2026-09-25 and 2026-09-26; provider capabilities
+Official documentation reviewed on 2026-09-25, 2026-09-26 and 2026-09-28; capabilities
 must be rechecked when qualifying an implementation:
 
 - [DuckLake storage](https://ducklake.select/docs/stable/duckdb/usage/choosing_storage),
@@ -822,7 +848,15 @@ must be rechecked when qualifying an implementation:
 - [Trivy image scanning](https://trivy.dev/docs/latest/target/container_image/)
   and [Postmark SMTP](https://postmarkapp.com/developer/user-guide/send-email-with-smtp).
 
-NixOS lifecycle sources: [NixOS manual](https://nixos.org/manual/nixos/stable/),
-[nixos-anywhere](https://github.com/nix-community/nixos-anywhere),
-[disko](https://github.com/nix-community/disko), and
-[deploy-rs](https://github.com/serokell/deploy-rs).
+- NixOS lifecycle: [NixOS manual](https://nixos.org/manual/nixos/stable/),
+  [nixos-anywhere](https://github.com/nix-community/nixos-anywhere),
+  [disko](https://github.com/nix-community/disko), and
+  [deploy-rs](https://github.com/serokell/deploy-rs).
+
+- [Trivy OS coverage](https://trivy.dev/docs/latest/coverage/os/) and
+  [Nixpkgs security tracker](https://tracker.security.nixos.org/).
+- [Docker firewall behavior](https://docs.docker.com/engine/network/packet-filtering-firewalls/)
+  and [Better Stack collector configuration](https://betterstack.com/docs/logs/collector/).
+- [Restic](https://restic.readthedocs.io/en/stable/),
+  [Hetzner object credential scope](https://docs.hetzner.com/storage/object-storage/overview/)
+  and [Object Lock/retention](https://docs.hetzner.com/storage/object-storage/faq/buckets-objects/).

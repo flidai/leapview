@@ -35,6 +35,35 @@ now includes analytical rebuild from sources or an optional consistent backup.
 
 ## Findings and recommendation
 
+### Final evaluation and agreed target
+
+The 2026-09-28 review confirms the core target in ADR-0025: public Compose and an
+operated NixOS/Kamal application VPS with a separate self-operated PostgreSQL VPS.
+No core platform replacement is required. The final refinements are:
+
+| Area | Decision |
+|---|---|
+| Host security | Separate NixOS vulnerability review and input-update process from Trivy image scanning |
+| Proxy/network integration | Explicit SSE settings, continuous monitoring and external Docker/firewall exposure checks |
+| Recovery | pgBackRest for PostgreSQL; Restic for irreplaceable local files where present; independent key recovery; analytical rebuild where qualified |
+| Backup isolation | Enforce customer-scoped credentials and decide Object Lock before bucket creation; test retention/restore compatibility |
+| Observability | Better Stack with explicit instrumentation, scoped collection and bounded buffers; broad mounts/privileged eBPF require justification |
+| Release overlap | Prove local path, catalog, publication, cleanup and capacity behavior across release pairs |
+| Pipeline orchestration | Retain River as baseline while the separate River/DBOS evaluation measures simplification |
+
+The next milestone is a complete deployment exercise: provision, deploy, upgrade,
+rollback, reboot and replace each host, restore authoritative state and rebuild
+analytics. These findings select architecture; they do not supply test evidence.
+
+Sources: [Trivy coverage](https://trivy.dev/docs/latest/coverage/os/),
+[Nixpkgs security](https://tracker.security.nixos.org/),
+[Kamal proxy](https://kamal-deploy.org/docs/configuration/proxy/),
+[Docker networking/firewalls](https://docs.docker.com/engine/network/packet-filtering-firewalls/),
+[Restic](https://restic.readthedocs.io/en/stable/),
+[Hetzner credential scope](https://docs.hetzner.com/storage/object-storage/overview/),
+[Object Lock](https://docs.hetzner.com/storage/object-storage/faq/buckets-objects/),
+[Better Stack collector](https://betterstack.com/docs/logs/collector/).
+
 ### Selected target supporting stack
 
 The target now selects NixOS and OpenTofu for managed hosts, nixos-anywhere/disko
@@ -296,7 +325,7 @@ needs to be installed into every customer environment.
   LeapView should invoke supported operations and validate the recovered state.
 - **Monitoring storage and incident tooling:** use portable telemetry with the
   selected Better Stack service. A separate Grafana backend is optional.
-- **A second recovery scheduler:** retain the existing PostgreSQL/River recovery
+- **A second recovery scheduler:** preserve the PostgreSQL/River recovery
   occurrence and evidence contracts. Kubernetes Jobs or external CI can execute
   a claimed scenario without becoming another authority for its identity.
 - **A general platform API:** adopt a deployment UI or GitOps controller when
@@ -324,11 +353,12 @@ the new path. A prior successful Compose qualification does not qualify Kamal.
 Conversely, a new platform is not a reason to replace completed recovery ledger
 and provider-handoff work.
 
-## Bounded selection exercise
+## Implementation qualification
 
 Qualify Kamal first against the revised restart-based rollback contract. The
 selected managed shape is one application VPS plus one self-operated PostgreSQL
-VPS per customer, with local SSD analytical storage and pgBackRest recovery. Keep Compose for self-hosters.
+VPS per customer, with local SSD analytical storage, pgBackRest database recovery
+and Restic for irreplaceable local files. Keep Compose for self-hosters.
 Reopen platform selection only if measured product behavior or service obligations reveal a concrete gap;
 do not rebuild Argo-style warm retention and analysis around Kamal.
 
@@ -342,7 +372,8 @@ For the selected path, record:
 5. Customer isolation, operator access, provider exit and independent self-hosting.
 6. Remaining ownership for OS, Docker, Kamal/proxy, monitoring and data services.
 
-Confirm or revisit the proposed managed path from these results. Retire replaced
+Record qualification of the agreed target from these results; revisit a choice
+only if evidence demonstrates an unmet requirement. Retire replaced
 mechanisms only after equivalent application guarantees and recovery evidence are
 demonstrated.
 This research ran no deployment, benchmark, failover or restore exercise.
