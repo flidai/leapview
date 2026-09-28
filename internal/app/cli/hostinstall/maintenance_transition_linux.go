@@ -150,10 +150,11 @@ func parseCandidateRuntimeID(value string) (int, error) {
 	if err != nil || strconv.FormatUint(number, 10) != value {
 		return 0, errors.New("candidate default runtime identity must be a canonical uint32")
 	}
-	if number > uint64(^uint(0)>>1) {
+	hostNumber, err := strconv.Atoi(value)
+	if err != nil {
 		return 0, errors.New("candidate default runtime identity does not fit host integer")
 	}
-	return int(number), nil
+	return hostNumber, nil
 }
 
 func stageTransitionInput(source, destination string, uid, gid int) error {
@@ -185,7 +186,7 @@ func stageTransitionInput(source, destination string, uid, gid int) error {
 	if err != nil || !staged.Mode().IsRegular() || staged.Mode().Perm() != 0o400 {
 		return errors.New("staged transition input must be read-only")
 	}
-	if owner, ok := staged.Sys().(*syscall.Stat_t); !ok || owner.Uid != uint32(uid) || owner.Gid != uint32(gid) {
+	if owner, ok := staged.Sys().(*syscall.Stat_t); !ok || uint64(owner.Uid) != uint64(uid) || uint64(owner.Gid) != uint64(gid) {
 		return errors.New("staged transition input has the wrong runtime owner")
 	}
 	return nil
