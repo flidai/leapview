@@ -105,7 +105,10 @@ test('permission catalogue is a static searchable list of exact actions', async 
       const list = root.querySelector('.role-catalogue lv-entity-list') as HTMLElement
       const rows = list.querySelectorAll('.entity-list-table-row')
       const headings = Array.from(list.querySelectorAll('thead th')).map((cell) => cell.textContent?.trim())
-      const values = Array.from(rows).map((row) => Array.from(row.querySelectorAll('th, td')).map((cell) => cell.textContent?.trim()))
+      const values = Array.from(rows).map((row) => Array.from(row.querySelectorAll('th, td')).map((cell) => {
+        const mobileLabel = cell.querySelector('.entity-list-mobile-cell-label')?.textContent ?? ''
+        return cell.textContent?.replace(mobileLabel, '').trim()
+      }))
       const meaningTitle = rows[0].querySelector('td')?.getAttribute('title')
       const firstHeader = list.querySelector('thead th') as HTMLElement
       const firstCell = rows[0].querySelector('th') as HTMLElement

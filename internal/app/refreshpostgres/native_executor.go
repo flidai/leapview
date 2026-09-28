@@ -79,7 +79,7 @@ func (e *PostgresNativeRefreshExecutor) Execute(ctx context.Context, job refresh
 		return refreshrun.CanonicalRefreshResult{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
 	if err := validateNativeRefreshJob(job); err != nil {
-		return refreshrun.CanonicalRefreshResult{}, err
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStagePlan, err)
 	}
 
 	snapshot, err := e.Reader.OperatorSnapshot(ctx, e.TargetID)
@@ -151,13 +151,13 @@ func (e *PostgresNativeRefreshExecutor) Execute(ctx context.Context, job refresh
 		if errors.Is(err, deploymentnative.ErrStaleFence) || errors.Is(err, deploymentnative.ErrCASConflict) {
 			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("plan canonical refresh: %w: %v", refreshrun.ErrRunStale, err)
 		}
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("plan canonical refresh: %w", err)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStagePlan, fmt.Errorf("plan canonical refresh: %w", err))
 	}
 	if err := validateNativeRefreshPlan(plan, job, e.TargetID, snapshot, basePlan.SourceDigest, attestationDigest); err != nil {
-		return refreshrun.CanonicalRefreshResult{}, err
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStagePlan, err)
 	}
 	if err := e.Mutations.CompleteNativePlanCommand(ctx, plan); err != nil {
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("complete native refresh plan command: %w", err)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStagePlan, fmt.Errorf("complete native refresh plan command: %w", err))
 	}
 
 	build, err := e.Mutations.BuildPlan(ctx, deploymentmodule.NativeDeliveryBuildRequest{
@@ -168,42 +168,42 @@ func (e *PostgresNativeRefreshExecutor) Execute(ctx context.Context, job refresh
 		if errors.Is(err, deploymentnative.ErrStaleFence) || errors.Is(err, deploymentnative.ErrCASConflict) {
 			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("build canonical refresh: %w: %v", refreshrun.ErrRunStale, err)
 		}
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("build canonical refresh: %w", err)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageBuild, fmt.Errorf("build canonical refresh: %w", err))
 	}
 	if err := validateNativeRefreshBuild(build, plan, snapshot.ActiveGenerationID); err != nil {
-		return refreshrun.CanonicalRefreshResult{}, err
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageBuild, err)
 	}
 	if err := e.Mutations.CompleteNativeBuildCommand(ctx, build); err != nil {
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("complete native refresh build command: %w", err)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageBuild, fmt.Errorf("complete native refresh build command: %w", err))
 	}
 
 	attempt, err := e.Reader.LoadBuildAttempt(ctx, build.ID.String())
 	if err != nil {
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("resolve native refresh build attempt: %w", err)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageEvidence, fmt.Errorf("resolve native refresh build attempt: %w", err))
 	}
 	if attempt.AttemptID != build.ID.String() || attempt.PlanID != plan.ID.String() || attempt.CandidateID != build.CandidateID.String() || attempt.State != deploymentnative.AttemptCommitted || attempt.SnapshotID <= 0 {
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("%w: native refresh build attempt evidence is incomplete", deployment.ErrDeliveryConflict)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageEvidence, fmt.Errorf("%w: native refresh build attempt evidence is incomplete", deployment.ErrDeliveryConflict))
 	}
 	seal, err := e.Reader.LoadSnapshotSeal(ctx, build.SealID.String())
 	if err != nil {
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("resolve native refresh snapshot seal: %w", err)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageEvidence, fmt.Errorf("resolve native refresh snapshot seal: %w", err))
 	}
 	if seal.SealID != build.SealID.String() || seal.AttemptID != build.ID.String() || seal.CandidateID != build.CandidateID.String() || seal.PlanDigest != plan.PlanDigest || seal.DuckLakeSnapshotID != attempt.SnapshotID || seal.DuckLakeSnapshotID <= 0 {
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("%w: native refresh snapshot seal evidence is incomplete", deployment.ErrDeliveryConflict)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageEvidence, fmt.Errorf("%w: native refresh snapshot seal evidence is incomplete", deployment.ErrDeliveryConflict))
 	}
 	candidate, err := e.Reader.LoadCandidate(ctx, build.CandidateID.String())
 	if err != nil {
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("resolve native refresh candidate: %w", err)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageEvidence, fmt.Errorf("resolve native refresh candidate: %w", err))
 	}
 	if candidate.CandidateID != build.CandidateID.String() || candidate.TargetID != e.TargetID || candidate.PlanID != plan.ID.String() || candidate.AttemptID != build.ID.String() || candidate.SnapshotSealID != build.SealID.String() || candidate.Status != "qualified" {
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("%w: native refresh candidate evidence is incomplete", deployment.ErrDeliveryConflict)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageEvidence, fmt.Errorf("%w: native refresh candidate evidence is incomplete", deployment.ErrDeliveryConflict))
 	}
 	generation, err := e.Reader.LoadGeneration(ctx, build.ServingStateID.String())
 	if err != nil {
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("resolve native refresh generation: %w", err)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageEvidence, fmt.Errorf("resolve native refresh generation: %w", err))
 	}
 	if generation.GenerationID != build.ServingStateID.String() || generation.TargetID != e.TargetID || generation.CandidateID != build.CandidateID.String() || generation.SnapshotSealID != build.SealID.String() || generation.PlanID != plan.ID.String() || generation.ServingArtifactDigest != build.ServingArtifactDigest {
-		return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("%w: native refresh generation evidence is incomplete", deployment.ErrDeliveryConflict)
+		return refreshrun.CanonicalRefreshResult{}, refreshrun.WithWorkerFailureStage(refreshrun.WorkerFailureStageEvidence, fmt.Errorf("%w: native refresh generation evidence is incomplete", deployment.ErrDeliveryConflict))
 	}
 
 	// Native generation admission binds serving-state and delivery-generation

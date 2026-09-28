@@ -312,7 +312,7 @@ for (const viewport of [
           titles: rows.map((row) => row.querySelector('.entity-list-title')?.textContent?.trim()),
           descriptionCount: rows.filter((row) => row.querySelector('.entity-list-description')).length,
           headers: Array.from(root.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
-          dataModels: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
+          dataModels: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim().replace(/^Data model:\s*/, '').trim()),
           owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.querySelector('.entity-list-person-avatar')?.getAttribute('aria-label') ?? '—'),
           ownerAvatars: rows.map((row) => Boolean(row.querySelectorAll('.entity-list-cell')[1]?.querySelector('lv-user-avatar'))),
           statuses: rows.map((row) => row.querySelector('.entity-list-status')?.textContent?.trim() ?? ''),
@@ -646,6 +646,7 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
     expect(state.rowHref).toBe('/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone')
     expect(state.editHref).toBe('/dashboards/executive-sales/edit?draft=draft-one')
     expect(state.copiedLink).toBe(`${baseURL}/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone`)
+    expect((await page.locator('lv-toast-region lv-toast .message').textContent())?.trim()).toBe('Dashboard link copied')
     expect(state.title).toBe('Executive Sales Dashboard')
     expect(state.description).toBe('Fixture report')
     expect(state.details).toEqual(expect.arrayContaining(['Data model', 'Olist model', 'Owner', 'Analytics', 'Status', 'Published', 'Pages', '1']))
@@ -759,7 +760,7 @@ test('data model is a dedicated sortable column instead of dashboard subtitle me
       const rows = Array.from(list.querySelectorAll('tbody tr.entity-list-table-row')) as HTMLTableRowElement[]
       return {
         headers: Array.from(list.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim()),
-        models: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
+        models: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim().replace(/^Data model:\s*/, '').trim()),
         subtitles: rows.map((row) => row.querySelector('.entity-list-meta')?.textContent?.trim() ?? ''),
         sortable: Boolean(list.querySelector('button[aria-label="Sort by Data model"]')),
       }
@@ -793,7 +794,7 @@ test('owned dashboards use the signed-in display name and avatar instead of You'
       const cell = (element.shadowRoot as ShadowRoot).querySelectorAll('.entity-list-cell')[1] as HTMLElement
       const avatar = cell.querySelector('lv-user-avatar') as any
       return {
-        text: cell.textContent?.trim(),
+        text: cell.querySelector('.entity-list-hover-tooltip span')?.textContent?.trim(),
         label: cell.querySelector('.entity-list-person-avatar')?.getAttribute('aria-label'),
         avatarName: avatar?.name,
         avatarURL: avatar?.imageUrl,

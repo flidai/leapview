@@ -13,17 +13,19 @@ import (
 )
 
 const (
-	routeLogin            = "login"
-	routeCatalog          = "catalog"
-	routeData             = "data"
-	routeConnections      = "connections"
-	routeConnectionAsset  = "connection_asset"
-	routePipelines        = "pipelines"
-	routeAsset            = "asset"
-	routeDashboard        = "dashboard"
-	routeDashboardBuilder = "dashboard_builder"
-	routeChat             = "chat"
-	routeAdmin            = "admin"
+	routeLogin             = "login"
+	routeCatalog           = "catalog"
+	routeData              = "data"
+	routeConnections       = "connections"
+	routeConnectionAsset   = "connection_asset"
+	routePipelines         = "pipelines"
+	routePipelineDetail    = "pipeline_detail"
+	routePipelineRunDetail = "pipeline_run_detail"
+	routeAsset             = "asset"
+	routeDashboard         = "dashboard"
+	routeDashboardBuilder  = "dashboard_builder"
+	routeChat              = "chat"
+	routeAdmin             = "admin"
 )
 
 func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *platformServices, _ *httpPolicy) {
@@ -31,7 +33,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 		switch route {
 		case routeLogin:
 			return next, true
-		case routeCatalog, routeData, routeConnections, routeConnectionAsset, routePipelines, routeAsset:
+		case routeCatalog, routeData, routeConnections, routeConnectionAsset, routePipelines, routePipelineDetail, routePipelineRunDetail, routeAsset:
 			if routes.projectBrowser == nil {
 				return nil, false
 			}
@@ -84,6 +86,8 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 		handlers[routeConnections] = http.HandlerFunc(routes.projectBrowser.Updates)
 		handlers[routeConnectionAsset] = http.HandlerFunc(routes.projectBrowser.Updates)
 		handlers[routePipelines] = http.HandlerFunc(routes.projectBrowser.Updates)
+		handlers[routePipelineDetail] = http.HandlerFunc(routes.projectBrowser.Updates)
+		handlers[routePipelineRunDetail] = http.HandlerFunc(routes.projectBrowser.Updates)
 		handlers[routeAsset] = http.HandlerFunc(routes.projectBrowser.Updates)
 	}
 	runtime.pageStreams = uitransport.NewPageStream(uitransport.PageStreamConfig{Authorize: authorize, Handlers: handlers})
