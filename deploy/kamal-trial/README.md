@@ -24,7 +24,7 @@ PR #748 remains the unmerged fallback.
   beneath a developer-owned directory; production SSH configuration is untouched.
 
 Build `fixture.go` with `CGO_ENABLED=0 go build -o "$ARTIFACTS/fixture"
-./deploy/kamal-trial/fixture.go`. It is a synthetic non-root HTTP app, not LeapView.
+./deploy/kamal-trial/fixture.go`. It is a synthetic non-root HTTP app, not LeapView. Its standalone Go module keeps this deployment fixture outside the application architecture and dependency graph.
 Download the pinned amd64 images:
 
 ```sh
