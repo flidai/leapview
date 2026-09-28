@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -218,13 +219,15 @@ func (e *NativeEffects) candidateContainerEnvironment() ([]byte, error) {
 			return nil, errors.New("multiline application environment is unsupported")
 		}
 		name, _, ok := strings.Cut(entry, "=")
-		value, replace := replacements[name]
-		if ok && replace {
-			if seen[name] {
-				return nil, fmt.Errorf("duplicate application environment key %s", name)
-			}
+		if !ok || name == "" {
+			return nil, errors.New("application environment entry must have a nonempty key and value separator")
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("duplicate application environment key %s", name)
+		}
+		seen[name] = true
+		if value, replace := replacements[name]; replace {
 			environment[i] = name + "=" + value
-			seen[name] = true
 		}
 	}
 	for _, name := range []string{"LEAPVIEW_AGENT_CREDENTIAL_KEY", "LEAPVIEW_IMAGE"} {
@@ -232,6 +235,9 @@ func (e *NativeEffects) candidateContainerEnvironment() ([]byte, error) {
 			environment = append(environment, name+"="+replacements[name])
 		}
 	}
+	// Docker Compose can reorder Config.Env when reopening the predecessor.
+	// Bind the complete, unambiguous key/value set, not Docker's slice order.
+	sort.Strings(environment)
 	preparedEnvironment := []byte(strings.Join(environment, "\n") + "\n")
 	var expectedDigest string
 	if e.detached {

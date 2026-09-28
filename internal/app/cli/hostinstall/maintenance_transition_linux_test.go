@@ -346,3 +346,82 @@ func TestCandidateRuntimeIdentityRejectsIDsAboveUint32(t *testing.T) {
 		})
 	}
 }
+
+// Docker Compose may reorder Config.Env when reopening the predecessor after
+// capture. The same effective settings must remain bound to the passed receipt.
+func TestCandidateEnvironmentRehearsalBinding(t *testing.T) {
+	for _, detached := range []bool{false, true} {
+		for _, change := range []string{"reordered", "value", "added", "removed", "duplicate", "conflicting duplicate", "malformed"} {
+			t.Run(fmt.Sprintf("detached=%t/%s", detached, change), func(t *testing.T) {
+				e, _, _ := transitionEffectsFixture(t)
+				config := []byte("LEAPVIEW_AGENT_CREDENTIAL_KEY=" + strings.Repeat("a", 64) + "\n")
+				for _, path := range []string{filepath.Join(e.root, "leapview.env"), filepath.Join(e.operation, "original-config", "leapview.env")} {
+					if err := securefs.WritePrivateFileAtomic(path, config); err != nil {
+						t.Fatal(err)
+					}
+				}
+				before, err := e.candidateContainerEnvironment()
+				if err != nil {
+					t.Fatal(err)
+				}
+				state := DetachedRehearsalState{Version: 1, Identity: e.id, RecoveryDigest: "sha256:" + hex64('b'), CandidateEnvironmentDigest: candidateEnvironmentDigest(before), Phase: DetachedPassed}
+				receiptRoot := filepath.Join(e.provider, "upgrade-operations", strings.TrimPrefix(e.id.ArtifactAdmissionDigest, "sha256:"))
+				if detached {
+					e.detached = true
+					state.Phase = DetachedRunning
+					receiptRoot = e.operation
+				} else {
+					e.request.PreparationDigest = e.id.ArtifactAdmissionDigest
+				}
+				if err := os.MkdirAll(receiptRoot, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := writeDetachedState(receiptRoot, state); err != nil {
+					t.Fatal(err)
+				}
+				env := e.original.App.Config.Env
+				for left, right := 0, len(env)-1; left < right; left, right = left+1, right-1 {
+					env[left], env[right] = env[right], env[left]
+				}
+				switch change {
+				case "value":
+					env[0] = "LEAPVIEW_PUBLIC_URL=https://different.example"
+				case "added":
+					env = append(env, "NEW_SETTING=changed")
+				case "removed":
+					env = env[1:]
+				case "duplicate":
+					env = append(env, env[0])
+				case "conflicting duplicate":
+					env = append(env, "LEAPVIEW_PUBLIC_URL=https://different.example")
+				case "malformed":
+					env = append(env, "INVALID_ENTRY")
+				}
+				e.original.App.Config.Env = env
+				after, err := e.candidateContainerEnvironment()
+				if change == "reordered" {
+					if err != nil {
+						t.Fatalf("unchanged effective configuration rejected after Docker reordered it: %v", err)
+					}
+					if string(before) != string(after) {
+						t.Fatal("same effective environment produced different candidate configuration")
+					}
+				} else if err == nil {
+					t.Fatalf("accepted %s candidate configuration", change)
+				}
+			})
+		}
+	}
+}
+
+func TestCandidateEnvironmentRejectsAmbiguousEntriesBeforeCapture(t *testing.T) {
+	for _, entry := range []string{"LEAPVIEW_PUBLIC_URL=https://demo.leapview.dev", "LEAPVIEW_PUBLIC_URL=https://different.example", "INVALID_ENTRY", "=empty-key"} {
+		t.Run(entry, func(t *testing.T) {
+			e, _, _ := transitionEffectsFixture(t)
+			e.original.App.Config.Env = append(e.original.App.Config.Env, entry)
+			if _, err := e.candidateContainerEnvironment(); err == nil {
+				t.Fatal("accepted ambiguous candidate environment before capture")
+			}
+		})
+	}
+}
