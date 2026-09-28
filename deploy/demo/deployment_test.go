@@ -111,7 +111,7 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"legacy-capabilities/v1",
 		"leapview.permissions/v1",
 		"RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH",
-		"connection.manage connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read",
+		"connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read",
 		"delivery.approve delivery.read",
 	} {
 		require.Contains(t, clientContract, required)
