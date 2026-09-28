@@ -80,6 +80,8 @@ pkgs.stdenv.mkDerivation {
   installPhase = ''
     mkdir -p "$out/share/leapview"
     cp -R static schemas dashboards evaluation deploy "$out/share/leapview/"
+    # Runtime resources must not become a second test tree through a result link.
+    find "$out/share/leapview" -type f \( -name '*_test.go' -o -name '*.test.ts' -o -name '*.test.mjs' \) -delete
     # Nix candidates export Linux binaries with a glibc 2.38 ABI baseline.
     # Keep the standard Dockerfile candidate's Debian client fixture unchanged.
     substituteInPlace "$out/share/leapview/deploy/compose/qualification/Dockerfile.authoring-client" \
