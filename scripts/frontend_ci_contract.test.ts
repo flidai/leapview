@@ -125,7 +125,7 @@ test('native PostgreSQL qualification generates the complete application fixture
 })
 
 test('hosted demo rejects an unknown dataset before requesting deployment credentials', () => {
-  const result = spawnSync('/bin/bash', ['scripts/deploy_demo.sh'], {
+  const result = spawnSync('bash', ['scripts/deploy_demo.sh'], {
     env: { PATH: process.env.PATH, DEMO_DATASET: 'unknown' }, encoding: 'utf8',
   })
   expect(result.status).toBe(64)
@@ -146,7 +146,7 @@ test('pinned publication rejects unsupported datasets before credentials or publ
   const directory = mkdtempSync(join(tmpdir(), 'demo-dataset-guard-'))
   try {
     mkdirSync(join(directory, 'deploy/demo'), { recursive: true })
-    const run = (dataset: string) => spawnSync('/bin/bash', ['-c', steps[guardIndex].run], {
+    const run = (dataset: string) => spawnSync('bash', ['-c', steps[guardIndex].run], {
       cwd: directory, env: { PATH: process.env.PATH, DEMO_DATASET: dataset }, encoding: 'utf8',
     })
     // Old pinned revisions have no capability manifest and only publish Olist.

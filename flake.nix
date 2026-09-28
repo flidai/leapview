@@ -22,7 +22,7 @@
       devShells.${system}.default = pkgs.mkShell {
         packages = toolchain.packages;
         buildInputs = [ pkgs.stdenv.cc.cc.lib ];
-        inherit (toolchain) GOTOOLCHAIN PLAYWRIGHT_BROWSERS_PATH;
+        inherit (toolchain) GOTOOLCHAIN PLAYWRIGHT_BROWSERS_PATH FONTCONFIG_FILE;
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
         LEAPVIEW_TEST_NIX_PLAYWRIGHT_VERSION = toolchain.playwrightVersion;
         BUN_FEATURE_FLAG_NO_ORPHANS = "1";

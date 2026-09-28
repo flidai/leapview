@@ -34,15 +34,16 @@ let
   playwright =
     (pkgs.callPackage "${playwright-nixpkgs}/pkgs/development/web/playwright/driver.nix" { })
     .playwright-core;
+  fontconfig = pkgs.makeFontsConf {
+    fontDirectories = [
+      pkgs.dejavu_fonts
+      pkgs.liberation_ttf
+    ];
+  };
   browsers = playwright.selectBrowsers {
     withFirefox = false;
     withWebkit = false;
-    fontconfig_file = pkgs.makeFontsConf {
-      fontDirectories = [
-        pkgs.dejavu_fonts
-        pkgs.liberation_ttf
-      ];
-    };
+    fontconfig_file = fontconfig;
   };
 in
 assert manifest.devDependencies."@playwright/test" == "^${playwright.version}";
@@ -56,6 +57,8 @@ assert manifest.devDependencies."@playwright/test" == "^${playwright.version}";
     ;
   playwrightVersion = playwright.version;
   GOTOOLCHAIN = "local";
+  # The upstream headless-shell package does not inherit the Chromium wrapper.
+  FONTCONFIG_FILE = fontconfig;
   PLAYWRIGHT_BROWSERS_PATH = "${browsers}";
   packages = with pkgs; [
     go
@@ -64,6 +67,7 @@ assert manifest.devDependencies."@playwright/test" == "^${playwright.version}";
     nodejs_24
     go-task
     pkg-config
+    procps
     stdenv.cc
     git
     curl

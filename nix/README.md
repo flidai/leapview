@@ -47,7 +47,7 @@ checkout containing secrets, because that copies ignored files into the store to
 | Managed OS configuration | Managed deployment scaffold in PR #760 |
 
 The shell includes Go, Bun, Node 24, Task, the native compiler, pkg-config, Git,
-curl, jq, OpenSSL, Python, Make, PostgreSQL client/server tools, Docker CLI/Compose,
+curl, jq, OpenSSL, Python, Make, procps, PostgreSQL client/server tools, Docker CLI/Compose,
 nixfmt and actionlint. PostgreSQL is **not** automatically started as a host service.
 
 Go and Bun source hashes are recorded in `toolchain.nix`; their versions come from

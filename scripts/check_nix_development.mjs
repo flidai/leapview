@@ -1,7 +1,7 @@
 // Integration check: run inside the repository's Nix shell after task node:deps.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
@@ -9,6 +9,8 @@ const expectedPlaywright = process.env.LEAPVIEW_TEST_NIX_PLAYWRIGHT_VERSION
 assert.ok(expectedPlaywright, 'Run this check with nix develop -c task nix:smoke')
 assert.equal(require('playwright-core/package.json').version, expectedPlaywright,
   'Update the locked Nix Playwright input alongside bun.lock; browser revisions must match')
+assert.ok(process.env.FONTCONFIG_FILE?.startsWith('/nix/store/'), 'Headless Chromium needs the pinned font configuration')
+await access(process.env.FONTCONFIG_FILE)
 const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 const goMod = await readFile(new URL('../go.mod', import.meta.url), 'utf8')
 const goVersion = goMod.match(/^go (\S+)$/m)?.[1]
