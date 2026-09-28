@@ -1,8 +1,9 @@
-# Nix development environment
+# Nix development and builds
 
-This is the first development-toolchain slice. It supports **x86_64 Linux** with
-Nix on an existing distribution or NixOS. It does not install an operating system,
-start services when entering the shell, or replace the release image builder.
+The development shell and application/container builds support **x86_64 Linux**
+with Nix on an existing distribution or NixOS. Entering the shell does not install
+an operating system or start services. The existing release pipeline remains in
+place while the Nix image path is qualified.
 Docker must already be running and accessible to the current user for development
 PostgreSQL and integration tests.
 
@@ -43,7 +44,8 @@ checkout containing secrets, because that copies ignored files into the store to
 | PostgreSQL development instances and fixture lifecycle | Existing Docker/Task workflow |
 | Playwright browser executables and fonts | Nix packages matching npm Playwright |
 | App build, dev process, tests and generation order | Existing Taskfile |
-| Release images and self-hosting | Existing Dockerfile and public Compose package |
+| Container candidates | Nix application/image derivations; existing production qualifier |
+| Published releases and self-hosting | Existing release pipeline and public Compose package |
 | Managed OS configuration | Managed deployment scaffold in PR #760 |
 
 The shell includes Go, Bun, Node 24, Task, the native compiler, pkg-config, Git,
@@ -76,20 +78,81 @@ and version changes. A Go/Bun manifest update needs the corresponding official
 source checksum update in `toolchain.nix`. A Playwright npm update needs matching
 upstream packaging and a refreshed lock. Run `task nix:check` and `task nix:ci`.
 
-A development shell pins build tools; it does **not** make `task build` a sandboxed
-Nix derivation. Go/npm downloads, Docker, test fixtures and generated/downloaded map
-assets remain part of the existing workflow. Build metadata and those inputs must
-be modeled before providing a canonical `nix build .#leapview-image` output.
+## Application and container builds
 
-## Next slices
+```sh
+nix build --no-update-lock-file .#leapview --out-link result-app
+./result-app/bin/leapview version
+nix build --no-update-lock-file .#leapview-image --out-link result-image
+nix develop -c docker load --input "$(readlink -f result-image)"
+# Full production-image qualification using disposable Docker fixtures:
+nix develop -c bash scripts/check_nix_image.sh
+```
 
-1. Qualify this shell and the development workflow on a replacement NixOS dev VPS,
-   with reviewed SSH/Tailscale access and independently restored development secrets.
-   Reuse managed host modules, adding a dedicated development profile.
-2. Package generated assets and the CGO/DuckDB application as Nix derivations.
-3. Produce and qualify an OCI image with the existing release identity, runtime
-   privileges, health checks and upgrade/rollback contracts. Retire duplicate
-   Dockerfile build logic only after that image becomes the canonical release.
+`task nix:build`, `task nix:image`, and `task nix:qualify` expose the same paths.
+The container output is a Docker-loadable archive made by Nixpkgs `dockerTools`;
+its loaded image works with Docker, public Compose, and Kamal. No registry or
+customer deployment is contacted by a build. Qualification uses a temporary
+loopback registry and existing PostgreSQL/browser fixtures.
+
+| Output | Contents |
+|---|---|
+| `leapview` (default) | Application and deployment CLI, generated contracts, frontend assets and runtime resources |
+| `leapview-linux` | Exported Linux CLI binaries for Ubuntu 24.04 or a compatible runtime; no Nix store required |
+| `leapview-image` | Container archive with the existing entrypoint, UID/GID 999, health check, writable volume paths and deployment bundle |
+| `go-dependencies`, `javascript-dependencies` | Content-addressed dependency inputs for offline compilation |
+| `map-assets`, `extension-supply` | Pinned runtime asset trees, using the existing map/extension publishers and integrity checks |
+
+The application derivation runs source generation, TypeSpec and frontend builds,
+and Go/CGO compilation inside the Nix sandbox. Only fixed-output dependency and
+runtime-asset fetches use the network. Their complete outputs are pinned in
+`build-hashes.json`, in addition to the existing module/package locks and asset
+integrity checks. The final image assembly also runs without network access.
+Use a Nix installation with `sandbox = true`; the image CI job sets it explicitly.
+
+### Runtime compatibility
+
+The native `leapview` output uses the locked Nix runtime and runs on Nix/NixOS.
+The image and its exported deployment CLI use ordinary Linux loader paths, with
+runtime libraries supplied by the container or the operator's host. Exported Nix
+CLI candidates currently require **glibc 2.38+, GLIBCXX 3.4.30 and CXXABI 1.3.13**;
+Ubuntu 24.04 is the qualification baseline. The build rejects increases to these
+ABI requirements. On NixOS, use the native output; the exported conventional Linux
+binary needs a compatible loader such as a separately configured `nix-ld`.
+
+The packaged authoring-client fixture uses pinned Ubuntu 24.04 to exercise that
+baseline. The existing Dockerfile and its Debian client fixture remain unchanged.
+Do not assume these candidate exports support Debian 12. Fully static glibc
+binaries are unsuitable here: DuckDB loads native extensions at runtime.
+
+These are candidate builds, not a replacement for signed release publication.
+Clean Git revisions receive a `+nix.<revision>` development version, source
+revision and commit timestamp. Dirty worktrees remain marked as development.
+Release attestation/admission and supported upgrade policy are still owned by the
+existing release process. The Dockerfile is retained during qualification.
+
+### Updating dependency and asset hashes
+
+After changing dependencies or publisher inputs, update the corresponding hash
+in `build-hashes.json`. Temporarily use `pkgs.lib.fakeHash`'s value
+(`sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=`), build that output, review
+the changed inputs and reported hash, then record it and rebuild. Never accept a
+new hash without reviewing the lockfile, asset pins or publisher change that
+caused it. Application-only changes do not need new dependency hashes.
+
+The JavaScript input contains unmodified package-manager output; platform-native
+helpers are patched in the sandboxed application build. The Go input is a local
+module proxy, including deterministic version lists needed by sqlc. Neither
+input contains a developer's credentials or caches. Build from a Git flake so
+ignored local secrets do not enter the store.
+
+## Follow-up work
+
+- Qualify the development workflow on a replacement NixOS dev VPS, with reviewed
+  SSH/Tailscale access and independently restored development secrets.
+- Adopt the Nix image in protected release publication after qualification and
+  attestation/admission integration; then retire duplicate Dockerfile build logic.
+- Qualify other architectures and desktop/Electron packaging separately.
 
 Contributors and self-hosters can continue using the existing non-Nix workflows.
 No host migration or customer deployment is performed by these commands.

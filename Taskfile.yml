@@ -4,6 +4,21 @@ env:
   GOFLAGS: -tags=duckdb_arrow
 
 tasks:
+  nix:build:
+    desc: Build the sandboxed native Nix application and deployment CLI
+    cmds:
+      - nix build --no-update-lock-file .#leapview --out-link result-app
+
+  nix:image:
+    desc: Build the Nix container archive for Docker, Compose and Kamal
+    cmds:
+      - nix build --no-update-lock-file .#leapview-image --out-link result-image
+
+  nix:qualify:
+    desc: Qualify the Nix image through the existing production deployment checks
+    cmds:
+      - nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh
+
   nix:check:
     desc: Check the locked Nix toolchain and real browser integration
     cmds:

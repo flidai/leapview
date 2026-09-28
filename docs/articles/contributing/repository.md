@@ -40,6 +40,8 @@ On x86_64 Linux, the repository's `flake.nix` provides a locked development tool
 Run `nix develop`, then use the same Task commands below. Docker must already be
 running and accessible. `nix develop -c task ci` runs the PR contract in that
 environment; `task nix:check` checks the native toolchain and matching Chromium.
+`nix build .#leapview` and `nix build .#leapview-image` provide sandboxed application
+and container builds. `task nix:qualify` runs the existing production-image checks.
 See `nix/README.md` in the repository for setup, version updates and current limits.
 Nix is optional for contributors and is not required to run the published image.
 
