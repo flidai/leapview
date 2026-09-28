@@ -6,7 +6,7 @@ Decision date: pending review
 
 Proposal date: 2026-09-25
 
-Last revised: 2026-09-26
+Last revised: 2026-09-28
 
 Implementation: pending; this proposal does not establish production readiness
 
@@ -106,7 +106,7 @@ V1 has two public deployment packages for the same product:
   on European Hetzner infrastructure, using Docker and Kamal with restart-based
   rollback. A separate dedicated PostgreSQL VPS per customer hosts authoritative
   application state and the DuckLake catalog; LeapView operates its single primary
-  using Ansible and pgBackRest. Local SSD on the application VPS stores analytical
+  using NixOS and pgBackRest. Local SSD on the application VPS stores analytical
   files. S3 and Kubernetes are not required for analytical serving. Managed operations additionally protect
   irreplaceable customer state through off-host backups or durable copies.
 
@@ -181,9 +181,11 @@ until review. Exact versions, plans and resource sizes are qualified separately.
 | Layer | Selected technology | Responsibility and inclusion |
 |---|---|---|
 | Infrastructure | Hetzner Cloud | One dedicated application VPS and one dedicated PostgreSQL VPS per customer in a European region. Size independently from measured workloads; neither tier has redundancy in v1. |
-| Operating system | Ubuntu LTS | Standard managed host baseline with scheduled maintenance and security updates. |
+| Operating system | NixOS | Selected baseline for both managed VPS roles; reviewed, pinned system configurations with controlled updates and reboots. |
 | Infrastructure provisioning | OpenTofu with the official Hetzner provider | Public modules for servers, networks, firewalls and storage resources. Protect remote state and locking; qualify existing state before changing runners. |
-| Host and database configuration | Ansible; minimal cloud-init bootstrap | Repeatable Docker, PostgreSQL, backup, networking and agent configuration; controlled patching, staggered reboots and replacement. |
+| Host and database configuration | NixOS modules and locked flake inputs | Declarative Docker, PostgreSQL, pgBackRest, networking, access and telemetry configuration. |
+| Host installation | nixos-anywhere and disko | Install fresh hosts over SSH with a reviewed disk layout; never use destructive installation as an update procedure. |
+| Host configuration deployment | deploy-rs | Deploy reviewed NixOS generations with activation confirmation and rollback; qualify reboot and service health separately. |
 | Application runtime | Docker Engine | Immutable release images and persistent local volumes. |
 | Self-hosted deployment | Docker Compose; optional Caddy | Minimal public installation with bundled PostgreSQL and optional HTTPS. |
 | Managed application deployment | Kamal and kamal-proxy | Health-gated releases, TLS and traffic routing, draining and restart-based rollback. No retained warm release. |
@@ -218,12 +220,53 @@ kamal-proxy for HTTPS and release routing. Qualify SSE buffering and timeouts,
 uploads, client identity, draining and certificate renewal. Private administrative
 and metrics endpoints must remain protected.
 
-OpenTofu owns declared provider resources; cloud-init establishes minimal host
-access; Ansible owns repeatable OS, Docker, PostgreSQL and backup configuration.
+OpenTofu owns declared provider resources; nixos-anywhere and disko install fresh
+hosts. NixOS modules own OS, Docker, PostgreSQL and backup configuration; deploy-rs
+applies reviewed host generations.
 Kamal owns application deployment and its proxy lifecycle. The database has an
 independent maintenance lifecycle; application deployment must not restart or
-upgrade it implicitly. Use established roles and tools with pinned versions and
+upgrade it implicitly. Use established modules and tools with pinned versions and
 reviewed configuration, rather than a custom database controller.
+
+### NixOS host lifecycle decision
+
+NixOS is the selected managed host baseline, replacing Ubuntu LTS and Ansible.
+Public Compose self-hosting still works on supported Docker hosts without Nix.
+Publish reusable application-host and database-host modules with sanitized examples;
+keep customer inventory, credentials and operational records appropriately protected.
+
+Lock nixpkgs and tooling inputs in version control. Review and build configuration
+changes in CI before deploy-rs activation; stage updates and schedule disruptive
+service restarts and kernel reboots. Pin the PostgreSQL major package explicitly.
+Changing `system.stateVersion` is a separate compatibility review, not a routine
+release bump. Retain known-good system generations and recovery artifacts with a
+bounded garbage-collection policy. Track overdue security updates; pinning alone
+does not apply fixes.
+
+NixOS owns Docker Engine configuration, not the application containers that Kamal
+manages. Do not also declare those containers through NixOS OCI container units.
+The database host runs PostgreSQL and pgBackRest as host services. App hosts carry
+Docker; both roles carry required access, firewall and telemetry configuration.
+Provider provisioning and deployment tools can run from the operator/CI environment.
+Application releases and host updates have separate approval and maintenance paths.
+
+NixOS generations restore system software/configuration, not database contents,
+DuckLake files, application migrations or external side effects. deploy-rs activation
+confirmation does not prove application/database health or successful reboot.
+Qualify those separately, including rescue-console recovery and loss of SSH/Tailscale.
+Use pgBackRest and the database upgrade procedure for data recovery; never assume
+switching a system generation safely downgrades a PostgreSQL cluster.
+
+Keep secret values out of Nix expressions, flake inputs, derivations and the Nix
+store. GitHub Environments/Secrets remains the selected delivery mechanism; use
+restricted runtime files or supported credential-file interfaces for host services.
+Kamal retains its protected host secret files. Define permissions, persistence,
+reprovisioning and independent key recovery; no new secrets service is required.
+
+This choice moves host configuration and package selection into reviewable modules
+and locked inputs. It adds Nix tooling, module maintenance, build/cache availability
+and explicit state compatibility work. It does not remove operational responsibility
+for patching, backups, monitoring, reboot qualification or PostgreSQL major upgrades.
 
 Better Stack is the selected managed observability service. Keep application
 health endpoints and telemetry portable; public collection configuration must
@@ -273,7 +316,7 @@ to start and serve dashboards.
 
 | Capability | Self-hosted Compose | Operated Kamal |
 |---|---|---|
-| Installation and infrastructure | Compose; operator chooses host | Kamal, OpenTofu and Ansible on European Hetzner infrastructure |
+| Installation and infrastructure | Compose; operator chooses host | Kamal, OpenTofu and NixOS on European Hetzner infrastructure |
 | Analytical serving | Local persistent filesystem | Local SSD on customer VPS |
 | PostgreSQL | Bundled by default; external supported | Separate customer VPS; self-operated single primary with pgBackRest |
 | Customer credentials | Encrypted PostgreSQL records through UI/API/bootstrap | Same implementation and lifecycle |
@@ -498,7 +541,7 @@ evidence; it does not defer the selection itself:
   recovery evidence. LeapView owns these duties; Kamal does not outsource them.
 - **PostgreSQL:** use one customer database VPS with a qualified PostgreSQL major
   version, persistent storage, scoped roles, verified TLS and host access controls.
-  Ansible and pgBackRest own repeatable configuration and recovery mechanics.
+  NixOS and pgBackRest provide repeatable configuration and recovery mechanics.
   Qualify minor updates, OS reboots, major upgrades, PITR, retention, archive
   failures and complete host replacement. Managed database providers such as
   Ubicloud are researched alternatives, not selected v1 dependencies or support
@@ -778,3 +821,8 @@ must be rechecked when qualifying an implementation:
   and [data localization](https://developers.cloudflare.com/data-localization/).
 - [Trivy image scanning](https://trivy.dev/docs/latest/target/container_image/)
   and [Postmark SMTP](https://postmarkapp.com/developer/user-guide/send-email-with-smtp).
+
+NixOS lifecycle sources: [NixOS manual](https://nixos.org/manual/nixos/stable/),
+[nixos-anywhere](https://github.com/nix-community/nixos-anywhere),
+[disko](https://github.com/nix-community/disko), and
+[deploy-rs](https://github.com/serokell/deploy-rs).

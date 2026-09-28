@@ -2,7 +2,7 @@
 
 Date: 2026-09-25
 
-Last revised: 2026-09-26
+Last revised: 2026-09-28
 
 Status: research supporting selected proposal; no production profile is qualified
 
@@ -12,7 +12,7 @@ Scope clarification after this research: self-hosting prioritizes a straightforw
 Compose installation; operator deployments prioritize reuse and robustness. The
 ADR now proposes Kamal on one dedicated application VPS per customer on European
 Hetzner infrastructure, plus a separate customer PostgreSQL VPS operated by
-LeapView with Ansible and pgBackRest. Local SSD holds analytical files.
+LeapView with NixOS and pgBackRest. Local SSD holds analytical files.
 Derived data is explicitly rebuildable where complete source replay is supported.
 Off-host recovery protects irreplaceable managed customer state through the selected
 Hetzner Object Storage backup destination; S3 is outside the analytical serving path.
@@ -37,7 +37,8 @@ now includes analytical rebuild from sources or an optional consistent backup.
 
 ### Selected target supporting stack
 
-The target now selects Ubuntu LTS, OpenTofu and Ansible for managed hosts;
+The target now selects NixOS and OpenTofu for managed hosts, nixos-anywhere/disko
+for fresh installation and deploy-rs for configuration activation;
 GitHub Actions/GHCR and Trivy for release production; Better Stack for monitoring,
 logs, on-call and status pages; Tailscale for private operator/deployment access;
 and Postmark for transactional email. Cloudflare is the supported optional edge.
@@ -70,6 +71,25 @@ Official sources supporting these choices:
   reuse image assessment and email delivery rather than building those services.
 - [OWASP cryptographic storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html):
   use established authenticated encryption and explicit key lifecycle/recovery.
+
+### NixOS selection after host lifecycle review
+
+NixOS replaces the earlier Ubuntu/Ansible proposal for managed application and
+PostgreSQL hosts. Reusable modules and locked inputs make host configuration and
+package changes reviewable; deploy-rs provides established activation machinery.
+OpenTofu continues to own provider resources, nixos-anywhere/disko install fresh
+hosts, and Kamal owns application containers and proxy releases. Public Compose
+users do not need NixOS. This selection does not add a custom host controller.
+
+Qualification must cover activation and reboot recovery, PostgreSQL data-format
+compatibility, persistent mounts, secret files outside the Nix store, generation
+retention and patch cadence. System rollback does not restore mutable data.
+See the governing ADR and qualification specification for acceptance criteria.
+
+Sources: [NixOS manual](https://nixos.org/manual/nixos/stable/),
+[nixos-anywhere](https://github.com/nix-community/nixos-anywhere),
+[disko](https://github.com/nix-community/disko),
+[deploy-rs](https://github.com/serokell/deploy-rs).
 
 ### Deployment mechanisms
 
@@ -125,15 +145,16 @@ backups protect irreplaceable state; they need not include every materialization
 Accepting restore-time downtime makes a single primary with off-host backups a
 credible option. Database operation and availability topology are separate choices:
 a managed database can also have no standby. The selected approach is one separate
-PostgreSQL VPS per customer, with reviewed Ansible roles for lifecycle configuration
-and pgBackRest for physical backups, WAL archiving, retention and PITR. Cloud-init
-provides minimal bootstrap. No custom database controller, standby, Redis or default
+PostgreSQL VPS per customer, with reviewed NixOS modules for lifecycle configuration
+and pgBackRest for physical backups, WAL archiving, retention and PITR.
+nixos-anywhere and disko provide fresh-host installation. No custom database controller, standby, Redis or default
 PgBouncer service is required. Connection pooling must preserve session advisory
 locks used by LeapView; transaction pooling is not a universal default.
 
 | Candidate | Reuse | Trade-off and conclusion |
 |---|---|---|
-| Ansible + pgBackRest | Established configuration and database recovery tools | Selected; we own integration, patching, alerts, restore exercises and incident response |
+| NixOS + pgBackRest | Declarative host configuration and established database recovery tools | Selected; we own integration, patching, alerts, restore exercises and incident response |
+| Ubuntu LTS + Ansible + pgBackRest | Broad role ecosystem and familiar mutable hosts | Superseded option; prefer NixOS generations and shared modules for the managed baseline |
 | Pigsty | Integrated PostgreSQL lifecycle, backup and observability | Researched alternative; even the documented slim profile requires Patroni and etcd |
 | Autobase | PostgreSQL deployment, upgrade and recovery automation | Broader alternative; distinguish automation licensing from commercial console features |
 | Ubicloud PostgreSQL | Provider-operated database lifecycle and backups, optional standbys | Researched alternative, not a selected v1 dependency; adds a database vendor and requires provider/network/recovery qualification |
@@ -245,7 +266,7 @@ offering. Procurement and technical qualification remain open. Keep application
 packaging standard and public if a future Kubernetes profile is adopted.
 
 Provider-owned node lifecycle should replace our host provisioning and patching
-automation for those nodes. Do not run Ansible and infrastructure reconciliation
+automation for those nodes. Do not run our host and infrastructure reconciliation
 against resources simultaneously owned by the provider's controllers. OpenTofu
 can still manage resources outside that ownership boundary.
 

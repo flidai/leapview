@@ -4,7 +4,7 @@ Status: proposed requirements; no profile is qualified by this document
 
 Date: 2026-09-25
 
-Last revised: 2026-09-26
+Last revised: 2026-09-28
 
 Related: [ADR-0025](../0025-share-an-open-deployment-stack-for-self-hosted-and-managed-leapview.md),
 [supporting technology research](deployment-stack-reuse-research.md)
@@ -41,7 +41,7 @@ implementation, maintenance process, escalation and recovery evidence for each:
 | Responsibility | Required coverage |
 |---|---|
 | Hetzner resources | Account ownership, dedicated customer VPS, quotas, replacement capacity and region failure |
-| Ubuntu LTS and Docker | Qualified OS baseline, vulnerability updates, Docker upgrades, reboot windows, firewall and recovery |
+| NixOS and Docker | Qualified OS baseline, vulnerability updates, Docker upgrades, reboot windows, firewall and recovery |
 | Kamal and proxy | Pinned versions, application updates, rollback, HTTPS renewal, trusted client identity and SSE |
 | Self-operated PostgreSQL | Customer database VPS, roles, TLS, version/OS maintenance, PITR, archive monitoring, retention and restoration to a replacement host |
 | Local SSD | Persistent mount layout, isolated paths, integrity, capacity, rebuild/publication and safe cleanup |
@@ -54,12 +54,27 @@ implementation, maintenance process, escalation and recovery evidence for each:
 | Postmark | SMTP/TLS, sender domains, retry/bounce handling, scoped access and recipient/content processing |
 | Operations | Retained audit records, support coverage, incident response and supplier exit |
 
-OpenTofu provisions declared infrastructure; cloud-init bootstraps access; Ansible
-configures and maintains hosts, PostgreSQL and pgBackRest. Kamal owns application
-and proxy deployment. Do not let Compose and Kamal manage the same containers or
+OpenTofu provisions declared infrastructure; nixos-anywhere and disko install fresh
+hosts. NixOS modules configure hosts, PostgreSQL and pgBackRest; deploy-rs applies
+reviewed host generations. Kamal owns application and proxy deployment. Do not let Compose and Kamal manage the same containers or
 let application releases implicitly upgrade PostgreSQL. LeapView owns database
 maintenance, backup operation, incident response and coordinated recovery. External
 database vendors are not required by this profile.
+
+### NixOS host qualification
+
+- Lock inputs and build both host-role configurations in CI; validate deploy-rs
+  definitions before activation and keep secret values out of build outputs/store.
+- Prove fresh installation with nixos-anywhere/disko on an empty replacement host;
+  review disk identity/layout and prove updates do not invoke destructive formatting.
+- Exercise deploy-rs activation failure, connectivity rollback, service checks,
+  kernel reboot, boot-generation recovery and out-of-band rescue access.
+- Prove Docker/Kamal container ownership, persistent mounts and secret permissions
+  survive configuration activation, host reboot and application release overlap.
+- Retain and test known-good generations; qualify garbage collection, disk pressure,
+  build/cache unavailability and overdue security-update detection.
+- Pin PostgreSQL major versions; test minor updates and backup service restarts.
+  Prove the major-upgrade/data-recovery runbook independently of OS rollback.
 
 ### Selected supporting services and credential evidence
 
@@ -205,17 +220,17 @@ can destroy when the operator has not protected irreplaceable state.
 
 ### PostgreSQL lifecycle and recovery qualification
 
-Use reviewed, version-pinned Ansible roles and native PostgreSQL/pgBackRest tools.
+Use reviewed NixOS modules, locked inputs and native PostgreSQL/pgBackRest tools.
 Prove fresh provisioning and safe reapplication, scoped role bootstrap, verified
 TLS and host firewall rules. Exercise runtime, migrator and maintenance identities
 separately. Use direct or qualified session-compatible connections for session
 advisory locks; do not place every client behind transaction-mode PgBouncer.
 
-Record the supported major version and package origin, minor/security patch
-procedure, any package holds and their update/overdue-alert path. Qualify scheduled,
-staggered reboots and service restart behaviour. Cloud-init runs bootstrap only;
-ongoing changes must reconcile existing hosts. Budget connection pools, memory per
-query operation, autovacuum, WAL and backup work from actual VPS resources.
+Record the explicit PostgreSQL major package and locked nixpkgs revision,
+minor/security patch procedure and overdue-update alerts. Qualify scheduled,
+staggered reboots and service restart behaviour. Apply ongoing changes through
+reviewed NixOS generations; installation tooling must never repartition a live host.
+Budget connection pools, memory per query operation, autovacuum, WAL and backup work from actual VPS resources.
 
 Rehearse a PostgreSQL major upgrade against restored data, including preflight,
 extensions/catalog compatibility, writer quiescence, validation and a fresh backup.
