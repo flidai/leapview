@@ -2,7 +2,9 @@
 
 Status: proposed
 
-Decision date: pending review
+Decision date: 2026-09-28
+
+Review: target architecture agreed; record remains proposed pending PR review
 
 Proposal date: 2026-09-25
 
