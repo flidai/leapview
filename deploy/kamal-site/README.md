@@ -16,7 +16,7 @@ No fabricated `GITHUB_*` variables or new CI network identity are needed.
 
 Install the locked Ruby dependencies using `BUNDLE_GEMFILE=deploy/kamal-site/Gemfile`
 and Bundler 2.6.9. The operator also needs Python 3, Docker/buildx, Go and an
-authenticated `gh`; live admission uses the repository's pinned Trivy verifier.
+authenticated `gh` with `gh attestation verify` support (the system CLI may be too old); live admission uses the repository's pinned Trivy verifier.
 Run from the repository root:
 
 ```sh

@@ -7,6 +7,7 @@ Test bindings are confined to a generated copy in the disposable namespace.
 import argparse
 import fcntl
 import hashlib
+import gzip
 import importlib.util
 import io
 import json
@@ -84,17 +85,43 @@ def main():
         deploy.public_check = public_check
         def make_image(n, unhealthy=False):
             revision = f'{n:040x}'
+            def layer(files):
+                output = io.BytesIO()
+                with tarfile.open(fileobj=output, mode='w') as tar:
+                    for name, data in files:
+                        info = tarfile.TarInfo(name); info.size = len(data); info.mode = 0o755
+                        tar.addfile(info, io.BytesIO(data))
+                raw = output.getvalue()
+                return raw, gzip.compress(raw, mtime=0)
+            base_raw, base = layer([('leapview-site', (args.artifacts / 'fixture').read_bytes())])
+            delta_raw, delta = layer([('version', revision.encode()), ('payload', os.urandom(1024 * 128))])
+            blobs = {}
+            def blob(data, media_type):
+                digest = hashlib.sha256(data).hexdigest(); blobs[digest] = data
+                return {'mediaType': media_type, 'digest': 'sha256:' + digest, 'size': len(data)}
+            layers = [blob(data, 'application/vnd.oci.image.layer.v1.tar+gzip') for data in (base, delta)]
+            t.report['shared_fixture_layer'] = layers[0]['digest']
+            config = {'architecture': 'amd64', 'os': 'linux',
+                'config': {'Entrypoint': ['/leapview-site'], 'User': '65532:65532',
+                    'Env': ['TRIAL_UNHEALTHY=' + str(int(unhealthy))],
+                    'Labels': {'service': 'leapview-site', 'org.opencontainers.image.revision': revision}},
+                'rootfs': {'type': 'layers', 'diff_ids': ['sha256:' + hashlib.sha256(raw).hexdigest() for raw in (base_raw, delta_raw)]},
+                'history': [{'created_by': 'shared fixture base'}, {'created_by': 'fixture version'}]}
+            config_descriptor = blob(json.dumps(config).encode(), 'application/vnd.oci.image.config.v1+json')
+            manifest = {'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.manifest.v1+json',
+                        'config': config_descriptor, 'layers': layers}
+            manifest_descriptor = blob(json.dumps(manifest).encode(), manifest['mediaType'])
+            tag = t.repo + ':fixture-' + str(n)
+            manifest_descriptor['annotations'] = {'io.containerd.image.name': tag, 'org.opencontainers.image.ref.name': tag}
+            index = {'schemaVersion': 2, 'manifests': [manifest_descriptor]}
             archive = io.BytesIO()
             with tarfile.open(fileobj=archive, mode='w') as tar:
-                for name, data in [('leapview-site', (args.artifacts / 'fixture').read_bytes()),
-                                   ('version', revision.encode()), ('payload', os.urandom(1024 * 128))]:
-                    info = tarfile.TarInfo(name); info.size = len(data); info.mode = 0o755
+                files = [('oci-layout', b'{"imageLayoutVersion":"1.0.0"}'), ('index.json', json.dumps(index).encode())]
+                files += [('blobs/sha256/' + digest, data) for digest, data in blobs.items()]
+                for name, data in files:
+                    info = tarfile.TarInfo(name); info.size = len(data); info.mode = 0o644
                     tar.addfile(info, io.BytesIO(data))
-            tag = t.repo + ':fixture-' + str(n)
-            t.docker('import', '--platform', 'linux/amd64', '--change', 'LABEL service=leapview-site',
-                     '--change', 'LABEL org.opencontainers.image.revision=' + revision,
-                     '--change', 'ENTRYPOINT ["/leapview-site"]', '--change', 'USER 65532:65532',
-                     '--change', 'ENV TRIAL_UNHEALTHY=' + str(int(unhealthy)), '-', tag, data=archive.getvalue())
+            t.docker('load', data=archive.getvalue())
             t.docker('push', tag)
             image = t.inspect(tag); ref = image['RepoDigests'][0]; digest = ref.split('@')[1]
             manifest = json.load(urlopen(Request('http://127.0.0.1:5000/v2/site/manifests/' + digest, headers={'Accept': 'application/vnd.oci.image.manifest.v1+json'})))
@@ -138,7 +165,7 @@ def main():
         candidate = make_image(100, unhealthy=True)
         with deploy.ownership():
             snapshot = deploy.remote('state')
-            image_ids = t.docker('image', 'ls', '--quiet', '--no-trunc')[1]
+            image_ids = set(t.docker('image', 'ls', '--quiet', '--no-trunc')[1].split())
             original_ready = (state / 'ready.json').read_text()
             for field in ('candidate_headroom_bytes', 'reserve_inodes', 'qualified_compressed_bytes'):
                 changed = json.loads(original_ready)
@@ -149,7 +176,7 @@ def main():
                     raise AssertionError('capacity/envelope guard did not reject')
                 except RuntimeError: pass
                 finally: (state / 'ready.json').write_text(original_ready)
-                assert t.docker('image', 'ls', '--quiet', '--no-trunc')[1] == image_ids
+                assert set(t.docker('image', 'ls', '--quiet', '--no-trunc')[1].split()) == image_ids
                 assert deploy.remote('state') == snapshot
             original_state = (state / 'state.json').read_text()
             corrupt = json.loads(original_state)
