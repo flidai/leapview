@@ -22,8 +22,11 @@ import (
 )
 
 func runNative(ctx context.Context, action string, r NativeRequest, journalPath, credential, digest string, stdin io.Reader, stdout io.Writer) error {
-	if action == "migrate" || action == "rehearse" {
-		return runNativeMigration(ctx, r, journalPath, credential, digest, action == "rehearse")
+	if action == "migrate" || action == "rehearse" || action == "migrate-copy" {
+		return runNativeMigrationMode(ctx, r, journalPath, credential, digest, action)
+	}
+	if action == "verify-copy" {
+		return runNativeDetached(ctx, r, stdin, stdout)
 	}
 	id, err := r.Identity()
 	if err != nil {
@@ -45,6 +48,11 @@ func runNative(ctx context.Context, action string, r NativeRequest, journalPath,
 		return err
 	}
 	defer installLock.Release()
+	if action == "apply" {
+		if err := validatePreparedRehearsal(r); err != nil {
+			return err
+		}
+	}
 	// Persist the request before the journal can fence the host. A crash after
 	// preparing the journal must never leave recovery without its request file.
 	raw, err := json.Marshal(r)
@@ -100,6 +108,9 @@ func runNative(ctx context.Context, action string, r NativeRequest, journalPath,
 		_, err = fmt.Fprintln(stdout, "PREDECESSOR_RECOVERED")
 		return err
 	}
+	if action == "capture" {
+		return captureNativeRehearsal(ctx, &coordinator, effects, id, stdout)
+	}
 	if action != "apply" {
 		return errors.New("unsupported native upgrade action")
 	}
@@ -138,14 +149,29 @@ func validateMigrationIntent(r NativeRequest, state State, digest string, binary
 	return state.validate()
 }
 func runNativeMigration(ctx context.Context, r NativeRequest, journalPath, credential, digest string, rehearsal bool) error {
+	mode := "migrate"
+	if rehearsal {
+		mode = "rehearse"
+	}
+	return runNativeMigrationMode(ctx, r, journalPath, credential, digest, mode)
+}
+
+func runNativeMigrationMode(ctx context.Context, r NativeRequest, journalPath, credential, digest, mode string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	revalidate := func(context.Context) error {
+		if mode == "migrate-copy" {
+			state, err := readDetachedStateFile(journalPath)
+			if err != nil {
+				return err
+			}
+			return validateDetachedMigration(r, state, digest, buildinfo.Current())
+		}
 		state, err := readJournalFile(journalPath)
 		if err != nil {
 			return err
 		}
-		if rehearsal {
+		if mode == "rehearse" {
 			id, err := r.Identity()
 			if err != nil {
 				return err

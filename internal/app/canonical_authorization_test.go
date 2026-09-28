@@ -377,6 +377,61 @@ func TestDeliveryProjectTypedAuthorizationUsesReleaseOperatorAndRequiredPairs(t 
 	}
 }
 
+func TestLegacyDeliveryAuthorityCannotPublishNewTypedPolicyUntilNewSnapshot(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "legacy_deployer"}
+	legacyBinding := access.RoleBinding{
+		ID: "legacy-deployer", Name: "legacy deployer", Subject: principal,
+		Role: access.ProjectRoleDeployer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDeployer),
+	}
+	oldCapture, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []access.RoleBinding{legacyBinding}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := access.AuthorizationPolicyScope{TargetID: "target_demo", ProjectID: identity.ProjectID.String(), Environment: identity.Environment}
+	newOperator, err := access.NewTypedRoleBinding("transition-release-operator", "release operator", principal, access.PermissionRoleReleaseOperator, identity.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := access.AuthorizationPolicy{Scope: scope, Revision: 2, RoleBindings: []access.RoleBinding{legacyBinding, newOperator}}
+	current.Digest, err = access.AuthorizationPolicyDigest(scope, current.RoleBindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &currentAuthorizationPolicyReader{policy: current}
+	filter := currentTargetAuthorizationFilter(reader, scope.TargetID, identity.ProjectID, identity.Environment)
+	activeOld, err := filter(t.Context(), oldCapture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed, err := deliveryProjectAllowsTypedOperation(activeOld, []access.SubjectRef{principal}, identity.ProjectID, "createDeliveryPlan", accessAPIGenOperationContracts())
+	if err != nil || allowed {
+		t.Fatalf("typed policy addition authorized the old legacy capture: allowed=%t err=%v", allowed, err)
+	}
+
+	newIdentity := identity
+	newIdentity.GenerationID = "generation_typed"
+	newCapture, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(newIdentity, graph, current.RoleBindings, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeNew, err := filter(t.Context(), newCapture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed, err = deliveryProjectAllowsTypedOperation(activeNew, []access.SubjectRef{principal}, identity.ProjectID, "createDeliveryPlan", accessAPIGenOperationContracts())
+	if err != nil || !allowed {
+		t.Fatalf("new typed capture did not authorize the explicitly assigned release operator: allowed=%t err=%v", allowed, err)
+	}
+}
+
 func TestValidTusTransportIDRequiresCanonicalOpaqueToken(t *testing.T) {
 	valid := "tus_" + strings.Repeat("a", 64)
 	for _, value := range []string{valid, "tus_" + strings.Repeat("A", 64), " tus_" + strings.Repeat("a", 64), "tus_" + strings.Repeat("a", 63)} {

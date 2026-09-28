@@ -36,9 +36,18 @@ func TestSetAuthorizeConnectionUpdatesModuleEventAuthorization(t *testing.T) {
 	if module.authorizeConnection == nil {
 		t.Fatal("module event authorizer was not installed")
 	}
-	allowed, err := module.authorizeConnection(t.Context(), "principal:test", "project:test", "connection:test", access.ActionConnectionRead)
+	allowed, err := module.AuthorizeConnection(t.Context(), "principal:test", "project:test", "connection:test", access.ActionConnectionRead)
 	if err != nil || !allowed || !called {
 		t.Fatalf("module event authorization allowed=%v called=%v error=%v", allowed, called, err)
+	}
+}
+
+func TestAuthorizeConnectionRejectsUnconfiguredModule(t *testing.T) {
+	for _, module := range []*Module{nil, {}} {
+		allowed, err := module.AuthorizeConnection(t.Context(), "principal:test", "project:test", "connection:test", access.ActionConnectionManage)
+		if allowed || err == nil {
+			t.Fatalf("unconfigured authorization allowed=%v error=%v", allowed, err)
+		}
 	}
 }
 

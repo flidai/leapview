@@ -402,16 +402,19 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if !runtimeRiverRead || !runtimeRiverInsert || !runtimeRiverUpdate || !runtimeRiverDelete || !runtimeRiverMigrationRead || !runtimeRiverJobSequence || !runtimeRiverNotificationSequence || !ownerRiverTrigger || runtimeRiverTrigger {
 		t.Fatalf("River role policy invalid: runtime job=%t/%t/%t/%t migration-read=%t sequences=%t/%t owner/runtime-trigger=%t/%t", runtimeRiverRead, runtimeRiverInsert, runtimeRiverUpdate, runtimeRiverDelete, runtimeRiverMigrationRead, runtimeRiverJobSequence, runtimeRiverNotificationSequence, ownerRiverTrigger, runtimeRiverTrigger)
 	}
-	var runtimeTargetTableUpdate, runtimeTargetLockColumn, runtimeTargetRevisionColumn bool
+	var runtimeTargetTableSelect, runtimeTargetTableUpdate, runtimeTargetLockColumn, runtimeTargetRevisionColumn bool
+	var runtimeActivePointerSelect bool
 	if err := db.QueryRow(ctx, `
-		SELECT has_table_privilege('leapview_control_runtime', 'delivery.delivery_target', 'UPDATE'),
+		SELECT has_table_privilege('leapview_control_runtime', 'delivery.delivery_target', 'SELECT'),
+		       has_table_privilege('leapview_control_runtime', 'delivery.delivery_active_pointer', 'SELECT'),
+		       has_table_privilege('leapview_control_runtime', 'delivery.delivery_target', 'UPDATE'),
 		       has_column_privilege('leapview_control_runtime', 'delivery.delivery_target', 'updated_at', 'UPDATE'),
 		       has_column_privilege('leapview_control_runtime', 'delivery.delivery_target', 'target_revision', 'UPDATE')`).
-		Scan(&runtimeTargetTableUpdate, &runtimeTargetLockColumn, &runtimeTargetRevisionColumn); err != nil {
+		Scan(&runtimeTargetTableSelect, &runtimeActivePointerSelect, &runtimeTargetTableUpdate, &runtimeTargetLockColumn, &runtimeTargetRevisionColumn); err != nil {
 		t.Fatal(err)
 	}
-	if runtimeTargetTableUpdate || !runtimeTargetLockColumn || runtimeTargetRevisionColumn {
-		t.Fatalf("delivery target row-lock capability leaked: table=%t updated_at=%t target_revision=%t", runtimeTargetTableUpdate, runtimeTargetLockColumn, runtimeTargetRevisionColumn)
+	if !runtimeTargetTableSelect || !runtimeActivePointerSelect || runtimeTargetTableUpdate || !runtimeTargetLockColumn || runtimeTargetRevisionColumn {
+		t.Fatalf("delivery target read/row-lock policy invalid: target-select=%t pointer-select=%t target-update=%t updated_at=%t target_revision=%t", runtimeTargetTableSelect, runtimeActivePointerSelect, runtimeTargetTableUpdate, runtimeTargetLockColumn, runtimeTargetRevisionColumn)
 	}
 	var runtimeCatalogIdentitySelect, runtimeDeliveryAttemptSelect, runtimeDeliverySealSelect, runtimeServingBundleSelect bool
 	if err := db.QueryRow(ctx, `

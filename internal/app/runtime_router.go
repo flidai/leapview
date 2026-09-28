@@ -904,7 +904,7 @@ func buildApplicationSurfaces(
 			}
 			return snapshot, nil
 		}
-		snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, routes.accessModule.AuthorizationSubjects)
+		snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(runtimeConfig.InstanceID, authorizationSnapshot, routes.accessModule.AuthorizationSubjects)
 		authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection)
 		routes.accessModule.SetCurrentEffectiveCapabilities(func(ctx context.Context, principalID string) ([]access.Capability, error) {
 			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
