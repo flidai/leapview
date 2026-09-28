@@ -30,6 +30,7 @@ proxy:
   buffering:
     requests: false
     responses: false
+    # Applies only when request buffering is enabled; not an upload cap here.
     max_request_body: 100000000
 registry:
   server: ghcr.io

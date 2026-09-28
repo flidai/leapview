@@ -51,6 +51,10 @@ small host-contract build checks role separation and service settings. A full
 `nix flake check` also builds deploy-rs activation closures; neither evaluation nor
 build proves that the target machine boots or restores successfully.
 
+A subsequent [remote component rehearsal](rehearsal-2026-09-28.md) built both
+complete host configurations and exercised database/file recovery and proxy
+behavior. It did not boot NixOS or deploy LeapView through Kamal.
+
 ## Infrastructure and private inventory
 
 Copy the `hetzner/` root into a private operations checkout or consume it as a
