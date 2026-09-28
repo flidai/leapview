@@ -6,7 +6,6 @@ import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
-import { headers as commandHeaders } from '../shared/command'
 import '../dashboard/visual-modal'
 import './chat-thread'
 import { agentIcon } from './agent-icon'
@@ -15,6 +14,7 @@ import './chat-composer'
 import './chat-list'
 import './chat-visual-panel'
 import type { ChatVisualPanel } from './chat-visual-panel'
+import { saveChatVisual } from './saved-visuals'
 
 const emptyAgent: ChatSignal = {
   conversations: [],
@@ -572,13 +572,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.visualSaving = true
     this.visualSaveError = ''
     try {
-      const response = await fetch('/explore/saved', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { ...commandHeaders('saveExploration'), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, explorerUrl: explorerHref }),
-      })
-      if (!response.ok) throw new Error('Could not save this visual. Please try again.')
+      await saveChatVisual(title, explorerHref)
       if (event.detail.artifactId === this.selectedVisualID) this.visualSaved = true
     } catch {
       if (event.detail.artifactId === this.selectedVisualID) this.visualSaveError = 'Could not save this visual. Please try again.'
