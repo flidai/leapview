@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -583,8 +584,22 @@ func startQualificationHistoricalServer(
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { qualificationHistoricalStopContainer(t, container) })
+	endpoint := qualificationHistoricalServerEndpoint(t, ctx, container, network)
+	startupCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	require.NoError(t, waitQualificationHistoricalHealth(startupCtx, endpoint))
+	return container, endpoint
+}
+
+func qualificationHistoricalServerEndpoint(
+	t *testing.T,
+	ctx context.Context,
+	container qualificationContainer,
+	network string,
+) string {
+	t.Helper()
 	inspection, err := container.(*testcontainersQualificationContainer).container.Inspect(ctx)
-	require.NoError(t, err)
+	require.NoError(t, err, "inspect candidate address on the owned Docker network")
 	if inspection.NetworkSettings == nil {
 		t.Fatal("isolated predecessor container has no Docker network settings")
 	}
@@ -592,13 +607,7 @@ func startQualificationHistoricalServer(
 	if !ok || attachedNetwork == nil || !attachedNetwork.IPAddress.IsValid() || !attachedNetwork.IPAddress.IsPrivate() {
 		t.Fatalf("predecessor container has no private address on owned network %q", network)
 	}
-	// Internal Docker networks intentionally have no published ports. The
-	// loopback-only TLS reverse proxy below forwards to this private bridge IP.
-	endpoint := net.JoinHostPort(attachedNetwork.IPAddress.String(), "8080")
-	startupCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-	require.NoError(t, waitQualificationHistoricalHealth(startupCtx, endpoint))
-	return container, endpoint
+	return net.JoinHostPort(attachedNetwork.IPAddress.String(), "8080")
 }
 
 func waitQualificationHistoricalHealth(ctx context.Context, endpoint string) error {
@@ -667,22 +676,65 @@ type qualificationHistoricalTransport struct {
 	ProxyURL string
 	CACert   string
 	SPKIPin  string
+	target   *qualificationHistoricalProxyTarget
 	server   *http.Server
 	listener net.Listener
 	process  *exec.Cmd
 }
 
-func startQualificationHistoricalTransport(t *testing.T, ctx context.Context, repoRoot, endpoint string) *qualificationHistoricalTransport {
-	t.Helper()
-	proxyTarget, err := url.Parse("http://" + endpoint)
-	require.NoError(t, err)
-	proxy := httputil.NewSingleHostReverseProxy(proxyTarget)
-	proxy.Director = func(request *http.Request) {
+type qualificationHistoricalProxyTarget struct {
+	mu  sync.RWMutex
+	url *url.URL
+}
+
+func newQualificationHistoricalProxyTarget(endpoint string) (*qualificationHistoricalProxyTarget, error) {
+	target := &qualificationHistoricalProxyTarget{}
+	if err := target.setEndpoint(endpoint); err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+func (target *qualificationHistoricalProxyTarget) setEndpoint(endpoint string) error {
+	parsed, err := url.Parse("http://" + endpoint)
+	if err != nil || parsed.Host == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("invalid historical candidate endpoint %q", endpoint)
+	}
+	target.mu.Lock()
+	target.url = parsed
+	target.mu.Unlock()
+	return nil
+}
+
+func (target *qualificationHistoricalProxyTarget) current() *url.URL {
+	target.mu.RLock()
+	defer target.mu.RUnlock()
+	copy := *target.url
+	return &copy
+}
+
+func qualificationHistoricalReverseProxy(target *qualificationHistoricalProxyTarget) *httputil.ReverseProxy {
+	return &httputil.ReverseProxy{Director: func(request *http.Request) {
+		proxyTarget := target.current()
 		request.URL.Scheme = proxyTarget.Scheme
 		request.URL.Host = proxyTarget.Host
 		request.Host = "demo.leapview.dev"
 		request.Header.Set("X-Forwarded-Proto", "https")
+	}}
+}
+
+func (transport *qualificationHistoricalTransport) setEndpoint(endpoint string) error {
+	if transport == nil || transport.target == nil {
+		return errors.New("historical candidate transport has no proxy target")
 	}
+	return transport.target.setEndpoint(endpoint)
+}
+
+func startQualificationHistoricalTransport(t *testing.T, ctx context.Context, repoRoot, endpoint string) *qualificationHistoricalTransport {
+	t.Helper()
+	target, err := newQualificationHistoricalProxyTarget(endpoint)
+	require.NoError(t, err)
+	proxy := qualificationHistoricalReverseProxy(target)
 	certificate, caPath := qualificationHistoricalTLSCertificate(t)
 	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
 	require.NoError(t, err)
@@ -714,8 +766,8 @@ server.serve_forever()`
 	require.NoError(t, err)
 	transport := &qualificationHistoricalTransport{
 		ProxyURL: fmt.Sprintf("http://127.0.0.1:%d", proxyPort), CACert: caPath,
-		SPKIPin: base64.StdEncoding.EncodeToString(spki[:]),
-		server:  server, listener: listener, process: process,
+		SPKIPin: base64.StdEncoding.EncodeToString(spki[:]), target: target,
+		server: server, listener: listener, process: process,
 	}
 	t.Cleanup(func() {
 		_ = server.Shutdown(context.Background())

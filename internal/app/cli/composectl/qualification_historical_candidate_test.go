@@ -310,6 +310,8 @@ func runQualificationHistoricalCandidateTransition(
 
 	_, err = candidate.Start(ctx)
 	require.NoError(t, err, "restart the candidate server to process the durable publication workflow")
+	endpoint = qualificationHistoricalServerEndpoint(t, ctx, candidate, fixture.Topology.ComposeNetwork)
+	require.NoError(t, proxy.setEndpoint(endpoint), "retarget the viewer transport to the restarted candidate address")
 	startupCtx, startupCancel := context.WithTimeout(ctx, 2*time.Minute)
 	require.NoError(t, waitQualificationHistoricalHealth(startupCtx, endpoint))
 	startupCancel()

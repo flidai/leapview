@@ -3,6 +3,7 @@ package composectl
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Yacobolo/toolbelt/apigen/runtime/chi"
 	chimux "github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/require"
 )
 
 // TestQualificationHistoricalPythonTLSRelay exercises the exact Python
@@ -59,4 +61,34 @@ func TestQualificationHistoricalPythonTLSRelay(t *testing.T) {
 			t.Errorf("Python generation-status response omitted %s: %s", expected, strings.TrimSpace(string(output)))
 		}
 	}
+}
+
+func TestQualificationHistoricalTransportRetargetAfterServerRestart(t *testing.T) {
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "first")
+	}))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "restarted")
+	}))
+	defer second.Close()
+
+	target, err := newQualificationHistoricalProxyTarget(strings.TrimPrefix(first.URL, "http://"))
+	require.NoError(t, err)
+	proxy := httptest.NewServer(qualificationHistoricalReverseProxy(target))
+	defer proxy.Close()
+
+	getBody := func() string {
+		response, requestErr := http.Get(proxy.URL)
+		require.NoError(t, requestErr)
+		defer response.Body.Close()
+		body, readErr := io.ReadAll(response.Body)
+		require.NoError(t, readErr)
+		require.Equal(t, http.StatusOK, response.StatusCode)
+		return string(body)
+	}
+	require.Equal(t, "first", getBody())
+
+	require.NoError(t, target.setEndpoint(strings.TrimPrefix(second.URL, "http://")))
+	require.Equal(t, "restarted", getBody(), "the stable viewer proxy must follow a restarted container's new bridge address")
 }
