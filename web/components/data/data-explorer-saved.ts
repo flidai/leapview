@@ -38,7 +38,7 @@ class DataExplorerSaved extends LitElement {
       background: var(--lv-bg-control-hover);
       padding: 0 var(--base-size-2);
       color: var(--lv-fg-muted);
-      font: var(--lv-type-micro);
+      font: var(--lv-type-caption);
     }
     .saved-popover {
       position: absolute;
