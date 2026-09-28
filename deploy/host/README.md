@@ -33,14 +33,33 @@ shared `bootstrap-linux.sh`; it contains no application lifecycle logic.
 
 For the exact admitted FAI-518 revision-019 predecessor image, the current
 bootstrap translates this document to the six fields accepted by that image's
-older installer. It rejects extra fields and persists the provisioner-supplied
-`targetId` in a private binding file before invoking the older installer. After
-installation it verifies that the predecessor-owned marker matches the image
+older installer contract. It rejects extra fields and persists the provisioner-supplied
+`targetId` in a private binding file before invoking host installation. After
+installation it verifies that the installed marker matches the image
 and translated configuration. The current upgrade command accepts that binding
 only for this exact predecessor and only while the marker still matches it.
 Other images receive the original configuration and keep the normal marker
-contract. This compatibility path does not change the predecessor artifact or
-qualify the real-host transition.
+contract.
+
+The revision-019 bootstrap additionally requires a distinct immutable
+`bootstrap_controller_image` containing the current `host install
+--revision019-postgres-init` command. The controller is used only to orchestrate
+provider setup and installation; the extracted revision-019 `leapviewctl init`
+performs predecessor configuration and schema initialization. The staged
+application and final host generation come from the
+exact predecessor image. The provisioner supplies the canonical PostgreSQL
+initialization script from `deploy/postgres/init.sh`, whose bytes match the
+revision-019 source. The host installer prepares a disposable TLS PostgreSQL
+provider with separate control and DuckLake databases, obtains the physical
+pool identity from the predecessor image, initializes the control schema,
+applies that same pool admission, and only then starts revision-019. Its
+PostgreSQL container and data volume have a separate lifecycle from the
+application Compose service. The short-lived qualification CA remains in a
+private host directory; this path is for disposable qualification hosts. It
+checks application liveness at this stage because no serving generation has
+yet been published; full readiness is part of the later real-host journey. It
+does not qualify the real-host transition or supply production database
+operations.
 
 The production image carries the matching payload under
 `/usr/local/share/leapview/deployment`. A digest therefore selects the server,

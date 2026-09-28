@@ -63,3 +63,33 @@ run "reject_unsupported_base_image" {
 
   expect_failures = [var.image]
 }
+
+run "reject_revision019_without_bootstrap_controller" {
+  command = plan
+
+  variables {
+    leapview_image = "ghcr.io/flidai/leapview@sha256:4a4455ff0048704acf0df1a9308a39a09b4c786f801fe7f3a383ada089d21368"
+  }
+
+  expect_failures = [hcloud_server.leapview]
+}
+
+run "revision019_receives_pinned_controller_and_canonical_postgres_init" {
+  command = plan
+
+  variables {
+    leapview_image             = "ghcr.io/flidai/leapview@sha256:4a4455ff0048704acf0df1a9308a39a09b4c786f801fe7f3a383ada089d21368"
+    bootstrap_controller_image = "ghcr.io/flidai/leapview@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    domain                     = "dash.example.com"
+  }
+
+  assert {
+    condition     = strcontains(local.bootstrap_cloud_init, base64encode("${var.bootstrap_controller_image}\n"))
+    error_message = "the exact controller image must reach the predecessor bootstrap"
+  }
+
+  assert {
+    condition     = strcontains(local.bootstrap_cloud_init, base64encode(file("${path.module}/../postgres/init.sh")))
+    error_message = "the canonical PostgreSQL init script must reach the predecessor bootstrap"
+  }
+}

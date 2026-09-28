@@ -32,6 +32,16 @@ module deliberately rejects world-open SSH and mutable image tags. Set
 `target_id` to the same authoritative deployment target ID used by release
 preflight; it is persisted in the installed host marker.
 
+For the exact revision-019 FAI-518 predecessor, also set
+`bootstrap_controller_image` to a distinct immutable LeapView image containing
+the predecessor bootstrap command. Terraform rejects a missing or identical
+controller image for that predecessor. The controller prepares disposable TLS
+PostgreSQL control and DuckLake databases and physical-pool admission before
+starting the predecessor. The installed runtime remains the predecessor digest.
+The disposable provider is separate from the application lifecycle and is
+removed with the qualification host. Ordinary/current image installation does
+not use this controller input.
+
 Provisioning renders the provider-neutral Ubuntu host bootstrap with the
 domain, administrator email, target identity, environment, and immutable image digest. The
 bootstrap pulls that image, extracts its matching deployment payload, and

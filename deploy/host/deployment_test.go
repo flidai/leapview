@@ -1,12 +1,29 @@
 package host_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRevision019BootstrapUsesCanonicalPredecessorPostgresScript(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "postgres", "init.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(contents)
+	if got := hex.EncodeToString(digest[:]); got != "8e5c753512c0dc353fdeb181d97d16ae2df1eed6d3cf0e15f0ee9e9aed366951" {
+		t.Fatalf("revision-019 PostgreSQL initialization contract changed: %s", got)
+	}
+	cloudInit := read(t, "cloud-init.yaml.tftpl")
+	for _, fragment := range []string{"revision019_postgres_init_b64", "bootstrap_controller_image_b64", "/usr/local/libexec/leapview-postgres-init"} {
+		requireContains(t, cloudInit, fragment)
+	}
+}
 
 func TestBootstrapIsProviderNeutralAndDelegatesLifecycleToGo(t *testing.T) {
 	bootstrap := read(t, "bootstrap-linux.sh")
@@ -25,7 +42,7 @@ func TestBootstrapIsProviderNeutralAndDelegatesLifecycleToGo(t *testing.T) {
 		"debian:13) compose_package=docker-compose",
 		"requires Ubuntu 24.04 LTS or Debian 13", "\"$compose_package\"", "docker compose version",
 		"docker pull", "docker create", "docker cp",
-		`leapviewctl" host install`, "repository@sha256",
+		`"$installer" host install`, "repository@sha256",
 	} {
 		requireContains(t, bootstrap, required)
 	}

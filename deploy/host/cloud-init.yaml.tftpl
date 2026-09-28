@@ -11,6 +11,16 @@ write_files:
     permissions: "0700"
     encoding: b64
     content: ${revision019_compat_b64}
+  - path: /usr/local/libexec/leapview-postgres-init
+    owner: root:root
+    permissions: "0755"
+    encoding: b64
+    content: ${revision019_postgres_init_b64}
+  - path: /run/leapview/bootstrap-controller-image
+    owner: root:root
+    permissions: "0600"
+    encoding: b64
+    content: ${bootstrap_controller_image_b64}
 %{ endif ~}
   - path: /run/leapview/bootstrap.json
     owner: root:root

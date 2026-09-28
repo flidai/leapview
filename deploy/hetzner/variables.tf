@@ -86,6 +86,17 @@ variable "leapview_image" {
   }
 }
 
+variable "bootstrap_controller_image" {
+  description = "Distinct immutable controller image containing revision-019 provider bootstrap support; required only for the exact FAI-518 predecessor."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.bootstrap_controller_image == "" || can(regex("^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$", var.bootstrap_controller_image))
+    error_message = "bootstrap_controller_image must be an immutable OCI repository@sha256 reference."
+  }
+}
+
 variable "target_id" {
   description = "Authoritative deployment target ID to bind into the host installation marker and release preflight."
   type        = string

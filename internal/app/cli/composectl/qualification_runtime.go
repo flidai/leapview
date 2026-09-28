@@ -21,17 +21,18 @@ type qualificationContainerVolume struct {
 }
 
 type qualificationContainerRequest struct {
-	Name        string
-	Image       string
-	NetworkMode string
-	ReadOnly    bool
-	Volumes     []qualificationContainerVolume
-	Tmpfs       []string
-	Environment map[string]string
-	Entrypoint  []string
-	Command     []string
-	NoHealth    bool
-	ReadyLog    string
+	Name          string
+	Image         string
+	NetworkMode   string
+	ReadOnly      bool
+	Volumes       []qualificationContainerVolume
+	Tmpfs         []string
+	Environment   map[string]string
+	Entrypoint    []string
+	Command       []string
+	NoHealth      bool
+	RestartPolicy string
+	ReadyLog      string
 }
 
 type qualificationContainerRuntime interface {
@@ -156,6 +157,12 @@ func (runtime *dockerCLIQualificationRuntime) Start(
 		return nil, fmt.Errorf("qualification container entrypoint must be a single executable")
 	}
 	arguments := []string{"run", "--detach", "--name", request.Name}
+	if request.RestartPolicy != "" {
+		if request.RestartPolicy != "unless-stopped" {
+			return nil, fmt.Errorf("unsupported qualification container restart policy")
+		}
+		arguments = append(arguments, "--restart", request.RestartPolicy)
+	}
 	if request.ReadOnly {
 		arguments = append(arguments, "--read-only")
 	}

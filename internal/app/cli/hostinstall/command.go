@@ -34,6 +34,7 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 	configPath := "/run/leapview/bootstrap.json"
 	payloadPath := ""
 	sourceImage := ""
+	revision019InitScript := ""
 	install := &cobra.Command{
 		Use:   "install",
 		Short: "Install the immutable deployment payload and initialize the instance",
@@ -53,6 +54,7 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 			installer, err := New(Options{
 				Paths: DefaultPaths(payload, configPath), DockerBin: options.DockerBin, ExpectedImage: sourceImage,
 				Stdin: options.Stdin, Stdout: options.Stdout, Stderr: options.Stderr,
+				Revision019InitScript: revision019InitScript,
 			})
 			if err != nil {
 				return err
@@ -63,6 +65,7 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 	install.Flags().StringVar(&configPath, "config", configPath, "private bootstrap configuration file")
 	install.Flags().StringVar(&payloadPath, "payload", payloadPath, "immutable deployment payload (defaults to the leapviewctl directory)")
 	install.Flags().StringVar(&sourceImage, "source-image", sourceImage, "immutable image from which the deployment payload was extracted")
+	install.Flags().StringVar(&revision019InitScript, "revision019-postgres-init", "", "provisioner-owned canonical PostgreSQL initialization script for the exact revision-019 predecessor")
 	host.AddCommand(install)
 	addRecoveryAdmissionCommand(ctx, host)
 	addUpgradeCommand(ctx, host, options)
