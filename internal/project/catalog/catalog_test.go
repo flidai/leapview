@@ -216,6 +216,83 @@ func TestTypedRoleReadsOnlyItsAuthorizedCatalogKinds(t *testing.T) {
 	}
 }
 
+func TestResolveSemanticModelUseRequiresTypedQueryAndPrerequisites(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "semantic_sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_semantic_use")
+	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
+	group, _ := access.NewSubjectRef(access.SubjectKindGroup, "group_1")
+	resource, err := access.NewResourceRef("semantic_sales", projectgraph.KindSemanticModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query, err := access.NewExactPermissionPair(access.ActionSemanticQuery, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consume, err := access.NewExactPermissionPair(access.ActionSemanticConsume, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := access.NewExactPermissionPair(access.ActionSemanticRead, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name       string
+		pairs      []access.PermissionPair
+		groupPairs []access.PermissionPair
+		wantAllow  bool
+	}{
+		{name: "query with consume prerequisite", pairs: []access.PermissionPair{query, consume}, wantAllow: true},
+		{name: "query and consume split across principal and group", pairs: []access.PermissionPair{query}, groupPairs: []access.PermissionPair{consume}, wantAllow: true},
+		{name: "read without query", pairs: []access.PermissionPair{read}},
+		{name: "consume without query", pairs: []access.PermissionPair{consume}},
+		{name: "query without consume prerequisite", pairs: []access.PermissionPair{query}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			grant, err := accesssnapshot.NewTypedGrant("semantic-use", "semantic use", principal, test.pairs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			grants := []accesssnapshot.Grant{grant}
+			subjects := []access.SubjectRef{principal}
+			if len(test.groupPairs) > 0 {
+				groupGrant, err := accesssnapshot.NewTypedGrant("semantic-use-group", "semantic use group", group, test.groupPairs)
+				if err != nil {
+					t.Fatal(err)
+				}
+				grants = append(grants, groupGrant)
+				subjects = append(subjects, group)
+			}
+			snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, grants, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			service, err := NewService(
+				testLeases{lease: testLease{snapshot: snapshot}},
+				testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: subjects}},
+				WithSemanticModelVisibility(func(context.Context, Lease, string, projectgraph.ResourceID) (bool, error) { return true, nil }),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = service.Resolve(t.Context(), principal.ID, Ref{ID: "semantic_sales", Kind: projectgraph.KindSemanticModel}, access.CapabilityResourceUse, false)
+			if test.wantAllow && err != nil {
+				t.Fatalf("authorized semantic use resolve = %v", err)
+			}
+			if !test.wantAllow && !errors.Is(err, ErrNotFound) {
+				t.Fatalf("unauthorized semantic use error = %v, want not found", err)
+			}
+		})
+	}
+}
+
 func TestResolveRejectsUnknownAndWrongKindIDs(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},

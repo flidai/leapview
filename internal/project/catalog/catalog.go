@@ -505,6 +505,24 @@ func (s *Service) Resolve(ctx context.Context, principalID string, ref Ref, capa
 	if devAuthBypass {
 		return resultFor(resource), nil
 	}
+	if capability == access.CapabilityResourceUse && resource.Kind == projectgraph.KindSemanticModel {
+		ref, err := access.NewResourceRef(resource.ID, resource.Kind)
+		if err != nil {
+			return Result{}, err
+		}
+		pair, err := access.NewExactPermissionPair(access.ActionSemanticQuery, snapshot.Identity().ProjectID, ref)
+		if err != nil {
+			return Result{}, err
+		}
+		granted, err := snapshot.EffectiveTypedPermissions(subjects)
+		if err != nil {
+			return Result{}, err
+		}
+		if access.PermissionSetAllows(granted, pair) {
+			return resultFor(resource), nil
+		}
+		return Result{}, ErrNotFound
+	}
 	for _, subject := range subjects {
 		allowed, err := allowsCatalogResource(snapshot, subject, resource, capability)
 		if err != nil {

@@ -484,6 +484,29 @@ test('chat thread hides tool processing rows while retaining errors, answers, an
   await page.close()
 })
 
+test('chat thread hides recovered tool errors only within the same user turn', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const errors = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'u1', kind: 'user', text: 'Show revenue' },
+      { id: 'e1', kind: 'tool', name: 'catalog_get', status: 'error', error: 'Recovered lookup.' },
+      { id: 's1', kind: 'tool', name: 'catalog_get', status: 'complete' },
+      { id: 'e2', kind: 'tool', name: 'query_visual', status: 'error', error: 'Unresolved visual error.' },
+      { id: 'u2', kind: 'user', text: 'Try again' },
+      { id: 's2', kind: 'tool', name: 'query_visual', status: 'complete' },
+      { id: 'e3', kind: 'tool', name: 'catalog_search', status: 'error', error: 'Current lookup error.' },
+    ]
+    await thread.updateComplete
+    return Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim())
+  })
+  expect(errors).toEqual(['Unresolved visual error.', 'Current lookup error.'])
+  await page.close()
+})
+
 test('drawer keeps answers and failures while hiding every tool processing row', async () => {
   const page = await browser.newPage()
   try {

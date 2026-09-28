@@ -49,10 +49,21 @@ class ChatThread extends LitElement {
 
   render() {
     const transcript = this.resolvedTranscript
+    const recoveredErrors = new Set<ChatTranscriptItemSignal>()
+    const completedTools = new Set<string>()
+    for (let index = transcript.length - 1; index >= 0; index--) {
+      const item = transcript[index]
+      if (item.kind === 'user') {
+        completedTools.clear()
+      } else if (item.kind === 'tool' && item.name) {
+        if (this.toolStatus(item) === 'complete') completedTools.add(item.name)
+        else if (this.toolStatus(item) === 'error' && completedTools.has(item.name)) recoveredErrors.add(item)
+      }
+    }
     const visibleTranscript = transcript.filter((item) => {
       if (item.kind !== 'tool') return true
       const status = this.toolStatus(item)
-      return status === 'error' || (status === 'complete' && Boolean(item.artifact))
+      return (status === 'error' && !recoveredErrors.has(item)) || (status === 'complete' && Boolean(item.artifact))
     })
     const unavailable = !this.status.enabled && transcript.length === 0
     const empty = visibleTranscript.length === 0 && !this.status.running

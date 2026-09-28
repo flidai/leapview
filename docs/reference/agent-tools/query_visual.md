@@ -2,7 +2,7 @@
 
 # query_visual
 
-Create one read-only visual from LeapView semantic model fields. Data is queried from semantic models; do not provide inline data.
+Create one read-only visual from LeapView semantic model fields. semanticModelId must be the exact semantic-model ref.id returned by catalog search or list; short names and project-qualified dashboard stable IDs are not accepted. Data is queried from semantic models; do not provide inline data.
 
 Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [complete manifest](/docs/agent-tools/manifest.json)
 

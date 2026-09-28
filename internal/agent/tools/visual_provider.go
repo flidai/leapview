@@ -142,7 +142,7 @@ type agentVisualResult struct {
 func (p VisualProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 	return []agentcore.ToolDefinition{{
 		Name:         agentVisualToolName,
-		Description:  "Create one read-only visual from LeapView semantic model fields. Data is queried from semantic models; do not provide inline data.",
+		Description:  "Create one read-only visual from LeapView semantic model fields. semanticModelId must be the exact semantic-model ref.id returned by catalog search or list; short names and project-qualified dashboard stable IDs are not accepted. Data is queried from semantic models; do not provide inline data.",
 		InputSchema:  json.RawMessage(agentcontracts.QueryVisualInputSchemaJSON),
 		OutputSchema: json.RawMessage(agentcontracts.QueryVisualResultSchemaJSON),
 		Effect:       "read",
