@@ -422,13 +422,13 @@ test('chat thread hides Explorer action when aggregate query has unsupported sta
   await page.close()
 })
 
-test('chat thread hides tool processing rows while retaining errors, answers, and the working indicator', async () => {
+test('chat thread hides processing rows while retaining finished errors and answers', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
-    thread.status = { enabled: true, running: true }
+    thread.status = { enabled: true, running: false }
     thread.transcript = [
       { id: 'user-1', kind: 'user', text: 'Find the sales dashboard.' },
       {
@@ -465,7 +465,7 @@ test('chat thread hides tool processing rows while retaining errors, answers, an
     }
   })
 
-  expect(state.working).toBe('')
+  expect(state.working).toBeUndefined()
   expect(state.toolRows).toBe(0)
   expect(state.codeBlocks).toBe(0)
   expect(state.agentTurns).toBe(1)
@@ -507,6 +507,46 @@ test('chat thread hides recovered tool errors only within the same user turn', a
   await page.close()
 })
 
+test('chat thread waits until the active run ends before showing unresolved errors', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const states = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    const transcript = [
+      { id: 'u1', kind: 'user', text: 'Earlier question', runId: 'run-old' },
+      { id: 'old-error', kind: 'tool', name: 'catalog_get', status: 'error', error: 'Earlier failure.', runId: 'run-old' },
+      { id: 'u2', kind: 'user', text: 'Show revenue', runId: 'run-new' },
+      { id: 'progress', kind: 'assistant', markdown: 'Retrying the visual.', runId: 'run-new' },
+      { id: 'new-error', kind: 'tool', name: 'query_visual', status: 'error', error: 'Temporary visual failure.', runId: 'run-new' },
+    ]
+    const visible = () => ({
+      errors: Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim()),
+      answers: Array.from(thread.shadowRoot.querySelectorAll('.agent-markdown')).map((node: any) => node.value),
+    })
+    thread.status = { enabled: true, running: true, runId: 'run-new' }
+    thread.transcript = transcript
+    await thread.updateComplete
+    const running = visible()
+    thread.status = { enabled: true, running: false, runId: 'run-new' }
+    await thread.updateComplete
+    const failed = visible()
+    thread.transcript = [
+      ...transcript,
+      { id: 'success', kind: 'tool', name: 'query_visual', status: 'complete', runId: 'run-new' },
+      { id: 'final', kind: 'assistant', markdown: 'Open the chart.', runId: 'run-new' },
+    ]
+    await thread.updateComplete
+    return { running, failed, recovered: visible() }
+  })
+  expect(states).toEqual({
+    running: { errors: ['Earlier failure.'], answers: [] },
+    failed: { errors: ['Earlier failure.', 'Temporary visual failure.'], answers: ['Retrying the visual.'] },
+    recovered: { errors: ['Earlier failure.'], answers: ['Open the chart.'] },
+  })
+  await page.close()
+})
+
 test('chat thread keeps only the last assistant message in each user turn', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
@@ -535,7 +575,7 @@ test('chat thread keeps only the last assistant message in each user turn', asyn
   await page.close()
 })
 
-test('drawer keeps answers and failures while hiding every tool processing row', async () => {
+test('drawer shows only working state until the active run finishes', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
@@ -560,8 +600,8 @@ test('drawer keeps answers and failures while hiding every tool processing row',
     }))
     expect(state.toolRows).toBe(0)
     expect(state.working).toBe(true)
-    expect(state.error).toBe('Could not edit dashboard.')
-    expect(state.answer).toBe('I could not add the chart.')
+    expect(state.error).toBeUndefined()
+    expect(state.answer).toBeUndefined()
     expect(state.user).toContain('Add a chart.')
   } finally {
     await page.close()

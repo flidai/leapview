@@ -53,9 +53,11 @@ class ChatThread extends LitElement {
     const earlierAssistantMessages = new Set<ChatTranscriptItemSignal>()
     const completedTools = new Set<string>()
     let hasLaterAssistant = false
+    let latestUserIndex = -1
     for (let index = transcript.length - 1; index >= 0; index--) {
       const item = transcript[index]
       if (item.kind === 'user') {
+        if (latestUserIndex < 0) latestUserIndex = index
         completedTools.clear()
         hasLaterAssistant = false
       } else if (item.kind === 'tool' && item.name) {
@@ -66,11 +68,15 @@ class ChatThread extends LitElement {
         hasLaterAssistant = true
       }
     }
-    const visibleTranscript = transcript.filter((item) => {
+    const visibleTranscript = transcript.filter((item, index) => {
       if (earlierAssistantMessages.has(item)) return false
+      const activeRunItem = this.status.running && (this.status.runId && item.runId
+        ? item.runId === this.status.runId
+        : index > latestUserIndex)
+      if (activeRunItem && (item.kind === 'assistant' || item.kind === 'summary')) return false
       if (item.kind !== 'tool') return true
       const status = this.toolStatus(item)
-      return (status === 'error' && !recoveredErrors.has(item)) || (status === 'complete' && Boolean(item.artifact))
+      return (status === 'error' && !activeRunItem && !recoveredErrors.has(item)) || (status === 'complete' && Boolean(item.artifact))
     })
     const unavailable = !this.status.enabled && transcript.length === 0
     const empty = visibleTranscript.length === 0 && !this.status.running
