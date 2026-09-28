@@ -634,7 +634,9 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		return candidateApprovalPermissions(resolveCtx, graph.ServingState, nativeProjectSource.Objects, accessBundle.Module.AuthorizationSubjects, generationID, principalID)
 	})
 	semanticCatalogAuditRecorder, _ := accessBundle.Repository.(access.CanonicalAuditRecorder)
-	projectCatalogService, err := projectcatalog.NewService(projectCatalogLeaseProvider{provider: runtimeHost.Provider()}, projectCatalogSubjectResolver{resolve: accessBundle.Module.AuthorizationSubjects}, projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility(instanceID, accessBundle.Module.ResolveSemanticAttributes, semanticCatalogAuditRecorder)))
+	projectCatalogService, err := projectcatalog.NewService(projectCatalogLeaseProvider{provider: runtimeHost.Provider()}, projectCatalogSubjectResolver{resolve: accessBundle.Module.AuthorizationSubjects},
+		projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility(instanceID, accessBundle.Module.ResolveSemanticAttributes, semanticCatalogAuditRecorder)),
+		projectcatalog.WithSemanticModelSearchTerms(projectmodule.SemanticCatalogSearchTerms()))
 	if err != nil {
 		return fail(err)
 	}

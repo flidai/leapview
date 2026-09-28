@@ -303,7 +303,11 @@ test('chat thread renders visual artifacts with dashboard web components', async
         kind: 'tool',
         name: 'query_visual',
         status: 'complete',
-        resultJson: '{\n  "ok": true,\n  "type": "bar",\n  "id": "agent_chart_1",\n  "signal": "visuals.agent_chart_1"\n}',
+        argumentsJson: JSON.stringify({ semanticModelId: 'semantic:sales', visual: { type: 'bar', query: { type: 'aggregate', dimensions: ['country'], metrics: ['revenue'], limit: 25 }, presentation: { type: 'cartesian' } } }),
+        resultJson: JSON.stringify({ ok: true, type: 'bar', id: 'agent_chart_1', datasetId: 'orders', semanticModelRef: { kind: 'semantic_model', id: 'semantic:sales' }, fields: [
+          { fieldId: 'semantic:sales.country', role: 'dimension', alias: 'country', explorerFieldId: 'orders.country', label: 'Country' },
+          { fieldId: 'semantic:sales.revenue', role: 'metric', alias: 'revenue', label: 'Revenue' },
+        ] }),
         artifact: {
           type: 'bar',
           id: 'agent_chart_1',
@@ -345,6 +349,7 @@ test('chat thread renders visual artifacts with dashboard web components', async
     return {
       chart: (root.querySelector('lv-visual-artifact[artifact-id="agent_chart_1"]')?.shadowRoot?.querySelector('lv-visualization-host') as any)?.envelope?.spec?.kind,
       table: (root.querySelector('lv-visual-artifact[artifact-id="agent_table_1"]')?.shadowRoot?.querySelector('lv-visualization-host') as any)?.envelope?.spec?.kind,
+      explorerHref: (root.querySelector('lv-visual-artifact[artifact-id="agent_chart_1"]')?.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement)?.querySelector<HTMLAnchorElement>('[slot="agent-action"]')?.getAttribute('href'),
       toolRows: root.querySelectorAll('.tool-call').length,
       bodyText: root.textContent || '',
       artifactBackground: getComputedStyle(root.querySelector('lv-visual-artifact')!.shadowRoot!.querySelector('.artifact')!).backgroundColor,
@@ -353,6 +358,14 @@ test('chat thread renders visual artifacts with dashboard web components', async
   })
   expect(rendered.chart).toBe('cartesian')
   expect(rendered.table).toBe('table')
+  const explorerURL = new URL(rendered.explorerHref!, 'https://example.test')
+  expect(explorerURL.pathname).toBe('/explore')
+  expect(explorerURL.searchParams.get('mode')).toBe('explore')
+  expect(explorerURL.searchParams.get('semanticModel')).toBe('semantic:sales')
+  expect(explorerURL.searchParams.get('dataset')).toBe('orders')
+  expect(explorerURL.searchParams.getAll('dimension')).toEqual(['orders.country'])
+  expect(explorerURL.searchParams.getAll('metric')).toEqual(['revenue'])
+  expect(explorerURL.searchParams.get('limit')).toBe('25')
   expect(rendered.toolRows).toBe(2)
   expect(rendered.bodyText.includes('delivered')).toBe(false)
   expect(rendered.artifactBackground).toBe('rgb(1, 2, 3)')
@@ -368,6 +381,42 @@ test('chat thread renders visual artifacts with dashboard web components', async
   })
   expect(drawer).toEqual({ toolRows: 0, artifacts: 2 })
 
+  await page.close()
+})
+
+test('chat thread hides Explorer action when aggregate query has unsupported state', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.visuals = Object.fromEntries(['filtered', 'secondary', 'records', 'input-only', 'unqualified'].map((id) => [id, {
+      schemaVersion: 4, visualID: id, rendererID: 'echarts', specRevision: `sha256:${id}`, dataRevision: 1,
+      spec: { kind: 'cartesian', mark: 'bar', title: 'Orders', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Orders' }] }], dataBudget: { maxRows: 50, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Orders' }, interactions: [], x: { dataset: 'primary', field: 'value' }, y: [{ dataset: 'primary', field: 'value' }], presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false } },
+      dataState: { kind: 'inline', specRevision: `sha256:${id}`, dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: `sha256:${id}`, dataRevision: 1, generation: 1, columns: ['value'], rows: [[42]], completeness: 'complete' }] },
+      selection: [], status: { kind: 'ready' }, diagnostics: [],
+    }]))
+    const args = (extraVisual: Record<string, unknown> = {}, filters?: unknown[]) => JSON.stringify({
+      semanticModelId: 'semantic:sales',
+      ...(filters ? { filters } : {}),
+      visual: { type: 'bar', query: { type: 'aggregate', dimensions: ['status'], metrics: ['orders.count'] }, ...extraVisual },
+    })
+    const result = (id: string, explorerFieldId?: string) => JSON.stringify({
+      ok: true, type: 'bar', id, datasetId: 'orders', semanticModelRef: { kind: 'semantic_model', id: 'semantic:sales' },
+      fields: [{ fieldId: 'semantic:sales.status', role: 'dimension', alias: 'status', ...(explorerFieldId ? { explorerFieldId } : {}), label: 'Status' }],
+    })
+    thread.transcript = [
+      { id: 'filtered', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: args({}, [{ id: 'status-filter', dimension: 'status', control: { type: 'singleSelect' } }]), resultJson: result('filtered', 'orders.status'), artifact: { type: 'bar', id: 'filtered', summary: 'Filtered chart.' } },
+      { id: 'secondary', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: args({ datasets: { comparison: { type: 'aggregate', dimensions: [], metrics: ['orders.count'] } } }), resultJson: result('secondary', 'orders.status'), artifact: { type: 'bar', id: 'secondary', summary: 'Secondary chart.' } },
+      { id: 'records', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: JSON.stringify({ semanticModelId: 'semantic:sales', visual: { type: 'bar', query: { type: 'records', dataset: 'orders', fields: ['status'] } } }), resultJson: result('records', 'orders.status'), artifact: { type: 'bar', id: 'records', summary: 'Record chart.' } },
+      { id: 'input-only', kind: 'tool', name: 'query_visual', status: 'complete', inputJson: args(), resultJson: result('input-only', 'orders.status'), artifact: { type: 'bar', id: 'input-only', summary: 'Input only chart.' } },
+      { id: 'unqualified', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: args(), resultJson: result('unqualified'), artifact: { type: 'bar', id: 'unqualified', summary: 'Unqualified chart.' } },
+    ]
+    await thread.updateComplete
+  })
+  await page.waitForFunction(() => document.querySelector('lv-chat-thread')?.shadowRoot?.querySelectorAll('lv-visual-artifact').length === 5)
+  const actions = await page.locator('lv-chat-thread').evaluate((thread: any) => Array.from(thread.shadowRoot.querySelectorAll('lv-visual-artifact')).map((artifact: any) => Boolean(artifact.shadowRoot.querySelector('lv-visualization-host')?.querySelector('[slot="agent-action"]'))))
+  expect(actions).toEqual([false, false, false, false, false])
   await page.close()
 })
 

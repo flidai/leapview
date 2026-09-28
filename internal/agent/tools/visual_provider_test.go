@@ -3,11 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
@@ -33,6 +35,85 @@ func TestAgentVisualInputRejectsLegacyAndUnknownProperties(t *testing.T) {
 		if strings.Contains(schema, property) {
 			t.Fatalf("agent schema still exposes legacy property %s", property)
 		}
+	}
+}
+
+func TestCompileAgentVisualDefaultsBudgetAndQueryLimit(t *testing.T) {
+	model := testAgentModel()
+	tests := []struct {
+		name             string
+		budget           *dashboarddocument.DashboardDataBudget
+		wantBudget       int64
+		wantCompleteness visualizationir.VisualizationCompleteness
+	}{
+		{name: "agent ceiling", wantBudget: maxVisualRows, wantCompleteness: visualizationir.VisualizationCompletenessPartial},
+		{name: "explicit budget", budget: &dashboarddocument.DashboardDataBudget{MaxRows: 7}, wantBudget: 7, wantCompleteness: visualizationir.VisualizationCompletenessComplete},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			visual := testAgentVisual("bar")
+			visual.DataBudget = test.budget
+			compiled, err := compileAgentVisual(agentVisualInput{Visual: visual, Model: "commerce"}, model, "visual-id")
+			if err != nil {
+				t.Fatalf("compileAgentVisual(): %v", err)
+			}
+			definition := compiled.Visualizations["visual-id"]
+			base, err := visualizationir.SpecificationBase(definition.Spec)
+			if err != nil {
+				t.Fatalf("SpecificationBase(): %v", err)
+			}
+			if base.DataBudget.MaxRows != test.wantBudget {
+				t.Fatalf("data budget = %d, want %d", base.DataBudget.MaxRows, test.wantBudget)
+			}
+			if base.DataBudget.RequiredCompleteness != test.wantCompleteness {
+				t.Fatalf("required completeness = %q, want %q", base.DataBudget.RequiredCompleteness, test.wantCompleteness)
+			}
+			if got := agentDefinitionLimit(definition); got != int(test.wantBudget) {
+				t.Fatalf("query limit = %d, want budget %d", got, test.wantBudget)
+			}
+		})
+	}
+}
+
+func TestCompileAgentVisualRejectsBudgetAboveAgentCeilingActionably(t *testing.T) {
+	visual := testAgentVisual("bar")
+	visual.DataBudget = &dashboarddocument.DashboardDataBudget{MaxRows: maxVisualRows + 1}
+	_, err := compileAgentVisual(agentVisualInput{Visual: visual, Model: "commerce"}, testAgentModel(), "visual-id")
+	if err == nil || !strings.Contains(err.Error(), "visual.dataBudget.maxRows") || !strings.Contains(err.Error(), "50") {
+		t.Fatalf("compileAgentVisual() error = %v, want actionable dataBudget.maxRows error naming ceiling 50", err)
+	}
+}
+
+func TestCompileAgentVisualQueryLimitErrorIsActionable(t *testing.T) {
+	visual := testAgentVisual("bar")
+	visual.DataBudget = &dashboarddocument.DashboardDataBudget{MaxRows: 7}
+	limit := int32(8)
+	visual.Query.Value.(*dashboarddocument.AggregateDashboardQuery).Limit = &limit
+	_, err := compileAgentVisual(agentVisualInput{Visual: visual, Model: "commerce"}, testAgentModel(), "visual-id")
+	if err == nil || !strings.Contains(err.Error(), "visual.query.limit") || !strings.Contains(err.Error(), "visual.dataBudget.maxRows 7") {
+		t.Fatalf("compileAgentVisual() error = %v, want actionable query limit and budget details", err)
+	}
+}
+
+func TestCompactAgentVisualResultMarksEnvelopeErrorNotOK(t *testing.T) {
+	model := testAgentModel()
+	input := agentVisualInput{Visual: testAgentVisualWithLimit("bar", 10), Model: "commerce"}
+	dashboardDefinition, err := compileAgentVisual(input, model, "visual-id")
+	if err != nil {
+		t.Fatalf("compileAgentVisual(): %v", err)
+	}
+	definition := dashboardDefinition.Visualizations["visual-id"]
+	envelope := visualizationir.VisualizationEnvelope{
+		Spec:   definition.Spec,
+		Status: visualizationir.VisualizationStatus{Kind: visualizationir.VisualizationStatusKindError, Message: strPtr("query failed")},
+	}
+	result := agentVisualResult{Type: "bar", ID: "visual-id", Patch: map[string]map[string]visualizationir.VisualizationEnvelope{"visuals": {"visual-id": envelope}}}
+	compact, err := compactAgentVisualResult("sales", "query-id", VisualQueryMetadata{}, model, input, dashboardDefinition, definition, result)
+	if err != nil {
+		t.Fatalf("compactAgentVisualResult(): %v", err)
+	}
+	if compact.Ok {
+		t.Fatalf("compact result ok = true for error envelope: %#v", compact)
 	}
 }
 
@@ -84,11 +165,48 @@ func TestAgentVisualFieldUsagePreservesSemanticUnitsAndFormats(t *testing.T) {
 			"return_rate": {Label: "Return rate", Unit: "percent", Format: "percent_1"},
 		},
 	}
-	got := agentVisualFieldUsage("sales", "commerce", model, agentVisualFieldRef{Field: "return_rate", Alias: "rate"}, "metric")
+	got := agentVisualFieldUsage("sales", "commerce", model, agentVisualFieldRef{Field: "return_rate", Alias: "rate"}, "metric", "orders")
 	if got.Role != "metric" || got.FieldID != "commerce.return_rate" || got.Label != "Return rate" ||
 		got.Alias == nil || *got.Alias != "rate" || got.Unit == nil || *got.Unit != "percent" ||
 		got.Format == nil || *got.Format != "percent_1" {
 		t.Fatalf("field usage = %#v", got)
+	}
+}
+
+func TestAgentVisualCanonicalAggregateExposesExplorerDimensionBinding(t *testing.T) {
+	model := testAgentModel()
+	compiled, err := compileAgentVisual(agentVisualInput{Visual: testAgentVisual("bar"), Model: "commerce"}, model, "visual-id")
+	if err != nil {
+		t.Fatalf("compileAgentVisual(): %v", err)
+	}
+	definition := compiled.Visualizations["visual-id"]
+	fields := agentVisualFieldUsages("sales", "commerce", model, definition)
+	if len(fields) != 2 {
+		t.Fatalf("field usages = %#v, want canonical aggregate dimension and metric", fields)
+	}
+	if fields[0].FieldID != "commerce.country" || fields[0].ExplorerFieldID == nil || *fields[0].ExplorerFieldID != "orders.country" {
+		t.Fatalf("semantic dimension explorer binding = %#v, want orders.country", fields[0])
+	}
+	if fields[1].Role != "metric" || fields[1].ExplorerFieldID != nil {
+		t.Fatalf("metric explorer mapping = %#v, want none", fields[1])
+	}
+
+	// Explorer field IDs are qualified by the semantic dataset alias, even
+	// when that dataset is backed by a differently named physical model.
+	aliasModel := testAgentModel()
+	aliasModel.Datasets["order_facts"] = semanticmodel.SemanticDatasetSpec{Model: "orders"}
+	aliasDimension := aliasModel.Dimensions["country"]
+	aliasDimension.Bindings["order_facts"] = semanticmodel.DimensionBinding{Field: "orders.country"}
+	aliasModel.Dimensions["country"] = aliasDimension
+	aliasUsage := agentVisualFieldUsage("sales", "commerce", aliasModel, agentVisualFieldRef{Field: "country", Alias: "country"}, "dimension", "order_facts")
+	if aliasUsage.ExplorerFieldID == nil || *aliasUsage.ExplorerFieldID != "order_facts.country" {
+		t.Fatalf("aliased semantic dimension explorer binding = %#v, want order_facts.country", aliasUsage.ExplorerFieldID)
+	}
+
+	model.Dimensions["country"].Bindings["orders"] = semanticmodel.DimensionBinding{Field: "orders.country", Path: []string{"orders_customers"}}
+	unsafe := agentVisualFieldUsage("sales", "commerce", model, agentVisualFieldRef{Field: "country", Alias: "country"}, "dimension", "orders")
+	if unsafe.ExplorerFieldID != nil {
+		t.Fatalf("non-root dimension binding exposed to Explorer: %#v", unsafe.ExplorerFieldID)
 	}
 }
 
@@ -133,8 +251,11 @@ func TestAgentVisualQueryUsesCanonicalDefinitionExactlyOnce(t *testing.T) {
 		if !ok {
 			t.Fatal("canonical runtime context has no independent result budget")
 		}
-		if err := budget.ConsumeSize(maxVisualRows+1, 1); err == nil {
-			t.Fatal("canonical runtime result budget accepted more than max rows")
+		if err := budget.ConsumeSize(agentDefinitionLimit(definition)+1, 1); err != nil {
+			t.Fatalf("canonical runtime result budget rejected one sentinel row: %v", err)
+		}
+		if err := budget.ConsumeSize(1, 1); err == nil {
+			t.Fatal("canonical runtime result budget accepted more than one sentinel row")
 		}
 		if pageID != "page" || visualID != "visual-id" {
 			t.Fatalf("runtime route = page %q visual %q", pageID, visualID)
@@ -156,6 +277,101 @@ func TestAgentVisualQueryUsesCanonicalDefinitionExactlyOnce(t *testing.T) {
 	}
 	if got := result.Patch["visuals"]["visual-id"]; !reflect.DeepEqual(got, wantEnvelope) {
 		t.Fatalf("runtime envelope changed:\n got %#v\nwant %#v", got, wantEnvelope)
+	}
+}
+
+func TestAgentVisualRunTrimsRecordsSentinelToBudget(t *testing.T) {
+	for _, rowLimit := range []int{maxVisualRows, 7} {
+		t.Run(fmt.Sprintf("budget_%d", rowLimit), func(t *testing.T) {
+			model := testAgentModel()
+			rows := make([][]any, rowLimit+1)
+			for i := range rows {
+				rows[i] = []any{fmt.Sprintf("order-%d", i)}
+			}
+			provider := VisualProvider{
+				Resolve: func(_ context.Context, _ Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
+					return id, nil
+				},
+				SemanticModel: func(string, string) (*semanticmodel.Model, bool) { return model, true },
+				QueryMetadata: func(context.Context, string, string) VisualQueryMetadata {
+					return VisualQueryMetadata{ServingSnapshot: "snapshot-1"}
+				},
+				QueryDefinition: func(ctx context.Context, _ string, definition dashboarddefinition.Definition, _, visualID string, _ dashboard.Filters) (visualizationir.VisualizationEnvelope, error) {
+					if got := definition.Visualizations[visualID].Query.Detail.Limit; got != int64(rowLimit) {
+						t.Fatalf("records query limit = %d, want %d", got, rowLimit)
+					}
+					budget, ok := dataquery.ResultBudgetFromContext(ctx)
+					if !ok {
+						t.Fatal("canonical runtime context has no independent result budget")
+					}
+					if err := budget.ConsumeSize(rowLimit+1, 1); err != nil {
+						t.Fatalf("canonical runtime result budget rejected sentinel row: %v", err)
+					}
+					if err := budget.ConsumeSize(1, 1); err == nil {
+						t.Fatal("canonical runtime result budget accepted more than one sentinel row")
+					}
+					return visualizationir.VisualizationEnvelope{
+						VisualID: visualID,
+						Spec:     definition.Visualizations[visualID].Spec,
+						DataState: visualizationir.VisualizationDataState{Value: &visualizationir.InlineVisualizationDataState{
+							VisualizationDataStateBase: visualizationir.VisualizationDataStateBase{Kind: "inline"},
+							Kind:                       "inline",
+							Datasets:                   []visualizationir.VisualizationInlineDataset{{ID: "primary", Rows: rows}},
+						}},
+						Status: visualizationir.VisualizationStatus{Kind: visualizationir.VisualizationStatusKindReady},
+					}, nil
+				},
+			}
+			result := provider.Run(context.Background(), Scope{ProjectID: "project", PrincipalID: "principal"}, agentcore.ToolCall{
+				ID:        "records-51",
+				Arguments: json.RawMessage(fmt.Sprintf(`{"semanticModelId":"orders","visual":{"type":"table","query":{"type":"records","dataset":"orders","fields":[{"field":"order_id"}]},"dataBudget":{"maxRows":%d},"presentation":{"type":"table","rowHeight":32,"showHeader":true,"striped":false}}}`, rowLimit)),
+			})
+			if result.IsError {
+				t.Fatalf("Run() failed: %#v", result.Content)
+			}
+			content, ok := result.Content.(agentcontracts.QueryVisualResult)
+			if !ok {
+				t.Fatalf("content type = %T, want QueryVisualResult", result.Content)
+			}
+			if !content.Ok || content.Completeness.ReturnedRows != int32(rowLimit) || content.Completeness.Status != "limit_reached" {
+				t.Fatalf("compact completeness = %#v, ok=%t; want %d rows and limit_reached", content.Completeness, content.Ok, rowLimit)
+			}
+			display, ok := result.DisplayContent.(agentVisualResult)
+			if !ok {
+				t.Fatalf("display content type = %T, want agentVisualResult", result.DisplayContent)
+			}
+			envelope := display.Patch["visuals"][display.ID]
+			primaryRows := agentVisualReturnedRows(envelope)
+			if primaryRows != rowLimit {
+				t.Fatalf("displayed primary rows = %d, want %d", primaryRows, rowLimit)
+			}
+			if len(envelope.Diagnostics) == 0 || envelope.Diagnostics[len(envelope.Diagnostics)-1].Code != "agent_row_limit_reached" {
+				t.Fatalf("diagnostics = %#v, want agent row limit warning", envelope.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestTrimAgentVisualEnvelopeRowsCapsWindowedBlocks(t *testing.T) {
+	rows := func(count int) [][]any {
+		out := make([][]any, count)
+		for i := range out {
+			out[i] = []any{i}
+		}
+		return out
+	}
+	envelope := visualizationir.VisualizationEnvelope{DataState: visualizationir.VisualizationDataState{Value: &visualizationir.WindowedVisualizationDataState{
+		Kind: "windowed",
+		Blocks: map[string]visualizationir.VisualizationWindowBlock{
+			"first":  {ID: "first", Start: 0, Rows: rows(30)},
+			"second": {ID: "second", Start: 30, Rows: rows(30)},
+		},
+	}}}
+	if !trimAgentVisualEnvelopeRows(&envelope, maxVisualRows) {
+		t.Fatal("trimAgentVisualEnvelopeRows() = false, want a windowed cap")
+	}
+	if got := agentVisualReturnedRows(envelope); got != maxVisualRows {
+		t.Fatalf("windowed returned rows = %d, want %d", got, maxVisualRows)
 	}
 }
 

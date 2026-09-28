@@ -318,6 +318,31 @@ func TestDomainFilterDoesNotChangeResourceID(t *testing.T) {
 	}
 }
 
+func TestDomainFilterExplainsWhenProjectHasNoDomainMetadata(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{
+		grant(t, project, "grant_model", principal, "model_orders", projectgraph.KindModel),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Search(context.Background(), SearchRequest{PrincipalID: principal.ID, Query: "orders", Domain: "finance"})
+	if !errors.Is(err, ErrUnsupportedDomain) || !strings.Contains(err.Error(), "no authorized catalog resource exposes domain metadata") {
+		t.Fatalf("domain search error = %v, want clear unsupported-domain error", err)
+	}
+}
+
 func TestSearchMatchesStableResourceID(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "unrelated"},
@@ -338,6 +363,150 @@ func TestSearchMatchesStableResourceID(t *testing.T) {
 	}
 	if len(page.Items) != 1 || page.Items[0].Ref.ID != "model_orders" {
 		t.Fatalf("ID search = %#v, want model_orders", page.Items)
+	}
+}
+
+func TestSearchMatchesSemanticNamesAndLabelsWithinDomain(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "semantic_sales", Kind: projectgraph.KindSemanticModel, Name: "sales", Metadata: projectgraph.Metadata{Domain: "commerce"}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{grant(t, project, "grant_direct", principal, "semantic_sales", projectgraph.KindSemanticModel)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := testLease{snapshot: snapshot}
+	service, err := NewService(testLeases{lease: lease}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}},
+		WithSemanticModelVisibility(func(_ context.Context, got Lease, principalID string, id projectgraph.ResourceID) (bool, error) {
+			if got.Identity() != identity || principalID != principal.ID || id != "semantic_sales" {
+				t.Fatalf("semantic visibility got lease=%v principal=%q id=%q", got.Identity(), principalID, id)
+			}
+			return true, nil
+		}),
+		WithSemanticModelSearchTerms(func(_ context.Context, got Lease, principalID string, id projectgraph.ResourceID) ([]string, error) {
+			if got.Identity() != identity || principalID != principal.ID || id != "semantic_sales" {
+				t.Fatalf("semantic search got lease=%v principal=%q id=%q", got.Identity(), principalID, id)
+			}
+			return []string{"gross_revenue", "Gross Revenue", "Total value of orders"}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := service.Search(context.Background(), SearchRequest{PrincipalID: principal.ID, Query: "gross revenue", Domain: "COMMERCE"})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Ref.ID != "semantic_sales" {
+		t.Fatalf("semantic domain search = %#v, %v", page, err)
+	}
+	page, err = service.Search(context.Background(), SearchRequest{PrincipalID: principal.ID, Query: "gross revenue", Domain: "finance"})
+	if err != nil || len(page.Items) != 0 {
+		t.Fatalf("filtered semantic domain search = %#v, %v", page, err)
+	}
+}
+
+func TestSearchDoesNotProjectTermsForUnauthorizedSemanticModels(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "semantic_secret", Kind: projectgraph.KindSemanticModel, Name: "private"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	termsCalled := false
+	service, err := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}},
+		WithSemanticModelVisibility(func(context.Context, Lease, string, projectgraph.ResourceID) (bool, error) { return true, nil }),
+		WithSemanticModelSearchTerms(func(context.Context, Lease, string, projectgraph.ResourceID) ([]string, error) {
+			termsCalled = true
+			return []string{"Secret Revenue"}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := service.Search(context.Background(), SearchRequest{PrincipalID: principal.ID, Query: "secret revenue"})
+	if err != nil || len(page.Items) != 0 {
+		t.Fatalf("unauthorized semantic search = %#v, %v", page, err)
+	}
+	if termsCalled {
+		t.Fatal("semantic search terms were projected before resource authorization")
+	}
+}
+
+func TestListAllowsAuthorizedProjectParentAsRoot(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
+		{ID: "dashboard_sales", Kind: projectgraph.KindDashboard, Name: "sales"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
+	projectPair, err := access.NewProjectPermissionPair(access.ActionProjectSettingsRead, identity.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectGrant, err := accesssnapshot.NewTypedGrant("grant_project", "project settings reader", principal, []access.PermissionPair{projectPair})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{
+		projectGrant,
+		grant(t, project, "grant_model", principal, "model_orders", projectgraph.KindModel),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := service.List(context.Background(), ListRequest{PrincipalID: principal.ID, Parent: &Ref{ID: identity.ProjectID, Kind: projectgraph.KindProjectNamespace}, Kinds: []projectgraph.Kind{projectgraph.KindModel}})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Ref.ID != "model_orders" {
+		t.Fatalf("project parent list = %#v, %v", page, err)
+	}
+
+	withoutProjectRead, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{
+		grant(t, project, "grant_model_only", principal, "model_orders", projectgraph.KindModel),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied, _ := NewService(testLeases{lease: testLease{snapshot: withoutProjectRead}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
+	if _, err := denied.List(context.Background(), ListRequest{PrincipalID: principal.ID, Parent: &Ref{ID: identity.ProjectID, Kind: projectgraph.KindProjectNamespace}}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("project parent without project read = %v, want not found", err)
+	}
+}
+
+func TestListDistinguishesMissingAndNonTraversableParents(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "source_input", Kind: projectgraph.KindSource, Name: "input"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
+	identity, _ := projectgraph.NewServingIdentity("project_demo", "development", "generation_1")
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{
+		grant(t, project, "grant_source", principal, "source_input", projectgraph.KindSource),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, _ := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
+	if _, err := service.List(context.Background(), ListRequest{PrincipalID: principal.ID, Parent: &Ref{ID: "source_input", Kind: projectgraph.KindSource}}); !errors.Is(err, ErrNotTraversable) {
+		t.Fatalf("non-traversable parent = %v, want ErrNotTraversable", err)
+	}
+	if _, err := service.List(context.Background(), ListRequest{PrincipalID: principal.ID, Parent: &Ref{ID: "source_missing", Kind: projectgraph.KindSource}}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing parent = %v, want ErrNotFound", err)
 	}
 }
 

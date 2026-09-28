@@ -2,7 +2,7 @@
 
 # catalog_list
 
-Browse one authorized project-resource hierarchy level when a parent ref is known. Returned refs are exact stable IDs; a page with hasMore false is complete.
+Browse authorized project resources from the project ref, or one dependency level from a resource ref. Returned refs are exact stable IDs; a page with hasMore false is complete. Missing or unauthorized parents return catalog_not_found; authorized resources without dependencies return catalog_not_traversable.
 
 Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_list.json) · [complete manifest](/docs/agent-tools/manifest.json)
 

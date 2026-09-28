@@ -117,6 +117,9 @@ func agentDefinitionLimit(definition visualizationdefinition.Definition) int {
 	if limit <= 0 || limit > int64(maxVisualRows) {
 		limit = maxVisualRows
 	}
+	if base, err := visualizationir.SpecificationBase(definition.Spec); err == nil && base.DataBudget.MaxRows > 0 && limit > int64(base.DataBudget.MaxRows) {
+		limit = int64(base.DataBudget.MaxRows)
+	}
 	return int(limit)
 }
 
@@ -178,6 +181,9 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 	if !ok || model == nil {
 		return apigenAgentToolError("catalog_not_found", "semantic model is unknown or unauthorized")
 	}
+	if err := validateAgentRecordsFields(input.Visual); err != nil {
+		return apigenAgentToolError("query_visual_failed", err.Error())
+	}
 	visualID := agentVisualID(call.ID)
 	dashboardDefinition, err := compileAgentVisual(input, model, visualID)
 	if err != nil {
@@ -226,7 +232,8 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 		return apigenAgentToolError("query_visual_failed", err.Error())
 	}
 	if envelope, ok := result.Patch["visuals"][result.ID]; ok {
-		if limit := agentDefinitionLimit(definition); limit > 0 && agentVisualReturnedRows(envelope) >= limit {
+		trimmed := trimAgentVisualEnvelopeRows(&envelope, agentDefinitionLimit(definition))
+		if limit := agentDefinitionLimit(definition); trimmed || (limit > 0 && agentVisualReturnedRows(envelope) >= limit) {
 			envelope.Diagnostics = append(envelope.Diagnostics, visualizationir.VisualizationDiagnostic{Code: "agent_row_limit_reached", Severity: visualizationir.VisualizationDiagnosticSeverityWarning, Message: fmt.Sprintf("Showing up to %d rows. More data may exist.", limit)})
 			result.Patch["visuals"][result.ID] = envelope
 		}
@@ -275,6 +282,10 @@ func compileAgentVisual(input agentVisualInput, model *semanticmodel.Model, id s
 	if model == nil {
 		return dashboarddefinition.Definition{}, fmt.Errorf("semantic model is required")
 	}
+	input, err := normalizeAgentVisualInput(input)
+	if err != nil {
+		return dashboarddefinition.Definition{}, err
+	}
 	doc := agentVisualDocument(input, id, input.Model)
 	compiled, err := dashboardcompiler.CompileDocument(doc, map[string]*semanticmodel.Model{input.Model: model})
 	if err != nil {
@@ -287,6 +298,110 @@ func compileAgentVisual(input agentVisualInput, model *semanticmodel.Model, id s
 		return dashboarddefinition.Definition{}, err
 	}
 	return compiled.Definition, nil
+}
+
+func normalizeAgentVisualInput(input agentVisualInput) (agentVisualInput, error) {
+	budget := int32(maxVisualRows)
+	if input.Visual.DataBudget == nil {
+		partial := visualizationir.VisualizationCompletenessPartial
+		input.Visual.DataBudget = &dashboarddocument.DashboardDataBudget{MaxRows: budget, RequiredCompleteness: &partial}
+	} else {
+		budget = input.Visual.DataBudget.MaxRows
+	}
+	if budget <= 0 {
+		return agentVisualInput{}, fmt.Errorf("visual.dataBudget.maxRows must be between 1 and %d", maxVisualRows)
+	}
+	if budget > maxVisualRows {
+		return agentVisualInput{}, fmt.Errorf("visual.dataBudget.maxRows %d exceeds the agent limit %d; set it to at most %d", budget, maxVisualRows, maxVisualRows)
+	}
+	var err error
+	input.Visual.Query, err = agentVisualQueryWithDefaultLimit(input.Visual.Query, budget, "visual.query")
+	if err != nil {
+		return agentVisualInput{}, err
+	}
+	if input.Visual.Datasets != nil {
+		queries := make(map[string]dashboarddocument.DashboardQuery, len(*input.Visual.Datasets))
+		for datasetID, query := range *input.Visual.Datasets {
+			queries[datasetID], err = agentVisualQueryWithDefaultLimit(query, budget, fmt.Sprintf("visual.datasets[%q]", datasetID))
+			if err != nil {
+				return agentVisualInput{}, err
+			}
+		}
+		input.Visual.Datasets = &queries
+	}
+	return input, nil
+}
+
+func agentVisualQueryWithDefaultLimit(query dashboarddocument.DashboardQuery, budget int32, path string) (dashboarddocument.DashboardQuery, error) {
+	check := func(limit int32, field string) error {
+		if limit <= 0 {
+			return fmt.Errorf("%s.%s must be a positive integer no greater than visual.dataBudget.maxRows (%d)", path, field, budget)
+		}
+		if limit > budget {
+			return fmt.Errorf("%s.%s %d exceeds visual.dataBudget.maxRows %d; lower the query limit or raise maxRows up to %d", path, field, limit, budget, maxVisualRows)
+		}
+		return nil
+	}
+	switch value := query.Value.(type) {
+	case *dashboarddocument.AggregateDashboardQuery:
+		if value == nil {
+			return query, nil
+		}
+		copy := *value
+		if copy.Limit == nil {
+			copy.Limit = &budget
+		}
+		if err := check(*copy.Limit, "limit"); err != nil {
+			return dashboarddocument.DashboardQuery{}, err
+		}
+		query.Value = &copy
+	case *dashboarddocument.RecordsDashboardQuery:
+		if value == nil {
+			return query, nil
+		}
+		copy := *value
+		if copy.Limit == nil {
+			copy.Limit = &budget
+		}
+		if err := check(*copy.Limit, "limit"); err != nil {
+			return dashboarddocument.DashboardQuery{}, err
+		}
+		query.Value = &copy
+	case *dashboarddocument.DistributionDashboardQuery:
+		if value == nil {
+			return query, nil
+		}
+		copy := *value
+		if copy.Limit == nil {
+			copy.Limit = &budget
+		}
+		if err := check(*copy.Limit, "limit"); err != nil {
+			return dashboarddocument.DashboardQuery{}, err
+		}
+		query.Value = &copy
+	case *dashboarddocument.PivotDashboardQuery:
+		if value == nil {
+			return query, nil
+		}
+		copy := *value
+		if copy.Window == nil {
+			copy.Window = &dashboarddocument.DashboardPivotWindow{Limit: budget}
+		} else {
+			window := *copy.Window
+			copy.Window = &window
+		}
+		if err := check(copy.Window.Limit, "window.limit"); err != nil {
+			return dashboarddocument.DashboardQuery{}, err
+		}
+		if copy.Window.Offset != nil && *copy.Window.Offset < 0 {
+			return dashboarddocument.DashboardQuery{}, fmt.Errorf("%s.window.offset must not be negative", path)
+		}
+		if copy.Window.Offset != nil && int64(*copy.Window.Offset)+int64(copy.Window.Limit) > int64(budget) {
+			return dashboarddocument.DashboardQuery{}, fmt.Errorf("%s.window offset plus limit exceeds visual.dataBudget.maxRows %d; reduce the offset or limit", path, budget)
+		}
+		query.Value = &copy
+	}
+	return query, nil
 }
 
 func validateAgentVisualBudget(definition visualizationdefinition.Definition) error {
@@ -355,12 +470,69 @@ func (p VisualProvider) queryAgentVisual(ctx context.Context, projectID string, 
 		return agentVisualResult{}, fmt.Errorf("canonical visualization runtime is not configured")
 	}
 	filters := dashboardDefinition.DefaultFilters()
-	ctx = dataquery.WithIndependentResultBudget(ctx, dataquery.ResultLimits{MaxRows: maxVisualRows, MaxBytes: maxVisualBytes})
+	ctx = dataquery.WithIndependentResultBudget(ctx, dataquery.ResultLimits{MaxRows: agentDefinitionLimit(definition) + 1, MaxBytes: maxVisualBytes})
 	envelope, err := p.QueryDefinition(ctx, projectID, dashboardDefinition, "page", id, filters)
 	if err != nil {
 		return agentVisualResult{}, err
 	}
 	return agentVisualResult{Type: agentVisualType(input), ID: id, Filters: filters, Patch: map[string]map[string]visualizationir.VisualizationEnvelope{"visuals": {id: envelope}}, Summary: fmt.Sprintf("Created visual %q.", agentDefinitionTitle(definition))}, nil
+}
+
+func trimAgentVisualEnvelopeRows(envelope *visualizationir.VisualizationEnvelope, maxRows int) bool {
+	if envelope == nil || maxRows < 0 {
+		return false
+	}
+	trimmed := false
+	switch state := envelope.DataState.Value.(type) {
+	case *visualizationir.InlineVisualizationDataState:
+		if state == nil {
+			return false
+		}
+		copy := *state
+		copy.Datasets = append([]visualizationir.VisualizationInlineDataset(nil), state.Datasets...)
+		for index := range copy.Datasets {
+			if copy.Datasets[index].ID != "primary" {
+				continue
+			}
+			if len(copy.Datasets[index].Rows) > maxRows {
+				copy.Datasets[index].Rows = append([][]any(nil), copy.Datasets[index].Rows[:maxRows]...)
+				trimmed = true
+			}
+		}
+		envelope.DataState.Value = &copy
+	case *visualizationir.WindowedVisualizationDataState:
+		if state == nil {
+			return false
+		}
+		copy := *state
+		copy.Blocks = make(map[string]visualizationir.VisualizationWindowBlock, len(state.Blocks))
+		blockIDs := make([]string, 0, len(state.Blocks))
+		for id, block := range state.Blocks {
+			copy.Blocks[id] = block
+			blockIDs = append(blockIDs, id)
+		}
+		sort.Slice(blockIDs, func(i, j int) bool {
+			left, right := copy.Blocks[blockIDs[i]], copy.Blocks[blockIDs[j]]
+			if left.Start == right.Start {
+				return blockIDs[i] < blockIDs[j]
+			}
+			return left.Start < right.Start
+		})
+		remaining := maxRows
+		for _, id := range blockIDs {
+			block := copy.Blocks[id]
+			if len(block.Rows) > remaining {
+				block.Rows = append([][]any(nil), block.Rows[:remaining]...)
+				remaining = 0
+				trimmed = true
+			} else {
+				remaining -= len(block.Rows)
+			}
+			copy.Blocks[id] = block
+		}
+		envelope.DataState.Value = &copy
+	}
+	return trimmed
 }
 
 func compactAgentVisualResult(
@@ -394,7 +566,7 @@ func compactAgentVisualResult(
 		return agentcontracts.QueryVisualResult{}, err
 	}
 	return agentcontracts.QueryVisualResult{
-		Ok:               true,
+		Ok:               envelope.Status.Kind != visualizationir.VisualizationStatusKindError,
 		QueryID:          queryID,
 		ServingSnapshot:  metadata.ServingSnapshot,
 		Freshness:        metadata.Freshness,
@@ -481,13 +653,13 @@ func agentVisualFieldUsages(projectID, modelID string, model *semanticmodel.Mode
 				fieldID = *field.SourceRef
 			}
 			ref := agentVisualFieldRef{Field: fieldID, Alias: field.ID}
-			out = append(out, agentVisualFieldUsage(projectID, modelID, model, ref, role))
+			out = append(out, agentVisualFieldUsage(projectID, modelID, model, ref, role, agentDefinitionDataset(definition)))
 		}
 	}
 	return out
 }
 
-func agentVisualFieldUsage(projectID, modelID string, model *semanticmodel.Model, ref agentVisualFieldRef, role string) agentcontracts.QueryVisualFieldUsage {
+func agentVisualFieldUsage(projectID, modelID string, model *semanticmodel.Model, ref agentVisualFieldRef, role, rootDataset string) agentcontracts.QueryVisualFieldUsage {
 	usage := agentcontracts.QueryVisualFieldUsage{
 		FieldID: qualifiedVisualFieldID(modelID, ref.Field),
 		Role:    role,
@@ -497,11 +669,19 @@ func agentVisualFieldUsage(projectID, modelID string, model *semanticmodel.Model
 	if dimension, err := model.ResolveDimension(ref.Field); err == nil {
 		usage.Label = dimensionLabelForAgent(agentFieldAliasForRef(ref), dimension)
 		usage.DataType = optionalString(dimension.Type)
+		if role == "dimension" {
+			usage.ExplorerFieldID = optionalString(agentExplorerDimensionField(model, rootDataset, dimension.Field))
+		}
 		return usage
 	}
 	if dimension, err := model.ResolveSemanticDimension(ref.Field); err == nil {
 		usage.Label = firstNonEmpty(dimension.Label, ref.Field)
 		usage.DataType = optionalString(dimension.Type)
+		if role == "dimension" {
+			if binding, ok := dimension.Bindings[rootDataset]; ok && len(binding.Path) == 0 {
+				usage.ExplorerFieldID = optionalString(agentExplorerDimensionField(model, rootDataset, binding.Field))
+			}
+		}
 		return usage
 	}
 	if metric, ok := model.Metrics[ref.Field]; ok {
@@ -510,6 +690,23 @@ func agentVisualFieldUsage(projectID, modelID string, model *semanticmodel.Model
 		usage.Format = optionalString(metric.Format)
 	}
 	return usage
+}
+
+func agentExplorerDimensionField(model *semanticmodel.Model, rootDataset, field string) string {
+	if model == nil || strings.TrimSpace(rootDataset) == "" {
+		return ""
+	}
+	rootTable := strings.TrimSpace(rootDataset)
+	if dataset, ok := model.Datasets[rootDataset]; ok && strings.TrimSpace(dataset.Model) != "" {
+		rootTable = strings.TrimSpace(dataset.Model)
+	}
+	dimension, err := model.ResolveDimension(strings.TrimSpace(field))
+	if err != nil || dimension.Table != rootTable {
+		return ""
+	}
+	// Explorer field IDs are qualified by the semantic dataset ID, including
+	// aliases whose backing model has a different name.
+	return strings.TrimSpace(rootDataset) + "." + dimension.Name
 }
 
 func optionalString(value string) *string {

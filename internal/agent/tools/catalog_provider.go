@@ -113,7 +113,7 @@ type CatalogProvider struct {
 func (p CatalogProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 	return []agentcore.ToolDefinition{
 		{
-			Name: CatalogSearchToolName, Description: "Search authorized project resources by stable ID, name, description, or domain metadata. Use an exact ref from a unique result; do not repeat broad searches when hasMore is false.",
+			Name: CatalogSearchToolName, Description: "Search authorized project resources by stable ID, name, description, semantic metric or dimension names and labels, or domain metadata. The domain filter requires domain metadata in the active project. Use an exact ref from a unique result; do not repeat broad searches when hasMore is false.",
 			InputSchema: json.RawMessage(agentcontracts.CatalogSearchInputSchemaJSON), OutputSchema: json.RawMessage(agentcontracts.CatalogPageSchemaJSON),
 			Effect: "read", Tags: []string{"catalog", "search"},
 			Handler: agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {
@@ -145,7 +145,7 @@ func (p CatalogProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 			}),
 		},
 		{
-			Name: CatalogListToolName, Description: "Browse one authorized project-resource hierarchy level when a parent ref is known. Returned refs are exact stable IDs; a page with hasMore false is complete.",
+			Name: CatalogListToolName, Description: "Browse authorized project resources from the project ref, or one dependency level from a resource ref. Returned refs are exact stable IDs; a page with hasMore false is complete. Missing or unauthorized parents return catalog_not_found; authorized resources without dependencies return catalog_not_traversable.",
 			InputSchema: json.RawMessage(agentcontracts.CatalogListInputSchemaJSON), OutputSchema: json.RawMessage(agentcontracts.CatalogPageSchemaJSON),
 			Effect: "read", Tags: []string{"catalog", "browse"},
 			Handler: agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {

@@ -96,6 +96,10 @@ This closed schema is too large to inline usefully. Read the exact generated sch
           "dataType": {
             "type": "string"
           },
+          "explorerFieldId": {
+            "description": "Data Explorer field ID for a direct binding to the query root dataset.",
+            "type": "string"
+          },
           "fieldId": {
             "type": "string"
           },
