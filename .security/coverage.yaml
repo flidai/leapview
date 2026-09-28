@@ -8,6 +8,10 @@ surfaces:
     kind: go-module
     updater: {ecosystem: gomod, directory: /}
     scanners: [govulncheck]
+  - path: deploy/kamal-trial/go.mod
+    kind: go-module
+    updater: {ecosystem: gomod, directory: /deploy/kamal-trial}
+    scanners: [govulncheck]
   - path: pkg/apigen/go.mod
     kind: go-module
     updater: {ecosystem: gomod, directory: /pkg/apigen}

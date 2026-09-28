@@ -48,6 +48,12 @@ updates:
     groups:
       go-dependencies: {patterns: ["*"]}
   - package-ecosystem: gomod
+    directory: /deploy/kamal-trial
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      kamal-trial-go-dependencies: {patterns: ["*"]}
+  - package-ecosystem: gomod
     directory: /pkg/apigen
     schedule: {interval: weekly}
     open-pull-requests-limit: 5
