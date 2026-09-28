@@ -1519,6 +1519,11 @@ tasks:
       - nix flake check path:./deploy/managed/nixos --no-build --no-update-lock-file
       - nix build path:./deploy/managed/nixos#checks.x86_64-linux.host-contracts --no-link --no-update-lock-file
 
+  managed:hosts:boot-test:
+    desc: Boot isolated NixOS guests and verify TLS, filtering and reboot persistence
+    cmds:
+      - nix build path:./deploy/managed/nixos#boot-test --no-link --no-update-lock-file -L
+
   managed:kamal:check:
     desc: Parse the application template with locked Kamal dependencies (no SSH)
     dir: deploy/managed/kamal

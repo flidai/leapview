@@ -1,6 +1,6 @@
 # Native Kamal parsing and command construction; never contacts a host/registry.
 require "bundler/setup"
-require "kamal"
+require_relative "probe_host"
 require "minitest/autorun"
 require "pathname"
 
@@ -30,9 +30,17 @@ class ManagedKamalConfigurationTest < Minitest::Test
     assert_includes @config.volume_args, "/var/lib/leapview:/var/lib/leapview"
     secrets = @config.raw_config.env["secret"]
     assert_includes secrets, "LEAPVIEW_POSTGRES_CONTROL_URL"
-    refute secrets.any? { |key| key.match?(/MIGRATOR|MAINTENANCE|ADMIN|HCLOUD|BACKUP/) }
+    assert_includes secrets, "LEAPVIEW_AGENT_CREDENTIAL_KEY"
+    assert_includes secrets, "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL"
+    assert_includes secrets, "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL"
+    refute secrets.any? { |key| key.match?(/MIGRATOR|UPGRADE_COORDINATOR|ADMIN|HCLOUD|BACKUP/) }
     assert_empty @config.accessories
     assert_equal "ghcr.io/flidai/leapview:0123456789abcdef", @config.absolute_image
+  end
+
+  def test_probe_uses_the_public_host_without_relaxing_application_host_checks
+    proxy = Kamal::Configuration::Proxy.new(config: @config, proxy_config: @config.raw_config.proxy, secrets: {})
+    assert_includes proxy.deploy_command_args(target: "container-id"), '--health-check-host="dash.example.com"'
   end
 
   def test_missing_inventory_fails_closed

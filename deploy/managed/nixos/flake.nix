@@ -70,6 +70,10 @@
           hosts = self.nixosConfigurations;
         };
       };
+      packages.${system}.boot-test = import ./tests/boot.nix {
+        inherit pkgs;
+        modules = self.nixosModules;
+      };
       formatter.${system} = pkgs.nixfmt;
       devShells.${system}.default = pkgs.mkShell {
         packages = [

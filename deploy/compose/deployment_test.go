@@ -547,6 +547,7 @@ func TestReleaseIdentityContract(t *testing.T) {
 
 	dockerfile := read(t, filepath.Join(root, "Dockerfile"))
 	for _, required := range []string{
+		`service="leapview"`,
 		"BUILD_VERSION=development",
 		"BUILD_REVISION=unknown",
 		"BUILD_TIME=unknown",

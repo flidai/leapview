@@ -1,4 +1,5 @@
 # Configuration scaffold only: production lifecycle adapter/qualification is pending.
+# Invoke via: bundle exec ruby -r ./probe_host.rb -S kamal ...
 # Values below are non-secret inventory. Secrets come from .kamal/secrets.
 service: leapview
 image: flidai/leapview
@@ -63,11 +64,15 @@ env:
     LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID: <%= ENV.fetch("LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID").to_json %>
     LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST: <%= ENV.fetch("LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST").to_json %>
   secret:
+    - LEAPVIEW_AGENT_CREDENTIAL_KEY
     - LEAPVIEW_CSRF_KEY
     - LEAPVIEW_METRICS_BEARER_TOKEN
     - LEAPVIEW_POSTGRES_CONTROL_URL
     - LEAPVIEW_POSTGRES_DUCKLAKE_URL
-# Migration/maintenance/admin credentials are deliberately absent from the runtime.
+    - LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL
+    - LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL
+# Bounded retention uses distinct maintenance roles; schema-owner/migrator,
+# upgrade-coordinator, cloud and backup credentials stay outside the runtime.
 deploy_timeout: 120
 drain_timeout: 30
 stop_timeout: 120
