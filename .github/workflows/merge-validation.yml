@@ -167,10 +167,19 @@ jobs:
         id: merge-validation
         run: task ci:full:extras:hosted
 
+  host-recovery-validation:
+    name: Isolated host recovery and migration boundary contracts
+    if: github.repository == 'flidai/leapview'
+    uses: ./.github/workflows/demo-upgrade-qualification.yml
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation]
+    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation, host-recovery-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -184,6 +193,7 @@ jobs:
           GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}
           FRONTEND_RESULT: ${{ needs.frontend-validation.result }}
           FULL_VALIDATION_RESULT: ${{ needs.full-validation.result }}
+          HOST_RECOVERY_RESULT: ${{ needs.host-recovery-validation.result }}
         run: |
           test "${APIGEN_RESULT}" = success || {
             printf 'APIGen validation: %s\n' "${APIGEN_RESULT}" >&2
@@ -203,6 +213,10 @@ jobs:
           }
           test "${FULL_VALIDATION_RESULT}" = success || {
             printf 'Full merge validation: %s\n' "${FULL_VALIDATION_RESULT}" >&2
+            exit 1
+          }
+          test "${HOST_RECOVERY_RESULT}" = success || {
+            printf 'Isolated host recovery qualification: %s\n' "${HOST_RECOVERY_RESULT}" >&2
             exit 1
           }
 

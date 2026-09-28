@@ -477,6 +477,18 @@ func jobResults(jobs []githubJob) map[string]string {
 			results[name] = job.Conclusion
 		}
 	}
+	// The parent reusable-workflow result is the mandatory caller contract.
+	// Synthesize it only after both child jobs are observed; keeping their
+	// individual keys lets health reporting detect a missing child as incomplete.
+	recovery, hasRecovery := results["host-recovery-validation/recovery"]
+	historical, hasHistorical := results["host-recovery-validation/historical-transition"]
+	if hasRecovery && hasHistorical {
+		aggregate := combineConclusion(recovery, historical)
+		if parent, present := results["host-recovery-validation"]; present {
+			aggregate = combineConclusion(parent, aggregate)
+		}
+		results["host-recovery-validation"] = aggregate
+	}
 	return results
 }
 
