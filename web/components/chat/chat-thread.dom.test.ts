@@ -507,7 +507,7 @@ test('chat thread hides recovered tool errors only within the same user turn', a
   await page.close()
 })
 
-test('chat thread hides assistant progress before tools and keeps the final answer', async () => {
+test('chat thread keeps only the last assistant message in each user turn', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   const answers = await page.evaluate(async () => {
@@ -520,7 +520,10 @@ test('chat thread hides assistant progress before tools and keeps the final answ
       { id: 'tool-error', kind: 'tool', name: 'query_visual', status: 'error', error: 'Invalid option.' },
       { id: 'progress-2', kind: 'assistant', markdown: 'Retrying without the option.' },
       { id: 'tool-success', kind: 'tool', name: 'query_visual', status: 'complete' },
+      { id: 'answer-1', kind: 'assistant', markdown: 'The chart is ready.' },
       { id: 'final', kind: 'assistant', markdown: 'Open the Revenue chart.' },
+      { id: 'user-2', kind: 'user', text: 'What is the total?' },
+      { id: 'answer-2', kind: 'assistant', markdown: 'The total is 42.' },
     ]
     await thread.updateComplete
     return {
@@ -528,7 +531,7 @@ test('chat thread hides assistant progress before tools and keeps the final answ
       errors: thread.shadowRoot.querySelectorAll('.message.error').length,
     }
   })
-  expect(answers).toEqual({ answers: ['Open the Revenue chart.'], errors: 0 })
+  expect(answers).toEqual({ answers: ['Open the Revenue chart.', 'The total is 42.'], errors: 0 })
   await page.close()
 })
 
