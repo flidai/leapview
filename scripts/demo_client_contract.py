@@ -196,7 +196,8 @@ def wait_for_generation(target, project_id, generation_id, candidate_id,
         if http_status == 503:
             diagnostic('generation status read returned ' +
                        _retry_diagnostic(http_status, content_type, body, bearer_token))
-            if (str(content_type).strip().lower() == 'text/plain' and
+            media_type = str(content_type).split(';', 1)[0].strip().lower()
+            if (media_type == 'text/plain' and
                     isinstance(body, bytes) and body.strip() == b'Service Unavailable'):
                 _sleep_before_generation_retry(deadline, poll_interval_seconds, monotonic, sleep)
                 continue

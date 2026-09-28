@@ -84,24 +84,26 @@ class GenerationStatusPollTests(unittest.TestCase):
         self.assertIn('DELIVERY_READ_UNAVAILABLE', diagnostics[0])
 
     def test_exact_plaintext_service_unavailable_503_then_active_succeeds(self):
-        run, calls, sleeps, diagnostics = self.make_poller([
-            (503, b' Service Unavailable\r\n', 'text/plain'),
-            (200, body(), 'application/json'),
-        ])
-        self.assertEqual(run()['status'], 'active')
-        self.assertEqual(len(calls), 2)
-        self.assertEqual([call[3] for call in calls], [TOKEN, TOKEN])
-        self.assertEqual(sleeps, [2])
-        self.assertEqual(len(diagnostics), 1)
-        self.assertIn("Content-Type='text/plain'", diagnostics[0])
-        self.assertIn('Service Unavailable', diagnostics[0])
+        for content_type in ('text/plain', 'text/plain; charset=utf-8'):
+            with self.subTest(content_type=content_type):
+                run, calls, sleeps, diagnostics = self.make_poller([
+                    (503, b' Service Unavailable\r\n', content_type),
+                    (200, body(), 'application/json'),
+                ])
+                self.assertEqual(run()['status'], 'active')
+                self.assertEqual(len(calls), 2)
+                self.assertEqual([call[3] for call in calls], [TOKEN, TOKEN])
+                self.assertEqual(sleeps, [2])
+                self.assertEqual(len(diagnostics), 1)
+                self.assertIn("Content-Type=" + repr(content_type), diagnostics[0])
+                self.assertIn('Service Unavailable', diagnostics[0])
 
     def test_plaintext_503_retries_only_exact_content_type_and_body(self):
         for content_type, response_body in (
                 ('text/plain', b'Service unavailable'),
                 ('text/plain', b'Service Temporarily Unavailable'),
                 ('text/html', b'Service Unavailable'),
-                ('text/plain; charset=utf-8', b'Service Unavailable')):
+                ('application/problem+json; charset=utf-8', b'Service Unavailable')):
             with self.subTest(content_type=content_type, response_body=response_body):
                 run, calls, sleeps, _ = self.make_poller([
                     (503, response_body, content_type),

@@ -374,7 +374,7 @@ func startQualificationHistoricalPredecessorFixture(t *testing.T, ctx context.Co
 	bootstrapPublication, err := runQualificationHistoricalBootstrapPublication(ctx, t, legacyClient, seed, initial, proxy)
 	if err != nil {
 		serverLogs, logsErr := predecessor.Logs(ctx, 120)
-		t.Logf("predecessor diagnostics after initial publication: %s", qualificationHistoricalCommandDiagnostic(
+		t.Logf("predecessor diagnostics after initial publication: %s", qualificationHistoricalCandidateFailureLogs(
 			serverLogs, logsErr, initial.PublisherToken, seed.PublisherClientSecret, seed.ReleaseClientSecret, seed.ViewerPassword))
 		readyRequest, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+endpoint+"/readyz", nil)
 		if requestErr == nil {
