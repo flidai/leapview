@@ -40,6 +40,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
+	projectview "github.com/flidai/leapview/internal/project"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	developmentsessionmodule "github.com/flidai/leapview/internal/project/developmentsession/module"
@@ -343,6 +344,7 @@ type capabilityAssemblyInputs struct {
 	ProductStatus       adminmodule.ProductStatus
 	ProjectCatalog      *projectcatalog.Service
 	ProjectGraph        projecthttp.GraphReader
+	SavedExplorations   projectview.SavedExplorationStore
 }
 
 type workflowAssemblyInputs struct {
@@ -832,6 +834,7 @@ func buildApplicationSurfaces(
 	var dashboardAppearances projecthttp.DashboardAppearanceStore
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
+		SavedExplorations:       capabilities.SavedExplorations,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardAppearances, DashboardCatalog: capabilities.Authoring,

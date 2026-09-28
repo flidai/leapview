@@ -14,6 +14,13 @@ const root = join(projectRoot, '.tmp/data-explorer-test')
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/explore/saved') {
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({ items: [
+        { id: 'explore_1', title: 'Orders by month', href: '/explore?saved=explore_1', updatedAt: '2026-09-27T10:30:00Z' },
+      ] }))
+      return
+    }
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument())
@@ -317,6 +324,50 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.commands.some((command) => command.visibleColumns?.length === 1 && command.visibleColumns[0] === 'order_id')).toBe(true)
     expect(state.commands.some((command) => command.objectKey === 'model:model:olist.orders' && command.columnWidths?.order_id > 200)).toBe(true)
     expect(state.commands.some((command) => command.block && command.start > 0 && command.count === 100 && command.requestSeq > 0)).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('data explorer lists server-saved explorations with links back to the saved route', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+
+    const saved = await page.evaluate(async () => {
+      const element = document.createElement('lv-data-explorer') as any
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [], preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
+          command: { mode: 'browse', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
+          explore: { command: { semanticModelId: '', datasetId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
+          warnings: [],
+        },
+      })
+      document.body.append(element)
+      const root = element.shadowRoot as ShadowRoot
+      for (let index = 0; index < 30 && !root.querySelector('.saved-count'); index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      root.querySelector<HTMLButtonElement>('.saved-button')?.click()
+      await element.updateComplete
+      const link = root.querySelector<HTMLAnchorElement>('.saved-item')
+      return {
+        title: link?.querySelector('.saved-item-title')?.textContent?.trim(),
+        href: link?.getAttribute('href'),
+        updatedAt: link?.querySelector('time')?.getAttribute('datetime'),
+      }
+    })
+
+    expect(saved).toEqual({
+      title: 'Orders by month',
+      href: '/explore?saved=explore_1',
+      updatedAt: '2026-09-27T10:30:00Z',
+    })
   } finally {
     await page.close()
   }

@@ -327,6 +327,7 @@ test('chat thread renders visual artifacts with dashboard web components', async
         },
       },
     ]
+    thread.surface = 'drawer'
     await thread.updateComplete
   })
   await page.waitForFunction(() => Boolean(
@@ -366,7 +367,7 @@ test('chat thread renders visual artifacts with dashboard web components', async
   expect(explorerURL.searchParams.getAll('dimension')).toEqual(['orders.country'])
   expect(explorerURL.searchParams.getAll('metric')).toEqual(['revenue'])
   expect(explorerURL.searchParams.get('limit')).toBe('25')
-  expect(rendered.toolRows).toBe(2)
+  expect(rendered.toolRows).toBe(0)
   expect(rendered.bodyText.includes('delivered')).toBe(false)
   expect(rendered.artifactBackground).toBe('rgb(1, 2, 3)')
   expect(rendered.artifactBorderTopWidth).toBe('2px')
@@ -412,6 +413,7 @@ test('chat thread hides Explorer action when aggregate query has unsupported sta
       { id: 'input-only', kind: 'tool', name: 'query_visual', status: 'complete', inputJson: args(), resultJson: result('input-only', 'orders.status'), artifact: { type: 'bar', id: 'input-only', summary: 'Input only chart.' } },
       { id: 'unqualified', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: args(), resultJson: result('unqualified'), artifact: { type: 'bar', id: 'unqualified', summary: 'Unqualified chart.' } },
     ]
+    thread.surface = 'drawer'
     await thread.updateComplete
   })
   await page.waitForFunction(() => document.querySelector('lv-chat-thread')?.shadowRoot?.querySelectorAll('lv-visual-artifact').length === 5)
@@ -420,7 +422,7 @@ test('chat thread hides Explorer action when aggregate query has unsupported sta
   await page.close()
 })
 
-test('chat thread renders tool activity with accessible expandable details', async () => {
+test('chat thread hides tool processing rows while retaining errors, answers, and the working indicator', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
@@ -456,60 +458,33 @@ test('chat thread renders tool activity with accessible expandable details', asy
       working: root.querySelector('.working')?.textContent?.replace(/\s+/g, ' ').trim(),
       toolRows: root.querySelectorAll('.tool-call').length,
       codeBlocks: root.querySelectorAll('lv-code-block').length,
-      labels: Array.from(root.querySelectorAll('.tool-trigger')).map((trigger: any) => trigger.textContent.replace(/\s+/g, ' ').trim()),
-      statuses: Array.from(root.querySelectorAll('.tool-call')).map((row: any) => ({
-        className: row.className,
-        expanded: row.querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
-        controls: row.querySelector('.tool-trigger')?.getAttribute('aria-controls'),
-      })),
       agentTurns: root.querySelectorAll('.agent-turn').length,
-      runError: root.querySelector('.message.error')?.textContent?.replace(/\s+/g, ' ').trim(),
+      errors: Array.from(root.querySelectorAll('.message.error')).map((node: any) => node.textContent?.replace(/\s+/g, ' ').trim()),
       assistantMarkdown: (root.querySelector('.agent-markdown') as any)?.value,
+      transcriptTools: element.transcript.filter((item: any) => item.kind === 'tool').map((item: any) => ({ name: item.name, inputJson: item.inputJson, resultJson: item.resultJson })),
     }
   })
 
-  expect(state.working).toBeUndefined()
-  expect(state.toolRows).toBe(3)
+  expect(state.working).toBe('')
+  expect(state.toolRows).toBe(0)
   expect(state.codeBlocks).toBe(0)
-  expect(state.labels).toEqual(['Catalog Search Running', 'Catalog Get Failed', 'Catalog List Complete'])
-  expect(state.statuses).toEqual([
-    { className: 'tool-call running', expanded: 'false', controls: 'tool-details-tool-running' },
-    { className: 'tool-call error', expanded: 'false', controls: 'tool-details-tool-error' },
-    { className: 'tool-call done', expanded: 'false', controls: 'tool-details-tool-complete' },
-  ])
   expect(state.agentTurns).toBe(1)
-  expect(state.runError).toBe('The dashboard could not be loaded.')
+  expect(state.errors).toEqual(['Catalog lookup failed.', 'The dashboard could not be loaded.'])
   expect(state.text).toContain('Find the sales dashboard.')
   expect(state.assistantMarkdown).toBe('I could not load that dashboard.')
-  expect(state.text).not.toContain('Catalog lookup failed.')
+  expect(state.text).not.toContain('Catalog Search')
+  expect(state.text).not.toContain('Catalog Get')
+  expect(state.text).not.toContain('Catalog List')
   expect(state.text).not.toContain('secret tool result')
-
-  await page.locator('lv-chat-thread').evaluate(async (element: any) => {
-    for (const trigger of Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.tool-trigger')) as HTMLButtonElement[]) {
-      trigger.click()
-    }
-    await element.updateComplete
-  })
-  const details = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const root = element.shadowRoot as ShadowRoot
-    return {
-      expanded: Array.from(root.querySelectorAll('.tool-trigger')).map((trigger) => trigger.getAttribute('aria-expanded')),
-      codeBlocks: root.querySelectorAll('lv-code-block').length,
-      detailsText: Array.from(root.querySelectorAll('.tool-details')).map((detail) => detail.textContent?.replace(/\s+/g, ' ').trim()),
-      errorText: root.querySelector('.tool-error')?.textContent,
-    }
-  })
-  expect(details.expanded).toEqual(['true', 'true', 'true'])
-  expect(details.codeBlocks).toBe(5)
-  expect(details.detailsText[0]).toContain('sales')
-  expect(details.detailsText[1]).toContain('secret tool result')
-  expect(details.detailsText[1]).not.toContain('Catalog lookup failed.')
-  expect(details.errorText).toBeUndefined()
-  expect(details.detailsText[2]).toContain('dashboard:sales')
+  expect(state.transcriptTools).toEqual([
+    { name: 'catalog_search', inputJson: '{"query":"sales"}', resultJson: 'items[1]{id}: sales' },
+    { name: 'catalog_get', inputJson: '{"id":"dashboard:sales"}', resultJson: '{"error":"secret tool result"}' },
+    { name: 'catalog_list', inputJson: undefined, resultJson: 'items[1]{id}: dashboard:sales' },
+  ])
   await page.close()
 })
 
-test('drawer keeps answers and failures but hides routine tool activity', async () => {
+test('drawer keeps answers and failures while hiding every tool processing row', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
@@ -526,13 +501,15 @@ test('drawer keeps answers and failures but hides routine tool activity', async 
       await thread.updateComplete
     })
     const state = await page.locator('lv-chat-thread').evaluate((thread: any) => ({
-      tools: [...thread.shadowRoot.querySelectorAll('.tool-trigger')].map((node: Element) => node.textContent?.replace(/\s+/g, ' ').trim()),
+      toolRows: thread.shadowRoot.querySelectorAll('.tool-call').length,
       working: Boolean(thread.shadowRoot.querySelector('.working')),
+      error: thread.shadowRoot.querySelector('.message.error')?.textContent?.trim(),
       answer: thread.shadowRoot.querySelector('.agent-markdown')?.value,
       user: thread.shadowRoot.querySelector('.message.user')?.textContent?.trim(),
     }))
-    expect(state.tools).toEqual(['Edit Dashboard Source Failed'])
+    expect(state.toolRows).toBe(0)
     expect(state.working).toBe(true)
+    expect(state.error).toBe('Could not edit dashboard.')
     expect(state.answer).toBe('I could not add the chart.')
     expect(state.user).toContain('Add a chart.')
   } finally {
@@ -540,7 +517,7 @@ test('drawer keeps answers and failures but hides routine tool activity', async 
   }
 })
 
-test('tool failure keeps a distinct error message when its result has no error details', async () => {
+test('tool failure remains accessible without its processing row', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
@@ -548,16 +525,16 @@ test('tool failure keeps a distinct error message when its result has no error d
       thread.status = { enabled: true, running: false }
       thread.transcript = [{ id: 'failed-tool', kind: 'tool', name: 'catalog_get', status: 'error', resultJson: '{"ok":false}', error: 'Network timed out.' }]
       await thread.updateComplete
-      thread.shadowRoot.querySelector('.tool-trigger').click()
-      await thread.updateComplete
     })
-    expect(await page.locator('lv-chat-thread').locator('.tool-error').textContent()).toBe('Network timed out.')
+    const thread = page.locator('lv-chat-thread')
+    expect(await thread.locator('.tool-call').count()).toBe(0)
+    expect((await thread.getByRole('alert').textContent())?.trim()).toBe('Network timed out.')
   } finally {
     await page.close()
   }
 })
 
-test('chat thread keeps one tool row per call when durable history replaces live activity', async () => {
+test('chat thread keeps structured tool history when durable history replaces live activity', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
@@ -578,17 +555,21 @@ test('chat thread keeps one tool row per call when durable history replaces live
     const root = element.shadowRoot as ShadowRoot
     return {
       rows: root.querySelectorAll('.tool-call').length,
-      labels: Array.from(root.querySelectorAll('.tool-trigger')).map((trigger: any) => trigger.textContent.replace(/\s+/g, ' ').trim()),
-      ids: Array.from(root.querySelectorAll('.tool-details')).map((detail: any) => detail.id),
+      transcript: element.transcript.map((item: any) => ({ name: item.name, status: item.status, resultJson: item.resultJson })),
+      visibleText: root.textContent,
     }
   })
-  expect(state.rows).toBe(2)
-  expect(state.labels).toEqual(['Catalog Search Complete', 'Catalog List Complete'])
-  expect(state.ids).toEqual([])
+  expect(state.rows).toBe(0)
+  expect(state.transcript).toEqual([
+    { name: 'catalog_search', status: 'complete', resultJson: 'items[1]{id}: sales' },
+    { name: 'catalog_list', status: 'complete', resultJson: 'items[1]{id}: sales' },
+  ])
+  expect(state.visibleText).not.toContain('Catalog Search')
+  expect(state.visibleText).not.toContain('Catalog List')
   await page.close()
 })
 
-test('chat thread marks orphaned historical tools interrupted without hiding a new run indicator', async () => {
+test('chat thread hides orphaned historical tools while keeping the new run indicator', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
@@ -603,12 +584,11 @@ test('chat thread marks orphaned historical tools interrupted without hiding a n
   const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
     const root = element.shadowRoot as ShadowRoot
     return {
-      label: root.querySelector('.tool-trigger')?.textContent?.replace(/\s+/g, ' ').trim(),
-      className: root.querySelector('.tool-call')?.className,
+      rows: root.querySelectorAll('.tool-call').length,
       working: root.querySelector('.working')?.textContent?.replace(/\s+/g, ' ').trim(),
     }
   })
-  expect(state).toEqual({ label: 'Catalog Search Interrupted', className: 'tool-call interrupted', working: '' })
+  expect(state).toEqual({ rows: 0, working: '' })
   await page.close()
 })
 
@@ -694,6 +674,7 @@ test('chat thread rejects payloads embedded in artifact metadata', async () => {
         },
       },
     }]
+    thread.surface = 'drawer'
     await thread.updateComplete
   })
   const artifact = page.locator('lv-chat-thread').locator('lv-visual-artifact[artifact-id="legacy_chart_1"]')

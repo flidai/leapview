@@ -6,12 +6,15 @@ import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
+import { headers as commandHeaders } from '../shared/command'
 import '../dashboard/visual-modal'
 import './chat-thread'
 import { agentIcon } from './agent-icon'
 import { type ChatReferencesChangeDetail, defaultAgentReferenceLimit, latestAcceptedRunId, mergeReferences, normalizeReferenceLimit } from './reference'
 import './chat-composer'
 import './chat-list'
+import './chat-visual-panel'
+import type { ChatVisualPanel } from './chat-visual-panel'
 
 const emptyAgent: ChatSignal = {
   conversations: [],
@@ -29,6 +32,14 @@ const promptStarters: Array<{ label: string; prompt: string; icon: IconNode }> =
 
 class LeapViewChatPage extends DatastarLit(LitElement) {
   private redirectedConversationID = ''
+  @state() private selectedVisualID = ''
+  @state() private selectedExplorerHref = ''
+  @state() private selectedVisualTitle = ''
+  @state() private visualSaving = false
+  @state() private visualSaved = false
+  @state() private visualSaveError = ''
+  @state() private compactViewport = false
+  private compactMedia?: MediaQueryList
   @state() private references: AgentReferenceSignal[] = []
 	@state() private editMessageId = ''
 	@state() private optimisticTurn: ChatTranscriptItemSignal | null = null
@@ -53,6 +64,15 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       min-height: 100svh;
       background: var(--lv-bg-app);
     }
+
+    .route.visual-open {
+      display: grid;
+      height: 100svh;
+      grid-template-columns: minmax(0, 1fr) minmax(22rem, 42%);
+      overflow: hidden;
+    }
+
+    lv-chat-visual-panel { min-width: 0; min-height: 0; }
 
     .main {
       display: grid;
@@ -294,6 +314,14 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         grid-template-columns: 1fr;
       }
 
+      .route.visual-open { grid-template-columns: minmax(0, 1fr); }
+      .route.visual-open lv-chat-visual-panel {
+        position: fixed;
+        z-index: 20;
+        inset: 0;
+        background: var(--lv-bg-panel);
+      }
+
       .main.new-main {
         height: 100svh;
       }
@@ -307,6 +335,24 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
   `
 
+  connectedCallback(): void {
+    super.connectedCallback()
+    if (typeof window === 'undefined') return
+    this.compactMedia = window.matchMedia('(max-width: 768px)')
+    this.compactViewport = this.compactMedia.matches
+    this.compactMedia.addEventListener('change', this.onCompactViewportChange)
+  }
+
+  disconnectedCallback(): void {
+    this.compactMedia?.removeEventListener('change', this.onCompactViewportChange)
+    this.compactMedia = undefined
+    super.disconnectedCallback()
+  }
+
+  private onCompactViewportChange = (event: MediaQueryListEvent): void => {
+    this.compactViewport = event.matches
+  }
+
   updated(): void {
     if (!this.hasBootstrapSignals) return
     checkSignalContract('chat page', this.page, {
@@ -319,6 +365,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     })
 		this.syncEditState()
 		this.syncOptimisticTurn()
+    if (this.selectedVisualID && !this.visuals[this.selectedVisualID]) this.closeVisual(false)
     this.navigateFromDraft()
   }
 
@@ -342,6 +389,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 			this.references = []
 			this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft('')
 		}
+		if (this.trackedConversationID !== null && this.trackedConversationID !== conversationID) this.closeVisual(false)
 		if (
 			(this.trackedConversationID !== null && this.trackedConversationID !== conversationID)
 			|| (this.trackedAcceptedRunID !== null && acceptedRunID && this.trackedAcceptedRunID !== acceptedRunID)
@@ -407,15 +455,30 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const isList = view === 'list'
     const isNew = view === 'new'
     const title = conversationTitle(agent)
+    const selectedVisual = this.selectedVisualID ? this.visuals[this.selectedVisualID] : undefined
     return html`
-      <div class="route" @lv-chat-submit=${this.showOptimisticTurn}>
-        <section class=${['main', isList ? 'list-main' : '', isNew ? 'new-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats">
+      <div class=${selectedVisual && !isList && !isNew ? 'route visual-open' : 'route'} @lv-chat-submit=${this.showOptimisticTurn}>
+        <section class=${['main', isList ? 'list-main' : '', isNew ? 'new-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats" ?inert=${Boolean(selectedVisual && this.compactViewport)}>
           ${isList || isNew ? null : this.renderConversationTitlebar(title)}
           <div class="body">
             ${isList ? this.renderListView(agent) : isNew ? this.renderNewView(composer, status) : this.renderConversationView(agent, status, composer)}
           </div>
           <lv-visual-modal></lv-visual-modal>
         </section>
+        ${selectedVisual && !isList && !isNew ? html`
+          <lv-chat-visual-panel
+            artifact-id=${this.selectedVisualID}
+            title=${this.selectedVisualTitle || selectedVisual.spec.title || 'Visual result'}
+            .payload=${selectedVisual}
+            .explorerHref=${this.selectedExplorerHref}
+            .saving=${this.visualSaving}
+            .saved=${this.visualSaved}
+            .saveError=${this.visualSaveError}
+            .modal=${this.compactViewport}
+            @lv-chat-visual-close=${() => this.closeVisual(true)}
+            @lv-chat-visual-save=${this.saveVisual}
+          ></lv-chat-visual-panel>
+        ` : null}
       </div>
     `
   }
@@ -471,10 +534,57 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           .status=${status}
           conversation-id=${agent.activeConversationId ?? ''}
           @lv-chat-reuse=${this.reuseDraft}
+          @lv-chat-visual-open=${this.openVisual}
         >${status.error ?? ''}</lv-chat-thread>
         ${status.enabled ? this.renderComposer(composer, status) : null}
       </div>
     `
+  }
+
+  private openVisual(event: CustomEvent<{ artifactId: string; explorerHref: string; title: string }>): void {
+    const artifactId = event.detail?.artifactId ?? ''
+    if (!artifactId || !this.visuals[artifactId]) return
+    this.selectedVisualID = artifactId
+    this.selectedExplorerHref = event.detail.explorerHref ?? ''
+    this.selectedVisualTitle = event.detail.title ?? ''
+    this.visualSaved = false
+    this.visualSaveError = ''
+    void this.updateComplete.then(() => this.shadowRoot?.querySelector<ChatVisualPanel>('lv-chat-visual-panel')?.focusClose())
+  }
+
+  private closeVisual(restoreFocus: boolean): void {
+    const artifactId = this.selectedVisualID
+    if (!artifactId) return
+    this.selectedVisualID = ''
+    this.selectedExplorerHref = ''
+    this.selectedVisualTitle = ''
+    this.visualSaveError = ''
+    if (restoreFocus) void this.updateComplete.then(() => {
+      const cards = this.shadowRoot?.querySelector('lv-chat-thread')?.shadowRoot?.querySelectorAll<HTMLButtonElement>('.artifact-card')
+      Array.from(cards ?? []).find(card => card.dataset.visualId === artifactId)?.focus()
+    })
+  }
+
+  private saveVisual = async (event: CustomEvent<{ title: string; explorerHref: string; artifactId: string }>): Promise<void> => {
+    if (this.visualSaving || !this.selectedVisualID || event.detail?.artifactId !== this.selectedVisualID) return
+    const { title, explorerHref } = event.detail
+    if (!explorerHref) return
+    this.visualSaving = true
+    this.visualSaveError = ''
+    try {
+      const response = await fetch('/explore/saved', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { ...commandHeaders('saveExploration'), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, explorerUrl: explorerHref }),
+      })
+      if (!response.ok) throw new Error('Could not save this visual. Please try again.')
+      if (event.detail.artifactId === this.selectedVisualID) this.visualSaved = true
+    } catch {
+      if (event.detail.artifactId === this.selectedVisualID) this.visualSaveError = 'Could not save this visual. Please try again.'
+    } finally {
+      this.visualSaving = false
+    }
   }
 
   private renderComposer(composer: ChatSignal['composer'], status: ChatSignal['status'], hideContextAction = false) {
