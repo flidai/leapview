@@ -71,7 +71,9 @@ The `Nix development` workflow runs native toolchain checks, browser checks, and
 existing `task ci` on relevant toolchain changes or manual dispatch. It uses an
 ephemeral GitHub-hosted runner and public Nix substitutes, with no deployment secrets
 or private cache account. Existing CI remains in place during qualification; this
-slice does not migrate every CI lane to Nix.
+slice does not migrate every CI lane to Nix. Manual dispatch can select
+`checks=image` or `checks=development` for a focused rerun; the default and
+pull-request validation run both lanes.
 
 Update toolchains in a reviewed change. After `nix flake update`, inspect the lock
 and version changes. A Go/Bun manifest update needs the corresponding official
@@ -165,6 +167,14 @@ existing release contract:
 | Installation package | Assemble the exported controller and Compose payload from the same build; qualify their loader/ABI compatibility on every advertised host platform. |
 | Upgrade and recovery | Run historical transition qualification against that exact clean image; run installed-candidate and host recovery journeys. Local candidate evidence does not replace final-artifact admission. |
 | Promotion | Preserve the existing pre-publication gates and publish only the digest that passed them. |
+
+Scanner coverage must include the runtime libraries as well as Go dependencies.
+Do not interpret a zero-finding report with no OS inventory as complete coverage:
+[Nix is not listed in Trivy's OS coverage](https://trivy.dev/docs/latest/coverage/os/).
+[Syft can inventory Nix packages](https://oss.anchore.com/docs/capabilities/nix/),
+but Nix-aware SBOM generation and vulnerability matching still need to be wired
+into the protected release policy and qualified. The build checks that Go module
+metadata remains readable after native fixups and conventional Linux export.
 
 The historical fixture uses a private synthetic CA. Its Python publication client
 receives `DEMO_GENERATION_CA_CERT` explicitly, because Nix OpenSSL's default trust

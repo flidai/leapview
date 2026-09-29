@@ -19,6 +19,12 @@ on:
       - 'scripts/ensure_playwright*'
       - '.github/workflows/nix-development.yml'
   workflow_dispatch:
+    inputs:
+      checks:
+        description: Validation lanes (pull requests always run both)
+        type: choice
+        default: all
+        options: [all, development, image]
 
 permissions:
   contents: read
@@ -29,7 +35,7 @@ concurrency:
 
 jobs:
   development:
-    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks != 'image') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -55,7 +61,7 @@ jobs:
 
   image:
     name: Application and image
-    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks != 'development') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
