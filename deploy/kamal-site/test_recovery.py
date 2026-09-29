@@ -40,11 +40,42 @@ class InterruptedRecoveryTest(unittest.TestCase):
         state['records']['candidate'] = candidate
         def scope(records):
             self.assertEqual(records['candidate']['local_id'], 'pulled')
-        with patch.object(host, 'command', return_value='[{"Id":"pulled"}]'), \
+        with patch.object(host, 'command', side_effect=['[{"Id":"pulled"}]', '[]']), \
                 patch.object(host, 'local_image', side_effect=lambda r: {'Id': 'pulled' if r is candidate else 'saved'}), \
                 patch.object(host, 'scope', side_effect=scope), \
                 patch.object(host, 'inspect', return_value={'Image': 'saved'}), patch.object(host, 'validate_container'):
             host.recovery_ready(state)
+
+    def test_pending_canonical_pull_is_recovered_without_network(self):
+        state = self.state()
+        candidate = state['records']['candidate']
+        image = {'Id': 'pulled', 'Descriptor': {'digest': candidate['platform']}}
+        calls = []
+        local = host.LOCAL_REPOSITORY + ':' + candidate['version']
+        def command(*args, **kwargs):
+            calls.append(args)
+            if args == ('docker', 'image', 'inspect', local): return '[]'
+            if args == ('docker', 'image', 'inspect', candidate['image']): return __import__('json').dumps([image])
+            if '--platform' in args: return __import__('json').dumps([image])
+            return ''
+        with patch.object(host, 'command', side_effect=command), patch.object(host, 'validate_image'), \
+                patch.object(host, 'local_image', return_value=image):
+            host.reconcile_pending(state)
+        self.assertEqual(candidate['local_id'], 'pulled')
+        self.assertIn(('docker', 'tag', candidate['image'], local), calls)
+        self.assertIn(('docker', 'image', 'rm', candidate['image']), calls)
+        self.assertFalse(any('pull' in call for call in calls))
+
+    def test_pending_canonical_wrong_platform_never_tags_or_removes(self):
+        state = self.state()
+        calls = []
+        def command(*args, **kwargs):
+            calls.append(args)
+            if len(calls) == 1: return '[]'
+            return '[{"Id":"pulled","Descriptor":{"digest":"wrong"}}]'
+        with patch.object(host, 'command', side_effect=command), patch.object(host, 'validate_image'):
+            with self.assertRaisesRegex(ValueError, 'platform'): host.reconcile_pending(state)
+        self.assertFalse(any('tag' in call or 'rm' in call for call in calls))
 
     def test_recovery_restores_saved_active_without_pull_or_admission(self):
         state = self.state()

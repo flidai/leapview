@@ -207,15 +207,36 @@ def rollback_ready(state):
         raise ValueError('prior recovery container missing or contradictory; inspect saved record; no pull permitted') from exc
 
 
+def reconcile_pending(state):
+    """Finish only local identity bookkeeping for an audited interrupted pull."""
+    pending = state['records'][state['pending']]
+    alias = LOCAL_REPOSITORY + ':' + pending['version']
+    local = json.loads(command('docker', 'image', 'inspect', alias, check=False) or '[]')
+    canonical = json.loads(command('docker', 'image', 'inspect', pending['image'], check=False) or '[]')
+    if canonical:
+        validate_image(pending, canonical[0])
+        selected = json.loads(command('docker', 'image', 'inspect', '--platform', 'linux/amd64', pending['image']))[0]
+        if selected.get('Descriptor', {}).get('digest') != pending['platform']:
+            raise ValueError('pending image platform differs from admitted identity')
+        if pending.get('local_id') and pending['local_id'] != canonical[0]['Id']:
+            raise ValueError('pending saved image identity changed')
+        if local and local[0]['Id'] != canonical[0]['Id']:
+            raise ValueError('pending local and canonical images disagree')
+        if not local: command('docker', 'tag', pending['image'], alias)
+        pending['local_id'] = local_image(pending)['Id']
+        # Normalize the same admitted identity for native pruning, without force.
+        command('docker', 'image', 'rm', pending['image'])
+    elif local:
+        pending['local_id'] = local_image(pending)['Id']
+
+
 def recovery_ready(state):
     """Validate an explicit restore without guessing whether a switch completed."""
     if not state.get('pending') or state['pending'] == state['active']:
         raise ValueError('no distinct unresolved candidate; inspect state or use maintain')
     record = state['records'][state['active']]
     if record.get('verified') is not True: raise ValueError('saved active is not verified')
-    pending = state['records'][state['pending']]
-    raw = command('docker', 'image', 'inspect', LOCAL_REPOSITORY + ':' + pending['version'], check=False)
-    if json.loads(raw or '[]'): pending['local_id'] = local_image(pending)['Id']
+    reconcile_pending(state)
     scope(state['records'])
     image = local_image(record)
     container = inspect('container', SERVICE + '-web-' + record['version'])
@@ -306,9 +327,7 @@ def main():
     elif operation == 'maintenance-begin':
         running(state['records'][state['active']])
         if state.get('pending'):
-            pending = state['records'][state['pending']]
-            raw = command('docker', 'image', 'inspect', LOCAL_REPOSITORY + ':' + pending['version'], check=False)
-            if json.loads(raw or '[]'): pending['local_id'] = local_image(pending)['Id']
+            reconcile_pending(state)
             scope(state['records'])
             ids = command('docker', 'ps', '-aq', '--filter', 'label=service=' + SERVICE).split()
             cleanup_candidates([inspect('container', cid) for cid in ids], state['records'], state['active'], state.get('prior'))
