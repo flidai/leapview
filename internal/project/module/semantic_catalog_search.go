@@ -86,7 +86,7 @@ func semanticSearchTerms(model *semanticmodel.Model, compiled *semanticquery.Com
 			}
 		}
 	}
-	terms := make([]string, 0, len(model.Metrics)*3+len(model.Dimensions)*3)
+	terms := make([]string, 0)
 	for name, dimension := range model.Dimensions {
 		if _, protected := protectedDimensions[name]; protected {
 			continue
