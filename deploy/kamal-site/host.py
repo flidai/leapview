@@ -111,9 +111,20 @@ def topology_ready(ready, proxy):
             or caddy['HostConfig'].get('RestartPolicy', {}).get('Name') != 'unless-stopped'
             or caddy['Config']['Image'] != config['services']['caddy']['image']):
         raise ValueError('Caddy runtime differs from persistent topology')
-    mounts = {m['Destination']: m['Source'] for m in caddy['Mounts']}
-    if mounts.get('/etc/caddy/Caddyfile') != str(site / 'Caddyfile'):
-        raise ValueError('Caddy does not mount the verified route configuration')
+    ports = caddy['HostConfig'].get('PortBindings') or {}
+    for port in ('80', '443'):
+        if not any(binding.get('HostPort') == port and binding.get('HostIp', '') in ('', '0.0.0.0', '::')
+                   for binding in (ports.get(port + '/tcp') or [])):
+            raise ValueError('Caddy public HTTP/HTTPS ports differ from persistent topology')
+    mounts = {m['Destination']: m for m in caddy['Mounts']}
+    for destination, source, writable in (
+        ('/etc/caddy/Caddyfile', str(site / 'Caddyfile'), False),
+        ('/data', '/var/lib/leapview-site/caddy-data', True),
+        ('/config', '/var/lib/leapview-site/caddy-config', True),
+    ):
+        mount = mounts.get(destination, {})
+        if mount.get('Source') != source or mount.get('Type') != 'bind' or mount.get('RW') is not writable:
+            raise ValueError('Caddy route/certificate mounts differ from persistent topology')
     text = (site / 'Caddyfile').read_text()
     if 'reverse_proxy kamal-proxy:80' not in text or 'admin off' not in text:
         raise ValueError('Caddy route is not persistently directed at the private Kamal proxy')
