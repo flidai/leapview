@@ -96,6 +96,10 @@ test('saved explorations render in their own row and emit the canonical current 
         await element.updateComplete
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
+      const exportFormats = Array.from(root.querySelectorAll<HTMLAnchorElement>('.saved-exploration-sharing a[href^="/explore/export"]')).map((link) => new URL(link.href).searchParams.get('format'))
+      mergePatch({ dataExplorer: { explore: { result: { truncated: true } } } })
+      await element.updateComplete
+      await new Promise((resolve) => requestAnimationFrame(resolve))
       return {
         routeClasses: root.querySelector('.route')!.className,
         gridRows: getComputedStyle(root.querySelector('.route')!).gridTemplateRows,
@@ -108,7 +112,9 @@ test('saved explorations render in their own row and emit the canonical current 
         explorerTopBeforeShare,
         explorerTopAfterShare,
         fallbackURL: root.querySelector<HTMLAnchorElement>('.saved-exploration-share-fallback')?.href,
-        exportFormats: Array.from(root.querySelectorAll<HTMLAnchorElement>('.saved-exploration-sharing a[href^="/explore/export"]')).map((link) => new URL(link.href).searchParams.get('format')),
+        exportFormats,
+        truncatedExportLinks: root.querySelectorAll('.saved-exploration-sharing a[href^="/explore/export"]').length,
+        truncatedExportMessage: root.querySelector('.saved-exploration-export-unavailable')?.textContent?.trim(),
       }
     })
     expect(state.routeClasses).toContain('saved-enabled')
@@ -122,6 +128,12 @@ test('saved explorations render in their own row and emit the canonical current 
     expect(state.explorerTopAfterShare).toBe(state.explorerTopBeforeShare)
     expect(state.fallbackURL).toBe(state.copiedURL)
     expect(state.exportFormats).toEqual(['csv', 'parquet'])
+    expect(state.truncatedExportLinks).toBe(0)
+    expect(state.truncatedExportMessage).toBe('Increase row limit, then run to export.')
+    await page.setViewportSize({ width: 390, height: 820 })
+    const shareMenuBounds = await page.evaluate(() => document.querySelector('lv-data-explorer')?.shadowRoot?.querySelector('.saved-exploration-sharing-actions')?.getBoundingClientRect().toJSON())
+    expect(shareMenuBounds?.left).toBeGreaterThanOrEqual(0)
+    expect(shareMenuBounds?.right).toBeLessThanOrEqual(390)
   } finally {
     await page.close()
   }

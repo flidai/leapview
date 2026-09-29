@@ -1179,7 +1179,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 </div>
               </details>
             ` : nothing}
-            ${savedVisible ? renderExplorationShareMenu(savedExplorations, savedViewOptions) : nothing}
+            ${savedVisible ? renderExplorationShareMenu(savedExplorations, savedViewOptions, Boolean(explorer.explore?.result?.truncated)) : nothing}
             ${agentEnabled ? html`<button type="button" class="icon-button ask-button" aria-label="Ask about this data" aria-expanded=${String(this.agentDrawerOpen)} title="Ask about this data" @click=${() => this.setAgentDrawerOpen(!this.agentDrawerOpen)}>${agentIcon()}<span>Ask</span></button>` : nothing}
           </div>
         </header>

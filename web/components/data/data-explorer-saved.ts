@@ -46,7 +46,8 @@ export const savedExplorationStyles = css`
   }
 
   .saved-exploration-actions input {
-    min-width: 10rem;
+    width: 10rem;
+    min-width: 8rem;
   }
 
   .saved-exploration-actions .text-button {
@@ -234,6 +235,21 @@ export const savedExplorationStyles = css`
     line-height: 1.5;
   }
 
+  .saved-exploration-export-unavailable {
+    padding: var(--base-size-6) var(--base-size-8);
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+  }
+
+  @media (max-width: 600px) {
+    .saved-exploration-sharing-actions {
+      right: auto;
+      left: 0;
+      box-sizing: border-box;
+      width: min(20rem, calc(100vw - 4rem));
+    }
+  }
+
 `
 
 export type SavedExplorationVisibility = 'private' | 'organization'
@@ -334,13 +350,13 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
             <button type="button" class="text-button" @click=${() => duplicateSavedExploration(current, options)}>Duplicate saved version</button>
             ${current.status === 'active' ? html`<button type="button" class="text-button" @click=${() => archiveSavedExploration(current, options)}>Archive</button>` : nothing}
         </div>
-      ` : hasCanonicalState ? html`<div class="saved-exploration-actions"><input type="text" aria-label="Saved exploration name" placeholder="Name this exploration" .value=${options.savedTitle()} @input=${(event: Event) => options.onSavedTitleInput((event.target as HTMLInputElement).value)} />${savedVisibilitySelect(options.savedVisibility(), options.onSavedVisibilityInput)}<button type="button" class="text-button" @click=${() => createSavedExploration(options)}>Save current</button></div>` : nothing}
+      ` : hasCanonicalState ? html`<div class="saved-exploration-actions"><input type="text" aria-label="Saved exploration name" placeholder="Name this exploration" .value=${options.savedTitle()} @input=${(event: Event) => options.onSavedTitleInput((event.target as HTMLInputElement).value)} />${savedVisibilitySelect(options.savedVisibility(), options.onSavedVisibilityInput)}<button type="button" class="text-button" aria-label="Save current exploration" @click=${() => createSavedExploration(options)}>Save</button></div>` : nothing}
       ${unavailable || state.save?.message || (state.save?.state && state.save.state !== 'saved') ? html`<span class="saved-exploration-status" role=${unavailable ? 'alert' : nothing}>${state.save?.message ?? state.save?.state}</span>` : nothing}
     </section>
   `
 }
 
-export function renderExplorationShareMenu(state: SavedExplorationStateSignal, options: SavedExplorationViewOptions) {
+export function renderExplorationShareMenu(state: SavedExplorationStateSignal, options: SavedExplorationViewOptions, exportTruncated = false) {
   if (!state.enabled) return nothing
   const currentQueryURL = options.canSaveCurrent() && options.activeSpec().modelId?.trim()
     ? dataExplorerURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand)
@@ -356,8 +372,10 @@ export function renderExplorationShareMenu(state: SavedExplorationStateSignal, o
         ${savedURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(savedURL, options)}>Copy saved version link</button>` : nothing}
         ${currentQueryURL ? html`
           <span class="saved-exploration-sharing-label">Export</span>
-          <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'csv')}>Download CSV</a>
-          <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'parquet')}>Download Parquet</a>
+          ${exportTruncated ? html`<span class="saved-exploration-export-unavailable">Increase row limit, then run to export.</span>` : html`
+            <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'csv')}>Download CSV</a>
+            <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'parquet')}>Download Parquet</a>
+          `}
         ` : nothing}
         <span class="saved-exploration-sharing-hint">Links run live data with the viewer’s access.</span>
         ${options.shareStatus() ? html`<span role="status" aria-live="polite">${options.shareStatus()}</span>` : nothing}
