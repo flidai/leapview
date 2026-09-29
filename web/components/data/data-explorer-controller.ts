@@ -131,15 +131,30 @@ export class DataExplorerPanelController {
 
 export class DataExplorerSelectionController {
   private lastSelectedKey = ''
+  private pendingSelectedKey = ''
 
   observe(selectedKey: string): boolean {
     if (selectedKey === this.lastSelectedKey) return false
     this.lastSelectedKey = selectedKey
+    this.pendingSelectedKey = selectedKey
     return true
+  }
+
+  revealPendingSelection(root: ParentNode, expandedGroupIDs: Set<string>): void {
+    if (!this.pendingSelectedKey) return
+    const selected = root.querySelector<HTMLElement>('.object-button.is-selected')
+    const objectNode = selected?.closest<HTMLDetailsElement>('.object-node')
+    const group = selected?.closest<HTMLDetailsElement>('.resource-group')
+    if (!objectNode || !group) return
+    if (group.dataset.groupId) expandedGroupIDs.add(group.dataset.groupId)
+    group.open = true
+    objectNode.open = true
+    this.pendingSelectedKey = ''
   }
 
   reset(): void {
     this.lastSelectedKey = ''
+    this.pendingSelectedKey = ''
   }
 }
 

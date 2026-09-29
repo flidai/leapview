@@ -269,6 +269,94 @@ test('Data Explorer retains the last good result through draft and run lifecycle
   }
 })
 
+test('Data Explorer reveals a newly hydrated selection and preserves manual sidebar collapse', async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const orders = {
+        key: 'model:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model',
+        semanticModelId: 'sales', datasetId: 'orders', title: 'Sales Orders', columnCount: 1,
+        columns: [{ key: 'status', label: 'Status', type: 'string' }],
+      }
+      const customers = {
+        ...orders, key: 'model:model:sales.customers', resourceId: 'model:sales.customers',
+        datasetId: 'customers', title: 'Customers', columns: [{ key: 'name', label: 'Name', type: 'string' }],
+      }
+      const filter = {
+        field: 'orders.status', datasetId: 'orders',
+        expression: { kind: 'comparison', operator: 'equals', value: { kind: 'string', value: 'shipped' } },
+      }
+      const spec = {
+        schemaVersion: 1, modelId: 'sales', datasetId: 'orders',
+        dimensions: [{ field: 'orders.status' }], metrics: [], filters: [filter], sort: [], limit: 100,
+      }
+      const exploreCommand = {
+        spec, semanticModelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], metrics: [],
+        filters: [filter], sort: [], limit: 100, requestSeq: 1, resetVersion: 1, columnWidths: {},
+      }
+      const dataExplorer = {
+        objects: [orders, customers], selectedKey: orders.key, selectedObject: orders,
+        preview: {
+          columns: orders.columns, totalRows: 1, availableRows: 1, chunkSize: 100, rowHeight: 32,
+          resetVersion: 1, blocks: { first: { start: 0, requestSeq: 1, resetVersion: 1, sort: {}, rows: [{ status: 'shipped' }] } },
+          totalRowLabel: '1', sort: {}, sql: '', error: '', loading: false, stale: false,
+        },
+        command: {
+          mode: 'browse', objectKey: orders.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100,
+          requestSeq: 1, resetVersion: 1, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand,
+        },
+        explore: {
+          command: exploreCommand,
+          semanticModels: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }, { id: 'customers', title: 'Customers', fieldCount: 1, entities: [] }] }],
+          datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }],
+          fields: [{ id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', compatible: true, selected: false }],
+          result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
+          status: { loading: false, stale: false, requestSeq: 0, state: 'idle' },
+        },
+        warnings: [],
+      }
+      mergePatch({ page: { kind: 'data', title: 'Data Explorer', tabs: [] }, dataExplorer })
+      const element = document.createElement('lv-data-explorer') as any
+      document.body.append(element)
+      const settle = async () => {
+        for (let index = 0; index < 6; index += 1) {
+          await element.updateComplete
+          await new Promise((resolve) => requestAnimationFrame(resolve))
+        }
+      }
+      await settle()
+      const root = element.shadowRoot as ShadowRoot
+      const selected = root.querySelector<HTMLElement>('.object-button.is-selected')!
+      const objectNode = selected.closest<HTMLDetailsElement>('.object-node')!
+      const group = selected.closest<HTMLDetailsElement>('.resource-group')!
+      const initiallyRevealed = { groupOpen: group.open, objectOpen: objectNode.open }
+
+      objectNode.open = false
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      mergePatch({ dataExplorer: { preview: { totalRows: 2 } } })
+      await settle()
+      const objectRemainsCollapsed = !objectNode.open
+
+      group.open = false
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      mergePatch({ dataExplorer: { warnings: ['unrelated update'] } })
+      await settle()
+      const groupRemainsCollapsed = !group.open
+      return { initiallyRevealed, objectRemainsCollapsed, groupRemainsCollapsed }
+    })
+
+    expect(state.initiallyRevealed).toEqual({ groupOpen: true, objectOpen: true })
+    expect(state.objectRemainsCollapsed).toBe(true)
+    expect(state.groupRemainsCollapsed).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument() {
   return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%}lv-data-explorer{display:block;min-height:720px}</style></head><body><main data-signals="{}"></main><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script><script type="module" src="/data-explorer-under-test.js"></script></body></html>`
 }

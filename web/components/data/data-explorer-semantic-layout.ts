@@ -52,8 +52,18 @@ export const semanticLayoutStyles = css`
   .semantic-filter-footer button:disabled { opacity: .5; cursor: not-allowed; }
   .semantic-filter-body { overflow: auto; padding: 12px; }
   .semantic-filter-section-title { display: flex; justify-content: space-between; color: var(--lv-fg-muted); font: var(--lv-type-caption); text-transform: uppercase; margin-bottom: 10px; }
-  .semantic-filter-body > label { display: grid; gap: 6px; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-  .semantic-filter-body > label select { width: 100%; height: var(--control-medium-size); border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); padding: 0 8px; font: var(--lv-type-body); }
+  .semantic-filter-add { display: grid; gap: 6px; margin-bottom: 12px; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+  .semantic-filter-picker { min-width: 0; }
+  .semantic-filter-picker summary { display: flex; min-height: var(--control-medium-size); box-sizing: border-box; align-items: center; gap: 8px; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-control); color: var(--lv-fg-default); padding: 0 8px; cursor: pointer; font: var(--lv-type-body); list-style: none; }
+  .semantic-filter-picker summary::-webkit-details-marker { display: none; }
+  .semantic-filter-picker summary:focus-visible { outline: 2px solid var(--lv-line-accent); outline-offset: 2px; }
+  .semantic-filter-picker summary::after { content: '▾'; margin-left: auto; color: var(--lv-fg-muted); }
+  .semantic-filter-picker[open] > summary::after { transform: rotate(180deg); }
+  .semantic-filter-options { display: grid; box-sizing: border-box; max-height: min(14rem, 32vh); gap: 2px; overflow: auto; overscroll-behavior: contain; margin-top: 4px; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); padding: 4px; }
+  .semantic-filter-option { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; border: 0; border-radius: var(--lv-radius-default); background: transparent; color: var(--lv-fg-default); padding: 6px 8px; cursor: pointer; font: var(--lv-type-body); text-align: left; }
+  .semantic-filter-option:hover, .semantic-filter-option:focus-visible { background: var(--lv-bg-control-hover); outline: 0; }
+  .semantic-filter-option > span, .semantic-filter-option > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .semantic-filter-option > small { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
   .semantic-filter-body .selected-field-row { display: block; margin-bottom: 12px; }
   .semantic-filter-body .selected-field-row > .query-label { display: none; }
   .semantic-filter-body .selected-field-values { display: grid; justify-items: start; }
@@ -211,16 +221,42 @@ export function renderSemanticFilterDock(
   },
   showQueryConfig = true,
 ) {
-  return html`<aside class="semantic-filter-dock" aria-label="Explorer filters" @keydown=${(event: KeyboardEvent) => { if (open && event.key === 'Escape') { event.stopPropagation(); actions.toggle() } }}>
+  const filterFields = explore.fields.filter((field) => field.kind === 'dimension' && field.compatible !== false)
+  return html`<aside class="semantic-filter-dock" aria-label="Explorer filters" @keydown=${(event: KeyboardEvent) => {
+    if (!open || event.key !== 'Escape') return
+    const picker = (event.currentTarget as HTMLElement).querySelector<HTMLDetailsElement>('.semantic-filter-picker')
+    if (picker?.open) {
+      picker.open = false
+      picker.querySelector('summary')?.focus()
+    } else {
+      actions.toggle()
+    }
+    event.stopPropagation()
+  }} @click=${(event: MouseEvent) => {
+    const picker = (event.currentTarget as HTMLElement).querySelector<HTMLDetailsElement>('.semantic-filter-picker')
+    if (picker?.open && !picker.contains(event.target as Node)) picker.open = false
+  }}>
     ${open ? html`<div class="semantic-filter-panel">
       <header class="semantic-filter-header"><div><strong>Filters</strong><small>${spec.filters.length ? `${spec.filters.length} active` : 'No active filters'}</small></div><button type="button" aria-label="Close filters" @click=${actions.toggle}>${lucideIcon(X, { size: 16 })}</button></header>
       <div class="semantic-filter-body">
         <div class="semantic-filter-section-title"><span>Filters on this query</span><span>${spec.filters.length}</span></div>
-        <label>Add filter<select aria-label="Add filter" @change=${(event: Event) => {
-          const select = event.target as HTMLSelectElement
-          if (select.value) actions.add(select.value)
-          select.value = ''
-        }}><option value="">Choose a field…</option>${explore.fields.filter((field) => field.kind === 'dimension' && field.compatible !== false).map((field) => html`<option value=${field.id}>${field.label || field.id}</option>`)}</select></label>
+        <div class="semantic-filter-add">
+          <span>Add filter</span>
+          <details class="semantic-filter-picker">
+            <summary aria-label="Add filter">Choose a field…</summary>
+            <div class="semantic-filter-options" aria-label="Filter fields">
+              ${filterFields.map((field) => {
+                const fieldName = field.label || field.id
+                const datasetName = field.datasetId || 'Shared'
+                return html`<button type="button" class="semantic-filter-option" aria-label=${`${fieldName}, ${datasetName}`} @click=${(event: Event) => {
+                  actions.add(field.id)
+                  const picker = (event.currentTarget as HTMLButtonElement).closest('details')
+                  if (picker) picker.open = false
+                }}><span>${fieldName}</span><small>${datasetName}</small></button>`
+              })}
+            </div>
+          </details>
+        </div>
         ${renderSemanticFilterControls(spec, explore, command, editor, (filter, index) => renderSemanticFilterCard(filter, explore.fields, () => actions.editFilter(filter), () => actions.removeFilter(index)), actions.clear, actions.changeFilter)}
         ${showQueryConfig ? html`<lv-data-explorer-query-controls .filtersOnly=${true} .compactConfig=${true} .command=${command} .fields=${explore.fields} @lv-data-explorer-spec-change=${(event: CustomEvent<ExplorationSpec>) => actions.changeSpec(event.detail)}></lv-data-explorer-query-controls>` : nothing}
       </div>

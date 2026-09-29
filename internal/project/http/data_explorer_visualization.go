@@ -2,6 +2,7 @@ package http
 
 import (
 	"strings"
+	"time"
 
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
@@ -169,7 +170,7 @@ func explorerVisualizationFrame(result projectsignals.DataExploreResultSignal, c
 	for rowIndex, record := range result.Rows {
 		rows[rowIndex] = make([]any, len(columns))
 		for columnIndex, column := range columns {
-			rows[rowIndex][columnIndex] = record[column.Output]
+			rows[rowIndex][columnIndex] = explorerVisualizationScalar(record[column.Output])
 		}
 	}
 	columnNames := make([]string, len(columns))
@@ -181,6 +182,18 @@ func explorerVisualizationFrame(result projectsignals.DataExploreResultSignal, c
 		completeness = visualizationir.VisualizationCompletenessTruncated
 	}
 	return visualizationruntime.Frame{Columns: columnNames, Rows: rows, Completeness: completeness}
+}
+
+func explorerVisualizationScalar(value any) any {
+	switch value := value.(type) {
+	case time.Time:
+		return value.Format(time.RFC3339Nano)
+	case *time.Time:
+		if value != nil {
+			return value.Format(time.RFC3339Nano)
+		}
+	}
+	return value
 }
 
 func explorerVisualizationDataRevision(result projectsignals.DataExploreResultSignal) int64 {

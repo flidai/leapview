@@ -1069,6 +1069,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         this.renderRoot.querySelector<HTMLElement>('.object-button.is-selected')?.scrollIntoView({ block: 'nearest' })
       })
     }
+    this.selectionController.revealPendingSelection(this.renderRoot, this.expandedGroupIDs)
     const search = this.search.trim().toLowerCase()
     if (search !== this.lastSearch) {
       this.lastSearch = search

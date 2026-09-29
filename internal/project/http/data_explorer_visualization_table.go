@@ -79,7 +79,7 @@ func explorerTableEnvelope(spec exploration.ExplorationSpec, base visualizationi
 	for rowIndex, source := range result.Rows {
 		row := make(map[string]any, len(selected))
 		for _, column := range selected {
-			row[column.Output] = source[column.Output]
+			row[column.Output] = explorerVisualizationScalar(source[column.Output])
 		}
 		rows[rowIndex] = row
 	}

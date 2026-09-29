@@ -56,7 +56,7 @@ func explorerVisualizationColumns(spec exploration.ExplorationSpec, result proje
 		metadata, hasMetadata := fieldByID[semantic]
 		role := visualizationir.VisualizationFieldRoleDimension
 		typeName := strings.TrimSpace(projectsignals.ValueOrZero(resultColumn.Type))
-		dataType := explorerVisualizationDataType(typeName)
+		dataType := explorerVisualizationDataTypeForResult(typeName, result.Rows, output)
 		dataset := strings.TrimSpace(projectsignals.ValueOrZero(spec.DatasetID))
 		label := firstExplorerNonEmpty(resultColumn.Label, output)
 		if hasMetadata {
@@ -66,8 +66,8 @@ func explorerVisualizationColumns(spec exploration.ExplorationSpec, result proje
 				role = visualizationir.VisualizationFieldRoleMetric
 			}
 			if metadata.Type != nil && strings.TrimSpace(*metadata.Type) != "" {
-				dataType = explorerVisualizationDataType(*metadata.Type)
 				typeName = strings.TrimSpace(*metadata.Type)
+				dataType = explorerVisualizationDataTypeForResult(typeName, result.Rows, output)
 			}
 		}
 		if typeName == "" {
@@ -159,7 +159,7 @@ func explorerVisualizationDataType(value string) visualizationir.VisualizationDa
 		return visualizationir.VisualizationDataTypeInteger
 	case "sum", "avg", "average", "min", "max", "decimal", "numeric", "number_sum", "number_average":
 		return visualizationir.VisualizationDataTypeDecimal
-	case "float", "float32", "float64", "number", "double":
+	case "float", "float32", "float64", "double", "number":
 		return visualizationir.VisualizationDataTypeFloat
 	case "date":
 		return visualizationir.VisualizationDataTypeDate
@@ -170,6 +170,59 @@ func explorerVisualizationDataType(value string) visualizationir.VisualizationDa
 	default:
 		return visualizationir.VisualizationDataTypeString
 	}
+}
+
+func explorerVisualizationDataTypeForResult(typeName string, rows []map[string]any, key string) visualizationir.VisualizationDataType {
+	if !strings.EqualFold(strings.TrimSpace(typeName), "number") {
+		return explorerVisualizationDataType(typeName)
+	}
+
+	hasDecimal := false
+	hasFloat := false
+	hasInteger := false
+	for _, row := range rows {
+		value := row[key]
+		if value == nil {
+			continue
+		}
+		var dataType visualizationir.VisualizationDataType
+		switch value.(type) {
+		case string:
+			// Generic numbers transported as strings preserve exact decimal
+			// precision. Shared envelope validation rejects malformed strings.
+			dataType = visualizationir.VisualizationDataTypeDecimal
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			dataType = visualizationir.VisualizationDataTypeInteger
+		case float32, float64:
+			dataType = visualizationir.VisualizationDataTypeFloat
+		default:
+			return visualizationir.VisualizationDataTypeFloat
+		}
+		switch dataType {
+		case visualizationir.VisualizationDataTypeDecimal:
+			hasDecimal = true
+		case visualizationir.VisualizationDataTypeFloat:
+			hasFloat = true
+		case visualizationir.VisualizationDataTypeInteger:
+			hasInteger = true
+		}
+	}
+	if !hasDecimal && !hasFloat && !hasInteger {
+		return visualizationir.VisualizationDataTypeFloat
+	}
+	if hasDecimal && (hasFloat || hasInteger) {
+		// Heterogeneous transports do not have a truthful scalar type; leave the
+		// numeric default in place so shared validation rejects the mixed frame.
+		return visualizationir.VisualizationDataTypeFloat
+	}
+	if hasDecimal {
+		return visualizationir.VisualizationDataTypeDecimal
+	}
+	if hasFloat {
+		// Float accepts integer scalars too, so this is the common numeric type.
+		return visualizationir.VisualizationDataTypeFloat
+	}
+	return visualizationir.VisualizationDataTypeInteger
 }
 
 func explorerVisualizationAliases(spec exploration.ExplorationSpec) map[string]string {

@@ -88,7 +88,7 @@ func explorerPivotEnvelope(spec exploration.ExplorationSpec, base visualizationi
 			if _, exists := cells[key]; exists {
 				return fail("the result contains duplicate row, column, and metric cells")
 			}
-			cells[key] = record[metric.Output]
+			cells[key] = explorerVisualizationScalar(record[metric.Output])
 			if len(cells) > dataExplorerPivotMaxCells {
 				return fail("pivot cell count exceeds its bounded size")
 			}
@@ -242,7 +242,7 @@ func explorerPivotFields[T interface {
 func explorerPivotRecordValues(record map[string]any, fields []explorerVisualizationColumn) []any {
 	values := make([]any, len(fields))
 	for index, field := range fields {
-		values[index] = record[field.Output]
+		values[index] = explorerVisualizationScalar(record[field.Output])
 	}
 	return values
 }
