@@ -92,10 +92,33 @@ def verify_public_revision(expected, permission_profile=None, environ=None):
 
 
 def runtime_binding(action, previous, image, revision, operation_digest):
-    return dict(version=1, operation=action, operationId=operation_digest,
-                candidate=dict(image=image, revision=revision),
-                predecessor=dict(image=previous['image'], revision=previous['revision']),
-                workflowRunId=os.environ['GITHUB_RUN_ID'], workflowAttempt=os.environ['GITHUB_RUN_ATTEMPT'])
+    binding = dict(version=1, operation=action, operationId=operation_digest,
+                   candidate=dict(image=image, revision=revision),
+                   predecessor=dict(image=previous['image'], revision=previous['revision']),
+                   workflowRunId=os.environ['GITHUB_RUN_ID'], workflowAttempt=os.environ['GITHUB_RUN_ATTEMPT'])
+    qualification_run = os.environ.get('QUALIFICATION_RUN', '')
+    if qualification_run:
+        runner_temp = os.environ.get('RUNNER_TEMP')
+        if not runner_temp:
+            raise ValueError('RUNNER_TEMP is required to bind the admitted qualification')
+        try:
+            qualification = json.loads((Path(runner_temp)/'demo-qualification.json').read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError('Admitted qualification receipt is unavailable') from exc
+        if (not isinstance(qualification, dict)
+                or qualification.get('runId') != qualification_run
+                or qualification.get('image') != image
+                or qualification.get('revision') != revision
+                or qualification.get('qualified') is not True
+                or not isinstance(qualification.get('runAttempt'), str)
+                or not qualification['runAttempt'].isdecimal()):
+            raise ValueError('Runtime candidate differs from its admitted qualification receipt')
+        binding.update(
+            qualificationRunId=qualification_run,
+            qualificationAttempt=qualification['runAttempt'],
+            permissionProfile=read_contract(revision)['permissionProfile'],
+        )
+    return binding
 
 
 def write_binding(binding):
@@ -138,21 +161,29 @@ def viewer_environment(ssh, remote):
     return env
 
 
-def verify_publication():
-    """Read-only post-publication browser gate, with no runtime mutation path."""
+def verify_publication(ssh=None, revision_verified=False):
+    """Read-only post-publication browser gate, with no runtime mutation path.
+
+    Callers that need another pinned host action in the same operation can
+    pass the SSH argv yielded by ``verified_demo_ssh`` and keep one verified
+    key/host-key context for both actions.
+    """
     revision = os.environ['SOURCE_REVISION']
     profile = read_contract(revision)['permissionProfile']
-    verify_public_revision(revision, profile)
-    with verified_demo_ssh() as ssh:
-        remote = '/run/leapview-demo-verify-'+secrets.token_hex(12)+'.py'
-        subprocess.run([*ssh, f'umask 077; cat > {remote}'],
-                       input=(ROOT/'scripts/demo_compose_runtime.py').read_bytes(), check=True)
-        try:
-            env = viewer_environment(ssh, remote)
-            subprocess.run(['node', 'scripts/demo_validate_browser.mjs'], cwd=ROOT,
-                           check=True, timeout=240, env=env)
-        finally:
-            subprocess.run([*ssh, 'rm', '-f', remote], check=True)
+    if not revision_verified:
+        verify_public_revision(revision, profile)
+    if ssh is None:
+        with verified_demo_ssh() as verified_ssh:
+            return verify_publication(ssh=verified_ssh, revision_verified=True)
+    remote = '/run/leapview-demo-verify-'+secrets.token_hex(12)+'.py'
+    subprocess.run([*ssh, f'umask 077; cat > {remote}'],
+                   input=(ROOT/'scripts/demo_compose_runtime.py').read_bytes(), check=True)
+    try:
+        env = viewer_environment(ssh, remote)
+        subprocess.run(['node', 'scripts/demo_validate_browser.mjs'], cwd=ROOT,
+                       check=True, timeout=240, env=env)
+    finally:
+        subprocess.run([*ssh, 'rm', '-f', remote], check=True)
 
 
 def main():

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Collect and verify a read-only, digest-bound demo host outcome."""
+import datetime
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,9 @@ RUN_ID_RE = re.compile(r'^[0-9]+$')
 REVISION_RE = re.compile(r'^[0-9a-f]{40}$')
 IMAGE_RE = re.compile(r'^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$')
 OPERATION_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
+INSTANCE_ID_RE = re.compile(r'^(lvinst_[A-Za-z0-9_-]{32}|instance_[0-9a-f]{32})$')
 TERMINAL_COMMIT = {'committed', 'succeeded'}
+INSTALLATION_VERSION = 'leapview-compose-installation-v1'
 
 
 def _schema(expected_schema, revision):
@@ -22,6 +25,46 @@ def _schema(expected_schema, revision):
     if type(value) is not int or value < 1:
         raise ValueError('Source schema resolver returned an invalid schema')
     return value
+
+
+def _valid_utc_timestamp(value):
+    if not isinstance(value, str) or not value.endswith('Z'):
+        return False
+    try:
+        parsed = datetime.datetime.fromisoformat(value[:-1]+'+00:00')
+    except ValueError:
+        return False
+    return parsed.utcoffset() == datetime.timedelta(0)
+
+
+def _verify_installation_evidence(value, runtime, binding, schema):
+    fields = {
+        'version', 'host', 'installationRoot', 'hostTargetId', 'instanceId', 'image',
+        'revision', 'schema', 'permissionProfile', 'qualificationRunId',
+        'qualificationAttempt', 'validatedAt',
+    }
+    qualification_fields = ('qualificationRunId', 'qualificationAttempt', 'permissionProfile')
+    if set(binding).issuperset(qualification_fields) is False:
+        raise ValueError('Installation evidence requires an admitted qualification binding')
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError('Installation evidence has an unsupported shape')
+    observed = {'image': runtime.get('image'), 'revision': runtime.get('revision')}
+    if (value.get('version') != INSTALLATION_VERSION
+            or value.get('host') != 'app-leapview-demo-02'
+            or value.get('installationRoot') != '/opt/leapview'
+            or not isinstance(runtime.get('markerTargetId'), str)
+            or value.get('hostTargetId') != runtime.get('markerTargetId')
+            or not isinstance(runtime.get('instanceId'), str)
+            or not INSTANCE_ID_RE.fullmatch(runtime['instanceId'])
+            or value.get('instanceId') != runtime.get('instanceId')
+            or value.get('image') != observed['image']
+            or value.get('revision') != observed['revision']
+            or type(value.get('schema')) is not int or value.get('schema') != schema
+            or value.get('qualificationRunId') != binding['qualificationRunId']
+            or value.get('qualificationAttempt') != binding['qualificationAttempt']
+            or value.get('permissionProfile') != binding['permissionProfile']
+            or not _valid_utc_timestamp(value.get('validatedAt'))):
+        raise ValueError('Installation evidence differs from its qualified live identity')
 
 
 def _remote_snapshot(ssh, remote_runtime, operation, operation_id):
@@ -95,11 +138,22 @@ def _verify_snapshot(snapshot, binding, candidate_schema, predecessor_schema):
         raise ValueError('Container image ID is missing')
     if not isinstance(repository_digests, list) or image not in repository_digests:
         raise ValueError('Container content does not match the immutable image digest')
-    if (runtime.get('descriptorImage') != image
-            or runtime.get('markerImage') != image
-            or runtime.get('receiptImage') != image
-            or runtime.get('receiptRevision') != revision):
+    if runtime.get('descriptorImage') != image or runtime.get('markerImage') != image:
         raise ValueError('Host deployment descriptor differs from the running container')
+
+    evidence_type = runtime.get('evidenceType')
+    if evidence_type == 'deployment':
+        if (runtime.get('receiptImage') != image
+                or runtime.get('receiptRevision') != revision
+                or runtime.get('installationEvidence') is not None):
+            raise ValueError('Host deployment receipt differs from the running container')
+    elif evidence_type == 'installation':
+        if (binding['operation'] != 'deploy'
+                or binding['candidate'] != binding['predecessor']):
+            raise ValueError('Installation evidence is only valid for a same-image deploy')
+        _verify_installation_evidence(runtime.get('installationEvidence'), runtime, binding, schema)
+    else:
+        raise ValueError('Host runtime evidence type is unknown')
 
     candidate = binding['candidate']
     predecessor = binding['predecessor']
@@ -114,7 +168,8 @@ def _verify_snapshot(snapshot, binding, candidate_schema, predecessor_schema):
             # No-op deploy records use a run-bound synthetic digest and do not
             # rewrite the older deployment receipt on the host.
             return 'committed', observed, schema
-        if is_candidate and runtime.get('receiptPreviousImage') == predecessor['image']:
+        if (is_candidate and evidence_type == 'deployment'
+                and runtime.get('receiptPreviousImage') == predecessor['image']):
             return 'committed', observed, schema
         if is_predecessor:
             return 'recovered', observed, schema
@@ -183,6 +238,9 @@ def collect(ssh, remote_runtime, binding, deployment_id, verify_public_revision,
     host_runtime_verified = False
     container_image_verified = False
     public_identity_verified = False
+    host_evidence_type = None
+    deployment_receipt_verified = False
+    installation_evidence_verified = False
 
     try:
         candidate_schema = _schema(expected_schema, binding['candidate']['revision'])
@@ -203,17 +261,27 @@ def collect(ssh, remote_runtime, binding, deployment_id, verify_public_revision,
         if binding['operation'] == 'deploy' and classification is not None:
             journal_state = 'image-only-' + classification
         runtime = snapshot['runtime']
+        host_evidence_type = runtime.get('evidenceType')
         container_image_verified = (
             runtime.get('image') == observed['image']
             and runtime.get('revision') == observed['revision']
             and isinstance(runtime.get('containerImageID'), str)
             and runtime['image'] in runtime.get('repositoryDigests', []))
-        host_runtime_verified = container_image_verified and all((
+        common_runtime_verified = container_image_verified and all((
             runtime.get('descriptorImage') == observed['image'],
             runtime.get('markerImage') == observed['image'],
-            runtime.get('receiptImage') == observed['image'],
-            runtime.get('receiptRevision') == observed['revision'],
         ))
+        deployment_receipt_verified = bool(
+            host_evidence_type == 'deployment'
+            and runtime.get('receiptImage') == observed['image']
+            and runtime.get('receiptRevision') == observed['revision'])
+        installation_evidence_verified = bool(
+            host_evidence_type == 'installation'
+            and classification == 'committed'
+            and binding['operation'] == 'deploy'
+            and binding['candidate'] == binding['predecessor'])
+        host_runtime_verified = common_runtime_verified and (
+            deployment_receipt_verified or installation_evidence_verified)
         if observed_schema not in (candidate_schema, predecessor_schema):
             classification = None
         if classification is not None:
@@ -241,6 +309,9 @@ def collect(ssh, remote_runtime, binding, deployment_id, verify_public_revision,
         'journalState': journal_state,
         'hostJournalVerified': host_journal_verified,
         'hostRuntimeVerified': host_runtime_verified,
+        'hostEvidenceType': host_evidence_type,
+        'deploymentReceiptVerified': deployment_receipt_verified,
+        'installationEvidenceVerified': installation_evidence_verified,
         'containerImageVerified': container_image_verified,
         'publicIdentityVerified': public_identity_verified,
         'candidateSchema': candidate_schema,
