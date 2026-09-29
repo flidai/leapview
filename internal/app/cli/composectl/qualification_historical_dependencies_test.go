@@ -87,7 +87,7 @@ func qualificationHistoricalTransitionGrants(t *testing.T, seed qualificationHis
 	// planner's connection.use and the explicit upload authority. Keep that
 	// support permission on the one CFO connection only.
 	add(seed.PublisherPrincipalID, projectgraph.ResourceID("connection:finance_files"), projectgraph.KindConnection, access.ActionConnectionRead)
-	add(seed.PublisherPrincipalID, projectgraph.ResourceID("connection:finance_files"), projectgraph.KindConnection, access.ActionConnectionManage)
+	add(seed.PublisherPrincipalID, projectgraph.ResourceID("connection:finance_files"), projectgraph.KindConnection, access.ActionConnectionUpload)
 	add(seed.ViewerPrincipalID, projectgraph.ResourceID(seed.DashboardID), projectgraph.KindDashboard, access.ActionDashboardRead)
 	add(seed.ViewerPrincipalID, projectgraph.ResourceID("semantic-model:finance"), projectgraph.KindSemanticModel, access.ActionSemanticConsume)
 
@@ -135,7 +135,7 @@ func TestQualificationHistoricalTransitionConnectionReadIsExact(t *testing.T) {
 	require.Len(t, connectionGrants, 1, "the publisher must receive no connection authority outside the CFO dependency")
 	require.Equal(t, "connection:finance_files", connectionGrants[0].ResourceID)
 	require.ElementsMatch(t, []string{
-		string(access.ActionConnectionManage), string(access.ActionConnectionRead), string(access.ActionConnectionUse),
+		string(access.ActionConnectionRead), string(access.ActionConnectionUpload), string(access.ActionConnectionUse),
 	}, connectionGrants[0].Actions, "upload-session reads and finalization stay scoped to the exact connection")
 }
 

@@ -18,6 +18,7 @@ SCRIPTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import demo_client_contract as contract
 import demo_compose_deploy as compose
+import demo_upgrade_plan
 import demo_upgrade_transport as upgrade
 
 
@@ -47,7 +48,7 @@ class ClientContractTests(unittest.TestCase):
         self.assertEqual(contract.scope_for(contract.LEGACY_PROFILE, 'release'),
                          'PROJECT_ADMIN RESOURCE_READ')
         self.assertEqual(contract.scope_for(contract.TYPED_PROFILE, 'publisher'),
-                         'connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read')
+                         'connection.upload connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read')
         self.assertEqual(contract.scope_for(contract.TYPED_PROFILE, 'release'),
                          'delivery.approve delivery.read')
         self.assertEqual(contract.scope_for(contract.TYPED_PROFILE, 'inspection'), 'delivery.read')
@@ -55,9 +56,24 @@ class ClientContractTests(unittest.TestCase):
     def test_typed_publisher_scope_includes_graph_reads_without_authoring_or_approval(self):
         actions = set(contract.scope_for(contract.TYPED_PROFILE, 'publisher').split())
         self.assertTrue({'source.read', 'model.read', 'semantic.consume', 'connection.use',
-                         'connection.manage', 'connection.read'} <= actions)
+                         'connection.upload', 'connection.read'} <= actions)
         self.assertFalse({'source.update', 'model.update', 'semantic.update', 'connection.create',
-                          'delivery.approve', 'project.access.manage'} & actions)
+                          'connection.manage', 'delivery.approve', 'project.access.manage'} & actions)
+
+    def test_typed_publisher_scope_tracks_immutable_source_schema(self):
+        base = 'connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read'
+        self.assertEqual(contract.scope_for(contract.TYPED_PROFILE, 'publisher', source_schema=45),
+                         'connection.manage ' + base)
+        self.assertEqual(contract.scope_for(contract.TYPED_PROFILE, 'publisher', source_schema=46),
+                         'connection.upload ' + base)
+        with self.assertRaises(ValueError):
+            contract.scope_for(contract.TYPED_PROFILE, 'publisher', source_schema='46')
+        with patch.object(demo_upgrade_plan, 'source_schema', side_effect=[(45, {}), (46, {})]) as resolve:
+            self.assertEqual(contract.scope_for_source(contract.TYPED_PROFILE, 'publisher', 'a' * 40),
+                             'connection.manage ' + base)
+            self.assertEqual(contract.scope_for_source(contract.TYPED_PROFILE, 'publisher', 'b' * 40),
+                             'connection.upload ' + base)
+        self.assertEqual(resolve.call_args_list[0].args, ('a' * 40,))
 
     def test_unknown_profile_and_role_fail_without_legacy_retry(self):
         for profile, role in [('future/v2', 'publisher'), (contract.TYPED_PROFILE, 'administrator')]:

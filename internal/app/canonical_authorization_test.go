@@ -139,11 +139,11 @@ func tusSnapshot(t *testing.T, principalID string, connectionID projectgraph.Res
 		if err != nil {
 			t.Fatal(err)
 		}
-		pair, err := access.NewExactPermissionPair(access.ActionConnectionManage, identity.ProjectID, resource)
+		pair, err := access.NewExactPermissionPair(access.ActionConnectionUpload, identity.ProjectID, resource)
 		if err != nil {
 			t.Fatal(err)
 		}
-		grant, err := accesssnapshot.NewTypedGrant("typed:connection-manage", "connection_manage", subject, []access.PermissionPair{pair})
+		grant, err := accesssnapshot.NewTypedGrant("typed:connection-upload", "connection_upload", subject, []access.PermissionPair{pair})
 		if err != nil {
 			t.Fatal(err)
 		}

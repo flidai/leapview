@@ -42,6 +42,25 @@ func TestStageGrantRequiresExactDelegableResourceIntent(t *testing.T) {
 	}
 }
 
+func TestStageGrantAcceptsExactConnectionUploadButRejectsConnectionAdministration(t *testing.T) {
+	request := validStageGrantRequest()
+	request.GrantID = "publisher-finance-upload"
+	request.ResourceID = "connection:finance_files"
+	request.ResourceKind = "connection"
+	request.Actions = []string{string(access.ActionConnectionUpload)}
+	grant, err := request.Grant()
+	if err != nil {
+		t.Fatalf("exact connection upload grant rejected: %v", err)
+	}
+	if len(grant.Permissions) != 1 || grant.Permissions[0].Action != access.ActionConnectionUpload || grant.Permissions[0].Target.IncludeFuture || grant.Permissions[0].Target.ResourceID != "connection:finance_files" {
+		t.Fatalf("staged connection upload grant is not exact: %+v", grant)
+	}
+	request.Actions = []string{string(access.ActionConnectionManage)}
+	if _, err := request.Grant(); err == nil {
+		t.Fatal("connection.manage unexpectedly became delegable through stage-grant")
+	}
+}
+
 type stageGrantOperations struct {
 	fakeOperations
 	request StageAccessGrantRequest
