@@ -16,11 +16,11 @@ nix develop --no-update-lock-file .#runtime-security -c \
 ```
 
 Use a new evidence directory on every run. The default command fails on missing
-inventory, failed matching controls, scanner errors, or any HIGH/CRITICAL runtime
-finding, including findings without a fix. `--coverage-only` checks detection and
-records unresolved findings without requiring vulnerability clearance. The Nix
-candidate workflow uses that mode explicitly; it must never authorize production
-promotion. `releaseReady` remains false even when this individual check passes.
+inventory, failed matching controls, scanner errors, expired assessments, or any
+unassessed HIGH/CRITICAL runtime finding, including findings without a fix.
+`--coverage-only` is a diagnostic option that records unresolved findings without
+enforcing the vulnerability gate. The Nix candidate workflow uses default
+enforcement. `releaseReady` remains false even when this individual check passes.
 
 ## What is checked
 
@@ -40,6 +40,7 @@ promotion. `releaseReady` remains false even when this individual check passes.
   `runtime-security-policy.json` without changing installed versions or store paths.
 - Vulnerable synthetic controls exercise glibc, BusyBox, GCC (both outputs), xgcc
   and libidn2 against the same fresh, hash-validated Grype database as the image.
+  The same VEX file is supplied to the control scan; filtering a control fails.
   These are matching controls, not vulnerable binaries and not image findings.
 - Evidence binds the archive SHA-256, scanner image identity, runtime inventory,
   database identity, control results and all runtime findings. Missing or stale
@@ -63,7 +64,7 @@ is not evidence that the current amd64 runtime is affected.
 [Anchore documents Nix inventory and NVD/CPE matching](https://oss.anchore.com/docs/capabilities/nix/).
 Its Nix cataloger supplies inventory, not a Nix advisory feed aware of backported
 patches. Retain findings until a package update or a reviewed, artifact-specific
-assessment resolves them. There are no automatic ignores or exemptions here.
+assessment resolves them. There are no package-wide ignores here.
 
 ## Finding review
 
@@ -71,9 +72,29 @@ The [glibc triage](GLIBC-TRIAGE.md) resolves the eleven matches into eight fixes
 already present in the pinned backport bundle, two disputed/non-security
 classifications, and one confirmed `strfmon` defect fixed by the candidate's
 additional upstream patch. The image qualification exercises the corrected buffer
-boundary. Raw version-based matches may remain after a backport. No suppressions
-have been activated; enforcement remains blocked pending artifact-bound reviewed
-assessments of every remaining HIGH/CRITICAL match.
+boundary. Raw version-based matches remain after a backport.
+
+[`runtime-assessments.vex.json`](runtime-assessments.vex.json) records those
+dispositions in standard OpenVEX, consumed by [Grype's VEX support](https://oss.anchore.com/docs/guides/vulnerability/filter-results/).
+Nine statements describe fixes; two classify disputed records as `not_affected`
+using Debian's published non-security assessment. Those two statements do not
+claim a patch or prove that application paths are unreachable. They require
+review alongside the source evidence in this PR.
+
+Each statement names one CVE and the complete Nix PURL, including its output
+hash. The wrapper verifies that identity against the image's store path before
+applying it. The scanner policy sets review expiry to 2026-12-28 (a maximum
+90-day interval); expiry,
+missing identities, duplicate statements and package changes fail closed. When
+updating Nixpkgs or the patch, recheck the derivation and replace the assessment
+identity and dates only after reviewing the new package.
+
+Evidence includes the unchanged raw scan, the VEX file and its SHA-256, and a
+second assessed scan. Every raw match must occur exactly once in the assessed
+scan's active or ignored findings, with identical package, severity and evidence.
+An ignored match must have an exact CVE/PURL/store-path assessment. New CVEs remain
+blocking; unexpected filtering is an error. This is candidate runtime assessment,
+not an accepted-risk exception or authorization to publish a release.
 
 ## Qualification limits and production blockers
 
@@ -91,14 +112,16 @@ pinned Nix glibc source and applied patches. The clean patched candidate at
 revision `81d56a2a1099` passed the full production image qualifier and a fresh
 coverage scan. Its image inventory contained only the patched glibc output,
 all six matching controls passed, and Grype retained the same eleven raw matches.
-Their dispositions are documented in the triage above; they remain unsuppressed
-in scanner enforcement. The candidate is **not cleared for production release**.
+Applying the VEX assessments to that same archive retained all eleven raw matches
+and passed runtime enforcement. Nineteen medium and three low findings remain
+active; this is not a zero-finding scan. The archive SHA-256 is
+`6fe514991ecb875a4e391329c4387b8bd0ad694ff6d27743f374bd61803a8df4`.
+The candidate is **not cleared for production release**.
 
 Before switching production:
 
-1. Integrate the reviewed, artifact-bound dispositions for all eleven glibc
-   matches with protected admission and test that a new or genuinely unfixed CVE
-   still blocks release. Do not broadly ignore glibc or unfixed CVEs.
+1. Review and adopt these candidate assessments in protected admission. Changes
+   to this VEX file must receive the same review as the scanner policy.
 2. Bind this check's evidence to the published OCI digest and require its default
    mode in protected admission. A coverage-only CI pass grants no release authority.
 3. Preserve Go scanning and separately account for embedded native components

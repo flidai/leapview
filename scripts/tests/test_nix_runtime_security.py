@@ -1,10 +1,12 @@
 import copy
+import datetime
 import importlib.util
 import io
 import tarfile
 import tempfile
 import pathlib
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('runtime_security', ROOT / 'scripts/check_nix_runtime_security.py')
@@ -86,6 +88,77 @@ class CoverageTests(unittest.TestCase):
 
     def test_positive_control(self):
         m.check_controls({'matches': [{'artifact': {'id': 'glibc'}, 'vulnerability': {'id': 'CVE-test'}}]}, {'glibc': 'CVE-test'})
+
+
+class AssessmentTests(unittest.TestCase):
+    def setUp(self):
+        self.document = m.json.loads((ROOT / 'nix/runtime-assessments.vex.json').read_text())
+        self.path = '/nix/store/kj7ia0isvb6xh74qavgcshmb7fcskj4l-glibc-2.42-84'
+        self.purl = 'pkg:nix/glibc@2.42-84?outputhash=kj7ia0isvb6xh74qavgcshmb7fcskj4l'
+        self.packages = [{'name': 'glibc', 'version': '2.42-84', 'purl': self.purl,
+                          'metadata': {'path': self.path}}]
+        self.today = datetime.date(2026, 9, 29)
+
+    def validate(self):
+        return m.validate_assessments(self.document, self.packages, self.today)
+
+    def match(self, cve='CVE-2026-19499'):
+        return {'artifact': {'id': 'glibc', 'purl': self.purl,
+                             'locations': [{'path': self.path}]},
+                'vulnerability': {'id': cve, 'namespace': 'nvd:cpe', 'severity': 'High'}}
+
+    def test_document_names_only_exact_installed_package(self):
+        self.assertEqual(len(self.validate()), 11)
+        self.packages[0]['metadata']['path'] = self.path.replace('kj7ia0', 'aaaaaa')
+        with self.assertRaisesRegex(ValueError, 'identity'):
+            self.validate()
+
+    def test_expired_assessment_fails(self):
+        with self.assertRaisesRegex(ValueError, 'expired'):
+            m.validate_assessments(self.document, self.packages, datetime.date(2027, 1, 1))
+
+    def test_future_or_unbounded_review_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'future-dated'):
+            m.validate_assessments(self.document, self.packages, datetime.date(2026, 9, 28))
+        with patch.dict(m.POLICY, assessmentReviewUntil='2027-12-28'), self.assertRaisesRegex(ValueError, '90 days'):
+            self.validate()
+
+    def test_duplicate_or_broad_assessment_fails(self):
+        self.document['statements'].append(copy.deepcopy(self.document['statements'][0]))
+        with self.assertRaisesRegex(ValueError, 'duplicate'):
+            self.validate()
+        self.document['statements'].pop()
+        self.document['statements'][0]['products'][0]['@id'] = 'pkg:nix/glibc@2.42-84'
+        with self.assertRaisesRegex(ValueError, 'identity'):
+            self.validate()
+
+    def test_new_cve_still_blocks_while_fixed_finding_is_retained(self):
+        fixed, new = self.match(), self.match('CVE-2099-12345')
+        filtered = {'matches': [new], 'ignoredMatches': [fixed]}
+        m.check_assessed_report({'matches': [fixed, new]}, filtered, self.validate())
+        self.assertEqual(m.blocking_findings(filtered), [new])
+
+    def test_scanner_cannot_silently_drop_or_change_a_finding(self):
+        original = self.match()
+        with self.assertRaisesRegex(ValueError, 'partition'):
+            m.check_assessed_report({'matches': [original]}, {'matches': [], 'ignoredMatches': []}, self.validate())
+        changed = copy.deepcopy(original)
+        changed['vulnerability']['severity'] = 'Low'
+        with self.assertRaisesRegex(ValueError, 'partition'):
+            m.check_assessed_report({'matches': [original]}, {'matches': [changed]}, self.validate())
+
+    def test_unreviewed_ignore_or_changed_package_is_rejected(self):
+        for match in [self.match('CVE-2099-12345'), self.match()]:
+            if match['vulnerability']['id'] == 'CVE-2026-19499':
+                match['artifact']['purl'] = self.purl.replace('kj7ia0', 'aaaaaa')
+            with self.assertRaisesRegex(ValueError, 'unassessed'):
+                m.check_assessed_report({'matches': [match]}, {'matches': [], 'ignoredMatches': [match]}, self.validate())
+
+    def test_purl_alone_cannot_override_different_store_location(self):
+        match = self.match()
+        match['artifact']['locations'][0]['path'] = self.path.replace('kj7ia0', 'aaaaaa')
+        with self.assertRaisesRegex(ValueError, 'unassessed'):
+            m.check_assessed_report({'matches': [match]}, {'matches': [], 'ignoredMatches': [match]}, self.validate())
 
 
 if __name__ == '__main__':

@@ -5,8 +5,10 @@
 Of the eleven HIGH/CRITICAL matches in the original candidate scan, **eight have
 fixes in the pinned Nixpkgs patch bundle, two are disputed/non-security issues,
 and one was a confirmed defect in the shipped library**. The Nix candidate now
-adds the upstream stable fix for that defect. No scanner suppressions or release
-exceptions have been activated. Production promotion remains blocked.
+adds the upstream stable fix for that defect. Candidate enforcement now consumes
+the eleven exact-package [OpenVEX assessments](runtime-assessments.vex.json),
+while retaining the raw findings. These assessments are proposed for review in
+the draft PR. Production promotion remains blocked by the other release gates.
 
 This assessment applies only to:
 
@@ -109,11 +111,9 @@ identity, distinct from Syft's archive identity in the prior scanner report.
 
 ## Remaining release work
 
-1. Record the eight backport dispositions, the fixed `strfmon` defect and the two
-   disputed classifications as
-   reviewed, narrowly bound assessments in protected admission. Retain raw matches
-   and require reassessment when the package/store identity changes. Do not install
-   a package-wide or unfixed-CVE ignore rule.
+1. Review the OpenVEX dispositions and adopt them in protected admission. Candidate
+   checks now require reassessment when the package/store identity changes or the
+   review expires, and retain every raw match. No package-wide ignore is used.
 2. Require no unassessed HIGH/CRITICAL findings before production promotion, then
    complete digest binding and the other release gates.
 

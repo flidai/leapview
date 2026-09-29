@@ -82,11 +82,11 @@ jobs:
         run: nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh
       - name: Test runtime inventory and vulnerability coverage guards
         run: python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
-      - name: Qualify Nix runtime vulnerability detection (not release clearance)
+      - name: Enforce assessed Nix runtime findings (not release clearance)
         run: >-
           nix develop --no-update-lock-file .#runtime-security -c
           python3 scripts/check_nix_runtime_security.py result-image
-          --evidence-dir .tmp/nix-runtime-security --coverage-only
+          --evidence-dir .tmp/nix-runtime-security
       - name: Retain runtime inventory, matching controls and unresolved findings
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -100,6 +100,8 @@ jobs:
             .tmp/nix-runtime-security/sbom.syft.json
             .tmp/nix-runtime-security/runtime.syft.json
             .tmp/nix-runtime-security/runtime.grype.json
+            .tmp/nix-runtime-security/runtime.assessed.grype.json
+            .tmp/nix-runtime-security/assessments.vex.json
             .tmp/nix-runtime-security/controls.synthetic.syft.json
             .tmp/nix-runtime-security/controls.grype.json
       - name: Retain bounded image qualification evidence

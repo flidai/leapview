@@ -174,8 +174,10 @@ Do not interpret a zero-finding report with no OS inventory as complete coverage
 [Syft can inventory Nix packages](https://oss.anchore.com/docs/capabilities/nix/),
 and the [runtime qualification](RUNTIME-SECURITY.md) now tests inventory and
 upstream vulnerability matching with pinned Syft/Grype and synthetic controls.
-The corrected scan has unresolved runtime findings; production admission remains
-blocked pending triage and digest-bound integration. The build checks that Go module
+The candidate scan applies exact-package OpenVEX assessments while retaining the
+raw findings and enforcing new unassessed vulnerabilities. Production admission
+still requires review of those assessments and integration with the published
+digest and other release gates. The build checks that Go module
 metadata remains readable after native fixups and conventional Linux export.
 
 The historical fixture uses a private synthetic CA. Its Python publication client
