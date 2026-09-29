@@ -59,6 +59,47 @@ func TestConnectionAuthorizerFromSnapshotDirectGroupAndDeny(t *testing.T) {
 	require.False(t, allowed)
 }
 
+func TestConnectionAuthorizerRequiresExactUploadPermission(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "connection_finance_files", Kind: projectgraph.KindConnection, Name: "finance_files"},
+	}, nil)
+	require.NoError(t, err)
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
+	require.NoError(t, err)
+	publisher, err := access.NewSubjectRef(access.SubjectKindPrincipal, "publisher")
+	require.NoError(t, err)
+	resource, err := access.NewResourceRef("connection_finance_files", projectgraph.KindConnection)
+	require.NoError(t, err)
+	uploadPair, err := access.NewExactPermissionPair(access.ActionConnectionUpload, identity.ProjectID, resource)
+	require.NoError(t, err)
+	managePair, err := access.NewExactPermissionPair(access.ActionConnectionManage, identity.ProjectID, resource)
+	require.NoError(t, err)
+
+	providerFor := func(pair access.PermissionPair) func(context.Context, string, string, string, access.Action) (bool, error) {
+		grant, err := accesssnapshot.NewTypedGrant("publisher", "publisher", publisher, []access.PermissionPair{pair})
+		require.NoError(t, err)
+		leased, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{grant}, nil)
+		require.NoError(t, err)
+		return ConnectionAuthorizerFromSnapshot("instance_prod",
+			func(context.Context) (accesssnapshot.AuthorizationSnapshot, error) { return leased, nil },
+			func(context.Context, string) ([]access.SubjectRef, error) { return []access.SubjectRef{publisher}, nil },
+		)
+	}
+
+	uploadProvider := providerFor(uploadPair)
+	allowed, err := uploadProvider(context.Background(), "publisher", "project_demo", "connection_finance_files", access.ActionConnectionUpload)
+	require.NoError(t, err)
+	require.True(t, allowed, "an exact active upload grant must authorize managed-data uploads")
+	allowed, err = uploadProvider(context.Background(), "publisher", "project_demo", "connection_finance_files", access.ActionConnectionManage)
+	require.NoError(t, err)
+	require.False(t, allowed, "upload authority must not permit connection administration")
+
+	manageProvider := providerFor(managePair)
+	allowed, err = manageProvider(context.Background(), "publisher", "project_demo", "connection_finance_files", access.ActionConnectionUpload)
+	require.NoError(t, err)
+	require.False(t, allowed, "connection.manage must not imply upload authority")
+}
+
 func TestConnectionAuthorizerAppliesTypedTokenCeiling(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "connection_orders", Kind: projectgraph.KindConnection, Name: "orders"}}, nil)
 	require.NoError(t, err)

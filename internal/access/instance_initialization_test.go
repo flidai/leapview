@@ -33,6 +33,7 @@ func TestInitialProjectPublisherPermissionsCaptureBootstrapRoles(t *testing.T) {
 		require.Equal(t, PermissionCatalogProfile, pair.Profile)
 		require.Equal(t, projectID, pair.Target.ProjectID)
 		require.NotEqual(t, ActionConnectionManage, pair.Action)
+		require.NotEqual(t, ActionConnectionUpload, pair.Action)
 		require.Greater(t, pair.Key(), lastKey, "publisher permission pairs must have canonical sorted order")
 		lastKey = pair.Key()
 		byAction[pair.Action] = pair

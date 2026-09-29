@@ -436,6 +436,15 @@ func TestAPIGenManagedDataCapabilityOwnsItsOperationSurface(t *testing.T) {
 		t.Fatalf("ManagedData generated operations = %d, want %d", got, want)
 	}
 	appContracts := apigenapi.GetAPIGenOperationContracts()
+	uploadMutations := map[string]bool{
+		"createManagedDataUploadSession":       true,
+		"cancelManagedDataUploadSession":       true,
+		"finalizeManagedDataUploadSession":     true,
+		"createManagedDataS3MultipartUpload":   true,
+		"signManagedDataS3MultipartPart":       true,
+		"completeManagedDataS3MultipartUpload": true,
+		"abortManagedDataS3MultipartUpload":    true,
+	}
 	for operationID, contract := range contracts {
 		if len(contract.Tags) != 1 || contract.Tags[0] != "Managed Data" {
 			t.Errorf("ManagedData operation %q tags = %v, want [Managed Data]", operationID, contract.Tags)
@@ -443,6 +452,15 @@ func TestAPIGenManagedDataCapabilityOwnsItsOperationSurface(t *testing.T) {
 		if _, exists := appContracts[operationID]; exists {
 			t.Errorf("ManagedData operation %q is still emitted by the application package", operationID)
 		}
+		if uploadMutations[operationID] {
+			if contract.Authz == nil || contract.Authz.Action != "connection.upload" {
+				t.Errorf("ManagedData mutation %q action = %#v, want connection.upload", operationID, contract.Authz)
+			}
+			delete(uploadMutations, operationID)
+		}
+	}
+	for operationID := range uploadMutations {
+		t.Errorf("ManagedData upload mutation contract %q is missing", operationID)
 	}
 	if got, want := len(apiaggregate.GetAPIGenOperationContracts()), expectedAPIGenAggregateOperationCount; got != want {
 		t.Fatalf("aggregate generated operations = %d, want %d", got, want)

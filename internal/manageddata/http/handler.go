@@ -149,7 +149,7 @@ func (h *Handler) CreateManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	if !h.authorizeConnection(w, r, project, connection, access.ActionConnectionManage) {
+	if !h.authorizeConnection(w, r, project, connection, access.ActionConnectionUpload) {
 		return
 	}
 	var body apigenapi.ManagedDataUploadSessionCreateRequest
@@ -265,7 +265,7 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	if !h.authorizeConnection(w, r, project, connection, access.ActionConnectionManage) {
+	if !h.authorizeConnection(w, r, project, connection, access.ActionConnectionUpload) {
 		return
 	}
 	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession())
@@ -318,7 +318,7 @@ func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	if !h.authorizeConnection(w, r, project, connection, access.ActionConnectionManage) {
+	if !h.authorizeConnection(w, r, project, connection, access.ActionConnectionUpload) {
 		return
 	}
 	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession())
@@ -440,7 +440,7 @@ func (h *Handler) SignManagedDataS3MultipartPart(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	if _, ok := h.recoverUploadWithAction(w, r, project, connection, uploadSession, access.ActionConnectionManage); !ok {
+	if _, ok := h.recoverUploadWithAction(w, r, project, connection, uploadSession, access.ActionConnectionUpload); !ok {
 		return
 	}
 	if _, ok := h.actor(w, r); !ok {
@@ -608,7 +608,7 @@ func (h *Handler) recoverUpload(w stdhttp.ResponseWriter, r *stdhttp.Request, pr
 }
 
 func (h *Handler) recoverUploadCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID, project, connection, uploadSession string) (control.UploadResult, bool) {
-	result, err := h.recoverUploadResult(r, project, connection, uploadSession, access.ActionConnectionManage)
+	result, err := h.recoverUploadResult(r, project, connection, uploadSession, access.ActionConnectionUpload)
 	if err != nil {
 		h.writeCommandError(w, r, operationID, err)
 		return control.UploadResult{}, false

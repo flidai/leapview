@@ -16,6 +16,10 @@ from urllib.request import (HTTPRedirectHandler, HTTPSHandler, ProxyHandler,
 
 LEGACY_PROFILE = 'legacy-capabilities/v1'
 TYPED_PROFILE = 'leapview.permissions/v1'
+# connection.upload is introduced by schema 46. The typed profile is
+# additive, but predecessor runtimes reject an action they do not know.
+CONNECTION_UPLOAD_SCHEMA = 46
+CURRENT_TYPED_SCHEMA = 46
 PROFILES = {
     LEGACY_PROFILE: {
         'publisher': 'RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH',
@@ -31,7 +35,10 @@ PROFILES = {
         # publication and approval request. Exact resource authority still
         # comes from the target's typed grants; these actions are only the
         # short-lived token ceiling for the project.
-        'publisher': 'connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read',
+        # This is the schema-46+ source scope. deploy_demo.sh resolves the
+        # selected immutable source schema and substitutes the predecessor
+        # action for sources that predate schema 46.
+        'publisher': 'connection.upload connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read',
         # Keep approval separate from publishing; reads are limited to the
         # resulting publication/generation. Their evidence binds ProjectUID.
         'release': 'delivery.approve delivery.read',
@@ -238,10 +245,26 @@ def permission_profile(profile):
     return PROFILES[profile]
 
 
-def scope_for(profile, role):
+def scope_for(profile, role, source_schema=None):
     if role not in ('publisher', 'release', 'inspection'):
         raise ValueError('demo workload role must be publisher, release, or inspection')
-    return permission_profile(profile)[role]
+    scope = permission_profile(profile)[role]
+    if profile == TYPED_PROFILE and role == 'publisher':
+        if source_schema is None:
+            source_schema = CURRENT_TYPED_SCHEMA
+        if type(source_schema) is not int or source_schema < 1:
+            raise ValueError('publisher source schema must be a positive integer')
+        if source_schema < CONNECTION_UPLOAD_SCHEMA:
+            return scope.replace('connection.upload ', 'connection.manage ')
+    return scope
+
+
+def scope_for_source(profile, role, source_revision):
+    # Resolve the permission ceiling from immutable source metadata; never
+    # guess based on the currently running host.
+    from demo_upgrade_plan import source_schema
+    schema, _ = source_schema(source_revision)
+    return scope_for(profile, role, source_schema=schema)
 
 
 def loopback_proxy(value):
@@ -289,6 +312,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--profile', default=os.environ.get('DEMO_PERMISSION_PROFILE'))
     parser.add_argument('--role', choices=('publisher', 'release', 'inspection'))
+    parser.add_argument('--source-revision')
     parser.add_argument('--validate-environment', action='store_true')
     parser.add_argument('--wait-generation', action='store_true')
     parser.add_argument('--target', default=os.environ.get('DEMO_TARGET'))
@@ -307,7 +331,11 @@ def main():
         if args.validate_environment:
             validate_client_environment()
         if args.role:
-            print(scope_for(args.profile, args.role))
+            if args.source_revision:
+                scope = scope_for_source(args.profile, args.role, args.source_revision)
+            else:
+                scope = scope_for(args.profile, args.role)
+            print(scope)
         if args.wait_generation:
             token = os.environ.get(args.token_env, '')
             if not args.target:
