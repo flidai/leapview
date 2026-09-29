@@ -368,6 +368,19 @@ func TestRefreshVisualPatchCarriesCurrentExploreHrefAndClearsItForActiveState(t 
 	}
 }
 
+func TestVisualWindowStartDoesNotAddUnrequestedExploreVisuals(t *testing.T) {
+	definition, page := exploreHandoffDefinition()
+	base := dashboardstream.Envelope{Signals: map[string]any{
+		"visuals": map[string]any{"order_rows": map[string]any{"status": map[string]any{"kind": "loading"}}},
+	}}
+	event := dashboardstream.RefreshEvent{Type: dashboardstream.RefreshEventStart, Command: "visual_window", Targets: []string{"visual:order_rows"}}
+	decorated := (Handler{}).decorateExploreHrefsForAuthorizedVisuals(base, event, definition, exploreHandoffModel(), page, "client-1", "stream-1", map[string]bool{"revenue": true})
+	visuals := decorated.Signals["visuals"].(map[string]any)
+	if len(visuals) != 1 || visuals["order_rows"] == nil {
+		t.Fatalf("visual-window patch includes unrequested visuals: %#v", visuals)
+	}
+}
+
 func exploreHandoffDefinition() (dashboarddefinition.Definition, dashboard.Page) {
 	page := dashboard.Page{ID: "overview", Title: "Overview", Visuals: []dashboard.PageVisual{{ID: "component", Visual: "revenue"}}}
 	visual := visualizationdefinition.Definition{

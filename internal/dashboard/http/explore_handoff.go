@@ -277,7 +277,7 @@ func (h Handler) decorateExploreHrefsForAuthorizedVisuals(envelope dashboardstre
 		for visualID, value := range values {
 			values[visualID] = attach(visualID, value)
 		}
-		if event.Type == dashboardstream.RefreshEventStart {
+		if event.Type == dashboardstream.RefreshEventStart && event.Command != "visual_window" {
 			for _, component := range page.PlacedVisuals() {
 				if component.Visual == "" {
 					continue
