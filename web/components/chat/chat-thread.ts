@@ -517,10 +517,18 @@ function toolStepName(item: ChatTranscriptItemSignal): string {
 }
 
 function toolRequestKey(item: ChatTranscriptItemSignal): string | undefined {
-  // A later call to the same tool may target a different resource. Only an
-  // identical request can establish that the earlier failure was recovered.
   const argumentsJSON = item.argumentsJson?.trim()
-  return item.name && argumentsJSON ? `${item.name}\u0000${argumentsJSON}` : undefined
+  if (!item.name || !argumentsJSON) return undefined
+  if (item.name === 'query_visual') {
+    try {
+      const args = JSON.parse(argumentsJSON)
+      if (args.semanticModelId && args.visual?.type && args.visual?.query) {
+        // A retry may repair presentation options while keeping the same data query.
+        return `${item.name}\u0000${JSON.stringify([args.semanticModelId, args.visual.type, args.visual.query])}`
+      }
+    } catch { /* Preserve exact matching for malformed arguments. */ }
+  }
+  return `${item.name}\u0000${argumentsJSON}`
 }
 
 function toolStepStatus(status: string): string {

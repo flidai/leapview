@@ -587,6 +587,30 @@ test('chat thread keeps an error when a different request to the same tool succe
   await page.close()
 })
 
+test('chat thread keeps a repaired visual presentation error inside Worked', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const state = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    const query = { type: 'aggregate', metrics: [{ metric: 'net_sales' }], dimensions: [{ dimension: 'country' }] }
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'user', kind: 'user', text: 'Show net sales by country' },
+      { id: 'failed', kind: 'tool', name: 'query_visual', status: 'error', error: 'Unsupported orientation.', argumentsJson: JSON.stringify({ semanticModelId: 'semantic-model:finance', visual: { type: 'bar', query, presentation: { orientation: 'horizontal' } } }) },
+      { id: 'fixed', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { type: 'bar', id: 'by-country', summary: 'Net sales by country' }, argumentsJson: JSON.stringify({ semanticModelId: 'semantic-model:finance', visual: { type: 'bar', query } }) },
+    ]
+    await thread.updateComplete
+    return {
+      visibleErrors: thread.shadowRoot.querySelectorAll('.message.error').length,
+      steps: thread.shadowRoot.querySelector('.run-step-list')?.textContent?.replace(/\s+/g, ' ').trim(),
+      visual: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact')),
+    }
+  })
+  expect(state).toEqual({ visibleErrors: 0, steps: 'Query VisualFailedQuery VisualCompleted', visual: true })
+  await page.close()
+})
+
 test('chat thread waits until the active run ends before showing unresolved errors', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
