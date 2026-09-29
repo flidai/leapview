@@ -26,5 +26,6 @@ test('current session label uses the detected browser and preserves other sessio
 
   expect(browserSessionLabel(currentSession, 'Edge')).toBe('Edge on Linux')
   expect(browserSessionLabel(currentSession, 'Brave')).toBe('Brave on Linux')
+  expect(browserSessionLabel({ ...currentSession, clientLabel: 'Chromium on Linux' }, 'Brave')).toBe('Brave on Linux')
   expect(browserSessionLabel(olderSession, 'Edge')).toBe('Chrome on Linux')
 })

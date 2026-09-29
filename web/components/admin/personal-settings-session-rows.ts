@@ -68,7 +68,7 @@ export function browserSessionLabel(session: PersonalSessionSignal, currentBrows
 
   const splitAt = label.indexOf(' on ')
   const storedBrowserName = splitAt < 0 ? label : label.slice(0, splitAt)
-  if (storedBrowserName === 'Browser' || storedBrowserName === 'Chrome') {
+  if (storedBrowserName === 'Browser' || storedBrowserName === 'Chrome' || storedBrowserName === 'Chromium') {
     return `${currentBrowserName}${splitAt < 0 ? '' : label.slice(splitAt)}`
   }
   return label
