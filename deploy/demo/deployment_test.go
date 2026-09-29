@@ -97,7 +97,7 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"DEMO_PUBLISHER_CLIENT_ID",
 		"DEMO_RELEASE_CLIENT_ID",
 		"demo_client_contract.py",
-		"--role publisher",
+		"--role publisher --source-revision \"$source_revision\"",
 		"--role release",
 		"DEMO_PERMISSION_PROFILE",
 		"DEMO_CLONE_ONLY",
@@ -111,7 +111,9 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"legacy-capabilities/v1",
 		"leapview.permissions/v1",
 		"RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH",
-		"connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read",
+		"connection.upload connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read",
+		"CONNECTION_UPLOAD_SCHEMA = 46",
+		"scope.replace('connection.upload ', 'connection.manage ')",
 		"delivery.approve delivery.read",
 	} {
 		require.Contains(t, clientContract, required)

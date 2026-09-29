@@ -51,7 +51,7 @@ func ConnectionAuthorizerFromSnapshot(
 			return false, err
 		}
 		switch action {
-		case access.ActionConnectionRead, access.ActionConnectionUse, access.ActionConnectionManage:
+		case access.ActionConnectionRead, access.ActionConnectionUse, access.ActionConnectionManage, access.ActionConnectionUpload:
 		default:
 			return false, nil
 		}

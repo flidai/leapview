@@ -452,6 +452,22 @@
       "uiSelectable": true
     },
     {
+      "action": "connection.upload",
+      "displayName": "Upload managed data",
+      "family": "Connection",
+      "description": "Stage and commit managed-data revisions through an exact Connection without changing its configuration or credentials.",
+      "scope": "resource",
+      "resourceKinds": [
+        "connection"
+      ],
+      "checkKinds": [
+        "connection"
+      ],
+      "prerequisites": [],
+      "delegable": true,
+      "uiSelectable": true
+    },
+    {
       "action": "resource.share",
       "displayName": "Share resource",
       "family": "Sharing",
