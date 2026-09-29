@@ -106,7 +106,7 @@ Use these explicit initial margins:
 - Filesystem reserve: the greater of 2 GiB or 10% of filesystem capacity.
 - Inode reserve: the greater of 10,000 or twice the measured incremental inode peak.
 
-Record the measurements and margins separately. Define and record the tested image-size envelope; larger candidates require renewed qualification. Insufficient capacity or unresolved recovery state must stop deployment before pulling. Never delete the only verified rollback to make room.
+Record the measurements and margins separately. Bind each filesystem’s measurements to its exact immutable `qualified_images` list. Every new digest requires disposable byte/inode qualification, including smaller compressed downloads: compressed size alone cannot bound extracted size or file count. Define and record the tested compressed-image-size envelope as an additional consistency check; larger candidates require renewed qualification. Insufficient capacity or unresolved recovery state must stop deployment before pulling. Never delete the only verified rollback to make room.
 
 ## 3. Persist the production topology and defer automation
 

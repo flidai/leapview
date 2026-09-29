@@ -148,8 +148,19 @@ Docker and containerd backing paths. Record these fields per device:
 - `candidate_headroom_bytes`: ceiling of 1.5 times measured peak bytes.
 - `reserve_bytes`: at least max(2 GiB, ceiling of 10% filesystem capacity).
 - `reserve_inodes`: at least max(10,000, twice measured incremental inode peak).
+- `qualified_images`: exact immutable production image references measured on
+  this filesystem. Every new digest needs disposable capacity qualification,
+  even if its compressed download is smaller. The index digest binds the selected
+  platform's layers. Record the largest measured byte/inode peak across this set.
 - `qualified_compressed_bytes`: maximum qualified candidate platform layer/config
-  size. Larger images require renewed qualification, not a relaxed check.
+  size, retained as an additional consistency bound. Compressed size alone never
+  authorizes an unmeasured image: extraction ratios and file counts can differ.
+
+Before adding an image to `qualified_images`, preserve its disposable measurement
+report (including exact index/platform identities), account for shared-layer and
+cold-content cases, and update the maxima and all derived margins. This explicit
+qualification requirement is deliberately conservative; there is no inferred
+extraction-size bound or production-side experiment to discover one.
 
 Before a pull, require headroom plus byte reserve and measured inode peak plus
 inode reserve. Never remove the only verified rollback to meet these checks.

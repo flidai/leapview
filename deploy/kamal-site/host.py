@@ -183,6 +183,11 @@ def preflight(ready, state, record=None):
         if (headroom < (3 * measured + 1) // 2 or reserve < max(2 * 1024**3, (available['capacity_bytes'] + 9) // 10)
                 or inode_reserve < max(10000, 2 * inode_peak)):
             raise ValueError('capacity margins below qualified policy')
+        qualified = budget.get('qualified_images')
+        if (not isinstance(qualified, list) or not qualified
+                or any(not isinstance(ref, str) or not re.fullmatch(re.escape(REPOSITORY) + r'@sha256:[a-f0-9]{64}', ref) for ref in qualified)
+                or (record and record['image'] not in qualified)):
+            raise ValueError('exact image requires measured byte/inode capacity qualification before pulling')
         if record and (type(record.get('compressed_bytes')) is not int or record['compressed_bytes'] > envelope):
             raise ValueError('candidate exceeds tested image-size envelope; renewed qualification required')
         if available['available_bytes'] < headroom + reserve or available['available_inodes'] < inode_peak + inode_reserve:
