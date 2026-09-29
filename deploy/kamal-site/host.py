@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import sys
@@ -103,6 +104,8 @@ def topology_ready(ready, proxy):
                                 'config', '--format', 'json'))
     if set(config['services']) != {'caddy'} or not config['networks'].get('kamal', {}).get('external'):
         raise ValueError('active Compose definition must be Caddy-only with an external Kamal network')
+    if not re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', config['services']['caddy'].get('image', '')):
+        raise ValueError('Caddy image must be pinned by immutable digest')
     ids = command('docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=leapview-site',
                   '--filter', 'label=com.docker.compose.service=caddy').split()
     if len(ids) != 1: raise ValueError('exactly one Caddy container required')

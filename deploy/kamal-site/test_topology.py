@@ -19,7 +19,7 @@ class TopologyReadinessTest(unittest.TestCase):
                                  for name, field in (('compose.yaml', 'compose_sha256'), ('Caddyfile', 'caddy_sha256'))}}
             proxy = {'HostConfig': {'RestartPolicy': {'Name': 'unless-stopped'}},
                      'NetworkSettings': {'Networks': {'kamal': {}}}}
-            caddy = {'State': {'Running': True}, 'Config': {'Image': 'caddy@sha256:fixture'},
+            caddy = {'State': {'Running': True}, 'Config': {'Image': 'caddy@sha256:' + 'a' * 64},
                      'NetworkSettings': {'Networks': {'kamal': {}}},
                      'HostConfig': {'RestartPolicy': {'Name': 'unless-stopped'}, 'PortBindings': {
                          port + '/tcp': [{'HostIp': '0.0.0.0', 'HostPort': port}] for port in ('80', '443')}},
@@ -27,7 +27,7 @@ class TopologyReadinessTest(unittest.TestCase):
                          {'Destination': '/etc/caddy/Caddyfile', 'Source': str(site / 'Caddyfile'), 'Type': 'bind', 'RW': False},
                          {'Destination': '/data', 'Source': '/var/lib/leapview-site/caddy-data', 'Type': 'bind', 'RW': True},
                          {'Destination': '/config', 'Source': '/var/lib/leapview-site/caddy-config', 'Type': 'bind', 'RW': True}]}
-            compose = {'services': {'caddy': {'image': 'caddy@sha256:fixture'}}, 'networks': {'kamal': {'external': True}}}
+            compose = {'services': {'caddy': {'image': 'caddy@sha256:' + 'a' * 64}}, 'networks': {'kamal': {'external': True}}}
             cases = [('valid', caddy)]
             for name, change in (
                 ('unpublished ports', lambda c: c['HostConfig'].update(PortBindings={})),
@@ -36,11 +36,14 @@ class TopologyReadinessTest(unittest.TestCase):
                 ('ephemeral certificates', lambda c: c['Mounts'][1].update(Source='/tmp/certificates')),
                 ('missing config storage', lambda c: c['Mounts'].pop()),
                 ('writable route', lambda c: c['Mounts'][0].update(RW=True)),
+                ('mutable Caddy image', lambda c: c['Config'].update(Image='caddy:latest')),
             ):
                 altered = copy.deepcopy(caddy); change(altered); cases.append((name, altered))
             for name, actual in cases:
+                selected_compose = copy.deepcopy(compose)
+                if name == 'mutable Caddy image': selected_compose['services']['caddy']['image'] = 'caddy:latest'
                 with self.subTest(name=name), patch.object(host, 'Path', return_value=site), \
-                        patch.object(host, 'command', side_effect=[json.dumps(compose), 'caddy-id']), \
+                        patch.object(host, 'command', side_effect=[json.dumps(selected_compose), 'caddy-id']), \
                         patch.object(host, 'inspect', return_value=actual):
                     if name == 'valid': host.topology_ready(ready, proxy)
                     else:

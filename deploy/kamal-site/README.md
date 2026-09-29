@@ -27,6 +27,8 @@ task site:deploy -- prepare --image ghcr.io/flidai/leapview-site@sha256:FULL_DIG
 task site:deploy -- deploy --record /absolute/path/printed-by-prepare.json
 task site:deploy -- rollback
 task site:deploy -- maintain
+# After the explicit interrupted-operation ownership audit below:
+task site:deploy -- recover
 ```
 
 `prepare` requires the production repository/service label, a successfully
@@ -112,7 +114,8 @@ Explicit recovery, using the pinned operator SSH connection:
    response. It can reconcile a stopped/interrupted candidate and finish cleanup;
    it never activates a candidate. If an unaccepted candidate is still serving,
    or the recorded active cannot be verified, it refuses. Run
-   `python3 deploy/kamal-site/deploy.py recover` after the ownership audit above. This restores the saved verified active through Kamal
+   `python3 deploy/kamal-site/deploy.py recover` after the ownership audit above.
+   This restores the saved verified active through Kamal
    using its local image and saved runtime under exclusive ownership, verifies
    identity/public responses, then records restoration and completes maintenance.
    It never pulls or accepts the interrupted candidate. A missing or contradictory
@@ -183,7 +186,8 @@ timed restoration safeguard, recreate Caddy, and verify public identity/routes.
 Demonstrate restoration using the protected original Compose/env/Caddy files and
 return to A. Record SHA256 hashes of the active files as `topology.compose_sha256`
 and `topology.caddy_sha256`; readiness verifies hashes, actual Caddy image/mounts,
-restart policies, proxy digest and shared network. Only then write handover state.
+restart policies, immutable Caddy/proxy digests, public ports, persistent
+certificate/configuration mounts and shared network. Only then write handover state.
 
 Routine Caddy maintenance uses only the active Caddy-only definition:
 
