@@ -957,6 +957,10 @@ print(json.dumps(clone_only_environment(dict(os.environ), sys.argv[2])))`, filep
 	}
 	receiptPath := filepath.Join(receiptDirectory, "publication.json")
 	environment["DEMO_PUBLICATION_RECEIPT"] = receiptPath
+	// Pin urllib trust explicitly: Nix OpenSSL may prefer NIX_SSL_CERT_FILE
+	// over SSL_CERT_FILE when loading the default certificate store.
+	environment["DEMO_GENERATION_CA_CERT"] = transport.CACert
+	environment["DEMO_GENERATION_PROXY"] = transport.ProxyURL
 	environment["SSL_CERT_FILE"] = transport.CACert
 	environment["CURL_CA_BUNDLE"] = transport.CACert
 	environment["REQUESTS_CA_BUNDLE"] = transport.CACert
