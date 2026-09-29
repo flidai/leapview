@@ -395,7 +395,9 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 
   private renderSecurity(settings: PersonalSettingsSignal) {
-    const browserSessions = settings.security.sessions.filter((session) => !session.revokedAt)
+    const browserSessions = settings.security.sessions
+      .filter((session) => !session.revokedAt)
+      .sort((left, right) => Number(right.current) - Number(left.current))
     const authoringSessions = settings.security.authoringSessions.filter((session) => !session.revokedAt)
     const canChangePassword = settings.security.localPasswordEnabled && settings.profile.hasLocalPassword
     return html`

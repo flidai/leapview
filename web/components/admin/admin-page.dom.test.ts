@@ -229,11 +229,11 @@ test('security settings use a unified session list, focused password dialog, and
         security: {
           localPasswordEnabled: true,
           sessions: [
-            { id: 'session-current', kind: 'browser', clientLabel: 'Chrome on Linux', current: true, createdAt: '2026-09-17T08:00:00Z', lastSeenAt: '2026-09-17T09:00:00Z', expiresAt: '2026-09-18T08:00:00Z', absoluteExpiresAt: '2026-10-17T08:00:00Z', revokedAt: '' },
             { id: 'session-other', kind: 'desktop', clientLabel: 'LeapView Desktop', current: false, createdAt: '2026-09-16T08:00:00Z', lastSeenAt: '2026-09-17T07:00:00Z', expiresAt: '2026-09-18T08:00:00Z', absoluteExpiresAt: '2026-10-17T08:00:00Z', revokedAt: '' },
             { id: 'session-firefox', kind: 'browser', clientLabel: 'Firefox on Windows', current: false, createdAt: '2026-09-15T08:00:00Z', lastSeenAt: '2026-09-16T07:00:00Z', expiresAt: '2026-09-17T08:00:00Z', absoluteExpiresAt: '2026-10-15T08:00:00Z', revokedAt: '' },
             { id: 'session-safari', kind: 'browser', clientLabel: 'Safari on macOS', current: false, createdAt: '2026-09-14T08:00:00Z', lastSeenAt: '2026-09-15T07:00:00Z', expiresAt: '2026-09-16T08:00:00Z', absoluteExpiresAt: '2026-10-14T08:00:00Z', revokedAt: '' },
             { id: 'session-edge', kind: 'browser', clientLabel: 'Edge on Windows', current: false, createdAt: '2026-09-13T08:00:00Z', lastSeenAt: '2026-09-14T07:00:00Z', expiresAt: '2026-09-15T08:00:00Z', absoluteExpiresAt: '2026-10-13T08:00:00Z', revokedAt: '' },
+            { id: 'session-current', kind: 'browser', clientLabel: 'Chrome on Linux', current: true, createdAt: '2026-09-17T08:00:00Z', lastSeenAt: '2026-09-17T09:00:00Z', expiresAt: '2026-09-18T08:00:00Z', absoluteExpiresAt: '2026-10-17T08:00:00Z', revokedAt: '' },
           ],
           authoringSessions: [
             { id: 'authoring-1', kind: 'cli', clientId: 'LeapView CLI', targetId: 'target-1', projectId: 'sales', permissionProfile: 'leapview.permissions/v1', permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target: { scope: 'resource', projectId: 'sales', resourceKind: 'dashboard', resourceId: 'target-1' } }], createdAt: '2026-09-15T08:00:00Z', lastUsedAt: '2026-09-17T06:00:00Z', expiresAt: '2026-09-24T08:00:00Z', revokedAt: '' },
@@ -294,6 +294,8 @@ test('security settings use a unified session list, focused password dialog, and
         sessionTableCount: sessionsSection.querySelectorAll('.security-session-table').length,
         sessionHeaders: Array.from(sessionsSection.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
         sessionRows: sessionsSection.querySelectorAll('tbody tr').length,
+        firstSessionIsCurrent: sessionsSection.querySelector('tbody tr:first-child')?.classList.contains('is-current'),
+        secondSessionIsDesktop: sessionsSection.querySelector('tbody tr:nth-child(2)')?.textContent?.includes('LeapView Desktop'),
         currentBadge: root.querySelector('.security-badge')?.textContent?.trim(),
         currentLabel: root.querySelector('.security-session-table tr.is-current .security-session-device')?.getAttribute('aria-label'),
         currentRowBackground: getComputedStyle(root.querySelector('.security-session-table tr.is-current')!).backgroundColor,
@@ -334,6 +336,8 @@ test('security settings use a unified session list, focused password dialog, and
     expect(state.sessionTableCount).toBe(1)
     expect(state.sessionHeaders).toEqual(['Device', 'Access', 'Created', 'Updated', ''])
     expect(state.sessionRows).toBe(6)
+    expect(state.firstSessionIsCurrent).toBe(true)
+    expect(state.secondSessionIsDesktop).toBe(true)
     expect(state.currentBadge).toBe('This device')
     expect(state.currentLabel).toBe('View details for Brave on Linux, this device, current session')
     expect(state.currentRowBackground).not.toBe('rgba(0, 0, 0, 0)')
