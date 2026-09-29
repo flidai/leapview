@@ -26,7 +26,7 @@ alone does not complete the live migration.
 | Image A | Production workflow [36538460625](https://github.com/flidai/leapview/actions/runs/36538460625) passed; independent operator `prepare` passed. Source: `bc07df37e6041b07558f1e0e06a41cb8ba966102`. |
 | Image B | Post-#751 workflow [36558423631](https://github.com/flidai/leapview/actions/runs/36558423631) succeeded, and independent operator `prepare` passed. Source: `efefe8178e6fd78498c3f4cb52a379658f67618d`. |
 | Live website | No production migration was performed during this work. Fresh 29 September inventory: Ubuntu 24.04.4, original Compose/Caddy, Docker 29.1.3/containerd 2.2.1 on shared ext4, updater inactive/disabled. About 32.3 GiB free. Public checks passed around 11:18 UTC: health/readiness, build/release metadata, docs, 16 assets, eight server-release download/checksum links and the www redirect. Protected backup completed at 11:28 UTC; an empty protected Kamal directory was created, with no ready/state marker or app/proxy changes. |
-| Full adoption smoke | Failed on the existing desktop download: the advertised `desktop-v0.1.0-alpha.1` macOS arm64 asset returns HTTP 404 and GitHub reports that release absent. Original, A, B and current main advertise it. This is separate from successful server-release download checks; do not report the complete adoption smoke as passing. Resolve the website manifest or explicitly narrow desktop scope before cutover. |
+| Full adoption smoke | Failed on the existing desktop download: the advertised `desktop-v0.1.0-alpha.1` macOS arm64 asset returns HTTP 404 and GitHub reports that release absent. Original, A, B and current main advertise it. This is separate from successful server-release download checks; do not report the complete adoption smoke as passing. User approved including the website status correction; [#776](https://github.com/flidai/leapview/pull/776) withdraws the broken listing and corrects the availability copy. |
 | Demo | Latest reviewed [demo deployment](https://github.com/flidai/leapview/actions/runs/36553961368) passed. User reports NixOS rollout; leave the demo untouched. |
 | #748 | Open, uninstalled old Compose/updater fallback. Do not merge/install it alongside Kamal; close only after final migration acceptance. |
 
@@ -56,7 +56,12 @@ installation smoke check, not whatever a later checkout happens to contain.
 Image B: `ghcr.io/flidai/leapview-site@sha256:093b718bcb51bd23e334497cc279f09367a26bbce0126956377d3ba5f612c14c`.
 Its protected record and admission evidence are under
 `/home/codex/tmp/leapview-kamal-study/production-image-b-36558423631/`.
-Both images are admitted; real-image storage qualification and live migration
+Both images are admitted, but both retain the unavailable desktop download links
+found by the full adoption smoke. A website-only manifest correction is being
+reviewed in [#776](https://github.com/flidai/leapview/pull/776). After it merges, select
+and admit corrected replacement images before final capacity qualification;
+keep the previous records as historical evidence. Do not silently reuse their
+capacity results for new digests. Real-image storage qualification and live migration
 remain pending. The reviewed restore-B command below uses the recorded rollback
 path rather than trying to redeploy the recorded prior version.
 
@@ -91,6 +96,9 @@ new code fixes. Do not substitute an image or expand scope to bypass a failed ga
   admission for a distinct image B. Do not use a trial-package image or mutable tag.
 - [x] Confirm A and B are distinct immutable production images with the required
   service ownership label and source-specific release/download metadata.
+- [ ] Resolve the unavailable desktop download status through a focused website
+  change, then select two corrected successful production builds and repeat
+  admission. Verify all advertised download links before freezing their identities.
 - [ ] Pin the tested operator checkout and locked tooling. Recheck admission and
   policy freshness before deployment; preserve records for both selected images.
   If an image must be replaced, repeat its storage qualification too.
