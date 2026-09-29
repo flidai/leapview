@@ -17,6 +17,28 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
+// EncodeExplorationExport is the analytics module boundary used by the project
+// browser. It keeps Arrow encoding inside analytics while exposing only the
+// saved-exploration contract and a complete byte slice to HTTP composition.
+func EncodeExplorationExport(ctx context.Context, result dataquery.Result, format saved.ExportFormat, limits saved.ExportLimits) ([]byte, error) {
+	body, err := explorationexport.Encode(ctx, result, explorationexport.Format(format), limits)
+	if err == nil {
+		return body, nil
+	}
+	switch {
+	case errors.Is(err, explorationexport.ErrInvalidFormat):
+		return nil, errors.Join(saved.ErrExportInvalidFormat, err)
+	case errors.Is(err, explorationexport.ErrInvalidRequest):
+		return nil, errors.Join(saved.ErrExportInvalidRequest, err)
+	case errors.Is(err, explorationexport.ErrPartial):
+		return nil, errors.Join(saved.ErrExportPartial, err)
+	case errors.Is(err, explorationexport.ErrCanceled):
+		return nil, errors.Join(saved.ErrExportCanceled, err)
+	default:
+		return nil, err
+	}
+}
+
 // ExportSavedExploration executes exactly the authorized current revision and
 // encodes it only after the governed executor has returned a complete result.
 // If-Match is required even though the application can execute "current" for

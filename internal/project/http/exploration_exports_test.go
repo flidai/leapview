@@ -48,6 +48,10 @@ func (r *browserExportAuditRecorder) RecordQueryEvent(_ context.Context, event q
 	return nil
 }
 
+func browserTestExportEncoder(ctx context.Context, result dataquery.Result, format saved.ExportFormat, limits saved.ExportLimits) ([]byte, error) {
+	return explorationexport.Encode(ctx, result, explorationexport.Format(format), limits)
+}
+
 type browserExportFailingService struct {
 	savedExplorationBrowserServiceStub
 	err error
@@ -89,6 +93,7 @@ func TestExplorationExportUsesCanonicalURLStateAndReturnsRawCSV(t *testing.T) {
 	h := &BrowserHandler{
 		SavedExplorations:              stub,
 		ExplorationExportAuditRecorder: audit,
+		ExplorationExportEncoder:       browserTestExportEncoder,
 		ResolveProjectID:               func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 		CurrentUser:                    func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
 	}
@@ -119,6 +124,7 @@ func TestExplorationExportReturnsParquetOnlyAfterSuccessfulAudit(t *testing.T) {
 			}}, nil
 		}},
 		ExplorationExportAuditRecorder: audit,
+		ExplorationExportEncoder:       browserTestExportEncoder,
 		ResolveProjectID:               func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 		CurrentUser:                    func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
 	}
@@ -141,6 +147,7 @@ func TestExplorationExportRejectsNonCanonicalURLBeforeExecution(t *testing.T) {
 	h := &BrowserHandler{
 		SavedExplorations:              stub,
 		ExplorationExportAuditRecorder: &browserExportAuditRecorder{},
+		ExplorationExportEncoder:       browserTestExportEncoder,
 		ResolveProjectID:               func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 		CurrentUser:                    func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
 	}
@@ -168,6 +175,7 @@ func TestExplorationExportRejectsRepeatedBoundOption(t *testing.T) {
 			return saved.ExecuteResult{}, nil
 		}},
 		ExplorationExportAuditRecorder: &browserExportAuditRecorder{},
+		ExplorationExportEncoder:       browserTestExportEncoder,
 		ResolveProjectID:               func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 		CurrentUser:                    func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
 	}
@@ -191,6 +199,7 @@ func TestExplorationExportAuditsCanceledExecution(t *testing.T) {
 	h := &BrowserHandler{
 		SavedExplorations:              browserExportFailingService{err: context.Canceled},
 		ExplorationExportAuditRecorder: audit,
+		ExplorationExportEncoder:       browserTestExportEncoder,
 		ResolveProjectID:               func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 		CurrentUser:                    func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
 	}
@@ -216,6 +225,7 @@ func TestExplorationExportDoesNotSendAfterRequestCancellationDuringAudit(t *test
 			}}, nil
 		}},
 		ExplorationExportAuditRecorder: audit,
+		ExplorationExportEncoder:       browserTestExportEncoder,
 		ResolveProjectID:               func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 		CurrentUser:                    func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
 	}
@@ -241,12 +251,13 @@ func TestExplorationExportMapsDeniedAndPartialErrorsWithoutLeak(t *testing.T) {
 		want int
 	}{
 		{name: "denied", err: saved.ErrUnauthorized, want: http.StatusNotFound},
-		{name: "partial", err: explorationexport.ErrPartial, want: http.StatusUnprocessableEntity},
+		{name: "partial", err: saved.ErrExportPartial, want: http.StatusUnprocessableEntity},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			h := &BrowserHandler{
 				SavedExplorations:              browserExportFailingService{err: test.err},
 				ExplorationExportAuditRecorder: &browserExportAuditRecorder{},
+				ExplorationExportEncoder:       browserTestExportEncoder,
 				ResolveProjectID:               func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 				CurrentUser:                    func(*http.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
 			}

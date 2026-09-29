@@ -13,7 +13,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
-	explorationexport "github.com/flidai/leapview/internal/analytics/exploration/export"
 	savedexploration "github.com/flidai/leapview/internal/analytics/exploration/saved"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
@@ -46,6 +45,10 @@ func (h *BrowserHandler) ExplorationExport(w stdhttp.ResponseWriter, r *stdhttp.
 		return
 	}
 	if h.ExplorationExportAuditRecorder == nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return
+	}
+	if h.ExplorationExportEncoder == nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return
 	}
@@ -105,7 +108,7 @@ func (h *BrowserHandler) ExplorationExport(w stdhttp.ResponseWriter, r *stdhttp.
 		writeBrowserExportError(w, r, err)
 		return
 	}
-	body, err := explorationexport.Encode(ctx, result.Result, format, limits)
+	body, err := h.ExplorationExportEncoder(ctx, result.Result, format, limits)
 	if err != nil {
 		_ = recordBrowserExportOutcome(ctx, h.ExplorationExportAuditRecorder, result.Query, result.Result, format, browserExportOutcome(err), result.Result.BytesEstimate, err)
 		writeBrowserExportError(w, r, err)
@@ -116,13 +119,13 @@ func (h *BrowserHandler) ExplorationExport(w stdhttp.ResponseWriter, r *stdhttp.
 		return
 	}
 	if err := r.Context().Err(); err != nil {
-		canceled := fmt.Errorf("%w: %v", explorationexport.ErrCanceled, err)
+		canceled := fmt.Errorf("%w: %v", savedexploration.ErrExportCanceled, err)
 		_ = recordBrowserExportOutcome(ctx, h.ExplorationExportAuditRecorder, result.Query, result.Result, format, "canceled", int64(len(body)), canceled)
 		writeBrowserExportError(w, r, canceled)
 		return
 	}
 	contentType, extension := "text/csv; charset=utf-8", "csv"
-	if format == explorationexport.Parquet {
+	if format == savedexploration.ExportParquet {
 		contentType, extension = "application/vnd.apache.parquet", "parquet"
 	}
 	w.Header().Set("Content-Type", contentType)
@@ -136,7 +139,7 @@ func (h *BrowserHandler) ExplorationExport(w stdhttp.ResponseWriter, r *stdhttp.
 func validateBrowserExportURLOptions(values url.Values) error {
 	for _, key := range []string{"format", "maxRows", "maxBytes"} {
 		if len(values[key]) > 1 {
-			return fmt.Errorf("%w: %s may only be specified once", explorationexport.ErrInvalidRequest, key)
+			return fmt.Errorf("%w: %s may only be specified once", savedexploration.ErrExportInvalidRequest, key)
 		}
 	}
 	return nil
@@ -146,43 +149,43 @@ func validateBrowserExportURLOptions(values url.Values) error {
 // limit. Reject it here so a live download cannot masquerade as complete.
 func rejectTruncatedBrowserExportResult(result savedexploration.ExecuteResult) error {
 	if result.Query.Limit > 0 && len(result.Result.Rows) >= result.Query.Limit {
-		return explorationexport.ErrPartial
+		return savedexploration.ErrExportPartial
 	}
 	return nil
 }
 
-func browserExportRequest(rawFormat, rawRows, rawBytes string) (explorationexport.Format, explorationexport.Limits, error) {
-	var format explorationexport.Format
+func browserExportRequest(rawFormat, rawRows, rawBytes string) (savedexploration.ExportFormat, savedexploration.ExportLimits, error) {
+	var format savedexploration.ExportFormat
 	switch strings.ToLower(strings.TrimSpace(rawFormat)) {
 	case "csv":
-		format = explorationexport.CSV
+		format = savedexploration.ExportCSV
 	case "parquet":
-		format = explorationexport.Parquet
+		format = savedexploration.ExportParquet
 	case "":
-		return "", explorationexport.Limits{}, fmt.Errorf("%w: format is required", explorationexport.ErrInvalidRequest)
+		return "", savedexploration.ExportLimits{}, fmt.Errorf("%w: format is required", savedexploration.ErrExportInvalidRequest)
 	default:
-		return "", explorationexport.Limits{}, explorationexport.ErrInvalidFormat
+		return "", savedexploration.ExportLimits{}, savedexploration.ErrExportInvalidFormat
 	}
-	limits := explorationexport.Limits{MaxRows: explorationexport.DefaultMaxRows, MaxBytes: explorationexport.DefaultMaxBytes}
+	limits := savedexploration.ExportLimits{MaxRows: savedexploration.ExportDefaultMaxRows, MaxBytes: savedexploration.ExportDefaultMaxBytes}
 	if rawRows != "" {
 		value, err := strconv.Atoi(rawRows)
 		if err != nil {
-			return "", explorationexport.Limits{}, errors.Join(explorationexport.ErrInvalidRequest, err)
+			return "", savedexploration.ExportLimits{}, errors.Join(savedexploration.ErrExportInvalidRequest, err)
 		}
 		limits.MaxRows = value
 	}
 	if rawBytes != "" {
 		value, err := strconv.ParseInt(rawBytes, 10, 64)
 		if err != nil {
-			return "", explorationexport.Limits{}, errors.Join(explorationexport.ErrInvalidRequest, err)
+			return "", savedexploration.ExportLimits{}, errors.Join(savedexploration.ErrExportInvalidRequest, err)
 		}
 		limits.MaxBytes = value
 	}
 	if err := limits.Validate(); err != nil {
-		return "", explorationexport.Limits{}, errors.Join(explorationexport.ErrInvalidRequest, err)
+		return "", savedexploration.ExportLimits{}, errors.Join(savedexploration.ErrExportInvalidRequest, err)
 	}
-	if limits.MaxRows > explorationexport.MaximumMaxRows || limits.MaxBytes > explorationexport.MaximumMaxBytes {
-		return "", explorationexport.Limits{}, fmt.Errorf("%w: export bounds exceed maximum", explorationexport.ErrInvalidRequest)
+	if limits.MaxRows > savedexploration.ExportMaximumMaxRows || limits.MaxBytes > savedexploration.ExportMaximumMaxBytes {
+		return "", savedexploration.ExportLimits{}, fmt.Errorf("%w: export bounds exceed maximum", savedexploration.ErrExportInvalidRequest)
 	}
 	return format, limits, nil
 }
@@ -192,17 +195,17 @@ func writeBrowserExportError(w stdhttp.ResponseWriter, r *stdhttp.Request, err e
 	switch {
 	case errors.As(err, &limitErr):
 		stdhttp.Error(w, "export exceeds its bounds", stdhttp.StatusRequestEntityTooLarge)
-	case errors.Is(err, explorationexport.ErrInvalidFormat):
+	case errors.Is(err, savedexploration.ErrExportInvalidFormat):
 		stdhttp.Error(w, "unsupported export format", stdhttp.StatusUnsupportedMediaType)
-	case errors.Is(err, explorationexport.ErrInvalidRequest):
+	case errors.Is(err, savedexploration.ErrExportInvalidRequest):
 		stdhttp.Error(w, "invalid export request", stdhttp.StatusBadRequest)
-	case errors.Is(err, explorationexport.ErrCanceled), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, savedexploration.ErrExportCanceled), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		stdhttp.Error(w, "export canceled", stdhttp.StatusConflict)
 	case errors.Is(err, savedexploration.ErrNotFound), errors.Is(err, savedexploration.ErrUnauthorized), errors.Is(err, access.ErrForbidden):
 		// Do not turn a revoked/private saved-model capability into a retryable
 		// outage, and do not disclose whether the URL's target exists.
 		stdhttp.NotFound(w, r)
-	case errors.Is(err, explorationexport.ErrPartial):
+	case errors.Is(err, savedexploration.ErrExportPartial):
 		stdhttp.Error(w, "incomplete exploration result", stdhttp.StatusUnprocessableEntity)
 	case errors.Is(err, savedexploration.ErrInvalid), errors.Is(err, savedexploration.ErrInvalidPayload):
 		stdhttp.Error(w, "invalid exploration", stdhttp.StatusUnprocessableEntity)
@@ -211,7 +214,7 @@ func writeBrowserExportError(w stdhttp.ResponseWriter, r *stdhttp.Request, err e
 	}
 }
 
-func recordBrowserExportOutcome(ctx context.Context, recorder queryaudit.Recorder, query dataquery.Query, result dataquery.Result, format explorationexport.Format, outcome string, bytes int64, err error) error {
+func recordBrowserExportOutcome(ctx context.Context, recorder queryaudit.Recorder, query dataquery.Query, result dataquery.Result, format savedexploration.ExportFormat, outcome string, bytes int64, err error) error {
 	if recorder == nil {
 		return errors.New("export audit recorder unavailable")
 	}
@@ -220,11 +223,11 @@ func recordBrowserExportOutcome(ctx context.Context, recorder queryaudit.Recorde
 	if err != nil {
 		var limit *dataquery.ResultLimitError
 		switch {
-		case errors.Is(err, explorationexport.ErrCanceled), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		case errors.Is(err, savedexploration.ErrExportCanceled), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			errorClass = "canceled"
 		case errors.As(err, &limit):
 			errorClass = "bounds"
-		case errors.Is(err, explorationexport.ErrPartial):
+		case errors.Is(err, savedexploration.ErrExportPartial):
 			errorClass = "partial"
 		default:
 			errorClass = "failed"
@@ -243,11 +246,11 @@ func recordBrowserExportOutcome(ctx context.Context, recorder queryaudit.Recorde
 func browserExportOutcome(err error) string {
 	var limit *dataquery.ResultLimitError
 	switch {
-	case errors.Is(err, explorationexport.ErrCanceled), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, savedexploration.ErrExportCanceled), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return "canceled"
 	case errors.As(err, &limit):
 		return "bounds"
-	case errors.Is(err, explorationexport.ErrPartial):
+	case errors.Is(err, savedexploration.ErrExportPartial):
 		return "partial"
 	default:
 		return "failure"

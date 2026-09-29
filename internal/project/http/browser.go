@@ -17,7 +17,9 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	connectionadmin "github.com/flidai/leapview/internal/analytics/connectionadmin"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
+	savedexploration "github.com/flidai/leapview/internal/analytics/exploration/saved"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
@@ -197,6 +199,7 @@ type BrowserHandler struct {
 	ConnectionCommands             projectui.ConnectionCommandBindings
 	SavedExplorations              SavedExplorationService
 	ExplorationExportAuditRecorder queryaudit.Recorder
+	ExplorationExportEncoder       func(context.Context, dataquery.Result, savedexploration.ExportFormat, savedexploration.ExportLimits) ([]byte, error)
 	SavedExplorationCommands       SavedExplorationCommandBindings
 	PipelineRunCommand             uicommand.Binding
 	PipelineCancelCommand          uicommand.Binding

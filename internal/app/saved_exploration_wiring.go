@@ -8,7 +8,6 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
-	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/app/brand"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
@@ -99,8 +98,8 @@ func configureSavedExploration(inputs savedExplorationWiringInputs) (savedExplor
 	return savedExplorationWiringResult{accessModule: accessModule, savedExplorationService: savedService}, nil
 }
 
-func savedExplorationAPIGenConfig(service analyticsmodule.SavedExplorationService, accessModule *accessmodule.Module, auth *accessmodule.Auth, recorders ...queryaudit.Recorder) analyticsmodule.SavedExplorationAPIGenConfig {
-	var recorder queryaudit.Recorder
+func savedExplorationAPIGenConfig(service analyticsmodule.SavedExplorationService, accessModule *accessmodule.Module, auth *accessmodule.Auth, recorders ...analyticsmodule.QueryAuditRecorder) analyticsmodule.SavedExplorationAPIGenConfig {
+	var recorder analyticsmodule.QueryAuditRecorder
 	if len(recorders) > 0 {
 		recorder = recorders[0]
 	}
