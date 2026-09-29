@@ -207,6 +207,16 @@ class ChatDrawer extends DatastarLit(LitElement) {
 			gap: var(--lv-space-xs);
     }
 
+    .context-link {
+      width: auto;
+      height: auto;
+      flex: 0 0 auto;
+      margin-left: auto;
+      color: var(--lv-fg-link);
+      font: var(--lv-type-caption);
+      white-space: nowrap;
+    }
+
     .page-context {
       overflow: hidden;
       color: var(--lv-fg-default);
@@ -394,7 +404,6 @@ class ChatDrawer extends DatastarLit(LitElement) {
           <div class="toolbar">
             <div class="title">${agentIcon()}<span>Dashboard agent</span></div>
             <div class="toolbar-actions">
-              ${exploreHref ? html`<a class="text-action" href=${exploreHref} target="_blank" rel="noopener noreferrer" title="Open Explorer in a new tab" aria-label="Open Explorer in a new tab">Open Explorer</a>` : null}
               <button class="text-action" type="button" title=${this.pending ? 'Wait for the current answer to finish' : agentEnabled ? 'New chat' : 'Agent is not configured'} aria-label="New chat" ?disabled=${!agentEnabled || this.pending} @click=${this.newChat}>${lucideIcon(Plus)}<span>New chat</span></button>
               <a class="text-action" href=${conversationHref} title="Open full chat" aria-label="Open full chat" aria-disabled=${String(this.pending && !agent.activeConversationId)} @click=${(event: MouseEvent) => { if (this.pending && !agent.activeConversationId) event.preventDefault() }}>${lucideIcon(ExternalLink)}<span>Full chat</span></a>
 					  <button class="close-action" type="button" title="Close" aria-label="Close agent" @click=${this.closeDrawer}>${lucideIcon(X)}</button>
@@ -404,6 +413,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
             <div class="context-line">
               <span class="page-context">${context?.pageTitle || 'Current page'}</span>
               ${controls || selections ? html`<span class="context-separator" aria-hidden="true">·</span><span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>` : html`<span class="context-hint">· Page included</span>`}
+              ${exploreHref ? html`<a class="context-link" href=${exploreHref} target="_blank" rel="noopener noreferrer" title="Open Explorer in a new tab" aria-label="Open Explorer in a new tab">Open Explorer</a>` : null}
             </div>
             ${this.referenceLimitMessage ? html`
               <div class="reference-limit-status" data-reference-limit-status role="status" aria-live="polite">${this.referenceLimitMessage}</div>
