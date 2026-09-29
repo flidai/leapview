@@ -85,8 +85,18 @@ class RuntimeOutcomeTests(unittest.TestCase):
             },
             'workflowRunId': '777',
             'workflowAttempt': '1',
+            'qualificationRunId': '888',
+            'qualificationAttempt': '2',
+            'permissionProfile': 'leapview.permissions/v1',
         }
         self.binding_path.write_text(json.dumps(self.binding))
+        (self.root/'demo-qualification.json').write_text(json.dumps({
+            'runId':self.binding['qualificationRunId'],
+            'runAttempt':self.binding['qualificationAttempt'],
+            'image':self.binding['candidate']['image'],
+            'revision':self.binding['candidate']['revision'],
+            'qualified':True,
+        }))
         self.outcome_path = self.root / record_module.OUTCOME_FILENAME
         self.env = {
             'RUNNER_TEMP': str(self.root),
@@ -94,6 +104,7 @@ class RuntimeOutcomeTests(unittest.TestCase):
             'GITHUB_RUN_ID': '777',
             'SOURCE_REVISION': self.binding['candidate']['revision'],
             'DEMO_IMAGE': self.binding['candidate']['image'],
+            'QUALIFICATION_RUN': self.binding['qualificationRunId'],
         }
         self.github = FakeGitHub()
         self.patch_api = patch.object(record_module, 'api', side_effect=self.github.api)
@@ -123,6 +134,9 @@ class RuntimeOutcomeTests(unittest.TestCase):
             'journalState': ('succeeded' if result == 'committed'
                              else 'recovered' if result == 'recovered' else 'unknown'),
             'hostRuntimeVerified': True,
+            'hostEvidenceType': 'deployment',
+            'deploymentReceiptVerified': True,
+            'installationEvidenceVerified': False,
             'hostJournalVerified': True,
             'containerImageVerified': True,
             'publicIdentityVerified': True,
@@ -161,6 +175,16 @@ class RuntimeOutcomeTests(unittest.TestCase):
     def test_start_retry_reuses_the_same_attempt_record(self):
         with patch.dict('os.environ', self.env, clear=True):
             record_module.start()
+        self.assertEqual(len(self.github.deployments), 1)
+
+    def test_start_rejects_qualification_attempt_mismatch(self):
+        path = self.root/'demo-qualification.json'
+        receipt = json.loads(path.read_text())
+        receipt['runAttempt'] = '3'
+        path.write_text(json.dumps(receipt))
+        with patch.dict('os.environ', self.env, clear=True):
+            with self.assertRaisesRegex(ValueError, 'qualification receipt'):
+                record_module.start()
         self.assertEqual(len(self.github.deployments), 1)
 
     def test_duplicate_attempt_records_are_rejected(self):
@@ -260,6 +284,42 @@ class RuntimeOutcomeTests(unittest.TestCase):
                      predecessorSchema=30)
         self.reconcile()
         self.assertEqual(self.github.statuses[self.candidate_deployment_id][0]['state'], 'success')
+
+    def test_installation_evidence_is_limited_to_qualified_same_image_deploy(self):
+        same = dict(self.binding['candidate'])
+        self.binding['operation'] = 'deploy'
+        self.binding['operationId'] = 'sha256:' + 'f' * 64
+        self.binding['predecessor'] = same
+        self.binding_path.write_text(json.dumps(self.binding))
+        self.github.deployments.clear()
+        self.github.statuses.clear()
+        with patch.dict('os.environ', self.env, clear=True):
+            record_module.start()
+        self.candidate_deployment_id = self.github.deployments[0]['id']
+        self.outcome('committed', journalState='image-only-committed', hostJournalVerified=False,
+                     predecessorSchema=30, hostEvidenceType='installation',
+                     deploymentReceiptVerified=False, installationEvidenceVerified=True)
+        self.reconcile()
+        self.assertEqual(self.github.statuses[self.candidate_deployment_id][0]['state'], 'success')
+
+        invalid_binding = dict(self.binding, predecessor={
+            'image':'ghcr.io/flidai/leapview@sha256:'+'b'*64, 'revision':'d'*40})
+        invalid_outcome = {
+            'result':'committed', 'operation':'deploy', 'hostRuntimeVerified':True,
+            'containerImageVerified':True, 'publicIdentityVerified':True,
+            'hostEvidenceType':'installation', 'deploymentReceiptVerified':False,
+            'installationEvidenceVerified':True, 'candidateSchema':30,
+            'predecessorSchema':30, 'observedSchema':30, 'schemaVerified':True,
+            'observed':self.binding['candidate'], 'journalState':'image-only-committed',
+        }
+        self.assertEqual(record_module._verified_result(invalid_outcome, invalid_binding), 'unresolved')
+
+    def test_installation_evidence_cannot_substitute_for_deployment_receipt(self):
+        self.outcome(hostEvidenceType='installation', deploymentReceiptVerified=False,
+                     installationEvidenceVerified=True)
+        with self.assertRaisesRegex(RuntimeError, 'unresolved'):
+            self.reconcile()
+        self.assertEqual(self.github.statuses[self.candidate_deployment_id][0]['state'], 'error')
 
     def test_reconcile_rejects_changed_binding_after_attempt_recorded(self):
         changed = dict(self.binding)
