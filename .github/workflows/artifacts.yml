@@ -158,6 +158,9 @@ jobs:
       contents: read
       packages: read
       attestations: read
+    outputs:
+      image: ${{ steps.admission.outputs.image }}
+      revision: ${{ needs.build-production-image.outputs.revision }}
 
     steps:
       - name: Check out repository
@@ -225,19 +228,71 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Record exact image qualification
+  qualify-historical-transition:
+    name: Qualify schema-32 predecessor transition against exact image
+    needs: build-production-image
+    if: ${{ always() && needs.build-production-image.result == 'success' }}
+    uses: ./.github/workflows/demo-upgrade-qualification.yml
+    with:
+      candidate_image: ghcr.io/flidai/leapview@${{ needs.build-production-image.outputs.digest }}
+      candidate_revision: ${{ needs.build-production-image.outputs.revision }}
+      final_artifact: true
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+
+  record-production-image-qualification:
+    name: Record exact production image and historical transition
+    needs: [build-production-image, qualify-production-image, qualify-historical-transition]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Require both exact-image qualifications
         env:
-          IMAGE: ${{ steps.admission.outputs.image }}
-          REVISION: ${{ needs.build-production-image.outputs.revision }}
+          IMAGE_QUALIFICATION_RESULT: ${{ needs.qualify-production-image.result }}
+          HISTORICAL_TRANSITION_RESULT: ${{ needs.qualify-historical-transition.result }}
+          IMAGE_BUILD_RESULT: ${{ needs.build-production-image.result }}
         run: |
-          jq -n --arg image "$IMAGE" --arg revision "$REVISION" \
-            --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+          set -euo pipefail
+          test "${IMAGE_BUILD_RESULT}" = success
+          test "${IMAGE_QUALIFICATION_RESULT}" = success
+          test "${HISTORICAL_TRANSITION_RESULT}" = success
+
+      - name: Download the exact historical transition receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: historical-transition-${{ github.run_attempt }}
+          path: transition-evidence
+
+      - name: Bind both receipts to this exact workflow attempt
+        env:
+          IMAGE: ${{ needs.qualify-production-image.outputs.image }}
+          REVISION: ${{ needs.qualify-production-image.outputs.revision }}
+        run: |
+          set -euo pipefail
+          [[ "${IMAGE}" =~ ^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$ ]]
+          [[ "${REVISION}" =~ ^[0-9a-f]{40}$ ]]
+          jq -e --arg image "${IMAGE}" --arg revision "${REVISION}" \
+            '.version == 1 and .status == "passed" and .candidate.image == $image and .candidate.revision == $revision and .validatorRevision == $revision and (.checks as $checks | ["legacyPublication", "legacyViewer", "typedPolicyCaptured", "independentApproval", "publisherNoSelfApproval", "viewerLeastPrivilege", "realPublicationAdapter", "subsequentDeploy"] | all(.[]; $checks[.] == true))' \
+            transition-evidence/transition.json >/dev/null
+          jq --arg runId "${GITHUB_RUN_ID}" --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            '. + {runId:$runId,runAttempt:$runAttempt}' \
+            transition-evidence/transition.json > transition.json
+          jq -n --arg image "${IMAGE}" --arg revision "${REVISION}" \
+            --arg runId "${GITHUB_RUN_ID}" --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
             '{image:$image,revision:$revision,runId:$runId,runAttempt:$runAttempt,qualified:true}' > qualification.json
 
-      - name: Upload exact image qualification
+      - name: Upload exact image and historical transition qualification
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-image-qualification-${{ github.run_attempt }}
-          path: qualification.json
+          path: |
+            qualification.json
+            transition.json
           if-no-files-found: error
           retention-days: 90

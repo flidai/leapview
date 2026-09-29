@@ -693,7 +693,12 @@ func protectManagedDataTransportWithBootstrapTimeout(
 				return
 			}
 			if found {
-				if !allowed {
+				connectionAllowed, connectionErr := authorizeTusManagedDataConnection(r.Context(), accessModule, runtimeHost, managedData, principal.ID, activeProjectID, resource)
+				if connectionErr != nil {
+					http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+					return
+				}
+				if !connectionAllowed {
 					http.NotFound(w, r)
 					return
 				}
@@ -736,7 +741,7 @@ func protectManagedDataTransportWithBootstrapTimeout(
 			next.ServeHTTP(w, r)
 			return
 		}
-		_, allowed, err := authorizeTypedResourceAction(r.Context(), accessModule, runtimeHost, principal.ID, activeProjectID, []access.ResourceRef{resource}, access.ActionConnectionManage)
+		allowed, err := authorizeTusManagedDataConnection(r.Context(), accessModule, runtimeHost, managedData, principal.ID, activeProjectID, resource)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
@@ -747,6 +752,27 @@ func protectManagedDataTransportWithBootstrapTimeout(
 		}
 		next.ServeHTTP(w, r)
 	}))
+}
+
+func authorizeTusManagedDataConnection(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	managedData interface{},
+	principalID string,
+	projectID projectgraph.ResourceID,
+	resource access.ResourceRef,
+) (bool, error) {
+	if authorizer, ok := managedData.(interface {
+		AuthorizeConnection(context.Context, string, string, string, access.Action) (bool, error)
+	}); ok {
+		return authorizer.AuthorizeConnection(ctx, principalID, projectID.String(), resource.ID().String(), access.ActionConnectionManage)
+	}
+	// Small test doubles and older callers without the managed-data module port
+	// retain the canonical snapshot path. Production composition always passes
+	// Module, whose nil authorizer fails closed.
+	typed, allowed, err := authorizeTypedResourceAction(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, access.ActionConnectionManage)
+	return typed && allowed, err
 }
 
 func validTusTransportID(value string) bool {

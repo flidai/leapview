@@ -21,10 +21,13 @@ This directory contains only the publication contract, never secret values.
 
 ## Delivery
 
-Merging a PR does not change the public demo. Both operations in **Hosted demo
+Merging a PR does not change the public demo. Operations in **Hosted demo
 deployment** are manual and run on `main`, using one shared concurrency group:
 
-- **deploy** replaces the application image on `app-leapview-demo-02` at
+- **prepare** captures a coordinated copy, reopens the predecessor, and tests
+  the candidate and complete publication on that isolated copy. A successful
+  result is required before a database/permission upgrade.
+- **deploy** selects the supported image-only or database-upgrade path and replaces the application image on `app-leapview-demo-02` at
   `89.58.13.145`. Supply `image` as `ghcr.io/flidai/leapview@sha256:<digest>` and
   `qualification_run` as the successful **Main artifacts** run ID for that exact
   digest. The run must contain `production-image-qualification-<attempt>`; older
@@ -34,34 +37,37 @@ deployment** are manual and run on `main`, using one shared concurrency group:
   verifies provenance, SBOM and vulnerability policy again.
 - **publish** synchronizes and activates CFO/Olist project content using the
   source revision of the last successful runtime deployment. It does not
-  replace the application container.
+  replace the application container. The workflow installs only the two
+  version-aware publication client scripts from its protected revision; the
+  selected revision still supplies the Go CLI, generated code and content.
+- **recover** finishes the original interrupted host operation.
+- **reconcile** takes the original GitHub `deployment_id`, verifies the current
+  host and authenticated public revision, and repairs deployment bookkeeping
+  without applying migrations or changing the runtime.
 
 The runtime transaction uses the existing Compose installation at `/opt/leapview`,
 container `leapview-cfo-leapview-1`, state volume `leapview-cfo_leapview-state`, and
 PostgreSQL container `demo02-postgres-cfo`. SSH must match the pinned demo-02 host
-key. It does not mutate Hetzner firewalls, DNS, the old VPS, or agent credentials.
+key. It does not mutate Hetzner firewalls, DNS or the old VPS. Existing agent
+credential keys are preserved; a missing key is prepared and verified as part
+of the candidate configuration before live apply.
 It checks the actual database bindings and available backup space before stopping
 writes. Control DB, DuckLake DB, globals, application state and configuration are
 backed up together under `/etc/leapview-provider-cfo/compose-backup-*`.
 Dump/tar readability is checked; this is not a full restore rehearsal.
 
-Only image updates with unchanged schema/engine dependencies and Compose payloads
-are admitted. Before creating a runtime deployment record, the workflow inspects
-both immutable source revisions and reports their schema revisions, pending SQL
-migrations, and changed schema/engine paths in the run summary. Modified or
-removed historical migrations, missing forward migrations, and downgrades are
-rejected. This source comparison is diagnostic, not migration admission or
-proof of recoverability. The runner repeats it immediately before rollout.
+Before recording a deployment, preflight compares the two exact source revisions:
+SQL history, engines, role policy, and the versioned permission/publication
+contract in `internal/platform/releasecontract/contract.json`. Unsupported or
+missing contracts, rewritten migrations and engine changes fail before maintenance.
+The one historical compatibility entry is the verified schema-32 predecessor;
+it does not guess compatibility from a schema number. A same-schema permission
+change still requires the upgrade path. The candidate-owned controller validates
+the request again, and a live upgrade requires a passed detached rehearsal bound
+to the same images, source identities, installation profile and access intent.
+It captures a fresh recovery point; it never restores the older rehearsal copy
+over subsequently acknowledged writes.
 
-Schema changes remain blocked: this workflow never applies or reverses migrations.
-The existing `host upgrade` command implements fenced staging, activation, and
-restart phases; it requires an already admitted operation whose migrations have
-completed. It is not a standalone database upgrade or provider restore command.
-A schema upgrade needs an independently verified coordinated recovery frontier,
-an explicit migration executor, and paired state recovery before the old image
-can be restarted. Do not bypass the guard or run a destructive down migration.
-Preflight rejection creates no runtime deployment record, leaving the existing
-publication pin unchanged.
 Image payloads are extracted into a separate temporary directory before validation.
 New releases contain the same six runtime files and permissions as the host
 installer. Documentation and qualification helpers remain in the image, outside
@@ -87,11 +93,23 @@ A successful GitHub deployment record (`task=demo-compose-runtime`, environment
 additional `deployments: write` permission; no variable-write PAT is required.
 `DEMO_RUNTIME_REVISION` is a **bootstrap fallback only**, used before the first
 runtime deployment record. After that, deployment records take precedence.
-A failed/in-progress record blocks publication until an operator reconciles the
-host and re-runs deployment successfully. If recording success fails after the
-host commits, the image may already be live: inspect the host receipt and re-run
-the same qualified image; do not change the pin manually to hide the failure.
-The retired stage/prepare/systemd entrypoints exit without changing infrastructure.
+An unresolved record blocks publication. The runner collects the durable host
+journal, actual container digest, source revision, schema and installation
+receipts, and independently authenticates the public revision. A committed
+candidate becomes the runtime pin. Verified recovery retains the candidate's
+failed attempt and creates an idempotent successful predecessor record. Unknown
+state stays blocked; the resolver never falls back to an older successful record.
+If the runner or GitHub write fails after commit, run **reconcile** with the
+original deployment ID. This does not migrate or restore data. A later content
+publication failure reports a deployed runtime with incomplete publication and
+can be retried with **publish**. Runtime deployment and publication are separate
+results; a content failure does not undo acknowledged runtime writes.
+After CFO publication commits, the workflow reads the shared viewer credentials
+over the same pinned SSH connection and checks all four pages again. It uses
+the current verification policy and confirms the selected runtime revision;
+this read-only check cannot invoke migration, rollout or recovery. A browser
+failure leaves the runtime record intact and the release incomplete. The run
+summary retains the verified runtime outcome and published generation separately.
 
 The `leapview-demo` GitHub environment authenticates to Infisical through
 GitHub OIDC. The Infisical `prod:/demo/deployment` path supplies the
@@ -106,11 +124,19 @@ issuer-owned UUIDs beside `DEMO_PROJECT_ID` prevents legacy client aliases from
 being sent to the canonical PostgreSQL credential boundary.
 
 The publisher and release identities are separate service principals. Their
-credentials are exchanged for one-hour, project-scoped OAuth workload tokens
+credentials are exchanged for short-lived, project-scoped OAuth workload tokens
 on every publication. The publisher is restricted to managed-data ingestion,
-project authoring, and release publication. The release principal is restricted
-to viewing, approving, and activating the demo project environment, plus
-managing the public dashboard publications declared by the canonical showcase.
+project authoring, and release publication. The release principal uses a separate credential for approval and delivery
+inspection. The version-aware client selects scopes before OAuth from the
+independently bound deployed source; it does not authenticate just to discover
+which scopes authentication requires. The typed publisher requests
+`connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read`;
+the reviewer requests `delivery.approve delivery.read`.
+These publisher actions are only the short-lived token ceiling needed by
+managed-data ingestion and the retained CFO graph. They do not create role or
+grant authority. Target-owned typed policy must separately authorize each
+exact resource/action pair, and the captured serving policy must authorize
+runtime reads.
 
 The `leapview-demo` environment variable `DEMO_PROJECT_ID` stores the target's
 durable `ProjectUID`. Content publication must use that issuer-owned identity;
@@ -131,11 +157,30 @@ that profile against the host, installed image, Compose services, storage and
 public origin. Other equivalent installations supply their own private profile
 in the request and their own authenticated application validator.
 
-Select `deploy` for compatible image-only changes, `upgrade` for supported forward
-control-schema/permission-policy changes, and `recover` for an interrupted
-operation. Supply the immutable image and its successful main-push Main artifacts
+Select `prepare` before a forward schema/permission transition, then `deploy`.
+The deploy action selects the appropriate supported mode; the explicit `upgrade`
+alias remains available. Select `recover` only for an interrupted operation. Supply the immutable image and its successful main-push Main artifacts
 qualification run. The controller is extracted from that exact candidate. No
 migration is run during serving startup or by the Python transport.
+
+Admission requires both `qualification.json` (fresh-install/image checks) and
+`transition.json` (the supported legacy-to-typed upgrade and subsequent
+publication checks) from that same run attempt. The transition receipt binds
+the exact published digest, source, validator revision and predecessor; a local
+candidate test or another image's successful run is not deployment evidence.
+For an authorized PR qualification run, GitHub signs the protected workflow
+revision while the image contains the selected PR revision. The private request
+binds both identities separately; normal main-push deployment retains their
+equality. A PR qualification run is still not admitted for live demo deployment.
+The frozen schema-32 fixture remains a regression boundary after the demo moves
+forward. Each actual installation still needs its own passed `prepare` receipt.
+
+Pre-merge tests use local image identities and test admission inputs inside
+disposable containers; those inputs are never release-admission evidence. The
+final-artifact lane verifies the registry image and its real OCI admission.
+The fixture's subsequent-deployment check recreates the same candidate image
+and publishes again. Deployment of a second, distinct qualified digest remains
+an operational acceptance check after the initial upgrade.
 
 Preflight compares immutable SQL history, relevant River/DuckDB dependencies,
 product role policy and the actual packaged extension supply. Unrelated module
@@ -151,7 +196,63 @@ It does not create release-owner records or change the existing authoritative
 migration engine. Pending versions are derived from the candidate, not hardcoded
 as a particular release pair.
 
-The maintenance sequence is:
+The preparation sequence is:
+
+1. Check immutable qualification, installation and compatibility evidence.
+2. Briefly fence writers and capture the complete stopped PostgreSQL/filesystem
+   state. Persist a terminal live capture journal and reopen the predecessor.
+3. Exercise the captured copy under a separate operation lock and journal.
+   Clone failures and cancellation clean up only clone-owned resources. They
+   cannot stop, restore, reconfigure or expose the live installation.
+4. Check the predecessor, apply the exact candidate transition, authenticate the
+   publication clients, run the real `deploy_demo.sh` from the exact candidate
+   source, and validate the CFO pages. Browser, Python, curl and Go requests all
+   use the same pinned clone-only proxy with no ambient proxy bypass or public
+   fallback. The internal Docker network blocks external integrations.
+5. Save a private passed receipt, including the candidate configuration digest.
+   This is environment-specific upgrade evidence, distinct from fresh-install
+   image qualification and from successful deployment.
+
+For legacy permissions, the operator supplies private
+`/etc/leapview-provider-cfo/access-transition-intent.json` before preparation.
+It names the exact target/project/environment, previous policy and serving
+identities, explicit typed assignments, and distinct publisher/reviewer
+principals. The transition preserves historical rows and requires a new captured
+serving policy. It never infers project-wide authority from legacy capabilities.
+An intent entry may list several actions for one resource; the plan expands it
+into separate grants with deterministic IDs, one exact permission per stored
+grant. Single-action entries retain their supplied grant ID. Duplicate principal
+roles or exact permissions are rejected before policy capture.
+The candidate's read-only `leapview admin transition-access-inventory --project`
+command reads the existing policy revision/digest and active generation from
+schema 32 before migration. Use those returned identities in the private intent;
+do not guess them or derive replacement permissions from broad legacy roles.
+For the retained CFO source graph, the publisher's typed policy also needs
+`source.read` on `source:finance.financials`, `model.read` on each of
+`model:cash_forecast`, `model:cash_scenarios`, `model:cash_weeks`,
+`model:finance_countries`, `model:finance_dates`, `model:finance_discount_bands`,
+`model:finance_products`, `model:finance_segments`,
+`model:financial_performance`, `model:pnl_lines`, `model:pnl_statement`,
+`model:variance_driver_dimension`, and `model:variance_drivers`,
+`semantic.consume` on `semantic-model:finance`, and `connection.read`, `connection.use`, and
+`connection.manage` on `connection:finance_files`. Managed-data synchronization
+needs read access to recover and poll its upload session as well as manage access
+to stage files. These resource grants are
+independent of the publisher's project-scoped `release_operator` role. The
+schema-32 inventory command does not emit graph dependencies; this list comes
+from the unchanged retained CFO graph. This supported transition path covers
+the unchanged retained graph and routine runtime/frontend image updates that
+reuse it. A changed graph must be separately reviewed for its dependency pairs
+and authoring permissions, with matching publisher client-scope changes; do not
+assume this transition intent can supply create authority or that an exact
+resource grant substitutes for project-scoped create permission. The unchanged-
+source rehearsal does not validate a changed-graph publication.
+The reviewer authenticates with its actual workload credential; naming a reviewer
+in intent is not an approval. Credentials never enter the immutable request or
+public evidence. Credential ID/secret changes, if needed, must be synchronized
+in GitHub/Infisical before publication can be reported complete.
+
+The subsequent live maintenance sequence is:
 
 1. Validate qualification/admission and source compatibility before recording a
    runtime deployment. Validate the current viewer, host inventory and capacity.
@@ -167,12 +268,21 @@ The maintenance sequence is:
 5. Persist live migration intent. Run embedded Goose migrations with the control
    migrator under the canonical fence and reconcile product permissions. Keep
    River unchanged. Preserve the agent credential encryption key, generating a
-   missing key once per operation without rotating an existing key.
+   missing key during preparation and reusing that exact key for live apply.
+   An existing key is never rotated by the upgrade.
 6. Start and validate the live candidate through loopback bindings. Persist commit
    before reopening public traffic. Public image/source and CFO checks must pass
    before the workflow advances the runtime record.
 
-This operation requires downtime throughout capture, rehearsal and live upgrade.
+When an explicit access transition is needed, the candidate authenticates the
+publisher and independent reviewer, publishes the retained source with the typed
+policy, and records normal approval evidence. The host waits for that exact
+publication and serving-policy digest to become active before viewer validation.
+
+The prepare capture and the subsequent live upgrade require bounded downtime.
+The longer detached publication rehearsal runs with the predecessor serving.
+The live operation repeats its protected recovery/candidate gates against a fresh
+recovery point; the detached receipt does not waive them.
 A fresh-install image qualification does not replace the restored-data rehearsal.
 The [PostgreSQL cold-copy requirements](https://www.postgresql.org/docs/18/backup-file.html)
 require stopping the cluster and copying it as a whole. The isolated Docker
@@ -204,9 +314,11 @@ sudo /etc/leapview-provider-cfo/upgrade-controllers/<candidate-digest>/leapviewc
 ```
 
 `plan` validates a private admitted request and image engine compatibility without
-starting maintenance. `apply` performs the full operation. `status` reports the
+starting maintenance. `capture` closes and durably releases the live capture transaction.
+`verify-copy` runs only the detached clone. `apply` requires the passed preparation
+and performs the full live operation with a fresh recovery point. `status` reports the
 persisted state. `recover` restores precommit state or finalizes a committed
-candidate. The `migrate`/`rehearse` subcommands are guarded internal container
+candidate. The `migrate`/`rehearse`/`migrate-copy` subcommands are guarded internal container
 entrypoints, not a standalone bypass for operators.
 
 CI exercises migration preservation, partial failure, a synthetic future revision,
@@ -228,23 +340,21 @@ demo login:
 - `DEMO_VIEWER_EMAIL`
 - `DEMO_VIEWER_PASSWORD`
 
-The shared principal is `demo@leapview.dev`. For the CFO project, grant it `RESOURCE_READ` on
-`dashboard:cfo-command-center` and `RESOURCE_USE` on `semantic-model:finance`.
+The shared principal is `demo@leapview.dev`. For the CFO project, grant it typed `dashboard.read` on
+`dashboard:cfo-command-center` and `semantic.consume` on `semantic-model:finance`.
 Do not carry Olist grants into a CFO-only project graph. Stage the grants before
 publishing the candidate; the same activation requirement below applies.
 
-For the Olist project, the target policy grants it `RESOURCE_READ` on each canonical dashboard ID
-and `RESOURCE_USE` on the three backing semantic models. Use canonical IDs
+For the Olist project, the target policy grants it typed `dashboard.read` on each canonical dashboard ID
+and `semantic.consume` on the three backing semantic models. Use canonical IDs
 (`dashboard:executive-sales`, `dashboard:fulfillment-operations`,
 `dashboard:visual-showcase`, and `semantic-model:sales`,
 `semantic-model:operations`, `semantic-model:visuals`), not dashboard URL names.
-Dashboard read access opens the page; semantic-model use authorizes its queries. Project namespaces accept only `PROJECT_ADMIN` as a direct
-grant, and dashboards do not support `RESOURCE_USE`; neither is needed for
-this shared dashboard reader. Do not bind it to the built-in `viewer` role: that role
+Dashboard read access opens the page; semantic-model use authorizes its queries. Do not bind it to the built-in `viewer` role: that role
 also grants access to shared conversation history. The shared login must
 never receive administration, authoring, preview, refresh, deployment,
 or connection privileges. Personal API tokens are allowed, but remain limited
-to this principal's existing resource access; token capabilities cannot grant
+to this principal's existing resource access; token scopes cannot grant
 additional authority. Agent tools remain governed by the principal's exact
 resource grants.
 Conversation and personal-settings pages are authenticated user surfaces, so
@@ -275,12 +385,13 @@ does not revoke an already-issued browser session. On a replacement instance,
 create the local shared principal before the first project deployment; the
 administrator stages its least-privilege grants through
 `POST /api/v1/projects/{project}/grants`, supplying a stable `id`, the exact
-`resourceKind`/`resourceId`, `subjectType`/`subjectId`, `capability`, an
+`resourceKind`/`resourceId`, `subjectType`/`subjectId`, typed permission actions, an
 `expectedRevision`, and an `Idempotency-Key` header. Read the current policy
 revision from the role-bindings or grants list response. Each mutation produces
 a new target-policy revision; publish and activate a candidate containing that
 revision before expecting serving access to change. The portable source bundle
 does not contain these target-owned grants.
 
-After runtime deployment, dispatch `publish` when the PR changes project content.
-It uses the deployed revision, not an unrelated newer main revision.
+After a successful runtime deploy, the workflow publishes from that verified
+deployed revision. Dispatch `publish` to retry a content-only failure. It uses
+the deployed revision, not an unrelated newer main revision.

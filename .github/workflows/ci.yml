@@ -379,10 +379,19 @@ jobs:
       - name: Run cross-language quality validation
         run: task ci:lane:quality
 
+  host-recovery-validation:
+    name: Isolated host recovery and migration boundary contracts
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    uses: ./.github/workflows/demo-upgrade-qualification.yml
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+
   ci-gate:
     name: CI gate
     if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
-    needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation]
+    needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation, host-recovery-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -439,3 +448,11 @@ jobs:
             --expected-head "$GITHUB_SHA" --expected-run-id "$GITHUB_RUN_ID" \
             --expected-attempt "$PLAN_ATTEMPT" --expected-deferred="$DEFERRED" \
             --frontend-matrix "$FRONTEND_MATRIX" --github-summary "$GITHUB_STEP_SUMMARY"
+      - name: Require isolated host recovery qualification
+        env:
+          HOST_RECOVERY_RESULT: ${{ needs.host-recovery-validation.result }}
+        run: |
+          test "$HOST_RECOVERY_RESULT" = success || {
+            printf 'Isolated host recovery qualification: %s\n' "$HOST_RECOVERY_RESULT" >&2
+            exit 1
+          }

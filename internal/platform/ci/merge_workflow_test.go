@@ -19,6 +19,7 @@ func TestMergeWorkflowIndependentLanesAndStrictGate(t *testing.T) {
 		Jobs map[string]struct {
 			Name           string   `yaml:"name"`
 			If             string   `yaml:"if"`
+			Uses           string   `yaml:"uses"`
 			Needs          []string `yaml:"needs"`
 			TimeoutMinutes string   `yaml:"timeout-minutes"`
 			Steps          []struct {
@@ -35,7 +36,7 @@ func TestMergeWorkflowIndependentLanesAndStrictGate(t *testing.T) {
 	if err := yaml.Unmarshal(data, &workflow); err != nil {
 		t.Fatal(err)
 	}
-	lanes := []string{"apigen-validation", "go-packages-validation", "go-application-validation", "frontend-validation", "full-validation"}
+	lanes := []string{"apigen-validation", "go-packages-validation", "go-application-validation", "frontend-validation", "full-validation", "host-recovery-validation"}
 	if len(workflow.Jobs) != len(lanes)+1 {
 		t.Fatal("merge job inventory changed; update the required gate contract")
 	}
@@ -46,6 +47,9 @@ func TestMergeWorkflowIndependentLanesAndStrictGate(t *testing.T) {
 		}
 		if job.If != "github.repository == 'flidai/leapview'" {
 			t.Errorf("%s must remain exhaustive for upstream merge candidates", name)
+		}
+		if name == "host-recovery-validation" && job.Uses != "./.github/workflows/demo-upgrade-qualification.yml" {
+			t.Errorf("%s must call the isolated host recovery qualification workflow", name)
 		}
 	}
 	prepared, validated := false, false

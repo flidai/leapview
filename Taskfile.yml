@@ -241,12 +241,127 @@ tasks:
 
   test:qualification:native-postgres:
     desc: Run the required container-backed native PostgreSQL 18 qualification contract
-    deps:
-      - api:generate
     env:
       LEAPVIEW_TEST_CONTAINERS: "1"
     cmds:
+      - task: generate
       - go test ./internal/app/cli/composectl -run '^TestQualificationNativePostgresTopologyContainerBackedContract$' -count=1 -v
+
+  test:qualification:demo-host-recovery:
+    desc: Run isolated host recovery and migration-boundary qualification with synthetic disposable fixtures
+    cmds:
+      - task generate
+      - go run ./internal/app/tools/securitypolicy -root .
+      - go test -race ./internal/app/cli/hostinstall -count=1
+      - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -p 'test_demo*.py'
+      - |
+        set -eu
+        migration_tests="$(go test -list '^Test(DemoUpgrade|HostUpgrade|UpgradeBoundary)' ./internal/platform/postgres/migrations)"
+        for test_name in \
+          TestDemoUpgradePostgreSQL18 \
+          TestDemoUpgradePartialMigrationPostgreSQL18RequiresRecovery \
+          TestHostUpgradeFutureRevisionUsesSameExecutor \
+          TestUpgradeBoundaryRejectsUnknownTransitionsBeforeMigration \
+          TestUpgradeBoundaryRequiresCompleteHistoricalPrefix \
+          TestUpgradeBoundaryRejectsPartialAndPrematureCandidate \
+          TestUpgradeBoundaryAllowsCompleteFutureAndPolicyOnlyTransitions; do
+          if ! printf '%s\n' "$migration_tests" | grep -Fx "$test_name" >/dev/null; then
+            printf 'required migration qualification test missing: %s\n' "$test_name" >&2
+            exit 1
+          fi
+        done
+        LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=true \
+          go test ./internal/platform/postgres/migrations \
+            -run '^Test(DemoUpgrade|HostUpgrade|UpgradeBoundary)' -count=1 -timeout=5m -v
+      - |
+        set -eu
+        recovery_tests="$(go test -list '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification)$' ./internal/app/cli/hostinstall)"
+        for test_name in TestColdPostgreSQLPairRecovery TestInternalNetworkRecoveryRelay TestVolumeTLSMountQualification; do
+          if ! printf '%s\n' "$recovery_tests" | grep -Fx "$test_name" >/dev/null; then
+            printf 'required physical recovery test missing: %s\n' "$test_name" >&2
+            exit 1
+          fi
+        done
+        LEAPVIEW_HOST_UPGRADE_QUALIFICATION=1 \
+          go test ./internal/app/cli/hostinstall \
+            -run '^Test(ColdPostgreSQLPairRecovery|InternalNetworkRecoveryRelay|VolumeTLSMountQualification)$' \
+            -count=1 -timeout=10m -v
+
+  test:qualification:historical-transition:
+    desc: Run the required schema-32 to typed-access transition against a pinned predecessor and exact candidate image
+    cmds:
+      - |
+        set -eu
+        test "${LEAPVIEW_HISTORICAL_TRANSITION_REQUIRED:-}" = 1 || {
+          printf 'LEAPVIEW_HISTORICAL_TRANSITION_REQUIRED=1 is required for the historical transition lane\n' >&2
+          exit 64
+        }
+        test -n "${LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_IMAGE:-}" || {
+          printf 'candidate image identity is required\n' >&2
+          exit 64
+        }
+        test -n "${LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_REVISION:-}" || {
+          printf 'candidate source revision is required\n' >&2
+          exit 64
+        }
+        test -n "${LEAPVIEW_HISTORICAL_TRANSITION_EVIDENCE:-}" || {
+          printf 'private transition receipt path is required\n' >&2
+          exit 64
+        }
+        if [ "${LEAPVIEW_HISTORICAL_TRANSITION_FINAL_ARTIFACT:-0}" = 1 ]; then
+          test -n "${LEAPVIEW_HISTORICAL_TRANSITION_ADMISSION:-}" || {
+            printf 'final-artifact qualification requires OCI admission evidence\n' >&2
+            exit 64
+          }
+        fi
+        task generate
+        go run ./internal/app/tools/securitypolicy -root .
+        go test ./internal/app/cli/composectl \
+          -run '^TestQualificationHistoricalTransitionInputsFailClosed$' \
+          -count=1
+        transition_tests="$(go test ./internal/app/cli/composectl -list '^TestQualificationHistoricalTransitionEndToEnd$' -count=1)"
+        printf '%s\n' "${transition_tests}" | grep -Fx 'TestQualificationHistoricalTransitionEndToEnd' >/dev/null || {
+          printf 'required historical transition end-to-end test is missing\n' >&2
+          exit 1
+        }
+        go test ./internal/app/cli/composectl \
+          -run '^TestQualificationHistoricalTransitionEndToEnd$' \
+          -count=1 -timeout=110m -v
+
+  test:qualification:historical-transition:local:
+    desc: Build a local candidate image and run the mandatory historical transition fixture
+    cmds:
+      - |
+        set -euo pipefail
+        if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+          printf 'local historical-transition image requires a clean Git source tree; commit or export an immutable snapshot first\n' >&2
+          exit 64
+        fi
+        task generate
+        revision="$(git rev-parse HEAD)"
+        [[ "${revision}" =~ ^[0-9a-f]{40}$ ]]
+        if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+          printf 'generation changed the source tree; refusing to label a mutable tree as the exact historical-transition candidate\n' >&2
+          exit 64
+        fi
+        build_time="$(git show -s --format=%cI "${revision}")"
+        tag="leapview:historical-transition-${revision:0:12}"
+        docker buildx build --load --platform linux/amd64 --file Dockerfile \
+          --tag "${tag}" \
+          --build-arg BUILD_VERSION=historical-transition \
+          --build-arg BUILD_REVISION="${revision}" \
+          --build-arg BUILD_TIME="${build_time}" \
+          --build-arg BUILD_DIRTY=false \
+          --build-arg BUILD_RELEASE=false .
+        image="$(docker image inspect "${tag}" --format '{{.Id}}')"
+        [[ "${image}" =~ ^sha256:[0-9a-f]{64}$ ]]
+        evidence_dir="$(mktemp -d "${TMPDIR:-/tmp}/leapview-historical-transition.XXXXXX")"
+        LEAPVIEW_HISTORICAL_TRANSITION_REQUIRED=1 \
+          LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_IMAGE="${image}" \
+          LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_REVISION="${revision}" \
+          LEAPVIEW_HISTORICAL_TRANSITION_EVIDENCE="${evidence_dir}/transition.json" \
+          LEAPVIEW_HISTORICAL_TRANSITION_FINAL_ARTIFACT=0 \
+          task test:qualification:historical-transition
 
   test:qualification:authoring-package:
     desc: Verify the released authoring archive qualification contract without Docker
@@ -1407,6 +1522,7 @@ tasks:
     cmds:
       - task: db:generate
       - task: api:generate
+      - task: ui-signals:generate
       - mkdir -p {{.ROOT_DIR}}/.tmp/qualification/tmp
       - >-
         env TMPDIR={{.ROOT_DIR}}/.tmp/qualification/tmp
@@ -1421,7 +1537,9 @@ tasks:
     requires:
       vars: [IMAGE]
     cmds:
+      - task: db:generate
       - task: api:generate
+      - task: ui-signals:generate
       - >-
         env LEAPVIEWCTL_ROOT={{.ROOT_DIR}}/deploy/compose
         go run ./cmd/leapviewctl qualify site-image
@@ -1838,6 +1956,8 @@ tasks:
       - task: ci:full:extras:runtime:multinode
       - task: qa:ui-framework
       - task: ci:full:extras:runtime:tail
+      - task: test:qualification:demo-host-recovery
+      - task: test:qualification:historical-transition:local
 
   ci:full:extras:static:
     internal: true

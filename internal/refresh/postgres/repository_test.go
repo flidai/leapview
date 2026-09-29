@@ -78,6 +78,67 @@ func seedRefreshJob(t *testing.T, db *pgxpool.Pool, id, runID, project, environm
 	}
 }
 
+func TestPostgresScheduledOccurrenceDeniedByExternalRootAcrossPipelines(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	ctx := t.Context()
+	const project, environment, generation = "project_external_admission", "prod", "generation_external_admission"
+	digest := "sha256:" + strings.Repeat("a", 64)
+	now := time.Now().UTC().Truncate(time.Minute)
+	if _, err := r.PutSchedule(ctx, ScheduleInput{
+		ProjectID: project, Environment: environment, PipelineID: "pipeline_scheduled",
+		ScheduleID: "every-minute", SemanticModelID: "semantic_scheduled", GenerationID: generation,
+		ArtifactDigest: digest, Cron: "* * * * *", Timezone: "UTC", ConcurrencyPolicy: "Forbid",
+		StartingDeadline: time.Hour, ScheduleDigest: digest, NextRunAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := r.ClaimDue(ctx, Scope{ProjectID: project, Environment: environment, GenerationID: generation}, now, "scheduler-worker", time.Minute, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("claimed occurrences = %d, want 1", len(claimed))
+	}
+	occurrence := claimed[0]
+	if denied, err := r.DenyScheduledOccurrenceForExternalActiveRoot(ctx, occurrence); err != nil || denied {
+		t.Fatalf("deny without active root = (%v, %v), want (false, nil)", denied, err)
+	}
+
+	seedRefreshJob(t, admin, "job_external_pipeline", "run_external_pipeline", project, environment, "principal:external")
+	if _, err := r.CreateRun(ctx, RunInput{
+		RunID: "run_external_pipeline", ProjectID: project, Environment: environment, GenerationID: generation,
+		PipelineID: "pipeline_manual", SemanticModelID: "semantic_manual", TargetType: "refresh_pipeline",
+		TargetID: "pipeline_manual", TriggerType: "manual", InvocationSource: "manual",
+		PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal:external", JobID: "job_external_pipeline",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	denied, err := r.DenyScheduledOccurrenceForExternalActiveRoot(ctx, occurrence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !denied {
+		t.Fatal("external active root on another pipeline did not deny scheduled occurrence")
+	}
+	stored, err := r.GetOccurrence(ctx, occurrence.OccurrenceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outcome struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(stored.Outcome, &outcome); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "skipped" || outcome.Reason != "admission_denied_external_active" {
+		t.Fatalf("stored occurrence status=%q outcome=%s, want terminal external-active denial", stored.Status, stored.Outcome)
+	}
+	if err := r.ReleaseOccurrence(ctx, occurrence); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("release after terminal denial = %v, want stale-fence error", err)
+	}
+}
+
 func TestPostgresRefreshSchemaRollbackAndRoleBoundary(t *testing.T) {
 	h := postgrestest.Start(t)
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "refresh_runtime_password", Login: true})
@@ -723,7 +784,19 @@ func TestPostgresRefreshScheduleCatchupRetryAndDeadline(t *testing.T) {
 		t.Fatal("forged greater-fence data-version unexpectedly accepted")
 	}
 	seedRefreshJob(t, admin, "job-recovery-run", "recovery-run", "p", "prod", "principal")
-	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-run", ProjectID: "p", Environment: "prod", GenerationID: "g1", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "recovery-pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: "sha256:" + strings.Repeat("4", 64), ArtifactDigest: digestA, PrincipalID: "principal", JobID: "job-recovery-run"}); err != nil {
+	recoveryRunInput := RunInput{RunID: "recovery-run", ProjectID: "p", Environment: "prod", GenerationID: "g1", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "recovery-pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: "sha256:" + strings.Repeat("4", 64), ArtifactDigest: digestA, PrincipalID: "principal", JobID: "job-recovery-run"}
+	if _, err := r.CreateRun(ctx, recoveryRunInput); err == nil {
+		t.Fatal("second root run across pipelines was admitted while publication run remained active")
+	} else {
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+			t.Fatalf("scope-wide active root rejection = %v, want unique admission conflict", err)
+		}
+	}
+	if err := r.CompleteAttempt(ctx, pubRun.RunID, "publisher", pubAttempt.FenceGeneration, []byte(`{"published":true}`)); err != nil {
+		t.Fatalf("complete prior root after admission rejection: %v", err)
+	}
+	if _, err := r.CreateRun(ctx, recoveryRunInput); err != nil {
 		t.Fatal(err)
 	}
 	if attempt, err := r.ClaimAttempt(ctx, "recovery-run", "reconciler", 1, time.Minute); err != nil {
@@ -1147,8 +1220,8 @@ func TestPostgresRefreshDirectLifecycleGuardsAndMaintenanceBudget(t *testing.T) 
 	if _, err := admin.Exec(ctx, `INSERT INTO refresh.data_version(project_id,environment,semantic_model_id,generation_id,snapshot_id,source,physical_pool_id,catalog_id,run_id,lease_owner,lease_revision) VALUES ('p','prod','m','g',1,'refresh','pool','catalog','guard-run','owner',1)`); err == nil {
 		t.Fatal("unpublished data-version INSERT unexpectedly succeeded")
 	}
-	seedRefreshJob(t, admin, "job-recovery-guard", "recovery-guard", "p", "prod", "principal")
-	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-guard", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model", TargetID: "recovery-guard", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-recovery-guard"}); err != nil {
+	seedRefreshJob(t, admin, "job-recovery-guard", "recovery-guard", "p-recovery", "prod", "principal")
+	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-guard", ProjectID: "p-recovery", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model", TargetID: "recovery-guard", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-recovery-guard"}); err != nil {
 		t.Fatal(err)
 	}
 	if attempt, err := r.ClaimAttempt(ctx, "recovery-guard", "recovery-owner", 1, time.Minute); err != nil {
@@ -1164,8 +1237,9 @@ func TestPostgresRefreshDirectLifecycleGuardsAndMaintenanceBudget(t *testing.T) 
 	}
 
 	for _, id := range []string{"maintenance-a", "maintenance-b"} {
-		seedRefreshJob(t, admin, "job-"+id, id, "p", "prod", "principal")
-		if _, err := r.CreateRun(ctx, RunInput{RunID: id, ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model", TargetID: id, TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-" + id}); err != nil {
+		projectID := "p-" + id
+		seedRefreshJob(t, admin, "job-"+id, id, projectID, "prod", "principal")
+		if _, err := r.CreateRun(ctx, RunInput{RunID: id, ProjectID: projectID, Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model", TargetID: id, TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-" + id}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := r.ClaimAttempt(ctx, id, "worker-"+id, 1, 100*time.Millisecond); err != nil {

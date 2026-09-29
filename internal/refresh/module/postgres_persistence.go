@@ -796,7 +796,7 @@ func (p *postgresRunPersistence) MonitorRuns(ctx context.Context, scope refreshr
 	if err != nil {
 		return refreshrun.MonitorPage{}, err
 	}
-	return refreshrun.MonitorPage{Runs: runs, Total: page.Total, Failed: page.Failed, Completed: page.Completed, Active: page.Active}, nil
+	return refreshrun.MonitorPage{Runs: runs, Total: page.Total}, nil
 }
 
 func mapPostgresRuns(runs []refreshpostgres.Run) ([]refreshrun.RunRecord, error) {
@@ -853,7 +853,7 @@ func (p *postgresRunPersistence) ListSemanticModelRuns(ctx context.Context, scop
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	runs, err := p.repository.ListRunsFiltered(ctx, refreshpostgres.Scope{ProjectID: scope.ProjectID.String(), Environment: scope.Environment}, "", "", model.String(), false, limit, page.After)
+	runs, err := p.repository.ListRunsFiltered(ctx, refreshpostgres.Scope{ProjectID: scope.ProjectID.String(), Environment: scope.Environment}, refreshrun.TargetRefreshPipeline, "", model.String(), false, limit, page.After)
 	if err != nil {
 		return nil, err
 	}
@@ -861,7 +861,7 @@ func (p *postgresRunPersistence) ListSemanticModelRuns(ctx context.Context, scop
 }
 
 func (p *postgresRunPersistence) LatestSuccessfulSemanticModelRun(ctx context.Context, scope refreshrun.ReadScope, model projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
-	runs, err := p.repository.ListRunsFiltered(ctx, refreshpostgres.Scope{ProjectID: scope.ProjectID.String(), Environment: scope.Environment}, "", "", model.String(), true, 1, "")
+	runs, err := p.repository.ListRunsFiltered(ctx, refreshpostgres.Scope{ProjectID: scope.ProjectID.String(), Environment: scope.Environment}, refreshrun.TargetRefreshPipeline, "", model.String(), true, 1, "")
 	if err != nil {
 		return refreshrun.RunRecord{}, false, err
 	}
@@ -1004,7 +1004,9 @@ func (p *postgresRunPersistence) MarkRunTreeFailedClaimed(ctx context.Context, j
 	})
 }
 
-func safeWorkerFailureMessage(_ string) string { return "refresh execution failed" }
+func safeWorkerFailureMessage(message string) string {
+	return refreshrun.AllowWorkerFailureMessage(message)
+}
 
 func (p *postgresRunPersistence) MarkRunTreeSupersededClaimed(ctx context.Context, job refreshrun.JobRecord, message string) error {
 	if p == nil || p.repository == nil {
@@ -1015,6 +1017,7 @@ func (p *postgresRunPersistence) MarkRunTreeSupersededClaimed(ctx context.Contex
 		return err
 	}
 	return p.repository.InTx(ctx, func(tx refreshpostgres.Tx) error {
+		message = safeWorkerFailureMessage(message)
 		jobIDs, err := p.repository.SupersedeRunTreeTx(ctx, tx, job.RunID, job.LeaseOwner, job.LeaseRevision, message)
 		if err != nil {
 			return err
@@ -1228,6 +1231,19 @@ func (p *postgresRunPersistence) CheckInvocationAdmission(ctx context.Context, i
 func (p *postgresRunPersistence) CheckScheduledInvocationAdmission(ctx context.Context, occurrence refreshschedule.Occurrence) error {
 	if p == nil || p.repository == nil {
 		return errors.New("refresh PostgreSQL run persistence is unavailable")
+	}
+	stored := refreshpostgres.Occurrence{
+		OccurrenceID: occurrence.OccurrenceID, ProjectID: occurrence.Identity.ProjectID.String(),
+		Environment: occurrence.Identity.Environment, GenerationID: occurrence.Identity.GenerationID,
+		PipelineID: occurrence.PipelineID.String(), LeaseOwner: occurrence.LeaseOwner,
+		FenceGeneration: occurrence.LeaseRevision,
+	}
+	denied, err := p.repository.DenyScheduledOccurrenceForExternalActiveRoot(ctx, stored)
+	if err != nil {
+		return err
+	}
+	if denied {
+		return refreshschedule.ErrOccurrenceSkipped
 	}
 	return p.repository.CheckScheduledInvocationAdmission(ctx, refreshpostgres.Scope{ProjectID: occurrence.Identity.ProjectID.String(), Environment: occurrence.Identity.Environment}, occurrence.PipelineID.String())
 }

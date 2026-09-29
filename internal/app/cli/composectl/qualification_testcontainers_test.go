@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	dockercontainer "github.com/moby/moby/api/types/container"
+	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -47,10 +49,22 @@ func (runtime *testcontainersQualificationRuntime) Start(
 		}
 		binds = append(binds, value)
 	}
+	portBindings := make(map[dockernetwork.Port][]dockernetwork.PortBinding, len(request.ExposedPorts))
+	for _, exposedPort := range request.ExposedPorts {
+		port, err := dockernetwork.ParsePort(exposedPort)
+		if err != nil || !port.IsValid() {
+			return nil, fmt.Errorf("qualification container exposed port %q is invalid", exposedPort)
+		}
+		portBindings[port] = []dockernetwork.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1")}}
+	}
 	containerRequest := testcontainers.ContainerRequest{
 		Name: request.Name, Image: request.Image,
-		Env: request.Environment, Entrypoint: request.Entrypoint, Cmd: request.Command,
+		ExposedPorts: request.ExposedPorts,
+		Env:          request.Environment, Entrypoint: request.Entrypoint, Cmd: request.Command,
 		ConfigModifier: func(config *dockercontainer.Config) {
+			if user := strings.TrimSpace(request.User); user != "" {
+				config.User = user
+			}
 			if request.NoHealth {
 				config.Healthcheck = &dockercontainer.HealthConfig{Test: []string{"NONE"}}
 			}
@@ -58,6 +72,9 @@ func (runtime *testcontainersQualificationRuntime) Start(
 		HostConfigModifier: func(config *dockercontainer.HostConfig) {
 			config.ReadonlyRootfs = request.ReadOnly
 			config.Binds = append(config.Binds, binds...)
+			if len(portBindings) > 0 {
+				config.PortBindings = portBindings
+			}
 			if len(request.Tmpfs) > 0 {
 				if config.Tmpfs == nil {
 					config.Tmpfs = make(map[string]string, len(request.Tmpfs))

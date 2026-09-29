@@ -460,6 +460,18 @@ func (m *Module) SetAuthorizeConnection(authorizer ConnectionAuthorizer) {
 	}
 }
 
+// AuthorizeConnection evaluates an exact connection action through the
+// instance-bound authorizer installed by application composition. TUS
+// transport requests use this port after resolving their persisted upload
+// target, so they share the same workload-credential handling as the upload
+// session APIs.
+func (m *Module) AuthorizeConnection(ctx context.Context, principalID, projectID, connectionID string, action access.Action) (bool, error) {
+	if m == nil || m.authorizeConnection == nil {
+		return false, manageddatahttp.ErrUnavailable
+	}
+	return m.authorizeConnection(ctx, principalID, projectID, connectionID, action)
+}
+
 func newManagedDataStorage(ctx context.Context, cfg ProductConfig, recorders ...storage.ProviderVersionObservationRecorder) (managedDataStorage, error) {
 	root, err := filepath.Abs(strings.TrimSpace(cfg.Dir))
 	if err != nil || strings.TrimSpace(cfg.Dir) == "" {
