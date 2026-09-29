@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nix-development-${{ github.ref }}
+  group: nix-development-${{ github.ref }}-${{ inputs.checks || 'all' }}
   cancel-in-progress: true
 
 jobs:
