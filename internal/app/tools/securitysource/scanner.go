@@ -113,7 +113,9 @@ func regularFile(path string) bool {
 }
 
 func runGitleaks(parent context.Context, cfg Config, root, baseRef string) error {
-	scanRoot, err := os.MkdirTemp("", "leapview-security-")
+	// Keep the scanner inside its approved temporary roots regardless of the
+	// caller's TMPDIR (for example, a Nix shell under a hosted runner directory).
+	scanRoot, err := os.MkdirTemp("/tmp", "leapview-security-")
 	if err != nil {
 		return fmt.Errorf("create temporary scan root: %w", err)
 	}

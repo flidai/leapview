@@ -1,0 +1,115 @@
+name: Nix development
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'package.json'
+      - 'bun.lock'
+      - 'Taskfile.yml'
+      - 'scripts/check_nix_development.mjs'
+      - 'scripts/check_nix_image.sh'
+      - 'scripts/testdata/nix/**'
+      - 'scripts/check_nix_runtime_security.py'
+      - 'scripts/tests/test_nix_runtime_security.py'
+      - 'scripts/generate_build_sources.sh'
+      - 'pkg/apigen/**'
+      - 'scripts/ensure_playwright*'
+      - '.github/workflows/nix-development.yml'
+  workflow_dispatch:
+    inputs:
+      checks:
+        description: Validation lanes (pull requests always run both)
+        type: choice
+        default: all
+        options: [all, development, image]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-development-${{ github.ref }}-${{ inputs.checks || 'all' }}
+  cancel-in-progress: true
+
+jobs:
+  development:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks != 'image') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Check the pinned toolchain and native compiler
+        run: nix flake check --no-update-lock-file -L
+      - name: Check formatting
+        run: nix fmt -- --check flake.nix nix/*.nix
+      - name: Exercise the pinned browser and sqlc toolchain
+        run: nix develop --no-update-lock-file -c task nix:smoke
+      - name: Prepare generated and embedded assets for the fresh checkout
+        run: nix develop --no-update-lock-file -c task ci:prepare
+      - name: Run the existing PR contract with the same development environment
+        run: nix develop --no-update-lock-file -c task ci
+
+  image:
+    name: Application and image
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'workflow_dispatch' || inputs.checks != 'development') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.31.2/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+      - name: Build application and container without undeclared network access
+        run: nix build --no-update-lock-file .#leapview .#leapview-image --no-link -L
+      - name: Qualify the exact image with PostgreSQL and browser workflows
+        run: nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh
+      - name: Test runtime inventory and vulnerability coverage guards
+        run: python3 -m unittest discover -s scripts/tests -p test_nix_runtime_security.py
+      - name: Enforce assessed Nix runtime findings (not release clearance)
+        run: >-
+          nix develop --no-update-lock-file .#runtime-security -c
+          python3 scripts/check_nix_runtime_security.py result-image
+          --evidence-dir .tmp/nix-runtime-security
+      - name: Retain runtime inventory, matching controls and unresolved findings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-runtime-security-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          include-hidden-files: true
+          path: |
+            .tmp/nix-runtime-security/summary.json
+            .tmp/nix-runtime-security/sbom.syft.json
+            .tmp/nix-runtime-security/runtime.syft.json
+            .tmp/nix-runtime-security/runtime.grype.json
+            .tmp/nix-runtime-security/runtime.assessed.grype.json
+            .tmp/nix-runtime-security/assessments.vex.json
+            .tmp/nix-runtime-security/controls.synthetic.syft.json
+            .tmp/nix-runtime-security/controls.grype.json
+      - name: Retain bounded image qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-image-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          include-hidden-files: true
+          path: .tmp/nix-image-qualification/evidence/image-qualification-report.json

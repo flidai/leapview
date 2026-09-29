@@ -8,6 +8,10 @@ surfaces:
     kind: go-module
     updater: {ecosystem: gomod, directory: /}
     scanners: [govulncheck]
+  - path: deploy/kamal-trial/go.mod
+    kind: go-module
+    updater: {ecosystem: gomod, directory: /deploy/kamal-trial}
+    scanners: [govulncheck]
   - path: pkg/apigen/go.mod
     kind: go-module
     updater: {ecosystem: gomod, directory: /pkg/apigen}
@@ -61,6 +65,10 @@ surfaces:
   - path: deploy/kamal-site/Gemfile.lock
     kind: ruby-lock
     updater: {ecosystem: bundler, directory: /deploy/kamal-site}
+    scanners: [trivy]
+  - path: deploy/kamal-trial/Gemfile.lock
+    kind: ruby-lock
+    updater: {ecosystem: bundler, directory: /deploy/kamal-trial}
     scanners: [trivy]
 
   - path: deploy/hetzner
@@ -191,6 +199,10 @@ surfaces:
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nix-development.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
   - path: .github/workflows/public-site-smoke.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
@@ -208,6 +220,10 @@ surfaces:
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
   - path: .github/workflows/security.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/site-kamal-trial.yml
     kind: github-actions
     updater: {ecosystem: github-actions, directory: /}
     scanners: [trivy, action-pin-policy]
