@@ -739,7 +739,21 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
 for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
   test(`deferred hosts fall back to eager mounting when IntersectionObserver ${failureMode}`, async () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+    let releaseRendererChunk = () => {}
+    let rendererChunkRequested: Promise<void> | undefined
     try {
+      if (failureMode === 'constructor') {
+        let markRendererChunkRequested!: () => void
+        rendererChunkRequested = new Promise((resolve) => { markRendererChunkRequested = resolve })
+        let continueRendererChunk!: () => void
+        const rendererChunkGate = new Promise<void>((resolve) => { continueRendererChunk = resolve })
+        releaseRendererChunk = continueRendererChunk
+        await page.route('**/chunks/html-*.js', async (route) => {
+          markRendererChunkRequested()
+          await rendererChunkGate
+          await route.continue()
+        })
+      }
       await page.addInitScript((mode) => {
         if (mode === 'missing') {
           Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: undefined })
@@ -754,19 +768,24 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
       }, failureMode)
       await page.goto(baseURL)
       await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+      if (rendererChunkRequested) await rendererChunkRequested
 
-      const mounted = await page.evaluate(async () => {
+      await page.evaluate(async () => {
         const source = (window as any).__lvSourceHosts.orders_kpi
         const deferred = document.createElement('lv-visualization-host') as any
+        deferred.id = 'deferred-fallback'
         deferred.deferMount = true
         deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
         document.body.append(deferred)
         await deferred.updateComplete
-        await new Promise<void>((resolve) => setTimeout(resolve, 0))
-        return ((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0
       })
-      expect(mounted).toBe(true)
+      const renderer = page.locator('#deferred-fallback .renderer > *')
+      if (rendererChunkRequested) expect(await renderer.count()).toBe(0)
+      releaseRendererChunk()
+      await renderer.waitFor({ state: 'attached' })
+      expect(await renderer.count()).toBeGreaterThan(0)
     } finally {
+      releaseRendererChunk()
       await page.close()
     }
   })
