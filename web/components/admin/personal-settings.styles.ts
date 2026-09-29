@@ -46,7 +46,7 @@ export const personalSettingsStyles = css`
     .security-session-device { display: grid; width: 100%; min-width: 0; min-height: var(--base-size-40); grid-template-columns: var(--base-size-32) minmax(0, 1fr); align-items: center; column-gap: var(--base-size-16); border-color: transparent; border-radius: var(--lv-radius-default); background: transparent; padding: 0; text-align: left; }
     .security-session-device:hover { background: transparent; }
     .security-session-device:hover .security-session-icon { color: var(--lv-fg-accent); background: var(--lv-bg-accent-muted); }
-    .security-session-device:focus-visible { background: transparent; outline: var(--focus-outline, 2px solid var(--lv-fg-accent)); outline-offset: var(--focus-outline-offset, var(--base-size-2)); }
+    .security-session-device:focus-visible { background: transparent; outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
     .security-session-icon { display: grid; width: var(--base-size-32); height: var(--base-size-32); place-items: center; border-radius: var(--lv-radius-full); color: var(--lv-fg-muted); background: var(--lv-bg-control); }
     .security-session-icon svg { width: var(--base-size-16); height: var(--base-size-16); }
     .security-session-device-copy { display: grid; min-width: 0; gap: var(--base-size-4); }

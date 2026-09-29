@@ -23,7 +23,7 @@ import { avatarResponseError } from './avatar-response'
 import { formatDate, humanizeSessionKind, sessionFact } from './personal-settings-format'
 import { permissionPairKey, tokenPermissionPolicies, uniquePermissionPairs } from './personal-settings-permissions'
 import type { TokenPermissionPolicy } from './personal-settings-permissions'
-import { browserNameFromClientHints, browserSessionLabel, renderAuthoringSessionRow, renderBrowserSessionRow, type PendingSessionRevocation, type SelectedSession } from './personal-settings-session-rows'
+import { browserSessionLabel, detectCurrentBrowser, renderAuthoringSessionRow, renderBrowserSessionRow, type PendingSessionRevocation, type SelectedSession } from './personal-settings-session-rows'
 import { personalSettingsStyles } from './personal-settings.styles'
 import './personal-settings-token-permission-picker'
 import '../shared/drawer'
@@ -161,18 +161,9 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
 
   override connectedCallback(): void {
     super.connectedCallback()
-    const browserNavigator = navigator as Navigator & {
-      brave?: { isBrave?: () => Promise<boolean> }
-      userAgentData?: { brands?: readonly { brand: string }[] }
-    }
-    this.currentBrowserName = browserNameFromClientHints(
-      browserNavigator.userAgent,
-      browserNavigator.userAgentData?.brands?.map(({ brand }) => brand),
-    )
-    const brave = browserNavigator.brave
-    void brave?.isBrave?.().then((isBrave) => {
-      if (this.isConnected && isBrave) this.currentBrowserName = 'Brave'
-    }).catch(() => { /* Browser detection is optional. */ })
+    this.currentBrowserName = detectCurrentBrowser(navigator, () => {
+      if (this.isConnected) this.currentBrowserName = 'Brave'
+    })
     document.addEventListener('pointerdown', this.handleDocumentPointerDown)
     document.addEventListener('datastar-fetch', this.handleDatastarFetch)
     window.addEventListener('keydown', this.handleWindowKeydown)
@@ -395,9 +386,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 
   private renderSecurity(settings: PersonalSettingsSignal) {
-    const browserSessions = settings.security.sessions
-      .filter((session) => !session.revokedAt)
-      .sort((left, right) => Number(right.current) - Number(left.current))
+    const browserSessions = settings.security.sessions.filter((session) => !session.revokedAt).sort((left, right) => Number(right.current) - Number(left.current))
     const authoringSessions = settings.security.authoringSessions.filter((session) => !session.revokedAt)
     const canChangePassword = settings.security.localPasswordEnabled && settings.profile.hasLocalPassword
     return html`

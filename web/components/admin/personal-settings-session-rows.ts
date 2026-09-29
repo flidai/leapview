@@ -62,6 +62,16 @@ export function browserNameFromClientHints(userAgent: string, brands: readonly s
   return hintedBrowser ?? userAgentBrowser ?? null
 }
 
+export function detectCurrentBrowser(browserNavigator: Navigator & {
+  brave?: { isBrave?: () => Promise<boolean> }
+  userAgentData?: { brands?: readonly { brand: string }[] }
+}, onBrave: () => void): string | null {
+  void browserNavigator.brave?.isBrave?.().then((isBrave) => {
+    if (isBrave) onBrave()
+  }).catch(() => { /* Browser detection is optional. */ })
+  return browserNameFromClientHints(browserNavigator.userAgent, browserNavigator.userAgentData?.brands?.map(({ brand }) => brand))
+}
+
 export function browserSessionLabel(session: PersonalSessionSignal, currentBrowserName: string | null): string {
   const label = session.clientLabel || humanizeSessionKind(session.kind)
   if (!session.current || session.kind !== 'browser' || !currentBrowserName) return label
