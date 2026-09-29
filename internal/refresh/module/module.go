@@ -94,6 +94,14 @@ type Config struct {
 	Logger              *slog.Logger
 	RecoveryLifecycle   *RecoveryLifecycle
 	RecoveryInterval    time.Duration
+	// TargetID is the canonical native delivery target (the instance ID for the
+	// current single-target-per-project/environment runtime). Deferred manual
+	// refresh intents are fenced to this target independently of a serving
+	// generation.
+	TargetID string
+	// ManualIntentInterval controls how often the durable dispatcher looks for
+	// one waiting manual refresh intent.
+	ManualIntentInterval time.Duration
 	// RecoveryEnvironment is the exact configured serving environment used by
 	// startup reconciliation. It is never inferred from a mutable active
 	// serving pointer.
@@ -122,29 +130,35 @@ type AuthorizationConfig struct {
 }
 
 type Module struct {
-	handler                 materializehttp.Handler
-	runs                    RunPersistence
-	schedules               refreshschedule.Repository
-	service                 refreshrun.Service
-	refreshClock            refreshschedule.Clock
-	scheduler               Scheduler
-	reconcileSchedules      func(context.Context) error
-	scheduleInterval        time.Duration
-	leaseTimeout            time.Duration
-	logger                  *slog.Logger
-	events                  EventStore
-	durableAudit            bool
-	refreshExecution        apigencommand.AsyncExecutionContract
-	resolveIdentity         func(context.Context) (projectgraph.ServingIdentity, error)
-	currentCredential       func(context.Context) (access.APICredential, bool)
-	currentSessionEvidence  func(context.Context) (access.CredentialEvidence, bool)
-	scheduledAuthority      *DelegatedWorkloadAuthorityService
-	executionGrantID        string
-	resolveExecutionGrantID func(context.Context, refreshschedule.Occurrence) (string, error)
-	publishedVersion        PublishedDataVersionResolver
-	recoveryLifecycle       *RecoveryLifecycle
-	recoveryInterval        time.Duration
-	runFinishedCallback     func(context.Context, refreshrun.JobRecord)
+	handler                       materializehttp.Handler
+	runs                          RunPersistence
+	schedules                     refreshschedule.Repository
+	service                       refreshrun.Service
+	manualIntents                 manualIntentRepository
+	manualIntentCreateAuditWriter PostgresRefreshAuditWriter
+	manualIntentCancelAuditWriter PostgresCancelAuditWriter
+	manualTargetID                string
+	manualIntentOwner             string
+	manualIntentInterval          time.Duration
+	refreshClock                  refreshschedule.Clock
+	scheduler                     Scheduler
+	reconcileSchedules            func(context.Context) error
+	scheduleInterval              time.Duration
+	leaseTimeout                  time.Duration
+	logger                        *slog.Logger
+	events                        EventStore
+	durableAudit                  bool
+	refreshExecution              apigencommand.AsyncExecutionContract
+	resolveIdentity               func(context.Context) (projectgraph.ServingIdentity, error)
+	currentCredential             func(context.Context) (access.APICredential, bool)
+	currentSessionEvidence        func(context.Context) (access.CredentialEvidence, bool)
+	scheduledAuthority            *DelegatedWorkloadAuthorityService
+	executionGrantID              string
+	resolveExecutionGrantID       func(context.Context, refreshschedule.Occurrence) (string, error)
+	publishedVersion              PublishedDataVersionResolver
+	recoveryLifecycle             *RecoveryLifecycle
+	recoveryInterval              time.Duration
+	runFinishedCallback           func(context.Context, refreshrun.JobRecord)
 
 	mu         sync.Mutex
 	background context.Context
@@ -193,6 +207,10 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if recoveryInterval <= 0 {
 		recoveryInterval = time.Minute
 	}
+	manualIntentInterval := config.ManualIntentInterval
+	if manualIntentInterval <= 0 {
+		manualIntentInterval = 2 * time.Second
+	}
 	leaseTimeout := config.LeaseTimeout
 	if leaseTimeout <= 0 {
 		leaseTimeout = 2 * time.Minute
@@ -210,6 +228,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		refreshClock:       config.Clock,
 		reconcileSchedules: config.ReconcileSchedules, scheduleInterval: interval,
 		leaseTimeout: leaseTimeout, logger: logger,
+		manualTargetID: strings.TrimSpace(config.TargetID), manualIntentInterval: manualIntentInterval,
 		events: config.Events,
 		// Native PostgreSQL admission records the generated create audit intent
 		// inside the same transaction as the operation, run tree, queue job, and
@@ -269,6 +288,15 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		if !ok || publication == nil || platformtypednil.IsNil(publication.nativeFinalizer) {
 			return nil, errors.New("production refresh module requires a native finalizer")
 		}
+		if strings.TrimSpace(config.TargetID) == "" {
+			return nil, errors.New("production refresh module requires a canonical manual-intent target id")
+		}
+		if config.ResolveIdentity == nil {
+			return nil, errors.New("production refresh module requires a manual-intent serving identity resolver")
+		}
+		if config.Service.ResolveSourceDigest == nil || (config.Service.Artifacts == nil && config.Artifacts == nil) {
+			return nil, errors.New("production refresh module requires source digest and artifact resolvers for manual intents")
+		}
 	}
 	if config.RecoveryLifecycle != nil && persistence.Recovery == nil {
 		return nil, errors.New("refresh recovery persistence is required when recovery lifecycle is configured")
@@ -283,6 +311,21 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	m.service.Runs = m.runs
 	m.service.Publication = persistence.Publication
+	if persistence.isNative() {
+		m.manualIntents = persistence.nativeRepository
+		if nativeRuns, ok := m.runs.(*postgresRunPersistence); ok && nativeRuns != nil {
+			m.manualIntentCreateAuditWriter = nativeRuns.createAuditWriter
+			m.manualIntentCancelAuditWriter = nativeRuns.cancelAuditWriter
+		}
+		if config.Production && (m.manualIntentCreateAuditWriter == nil || m.manualIntentCancelAuditWriter == nil) {
+			return nil, errors.New("production refresh module requires native manual-intent audit writers")
+		}
+		owner, idErr := refreshpostgres.NewUUIDv7()
+		if idErr != nil {
+			return nil, fmt.Errorf("create manual refresh intent dispatcher identity: %w", idErr)
+		}
+		m.manualIntentOwner = owner
+	}
 	if config.RecoveryLifecycle != nil && persistence.Recovery != nil {
 		config.RecoveryLifecycle.Repository = persistence.Recovery
 	}
@@ -362,7 +405,7 @@ type PipelineUICommandInvocation struct {
 }
 
 func (*Module) BeginPipelineUICommand(ctx context.Context, invocation PipelineUICommandInvocation) (context.Context, error) {
-	if invocation.Action == "cancel" {
+	if invocation.Action == "cancel" || invocation.Action == "cancel-intent" {
 		started, _, err := refreshgen.BeginGenCancelRefreshRunCommand(ctx, refreshgen.GenCancelRefreshRunCommandInvocation{Surface: apigencommand.SurfaceUI, Project: invocation.Project, IdempotencyKey: invocation.IdempotencyKey, RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID})
 		return started, err
 	}
@@ -386,11 +429,11 @@ func (m *Module) ActiveServingIdentity(ctx context.Context) (projectgraph.Servin
 	return projectgraph.ServingIdentity{}, errors.New("refresh serving identity resolver is unavailable")
 }
 
-// QueuePipelineRefreshForUI queues a browser-originated run after the caller
-// has authorized the pipeline. It retains the same generated audit and
-// dispatch guarantees as the API command path.
-func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID, retryOf string) error {
-	if m == nil || m.service.Runs == nil {
+// QueuePipelineRefreshForUI records a durable browser-originated request after
+// the caller has authorized the pipeline. The dispatcher creates the immutable
+// run later, after the target-wide root-run gate opens.
+func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID, retryOf, idempotencyKey string) error {
+	if m == nil || m.runs == nil {
 		return errors.New("refresh service is unavailable")
 	}
 	pipeline, err := projectgraph.NewResourceID(pipelineID)
@@ -411,25 +454,16 @@ func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity project
 			return errors.New("refresh retry is invalid")
 		}
 	}
-	authority, err := m.captureAuthority(ctx, identity, pipeline, principalID)
-	if err != nil {
-		return err
-	}
 	// ADR-0014 models a retry as a fresh manual invocation. The prior run is
 	// validated above for UI safety, but it is not retained as mutable execution
-	// state on the new immutable pipeline occurrence.
-	result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
-		Identity: identity, PipelineID: pipeline, PrincipalID: principalID,
-		EstimatedMemoryBytes: 1, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
-		Authority: authority,
+	// state on the new immutable pipeline occurrence. Browser Run now records a
+	// generation-independent intent; the background dispatcher binds the run
+	// only when it becomes the target-wide next invocation.
+	_, err = m.QueueManualPipelineIntent(ctx, ManualPipelineIntentCommand{
+		Identity: identity, PipelineID: pipeline.String(), PrincipalID: principalID,
+		IdempotencyKey: idempotencyKey, RetryOf: retryOf,
 	})
-	if err != nil {
-		return err
-	}
-	if err := m.verifyRunCreated(ctx, result.Run); err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // CancelPipelineRefreshForUI cancels a queued root pipeline run and verifies
@@ -457,12 +491,18 @@ func (m *Module) CancelPipelineRefreshForUI(ctx context.Context, identity projec
 	if err != nil || !scope.Matches(prior.Identity) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.ParentRunID != "" || prior.PipelineID != pipeline || prior.TargetID != pipeline {
 		return errors.New("refresh run not found")
 	}
+	if prior.Status != refreshrun.RunStatusQueued {
+		return refreshrun.ErrRunNotCancellable
+	}
 	cancel, cancelErr := m.readRuns()
 	if cancelErr != nil {
 		return cancelErr
 	}
 	row, err := cancel.CancelRun(ctx, prior.Identity, runID)
 	if err != nil {
+		if errors.Is(err, refreshpostgres.ErrStaleFence) {
+			return refreshrun.ErrRunNotCancellable
+		}
 		return err
 	}
 	return m.verifyRunCancelled(ctx, row)
@@ -508,7 +548,7 @@ func (m *Module) DataVersion(ctx context.Context, projectID, environment, modelI
 	if err != nil || !found {
 		return AssetDataVersion{}, found, err
 	}
-	return AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}, true, nil
+	return AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source, PipelineID: version.PipelineID.String(), RunID: version.RunID}, true, nil
 }
 
 // AssetRefreshState returns the durable presentation state for a refresh
@@ -580,7 +620,7 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 	if version, ok, err := m.dataVersionForIdentity(ctx, identity, modelID); err != nil {
 		return state, err
 	} else if ok {
-		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}
+		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source, PipelineID: version.PipelineID.String(), RunID: version.RunID}
 	}
 	return state, nil
 }
@@ -600,6 +640,30 @@ func (m *Module) MonitorRuns(ctx context.Context, projectID projectgraph.Resourc
 		return refreshrun.MonitorPage{}, err
 	}
 	return store.MonitorRuns(ctx, scope, filter)
+}
+
+// GetRun and ListChildRuns expose only project/environment-scoped durable run
+// evidence to browser investigation. The caller still authorizes the pipeline.
+func (m *Module) GetRun(ctx context.Context, scope refreshrun.ReadScope, runID string) (refreshrun.RunRecord, error) {
+	if err := scope.Validate(); err != nil {
+		return refreshrun.RunRecord{}, err
+	}
+	store, err := m.readRuns()
+	if err != nil {
+		return refreshrun.RunRecord{}, err
+	}
+	return store.GetRun(ctx, scope, runID)
+}
+
+func (m *Module) ListChildRuns(ctx context.Context, scope refreshrun.ReadScope, parentRunID string) ([]refreshrun.RunRecord, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	store, err := m.readRuns()
+	if err != nil {
+		return nil, err
+	}
+	return store.ListChildRuns(ctx, scope, parentRunID)
 }
 
 // ModelRefreshState returns the durable child-run history for one Model.
@@ -702,7 +766,7 @@ func (m *Module) SemanticModelRefreshState(ctx context.Context, projectID projec
 	if version, found, err := m.dataVersionForIdentity(ctx, identity, semanticModelID); err != nil {
 		return state, err
 	} else if found {
-		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}
+		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source, PipelineID: version.PipelineID.String(), RunID: version.RunID}
 	}
 	return state, nil
 }
@@ -752,7 +816,7 @@ func (m *Module) dataVersionForIdentity(ctx context.Context, identity projectgra
 
 func assetRefreshRun(run refreshrun.RunRecord) AssetRefreshRun {
 	return AssetRefreshRun{
-		ID: run.ID, Environment: run.Identity.Environment, ModelID: run.SemanticModelID.String(),
+		ID: run.ID, Environment: run.Identity.Environment, PipelineID: run.PipelineID.String(), ModelID: run.SemanticModelID.String(),
 		ServingStateID: run.Identity.GenerationID, PrincipalID: run.PrincipalID,
 		PrincipalDisplayName: run.PrincipalDisplayName, TriggerType: run.TriggerType,
 		ParentRunID: run.ParentRunID, TargetGeneration: run.TargetRevision,
@@ -933,6 +997,10 @@ func (m *Module) Start(ctx context.Context) error {
 	if m.recoveryLifecycle != nil {
 		m.wg.Add(1)
 		go m.runRecoveryLifecycle(background)
+	}
+	if m.manualIntentReady() {
+		m.wg.Add(1)
+		go m.runManualIntentDispatcher(background)
 	}
 	m.mu.Unlock()
 	return nil

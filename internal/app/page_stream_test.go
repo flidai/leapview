@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
@@ -14,6 +15,18 @@ import (
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+func TestPipelineDetailPageStreamRoutesAreRegisteredInApplication(t *testing.T) {
+	server := assembleRuntime(fakeMetrics{}, assemblyConfig{})
+	for _, route := range []string{routePipelineDetail, routePipelineRunDetail} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/updates?route="+route+"&asset=pipeline%3Asales&run=run%3Aone", nil)
+		server.Routes().ServeHTTP(recorder, request)
+		if recorder.Code == http.StatusBadRequest && strings.Contains(recorder.Body.String(), "unknown updates route") {
+			t.Fatalf("page stream route %q was not registered in the application", route)
+		}
+	}
+}
 
 func TestPageStreamRouteInventoryIsProjectOwned(t *testing.T) {
 	got := map[string]struct{}{

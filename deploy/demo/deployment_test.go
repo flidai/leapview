@@ -86,8 +86,9 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"approveDeliveryPublicationApproval",
 		"getDeliveryPublicationApproval",
 		"getDeliveryPublicationEvidence",
-		"getDeliveryGenerationStatus",
-		"getProject",
+		"--wait-generation",
+		"--generation \"$generation_id\"",
+		"--candidate \"$candidate_id\"",
 		"browser entry did not redirect unauthenticated visitors to /login",
 		"$demo_target/login",
 		"DEMO_PROJECT_ID",
@@ -95,10 +96,25 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"grant_type=client_credentials",
 		"DEMO_PUBLISHER_CLIENT_ID",
 		"DEMO_RELEASE_CLIENT_ID",
-		"'RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH'",
-		"'PROJECT_ADMIN'",
+		"demo_client_contract.py",
+		"--role publisher",
+		"--role release",
+		"DEMO_PERMISSION_PROFILE",
+		"DEMO_CLONE_ONLY",
+		"--proxy \"$clone_proxy\"",
+		"--noproxy ''",
 	} {
 		require.Contains(t, script, required)
+	}
+	clientContract := read(t, filepath.Join(root, "scripts", "demo_client_contract.py"))
+	for _, required := range []string{
+		"legacy-capabilities/v1",
+		"leapview.permissions/v1",
+		"RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH",
+		"connection.manage connection.read connection.use delivery.build delivery.plan delivery.publish delivery.read model.read semantic.consume source.read",
+		"delivery.approve delivery.read",
+	} {
+		require.Contains(t, clientContract, required)
 	}
 	for _, forbidden := range []string{
 		"demo_image",

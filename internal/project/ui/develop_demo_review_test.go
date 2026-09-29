@@ -278,6 +278,27 @@ func TestRefreshHistoryUsesAvailableTimestampsAndReadablePrincipals(t *testing.T
 	}
 }
 
+func TestSemanticRefreshHistoryLinksOnlyKnownRootPipelineRuns(t *testing.T) {
+	state := AssetRefreshState{Runs: []AssetRefreshRun{
+		{ID: "run:sales", PipelineID: "pipeline:sales", Status: "succeeded"},
+		{ID: "run:child", PipelineID: "pipeline:sales", ParentRunID: "run:sales", Status: "failed"},
+		{ID: "run:unknown", Status: "failed"},
+	}}
+	table := assetRefreshesTable(state)
+	if len(table.Columns) < 3 || table.Columns[2].ID != "run" || table.Columns[2].Kind == nil || *table.Columns[2].Kind != "link" {
+		t.Fatalf("history columns = %#v, want a visible run link", table.Columns)
+	}
+	if got := table.Rows[0]["runHref"]; got != "/pipelines/pipeline:sales/runs/run:sales" {
+		t.Fatalf("root run href = %#v", got)
+	}
+	if got := table.Rows[1]["runHref"]; got != "" {
+		t.Fatalf("child run href = %#v, want no fabricated pipeline detail URL", got)
+	}
+	if got := table.Rows[2]["runHref"]; got != "" {
+		t.Fatalf("unknown run href = %#v, want no fabricated pipeline detail URL", got)
+	}
+}
+
 func TestPrincipalDisplayLabelDoesNotInferServiceAccountFromUUID(t *testing.T) {
 	if got := principalDisplayLabel("123e4567-e89b-12d3-a456-426614174000"); got != "Unknown actor" {
 		t.Fatalf("UUID principal label = %q, want neutral unknown actor label", got)

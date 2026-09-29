@@ -17,6 +17,20 @@ import (
 
 var errAssetNotFound = errors.New("project asset not found")
 
+// PipelineWaitingIntent is the browser adapter's request-stage read model.
+// The app composition root maps refresh-module records into this transport
+// shape without importing the project's UI implementation.
+type PipelineWaitingIntent struct {
+	IntentID      string
+	PipelineID    string
+	Status        string
+	CreatedAt     string
+	Reason        string
+	QueuePosition int64
+	RunID         string
+	CancelAllowed bool
+}
+
 // pipelineMonitorState is the single read-model builder used by the initial
 // document, stream bootstrap, and post-command refresh paths.
 func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID projectgraph.ResourceID, assets []projectview.DevelopAssetView) (projectui.PipelineMonitorState, error) {
@@ -33,44 +47,47 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 		RunCommand:    h.PipelineRunCommand,
 		CancelCommand: h.PipelineCancelCommand,
 	}
-	seenRuns := make(map[string]struct{})
 	for _, asset := range pipelines {
 		refresh, refreshErr := h.assetRefreshState(r.Context(), projectID, asset)
 		if refreshErr != nil {
 			refresh.Unavailable = true
 		}
 		canUse := h.pipelineMutationAllowed(r, asset.ID)
-		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{
-			Asset: asset, Refresh: refresh,
-			CanRun:    canUse && !refresh.Unavailable && state.RunCommand.OperationID() != "",
-			CanCancel: canUse && !refresh.Unavailable && state.CancelCommand.OperationID() != "",
-		})
-		for _, run := range refresh.Runs {
-			if run.ID == "" {
-				continue
-			}
-			if _, seen := seenRuns[run.ID]; seen {
-				continue
-			}
-			seenRuns[run.ID] = struct{}{}
-			switch run.Status {
-			case "running":
-				state.Capacity.Running++
-			case "queued":
-				state.Capacity.Queued++
-			case "prepared":
-				state.Capacity.Prepared++
+		publicationStatus := "none"
+		var publicationAt time.Time
+		if h.RunPublicationReader == nil || refresh.Unavailable {
+			publicationStatus = "unavailable"
+		} else if refresh.LatestSuccessful.ID != "" {
+			evidence, found, publicationErr := h.RunPublicationReader.RunPublication(r.Context(), refreshrun.ReadScope{ProjectID: projectID, Environment: h.Environment}, refresh.LatestSuccessful.ID)
+			if publicationErr != nil {
+				publicationStatus = "unavailable"
+			} else if found {
+				publicationStatus = "confirmed"
+				publicationAt = evidence.CommittedAt
 			}
 		}
+		semanticModelID := projectAssetPayloadResourceID(asset.Payload, "SemanticModel", "semanticModel", "SemanticModelID", "semanticModelId")
+		semanticModelTitle := pipelineSemanticModelTitle(semanticModelID.String(), assets)
+		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{
+			Asset: asset, Refresh: refresh,
+			CanRun:             canUse && !refresh.Unavailable && state.RunCommand.OperationID() != "",
+			CanCancel:          canUse && !refresh.Unavailable && state.CancelCommand.OperationID() != "",
+			SemanticModelTitle: semanticModelTitle,
+			PublicationAt:      publicationAt, PublicationStatus: publicationStatus,
+		})
 	}
-	if r.URL.Path == "/runs" || r.URL.Query().Get("view") == "runs" {
+	state.WaitingIntents, err = h.pipelineWaitingIntents(r, projectID, visiblePipelineIDs(pipelines, ""))
+	if err != nil {
+		return projectui.PipelineMonitorState{}, err
+	}
+	if pipelineCollectionView(r) == "runs" {
 		if h.RunMonitor == nil {
 			return projectui.PipelineMonitorState{}, errors.New("run monitor is unavailable")
 		}
 		filter, rangeLabel, page := pipelineRunMonitorFilter(r, time.Now().UTC())
-		filter.AllowedPipelineIDs = make([]string, 0, len(pipelines))
+		selectedPipeline := strings.TrimSpace(r.URL.Query().Get("pipeline"))
+		filter.AllowedPipelineIDs = visiblePipelineIDs(pipelines, selectedPipeline)
 		for _, pipeline := range pipelines {
-			filter.AllowedPipelineIDs = append(filter.AllowedPipelineIDs, pipeline.ID)
 			if filter.Search != "" && (strings.Contains(strings.ToLower(pipeline.Title), strings.ToLower(filter.Search)) || strings.Contains(strings.ToLower(pipeline.Key), strings.ToLower(filter.Search))) {
 				filter.PipelineIDs = append(filter.PipelineIDs, pipeline.ID)
 			}
@@ -79,11 +96,11 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 		if err != nil {
 			return projectui.PipelineMonitorState{}, err
 		}
-		monitor := &projectui.PipelineRunMonitor{Query: filter.Search, Range: rangeLabel, Status: filter.Status, Trigger: filter.Trigger,
-			Page: page, PageSize: 25, Total: result.Total, Failed: result.Failed, Completed: result.Completed, Active: result.Active}
+		monitor := &projectui.PipelineRunMonitor{Query: filter.Search, Range: rangeLabel, Pipeline: selectedPipeline, Status: filter.Status, Trigger: filter.Trigger,
+			Page: page, PageSize: 25, Total: result.Total}
 		for _, run := range result.Runs {
 			monitor.Runs = append(monitor.Runs, projectui.PipelineMonitorRun{PipelineID: run.PipelineID.String(), Run: projectui.AssetRefreshRun{
-				ID: run.ID, Environment: run.Identity.Environment, ModelID: run.SemanticModelID.String(), ServingStateID: run.Identity.GenerationID,
+				ID: run.ID, Environment: run.Identity.Environment, PipelineID: run.PipelineID.String(), ModelID: run.SemanticModelID.String(), ServingStateID: run.Identity.GenerationID,
 				PrincipalID: run.PrincipalID, PrincipalDisplayName: run.PrincipalDisplayName, TriggerType: run.TriggerType,
 				ParentRunID: run.ParentRunID, TargetGeneration: run.TargetRevision, Status: run.Status, CreatedAt: run.CreatedAt,
 				UpdatedAt: run.UpdatedAt, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Error: run.Error,
@@ -92,6 +109,89 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 		state.RunMonitor = monitor
 	}
 	return state, nil
+}
+
+func (h *BrowserHandler) pipelineWaitingIntents(r *http.Request, projectID projectgraph.ResourceID, visibleIDs []string) ([]projectui.PipelineWaitingIntent, error) {
+	if h.ReadPipelineIntents == nil || len(visibleIDs) == 0 {
+		return nil, nil
+	}
+	intents, err := h.ReadPipelineIntents(r.Context(), refreshrun.ReadScope{ProjectID: projectID, Environment: h.Environment})
+	if err != nil {
+		return nil, err
+	}
+	visible := make(map[string]struct{}, len(visibleIDs))
+	for _, id := range visibleIDs {
+		visible[id] = struct{}{}
+	}
+	result := make([]projectui.PipelineWaitingIntent, 0, len(intents))
+	for _, intent := range intents {
+		if _, allowed := visible[intent.PipelineID]; allowed {
+			result = append(result, projectui.PipelineWaitingIntent{
+				IntentID: intent.IntentID, PipelineID: intent.PipelineID, Status: intent.Status,
+				CreatedAt: intent.CreatedAt, Reason: intent.Reason, QueuePosition: intent.QueuePosition,
+				RunID: intent.RunID, CancelAllowed: intent.CancelAllowed,
+			})
+		}
+	}
+	return result, nil
+}
+
+func pipelineSemanticModelTitle(reference string, assets []projectview.DevelopAssetView) string {
+	reference = strings.TrimSpace(reference)
+	if reference == "" {
+		return ""
+	}
+	for _, asset := range assets {
+		if asset.Type == string(projectview.AssetTypeSemanticModel) && strings.TrimSpace(asset.ID) == reference {
+			return firstProjectText(asset.Title, asset.Key)
+		}
+	}
+	want := normalizeSemanticModelReference(reference)
+	for _, asset := range assets {
+		if asset.Type != string(projectview.AssetTypeSemanticModel) {
+			continue
+		}
+		if normalizeSemanticModelReference(asset.ID) == want || normalizeSemanticModelReference(asset.Key) == want {
+			return firstProjectText(asset.Title, asset.Key)
+		}
+	}
+	return ""
+}
+
+func firstProjectText(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func normalizeSemanticModelReference(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, prefix := range []string{"semantic-model:", "semantic_model:", "semantic:", "semantic-model/", "semantic_model/", "semantic/"} {
+		if strings.HasPrefix(value, prefix) {
+			return strings.TrimPrefix(value, prefix)
+		}
+	}
+	return value
+}
+
+func visiblePipelineIDs(pipelines []projectview.DevelopAssetView, selected string) []string {
+	ids := make([]string, 0, len(pipelines))
+	for _, pipeline := range pipelines {
+		if selected == "" || selected == pipeline.ID {
+			ids = append(ids, pipeline.ID)
+		}
+	}
+	return ids
+}
+
+func pipelineCollectionView(r *http.Request) string {
+	if r != nil && r.URL != nil && (r.URL.Path == "/pipelines/runs" || r.URL.Query().Get("view") == "runs") {
+		return "runs"
+	}
+	return "pipelines"
 }
 
 func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.MonitorFilter, string, int64) {
@@ -110,7 +210,9 @@ func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.Monito
 	}
 	status := strings.ToLower(strings.TrimSpace(query.Get("status")))
 	switch status {
-	case "queued", "running", "prepared", "succeeded", "failed", "cancelled", "superseded", "skipped":
+	case "queued", "running", "succeeded", "failed", "cancelled", "superseded", "skipped":
+	case "prepared":
+		status = "running"
 	default:
 		status = ""
 	}

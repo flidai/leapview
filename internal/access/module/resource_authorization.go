@@ -91,6 +91,23 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
+		if hasCredential && credential.Authoring != nil {
+			// Workload and scoped CLI credentials are an independent attenuation
+			// ceiling on the snapshot grant. They are not REST API tokens, but
+			// still need a validated credential identity, configured instance
+			// binding, and the exact operation pairs in their authoring scope.
+			if strings.TrimSpace(credential.Token.ID) == "" || credential.Token.PrincipalID != principal.ID ||
+				credential.Principal.ID != principal.ID || a.module.authoringInstanceID() == "" ||
+				!a.module.RequestAllowsTypedPermissions(r, projectID, pairs) {
+				for _, resource := range resources {
+					a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resource, capability)
+				}
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
 		if typedToken {
 			// Authentication normally binds these identities before this
 			// middleware runs, but keep the typed operation boundary

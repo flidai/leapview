@@ -48,7 +48,7 @@ test('personal API tokens use the standard list with edit navigation and inline 
         rows: Array.from(table.querySelectorAll('tbody tr')).map((row) => ({
           name: row.querySelector('.entity-list-title')?.textContent?.trim(),
           cells: row.children.length,
-          status: row.querySelector('td:nth-child(7)')?.textContent?.trim(),
+          status: row.querySelector('td:nth-child(7) .entity-list-status > span:last-child')?.textContent?.trim(),
           created: row.querySelector<HTMLTimeElement>('td:nth-child(5) time')?.dateTime,
           modified: row.querySelector<HTMLTimeElement>('td:nth-child(6) time')?.dateTime,
         })),
@@ -131,9 +131,10 @@ test('personal API tokens persist and render an explicit empty authority list', 
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       personal.tokenView = 'list'
       await personal.updateComplete
+      const permissionCell = root.querySelector('lv-entity-list .entity-list-table-row td:nth-child(3)')
       return {
         command,
-        permissionSummary: root.querySelector('lv-entity-list .entity-list-table-row td:nth-child(3)')?.textContent?.trim(),
+        permissionSummary: permissionCell?.textContent?.replace(permissionCell.querySelector('.entity-list-mobile-cell-label')?.textContent ?? '', '').trim(),
         editHref: root.querySelector('lv-entity-list .entity-list-identity')?.getAttribute('href'),
       }
     })
@@ -279,10 +280,11 @@ test('personal API token UI submits action-target pairs without a Cartesian expa
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       personal.tokenView = 'list'
       await personal.updateComplete
+      const permissionCell = root.querySelector('lv-entity-list .entity-list-table-row td:nth-child(3)')
       return {
         command,
         selectedScope,
-        summary: root.querySelector('lv-entity-list .entity-list-table-row td:nth-child(3)')?.textContent?.trim(),
+        summary: permissionCell?.textContent?.replace(permissionCell.querySelector('.entity-list-mobile-cell-label')?.textContent ?? '', '').trim(),
         inlineDetails: Boolean(root.querySelector('lv-entity-list details')),
       }
     })

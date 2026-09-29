@@ -142,6 +142,9 @@ func Provider(config Config) webpage.Provider {
 			area = ""
 		}
 		sidebarActive := context.Active
+		if sidebarActive == "runs" {
+			sidebarActive = "pipelines"
+		}
 		if fallbackToInsights {
 			sidebarActive = ""
 			if context.Active == "dashboard-catalog" {
@@ -245,8 +248,12 @@ func developNavigation(access ProductNavigationAccess) []Group {
 	if access.CanDashboardCatalog {
 		catalog = append(catalog, Item{ID: "dashboard-catalog", Label: "Dashboards", Href: "/dashboards", Icon: "dashboard"})
 	}
-	if access.CanPipelines {
-		catalog = append(catalog, Item{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow"})
+	if access.CanPipelines || access.CanRuns {
+		href := "/pipelines"
+		if !access.CanPipelines {
+			href = "/pipelines/runs"
+		}
+		catalog = append(catalog, Item{ID: "pipelines", Label: "Pipelines", Href: href, Icon: "workflow"})
 	}
 	if access.CanConnections {
 		catalog = append(catalog, Item{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"})
@@ -254,9 +261,6 @@ func developNavigation(access ProductNavigationAccess) []Group {
 	groups := []Group{}
 	if len(catalog) > 0 {
 		groups = append(groups, Group{Label: "Catalog", Items: catalog})
-	}
-	if access.CanRuns {
-		groups = append(groups, Group{Label: "Operations", Items: []Item{{ID: "runs", Label: "Runs", Href: "/runs", Icon: "activity"}}})
 	}
 	return groups
 }
@@ -288,7 +292,7 @@ func (access ProductNavigationAccess) developHref() string {
 	case access.CanConnections:
 		return "/connections"
 	case access.CanRuns:
-		return "/runs"
+		return "/pipelines/runs"
 	default:
 		return "/"
 	}

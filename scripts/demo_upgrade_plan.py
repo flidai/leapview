@@ -4,6 +4,8 @@ import hashlib
 import re
 import subprocess
 
+from demo_release_contract import read_contract
+
 MIGRATIONS = 'internal/platform/postgres/migrations'
 ENGINE_PREFIXES = ('github.com/duckdb/', 'github.com/riverqueue/')
 
@@ -23,7 +25,7 @@ def source_compatibility(revision):
     return engines, hashlib.sha256(match[1]).hexdigest()
 
 
-def classify(current, target, before, after, compatibility_changes, policy_changed=False):
+def classify(current, target, before, after, compatibility_changes, policy_changed=False, permission_changed=False):
     if target < current:
         raise ValueError('Downgrade requires a separately admitted recovery operation')
     for name, digest in before.items():
@@ -39,7 +41,7 @@ def classify(current, target, before, after, compatibility_changes, policy_chang
     if sorted(versions) != list(range(current + 1, target + 1)):
         raise ValueError('Forward migration chain is missing, ambiguous, or rewrites history')
     mode = 'database-upgrade-required' if target != current else 'image-only'
-    if policy_changed: mode = 'database-upgrade-required'
+    if policy_changed or permission_changed: mode = 'database-upgrade-required'
     if compatibility_changes: mode = 'review-required'
     return dict(mode=mode, currentSchema=current, candidateSchema=target,
                 pendingMigrations=pending, pendingMigrationDigests={name: after[name] for name in pending},
@@ -72,7 +74,10 @@ def inspect_transition(previous, candidate):
     old_engines, old_policy = source_compatibility(previous)
     new_engines, new_policy = source_compatibility(candidate)
     changes = [name for name in set(old_engines) | set(new_engines) if old_engines.get(name) != new_engines.get(name)]
-    result = classify(current, target, before, after, changes, old_policy != new_policy)
-    result['sourceBefore'] = dict(schema=current,migrations=before,engines=old_engines,rolePolicy=old_policy)
-    result['sourceAfter'] = dict(schema=target,migrations=after,engines=new_engines,rolePolicy=new_policy)
+    old_contract = read_contract(previous, git)
+    new_contract = read_contract(candidate, git)
+    result = classify(current, target, before, after, changes, old_policy != new_policy,
+                      old_contract['permissionProfile'] != new_contract['permissionProfile'])
+    result['sourceBefore'] = dict(schema=current,migrations=before,engines=old_engines,rolePolicy=old_policy,permissionProfile=old_contract['permissionProfile'])
+    result['sourceAfter'] = dict(schema=target,migrations=after,engines=new_engines,rolePolicy=new_policy,permissionProfile=new_contract['permissionProfile'])
     return dict(result, predecessorRevision=previous, candidateRevision=candidate)

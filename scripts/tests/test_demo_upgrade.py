@@ -1,5 +1,7 @@
 """Read-only classification of immutable demo upgrade candidates."""
 import hashlib
+import json
+import sys
 import importlib.util
 import pathlib
 import unittest
@@ -8,6 +10,7 @@ import subprocess
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT/'scripts'))
 spec = importlib.util.spec_from_file_location('demo_upgrade_plan', ROOT/'scripts/demo_upgrade_plan.py')
 plan = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plan)
@@ -68,6 +71,9 @@ class UpgradePlanTests(unittest.TestCase):
 
 
 def write_compatibility(root):
+    contract = root/'internal/platform/releasecontract/contract.json'
+    contract.parent.mkdir(parents=True, exist_ok=True)
+    contract.write_text((ROOT/'internal/platform/releasecontract/contract.json').read_text())
     (root/'go.mod').write_text('require (\n github.com/duckdb/duckdb-go/v2 v2.1.0\n github.com/riverqueue/river v0.47.0\n)\n')
     policy = root/'internal/app/postgresbaseline/baseline.go'
     policy.parent.mkdir(parents=True,exist_ok=True)

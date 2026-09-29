@@ -207,6 +207,10 @@ func dashboardPrewarmConfig(cfg config.Config) dashboardmodule.PrewarmConfig {
 // The retained PostgreSQL lifecycle is an application component, so pool
 // shutdown follows worker/runtime-host shutdown on the reverse component path.
 func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool) (*Application, error) {
+	return buildPostgresTargetWithTransition(ctx, cfg, production, nil)
+}
+
+func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, production bool, runnerOut **AccessTransitionRunner) (*Application, error) {
 	cfg.Production = production
 	bootstrap, err := openPostgresControlPlane(ctx, cfg)
 	if err != nil {
@@ -633,6 +637,9 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	graph.ApprovalAuthorizer.SetCandidateResolver(func(resolveCtx context.Context, generationID, principalID string) (string, string, []access.PermissionPair, error) {
 		return candidateApprovalPermissions(resolveCtx, graph.ServingState, nativeProjectSource.Objects, accessBundle.Module.AuthorizationSubjects, generationID, principalID)
 	})
+	graph.ApprovalAuthorizer.CandidateSnapshotDigest = func(resolveCtx context.Context, generationID string) (string, error) {
+		return candidateApprovalSnapshotDigest(resolveCtx, graph.ServingState, nativeProjectSource.Objects, generationID)
+	}
 	semanticCatalogAuditRecorder, _ := accessBundle.Repository.(access.CanonicalAuditRecorder)
 	projectCatalogService, err := projectcatalog.NewService(projectCatalogLeaseProvider{provider: runtimeHost.Provider()}, projectCatalogSubjectResolver{resolve: accessBundle.Module.AuthorizationSubjects},
 		projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility(instanceID, accessBundle.Module.ResolveSemanticAttributes, semanticCatalogAuditRecorder)),
@@ -1044,7 +1051,52 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		return errors.Join(closeRuntimeHost(), closeResources())
 	}
 	components := []Lifecycle{bootstrapLifecycle, resourceLifecycle, runtimeHostLifecycle, refreshChanges, runtimeLifecycle}
-	return newApplication(handler, components), nil
+	application := newApplication(handler, components)
+	transitionExecute := func(transitionCtx context.Context, request AccessTransitionExecutionRequest) (AccessTransitionExecutionResult, error) {
+		if routes.deploymentModule == nil {
+			return AccessTransitionExecutionResult{}, errors.New("native deployment module is unavailable for access transition")
+		}
+		transitionSnapshotDigests := func(digestCtx context.Context, generationID string) (deploymentmodule.AccessTransitionSnapshotDigests, error) {
+			operator, err := nativeDeliveryReader.OperatorSnapshot(digestCtx, instanceID)
+			if err != nil {
+				return deploymentmodule.AccessTransitionSnapshotDigests{}, err
+			}
+			if operator.TargetID != instanceID || operator.ProjectID != request.Intent.ProjectID || operator.Environment != string(environment) ||
+				(operator.ActiveGenerationID != request.Intent.ExpectedServingGeneration && operator.ActiveGenerationID != generationID) {
+				return deploymentmodule.AccessTransitionSnapshotDigests{}, errors.New("access-transition snapshot target or active generation changed")
+			}
+			generation, err := nativeDeliveryReader.LoadGeneration(digestCtx, generationID)
+			if err != nil {
+				return deploymentmodule.AccessTransitionSnapshotDigests{}, err
+			}
+			if generation.GenerationID != generationID || generation.TargetID != instanceID {
+				return deploymentmodule.AccessTransitionSnapshotDigests{}, errors.New("access-transition snapshot generation belongs to another target")
+			}
+			snapshotReader, ok := accessBundle.Repository.(interface {
+				AuthorizationSnapshotDigest(context.Context, string, string, string) (string, bool, error)
+			})
+			if !ok {
+				return deploymentmodule.AccessTransitionSnapshotDigests{}, errors.New("immutable authorization snapshot digest reader is unavailable")
+			}
+			return resolveAccessTransitionSnapshotDigests(
+				digestCtx, instanceID, request.Intent.ProjectID, string(environment),
+				request.Intent.ExpectedServingGeneration, operator.ActiveGenerationID,
+				generationID, generation.TargetID, snapshotReader,
+				func(candidateCtx context.Context, candidateGenerationID string) (deploymentmodule.AccessTransitionSnapshotDigests, error) {
+					return candidateApprovalSnapshotDigests(candidateCtx, graph.ServingState, nativeProjectSource.Objects, candidateGenerationID)
+				},
+			)
+		}
+		return accessTransitionExecutionFromModules(
+			transitionCtx, request, instanceID, string(environment), accessBundle.Module, policyReader,
+			routes.deploymentModule,
+			transitionSnapshotDigests,
+		)
+	}
+	if runnerOut != nil {
+		*runnerOut = &AccessTransitionRunner{lifecycle: application.lifecycle, execute: transitionExecute}
+	}
+	return application, nil
 }
 
 // postgresResourceLifecycle owns capability resources that are safe to start
