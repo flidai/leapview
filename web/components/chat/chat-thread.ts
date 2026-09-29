@@ -1,25 +1,21 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronRight, Check, Copy, FileText, LayoutDashboard, LayoutPanelTop, Pencil, Waypoints, Wrench, type IconNode } from 'lucide'
+import { ChartColumn, Check, ChevronRight, Copy, Pencil } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import type { ChatArtifactSignal, ChatStatus, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { agentIcon } from './agent-icon'
 import { referenceHierarchy, referenceIcon, referenceKindLabel } from './reference'
 import { chatThreadStyles } from './chat-thread-styles'
+import { dataExplorerURL } from '../data/data-explorer-url'
+import type { DashboardTimeGrain } from '../../generated/dashboard'
+import type { DataExplorerCommand } from '../../generated/signals'
 import '../shared/markdown-view'
-import '../shared/code-block'
 import '../shared/visual-artifact'
 
 type ChatRenderUnit =
   | { kind: 'user'; item: ChatTranscriptItemSignal }
-  | { kind: 'agent'; items: ChatTranscriptItemSignal[] }
-
-type ToolPreviewLanguage = 'json' | 'toon' | 'text' | 'yaml'
-type ChatTranscriptItemWithFormats = ChatTranscriptItemSignal & {
-  inputFormat?: string
-  resultFormat?: string
-}
+  | { kind: 'agent'; items: ChatTranscriptItemSignal[]; prompt?: ChatTranscriptItemSignal }
 
 const jsonConverter = <T,>(fallback: T) => ({
   fromAttribute(value: string | null): T {
@@ -43,7 +39,6 @@ class ChatThread extends LitElement {
   @property({ attribute: 'status', converter: jsonConverter<ChatStatus>({ enabled: false, running: false }) }) status: ChatStatus = { enabled: false, running: false }
   @property({ attribute: 'conversation-id' }) conversationId = ''
   @property({ reflect: true }) surface: 'page' | 'drawer' = 'page'
-  @state() private expandedToolCalls = new Set<string>()
   @state() private copiedId = ''
   @state() private copyError = ''
   private copyTimer = 0
@@ -54,16 +49,41 @@ class ChatThread extends LitElement {
 
   render() {
     const transcript = this.resolvedTranscript
-    const visibleTranscript = this.surface === 'drawer'
-      ? transcript.filter((item) => {
-        if (item.kind !== 'tool') return true
-        const status = this.toolStatus(item)
-        return status === 'error' || (status === 'complete' && Boolean(item.artifact))
-      })
-      : transcript
+    const recoveredErrors = new Set<ChatTranscriptItemSignal>()
+    const earlierAssistantMessages = new Set<ChatTranscriptItemSignal>()
+    const completedTools = new Set<string>()
+    let hasLaterAssistant = false
+    let latestUserIndex = -1
+    for (let index = transcript.length - 1; index >= 0; index--) {
+      const item = transcript[index]
+      if (item.kind === 'user') {
+        if (latestUserIndex < 0) latestUserIndex = index
+        completedTools.clear()
+        hasLaterAssistant = false
+      } else if (item.kind === 'tool' && item.name) {
+        const requestKey = toolRequestKey(item)
+        if (requestKey && this.toolStatus(item) === 'complete') completedTools.add(requestKey)
+        else if (requestKey && this.toolStatus(item) === 'error' && completedTools.has(requestKey)) recoveredErrors.add(item)
+      } else if (item.kind === 'assistant' || item.kind === 'summary') {
+        if (hasLaterAssistant) earlierAssistantMessages.add(item)
+        hasLaterAssistant = true
+      }
+    }
+    const visibleTranscript = transcript.filter((item, index) => {
+      if (earlierAssistantMessages.has(item)) return false
+      const activeRunItem = this.status.running && (this.status.runId && item.runId
+        ? item.runId === this.status.runId
+        : index > latestUserIndex)
+      if (activeRunItem && (item.kind === 'assistant' || item.kind === 'summary')) return false
+      if (item.kind !== 'tool') return true
+      const status = this.toolStatus(item)
+      return (status === 'error' && !activeRunItem && !recoveredErrors.has(item)) || (status === 'complete' && Boolean(item.artifact))
+    })
     const unavailable = !this.status.enabled && transcript.length === 0
-    const empty = visibleTranscript.length === 0 && !this.status.running
-    const showWorking = this.status.running && (this.surface === 'drawer' || !transcript.some((item) => item.kind === 'tool' && this.toolStatus(item) === 'running'))
+    const empty = transcript.length === 0 && !this.status.running
+    const showWorking = this.status.running
+    const visibleItems = new Set(visibleTranscript)
+    const units = groupTranscript(transcript)
 
     return html`
       <div class="thread">
@@ -73,7 +93,7 @@ class ChatThread extends LitElement {
             ${unavailable ? this.renderEmptyState('Agent unavailable', this.status.error || 'Agent is not configured.') : nothing}
             ${!unavailable && this.status.error ? html`<div class="alert" role="alert">${this.status.error}</div>` : nothing}
             ${empty && !unavailable ? this.renderEmptyState('Start a conversation') : nothing}
-            ${groupTranscript(visibleTranscript).map((unit) => this.renderUnit(unit))}
+            ${units.map((unit, index) => this.renderUnit(unit, visibleItems, earlierAssistantMessages, index === units.length - 1))}
             ${showWorking ? html`
               <div class="working" role="status" aria-label="Working" aria-live="polite">
                 <span class="working-dots" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -137,9 +157,13 @@ class ChatThread extends LitElement {
     `
   }
 
-  private renderUnit(unit: ChatRenderUnit) {
+  private renderUnit(unit: ChatRenderUnit, visibleItems: Set<ChatTranscriptItemSignal>, earlierAssistantMessages: Set<ChatTranscriptItemSignal>, latest: boolean) {
     if (unit.kind === 'user') return this.renderUserTurn(unit.item)
-    return this.renderAgentTurn(unit.items)
+    const items = unit.items.filter(item => visibleItems.has(item))
+    const running = this.status.running && latest && (!this.status.runId || unit.items.some(item => item.runId === this.status.runId))
+    const steps = unit.items.filter(item => item.kind === 'tool' || earlierAssistantMessages.has(item) || (running && (item.kind === 'assistant' || item.kind === 'summary')))
+    if (items.length === 0 && steps.length === 0) return nothing
+    return this.renderAgentTurn(items, steps, unit.prompt, unit.items, running)
   }
 
 	private renderUserTurn(item: ChatTranscriptItemSignal) {
@@ -168,16 +192,34 @@ class ChatThread extends LitElement {
 		`
 	}
 
-  private renderAgentTurn(items: ChatTranscriptItemSignal[]) {
+  private renderAgentTurn(items: ChatTranscriptItemSignal[], steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean) {
     const text = items.filter(item => item.kind === 'assistant').map(item => item.markdown || item.text || '').filter(Boolean).join('\n\n')
+    const hasVisualResult = !running && items.some(item => item.kind === 'tool' && this.toolStatus(item) === 'complete' && Boolean(item.artifact))
+    const context = hasVisualResult ? items.filter(item => item.kind === 'assistant' || item.kind === 'summary') : []
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
-          ${items.map((item) => this.renderAgentItem(item))}
+          ${steps.length > 0 ? this.renderRunSteps(steps, prompt, allItems, running, context) : nothing}
+          ${items.filter(item => !context.includes(item)).map((item) => this.renderAgentItem(item))}
         </div>
         ${text && !this.status.running ? this.messageActions(items[0].id, text, undefined, false) : nothing}
       </article>
     `
+  }
+
+  private renderRunSteps(steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean, context: ChatTranscriptItemSignal[]) {
+    const start = Date.parse(prompt?.createdAt || allItems[0]?.createdAt || '')
+    const end = Date.parse(allItems[allItems.length - 1]?.createdAt || '')
+    const elapsed = Number.isFinite(start) && Number.isFinite(end) && end >= start ? formatElapsed(end - start) : ''
+    const label = running ? 'Working' : elapsed ? `Worked for ${elapsed}` : 'View steps'
+    return html`<details class="run-steps">
+      <summary>${label}${lucideIcon(ChevronRight, { size: 16 })}</summary>
+      <ol class="run-step-list">
+        ${steps.map(item => item.kind === 'tool' ? html`<li class="run-step"><span>${toolStepName(item)}</span><span class="run-step-status">${toolStepStatus(this.toolStatus(item))}</span></li>`
+          : html`<li class="run-step">${item.markdown || item.text || ''}</li>`)}
+      </ol>
+      ${context.map(item => this.renderAgentItem(item))}
+    </details>`
   }
 
   private messageActions(id: string, text: string, prompt: ChatTranscriptItemSignal | undefined, user: boolean) {
@@ -215,7 +257,7 @@ class ChatThread extends LitElement {
   private renderAgentItem(item: ChatTranscriptItemSignal) {
     switch (item.kind) {
       case 'tool':
-        return this.renderTool(item)
+        return this.renderToolOutcome(item)
       case 'error':
         return this.renderMessage('error', item.text || item.error || '-', false, true)
       case 'assistant': {
@@ -230,7 +272,7 @@ class ChatThread extends LitElement {
 
   private renderMessage(role: string, content: string, renderMarkdown = false, error = false) {
     return html`
-      <article class=${['message', role, error ? 'error' : ''].filter(Boolean).join(' ')}>
+      <article class=${['message', role, error ? 'error' : ''].filter(Boolean).join(' ')} role=${error ? 'alert' : nothing}>
         ${this.renderBubble(content, renderMarkdown)}
       </article>
     `
@@ -245,71 +287,34 @@ class ChatThread extends LitElement {
     return html`<lv-markdown-view class="agent-markdown" .value=${content}></lv-markdown-view>`
   }
 
-  private renderTool(item: ChatTranscriptItemSignal) {
+  private renderToolOutcome(item: ChatTranscriptItemSignal) {
     const status = this.toolStatus(item)
-    if (this.surface === 'drawer' && status === 'complete' && item.artifact) return this.renderArtifact(item.artifact)
-    const label = toolCallLabel(item)
-    const key = toolCallKey(item)
-    const detailsID = toolDetailsID(key)
-    const expanded = this.expandedToolCalls.has(key)
-    const stateLabel = statusLabel(status)
-    return html`
-      <div
-        class=${['tool-call', item.artifact ? 'has-artifact' : '', status === 'running' ? 'running' : '', status === 'complete' ? 'done' : '', status === 'error' ? 'error' : '', status === 'interrupted' ? 'interrupted' : ''].filter(Boolean).join(' ')}
-        title=${`${label}: ${stateLabel}`}
-      >
-        <button
-          class="tool-trigger"
-          type="button"
-          aria-expanded=${expanded ? 'true' : 'false'}
-          aria-controls=${detailsID}
-          aria-label=${`${label}, ${stateLabel}. ${expanded ? 'Hide' : 'Show'} details`}
-          @click=${() => this.toggleToolCall(key)}
-        >
-          <span class="tool-icon" aria-hidden="true">${toolIcon(item.name)}</span>
-          <span class="activity-text">${label}</span>
-          <span class="tool-status" aria-hidden="true">${stateLabel}</span>
-          <span class="tool-chevron" aria-hidden="true">${chevronRightIcon()}</span>
-        </button>
-        ${status === 'complete' && item.artifact ? this.renderArtifact(item.artifact) : nothing}
-        ${expanded ? this.renderToolDetails(item, detailsID) : nothing}
-      </div>
-    `
+    if (status === 'complete' && item.artifact) return this.renderArtifact(item.artifact, item)
+    if (status === 'error') return this.renderMessage('error', item.error?.trim() || 'A requested operation failed.', false, true)
+    return nothing
   }
 
-  private renderArtifact(artifact: ChatArtifactSignal) {
+  private renderArtifact(artifact: ChatArtifactSignal, item?: ChatTranscriptItemSignal) {
     const payload = this.resolvedVisuals[artifact.id] || null
-    return html`<lv-visual-artifact type=${artifact.type} artifact-id=${artifact.id} .payload=${payload ?? null}></lv-visual-artifact>`
+    const explorerHref = payload && payload.visualID === artifact.id ? queryVisualExplorerURL(item, artifact.type, artifact.id) : ''
+    if (payload && (this.surface === 'page' || Boolean(explorerHref))) {
+      const title = payload?.spec.title?.trim() || artifact.summary?.trim() || 'Visual result'
+      const kind = ['table', 'matrix', 'pivot'].includes(payload.spec.kind) ? 'Table' : 'Chart'
+      return html`<button class="artifact-card" type="button" data-visual-id=${artifact.id} aria-label=${`Open visual details: ${title}`} @click=${() => this.openVisual(artifact.id, explorerHref, title)}>
+        <span class="artifact-card-icon" aria-hidden="true">${lucideIcon(ChartColumn, { size: 18 })}</span>
+        <span class="artifact-card-copy"><strong>${title}</strong><span>${kind} · Open details</span></span>
+        <span class="artifact-card-chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 18 })}</span>
+      </button>`
+    }
+    return html`<lv-visual-artifact type=${artifact.type} artifact-id=${artifact.id} .payload=${payload ?? null} .explorerHref=${explorerHref}></lv-visual-artifact>`
   }
 
-  private renderToolDetails(item: ChatTranscriptItemSignal, detailsID: string) {
-    const status = this.toolStatus(item)
-    return html`
-      <div class="tool-details" id=${detailsID}>
-        ${item.argumentsJson || item.inputJson ? this.renderToolCode('Input', item.argumentsJson || item.inputJson || '', toolInputLanguage(item)) : nothing}
-        ${item.resultJson ? this.renderToolCode(toolResultLabel(item, status), item.resultJson, toolResultLanguage(item)) : nothing}
-        ${item.error && !hasStructuredErrorResult(item.resultJson) ? html`<div class="tool-error" role="alert">${item.error}</div>` : nothing}
-        ${!item.argumentsJson && !item.inputJson && !item.resultJson && !item.error
-          ? html`<div class="tool-empty">No details available.</div>`
-          : nothing}
-      </div>
-    `
-  }
-
-  private renderToolCode(label: string, value: string, language: ToolPreviewLanguage) {
-    return html`
-      <div class="tool-detail-block">
-        <div class="tool-detail-label">${label}</div>
-        <lv-code-block compact language=${language} .code=${value}></lv-code-block>
-      </div>
-    `
-  }
-
-  private toggleToolCall(key: string) {
-    const next = new Set(this.expandedToolCalls)
-    if (next.has(key)) next.delete(key)
-    else next.add(key)
-    this.expandedToolCalls = next
+  private openVisual(artifactId: string, explorerHref: string, title: string): void {
+    this.dispatchEvent(new CustomEvent('lv-chat-visual-open', {
+      bubbles: true,
+      composed: true,
+      detail: { artifactId, explorerHref, title },
+    }))
   }
 
   private toolStatus(item: ChatTranscriptItemSignal): string {
@@ -321,6 +326,156 @@ class ChatThread extends LitElement {
   }
 }
 
+type JsonRecord = Record<string, unknown>
+type ExploreDimension = { sourceField: string; field: string; resultAlias?: string; grain?: DashboardTimeGrain; alias?: string }
+
+function queryVisualExplorerURL(item: ChatTranscriptItemSignal | undefined, artifactType: string, artifactID: string): string {
+  if (item?.kind !== 'tool' || item.name !== 'query_visual' || item.status !== 'complete' || !item.argumentsJson || !item.resultJson) return ''
+
+  let input: unknown
+  let result: unknown
+  try {
+    input = JSON.parse(item.argumentsJson)
+    result = JSON.parse(item.resultJson)
+  } catch {
+    return ''
+  }
+  if (!isRecord(input) || !isNonEmptyString(input.semanticModelId) || !isRecord(input.visual) || !isRecord(result)) return ''
+  if (!isRecord(result.semanticModelRef) || result.semanticModelRef.id !== input.semanticModelId || result.id !== artifactID || result.type !== artifactType || result.ok !== true || !isNonEmptyString(result.datasetId) || !Array.isArray(result.fields)) return ''
+  if (!isEmptyArray(input.filters)) return ''
+
+  const visual = input.visual
+  if (!isEmptyRecord(visual.datasets) || !isEmptyArray(visual.calculations) || !isEmptyArray(visual.interactions)) return ''
+  if (!isRecord(visual.query) || visual.query.type !== 'aggregate' || visual.type !== artifactType) return ''
+
+  const query = visual.query
+  if (!hasOnlyKeys(query, ['type', 'dimensions', 'metrics', 'sort', 'limit'])) return ''
+  if (!Array.isArray(query.dimensions) || !Array.isArray(query.metrics)) return ''
+
+  const dimensions: string[] = []
+  const sortFields = new Map<string, string>()
+  const selectedFields = new Set<string>()
+  const timeFields = new Set<string>()
+  let time: { field: string; grain: DashboardTimeGrain; alias?: string } | undefined
+  for (const value of query.dimensions) {
+    const dimension = exploreDimension(value, result.fields, result.semanticModelRef.id)
+    if (!dimension || selectedFields.has(dimension.field)) return ''
+    selectedFields.add(dimension.field)
+    if (dimension.grain) {
+      if (time) return ''
+      time = { field: dimension.field, grain: dimension.grain, ...(dimension.alias ? { alias: dimension.alias } : {}) }
+      timeFields.add(dimension.sourceField)
+      if (dimension.alias) timeFields.add(dimension.alias)
+    } else {
+      if (dimension.alias) return ''
+      dimensions.push(dimension.field)
+      sortFields.set(dimension.sourceField, dimension.field)
+      if (dimension.resultAlias) sortFields.set(dimension.resultAlias, dimension.field)
+    }
+  }
+
+  const metrics: string[] = []
+  for (const value of query.metrics) {
+    const metric = exploreMetric(value)
+    if (!metric || selectedFields.has(metric)) return ''
+    selectedFields.add(metric)
+    metrics.push(metric)
+    sortFields.set(metric, metric)
+  }
+  if (selectedFields.size === 0) return ''
+
+  const sort = exploreSort(query.sort, sortFields, timeFields)
+  if (sort === null) return ''
+
+  const explicitLimit = query.limit
+  const maxRows = isRecord(visual.dataBudget) ? visual.dataBudget.maxRows : undefined
+  const limit = explicitLimit ?? maxRows ?? 50
+  if (!Number.isSafeInteger(limit) || (limit as number) <= 0 || (limit as number) > 1000) return ''
+
+  return dataExplorerURL({
+    mode: 'explore',
+    explore: {
+      semanticModelId: input.semanticModelId.trim(),
+      datasetId: result.datasetId,
+      dimensions,
+      metrics,
+      filters: [],
+      sort,
+      ...(time ? { time } : {}),
+      limit: limit as number,
+    },
+  } as unknown as DataExplorerCommand)
+}
+
+function exploreDimension(value: unknown, fields: unknown[], semanticModelID: string): ExploreDimension | undefined {
+  let sourceField: string
+  let grain: DashboardTimeGrain | undefined
+  let alias: string | undefined
+  if (isNonEmptyString(value)) {
+    sourceField = value.trim()
+  } else {
+    if (!isRecord(value) || !hasOnlyKeys(value, ['dimension', 'grain', 'alias']) || !isNonEmptyString(value.dimension)) return
+    sourceField = value.dimension.trim()
+    const grains: DashboardTimeGrain[] = ['second', 'minute', 'hour', 'day', 'week', 'month', 'quarter', 'year']
+    if (value.grain !== undefined && (typeof value.grain !== 'string' || !grains.includes(value.grain as DashboardTimeGrain))) return
+    if (value.alias !== undefined && !isNonEmptyString(value.alias)) return
+    if (value.alias !== undefined && value.grain === undefined) return
+    grain = value.grain as DashboardTimeGrain | undefined
+    alias = isNonEmptyString(value.alias) ? value.alias.trim() : undefined
+  }
+
+  const semanticFieldID = sourceField.includes('.') ? sourceField : `${semanticModelID}.${sourceField}`
+  const usage = fields.find((value) => isRecord(value) && value.role === 'dimension' && value.fieldId === semanticFieldID && (!alias || value.alias === alias))
+  if (!isRecord(usage) || !isNonEmptyString(usage.explorerFieldId)) return
+  return {
+    sourceField,
+    field: usage.explorerFieldId.trim(),
+    ...(isNonEmptyString(usage.alias) ? { resultAlias: usage.alias.trim() } : {}),
+    ...(grain ? { grain } : {}),
+    ...(alias ? { alias } : {}),
+  }
+}
+
+function exploreMetric(value: unknown): string | undefined {
+  if (isNonEmptyString(value)) return value.trim()
+  if (!isRecord(value) || !hasOnlyKeys(value, ['metric']) || !isNonEmptyString(value.metric)) return
+  return value.metric.trim()
+}
+
+function exploreSort(value: unknown, fields: Map<string, string>, timeFields: Set<string>): { field: string; direction: 'asc' | 'desc' }[] | null {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) return null
+  const sort: { field: string; direction: 'asc' | 'desc' }[] = []
+  for (const item of value) {
+    if (!isRecord(item) || !hasOnlyKeys(item, ['field', 'direction']) || !isNonEmptyString(item.field)) return null
+    const sourceField = item.field.trim()
+    const targetField = fields.get(sourceField)
+    if ((item.direction !== 'asc' && item.direction !== 'desc') || !targetField || timeFields.has(sourceField)) return null
+    sort.push({ field: targetField, direction: item.direction })
+  }
+  return sort
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function hasOnlyKeys(value: JsonRecord, allowed: string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key))
+}
+
+function isEmptyArray(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.length === 0)
+}
+
+function isEmptyRecord(value: unknown): boolean {
+  return value === undefined || (isRecord(value) && Object.keys(value).length === 0)
+}
+
 function hasKeys(value: Record<string, unknown> | undefined): boolean {
   return !!value && Object.keys(value).length > 0
 }
@@ -328,9 +483,10 @@ function hasKeys(value: Record<string, unknown> | undefined): boolean {
 function groupTranscript(transcript: ChatTranscriptItemSignal[]): ChatRenderUnit[] {
   const units: ChatRenderUnit[] = []
   let agentItems: ChatTranscriptItemSignal[] = []
+  let prompt: ChatTranscriptItemSignal | undefined
   const flushAgent = () => {
     if (agentItems.length === 0) return
-    units.push({ kind: 'agent', items: agentItems })
+    units.push({ kind: 'agent', items: agentItems, prompt })
     agentItems = []
   }
 
@@ -338,6 +494,7 @@ function groupTranscript(transcript: ChatTranscriptItemSignal[]): ChatRenderUnit
     if (item.kind === 'user') {
       flushAgent()
       units.push({ kind: 'user', item })
+      prompt = item
       continue
     }
     agentItems.push(item)
@@ -346,98 +503,31 @@ function groupTranscript(transcript: ChatTranscriptItemSignal[]): ChatRenderUnit
   return units
 }
 
-function toolCallLabel(item: ChatTranscriptItemSignal): string {
-  const title = item.title || titleFromToolName(item.name || '')
-  return title || 'Tool'
+function formatElapsed(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(minutes / 60)
+  if (hours > 0) return `${hours}h ${minutes % 60}m`
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`
+  return `${seconds}s`
 }
 
-function titleFromToolName(name: string): string {
-  return name.replace(/_/g, ' ').trim().replace(/\b\w/g, (match) => match.toUpperCase())
+function toolStepName(item: ChatTranscriptItemSignal): string {
+  return item.title?.trim() || (item.name || 'Tool').replace(/[_-]+/g, ' ').replace(/\b\w/g, character => character.toUpperCase())
 }
 
-const toolIconContent: Record<string, IconNode> = {
-  catalog_search: LayoutDashboard,
-  catalog_list: LayoutDashboard,
-  catalog_get: FileText,
-  docs_search: FileText,
-  docs_read: FileText,
-  query_semantic_model: Waypoints,
-  query_dashboard_visual: LayoutPanelTop,
-  query_visual: LayoutPanelTop,
-  list_dashboards: LayoutDashboard,
-  describe_dashboard: FileText,
-  list_semantic_models: Waypoints,
-  describe_model: Waypoints,
-  query_dashboard_page: LayoutPanelTop,
+function toolRequestKey(item: ChatTranscriptItemSignal): string | undefined {
+  // A later call to the same tool may target a different resource. Only an
+  // identical request can establish that the earlier failure was recovered.
+  const argumentsJSON = item.argumentsJson?.trim()
+  return item.name && argumentsJSON ? `${item.name}\u0000${argumentsJSON}` : undefined
 }
 
-function toolIcon(name = '') {
-  return lucideIcon(toolIconContent[name] ?? Wrench)
-}
-
-function chevronRightIcon() {
-  return lucideIcon(ChevronRight)
-}
-
-function toolCallKey(item: ChatTranscriptItemSignal): string {
-  return item.toolCallId || item.id || `${item.name || 'tool'}:${item.createdAt || ''}`
-}
-
-function toolDetailsID(key: string): string {
-  return `tool-details-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
-}
-
-function toolInputLanguage(item: ChatTranscriptItemSignal): ToolPreviewLanguage {
-  return previewLanguage((item as ChatTranscriptItemWithFormats).inputFormat, item.argumentsJson || item.inputJson || '', 'json')
-}
-
-function toolResultLanguage(item: ChatTranscriptItemSignal): ToolPreviewLanguage {
-  return previewLanguage((item as ChatTranscriptItemWithFormats).resultFormat, item.resultJson || '', 'toon')
-}
-
-function toolResultLabel(item: ChatTranscriptItemSignal, status: string): string {
-  if (status === 'error') return 'Error result'
-  if (item.name === 'export_dashboard_yaml' && toolResultLanguage(item) === 'yaml') return 'Dashboard YAML'
-  return 'Result'
-}
-
-function hasStructuredErrorResult(value: string | undefined): boolean {
-  if (!value) return false
-  try {
-    const result = JSON.parse(value)
-    return result !== null && typeof result === 'object' && 'error' in result && result.error != null
-  } catch {
-    return false
-  }
-}
-
-function previewLanguage(format: string | undefined, value: string, fallback: ToolPreviewLanguage): ToolPreviewLanguage {
-  const normalized = (format || '').trim().toLowerCase()
-  if (normalized === 'json' || normalized === 'toon' || normalized === 'text' || normalized === 'yaml') return normalized
-  if (isJSON(value)) return 'json'
-  return fallback
-}
-
-function isJSON(value: string): boolean {
-  const trimmed = value.trim()
-  if (!trimmed || !['{', '['].includes(trimmed[0])) return false
-  try {
-    JSON.parse(trimmed)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function statusLabel(status: string): string {
-  switch (status) {
-    case 'complete': return 'Complete'
-    case 'error': return 'Failed'
-    case 'streaming': return 'Streaming'
-    case 'pending': return 'Queued'
-    case 'interrupted': return 'Interrupted'
-    default: return 'Running'
-  }
+function toolStepStatus(status: string): string {
+  if (status === 'complete') return 'Completed'
+  if (status === 'error') return 'Failed'
+  if (status === 'interrupted') return 'Interrupted'
+  return 'Working'
 }
 
 if (!customElements.get('lv-chat-thread')) customElements.define('lv-chat-thread', ChatThread)

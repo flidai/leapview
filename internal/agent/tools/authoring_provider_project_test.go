@@ -202,6 +202,98 @@ func TestDashboardAuthoringExportProvidesTypedYAMLDisplay(t *testing.T) {
 	if !ok || display["type"] != "code" || display["language"] != "yaml" || display["content"] != "version: 1\n" {
 		t.Fatalf("export display = %#v", result.DisplayContent)
 	}
+	if app.exportRequest.Source.Kind != sourceadapter.SourceProject || app.exportRequest.Source.DashboardID != "dashboard_sales" {
+		t.Fatalf("project export request = %#v", app.exportRequest)
+	}
+}
+
+func TestDashboardAuthoringExportsInstanceDraftByCatalogIDOrStableID(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		arguments map[string]string
+		wantID    string
+	}{
+		{name: "catalog ID", arguments: map[string]string{"dashboardId": "dashboard:draft_sales", "sourceKind": "instance"}, wantID: "dashboard:draft_sales"},
+		{name: "stable ID", arguments: map[string]string{"stableId": "instance:project_demo:dashboard:draft_sales", "sourceKind": "instance"}, wantID: "dashboard:draft_sales"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app := &projectAuthoringFake{}
+			provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest()}
+			export := definitionByName(provider.Definitions(Scope{PrincipalID: "principal"}), ExportDashboardYAMLToolName)
+			args, _ := json.Marshal(test.arguments)
+			result, err := export.Handler.Run(context.Background(), agentcore.ToolCall{ID: "export-instance", Arguments: args})
+			if err != nil || result.IsError {
+				t.Fatalf("instance export result=%#v err=%v", result, err)
+			}
+			if app.exportDraftRequest.Source.Kind != sourceadapter.SourceInstance || app.exportDraftRequest.Source.ProjectID != projectIDForTest() || app.exportDraftRequest.Source.DashboardID != dashboardauthoring.DashboardID(test.wantID) || app.exportDraftRequest.ActorID != "principal" {
+				t.Fatalf("instance draft export request = %#v", app.exportDraftRequest)
+			}
+			if app.exportRequest.Source.DashboardID != "" {
+				t.Fatalf("instance draft export used published-source path: %#v", app.exportRequest)
+			}
+		})
+	}
+}
+
+func TestDashboardAuthoringExportRejectsAmbiguousOrForeignStableIDs(t *testing.T) {
+	provider := DashboardAuthoringProvider{Application: &projectAuthoringFake{}, ProjectID: projectIDForTest()}
+	export := definitionByName(provider.Definitions(Scope{PrincipalID: "principal"}), ExportDashboardYAMLToolName)
+	for name, args := range map[string]string{
+		"both identifiers": `{"dashboardId":"dashboard:sales","stableId":"instance:project_demo:dashboard:sales","sourceKind":"instance"}`,
+		"foreign project":  `{"stableId":"instance:project_other:dashboard:sales","sourceKind":"instance"}`,
+		"wrong source":     `{"stableId":"project:project_demo:dashboard:sales","sourceKind":"instance"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := export.Handler.Run(context.Background(), agentcore.ToolCall{ID: "invalid-export", Arguments: json.RawMessage(args)})
+			if err != nil || !result.IsError || toolErrorCode(result) != "invalid_arguments" {
+				t.Fatalf("export result=%#v err=%v, want invalid_arguments", result, err)
+			}
+		})
+	}
+}
+
+func TestDashboardAuthoringInstanceDraftExportHidesMissingVersusForbidden(t *testing.T) {
+	dashboardID := dashboardauthoring.DashboardID("dashboard:secret")
+	missing := &sourceadapter.SourceUnavailableError{
+		Kind: sourceadapter.SourceInstance, ProjectID: projectIDForTest(), DashboardID: dashboardID,
+	}
+	firstError := ""
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "missing", err: missing},
+		{name: "forbidden", err: access.ErrForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app := &projectAuthoringFake{exportDraftErr: test.err}
+			provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest()}
+			export := definitionByName(provider.Definitions(Scope{PrincipalID: "principal"}), ExportDashboardYAMLToolName)
+			result, err := export.Handler.Run(t.Context(), agentcore.ToolCall{ID: "export-instance", Arguments: json.RawMessage(`{"dashboardId":"dashboard:secret","sourceKind":"instance"}`)})
+			if err != nil || !result.IsError || toolErrorCode(result) != "not_found" || toolErrorMessage(result) != "dashboard draft not found" {
+				t.Fatalf("instance draft export result=%#v err=%v", result, err)
+			}
+			if strings.Contains(toolErrorMessage(result), dashboardID.String()) {
+				t.Fatalf("instance draft export error exposed the requested dashboard ID: %#v", result.Content)
+			}
+			currentError := toolErrorCode(result) + ":" + toolErrorMessage(result)
+			if firstError == "" {
+				firstError = currentError
+			} else if firstError != currentError {
+				t.Fatalf("missing and forbidden errors differ: first=%q current=%q", firstError, currentError)
+			}
+		})
+	}
+}
+
+func TestDashboardAuthoringProjectExportRetainsItsError(t *testing.T) {
+	app := &projectAuthoringFake{exportErr: access.ErrForbidden}
+	provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest(), Resolve: (&projectResolverFake{}).Resolve}
+	export := definitionByName(provider.Definitions(Scope{PrincipalID: "principal"}), ExportDashboardYAMLToolName)
+	result, err := export.Handler.Run(t.Context(), agentcore.ToolCall{ID: "export-project", Arguments: json.RawMessage(`{"dashboardId":"dashboard_sales","sourceKind":"project"}`)})
+	if err != nil || !result.IsError || toolErrorCode(result) != "authoring_failed" || toolErrorMessage(result) != access.ErrForbidden.Error() {
+		t.Fatalf("project export result=%#v err=%v", result, err)
+	}
 }
 
 func TestDashboardAuthoringSourceToolsReadAndEditExactDraftYAML(t *testing.T) {
@@ -296,6 +388,13 @@ func toolErrorCode(result agentcore.ToolResult) string {
 	return code
 }
 
+func toolErrorMessage(result agentcore.ToolResult) string {
+	content, _ := result.Content.(map[string]any)
+	errValue, _ := content["error"].(map[string]any)
+	message, _ := errValue["message"].(string)
+	return message
+}
+
 func definitionByName(definitions []agentcore.ToolDefinition, name string) agentcore.ToolDefinition {
 	for _, definition := range definitions {
 		if definition.Name == name {
@@ -326,22 +425,26 @@ func (f *projectResolverFake) capabilityFor(id string) access.Capability {
 }
 
 type projectAuthoringFake struct {
-	createContext     context.Context
-	executeContext    context.Context
-	intentContext     context.Context
-	forkContext       context.Context
-	editSourceContext context.Context
-	intentCommand     dashboardauthoring.Command
-	list              catalog.ListResult
-	listRequest       catalog.ListRequest
-	getRequest        catalog.GetRequest
-	create            authoringservice.CreateRequest
-	createResult      authoringservice.Result
-	fork              sourceadapter.ForkRequest
-	command           dashboardauthoring.Command
-	source            authoringapplication.SourceRead
-	editSource        authoringapplication.SourceEditRequest
-	editSourceResult  authoringapplication.SourceEditResult
+	createContext      context.Context
+	executeContext     context.Context
+	intentContext      context.Context
+	forkContext        context.Context
+	editSourceContext  context.Context
+	intentCommand      dashboardauthoring.Command
+	list               catalog.ListResult
+	listRequest        catalog.ListRequest
+	getRequest         catalog.GetRequest
+	create             authoringservice.CreateRequest
+	createResult       authoringservice.Result
+	fork               sourceadapter.ForkRequest
+	command            dashboardauthoring.Command
+	source             authoringapplication.SourceRead
+	editSource         authoringapplication.SourceEditRequest
+	editSourceResult   authoringapplication.SourceEditResult
+	exportRequest      sourceadapter.ExportRequest
+	exportDraftRequest sourceadapter.ExportRequest
+	exportErr          error
+	exportDraftErr     error
 }
 
 func (f *projectAuthoringFake) List(_ context.Context, request catalog.ListRequest) (catalog.ListResult, error) {
@@ -378,8 +481,13 @@ func (f *projectAuthoringFake) Fork(ctx context.Context, request sourceadapter.F
 func (f *projectAuthoringFake) Preview(context.Context, previewservice.PreviewRequest) (previewservice.Preview, error) {
 	return previewservice.Preview{}, nil
 }
-func (f *projectAuthoringFake) ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error) {
-	return []byte("version: 1\n"), nil
+func (f *projectAuthoringFake) ExportYAML(_ context.Context, request sourceadapter.ExportRequest) ([]byte, error) {
+	f.exportRequest = request
+	return []byte("version: 1\n"), f.exportErr
+}
+func (f *projectAuthoringFake) ExportDraftYAML(_ context.Context, request sourceadapter.ExportRequest) ([]byte, error) {
+	f.exportDraftRequest = request
+	return []byte("version: 1\n"), f.exportDraftErr
 }
 func (f *projectAuthoringFake) ReadSource(context.Context, authoringapplication.DraftRequest) (authoringapplication.SourceRead, error) {
 	return f.source, nil

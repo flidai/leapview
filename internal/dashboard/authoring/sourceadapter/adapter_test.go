@@ -100,6 +100,14 @@ func TestLoadDraftUsesCurrentDraftPointer(t *testing.T) {
 	if *source.Document.Metadata.DisplayName != "Newer draft" || source.Provenance.Instance == nil || source.Provenance.Instance.DraftRevision == nil || *source.Provenance.Instance.DraftRevision != f.draft.Token() || source.Provenance.Instance.PublishedRevision != (authoring.RevisionToken{}) {
 		t.Fatalf("draft source = %#v", source)
 	}
+	if len(f.authorizer.requests) != 1 || f.authorizer.requests[0].Target != service.AuthorizationTargetAuthoredDashboard || f.authorizer.requests[0].Action != authoring.AuthorizationActionEdit {
+		t.Fatalf("draft export authorization = %#v, want authored dashboard EDIT", f.authorizer.requests)
+	}
+	f = newSourceFixture(t)
+	f.authorizer.err = access.ErrForbidden
+	if _, err := f.adapter.LoadDraft(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: "sales"}, "actor"); !errors.Is(err, access.ErrForbidden) || len(f.repository.getRevisionIDs) != 0 {
+		t.Fatalf("denied draft load err=%v revision reads=%v", err, f.repository.getRevisionIDs)
+	}
 }
 
 func TestLoadProjectUsesOneLeaseAndNoFabricatedRevision(t *testing.T) {

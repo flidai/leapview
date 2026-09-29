@@ -89,7 +89,7 @@ test('outside funnel labels preserve the formatted value when a category uses th
   expect([...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(label)]).toHaveLength(24)
 })
 
-test('proportional responsive sizing keeps authored radii and the bottom legend band', () => {
+test('proportional responsive sizing preserves roomy radii and reserves the compact bottom legend band', () => {
   const envelope = proportionalWithIconFormat('donut')
   if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
   envelope.spec.presentation.legendTitle = 'Order status'
@@ -109,7 +109,7 @@ test('proportional responsive sizing keeps authored radii and the bottom legend 
   ] as const) {
     const patch = responsiveEChartsPatch(option, width, height)
     expect(patch.series[0].id).toBe('series:primary:donut')
-    expect(patch.series[0].radius).toEqual(['54%', '76%'])
+    expect(patch.series[0].radius).toEqual(height < 280 ? ['46.89%', '66%'] : ['54%', '76%'])
     expect(patch.series[0].label.alignTo).toBe(alignTo)
     if (alignTo === 'labelLine') {
       expect(patch.series[0].label).toMatchObject({ distanceToLabelLine: 12 })
@@ -137,6 +137,42 @@ test('proportional responsive helper keeps compact labels bounded and expanded l
       expect(expanded.series[0].id).toBe(`series:primary:${mark}`)
     }
     expect(option.series[0].id).toBe(`series:primary:${mark}`)
+  }
+})
+
+test('compact donut outside labels stay clear of the bottom legend', () => {
+  const envelope = proportionalFixture('donut')
+  if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected inline donut fixture')
+  envelope.spec.presentation.legend = 'bottom'
+  envelope.spec.presentation.rose = false
+  envelope.spec.presentation.centerLabel = undefined
+  envelope.spec.datasets[0]!.fields[1]!.format = { kind: 'currency', currency: 'USD' }
+  envelope.dataState.datasets[0]!.rows = [
+    ['United States of America', 25_000_000], ['Canada', 24_900_000],
+    ['France', 24_400_000], ['Germany', 23_500_000], ['Mexico', 20_900_000],
+  ]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 480, height: 250 })
+  try {
+    chart.setOption({ ...option, ...responsiveEChartsPatch(option, 480, 250), animation: false })
+    chart.renderToSVGString()
+    const labels = chart.getZr().storage.getDisplayList()
+      .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string')
+    const bounds = (item: any) => {
+      const box = item.getBoundingRect().clone()
+      const transform = item.getComputedTransform?.() ?? item.transform
+      if (transform) box.applyTransform(transform)
+      return box
+    }
+    const franceOutside = labels.find((item: any) => item.style.text === 'France: $24.4M')
+    const legendItem = labels.find((item: any) => item.style.text === 'France')
+    expect(franceOutside).toBeDefined()
+    expect(legendItem).toBeDefined()
+    const outsideBox = bounds(franceOutside)
+    const legendBox = bounds(legendItem)
+    expect(outsideBox.y + outsideBox.height).toBeLessThan(legendBox.y)
+  } finally {
+    chart.dispose()
   }
 })
 

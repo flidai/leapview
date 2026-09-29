@@ -996,14 +996,14 @@ export class ReportTable extends LitElement {
     super.connectedCallback()
     document.addEventListener('pointerdown', this.handleOutsidePointerDown)
     document.addEventListener('keydown', this.handleDocumentKeyDown)
-    if (this.hasUpdated) queueMicrotask(() => this.startViewportObserver())
+    if (this.hasUpdated) queueMicrotask(() => this.startViewportObserver(true))
   }
 
   firstUpdated(): void {
     this.startViewportObserver()
   }
 
-  private startViewportObserver(): void {
+  private startViewportObserver(reconnected = false): void {
     const viewport = this.bodyViewportRef.value
     if (!viewport) return
     this.resizeObserver?.disconnect()
@@ -1014,7 +1014,9 @@ export class ReportTable extends LitElement {
         this.requestUpdate()
       }
       const viewportHeight = viewport.clientHeight
-      if (viewportHeight === this.viewportHeight) return
+      if (viewportHeight === this.viewportHeight && !reconnected) return
+      if (reconnected) this.viewportTop = viewport.scrollTop
+      reconnected = false
       this.viewportHeight = viewportHeight
       this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
       this.scheduleEnsureBlocksForScroll()
@@ -1028,10 +1030,8 @@ export class ReportTable extends LitElement {
     document.removeEventListener('pointerdown', this.handleOutsidePointerDown)
     document.removeEventListener('keydown', this.handleDocumentKeyDown)
     this.resizeObserver?.disconnect()
-    if (this.scrollFrame) {
-      cancelAnimationFrame(this.scrollFrame)
-      this.scrollFrame = 0
-    }
+    if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
+    this.scrollFrame = 0
     this.clearResizeGuide()
     this.clearJumpTimer()
     this.windowRetryController.clear()

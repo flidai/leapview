@@ -7,7 +7,9 @@ WORKDIR /src
 
 COPY go.mod go.sum ./
 COPY pkg/apigen/go.mod pkg/apigen/go.sum ./pkg/apigen/
-RUN go mod download
+RUN go mod download || \
+    (sleep 5 && go mod download) || \
+    (sleep 5 && go mod download)
 
 FROM go-deps AS sourcegen
 

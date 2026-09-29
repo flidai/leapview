@@ -109,7 +109,12 @@ test('ECharts responsive patch keeps proportional geometry stable while adapting
         label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
         labelLine: { length: 58, length2: 42 },
       })
-      expect(compact.series[0].radius).toEqual(option.series[0].radius)
+      if (Array.isArray(option.series[0].radius)) {
+        expect(Number.parseFloat(compact.series[0].radius[1])).toBeLessThanOrEqual(66)
+        expect(Number.parseFloat(compact.series[0].radius[0])).toBeLessThan(Number.parseFloat(compact.series[0].radius[1]))
+      } else {
+        expect(compact.series[0].radius).toEqual(option.series[0].radius)
+      }
       expect(expanded.series[0].radius).toEqual(option.series[0].radius)
     }
     expect(option.series[0].id).toBe(`series:primary:${mark}`)

@@ -208,6 +208,7 @@ type BrowserHandler struct {
 	SourceSchemas            SourceSchemaReader
 	ProjectDefinitionReader  ProjectDefinitionReader
 	DashboardAppearances     DashboardAppearanceStore
+	SavedExplorations        projectview.SavedExplorationStore
 	DashboardCatalog         DashboardCatalogReader
 	DashboardPopularity      func(context.Context, int) (map[string]string, error)
 	QueryExecutor            DataQueryExecutor
@@ -283,6 +284,8 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/", wrap(h.Insights))
 	r.Get("/search", wrap(h.ProductSearch))
 	r.Get("/explore", wrap(h.Explore))
+	r.Get("/explore/saved", wrap(h.ListSavedExplorations))
+	r.Post("/explore/saved", wrapMutation(h.CreateSavedExploration))
 	r.Post("/explore/command", wrap(h.DataExplorerCommand))
 	r.Get("/sources", wrap(h.Sources))
 	r.Get("/sources/{asset}/{section}", wrap(h.SourceAsset))

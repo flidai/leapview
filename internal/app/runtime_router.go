@@ -343,6 +343,7 @@ type capabilityAssemblyInputs struct {
 	ProductStatus       adminmodule.ProductStatus
 	ProjectCatalog      *projectcatalog.Service
 	ProjectGraph        projecthttp.GraphReader
+	SavedExplorations   projectmodule.SavedExplorationStore
 }
 
 type workflowAssemblyInputs struct {
@@ -836,6 +837,7 @@ func buildApplicationSurfaces(
 	var dashboardAppearances projecthttp.DashboardAppearanceStore
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, HistoricalGraph: projectHistoricalGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
+		SavedExplorations:       capabilities.SavedExplorations,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardAppearances, DashboardCatalog: capabilities.Authoring,

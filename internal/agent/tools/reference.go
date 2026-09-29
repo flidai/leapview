@@ -146,7 +146,7 @@ func referenceMetadata(operations []APIGenOperation) map[string]toolReferenceMet
 		CreateDashboardDraftToolName:    {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
 		ExecuteDashboardCommandToolName: {authzMode: "privilege", privilege: "RESOURCE_MANAGE", operationID: "manual", defaults: map[string]any{}},
 		EditDashboardSourceToolName:     {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
-		ExportDashboardYAMLToolName:     {authzMode: "privilege", privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{}},
+		ExportDashboardYAMLToolName:     {authzMode: "authenticated", operationID: "manual", defaults: map[string]any{}},
 		ForkDashboardToolName:           {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
 		GetDashboardDraftToolName:       {authzMode: "privilege", privilege: "RESOURCE_EDIT", operationID: "manual", defaults: map[string]any{}},
 		GetDashboardToolName:            {authzMode: "privilege", privilege: "RESOURCE_READ", operationID: "manual", defaults: map[string]any{}},
