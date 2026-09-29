@@ -101,6 +101,50 @@ test('every viewer presentation defers hosts and explicit capture readiness prop
   }
 })
 
+test('closing a deeply scrolled focused table restores visible rows in the dashboard', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    const table = page.locator('lv-report-table')
+    await table.waitFor()
+    await table.evaluate(async (element: any) => {
+      await element.updateComplete
+      const base = element.table
+      const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...base.blocks.a.rows[0], order_id: `order-${start + offset}` }))
+      const block = (start: number) => ({ ...base.blocks.a, start, rows: rows(start) })
+      element.table = {
+        ...base,
+        availableRows: 1000,
+        cardinality: { kind: 'exact', value: 1000 },
+        chunkSize: 100,
+        blocks: { a: block(0), b: block(100), c: block(200) },
+      }
+      await element.updateComplete
+    })
+    await table.evaluate((element: any) => element.runAction('focus'))
+    await table.locator('.table-scrollport').evaluate((viewport: HTMLElement) => {
+      viewport.scrollTop = 500 * 34
+      viewport.dispatchEvent(new Event('scroll'))
+    })
+    await page.locator('lv-visual-modal').getByRole('button', { name: 'Close visual modal' }).click()
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page')
+      const host = [...(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])].find((item: any) => item.envelope?.visualID === 'orders')
+      const table = host?.shadowRoot?.querySelector('lv-report-table') as any
+      return table?.viewportTop === 0 && table?.visibleRows?.[0]?.kind === 'row'
+    })
+    const restored = await table.evaluate((element: any) => ({
+      scrollTop: element.shadowRoot.querySelector('.table-scrollport').scrollTop,
+      viewportTop: element.viewportTop,
+      firstRow: element.visibleRows[0].index,
+      firstKind: element.visibleRows[0].kind,
+    }))
+    expect(restored).toEqual({ scrollTop: 0, viewportTop: 0, firstRow: 0, firstKind: 'row' })
+  } finally {
+    await page.close()
+  }
+})
+
 for (const emptyResponse of [false, true]) test(`windowed table reconciles cached rows after a delayed ${emptyResponse ? 'empty' : 'populated'} jump response`, async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
