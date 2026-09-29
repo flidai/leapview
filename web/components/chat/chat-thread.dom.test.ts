@@ -333,9 +333,7 @@ test('chat thread renders visual artifacts with dashboard web components', async
   await page.waitForFunction(() => Boolean(
     document.querySelector('lv-chat-thread')!
       .shadowRoot!
-      .querySelector('lv-visual-artifact[artifact-id="agent_chart_1"]')
-      ?.shadowRoot
-      ?.querySelector('lv-visualization-host'),
+      .querySelector('.artifact-card[data-visual-id="agent_chart_1"]'),
   ))
   await page.waitForFunction(() => Boolean(
     document.querySelector('lv-chat-thread')!
@@ -346,18 +344,24 @@ test('chat thread renders visual artifacts with dashboard web components', async
   ))
 
   const rendered = await page.evaluate(() => {
-    const root = document.querySelector('lv-chat-thread')!.shadowRoot!
+    const thread = document.querySelector('lv-chat-thread')!
+    const root = thread.shadowRoot!
+    let explorerHref = ''
+    thread.addEventListener('lv-chat-visual-open', (event: Event) => {
+      explorerHref = (event as CustomEvent<{ explorerHref: string }>).detail.explorerHref
+    }, { once: true })
+    root.querySelector<HTMLButtonElement>('.artifact-card[data-visual-id="agent_chart_1"]')?.click()
     return {
-      chart: (root.querySelector('lv-visual-artifact[artifact-id="agent_chart_1"]')?.shadowRoot?.querySelector('lv-visualization-host') as any)?.envelope?.spec?.kind,
+      chartCard: root.querySelector('.artifact-card[data-visual-id="agent_chart_1"]')?.textContent?.includes('Orders'),
       table: (root.querySelector('lv-visual-artifact[artifact-id="agent_table_1"]')?.shadowRoot?.querySelector('lv-visualization-host') as any)?.envelope?.spec?.kind,
-      explorerHref: (root.querySelector('lv-visual-artifact[artifact-id="agent_chart_1"]')?.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement)?.querySelector<HTMLAnchorElement>('[slot="agent-action"]')?.getAttribute('href'),
+      explorerHref,
       toolRows: root.querySelectorAll('.tool-call').length,
       bodyText: root.textContent || '',
       artifactBackground: getComputedStyle(root.querySelector('lv-visual-artifact')!.shadowRoot!.querySelector('.artifact')!).backgroundColor,
       artifactBorderTopWidth: getComputedStyle(root.querySelector('lv-visual-artifact')!.shadowRoot!.querySelector('.artifact')!).borderTopWidth,
     }
   })
-  expect(rendered.chart).toBe('cartesian')
+  expect(rendered.chartCard).toBe(true)
   expect(rendered.table).toBe('table')
   const explorerURL = new URL(rendered.explorerHref!, 'https://example.test')
   expect(explorerURL.pathname).toBe('/explore')
@@ -380,7 +384,7 @@ test('chat thread renders visual artifacts with dashboard web components', async
       artifacts: thread.shadowRoot.querySelectorAll('lv-visual-artifact').length,
     }
   })
-  expect(drawer).toEqual({ toolRows: 0, artifacts: 2 })
+  expect(drawer).toEqual({ toolRows: 0, artifacts: 1 })
 
   await page.close()
 })

@@ -296,7 +296,7 @@ class ChatThread extends LitElement {
   private renderArtifact(artifact: ChatArtifactSignal, item?: ChatTranscriptItemSignal) {
     const payload = this.resolvedVisuals[artifact.id] || null
     const explorerHref = payload && payload.visualID === artifact.id ? queryVisualExplorerURL(item, artifact.type, artifact.id) : ''
-    if (this.surface === 'page' && payload) {
+    if (payload && (this.surface === 'page' || Boolean(explorerHref))) {
       const title = payload?.spec.title?.trim() || artifact.summary?.trim() || 'Visual result'
       const kind = ['table', 'matrix', 'pivot'].includes(payload.spec.kind) ? 'Table' : 'Chart'
       return html`<button class="artifact-card" type="button" data-visual-id=${artifact.id} aria-label=${`Open visual details: ${title}`} @click=${() => this.openVisual(artifact.id, explorerHref, title)}>

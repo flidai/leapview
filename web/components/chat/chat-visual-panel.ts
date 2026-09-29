@@ -121,7 +121,10 @@ export class ChatVisualPanel extends LitElement {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') this.close()
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    event.stopPropagation()
+    this.close()
   }
 
   private close(): void {
