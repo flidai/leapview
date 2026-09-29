@@ -385,7 +385,7 @@ tasks:
           --build-arg BUILD_TIME="${build_time}" \
           --build-arg BUILD_DIRTY=false \
           --build-arg BUILD_RELEASE=false .
-        image="$(docker image inspect "${tag}" --format '{{.Id}}')"
+        image="$(docker image inspect "${tag}" --format '{{"{{"}}.Id{{"}}"}}')"
         [[ "${image}" =~ ^sha256:[0-9a-f]{64}$ ]]
         evidence_dir="$(mktemp -d "${TMPDIR:-/tmp}/leapview-historical-transition.XXXXXX")"
         LEAPVIEW_HISTORICAL_TRANSITION_REQUIRED=1 \
@@ -2094,26 +2094,25 @@ tasks:
       - LEAPVIEW_TEST_CONTAINERS=1 go test ./internal/app/cli/composectl -run '^TestQualificationContainerRuntimeLifecycle$'
       - go test ./deploy/hetzner
       - go test ./deploy/hetzner-site
+      - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/kamal-site -p 'test_*.py'
       - terraform fmt -check -recursive deploy/hetzner
-      - terraform -chdir=deploy/hetzner init -backend=false -input=false
+      - terraform -chdir=deploy/hetzner init -backend=false -input=false -lockfile=readonly
       - terraform -chdir=deploy/hetzner validate
       - terraform -chdir=deploy/hetzner test
       - terraform fmt -check -recursive deploy/hetzner-site
-      - terraform -chdir=deploy/hetzner-site init -backend=false -input=false
+      - terraform -chdir=deploy/hetzner-site init -backend=false -input=false -lockfile=readonly
       - terraform -chdir=deploy/hetzner-site validate
       - terraform -chdir=deploy/hetzner-site test
 
   site:deploy:
-    desc: Bootstrap or recover pull-based deployment with an immutable public-site image
-    requires:
-      vars: [LEAPVIEW_SITE_IMAGE]
+    desc: Run the manual public-site operator (pass commands after --)
     cmds:
-      - >-
-        infisical run --silent
-        --env prod
-        --path /hetzner-site/operator
-        --projectId c52a0183-fc82-4614-b437-c237a889d79c
-        -- ./scripts/deploy_site.sh
+      - python3 -B deploy/kamal-site/deploy.py {{.CLI_ARGS}}
+
+  site:access-check:
+    desc: Inspect the public-site host over the operator's pinned SSH connection
+    cmds:
+      - python3 -B deploy/kamal-site/deploy.py status
 
   node:audit:
     desc: Scan JavaScript dependencies for known vulnerabilities

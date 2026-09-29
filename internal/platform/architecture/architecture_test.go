@@ -3082,6 +3082,14 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	if !strings.Contains(deployCheck, "- api:generate") {
 		t.Fatal("deploy:check must generate its build-only API inputs")
 	}
+	for _, required := range []string{
+		"terraform -chdir=deploy/hetzner init -backend=false -input=false -lockfile=readonly",
+		"terraform -chdir=deploy/hetzner-site init -backend=false -input=false -lockfile=readonly",
+	} {
+		if !strings.Contains(deployCheck, required) {
+			t.Errorf("deploy:check must initialize providers without modifying the committed Terraform lockfiles: missing %q", required)
+		}
+	}
 	siteImageQualification := taskfileTaskBlock(t, taskText, "image:qualify:site")
 	if !strings.Contains(siteImageQualification, "- task: api:generate") {
 		t.Fatal("site image qualification must generate the leapviewctl API inputs in a clean checkout")

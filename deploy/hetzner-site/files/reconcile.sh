@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -e /var/lib/leapview-site/kamal/ready.json ]]; then
+  echo "Legacy site controller is retired after Kamal handover" >&2
+  exit 64
+fi
+
 site_root="/opt/leapview-site"
 desired_tag="ghcr.io/flidai/leapview-site:production"
 immutable_site_reference='^ghcr\.io/flidai/leapview-site@sha256:[0-9a-f]{64}$'
@@ -10,6 +15,13 @@ exec 8>"$site_root/reconcile.lock"
 if ! flock -n 8; then
   echo "site reconciliation is already running"
   exit 0
+fi
+
+# Recheck after acquiring the shared lock: handover may have completed
+# between the initial check and lock acquisition.
+if [[ -e /var/lib/leapview-site/kamal/ready.json ]]; then
+  echo "Legacy site controller is retired after Kamal handover" >&2
+  exit 64
 fi
 
 docker pull "$desired_tag" >/dev/null

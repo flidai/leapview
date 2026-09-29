@@ -103,3 +103,10 @@ updates:
     open-pull-requests-limit: 5
     groups:
       site-terraform-providers: {patterns: ["*"]}
+
+  - package-ecosystem: bundler
+    directory: /deploy/kamal-site
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 2
+    groups:
+      site-deployment-tooling: {patterns: ["*"]}
