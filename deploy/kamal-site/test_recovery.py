@@ -12,7 +12,7 @@ class InterruptedRecoveryTest(unittest.TestCase):
     def state(self):
         active = dict(record(), verified=True)
         return {'active': active['version'], 'pending': 'candidate',
-                'records': {active['version']: active}}
+                'records': {active['version']: active, 'candidate': dict(record(), version='candidate')}}
 
     def test_recovery_requires_pending_and_verified_active(self):
         for updates in ({'pending': None}, {'pending': self.state()['active']}):
@@ -28,11 +28,23 @@ class InterruptedRecoveryTest(unittest.TestCase):
 
     def test_recovery_validates_saved_image_and_stopped_container(self):
         state = self.state()
-        with patch.object(host, 'scope'), patch.object(host, 'local_image', return_value={'Id': 'saved'}), \
+        with patch.object(host, 'command', return_value='[]'), patch.object(host, 'scope'), patch.object(host, 'local_image', return_value={'Id': 'saved'}), \
                 patch.object(host, 'inspect', return_value={'Image': 'different'}), \
                 patch.object(host, 'validate_container') as validate:
             with self.assertRaisesRegex(ValueError, 'disagree'): host.recovery_ready(state)
             self.assertFalse(validate.call_args.kwargs['require_running'])
+
+    def test_completed_pull_is_reconciled_before_scope_validation(self):
+        state = self.state()
+        candidate = dict(record(), version='candidate')
+        state['records']['candidate'] = candidate
+        def scope(records):
+            self.assertEqual(records['candidate']['local_id'], 'pulled')
+        with patch.object(host, 'command', return_value='[{"Id":"pulled"}]'), \
+                patch.object(host, 'local_image', side_effect=lambda r: {'Id': 'pulled' if r is candidate else 'saved'}), \
+                patch.object(host, 'scope', side_effect=scope), \
+                patch.object(host, 'inspect', return_value={'Image': 'saved'}), patch.object(host, 'validate_container'):
+            host.recovery_ready(state)
 
     def test_recovery_restores_saved_active_without_pull_or_admission(self):
         state = self.state()

@@ -199,6 +199,9 @@ def recovery_ready(state):
         raise ValueError('no distinct unresolved candidate; inspect state or use maintain')
     record = state['records'][state['active']]
     if record.get('verified') is not True: raise ValueError('saved active is not verified')
+    pending = state['records'][state['pending']]
+    raw = command('docker', 'image', 'inspect', LOCAL_REPOSITORY + ':' + pending['version'], check=False)
+    if json.loads(raw or '[]'): pending['local_id'] = local_image(pending)['Id']
     scope(state['records'])
     image = local_image(record)
     container = inspect('container', SERVICE + '-web-' + record['version'])
@@ -284,6 +287,7 @@ def main():
         result = state
     elif operation == 'recovery-begin':
         recovery_ready(state)
+        save(state)
         result = state
     elif operation == 'maintenance-begin':
         running(state['records'][state['active']])
