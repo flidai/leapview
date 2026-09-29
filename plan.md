@@ -25,7 +25,8 @@ alone does not complete the live migration.
 | Failure testing | 39 operator tests and expanded disposable lifecycle qualification passed. Real interrupted pulls/switches, lost responses and offline recovery were exercised. These are not production cutover or host-reboot results. |
 | Image A | Production workflow [36538460625](https://github.com/flidai/leapview/actions/runs/36538460625) passed; independent operator `prepare` passed. Source: `bc07df37e6041b07558f1e0e06a41cb8ba966102`. |
 | Image B | Post-#751 workflow [36558423631](https://github.com/flidai/leapview/actions/runs/36558423631) succeeded, and independent operator `prepare` passed. Source: `efefe8178e6fd78498c3f4cb52a379658f67618d`. |
-| Live website | No production migration was performed during this work. Last host inventory was 29 September at 03:53 UTC: original Compose/Caddy, updater inactive, no permanent Kamal handover. This is historical inventory, not a fresh runtime check. |
+| Live website | No production migration was performed during this work. Fresh 29 September inventory: Ubuntu 24.04.4, original Compose/Caddy, Docker 29.1.3/containerd 2.2.1 on shared ext4, updater inactive/disabled. About 32.3 GiB free. Public checks passed around 11:18 UTC: health/readiness, build/release metadata, docs, 16 assets, eight server-release download/checksum links and the www redirect. Protected backup completed at 11:28 UTC; an empty protected Kamal directory was created, with no ready/state marker or app/proxy changes. |
+| Full adoption smoke | Failed on the existing desktop download: the advertised `desktop-v0.1.0-alpha.1` macOS arm64 asset returns HTTP 404 and GitHub reports that release absent. Original, A, B and current main advertise it. This is separate from successful server-release download checks; do not report the complete adoption smoke as passing. Resolve the website manifest or explicitly narrow desktop scope before cutover. |
 | Demo | Latest reviewed [demo deployment](https://github.com/flidai/leapview/actions/runs/36553961368) passed. User reports NixOS rollout; leave the demo untouched. |
 | #748 | Open, uninstalled old Compose/updater fallback. Do not merge/install it alongside Kamal; close only after final migration acceptance. |
 
@@ -43,8 +44,14 @@ ghcr.io/flidai/leapview-site@sha256:cced827fce58ebbccc2c293da65741c08e0108cbd017
 Its mode-0600 record and evidence are saved locally under
 `/home/codex/tmp/leapview-kamal-study/production-image-a-36538460625/`:
 `site-a-record.json`, workflow metadata/artifact, prepare log and checksums.
-Preserve these in durable protected operator storage before rollout; a temporary
-workspace directory is not the sole long-term recovery store.
+A/B records and evidence have also been copied to durable protected operator
+storage at `/home/codex/.local/state/leapview-site-migration/20260929/`
+(`image-a/`, `image-b/`, and independently saved checksum manifests).
+The temporary workspace copies are not the sole recovery store.
+The same protected directory records the operator source hashes and the exact
+public/desktop release manifests from each selected source revision. Both A and
+B publish product release `0.3.0-alpha.1`; use these saved manifests for the
+installation smoke check, not whatever a later checkout happens to contain.
 
 Image B: `ghcr.io/flidai/leapview-site@sha256:093b718bcb51bd23e334497cc279f09367a26bbce0126956377d3ba5f612c14c`.
 Its protected record and admission evidence are under
@@ -104,19 +111,24 @@ production workflows, with all referenced artifacts retained.
 
 ## 2. Refresh the live baseline and protect original recovery material
 
-- [ ] Use the existing site SSH credential, route and pinned host fingerprint.
+- [x] Use the existing site SSH credential, route and pinned host fingerprint.
   Record UTC time, host boot ID, OS, architecture and Docker/containerd versions.
-- [ ] Check HTTPS, health/readiness, source/build identity, docs, release metadata,
+- [x] Check HTTPS, health/readiness, source/build identity, docs, release metadata,
   download links, CSS/JS and the `www` redirect. Capture the actual running image.
-- [ ] Inventory Docker/containerd backing paths, filesystem devices, free bytes,
+- [x] Inventory Docker/containerd backing paths, filesystem devices, free bytes,
   free inodes, site containers/images, Caddy image/config/mounts and restart policies.
   Do not reuse the old approximately 32.3 GiB free-space observation as current capacity.
-- [ ] Confirm the legacy updater timer/service remain disabled/inactive, old
+- [x] Confirm the legacy updater timer/service remain disabled/inactive, old
   mutating workflow runs are settled, and neither an unresolved owner journal nor
   surviving remote work exists. Acquire locks in the documented order.
-- [ ] Preserve protected original Compose, Caddyfile, deployment environment,
+- [x] Preserve protected original Compose, Caddyfile, deployment environment,
   exact image identities and container inspections outside the routine deployment
   directory. Preserve certificates/config volumes and required local images.
+  Captured under both locks at
+  `/var/lib/leapview-site/migration-original-20260929T112827Z-a919bd09`.
+  Original files/inspections and Caddy data/config were copied to the protected
+  operator store above; file contents were checked against the backup manifest.
+  Original image IDs remain cached on the live host. No restoration was performed.
 - [ ] Write and verify exact restoration commands, including how to regain SSH
   after a reboot. Keep secret-bearing material out of Git, PRs and public logs.
 
@@ -151,6 +163,10 @@ file-count capacity (inodes), not customer datasets or demo storage.
 - [ ] Rehearse the exact bootstrap, timed restoration safeguard, Caddy switch,
   public acceptance and original-Compose restoration sequence. Choose and record
   the safeguard deadline from the measured rehearsal before touching production.
+  The safeguard must defer if either deployment lock is held or an unresolved
+  owner journal exists. It must record that deferral, never clear ownership, and
+  require the documented ownership audit before restoration can resume. A timer
+  alone does not guarantee recovery after a controller disconnect.
 - [ ] Verify sufficient live capacity with recovery images retained. If it does
   not fit, stop and revise the plan; do not prune the only rollback or expand disks
   as an unreviewed shortcut.
