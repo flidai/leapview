@@ -19,7 +19,7 @@ TYPED_PROFILE = 'leapview.permissions/v1'
 # connection.upload is introduced by schema 46. The typed profile is
 # additive, but predecessor runtimes reject an action they do not know.
 CONNECTION_UPLOAD_SCHEMA = 46
-CURRENT_TYPED_SCHEMA = 46
+CURRENT_TYPED_SCHEMA = 47
 PROFILES = {
     LEGACY_PROFILE: {
         'publisher': 'RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH',
