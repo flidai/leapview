@@ -173,7 +173,7 @@ export class DashboardAppendController {
     const target = this.targets.find((item) => item.id === this.selectedDashboardID)
     const operationID = this.attribute('data-dashboard-append-operation-id')
     const endpoint = this.attribute('data-dashboard-append-url')
-    if (!target || !target.draftId || !this.selectedPageID || !target.revisionToken || !operationID || !endpoint || spec.modelId?.trim() !== this.modelID) return
+	if (!target || !target.draftId || !this.selectedPageID || !target.revisionToken || operationID !== 'executeDashboardAuthoringCommand' || !endpoint || spec.modelId?.trim() !== this.modelID) return
     this.saving = true
     this.status = ''
     this.successDashboardURL = ''
@@ -181,7 +181,7 @@ export class DashboardAppendController {
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { ...window.LeapViewCommand.headers(operationID), 'Content-Type': 'application/json' },
+		headers: { ...window.LeapViewCommand.headers('executeDashboardAuthoringCommand'), 'Content-Type': 'application/json' },
         body: JSON.stringify(dashboardAppendRequest(spec, target, this.selectedPageID, this.placementChoice)),
       })
       if (!response.ok) {

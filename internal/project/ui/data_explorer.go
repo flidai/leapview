@@ -84,10 +84,6 @@ func DataExplorerPageWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPag
 	return dataExplorerPageWithAgentAndSaved(page, explorer, agent, commands, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(false)}, DataExplorerDashboardBootstrap{}, csrfToken, providers...)
 }
 
-func DataExplorerPageWithSavedExplorations(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
-	return DataExplorerPageWithSavedExplorationsAndDashboard(catalog.Catalog{}, page, explorer, saved, DataExplorerDashboardBootstrap{}, csrfToken, providers...)
-}
-
 func DataExplorerPageWithSavedExplorationsAndDashboard(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
 	return dataExplorerPageWithAgentAndSaved(page, explorer, DataExplorerAgentBootstrap{}, DataExplorerAgentCommandBindings{}, saved, dashboard, csrfToken, providers...)
 }
