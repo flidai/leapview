@@ -148,8 +148,8 @@ func runQualificationHistoricalCandidateTransition(
 	t.Helper()
 	require.NotNil(t, fixture.Predecessor)
 	require.NotNil(t, fixture.Topology)
-	_, err := fixture.Predecessor.Kill(ctx, "KILL")
-	require.NoError(t, err, "stop the exact schema-32 predecessor before migrating its database")
+	require.NoError(t, stopQualificationHistoricalContainerGracefully(ctx, fixture.Predecessor),
+		"gracefully stop and verify the exact schema-32 predecessor before migrating its database")
 
 	runtime := newTestcontainersQualificationRuntime()
 	project := fixture.ComposeProject
@@ -274,8 +274,8 @@ func runQualificationHistoricalCandidateTransition(
 		currentInventory.PolicyRevision, currentInventory.PolicyDigest)
 	require.Equal(t, http.StatusForbidden, preTransitionStatus,
 		"the migrated but not-yet-transitioned schema-32 policy must reproduce the original viewer denial")
-	_, err = candidate.Kill(ctx, "KILL")
-	require.NoError(t, err, "stop the candidate server before invoking the offline maintenance command")
+	require.NoError(t, stopQualificationHistoricalContainerGracefully(ctx, candidate),
+		"gracefully stop and verify the candidate server before invoking the offline maintenance command")
 
 	publisherHostPath := writeQualificationHistoricalPrivateFile(t, privateRoot, "publisher.secret", []byte(fixture.Seed.PublisherClientSecret))
 	reviewerHostPath := writeQualificationHistoricalPrivateFile(t, privateRoot, "reviewer.secret", []byte(fixture.Seed.ReleaseClientSecret))

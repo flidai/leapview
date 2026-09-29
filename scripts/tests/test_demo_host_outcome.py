@@ -34,6 +34,8 @@ class HostOutcomeTests(unittest.TestCase):
             'candidate': {'image': 'ghcr.io/flidai/leapview@sha256:' + 'a' * 64, 'revision': 'c' * 40},
             'predecessor': {'image': 'ghcr.io/flidai/leapview@sha256:' + 'b' * 64, 'revision': 'd' * 40},
             'workflowRunId': '777', 'workflowAttempt': '1',
+            'qualificationRunId': '888', 'qualificationAttempt': '2',
+            'permissionProfile': 'leapview.permissions/v1',
         }
         self.public_calls = []
 
@@ -53,9 +55,34 @@ class HostOutcomeTests(unittest.TestCase):
                         'currentSchema': 28, 'candidateSchema': 30, 'profileID': 'app-leapview-demo-02'},
             'runtime': {**observed, 'schema': 28 if recovered else 30, 'containerImageID': 'sha256:'+'9'*64,
                         'repositoryDigests': [observed['image']], 'descriptorImage': observed['image'],
+                        'evidenceType': 'deployment', 'markerTargetId': 'app-leapview-demo-02',
+                        'instanceId': 'lvinst_'+'i'*32,
                         'markerImage': observed['image'], 'receiptImage': observed['image'],
                         'receiptRevision': observed['revision'], 'receiptPreviousImage': predecessor['image']},
         }
+
+    def installation_snapshot(self):
+        self.binding['operation'] = 'deploy'
+        self.binding['predecessor'] = dict(self.binding['candidate'])
+        snapshot = self.snapshot()
+        snapshot.update(operation='deploy', journalState=None, journal=None, request=None)
+        snapshot['runtime'].update(evidenceType='installation', receiptImage=None, receiptRevision=None,
+                                   receiptPreviousImage=None,
+                                   installationEvidence={
+                                       'version': 'leapview-compose-installation-v1',
+                                       'host': 'app-leapview-demo-02',
+                                       'installationRoot': '/opt/leapview',
+                                       'hostTargetId': 'app-leapview-demo-02',
+                                       'instanceId': 'lvinst_'+'i'*32,
+                                       'image': self.binding['candidate']['image'],
+                                       'revision': self.binding['candidate']['revision'],
+                                       'schema': 30,
+                                       'permissionProfile': self.binding['permissionProfile'],
+                                       'qualificationRunId': self.binding['qualificationRunId'],
+                                       'qualificationAttempt': self.binding['qualificationAttempt'],
+                                       'validatedAt': '2026-09-28T12:34:56Z',
+                                   })
+        return snapshot
 
     def collect(self, snapshot=None, verify=None):
         snapshot = snapshot or self.snapshot()
@@ -125,6 +152,43 @@ class HostOutcomeTests(unittest.TestCase):
             result = host_outcome.collect(['ssh','root@demo'], '/run/inspector.py', self.binding, '12346',
                 lambda _revision: None, lambda _revision: 30, output_path=self.output)
         self.assertEqual(result['result'], 'committed')
+
+    def test_first_install_evidence_commits_only_for_exact_same_image_deploy(self):
+        snapshot = self.installation_snapshot()
+        result = self.collect(snapshot)
+        self.assertEqual(result['result'], 'committed')
+        self.assertEqual(result['hostEvidenceType'], 'installation')
+        self.assertTrue(result['installationEvidenceVerified'])
+        self.assertEqual(self.public_calls, [self.binding['candidate']['revision']])
+
+    def test_installation_evidence_rejects_identity_and_operation_mismatches(self):
+        for mutate in (
+            lambda value: value['runtime']['installationEvidence'].__setitem__('instanceId', 'lvinst_'+'x'*32),
+            lambda value: value['runtime']['installationEvidence'].__setitem__('qualificationAttempt', '9'),
+            lambda value: value['runtime']['installationEvidence'].__setitem__('permissionProfile', 'other/v1'),
+            lambda value: value['runtime']['installationEvidence'].__setitem__('validatedAt', 'yesterday'),
+            lambda value: value['runtime']['installationEvidence'].__setitem__('schema', 29),
+        ):
+            snapshot = self.installation_snapshot()
+            mutate(snapshot)
+            self.public_calls.clear()
+            self.assertEqual(self.collect(snapshot)['result'], 'unresolved')
+            self.assertEqual(self.public_calls, [])
+
+        changed = self.installation_snapshot()
+        self.binding['predecessor'] = {'image': 'ghcr.io/flidai/leapview@sha256:'+'b'*64,
+                                       'revision': 'd'*40}
+        changed['runtime']['installationEvidence']['image'] = self.binding['candidate']['image']
+        self.public_calls.clear()
+        self.assertEqual(self.collect(changed)['result'], 'unresolved')
+        self.assertEqual(self.public_calls, [])
+
+        upgrade = self.installation_snapshot()
+        self.binding['operation'] = 'upgrade'
+        upgrade.update(operation='upgrade')
+        self.public_calls.clear()
+        self.assertEqual(self.collect(upgrade)['result'], 'unresolved')
+        self.assertEqual(self.public_calls, [])
 
     def test_reconcile_only_recovers_after_late_public_failure_without_host_rollout(self):
         import demo_runtime_record as record
