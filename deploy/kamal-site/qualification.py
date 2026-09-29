@@ -528,7 +528,7 @@ def main():
 
                 wait_until(docker_pull_running, seconds=15)
                 lock_process.stdin.close()
-                time.sleep(.2)
+                wait_until(lambda: json.loads((state / 'owner.json').read_text())['status'] == 'unresolved', seconds=15)
                 pull_journal = json.loads((state / 'owner.json').read_text())
                 assert pull_journal['status'] == 'unresolved'
                 assert pull_journal['work'][-1]['exit_code'] is None
@@ -646,6 +646,7 @@ def main():
             wait_until(lambda: (len(json.loads((state / 'owner.json').read_text())['work']) > before
                                and json.loads((state / 'owner.json').read_text())['work'][-1]['exit_code'] is not None),
                        seconds=15)
+            wait_until(lambda: lock_process.poll() is not None, seconds=15)
             raise ConnectionError('accept response lost after host commit')
 
         deploy.remote = drop_acceptance_reply
