@@ -262,7 +262,12 @@ def main():
             deploy.kamal(config, 'proxy', 'boot')
             deploy.kamal(config, 'app', 'boot', '--version', first['version'])
             deploy.remote('verify', version=first['version']); public_check(first)
-            deploy.remote('restored', version=first['version'])
+            # Bootstrap is a verified initial handover, not recovery of a
+            # distinct interrupted candidate. Seed its protected fixture state.
+            initial = deploy.remote('state')
+            initial['pending'] = None
+            initial['maintenance_pending'] = True
+            host.save(initial)
             deploy.remote('cleanup'); deploy.kamal(config, 'prune', 'all'); deploy.remote('maintained')
         print('PASS supervised boot/upload/identity/public proxy verification', flush=True)
         for n in range(2, 12):
@@ -543,7 +548,7 @@ def main():
         assert lock_process is not None
         lock_process.wait(timeout=20)
         assert subprocess.run(contender_args, input=b'finish\n', capture_output=True).returncode != 0
-        assert t.docker('image', 'inspect', deploy.LOCAL_REPOSITORY + ':' + pull_candidate['version'], check=False)[0] != 0
+        assert t.docker('image', 'inspect', host.LOCAL_REPOSITORY + ':' + pull_candidate['version'], check=False)[0] != 0
         pull_state = json.loads((state / 'state.json').read_text())
         assert pull_state['active'] == previous_record['version']
         assert pull_state['pending'] == pull_candidate['version']
