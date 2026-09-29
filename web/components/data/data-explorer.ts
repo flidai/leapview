@@ -131,6 +131,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private savedDuplicateTitle = ''
   @state() private savedVisibility: SavedExplorationVisibility = 'private'
   @state() private currentSavedVisibility: SavedExplorationVisibility = 'private'
+  @state() private savedShareStatus = ''
+  @state() private savedShareFallbackURL = ''
   @state() private exploreExecutionState: 'idle' | 'pending' | 'running' | 'stopped' | 'uncertain' = 'idle'
   @state() private exploreTransportFailure: BrowserCommandFailure | null = null
   private exploreTransportAction: 'run' | 'stop' | null = null
@@ -1171,6 +1173,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
           onReopen: (current) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
             bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },
           })),
+          shareStatus: () => this.savedShareStatus,
+          shareFallbackURL: () => this.savedShareFallbackURL,
+          onShareStatus: (message, fallbackURL) => {
+            this.savedShareStatus = message
+            this.savedShareFallbackURL = fallbackURL
+          },
         }) : nothing}
         <div
           class=${`explorer${this.browserCollapsed ? ' browser-collapsed' : ''}`}

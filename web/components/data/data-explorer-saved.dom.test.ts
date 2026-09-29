@@ -79,15 +79,35 @@ test('saved explorations render in their own row and emit the canonical current 
       name.dispatchEvent(new Event('input', { bubbles: true }))
       root.querySelector<HTMLButtonElement>('.saved-exploration-actions button')!.click()
       await element.updateComplete
+      let copiedURL = ''
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { copiedURL = value } } })
+      root.querySelector<HTMLButtonElement>('.saved-exploration-sharing button')!.click()
+      for (let index = 0; index < 10 && !root.querySelector('[role="status"]'); index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const shareStatus = root.querySelector('[role="status"]')?.textContent?.trim()
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('unavailable') } } })
+      root.querySelector<HTMLButtonElement>('.saved-exploration-sharing button')!.click()
+      for (let index = 0; index < 10 && !root.querySelector('.saved-exploration-sharing a'); index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
       return {
         routeClasses: root.querySelector('.route')!.className,
         gridRows: getComputedStyle(root.querySelector('.route')!).gridTemplateRows,
         command: commands[0],
+        copiedURL,
+        shareStatus,
+        fallbackURL: root.querySelector<HTMLAnchorElement>('.saved-exploration-sharing a')?.href,
       }
     })
     expect(state.routeClasses).toContain('saved-enabled')
     expect(state.gridRows.split(' ').length).toBeGreaterThanOrEqual(3)
     expect(state.command).toMatchObject({ action: 'create', title: 'Orders by status', visibility: 'private', spec: { modelId: 'sales', datasetId: 'orders' } })
+    expect(new URL(state.copiedURL).searchParams.get('mode')).toBe('explore')
+    expect(state.shareStatus).toBe('Link copied.')
+    expect(state.fallbackURL).toBe(state.copiedURL)
   } finally {
     await page.close()
   }

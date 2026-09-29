@@ -3,6 +3,15 @@ import { canonicalExplorationSpec, explorationSpecFromCommand } from './data-exp
 
 export type DataExplorerHistoryMode = 'push' | 'replace'
 
+// A saved link goes through the server's authorized reopen route. It must not
+// carry the browser's draft state, which may differ from the saved revision.
+export function savedExplorationShareURL(id: string, includeArchived = false): string {
+  const selected = id.trim()
+  if (!selected) return ''
+  const archived = includeArchived ? '&includeArchived=true' : ''
+  return `/explore/saved/${encodeURIComponent(selected)}?navigation=true${archived}`
+}
+
 export function dataExplorerURL(command: DataExplorerCommand, savedID?: string, includeArchived = false): string {
   const mode = command.mode === 'explore' ? 'explore' : 'browse'
   const objectKey = command.objectKey || ''
