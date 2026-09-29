@@ -71,9 +71,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       grid-template-columns: minmax(0, 1fr) minmax(22rem, 42%);
       overflow: hidden;
     }
-
     lv-chat-visual-panel { min-width: 0; min-height: 0; }
-
     .main {
       display: grid;
       min-width: 0;
@@ -321,7 +319,6 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         inset: 0;
         background: var(--lv-bg-panel);
       }
-
       .main.new-main {
         height: 100svh;
       }
