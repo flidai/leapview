@@ -229,6 +229,15 @@ def public_check(record):
     raise RuntimeError('public acceptance failed') from error
 
 
+def restore_active(config, record):
+    """Verify the restored route, stop only Kamal-stale containers, then clear pending."""
+    remote('verify', version=record['version']); public_check(record)
+    remote('stale-ready', version=record['version'])
+    kamal(config, 'app', 'stale_containers', '--stop')
+    remote('verify', version=record['version']); public_check(record)
+    remote('restored', version=record['version'])
+
+
 def deploy(directory, path):
     record = read_record(path)
     with ownership():
@@ -272,8 +281,7 @@ def transition(directory, record, previous, *, pull):
         config = configure(directory, previous)
         remote('image', version=previous['version'])
         kamal(config, 'rollback', previous['version'])
-        remote('verify', version=previous['version']); public_check(previous)
-        remote('restored', version=previous['version'])
+        restore_active(config, previous)
         remote('cleanup'); kamal(config, 'prune', 'all'); remote('maintained')
         raise
     # Maintenance errors after acceptance must report the new version as live;
@@ -291,8 +299,7 @@ def recover(directory):
     record = state['records'][state['active']]
     config = configure(directory, record)
     kamal(config, 'rollback', record['version'])
-    remote('verify', version=record['version']); public_check(record)
-    remote('restored', version=record['version'])
+    restore_active(config, record)
     remote('preserve-prior')
     remote('cleanup'); kamal(config, 'prune', 'all'); remote('maintained')
 

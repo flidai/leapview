@@ -249,6 +249,62 @@ def recovery_ready(state):
     if container['Image'] != image['Id']: raise ValueError('saved active image/container disagree')
 
 
+def stale_ready(state, version):
+    """Prove Kamal's native stale-container operation can preserve saved active."""
+    pending = state.get('pending')
+    if not pending or pending == state.get('active') or pending not in state['records']:
+        raise ValueError('no distinct unresolved candidate; inspect state or use maintain')
+    if version != state['active']:
+        raise ValueError('stale-container cleanup must preserve the saved active version')
+    record = state['records'][version]
+    if record.get('verified') is not True:
+        raise ValueError('saved active is not verified')
+    active = running(record)
+    scope(state['records'])
+
+    # Inspect every service container before Kamal enumerates versions by name.
+    ids = command('docker', 'ps', '-aq', '--filter', 'label=service=' + SERVICE).split()
+    for cid in ids:
+        container = inspect('container', cid)
+        labels = container.get('Config', {}).get('Labels', {})
+        name = container.get('Name', '').lstrip('/')
+        matches = []
+        for candidate, saved in state['records'].items():
+            canonical = SERVICE + '-web-' + candidate
+            if (container.get('Image') == saved.get('local_id')
+                    and (name == canonical
+                         or (name.startswith(canonical + '_') and len(name) > len(canonical) + 1))):
+                matches.append((candidate, saved))
+        if len(matches) != 1:
+            raise ValueError('unrecorded or ambiguous service container; inspect before stale cleanup')
+        candidate, saved = matches[0]
+        version_label = labels.get('version')
+        # Kamal 2.12.0 encodes versions in container names; manually restored
+        # containers may also carry a version label, which must agree if present.
+        if (labels.get('service') != SERVICE or labels.get('role') != 'web'
+                or labels.get('destination') not in ('', None)
+                or (container['State']['Running'] and 'destination' not in labels)
+                or (version_label is not None and version_label != saved['version'])):
+            raise ValueError('service container ownership, role, or version label differs from saved record')
+        validate_container(saved, container, require_running=False)
+
+    latest = inspect('image', LOCAL_REPOSITORY + ':latest')
+    if latest.get('Id') != active.get('Image'):
+        raise ValueError('Kamal latest image does not match the saved active container')
+    selected = command('docker', 'ps', '--latest', '--no-trunc', '--quiet',
+                       '--filter', 'status=running', '--filter', 'status=restarting',
+                       '--filter', 'label=service=' + SERVICE, '--filter', 'label=destination=',
+                       '--filter', 'label=role=web',
+                       '--filter', 'ancestor=' + latest['Id']).split()
+    if selected != [active['Id']]:
+        raise ValueError('Kamal native current-container selection differs from saved active')
+
+
+def service_containers():
+    ids = command('docker', 'ps', '-aq', '--filter', 'label=service=' + SERVICE).split()
+    return [inspect('container', cid) for cid in ids]
+
+
 def preserve_prior(state):
     """Recreate only a missing stopped recovery container after acceptance.
 
@@ -329,6 +385,8 @@ def main():
         recovery_ready(state)
         save(state)
         result = state
+    elif operation == 'stale-ready':
+        stale_ready(state, version)
     elif operation == 'maintenance-begin':
         running(state['records'][state['active']])
         if state.get('pending'):
@@ -370,7 +428,11 @@ def main():
         save(state)
     elif operation == 'restored':
         if version != state['active']: raise ValueError('restore must target last verified active version')
+        if not state.get('pending') or state['pending'] == state['active']:
+            raise ValueError('restore requires a distinct unresolved candidate')
         running(state['records'][version])
+        scope(state['records'])
+        cleanup_candidates(service_containers(), state['records'], state['active'], state.get('prior'))
         state['pending'] = None; state['maintenance_pending'] = True; save(state)
     elif operation == 'preserve-prior':
         if state.get('pending') or not state.get('maintenance_pending'):

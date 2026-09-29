@@ -117,7 +117,9 @@ Explicit recovery, using the pinned operator SSH connection:
    `python3 deploy/kamal-site/deploy.py recover` after the ownership audit above.
    This restores the saved verified active through Kamal
    using its local image and saved runtime under exclusive ownership, verifies
-   identity/public responses, then records restoration and completes maintenance.
+   identity/public responses, then validates every service container before Kamal
+   stops stale versions. Only after checking that no extra live version remains
+   does it record restoration and complete maintenance.
    It never pulls or accepts the interrupted candidate. A missing or contradictory
    recovery container, failed switch, or failed verification leaves pending state
    intact. If acceptance already committed (`pending` is empty), use `maintain`
