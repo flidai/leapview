@@ -2,7 +2,6 @@ import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { ChevronRight, Code2, Columns3, Database, Filter, Play, RotateCcw, Search, Sigma, Square, SquareCheckBig, X } from 'lucide'
 import type {
-  AgentReferenceSignal,
   DataExploreCommand,
   DataExploreFieldSignal,
   DataExploreFilterSignal,
@@ -27,6 +26,7 @@ import {
   DataExplorerPanelController,
   DataExplorerQueryController,
   DataExplorerSelectionController,
+  dataExplorerAgentSuggestions,
   prepareExplorationRun,
   prepareExplorationStop,
   exploreContextMatchesObject,
@@ -1247,7 +1247,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         </div>
         ${agentEnabled && this.agentDrawerOpen ? html`<lv-chat-drawer
           open
-          .suggestions=${this.agentSuggestions(explorer)}
+          .suggestions=${dataExplorerAgentSuggestions(explorer, this.optimisticExplore ?? explorer.explore.command, this.page?.context)}
           @lv-chat-drawer-close=${() => this.setAgentDrawerOpen(false)}
           @lv-chat-new=${this.handleAgentNew}
         ></lv-chat-drawer>` : nothing}
@@ -1537,24 +1537,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     // In an unknown-outcome state either the old or retry run may have reached
     // the server. A monotonic unnamed Stop safely addresses whichever remains.
     this.emitCommand({ action: 'stop', mode: 'explore', runId: uncertain ? undefined : this.clientState.runID(), explore: stopCommand })
-  }
-
-  private agentSuggestions(explorer: DataExplorerSignal): AgentReferenceSignal[] {
-    const command = this.optimisticExplore ?? explorer.explore.command
-    const context = this.page?.context
-    const projectId = context?.projectId ?? ''
-    const generationId = context?.generationId ?? ''
-    const semanticModelId = command.semanticModelId ?? ''
-    const datasetId = command.datasetId ?? ''
-    if (!projectId || !generationId || !semanticModelId || !datasetId) return []
-    const dataset = explorer.explore.datasets.find((candidate) => candidate.id === datasetId)
-    const href = `/explore?mode=explore&semanticModel=${encodeURIComponent(semanticModelId)}&dataset=${encodeURIComponent(datasetId)}`
-    return [{
-      reference: { kind: 'dataset', id: `${semanticModelId}/${datasetId}` },
-      name: dataset?.title ?? datasetId,
-      description: dataset?.description,
-      hierarchy: [projectId, semanticModelId], href, locations: [], context: ['active_project_generation'],
-    }]
   }
 
   private handleAgentNew = () => {

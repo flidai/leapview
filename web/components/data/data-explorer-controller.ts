@@ -1,8 +1,11 @@
 import type {
+  AgentReferenceSignal,
   DataExploreCommand,
   DataExploreFieldSignal,
   DataExplorerCommand,
   DataExplorerObjectSignal,
+  DataExplorerPageSignal,
+  DataExplorerSignal,
 } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
 import { explorationSpecFor, explorationSpecFromCommand } from './data-explorer-spec'
@@ -10,6 +13,26 @@ import { explorationSpecFor, explorationSpecFromCommand } from './data-explorer-
 const dataExplorerAgentStorageKey = 'leapview-data-explorer-agent-state'
 
 export type DataExplorerAgentStoredState = { open: boolean; conversationId: string }
+
+export function dataExplorerAgentSuggestions(
+  explorer: DataExplorerSignal,
+  command: DataExploreCommand,
+  context?: DataExplorerPageSignal['context'],
+): AgentReferenceSignal[] {
+  const projectId = context?.projectId ?? ''
+  const generationId = context?.generationId ?? ''
+  const semanticModelId = command.semanticModelId ?? ''
+  const datasetId = command.datasetId ?? ''
+  if (!projectId || !generationId || !semanticModelId || !datasetId) return []
+  const dataset = explorer.explore.datasets.find((candidate) => candidate.id === datasetId)
+  const href = `/explore?mode=explore&semanticModel=${encodeURIComponent(semanticModelId)}&dataset=${encodeURIComponent(datasetId)}`
+  return [{
+    reference: { kind: 'dataset', id: `${semanticModelId}/${datasetId}` },
+    name: dataset?.title ?? datasetId,
+    description: dataset?.description,
+    hierarchy: [projectId, semanticModelId], href, locations: [], context: ['active_project_generation'],
+  }]
+}
 
 export function readDataExplorerAgentState(storage: Storage | undefined = typeof localStorage === 'undefined' ? undefined : localStorage): DataExplorerAgentStoredState {
   if (!storage) return { open: false, conversationId: '' }
