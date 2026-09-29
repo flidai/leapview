@@ -194,11 +194,16 @@ func (container *testcontainersQualificationContainer) Kill(ctx context.Context,
 	if err := container.requireContainer(); err != nil {
 		return nil, err
 	}
-	if signal != "" && signal != "KILL" {
-		return nil, fmt.Errorf("Testcontainers qualification runtime supports only KILL")
+	switch signal {
+	case "TERM":
+		timeout := qualificationHistoricalStopGracePeriod
+		return nil, container.container.Stop(ctx, &timeout)
+	case "", "KILL":
+		timeout := time.Duration(0)
+		return nil, container.container.Stop(ctx, &timeout)
+	default:
+		return nil, fmt.Errorf("Testcontainers qualification runtime does not support signal %q", signal)
 	}
-	timeout := time.Duration(0)
-	return nil, container.container.Stop(ctx, &timeout)
 }
 
 func (container *testcontainersQualificationContainer) Start(ctx context.Context) ([]byte, error) {
@@ -219,6 +224,8 @@ func (container *testcontainersQualificationContainer) Inspect(ctx context.Conte
 	switch format {
 	case "{{.State.Status}}":
 		return []byte(inspection.State.Status), nil
+	case "{{.State.ExitCode}}":
+		return []byte(strconv.Itoa(inspection.State.ExitCode)), nil
 	case "{{.State.Health.Status}}":
 		if inspection.State.Health == nil {
 			return nil, nil

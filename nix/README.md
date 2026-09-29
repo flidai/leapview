@@ -148,10 +148,11 @@ ignored local secrets do not enter the store.
 
 ## Release adoption gates
 
-The application image is usable by Docker on a NixOS host. This does not qualify
-`deploy/host` on NixOS: its current supported host matrix is Ubuntu 24.04 and
-Debian 13. A native NixOS service/module and any Kamal integration need their own
-host lifecycle qualification.
+The application image is usable by Docker on a NixOS host. The reusable
+`deploy/host/nixos.nix` module configures Docker, the host controller wrapper
+and its loader prerequisites; it does not install the application. Nix image
+qualification does not replace the documented first-install and host recovery
+journeys. Any Kamal integration needs its own lifecycle qualification.
 
 Before replacing the builder in `.github/workflows/release.yml`, satisfy the
 existing release contract:

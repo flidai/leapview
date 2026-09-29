@@ -46,6 +46,8 @@ const (
 	qualificationHistoricalDiagnosticEnv     = "LEAPVIEW_HISTORICAL_TRANSITION_DIAGNOSTIC"
 	qualificationHistoricalDiagnosticImage   = "LEAPVIEW_HISTORICAL_TRANSITION_DIAGNOSTIC_IMAGE"
 	qualificationHistoricalDiagnosticRev     = "LEAPVIEW_HISTORICAL_TRANSITION_DIAGNOSTIC_REVISION"
+	qualificationHistoricalStopGracePeriod   = 2 * time.Minute
+	qualificationHistoricalStopWaitTimeout   = 3 * time.Minute
 )
 
 // TestQualificationHistoricalTransitionEndToEnd exercises the exact schema-32
@@ -157,7 +159,10 @@ func runQualificationHistoricalTransitionScenario(
 		"the newly activated typed generation must render the real CFO query proof")
 	require.NoError(t, verifyQualificationHistoricalTransitionAuthorization(ctx, candidate, fixture.Seed),
 		"typed workload roles and the real viewer must stay within their exact authority")
-	qualificationHistoricalStopContainer(t, candidate.Candidate)
+	require.NoError(t, stopQualificationHistoricalContainerGracefully(ctx, candidate.Candidate),
+		"gracefully stop and verify the candidate before starting its replacement")
+	_, err := candidate.Candidate.Remove(ctx)
+	require.NoError(t, err, "remove the stopped candidate before starting its replacement")
 	replacementRuntime := newTestcontainersQualificationRuntime()
 	replacementCandidate, replacementEndpoint := startQualificationHistoricalServer(t, ctx, replacementRuntime,
 		fixture.Network, fixture.StateVolume, options.CandidateImage, fixture.ApplicationEnv,
@@ -675,6 +680,103 @@ func qualificationHistoricalStopContainer(t *testing.T, container qualificationC
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	_, _ = container.Remove(cleanupCtx)
+}
+
+// stopQualificationHistoricalContainerGracefully drains application workers
+// before an offline operation can take a database lease. The stop request is
+// bounded, and only exit code zero proves the application completed its
+// shutdown hooks; Docker may report a successful stop after falling back from
+// SIGTERM to SIGKILL, while exit code 143 may bypass application draining.
+func stopQualificationHistoricalContainerGracefully(
+	ctx context.Context,
+	container qualificationContainer,
+) error {
+	if container == nil {
+		return fmt.Errorf("qualification container is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stopCtx, cancel := context.WithTimeout(ctx, qualificationHistoricalStopWaitTimeout)
+	defer cancel()
+	if _, err := container.Kill(stopCtx, "TERM"); err != nil {
+		return fmt.Errorf("send graceful termination signal to %s: %w", container.Name(), err)
+	}
+	if err := waitQualificationContainerValue(
+		stopCtx,
+		container,
+		"{{.State.Status}}",
+		"exited",
+		qualificationHistoricalStopWaitTimeout,
+	); err != nil {
+		return fmt.Errorf("wait for %s to finish graceful shutdown: %w", container.Name(), err)
+	}
+	exitOutput, err := container.Inspect(stopCtx, "{{.State.ExitCode}}")
+	if err != nil {
+		return fmt.Errorf("inspect %s exit code after graceful shutdown: %w", container.Name(), err)
+	}
+	exitCode, err := strconv.Atoi(strings.TrimSpace(string(exitOutput)))
+	if err != nil {
+		return fmt.Errorf("parse %s exit code %q after graceful shutdown: %w", container.Name(), exitOutput, err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("%s did not exit gracefully after SIGTERM (exit code %d)", container.Name(), exitCode)
+	}
+	return nil
+}
+
+type qualificationHistoricalStopFixture struct {
+	qualificationContainer
+	signals     []string
+	inspected   []string
+	state       string
+	exitCode    string
+	stopErr     error
+	hadDeadline bool
+}
+
+func (container *qualificationHistoricalStopFixture) Name() string { return "candidate-fixture" }
+
+func (container *qualificationHistoricalStopFixture) Kill(ctx context.Context, signal string) ([]byte, error) {
+	container.signals = append(container.signals, signal)
+	_, container.hadDeadline = ctx.Deadline()
+	if container.stopErr != nil {
+		return nil, container.stopErr
+	}
+	container.state = "exited"
+	return nil, nil
+}
+
+func (container *qualificationHistoricalStopFixture) Inspect(_ context.Context, format string) ([]byte, error) {
+	container.inspected = append(container.inspected, format)
+	switch format {
+	case "{{.State.Status}}":
+		return []byte(container.state), nil
+	case "{{.State.ExitCode}}":
+		return []byte(container.exitCode), nil
+	default:
+		return nil, fmt.Errorf("unexpected inspect format %q", format)
+	}
+}
+
+func TestStopQualificationHistoricalContainerGracefullyVerifiesExit(t *testing.T) {
+	container := &qualificationHistoricalStopFixture{exitCode: "0"}
+	require.NoError(t, stopQualificationHistoricalContainerGracefully(t.Context(), container))
+	require.Equal(t, []string{"TERM"}, container.signals, "normal shutdown must never send SIGKILL")
+	require.True(t, container.hadDeadline, "graceful stop must be bounded")
+	require.Equal(t, []string{"{{.State.Status}}", "{{.State.ExitCode}}"}, container.inspected,
+		"stop must wait for process exit and verify the exit code")
+}
+
+func TestStopQualificationHistoricalContainerRejectsExitWithoutCompletedDrain(t *testing.T) {
+	for _, exitCode := range []string{"137", "143"} {
+		t.Run(exitCode, func(t *testing.T) {
+			container := &qualificationHistoricalStopFixture{exitCode: exitCode}
+			err := stopQualificationHistoricalContainerGracefully(t.Context(), container)
+			require.ErrorContains(t, err, "did not exit gracefully")
+			require.Equal(t, []string{"TERM"}, container.signals, "the shutdown path must never request SIGKILL")
+		})
+	}
 }
 
 func historicalQualificationCFOSource(t *testing.T, repoRoot string) string {

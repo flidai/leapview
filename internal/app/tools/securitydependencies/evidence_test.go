@@ -191,6 +191,25 @@ func TestEvidenceAndScannerJSONRejectDuplicateKeys(t *testing.T) {
 	}
 }
 
+func TestBunEvidenceCoalescesDuplicateAdvisoryRecords(t *testing.T) {
+	findings, err := parseBunEvidenceFindings([]byte(`{"undici":[
+		{"id":1239932,"url":"https://github.com/advisories/GHSA-3wwx-pv8p-q78v","severity":"moderate"},
+		{"id":1239933,"url":"https://github.com/advisories/GHSA-3wwx-pv8p-q78v","severity":"high"},
+		{"id":1239934,"url":"https://github.com/advisories/GHSA-3wwx-pv8p-q78v","severity":"moderate"}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []javascriptEvidenceFinding{{
+		Advisory:   "GHSA-3wwx-pv8p-q78v",
+		Dependency: "undici",
+		Severity:   "high",
+	}}
+	if len(findings) != len(want) || findings[0] != want[0] {
+		t.Fatalf("findings = %#v, want %#v", findings, want)
+	}
+}
+
 func TestEvidenceRejectsGraphAndFindingSetChanges(t *testing.T) {
 	fixture := newJavaScriptEvidenceFixture(t)
 	base := fixture.evidence(&javascriptEvidenceFinding{Advisory: "GHSA-evidence-1", Dependency: "example-package", Severity: "low"})

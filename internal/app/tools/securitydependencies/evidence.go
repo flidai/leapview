@@ -573,8 +573,7 @@ func parseBunEvidenceFindings(data []byte) ([]javascriptEvidenceFinding, error) 
 			findings = append(findings, javascriptEvidenceFinding{Advisory: advisory, Dependency: dependency, Severity: strings.ToLower(severity)})
 		}
 	}
-	sortJavaScriptFindings(findings)
-	return findings, nil
+	return coalesceJavaScriptFindings(findings), nil
 }
 
 func parseNPMEvidenceFindings(data []byte) ([]javascriptEvidenceFinding, error) {
@@ -731,6 +730,23 @@ func sortJavaScriptFindings(findings []javascriptEvidenceFinding) {
 		right := findings[j].Dependency + "\x00" + findings[j].Advisory + "\x00" + findings[j].Severity
 		return left < right
 	})
+}
+
+func coalesceJavaScriptFindings(findings []javascriptEvidenceFinding) []javascriptEvidenceFinding {
+	byIdentity := make(map[string]javascriptEvidenceFinding, len(findings))
+	for _, finding := range findings {
+		key := finding.Dependency + "\x00" + finding.Advisory
+		existing, ok := byIdentity[key]
+		if !ok || severityRank(finding.Severity) > severityRank(existing.Severity) {
+			byIdentity[key] = finding
+		}
+	}
+	result := make([]javascriptEvidenceFinding, 0, len(byIdentity))
+	for _, finding := range byIdentity {
+		result = append(result, finding)
+	}
+	sortJavaScriptFindings(result)
+	return result
 }
 
 func equalStringSlices(left, right []string) bool {
