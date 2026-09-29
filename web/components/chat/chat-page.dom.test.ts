@@ -161,6 +161,28 @@ for (const viewport of [
   })
 }
 
+test('chat shows Explore data only for an authorized exploration context', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-page'))
+    const chat = page.locator('lv-chat-page')
+    expect(await chat.locator('.explore-link').count()).toBe(0)
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agentContext: { surface: 'explore', exploration: {
+        schemaVersion: 1, modelId: 'semantic:sales', datasetId: 'orders',
+        dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 50,
+      } } })
+    })
+    await chat.locator('.explore-link').waitFor()
+    const href = await chat.locator('.explore-link').getAttribute('href')
+    const url = new URL(href!, 'https://example.test')
+    expect(url.pathname).toBe('/explore')
+    expect(JSON.parse(url.searchParams.get('state')!).dimensions).toEqual([{ field: 'orders.status' }])
+  } finally { await page.close() }
+})
+
 for (const viewport of [
   { name: 'desktop', width: 1280, height: 820, expectedSurfaceWidth: 760 },
   { name: 'narrow desktop', width: 700, height: 820, expectedSurfaceWidth: 668 },
