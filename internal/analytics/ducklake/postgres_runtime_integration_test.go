@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -253,6 +254,11 @@ func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 
 func postgresCatalogCredentialBootstrap(t *testing.T, database *postgrestest.Database, role postgrestest.Role, secretName string) CredentialBootstrap {
 	t.Helper()
+	fixture := extensionfixture.New(t, "postgres")
+	admitted, err := fixture.Admission.AdmitExtension(t.Context(), "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
 	parsed, err := url.Parse(postgresTLSURL(t, database.URL(role)))
 	if err != nil {
 		t.Fatal(err)
@@ -263,10 +269,7 @@ func postgresCatalogCredentialBootstrap(t *testing.T, database *postgrestest.Dat
 	}
 	password, _ := parsed.User.Password()
 	return func(ctx context.Context, execer driver.ExecerContext) error {
-		if _, err := execer.ExecContext(ctx, "INSTALL postgres_scanner FROM core", nil); err != nil {
-			return err
-		}
-		if _, err := execer.ExecContext(ctx, "LOAD postgres_scanner", nil); err != nil {
+		if _, err := execer.ExecContext(ctx, "LOAD '"+sqlLiteral(admitted.Path)+"'", nil); err != nil {
 			return err
 		}
 		statement := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET %s (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE 'require')", quoteCatalogIdentifier(secretName), sqlLiteral(parsed.Hostname()), port, sqlLiteral(parsed.Path[1:]), sqlLiteral(parsed.User.Username()), sqlLiteral(password))
