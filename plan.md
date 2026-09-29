@@ -4,27 +4,38 @@ Updated: 29 September 2026. Implementation resumed after the 03:53 UTC reassessm
 
 ## Execution checkpoint
 
-- Current main (`bbdaa69ed`) has been merged into both Kamal branches.
-- Trial merge `aaff8a43b` is pushed; all refreshed hosted CI, security and
-  Electron checks passed.
+- Main snapshot (`2a08a13da`) has been merged into both Kamal branches.
+- Trial merge `671395792` is pushed; refreshed CI, security, Electron and
+  isolated image qualification all passed.
 - Production operator forwards the existing GitHub login to live admission and
   supports explicit offline `recover` after an interrupted switch. Review fixes
   reconcile a completed pull and verify Caddy public ports, persistent storage and
-  immutable image references. All 33 operator regression tests pass.
+  immutable image references. All 39 operator regression tests pass.
 - Capacity now requires the exact image digest to be listed in each filesystem
   qualification record; smaller compressed downloads do not bypass measurement.
-- Expanded remote lifecycle evidence and real-topology readiness qualification
-  are in progress; independent review is checking the final fixes.
-- A fresh local CI environment is being prepared with CI-pinned Node/Task and a
-  proper namespace init/reaper. Tests and watchdog limits remain unchanged.
+- Expanded remote lifecycle and actual-topology readiness qualification passed.
+  The 29 September evidence binds the final operator source hashes; independent
+  review found no remaining recovery-guard defect.
+- Local `task ci` passed preparation, generators, Go packages/application shards,
+  external integration, PostgreSQL conformance and coverage. It then failed on
+  the app-shell Undo-expiry browser test (5-second timeout, followed by closed
+  browser errors). Diagnosis and unchanged-test rerun are underway; there is
+  still no green aggregate local result. Tests/watchdog limits remain unchanged.
+- The expanded interruption run reproduced a recovery cleanup bug: the correct
+  site was restored but an extra container remained running. The guarded native
+  Kamal stale-container stop is implemented and its regression tests pass. The
+  full disposable run passed against the final source, including the reproduced
+  interrupted-switch scenario and a lost acceptance response.
 - Review, merge, production images, host handover and observation gates remain
   outstanding. No production mutation has been performed in this implementation.
 
 ## Latest reassessment
 
-No new main merges or public-site/demo deployment runs were found since the
-28 September assessment. Main remains at
-`bbdaa69edab52136a56c8abebf57b97904081bc4` (#762).
+The implementation now integrates main snapshot
+`2a08a13da0a309ed6972d17ec6c5839f99a72c4e`, including #764 (Node image),
+#765 (Vitest/security evidence), and #766 (GitHub Actions pins), after #762.
+The production/runtime rows below describe the read-only 03:53 UTC snapshot;
+they are not a claim that later workflow runs have been reassessed.
 
 | Area | Verified status |
 | --- | --- |
@@ -38,7 +49,7 @@ No new main merges or public-site/demo deployment runs were found since the
 | Release metadata | Live site advertises `0.2.0-rc.1`; main expects `0.3.0-alpha.1`. Latest public adoption smoke run 36431566050 failed this exact comparison. |
 | Updater and Kamal | Legacy timer disabled/inactive; service inactive. No Kamal proxy or permanent state/handover records exist. |
 | Capacity | 34,621,898,752 bytes available (about 32.3 GiB), 2,402,001 available inodes on the shared Docker/containerd filesystem. |
-| #752 / #751 | Both open drafts, external review required. Both integrate current main; #751 head `aaff8a43b` is pushed with CI/security/Electron passing. #752 implementation/requalification is ongoing locally. |
+| #752 / #751 | Both open drafts, external review required. Both integrate current main; #751 head `671395792` is pushed with CI/security/Electron/image qualification passing. #752 implementation/requalification is ongoing locally. |
 | #748 | Still open as fallback; keep it uninstalled. |
 
 The deployment failure is consistent with the deliberately disabled updater:
@@ -68,11 +79,13 @@ Automatic VPS deployment remains disabled.
 - Persistent Caddy-only configuration and the migration/recovery runbook exist.
 - Disposable tests passed ten updates, offline rollback with a broken current
   container, failure recovery, storage guards, Caddy recreation, engine restart,
-  and loss of the SSH lock connection while remote work continues.
-- All 33 current operator regression tests passed. Earlier hosted CI, security,
+  and loss of the SSH lock connection while remote work continues. The expanded
+  run also passed real interrupted pulls/switches and a lost acceptance response.
+- All 39 current operator regression tests passed. Earlier hosted CI, security,
   and Electron checks passed on previous heads; refreshed final checks are being
-  collected. Earlier local commands passed across completed and resumed lanes,
-  but the aggregate reports lane exceeded its watchdog limit:
+  collected. The earlier reports-lane watchdog issue was followed by a fresh Tini-based
+  aggregate run that reached frontend tests, then failed on the app-shell
+  Undo-expiry test:
   **there is no green monolithic local `task ci` result**.
 - PR #752 contains the implementation and evidence. PR #751 contains the trial
   harness and corrected status/docs. Both remain drafts with review required.
@@ -88,8 +101,9 @@ or that the release/download metadata is current.
 DONE: Build tooling → Initial disposable tests → Initial hosted checks
       → Refresh both branches against current main
 
-NOW:  Fix reviewed recovery/readiness gaps → Expand lifecycle proof
-      → Complete local and refreshed hosted checks
+DONE: Fix reviewed recovery/readiness gaps → Expanded lifecycle proof
+
+NOW:  Complete local and refreshed hosted checks
 
 NEXT: External review and resolve feedback
       → Merge #752 and qualify real image A
@@ -112,7 +126,7 @@ They are not trial images or mutable version tags.
   as proof that this refreshed integration passes.
 - [ ] Obtain Jacob's review of [#752](https://github.com/flidai/leapview/pull/752)
   and [#751](https://github.com/flidai/leapview/pull/751); address feedback.
-- [ ] Compare saved evidence with every scenario in the accepted completion
+- [x] Compare saved evidence with every scenario in the accepted completion
   plan. Complete any missing failure-injection evidence, especially interrupted
   pull/switch and lost acceptance responses; distinguish unit coverage from
   an exercised remote lifecycle.
