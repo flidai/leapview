@@ -799,6 +799,14 @@ test('dashboard agent opens an eligible query visual with Explore and Save actio
     await page.locator('lv-dashboard-page').evaluate((element: any) => {
       element.shadowRoot.querySelector('lv-chat-drawer').shadowRoot.querySelector('lv-chat-thread').shadowRoot.querySelector('[data-visual-id="chat-chart"]').click()
     })
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-chat-drawer')
+      const panel = drawer?.shadowRoot?.querySelector('lv-chat-visual-panel')
+      if (!drawer || !panel) return false
+      const panelBounds = panel.getBoundingClientRect()
+      const drawerBounds = drawer.getBoundingClientRect()
+      return panelBounds.left >= drawerBounds.left && panelBounds.right <= drawerBounds.right + 1 && panelBounds.bottom <= drawerBounds.bottom + 1
+    })
     const panelState = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
       await drawer.updateComplete
