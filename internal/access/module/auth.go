@@ -533,36 +533,23 @@ func createBrowserSession(r *http.Request, repository access.Repository, princip
 // Versions, device models, and the raw user-agent are excluded from durable
 // session metadata.
 func browserClientLabel(userAgent string) string {
+	return browserClientLabelWithEvidence(userAgent, "", "")
+}
+
+func browserClientLabelWithEvidence(userAgent, secCHUA, secCHUAPlatform string) string {
 	lower := strings.ToLower(userAgent)
-	browser := ""
-	switch {
-	case strings.Contains(lower, "edg/") || strings.Contains(lower, "edgios/") || strings.Contains(lower, "edga/"):
-		browser = "Edge"
-	case strings.Contains(lower, "opr/") || strings.Contains(lower, "opera/"):
-		browser = "Opera"
-	case strings.Contains(lower, "firefox/") || strings.Contains(lower, "fxios/"):
-		browser = "Firefox"
-	case strings.Contains(lower, "brave"):
-		browser = "Brave"
-	case strings.Contains(lower, "crios/") || strings.Contains(lower, "chrome/"):
-		browser = "Chrome"
-	case strings.Contains(lower, "safari/") && strings.Contains(lower, "version/"):
-		browser = "Safari"
+	browser := browserFromUserAgent(lower)
+	// A specific marker in the UA (such as Vivaldi or Brave) is stronger
+	// evidence than a generic Chromium client-hint brand. Hints refine the
+	// Chrome-shaped UA used by Edge, Opera, and other Chromium browsers.
+	if browser == "" || browser == "Chrome" || browser == "Chromium" || browser == "Safari" {
+		if hintedBrowser := browserFromClientHints(secCHUA); hintedBrowser != "" {
+			browser = hintedBrowser
+		}
 	}
-	osName := ""
-	switch {
-	case strings.Contains(lower, "windows"):
-		osName = "Windows"
-	case strings.Contains(lower, "android"):
-		osName = "Android"
-	case strings.Contains(lower, "cros"):
-		osName = "ChromeOS"
-	case strings.Contains(lower, "iphone") || strings.Contains(lower, "ipad") || strings.Contains(lower, "ipod"):
-		osName = "iOS"
-	case strings.Contains(lower, "macintosh") || strings.Contains(lower, "mac os x"):
-		osName = "macOS"
-	case strings.Contains(lower, "linux"):
-		osName = "Linux"
+	osName := operatingSystemFromUserAgent(lower)
+	if osName == "" {
+		osName = operatingSystemFromClientHint(secCHUAPlatform)
 	}
 	if browser != "" && osName != "" {
 		return browser + " on " + osName
@@ -574,18 +561,130 @@ func browserClientLabel(userAgent string) string {
 }
 
 func browserClientLabelFromRequest(r *http.Request) string {
-	label := browserClientLabel(r.UserAgent())
-	// Brave's desktop user agent is Chrome-shaped. Client hints may supply
-	// the Brave brand, but are not always available.
-	for _, brand := range strings.Split(r.Header.Get("Sec-CH-UA"), ",") {
-		if strings.HasPrefix(strings.TrimSpace(brand), `"Brave";`) {
-			if _, osName, found := strings.Cut(label, " on "); found {
-				return "Brave on " + osName
-			}
-			return "Brave"
+	return browserClientLabelWithEvidence(
+		r.UserAgent(),
+		r.Header.Get("Sec-CH-UA"),
+		r.Header.Get("Sec-CH-UA-Platform"),
+	)
+}
+
+func browserFromClientHints(clientHints string) string {
+	// Brand order is not defined by Sec-CH-UA, and generic brands such as
+	// Chromium may appear alongside a more specific browser brand.
+	brands := make(map[string]struct{})
+	for _, value := range strings.Split(clientHints, ",") {
+		brand, _, found := strings.Cut(strings.TrimSpace(value), ";")
+		if !found {
+			continue
+		}
+		brand = strings.ToLower(strings.Trim(strings.TrimSpace(brand), `"`))
+		brands[brand] = struct{}{}
+	}
+	switch {
+	case hasClientHintBrand(brands, "brave"):
+		return "Brave"
+	case hasClientHintBrand(brands, "microsoft edge"):
+		return "Edge"
+	case hasClientHintBrand(brands, "opera"):
+		return "Opera"
+	case hasClientHintBrand(brands, "vivaldi"):
+		return "Vivaldi"
+	case hasClientHintBrand(brands, "google chrome"):
+		return "Chrome"
+	case hasClientHintBrand(brands, "chromium"):
+		return "Chromium"
+	default:
+		return ""
+	}
+}
+
+func hasClientHintBrand(brands map[string]struct{}, brand string) bool {
+	_, found := brands[brand]
+	return found
+}
+
+func browserFromUserAgent(userAgent string) string {
+	switch {
+	case containsAny(userAgent, "edg/", "edga/", "edgios/", "edge/"):
+		return "Edge"
+	case containsAny(userAgent, "opr/", "opera/", "opios/"):
+		return "Opera"
+	case strings.Contains(userAgent, "samsungbrowser/"):
+		return "Samsung Internet"
+	case strings.Contains(userAgent, "brave"):
+		return "Brave"
+	case strings.Contains(userAgent, "vivaldi/"):
+		return "Vivaldi"
+	case containsAny(userAgent, "yabrowser/", "yowser/"):
+		return "Yandex Browser"
+	case containsAny(userAgent, "duckduckgo/", "ddg/"):
+		return "DuckDuckGo"
+	case containsAny(userAgent, "ucbrowser/", "ucweb/", "ubrowser/"):
+		return "UC Browser"
+	case containsAny(userAgent, "huaweibrowser/", "huawei browser"):
+		return "Huawei Browser"
+	case strings.Contains(userAgent, "miuibrowser/"):
+		return "Xiaomi Browser"
+	case containsAny(userAgent, "qqbrowser/", "mqqbrowser/"):
+		return "QQ Browser"
+	case strings.Contains(userAgent, "silk/"):
+		return "Silk"
+	case containsAny(userAgent, "firefox/", "fxios/", "fennec/", "focus/"):
+		return "Firefox"
+	case containsAny(userAgent, "crios/", "chrome/"):
+		return "Chrome"
+	case strings.Contains(userAgent, "chromium/"):
+		return "Chromium"
+	case strings.Contains(userAgent, "safari/") && strings.Contains(userAgent, "version/"):
+		return "Safari"
+	default:
+		return ""
+	}
+}
+
+func operatingSystemFromUserAgent(userAgent string) string {
+	switch {
+	case strings.Contains(userAgent, "windows"):
+		return "Windows"
+	case strings.Contains(userAgent, "android"):
+		return "Android"
+	case strings.Contains(userAgent, "cros"):
+		return "ChromeOS"
+	case containsAny(userAgent, "iphone", "ipad", "ipod"):
+		return "iOS"
+	case containsAny(userAgent, "macintosh", "mac os x"):
+		return "macOS"
+	case strings.Contains(userAgent, "linux"):
+		return "Linux"
+	default:
+		return ""
+	}
+}
+
+func operatingSystemFromClientHint(platform string) string {
+	switch strings.ToLower(strings.Trim(strings.TrimSpace(platform), `"`)) {
+	case "windows":
+		return "Windows"
+	case "android":
+		return "Android"
+	case "chrome os", "chromeos":
+		return "ChromeOS"
+	case "macos":
+		return "macOS"
+	case "linux":
+		return "Linux"
+	default:
+		return ""
+	}
+}
+
+func containsAny(value string, fragments ...string) bool {
+	for _, fragment := range fragments {
+		if strings.Contains(value, fragment) {
+			return true
 		}
 	}
-	return label
+	return false
 }
 
 func (a *Auth) LocalPassword(w http.ResponseWriter, r *http.Request) {

@@ -16,10 +16,60 @@ export type SelectedSession = {
   kind: 'browser' | 'authoring'
 }
 
-export function browserSessionLabel(session: PersonalSessionSignal, currentBrowserIsBrave: boolean): string {
+const browserBrandNames = new Map<string, string>([
+  ['brave', 'Brave'],
+  ['microsoft edge', 'Edge'],
+  ['opera', 'Opera'],
+  ['vivaldi', 'Vivaldi'],
+  ['samsung internet', 'Samsung Internet'],
+  ['yandex', 'Yandex Browser'],
+  ['duckduckgo', 'DuckDuckGo'],
+  ['silk', 'Silk'],
+  ['uc browser', 'UC Browser'],
+  ['huawei browser', 'Huawei Browser'],
+  ['miui browser', 'Xiaomi Browser'],
+  ['xiaomi browser', 'Xiaomi Browser'],
+  ['firefox', 'Firefox'],
+  ['google chrome', 'Chrome'],
+])
+
+export function browserNameFromClientHints(userAgent: string, brands: readonly string[] = []): string | null {
+  const hintedBrowser = brands
+    .map((brand) => browserBrandNames.get(brand.trim().toLowerCase()))
+    .find((name) => name !== undefined)
+
+  const lower = userAgent.toLowerCase()
+  const userAgentBrowser = [
+    { name: 'Edge', match: /(?:edg|edgios|edga)\// },
+    { name: 'Opera', match: /(?:opr|opera)\// },
+    { name: 'Vivaldi', match: /vivaldi\// },
+    { name: 'Samsung Internet', match: /samsungbrowser\// },
+    { name: 'Yandex Browser', match: /yabrowser\// },
+    { name: 'DuckDuckGo', match: /duckduckgo\// },
+    { name: 'Silk', match: /silk\// },
+    { name: 'UC Browser', match: /ucbrowser\// },
+    { name: 'Huawei Browser', match: /huaweibrowser\// },
+    { name: 'Xiaomi Browser', match: /(?:miuibrowser|xiaomibrowser)\// },
+    { name: 'Brave', match: /brave(?:\/|$)/ },
+    { name: 'Firefox', match: /(?:firefox|fxios)\// },
+    { name: 'Chrome', match: /(?:crios|chrome)\// },
+    { name: 'Safari', match: /safari\// },
+  ].find((candidate) => candidate.match.test(lower))?.name
+
+  // A branded UA token is more specific than the generic Chromium brand that
+  // Chrome-based browsers expose through User-Agent Client Hints.
+  if (userAgentBrowser && userAgentBrowser !== 'Chrome' && userAgentBrowser !== 'Safari') return userAgentBrowser
+  return hintedBrowser ?? userAgentBrowser ?? null
+}
+
+export function browserSessionLabel(session: PersonalSessionSignal, currentBrowserName: string | null): string {
   const label = session.clientLabel || humanizeSessionKind(session.kind)
-  if (session.current && session.kind === 'browser' && currentBrowserIsBrave && (label === 'Chrome' || label.startsWith('Chrome on '))) {
-    return `Brave${label.slice('Chrome'.length)}`
+  if (!session.current || session.kind !== 'browser' || !currentBrowserName) return label
+
+  const splitAt = label.indexOf(' on ')
+  const storedBrowserName = splitAt < 0 ? label : label.slice(0, splitAt)
+  if (storedBrowserName === 'Browser' || storedBrowserName === 'Chrome') {
+    return `${currentBrowserName}${splitAt < 0 ? '' : label.slice(splitAt)}`
   }
   return label
 }
@@ -28,9 +78,9 @@ export function renderBrowserSessionRow(
   session: PersonalSessionSignal,
   onSelect: (session: SelectedSession) => void,
   onRevoke: (session: PendingSessionRevocation) => void,
-  currentBrowserIsBrave = false,
+  currentBrowserName: string | null = null,
 ) {
-  const label = browserSessionLabel(session, currentBrowserIsBrave)
+  const label = browserSessionLabel(session, currentBrowserName)
   return html`<tr class=${session.current ? 'is-current' : ''}>
     <td><button class="security-session-device" type="button" aria-label=${`View details for ${label}${session.current ? ', this device, current session' : ''}`} @click=${() => onSelect({ id: session.id, kind: 'browser' })}>
       <span class="security-session-icon" aria-hidden="true">${lucideIcon(Monitor, { size: 16, strokeWidth: 1.75 })}</span>

@@ -218,6 +218,7 @@ test('security settings use a unified session list, focused password dialog, and
     await page.addInitScript(() => { Object.defineProperty(navigator, 'brave', { value: { isBrave: async () => true } }) })
     await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-personal-settings'))
+    await page.keyboard.press('Tab')
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ page: {
@@ -282,6 +283,8 @@ test('security settings use a unified session list, focused password dialog, and
       const dialogTitle = revokeDialog.querySelector('h2')?.textContent?.trim()
       revokeDialog.querySelector<HTMLButtonElement>('.token-delete-actions button')!.click()
       await personal.updateComplete
+      const currentDevice = root.querySelector<HTMLButtonElement>('.security-session-table tr.is-current .security-session-device')!
+      currentDevice.focus()
       return {
         headings: sections.map((section) => section.querySelector('h2')?.textContent?.trim()),
         mainClass: (admin.shadowRoot as ShadowRoot).querySelector('.main')?.className,
@@ -291,6 +294,9 @@ test('security settings use a unified session list, focused password dialog, and
         currentBadge: root.querySelector('.security-badge')?.textContent?.trim(),
         currentLabel: root.querySelector('.security-session-table tr.is-current .security-session-device')?.getAttribute('aria-label'),
         currentRowBackground: getComputedStyle(root.querySelector('.security-session-table tr.is-current')!).backgroundColor,
+        deviceFocusVisible: currentDevice.matches(':focus-visible'),
+        deviceFocusOutline: getComputedStyle(currentDevice).outlineStyle,
+        deviceFocusOutlineWidth: getComputedStyle(currentDevice).outlineWidth,
         currentAction: root.querySelector('.security-session-table tr.is-current .session-action')?.textContent?.trim(),
         sessionActions: [root.querySelector('[data-logout-all]')?.textContent?.trim(), otherRow.querySelector('.session-action')?.textContent?.trim()],
         deviceColumnGap,
@@ -316,6 +322,9 @@ test('security settings use a unified session list, focused password dialog, and
     expect(state.currentBadge).toBe('This device')
     expect(state.currentLabel).toBe('View details for Brave on Linux, this device, current session')
     expect(state.currentRowBackground).not.toBe('rgba(0, 0, 0, 0)')
+    expect(state.deviceFocusVisible).toBe(true)
+    expect(state.deviceFocusOutline).toBe('solid')
+    expect(state.deviceFocusOutlineWidth).toBe('2px')
     expect(state.currentAction).toBe('Sign out')
     expect(state.sessionActions).toEqual(['Log out all', 'Revoke'])
     expect(state.deviceColumnGap).toBe('16px')
@@ -335,6 +344,30 @@ test('security settings use a unified session list, focused password dialog, and
     expect(state.dialogTitle).toBe('Revoke this session?')
     expect(state.commandBeforeConfirmation).toBeNull()
     expect(state.sessionCommand).toEqual({ action: 'revoke', sessionId: 'session-other' })
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    const mobile = await page.evaluate(() => {
+      const personal = (document.querySelector('lv-admin-page')!.shadowRoot as ShadowRoot).querySelector('lv-personal-settings')!
+      const root = personal.shadowRoot as ShadowRoot
+      const wrap = root.querySelector<HTMLElement>('.security-session-table-wrap')!
+      const table = wrap.querySelector<HTMLTableElement>('.security-session-table')!
+      const device = root.querySelector<HTMLElement>('.security-session-table tr.is-current .security-session-device')!
+      const action = root.querySelector<HTMLElement>('.security-session-table tr.is-current .session-action')!
+      return {
+        visibleHeaders: Array.from(table.querySelectorAll('thead th')).filter((cell) => getComputedStyle(cell).display !== 'none').map((cell) => cell.textContent?.trim()),
+        wrapWidth: wrap.clientWidth,
+        wrapScrollWidth: wrap.scrollWidth,
+        deviceRight: Math.round(device.getBoundingClientRect().right),
+        actionRight: Math.round(action.getBoundingClientRect().right),
+        currentRowBackground: getComputedStyle(root.querySelector('.security-session-table tr.is-current')!).backgroundColor,
+        actionHeight: Math.round(action.getBoundingClientRect().height),
+      }
+    })
+    expect(mobile.visibleHeaders).toEqual(['Device', ''])
+    expect(mobile.wrapScrollWidth).toBeLessThanOrEqual(mobile.wrapWidth)
+    expect(mobile.deviceRight).toBeLessThanOrEqual(mobile.actionRight)
+    expect(mobile.currentRowBackground).not.toBe('rgba(0, 0, 0, 0)')
+    expect(mobile.actionHeight).toBeGreaterThanOrEqual(32)
   } finally {
     await page.close()
   }

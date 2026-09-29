@@ -45,7 +45,8 @@ export const personalSettingsStyles = css`
     .security-session-table tr.is-current { background: var(--lv-bg-accent-muted); }
     .security-session-table time, .security-session-access { color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
     .security-session-device { display: grid; width: 100%; min-width: 0; min-height: var(--base-size-40); grid-template-columns: var(--base-size-32) minmax(0, 1fr); align-items: center; column-gap: var(--base-size-16); border-color: transparent; background: transparent; padding: 0; text-align: left; }
-    .security-session-device:hover, .security-session-device:focus-visible { background: var(--lv-bg-control-hover); outline: 0; }
+    .security-session-device:hover { background: var(--lv-bg-control-hover); }
+    .security-session-device:focus-visible { background: var(--lv-bg-control-hover); outline: var(--focus-outline, 2px solid var(--lv-fg-accent)); outline-offset: var(--focus-outline-offset, var(--base-size-2)); }
     .security-session-icon { display: grid; width: var(--base-size-32); height: var(--base-size-32); place-items: center; border-radius: var(--lv-radius-full); color: var(--lv-fg-muted); background: var(--lv-bg-control); }
     .security-session-icon svg { width: var(--base-size-16); height: var(--base-size-16); }
     .security-session-device-copy { display: grid; min-width: 0; gap: var(--base-size-4); }
@@ -222,11 +223,6 @@ export const personalSettingsStyles = css`
       .security-section-heading > button { align-self: start; }
       .security-password-row { grid-template-columns: minmax(0, 1fr); }
       .security-password-row > button { justify-self: start; }
-      .security-session-table { min-width: 30rem; }
-      .security-session-table th:nth-child(2), .security-session-table td:nth-child(2), .security-session-table th:nth-child(3), .security-session-table td:nth-child(3) { display: none; }
-      .security-session-table th:first-child, .security-session-table td:first-child { width: 48%; }
-      .security-session-table th:nth-child(4), .security-session-table td:nth-child(4) { width: 28%; }
-      .security-session-table th:last-child, .security-session-table td:last-child { width: 24%; }
       .session-drawer-fact { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
       .permissions-header { align-items: start; }
       .permission-backdrop { position: fixed; z-index: var(--z-index-dropdown); inset: 0; display: block; background: var(--lv-modal-backdrop); }
@@ -245,5 +241,10 @@ export const personalSettingsStyles = css`
       .security-session-table th:first-child, .security-session-table td:first-child { width: 58%; }
       .security-session-table th:nth-child(2), .security-session-table td:nth-child(2) { width: 22%; }
       .security-session-table th:last-child, .security-session-table td:last-child { width: 20%; }
+    }
+    @container (max-width: 30rem) {
+      .security-session-table th:nth-child(2), .security-session-table td:nth-child(2) { display: none; }
+      .security-session-table th:first-child, .security-session-table td:first-child { width: 64%; }
+      .security-session-table th:last-child, .security-session-table td:last-child { width: 36%; }
     }
 `
