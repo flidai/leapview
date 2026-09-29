@@ -1,7 +1,7 @@
 import { css, html, nothing } from 'lit'
 import type { DataExplorerCommand, SavedExplorationCommandSignal, SavedExplorationStateSignal } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
-import { dataExplorerURL, savedExplorationShareURL, updateDataExplorerURL, type DataExplorerHistoryMode } from './data-explorer-url'
+import { dataExplorerExportURL, dataExplorerURL, savedExplorationShareURL, updateDataExplorerURL, type DataExplorerHistoryMode } from './data-explorer-url'
 
 export const emptySavedExplorations: SavedExplorationStateSignal = {
   enabled: false,
@@ -113,12 +113,21 @@ export const savedExplorationStyles = css`
   }
 
   .saved-exploration-sharing {
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+  }
+
+  .saved-exploration-sharing summary {
+    width: fit-content;
+    cursor: pointer;
+  }
+
+  .saved-exploration-sharing-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--base-size-8);
-    color: var(--lv-fg-muted);
-    font: var(--lv-type-caption);
+    padding-top: var(--base-size-8);
   }
 
   .saved-exploration-sharing .text-button {
@@ -207,15 +216,22 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
         <span class="saved-explorations-title">Saved explorations</span>
         <span class="saved-exploration-status" role=${unavailable ? 'alert' : nothing}>${state.save?.message ?? state.save?.state ?? 'saved'}</span>
       </div>
-      <div class="saved-exploration-sharing" aria-label="Share exploration">
+      <details class="saved-exploration-sharing">
+        <summary>Share &amp; export</summary>
+        <div class="saved-exploration-sharing-actions">
         ${currentQueryURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(currentQueryURL, options)}>Copy current query link</button>` : nothing}
         ${savedURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(savedURL, options)}>Copy saved version link</button>` : nothing}
+        ${currentQueryURL ? html`
+          <a href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'csv')}>Download CSV</a>
+          <a href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'parquet')}>Download Parquet</a>
+        ` : nothing}
         <span>Links rerun live data with the recipient’s access. A current-query link includes unsaved edits; a saved-version link does not grant access.</span>
         ${options.shareStatus() ? html`<span role="status" aria-live="polite">${options.shareStatus()}</span>` : nothing}
-        ${options.shareFallbackURL() ? html`<a href=${options.shareFallbackURL()}>Open link</a>` : nothing}
-      </div>
+        ${options.shareFallbackURL() ? html`<a class="saved-exploration-share-fallback" href=${options.shareFallbackURL()}>Open link</a>` : nothing}
+        </div>
+      </details>
       <div class="saved-exploration-list">
-        ${items.map((item) => html`<a class="saved-exploration-item" href=${dataExplorerURL({ mode: 'browse' } as DataExplorerCommand, item.id, item.status === 'archived')}>${item.title}</a>`)}
+        ${items.map((item) => html`<a class="saved-exploration-item" href=${savedExplorationShareURL(item.id, item.status === 'archived')}>${item.title}</a>`)}
       </div>
       ${unavailable ? nothing : current ? html`
         <div class="saved-exploration-current">

@@ -78,6 +78,31 @@ model SavedExplorationDuplicateRequest {
   visibility?: SavedExplorationVisibility;
 }
 
+enum SavedExplorationExportFormat {
+  csv;
+  parquet;
+}
+
+model SavedExplorationExportRequest {
+  format: SavedExplorationExportFormat;
+  maxRows?: int32;
+  maxBytes?: int64;
+}
+
+model SavedExplorationURLExportRequest extends SavedExplorationExportRequest {
+  spec: LeapViewExploration.ExplorationSpec;
+}
+
+model SavedExplorationExportResponse {
+  ...OkResponse;
+  @header contentType: string;
+  @header contentDisposition: string;
+  @header cacheControl: "no-store";
+  @body body: bytes;
+}
+
+alias ExportSavedExplorationOK = SavedExplorationExportResponse;
+
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model SavedExplorationMutationAuditPayload {
   @apigen.auditInternal
@@ -216,5 +241,23 @@ interface SavedExplorations {
   @apigen.command(#{ auditAction: "saved_exploration.archived" })
   @apigen.ui("saved-exploration.archive")
   archiveSavedExploration(@path @apigen.target project: ResourceId, @path exploration: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("If-Match") ifMatch: string): ArchiveSavedExplorationOK | CommonErrors;
+
+  @summary("Export a saved exploration revision")
+  @route("/{exploration}/export")
+  @post
+  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.query
+  @apigen.failsWith(SavedExplorationNotFoundFailure)
+  @apigen.failsWith(SavedExplorationPreconditionFailure)
+  @apigen.failsWith(SavedExplorationUnavailableFailure)
+  exportSavedExploration(@path project: ResourceId, @path exploration: ResourceId, @header("If-Match") ifMatch: string, @body body: SavedExplorationExportRequest): ExportSavedExplorationOK | CommonErrors;
+
+  @summary("Export canonical URL exploration state")
+  @route("/url-export")
+  @post
+  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.query
+  @apigen.failsWith(SavedExplorationUnavailableFailure)
+  exportSavedExplorationURL(@path @apigen.target project: ResourceId, @body body: SavedExplorationURLExportRequest): ExportSavedExplorationOK | CommonErrors;
 
 }

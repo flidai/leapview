@@ -20,6 +20,7 @@ import (
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardauthoringcatalog "github.com/flidai/leapview/internal/dashboard/authoring/catalog"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
@@ -171,34 +172,35 @@ type CreatorCommandInvocation struct {
 }
 
 type BrowserHandler struct {
-	Graph                    GraphReader
-	AssetVersions            AssetVersionsReader
-	ActiveServingState       ActiveServingStateReader
-	RefreshState             AssetRefreshStateReader
-	RunMonitor               RunMonitorReader
-	PipelineChanges          *pagestream.Broker
-	PipelineChangesStreamID  string
-	PhysicalCatalog          PhysicalCatalogReader
-	SourceSchemas            SourceSchemaReader
-	ProjectDefinitionReader  ProjectDefinitionReader
-	DashboardAppearances     DashboardAppearanceStore
-	DashboardCatalog         DashboardCatalogReader
-	DashboardPopularity      func(context.Context, int) (map[string]string, error)
-	QueryExecutor            DataQueryExecutor
-	ExplorationQueryLowerer  exploration.QueryLowerer
-	Catalog                  CatalogAuthorizer
-	SearchCatalog            ProductSearchCatalog
-	PrincipalDisplayReader   PrincipalDisplayReader
-	ResolveProjectID         func(context.Context) (projectgraph.ResourceID, error)
-	Environment              string
-	TargetID                 string
-	ConnectionAdministration connectionadmin.Administration
-	ConnectionCommands       projectui.ConnectionCommandBindings
-	SavedExplorations        SavedExplorationService
-	SavedExplorationCommands SavedExplorationCommandBindings
-	PipelineRunCommand       uicommand.Binding
-	PipelineCancelCommand    uicommand.Binding
-	RunPipeline              func(context.Context, string, string, string) error
+	Graph                          GraphReader
+	AssetVersions                  AssetVersionsReader
+	ActiveServingState             ActiveServingStateReader
+	RefreshState                   AssetRefreshStateReader
+	RunMonitor                     RunMonitorReader
+	PipelineChanges                *pagestream.Broker
+	PipelineChangesStreamID        string
+	PhysicalCatalog                PhysicalCatalogReader
+	SourceSchemas                  SourceSchemaReader
+	ProjectDefinitionReader        ProjectDefinitionReader
+	DashboardAppearances           DashboardAppearanceStore
+	DashboardCatalog               DashboardCatalogReader
+	DashboardPopularity            func(context.Context, int) (map[string]string, error)
+	QueryExecutor                  DataQueryExecutor
+	ExplorationQueryLowerer        exploration.QueryLowerer
+	Catalog                        CatalogAuthorizer
+	SearchCatalog                  ProductSearchCatalog
+	PrincipalDisplayReader         PrincipalDisplayReader
+	ResolveProjectID               func(context.Context) (projectgraph.ResourceID, error)
+	Environment                    string
+	TargetID                       string
+	ConnectionAdministration       connectionadmin.Administration
+	ConnectionCommands             projectui.ConnectionCommandBindings
+	SavedExplorations              SavedExplorationService
+	ExplorationExportAuditRecorder queryaudit.Recorder
+	SavedExplorationCommands       SavedExplorationCommandBindings
+	PipelineRunCommand             uicommand.Binding
+	PipelineCancelCommand          uicommand.Binding
+	RunPipeline                    func(context.Context, string, string, string) error
 	// CancelPipeline receives both the pipeline and run identifiers from the
 	// command. Implementations must verify that the run belongs to that
 	// pipeline before mutating it; keeping the pipeline ID in this callback
@@ -256,6 +258,7 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/", wrap(h.Insights))
 	r.Get("/search", wrap(h.ProductSearch))
 	r.Get("/explore", wrap(h.Explore))
+	r.Get("/explore/export", wrap(h.ExplorationExport))
 	r.Post("/explore/command", wrap(h.DataExplorerCommand))
 	r.Get("/explore/saved/{exploration}", wrap(h.SavedExplorationReopen))
 	r.Post("/explore/saved/command", wrapMutation(h.SavedExplorationCommand))

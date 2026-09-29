@@ -12,6 +12,17 @@ export function savedExplorationShareURL(id: string, includeArchived = false): s
   return `/explore/saved/${encodeURIComponent(selected)}?navigation=true${archived}`
 }
 
+export function dataExplorerExportURL(command: DataExplorerCommand, format: 'csv' | 'parquet'): string {
+  const source = new URL(dataExplorerURL(command), 'https://leapview.invalid')
+  if (source.searchParams.get('mode') !== 'explore' || !source.searchParams.has('state')) return ''
+  const params = new URLSearchParams()
+  params.set('v', '2')
+  params.set('mode', 'explore')
+  params.set('state', source.searchParams.get('state')!)
+  params.set('format', format)
+  return `/explore/export?${params.toString()}`
+}
+
 export function dataExplorerURL(command: DataExplorerCommand, savedID?: string, includeArchived = false): string {
   const mode = command.mode === 'explore' ? 'explore' : 'browse'
   const objectKey = command.objectKey || ''
