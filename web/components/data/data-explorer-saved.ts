@@ -13,6 +13,7 @@ export const emptySavedExplorations: SavedExplorationStateSignal = {
 export const savedExplorationStyles = css`
   .saved-explorations {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--base-size-8);
     border-bottom: var(--lv-border-muted);
     padding: var(--base-size-8) var(--base-size-16);
@@ -113,13 +114,16 @@ export const savedExplorationStyles = css`
   }
 
   .saved-exploration-sharing {
+    min-width: 0;
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
   }
 
   .saved-exploration-sharing summary {
-    width: fit-content;
+    width: max-content;
+    max-width: 100%;
     cursor: pointer;
+    white-space: nowrap;
   }
 
   .saved-exploration-sharing-actions {
@@ -132,6 +136,28 @@ export const savedExplorationStyles = css`
 
   .saved-exploration-sharing .text-button {
     white-space: nowrap;
+  }
+
+  .saved-exploration-download {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--control-medium-size);
+    border: var(--lv-border-default);
+    border-radius: var(--lv-radius-default);
+    padding: 0 var(--base-size-12);
+    color: var(--lv-fg-default);
+    font: var(--lv-type-body);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .saved-exploration-download:hover,
+  .saved-exploration-download:focus-visible {
+    background: var(--lv-bg-control-hover);
+  }
+
+  .saved-exploration-sharing-hint {
+    flex-basis: 100%;
   }
 
 `
@@ -222,10 +248,10 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
         ${currentQueryURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(currentQueryURL, options)}>Copy current query link</button>` : nothing}
         ${savedURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(savedURL, options)}>Copy saved version link</button>` : nothing}
         ${currentQueryURL ? html`
-          <a href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'csv')}>Download CSV</a>
-          <a href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'parquet')}>Download Parquet</a>
+          <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'csv')}>Download CSV</a>
+          <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'parquet')}>Download Parquet</a>
         ` : nothing}
-        <span>Links rerun live data with the recipient’s access. A current-query link includes unsaved edits; a saved-version link does not grant access.</span>
+        <span class="saved-exploration-sharing-hint">Links rerun live data with the recipient’s access. A current-query link includes unsaved edits; a saved-version link does not grant access.</span>
         ${options.shareStatus() ? html`<span role="status" aria-live="polite">${options.shareStatus()}</span>` : nothing}
         ${options.shareFallbackURL() ? html`<a class="saved-exploration-share-fallback" href=${options.shareFallbackURL()}>Open link</a>` : nothing}
         </div>
