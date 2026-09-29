@@ -1950,9 +1950,8 @@ function datasetGrainLabel(dataset: DataExploreDatasetSignal): string {
 function replaceDataExplorerURL(command: DataExplorerCommand) {
   if (typeof window === 'undefined') return
   const next = dataExplorerURL(command)
-  if (window.location.pathname + window.location.search !== next) {
-    window.history.replaceState({}, '', next)
-  }
+  if (window.location.pathname + window.location.search === next) return
+  window.history.replaceState({}, '', next)
 }
 
 function iconForLayer(layer: string): any {
@@ -1988,8 +1987,7 @@ function queryTargetLabel(object: DataExplorerObjectSignal): string {
 }
 
 function label(value: unknown): string {
-  if (value == null || value === '') return '-'
-  return String(value)
+  return value == null || value === '' ? '-' : String(value)
 }
 
 if (!customElements.get('lv-data-explorer')) customElements.define('lv-data-explorer', DataExplorerPage)
