@@ -38,11 +38,13 @@ import { dataExplorerURL, updateDataExplorerURL } from './data-explorer-url'
 import { renderSelectedFieldRows, renderSemanticFieldPane, renderSemanticFilterDock, semanticLayoutStyles } from './data-explorer-semantic-layout'
 import {
   emptySavedExplorations,
+  renderExplorationShareMenu,
   renderSavedExplorations,
   SavedExplorationTracker,
   savedExplorationSelectionIncludesArchived,
   savedExplorationStyles,
   type SavedExplorationCurrent,
+  type SavedExplorationViewOptions,
   type SavedExplorationVisibility,
 } from './data-explorer-saved'
 import '../chat/chat-drawer'
@@ -1120,6 +1122,28 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       || Boolean(savedExplorations.list?.items?.length)
       || savedExplorations.save?.state === 'error'
     )
+    const savedViewOptions: SavedExplorationViewOptions = {
+      savedTitle: () => this.savedTitle,
+      savedDuplicateTitle: () => this.savedDuplicateTitle,
+      savedVisibility: () => this.savedVisibility,
+      currentSavedVisibility: (current: SavedExplorationCurrent) => this.currentSavedVisibility || current.visibility,
+      canSaveCurrent: () => canSaveCurrent,
+      activeSpec: () => activeSpec,
+      onSavedTitleInput: (value) => this.savedTitle = value,
+      onDuplicateTitleInput: (value) => this.savedDuplicateTitle = value,
+      onSavedVisibilityInput: (value) => this.savedVisibility = value,
+      onCurrentSavedVisibilityInput: (value) => this.currentSavedVisibility = value,
+      onCommand: (command) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-command', { bubbles: true, composed: true, detail: command })),
+      onReopen: (current) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
+        bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },
+      })),
+      shareStatus: () => this.savedShareStatus,
+      shareFallbackURL: () => this.savedShareFallbackURL,
+      onShareStatus: (message, fallbackURL) => {
+        this.savedShareStatus = message
+        this.savedShareFallbackURL = fallbackURL
+      },
+    }
     return html`
       <section class=${`route${semanticActive ? ' semantic' : ''}${savedVisible ? ' saved-enabled' : ''}${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
         <header class="header">
@@ -1155,31 +1179,11 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 </div>
               </details>
             ` : nothing}
+            ${savedVisible ? renderExplorationShareMenu(savedExplorations, savedViewOptions) : nothing}
             ${agentEnabled ? html`<button type="button" class="icon-button ask-button" aria-label="Ask about this data" aria-expanded=${String(this.agentDrawerOpen)} title="Ask about this data" @click=${() => this.setAgentDrawerOpen(!this.agentDrawerOpen)}>${agentIcon()}<span>Ask</span></button>` : nothing}
           </div>
         </header>
-        ${savedVisible ? renderSavedExplorations(savedExplorations, {
-          savedTitle: () => this.savedTitle,
-          savedDuplicateTitle: () => this.savedDuplicateTitle,
-          savedVisibility: () => this.savedVisibility,
-          currentSavedVisibility: (current: SavedExplorationCurrent) => this.currentSavedVisibility || current.visibility,
-          canSaveCurrent: () => canSaveCurrent,
-          activeSpec: () => activeSpec,
-          onSavedTitleInput: (value) => this.savedTitle = value,
-          onDuplicateTitleInput: (value) => this.savedDuplicateTitle = value,
-          onSavedVisibilityInput: (value) => this.savedVisibility = value,
-          onCurrentSavedVisibilityInput: (value) => this.currentSavedVisibility = value,
-          onCommand: (command) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-command', { bubbles: true, composed: true, detail: command })),
-          onReopen: (current) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
-            bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },
-          })),
-          shareStatus: () => this.savedShareStatus,
-          shareFallbackURL: () => this.savedShareFallbackURL,
-          onShareStatus: (message, fallbackURL) => {
-            this.savedShareStatus = message
-            this.savedShareFallbackURL = fallbackURL
-          },
-        }) : nothing}
+        ${savedVisible ? renderSavedExplorations(savedExplorations, savedViewOptions) : nothing}
         <div
           class=${`explorer${this.browserCollapsed ? ' browser-collapsed' : ''}`}
         >

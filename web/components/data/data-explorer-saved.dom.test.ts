@@ -103,7 +103,8 @@ test('saved explorations render in their own row and emit the canonical current 
         copiedURL,
         shareStatus,
         sharePanelOpen: root.querySelector<HTMLDetailsElement>('.saved-exploration-sharing')?.open,
-        shareTriggerInHeader: Boolean(root.querySelector('.saved-explorations-header .saved-exploration-sharing summary')),
+        shareTriggerInHeader: Boolean(root.querySelector('.header .saved-exploration-sharing summary')),
+        shareTriggerInSavedBar: Boolean(root.querySelector('.saved-explorations .saved-exploration-sharing summary')),
         explorerTopBeforeShare,
         explorerTopAfterShare,
         fallbackURL: root.querySelector<HTMLAnchorElement>('.saved-exploration-share-fallback')?.href,
@@ -117,6 +118,7 @@ test('saved explorations render in their own row and emit the canonical current 
     expect(state.shareStatus).toBe('Link copied.')
     expect(state.sharePanelOpen).toBe(true)
     expect(state.shareTriggerInHeader).toBe(true)
+    expect(state.shareTriggerInSavedBar).toBe(false)
     expect(state.explorerTopAfterShare).toBe(state.explorerTopBeforeShare)
     expect(state.fallbackURL).toBe(state.copiedURL)
     expect(state.exportFormats).toEqual(['csv', 'parquet'])

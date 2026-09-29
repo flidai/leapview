@@ -1,5 +1,5 @@
 import { css, html, nothing } from 'lit'
-import { Share2 } from 'lucide'
+import { ChevronDown, Share2 } from 'lucide'
 import type { DataExplorerCommand, SavedExplorationCommandSignal, SavedExplorationStateSignal } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -14,8 +14,9 @@ export const emptySavedExplorations: SavedExplorationStateSignal = {
 
 export const savedExplorationStyles = css`
   .saved-explorations {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
     gap: var(--base-size-8);
     border-bottom: var(--lv-border-muted);
     padding: var(--base-size-8) var(--base-size-16);
@@ -30,10 +31,6 @@ export const savedExplorationStyles = css`
 
   .saved-exploration-actions {
     flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  .saved-explorations > .saved-exploration-actions {
     justify-content: flex-start;
   }
 
@@ -57,15 +54,7 @@ export const savedExplorationStyles = css`
   }
 
   .saved-explorations-header {
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-
-  .saved-explorations-header-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--base-size-8);
-    margin-left: auto;
+    flex: none;
   }
 
   .saved-explorations-title {
@@ -74,18 +63,59 @@ export const savedExplorationStyles = css`
     font-weight: var(--base-text-weight-medium);
   }
 
+  .saved-exploration-picker {
+    position: relative;
+    min-width: 0;
+  }
+
+  .saved-exploration-picker summary {
+    display: inline-flex;
+    min-height: var(--control-small-size);
+    align-items: center;
+    gap: var(--base-size-4);
+    color: var(--lv-fg-muted);
+    cursor: pointer;
+    font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-medium);
+    list-style: none;
+  }
+
+  .saved-exploration-picker summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .saved-exploration-picker summary:hover,
+  .saved-exploration-picker summary:focus-visible {
+    color: var(--lv-fg-default);
+  }
+
+  .saved-exploration-picker summary:focus-visible {
+    outline: var(--lv-border-width-focus) solid var(--lv-line-accent);
+    outline-offset: var(--base-size-2);
+  }
+
   .saved-exploration-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--base-size-6);
+    position: absolute;
+    top: calc(100% + var(--base-size-4));
+    left: 0;
+    z-index: var(--zIndex-overlay);
+    display: grid;
+    width: min(18rem, calc(100vw - 2rem));
+    max-height: min(20rem, calc(100vh - 6rem));
+    gap: var(--base-size-2);
+    overflow: auto;
+    border: var(--lv-border-default);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-overlay);
+    box-shadow: var(--lv-shadow-floating-sm);
+    padding: var(--base-size-4);
   }
 
   .saved-exploration-item {
     overflow: hidden;
-    max-width: 14rem;
-    border: var(--lv-border-default);
+    min-height: var(--control-small-size);
     border-radius: var(--lv-radius-default);
-    padding: var(--base-size-4) var(--base-size-8);
+    padding: var(--base-size-6) var(--base-size-8);
     color: var(--lv-fg-default);
     text-decoration: none;
     text-overflow: ellipsis;
@@ -99,26 +129,8 @@ export const savedExplorationStyles = css`
     outline: 0;
   }
 
-  .saved-exploration-current {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    min-width: 0;
-    align-items: start;
-    gap: var(--base-size-8);
-  }
-
-  .saved-exploration-current .saved-exploration-actions {
-    justify-content: flex-start;
-  }
-
-  .saved-exploration-current-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font: var(--lv-type-body);
-  }
-
   .saved-exploration-status {
+    margin-left: auto;
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
   }
@@ -294,45 +306,20 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
   const unavailable = state.save?.state === 'error'
   if (!state.enabled) return nothing
   const hasCanonicalState = options.canSaveCurrent() && Boolean(options.activeSpec().modelId?.trim())
-  const currentQueryURL = hasCanonicalState
-    ? dataExplorerURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand)
-    : ''
-  const savedURL = current ? savedExplorationShareURL(current.id, current.status === 'archived') : ''
   return html`
     <section class="saved-explorations" aria-label="Saved explorations">
       <div class="saved-explorations-header">
-        <span class="saved-explorations-title">Saved explorations</span>
-        <div class="saved-explorations-header-actions">
-          <span class="saved-exploration-status" role=${unavailable ? 'alert' : nothing}>${state.save?.message ?? state.save?.state ?? 'saved'}</span>
-          ${currentQueryURL || savedURL ? html`
-          <details class="saved-exploration-sharing">
-            <summary aria-label="Share or export exploration">${lucideIcon(Share2, { size: 15 })}<span>Share</span></summary>
-            <div class="saved-exploration-sharing-actions">
-              <span class="saved-exploration-sharing-label">Share</span>
-              ${currentQueryURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(currentQueryURL, options)}>Copy current query link</button>` : nothing}
-              ${savedURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(savedURL, options)}>Copy saved version link</button>` : nothing}
-              ${currentQueryURL ? html`
-                <span class="saved-exploration-sharing-label">Export</span>
-                <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'csv')}>Download CSV</a>
-                <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'parquet')}>Download Parquet</a>
-              ` : nothing}
-              <span class="saved-exploration-sharing-hint">Links rerun live data with the recipient’s access. A current-query link includes unsaved edits; a saved-version link does not grant access.</span>
-              ${options.shareStatus() ? html`<span role="status" aria-live="polite">${options.shareStatus()}</span>` : nothing}
-              ${options.shareFallbackURL() ? html`<a class="saved-exploration-share-fallback" href=${options.shareFallbackURL()}>Open link</a>` : nothing}
+        ${items.length ? html`
+          <details class="saved-exploration-picker">
+            <summary aria-label="Open saved explorations">Saved explorations (${items.length})${lucideIcon(ChevronDown, { size: 13 })}</summary>
+            <div class="saved-exploration-list">
+              ${items.map((item) => html`<a class="saved-exploration-item" href=${savedExplorationShareURL(item.id, item.status === 'archived')} aria-current=${item.id === current?.id ? 'page' : nothing}>${item.title}</a>`)}
             </div>
-          </details>` : nothing}
-        </div>
-      </div>
-      <div class="saved-exploration-list">
-        ${items.map((item) => html`<a class="saved-exploration-item" href=${savedExplorationShareURL(item.id, item.status === 'archived')}>${item.title}</a>`)}
+          </details>
+        ` : html`<span class="saved-explorations-title">Saved explorations</span>`}
       </div>
       ${unavailable ? nothing : current ? html`
-        <div class="saved-exploration-current">
-          <div>
-            <div class="saved-exploration-current-name">${current.title}</div>
-            <div class="saved-exploration-status">${current.status}${current.detached ? ' · reopened' : ''}</div>
-          </div>
-          <div class="saved-exploration-actions">
+        <div class="saved-exploration-actions" role="group" aria-label=${`Saved exploration actions for ${current.title}`}>
             <input type="text" aria-label="Duplicate saved exploration name" placeholder="Copy name (optional)" .value=${options.savedDuplicateTitle()} @input=${(event: Event) => options.onDuplicateTitleInput((event.target as HTMLInputElement).value)} />
             ${current.status === 'active' && current.detached ? savedVisibilitySelect(options.currentSavedVisibility(current), options.onCurrentSavedVisibilityInput) : nothing}
             ${current.detached
@@ -346,10 +333,37 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
             ` : nothing}
             <button type="button" class="text-button" @click=${() => duplicateSavedExploration(current, options)}>Duplicate saved version</button>
             ${current.status === 'active' ? html`<button type="button" class="text-button" @click=${() => archiveSavedExploration(current, options)}>Archive</button>` : nothing}
-          </div>
         </div>
       ` : hasCanonicalState ? html`<div class="saved-exploration-actions"><input type="text" aria-label="Saved exploration name" placeholder="Name this exploration" .value=${options.savedTitle()} @input=${(event: Event) => options.onSavedTitleInput((event.target as HTMLInputElement).value)} />${savedVisibilitySelect(options.savedVisibility(), options.onSavedVisibilityInput)}<button type="button" class="text-button" @click=${() => createSavedExploration(options)}>Save current</button></div>` : nothing}
+      ${unavailable || state.save?.message || (state.save?.state && state.save.state !== 'saved') ? html`<span class="saved-exploration-status" role=${unavailable ? 'alert' : nothing}>${state.save?.message ?? state.save?.state}</span>` : nothing}
     </section>
+  `
+}
+
+export function renderExplorationShareMenu(state: SavedExplorationStateSignal, options: SavedExplorationViewOptions) {
+  if (!state.enabled) return nothing
+  const currentQueryURL = options.canSaveCurrent() && options.activeSpec().modelId?.trim()
+    ? dataExplorerURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand)
+    : ''
+  const savedURL = state.current ? savedExplorationShareURL(state.current.id, state.current.status === 'archived') : ''
+  if (!currentQueryURL && !savedURL) return nothing
+  return html`
+    <details class="saved-exploration-sharing">
+      <summary aria-label="Share or export exploration">${lucideIcon(Share2, { size: 15 })}<span>Share</span></summary>
+      <div class="saved-exploration-sharing-actions">
+        <span class="saved-exploration-sharing-label">Share</span>
+        ${currentQueryURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(currentQueryURL, options)}>Copy current query link</button>` : nothing}
+        ${savedURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(savedURL, options)}>Copy saved version link</button>` : nothing}
+        ${currentQueryURL ? html`
+          <span class="saved-exploration-sharing-label">Export</span>
+          <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'csv')}>Download CSV</a>
+          <a class="saved-exploration-download" href=${dataExplorerExportURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand, 'parquet')}>Download Parquet</a>
+        ` : nothing}
+        <span class="saved-exploration-sharing-hint">Links run live data with the viewer’s access.</span>
+        ${options.shareStatus() ? html`<span role="status" aria-live="polite">${options.shareStatus()}</span>` : nothing}
+        ${options.shareFallbackURL() ? html`<a class="saved-exploration-share-fallback" href=${options.shareFallbackURL()}>Open link</a>` : nothing}
+      </div>
+    </details>
   `
 }
 
