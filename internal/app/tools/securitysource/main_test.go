@@ -104,6 +104,17 @@ func TestRunCleanScansCurrentTreeAndCandidateHistory(t *testing.T) {
 	}
 }
 
+func TestRunUsesPrivateScanRootIndependentOfAmbientTMPDIR(t *testing.T) {
+	fixture := newScannerFixture(t)
+	// Nix and hosted runners can select locations outside the scanner's allowed
+	// /tmp and /var/tmp roots. Even an unusable ambient path must not redirect it.
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "nonexistent"))
+	var stdout, stderr bytes.Buffer
+	if err := Run(context.Background(), Config{Root: fixture.root, BaseRef: "origin/main", Timeout: 5 * time.Second, Stdout: &stdout, Stderr: &stderr}); err != nil {
+		t.Fatalf("private scan root depended on ambient TMPDIR: %v", err)
+	}
+}
+
 func TestRunRejectsSecretFindingWithoutLeakingValue(t *testing.T) {
 	fixture := newScannerFixture(t)
 	const secret = "sentinel_value_never_logged_123"
