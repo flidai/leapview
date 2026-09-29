@@ -2,7 +2,7 @@
 
 End users install LeapView Desktop from the official [download page](/download). They do not clone the repository, run build commands, or need source code and development tools.
 
-> **Availability:** The current download is an unsigned early preview published through the verified LeapView GitHub prerelease. macOS and Windows publisher warnings are expected. Signed production installers remain a later release milestone.
+> **Availability:** Desktop downloads are temporarily unavailable. The previously advertised preview release is not available on GitHub, so the download page no longer offers its installers. The instructions below apply once a verified preview is published. Signed production installers remain a later release milestone.
 
 ## Choose the right installer
 
