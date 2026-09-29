@@ -1872,7 +1872,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             </div>
             ${hasQuery
               ? resultView === 'details' ? this.renderExploreQueryDetails(object, explore, command)
-              : resultView !== 'table' ? html`<div class="result-visual" aria-label=${resultView === 'chart' ? 'Chart results' : 'Pivot results'}><lv-visualization-host .envelope=${views[resultView]}></lv-visualization-host></div>`
+              : resultView !== 'table' ? html`<div class="result-visual" aria-label=${resultView === 'chart' ? 'Chart results' : 'Pivot results'}><lv-visualization-host .envelope=${views[resultView]} .actionsEnabled=${false}></lv-visualization-host></div>`
               : html`<lv-data-explore-table
                   .command=${command}
                   .result=${result}

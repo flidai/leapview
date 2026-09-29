@@ -726,7 +726,13 @@ test('governed result views switch locally and disappear when the result becomes
       const initial = { buttons: viewButtons().map((button) => button.textContent?.trim()), table: Boolean(root.querySelector('lv-data-explore-table')) }
       viewButtons().find((button) => button.textContent?.trim() === 'Chart')?.click()
       await element.updateComplete
-      const chartView = { host: Boolean(root.querySelector('lv-visualization-host')), table: Boolean(root.querySelector('lv-data-explore-table')) }
+      const chartHost = root.querySelector('lv-visualization-host') as HTMLElement | null
+      await (chartHost as any)?.updateComplete
+      const chartView = {
+        host: Boolean(chartHost),
+        table: Boolean(root.querySelector('lv-data-explore-table')),
+        actions: chartHost?.shadowRoot?.querySelectorAll('.visual-actions button, .visual-options summary').length ?? 0,
+      }
       mergePatch({ dataExplorer: { explore: { views: {}, status: { state: 'stale', requestSeq: 2, loading: false, stale: true } } } })
       await element.updateComplete
       const stale = { host: Boolean(root.querySelector('lv-visualization-host')), table: Boolean(root.querySelector('lv-data-explore-table')), buttons: viewButtons().map((button) => button.textContent?.trim()) }
@@ -735,7 +741,7 @@ test('governed result views switch locally and disappear when the result becomes
       return { initial, chartView, stale, nextRunWithoutChart: { host: Boolean(root.querySelector('lv-visualization-host')), table: Boolean(root.querySelector('lv-data-explore-table')) } }
     }, chartEnvelope)
     expect(state.initial).toEqual({ buttons: ['Table', 'Chart', 'SQL / Details'], table: true })
-    expect(state.chartView).toEqual({ host: true, table: false })
+    expect(state.chartView).toEqual({ host: true, table: false, actions: 0 })
     expect(state.stale).toEqual({ host: false, table: true, buttons: [] })
     expect(state.nextRunWithoutChart).toEqual({ host: false, table: true })
   } finally {
