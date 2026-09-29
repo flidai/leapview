@@ -509,6 +509,30 @@ test('chat thread expands completed steps with an elapsed label while keeping an
   await page.close()
 })
 
+test('chat thread keeps visual context inside Worked while leaving the chart card visible', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const thread = page.locator('lv-chat-thread')
+  await thread.evaluate(async (element: any) => {
+    element.status = { enabled: true, running: false }
+    element.transcript = [
+      { id: 'u1', kind: 'user', text: 'Show revenue by state', createdAt: '2026-09-28T10:00:00Z' },
+      { id: 't1', kind: 'tool', name: 'query_visual', status: 'complete', createdAt: '2026-09-28T10:00:02Z', artifact: { type: 'bar', id: 'revenue-by-state', summary: 'Revenue by State' } },
+      { id: 'a1', kind: 'assistant', markdown: '### Underlying values\n\n| State | Revenue |\n| --- | ---: |\n| SP | 5,998,226.96 |\n\nData freshness: current.', createdAt: '2026-09-28T10:00:14Z' },
+    ]
+    await element.updateComplete
+  })
+  const details = thread.locator('.run-steps')
+  expect(await details.locator('summary').textContent()).toContain('Worked for 14s')
+  expect(await thread.locator('lv-visual-artifact').isVisible()).toBe(true)
+  expect(await thread.locator('.agent-markdown').isVisible()).toBe(false)
+  expect(await details.locator('.agent-markdown').count()).toBe(1)
+  await details.locator('summary').click()
+  expect(await details.locator('.agent-markdown').isVisible()).toBe(true)
+  expect(await details.locator('.agent-markdown').evaluate((node: any) => node.value)).toContain('Data freshness: current.')
+  await page.close()
+})
+
 test('chat thread hides recovered tool errors only within the same user turn', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)

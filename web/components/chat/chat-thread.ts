@@ -193,18 +193,20 @@ class ChatThread extends LitElement {
 
   private renderAgentTurn(items: ChatTranscriptItemSignal[], steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean) {
     const text = items.filter(item => item.kind === 'assistant').map(item => item.markdown || item.text || '').filter(Boolean).join('\n\n')
+    const hasVisualResult = !running && items.some(item => item.kind === 'tool' && this.toolStatus(item) === 'complete' && Boolean(item.artifact))
+    const context = hasVisualResult ? items.filter(item => item.kind === 'assistant' || item.kind === 'summary') : []
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
-          ${steps.length > 0 ? this.renderRunSteps(steps, prompt, allItems, running) : nothing}
-          ${items.map((item) => this.renderAgentItem(item))}
+          ${steps.length > 0 ? this.renderRunSteps(steps, prompt, allItems, running, context) : nothing}
+          ${items.filter(item => !context.includes(item)).map((item) => this.renderAgentItem(item))}
         </div>
         ${text && !this.status.running ? this.messageActions(items[0].id, text, undefined, false) : nothing}
       </article>
     `
   }
 
-  private renderRunSteps(steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean) {
+  private renderRunSteps(steps: ChatTranscriptItemSignal[], prompt: ChatTranscriptItemSignal | undefined, allItems: ChatTranscriptItemSignal[], running: boolean, context: ChatTranscriptItemSignal[]) {
     const start = Date.parse(prompt?.createdAt || allItems[0]?.createdAt || '')
     const end = Date.parse(allItems[allItems.length - 1]?.createdAt || '')
     const elapsed = Number.isFinite(start) && Number.isFinite(end) && end >= start ? formatElapsed(end - start) : ''
@@ -215,6 +217,7 @@ class ChatThread extends LitElement {
         ${steps.map(item => item.kind === 'tool' ? html`<li class="run-step"><span>${toolStepName(item)}</span><span class="run-step-status">${toolStepStatus(this.toolStatus(item))}</span></li>`
           : html`<li class="run-step">${item.markdown || item.text || ''}</li>`)}
       </ol>
+      ${context.map(item => this.renderAgentItem(item))}
     </details>`
   }
 

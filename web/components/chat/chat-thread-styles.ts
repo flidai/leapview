@@ -211,6 +211,11 @@ export const chatThreadStyles = css`
       color: var(--lv-fg-muted);
     }
 
+    .run-steps .agent-markdown {
+      margin-top: var(--lv-space-sm);
+      color: var(--lv-fg-default);
+    }
+
     .agent-markdown {
       display: block;
     }
