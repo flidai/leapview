@@ -57,6 +57,7 @@ const (
 	ActionConnectionCreate Action = "connection.create"
 	ActionConnectionUse    Action = "connection.use"
 	ActionConnectionManage Action = "connection.manage"
+	ActionConnectionUpload Action = "connection.upload"
 
 	ActionResourceShare Action = "resource.share"
 
@@ -152,6 +153,7 @@ var permissionCatalog = []PermissionDefinition{
 	createPermissionFor(ActionConnectionCreate, "Create connections", "Connection", "Create a Connection in the bound Project.", projectgraph.KindConnection),
 	resourcePermission(ActionConnectionUse, "Use connection", "Connection", "Execute through an approved Connection binding without revealing credentials.", projectgraph.KindConnection, true),
 	resourcePermission(ActionConnectionManage, "Manage connection", "Connection", "Update, rotate, test, or delete a Connection.", projectgraph.KindConnection, false),
+	resourcePermission(ActionConnectionUpload, "Upload managed data", "Connection", "Stage and commit managed-data revisions through an exact Connection without changing its configuration or credentials.", projectgraph.KindConnection, true),
 
 	{
 		Action: ActionResourceShare, DisplayName: "Share resource", Family: "Sharing", Description: "Issue a bounded independent grant on an exact supported resource.",

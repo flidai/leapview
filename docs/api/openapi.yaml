@@ -31527,7 +31527,7 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
-        action: connection.manage
+        action: connection.upload
         mode: privilege
         resolver: connection
         privilege: RESOURCE_EDIT
@@ -32236,7 +32236,7 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
-        action: connection.manage
+        action: connection.upload
         mode: privilege
         resolver: connection
         privilege: RESOURCE_EDIT
@@ -32981,7 +32981,7 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
-        action: connection.manage
+        action: connection.upload
         mode: privilege
         resolver: connection
         privilege: RESOURCE_EDIT
@@ -33361,7 +33361,7 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
-        action: connection.manage
+        action: connection.upload
         mode: privilege
         resolver: connection
         privilege: RESOURCE_EDIT
@@ -33735,7 +33735,7 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
-        action: connection.manage
+        action: connection.upload
         mode: privilege
         resolver: connection
         privilege: RESOURCE_EDIT
@@ -34124,7 +34124,7 @@ paths:
           type: connection
         privilege: RESOURCE_EDIT
       x-authz:
-        action: connection.manage
+        action: connection.upload
         mode: privilege
         resolver: connection
         privilege: RESOURCE_EDIT
@@ -34449,7 +34449,7 @@ paths:
               size: 1
       x-apigen-operation-kind: query
       x-authz:
-        action: connection.manage
+        action: connection.upload
         mode: privilege
         resolver: connection
         privilege: RESOURCE_EDIT
@@ -79780,6 +79780,7 @@ components:
         - connection.create
         - connection.use
         - connection.manage
+        - connection.upload
         - resource.share
         - delivery.read
         - delivery.plan

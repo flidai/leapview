@@ -78,7 +78,7 @@ func TestManagedDataTusWorkloadConnectionAuthorizationFailsClosed(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			pair, err := access.NewExactPermissionPair(access.ActionConnectionManage, tusWorkloadProjectID, resource)
+			pair, err := access.NewExactPermissionPair(access.ActionConnectionUpload, tusWorkloadProjectID, resource)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -101,7 +101,7 @@ func TestManagedDataTusWorkloadConnectionAuthorizationFailsClosed(t *testing.T) 
 		for _, mode := range tusWorkloadBootstrapModes() {
 			t.Run(test.name+"/"+mode.name, func(t *testing.T) {
 				runtime, accessValue, resolve := tusWorkloadFixture(t, test.snapshotGrant)
-				pair := tusWorkloadManagePair(t)
+				pair := tusWorkloadUploadPair(t)
 				if test.scope != nil {
 					accessValue.credential.Authoring.Scope = *test.scope(t, []access.PermissionPair{pair})
 				}
@@ -140,20 +140,20 @@ func tusWorkloadResolver(t *testing.T, runtime tusRuntime, accessValue tusCreden
 	t.Helper()
 	authorize := tusWorkloadConnectionAuthorizer(t, runtime, accessValue)
 	return tusAuthorizingTargetResolver{tusTargetResolverFunc: resolve, authorize: func(ctx context.Context, principalID, projectID, connectionID string, action access.Action) (bool, error) {
-		if principalID != tusWorkloadPrincipalID || projectID != string(tusWorkloadProjectID) || connectionID != string(tusWorkloadConnectionID) || action != access.ActionConnectionManage {
-			return false, errors.New("TUS authorization did not use the session-bound connection manage action")
+		if principalID != tusWorkloadPrincipalID || projectID != string(tusWorkloadProjectID) || connectionID != string(tusWorkloadConnectionID) || action != access.ActionConnectionUpload {
+			return false, errors.New("TUS authorization did not use the session-bound connection upload action")
 		}
 		return authorize(ctx, principalID, projectID, connectionID, action)
 	}}
 }
 
-func tusWorkloadManagePair(t *testing.T) access.PermissionPair {
+func tusWorkloadUploadPair(t *testing.T) access.PermissionPair {
 	t.Helper()
 	resource, err := access.NewResourceRef(tusWorkloadConnectionID, projectgraph.KindConnection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pair, err := access.NewExactPermissionPair(access.ActionConnectionManage, tusWorkloadProjectID, resource)
+	pair, err := access.NewExactPermissionPair(access.ActionConnectionUpload, tusWorkloadProjectID, resource)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,11 +172,11 @@ func tusWorkloadFixture(t *testing.T, snapshotGrant bool) (tusRuntime, tusCreden
 	if err != nil {
 		t.Fatal(err)
 	}
-	manage, err := access.NewExactPermissionPair(access.ActionConnectionManage, identity.ProjectID, resource)
+	upload, err := access.NewExactPermissionPair(access.ActionConnectionUpload, identity.ProjectID, resource)
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := access.NewAuthoringScope(tusWorkloadTargetID, identity.ProjectID, []access.PermissionPair{manage})
+	scope, err := access.NewAuthoringScope(tusWorkloadTargetID, identity.ProjectID, []access.PermissionPair{upload})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -71,7 +71,7 @@ func TestAPIGenManagedDataBootstrapUsesTypedConnectionPairAndFence(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manage, err := access.NewExactPermissionPair(access.ActionConnectionManage, projectID, connection)
+	upload, err := access.NewExactPermissionPair(access.ActionConnectionUpload, projectID, connection)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestAPIGenManagedDataBootstrapUsesTypedConnectionPairAndFence(t *testing.T)
 	contract := APIGenOperationContract{
 		OperationID: "createManagedDataUploadSession", Method: http.MethodPost,
 		Path: "/api/v1/projects/{project}/connections/{connection}/upload-sessions", Protected: true, AuthzMode: "privilege",
-		Action: string(access.ActionConnectionManage), Resolver: string(access.TypedOperationResolverConnection),
+		Action: string(access.ActionConnectionUpload), Resolver: string(access.TypedOperationResolverConnection),
 		Command:    &APIGenCommandContract{Owner: "LeapViewAPI.ManagedData", AuthzMode: "privilege", Privilege: "RESOURCE_EDIT", Idempotency: "required", Target: &APIGenCommandTarget{Parameter: "connection", Type: "connection"}},
 		Extensions: map[string]any{apiGenObjectScopeExtension: "connection", "x-authz": map[string]any{"mode": "privilege", "privilege": "RESOURCE_EDIT"}},
 	}
@@ -93,7 +93,7 @@ func TestAPIGenManagedDataBootstrapUsesTypedConnectionPairAndFence(t *testing.T)
 		want        int
 	}{
 		{name: "project create", permissions: []access.PermissionPair{create}, want: http.StatusNoContent},
-		{name: "manage without create", permissions: []access.PermissionPair{manage}, want: http.StatusForbidden},
+		{name: "upload without create", permissions: []access.PermissionPair{upload}, want: http.StatusForbidden},
 		{name: "read does not manage", permissions: []access.PermissionPair{read}, want: http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

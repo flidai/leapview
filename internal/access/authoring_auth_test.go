@@ -11,6 +11,21 @@ import (
 	"github.com/flidai/leapview/internal/project/graph"
 )
 
+func TestDefaultAuthoringActionsIncludeUploadScopeWithoutConnectionAdministration(t *testing.T) {
+	var upload, manage bool
+	for _, action := range DefaultAuthoringActions() {
+		switch action {
+		case ActionConnectionUpload:
+			upload = true
+		case ActionConnectionManage:
+			manage = true
+		}
+	}
+	if !upload || manage {
+		t.Fatalf("default authoring actions include upload=%t and connection.manage=%t; want upload scope without administration", upload, manage)
+	}
+}
+
 func TestAuthoringScopeAllowsOnlyExactTargetProjectAndAction(t *testing.T) {
 	projectID := graph.ResourceID("finance")
 	permissions := mustProjectAuthoringPermissions(t, projectID.String(), ActionDashboardPublish)
@@ -48,11 +63,11 @@ func TestAuthoringScopeRejectsMissingOrUnknownBindings(t *testing.T) {
 		project     string
 		permissions []PermissionPair
 	}{
-		"target":     {project: "finance", permissions: mustProjectAuthoringPermissions(t, "finance", ActionDashboardPublish)},
-		"project":    {target: "instance-prod", permissions: mustProjectAuthoringPermissions(t, "finance", ActionDashboardPublish)},
+		"target":      {project: "finance", permissions: mustProjectAuthoringPermissions(t, "finance", ActionDashboardPublish)},
+		"project":     {target: "instance-prod", permissions: mustProjectAuthoringPermissions(t, "finance", ActionDashboardPublish)},
 		"permissions": {target: "instance-prod", project: "finance"},
-		"unknown":    {target: "instance-prod", project: "finance", permissions: []PermissionPair{{Action: "delete.everything", Profile: PermissionCatalogProfile, Target: PermissionTarget{Scope: PermissionScopeProject, ProjectID: "finance"}}}},
-		"duplicates": {target: "instance-prod", project: "finance", permissions: append(mustProjectAuthoringPermissions(t, "finance", ActionDashboardPublish), mustProjectAuthoringPermissions(t, "finance", ActionDashboardPublish)...)},
+		"unknown":     {target: "instance-prod", project: "finance", permissions: []PermissionPair{{Action: "delete.everything", Profile: PermissionCatalogProfile, Target: PermissionTarget{Scope: PermissionScopeProject, ProjectID: "finance"}}}},
+		"duplicates":  {target: "instance-prod", project: "finance", permissions: append(mustProjectAuthoringPermissions(t, "finance", ActionDashboardPublish), mustProjectAuthoringPermissions(t, "finance", ActionDashboardPublish)...)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := NewAuthoringScope(input.target, graph.ResourceID(input.project), input.permissions); err == nil {

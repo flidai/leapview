@@ -521,9 +521,9 @@ func managedDataConnectionID(r *http.Request, projectID projectgraph.ResourceID,
 
 func (a *APIGenAuthorizer) bootstrapOperationPairs(operationID string, r *http.Request, projectID projectgraph.ResourceID) ([]access.PermissionPair, error) {
 	if isManagedDataBootstrapOperation(operationID) {
-		// Before activation there is no graph object to manage. The
+		// Before activation there is no graph object to upload through. The
 		// project-scoped create action is the only authority for staging its
-		// first upload; existing connections take the exact manage path below.
+		// first upload; active connections require exact connection.upload.
 		if _, ok := managedDataConnectionID(r, projectID, a.resourceResolverForContractMust(operationID)); !ok {
 			return nil, access.ErrTypedOperationTargetRequired
 		}
