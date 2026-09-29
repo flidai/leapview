@@ -94,11 +94,13 @@ The patched glibc output is
 `/nix/store/kj7ia0isvb6xh74qavgcshmb7fcskj4l-glibc-2.42-84`.
 Running the same probe through its dynamic loader returned
 `glibc=2.42 result=10 bytes_changed_past_declared_size=0`, exit 0. The rebuilt
-candidate image returned the same passing result. Its Syft inventory contained
-exactly this glibc output and no copy of the old one. The Nix image qualification
-script now runs this probe for every candidate image. These observations establish
-the boundary fix in the tested library; they do not replace full image or scanner
-qualification for a clean revision.
+clean image at revision `81d56a2a1099` returned the same passing result and
+passed the full production image qualifier, including enterprise authoring. Its
+fresh Syft inventory contained exactly this glibc output and no copy of the old
+one. All six matching controls passed. Grype still emitted the same eleven raw
+version-based HIGH/CRITICAL matches. The Nix image qualification script now runs
+this probe for every candidate image. These observations establish the boundary
+fix in the tested library; they do not grant release clearance.
 
 The loaded Docker image ID was
 `sha256:7b6566d639efc96e7aaa256d70629c3219751cd96961465de91a6a95b9ef9147`;
@@ -107,15 +109,13 @@ identity, distinct from Syft's archive identity in the prior scanner report.
 
 ## Remaining release work
 
-1. Qualify the exact clean image revision, including DuckDB loading, image
-   operation and export ABI compatibility. Confirm the runtime inventory contains
-   only the patched glibc output.
-2. Record the eight backport dispositions and two disputed classifications as
+1. Record the eight backport dispositions, the fixed `strfmon` defect and the two
+   disputed classifications as
    reviewed, narrowly bound assessments in protected admission. Retain raw matches
    and require reassessment when the package/store identity changes. Do not install
    a package-wide or unfixed-CVE ignore rule.
-3. Rescan using a fresh database. Require no unassessed HIGH/CRITICAL findings before
-   production promotion, then complete digest binding and the other release gates.
+2. Require no unassessed HIGH/CRITICAL findings before production promotion, then
+   complete digest binding and the other release gates.
 
 The review supports continuing with Nix: most matches reflect missing backport
 knowledge in NVD matching. It also demonstrates why inventory and matching alone

@@ -82,20 +82,23 @@ complete detection of all vulnerabilities. libunistring has a reviewed GNU CPE
 but no known-vulnerable control in this suite. The glibc control retains a Nix
 revision suffix to test that version shape as well.
 
-The corrected scan of candidate `000eac132fd6a2802d86d4ed4e14fad3f01dd8c7`
+The corrected scan of the earlier candidate `000eac132fd6a2802d86d4ed4e14fad3f01dd8c7`
 accounted for all 13 store paths (12 cataloged packages and the explicit map
 asset payload), passed all six matching controls, and found 11 HIGH/CRITICAL
 glibc matches that the default inventory missed. Some records
 are disputed or have broad version constraints; others require checking the
-pinned Nix glibc source and applied patches. Their dispositions are documented in the triage above; they remain unsuppressed
-in scanner enforcement. The candidate is **not cleared for
-production release**.
+pinned Nix glibc source and applied patches. The clean patched candidate at
+revision `81d56a2a1099` passed the full production image qualifier and a fresh
+coverage scan. Its image inventory contained only the patched glibc output,
+all six matching controls passed, and Grype retained the same eleven raw matches.
+Their dispositions are documented in the triage above; they remain unsuppressed
+in scanner enforcement. The candidate is **not cleared for production release**.
 
 Before switching production:
 
-1. Triage the retained HIGH/CRITICAL matches against the exact Nix derivation and
-   its patches; update dependencies or integrate reviewed, bounded assessments
-   with the release exception policy. Do not broadly ignore glibc or unfixed CVEs.
+1. Integrate the reviewed, artifact-bound dispositions for all eleven glibc
+   matches with protected admission and test that a new or genuinely unfixed CVE
+   still blocks release. Do not broadly ignore glibc or unfixed CVEs.
 2. Bind this check's evidence to the published OCI digest and require its default
    mode in protected admission. A coverage-only CI pass grants no release authority.
 3. Preserve Go scanning and separately account for embedded native components
