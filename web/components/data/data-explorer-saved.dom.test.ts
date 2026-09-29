@@ -81,7 +81,9 @@ test('saved explorations render in their own row and emit the canonical current 
       await element.updateComplete
       let copiedURL = ''
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { copiedURL = value } } })
+      const explorerTopBeforeShare = root.querySelector('.explorer')!.getBoundingClientRect().top
       root.querySelector<HTMLElement>('.saved-exploration-sharing summary')!.click()
+      const explorerTopAfterShare = root.querySelector('.explorer')!.getBoundingClientRect().top
       root.querySelector<HTMLButtonElement>('.saved-exploration-sharing button')!.click()
       for (let index = 0; index < 10 && !root.querySelector('[role="status"]'); index += 1) {
         await element.updateComplete
@@ -101,6 +103,9 @@ test('saved explorations render in their own row and emit the canonical current 
         copiedURL,
         shareStatus,
         sharePanelOpen: root.querySelector<HTMLDetailsElement>('.saved-exploration-sharing')?.open,
+        shareTriggerInHeader: Boolean(root.querySelector('.saved-explorations-header .saved-exploration-sharing summary')),
+        explorerTopBeforeShare,
+        explorerTopAfterShare,
         fallbackURL: root.querySelector<HTMLAnchorElement>('.saved-exploration-share-fallback')?.href,
         exportFormats: Array.from(root.querySelectorAll<HTMLAnchorElement>('.saved-exploration-sharing a[href^="/explore/export"]')).map((link) => new URL(link.href).searchParams.get('format')),
       }
@@ -111,6 +116,8 @@ test('saved explorations render in their own row and emit the canonical current 
     expect(new URL(state.copiedURL).searchParams.get('mode')).toBe('explore')
     expect(state.shareStatus).toBe('Link copied.')
     expect(state.sharePanelOpen).toBe(true)
+    expect(state.shareTriggerInHeader).toBe(true)
+    expect(state.explorerTopAfterShare).toBe(state.explorerTopBeforeShare)
     expect(state.fallbackURL).toBe(state.copiedURL)
     expect(state.exportFormats).toEqual(['csv', 'parquet'])
   } finally {
