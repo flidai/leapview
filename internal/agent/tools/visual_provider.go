@@ -292,6 +292,10 @@ func compactAgentVisualModelResult(compact agentcontracts.QueryVisualResult, env
 		middle := low + (high-low+1)/2
 		candidate := projection
 		candidate.Rows = projection.Rows[:middle]
+		candidate.DataCompleteness.ReturnedRows = int32(middle)
+		if middle < initialRowCount {
+			candidate.DataCompleteness.Status = "truncated"
+		}
 		if agentVisualModelProjectionBytes(candidate) <= maxVisualModelBytes {
 			low = middle
 		} else {

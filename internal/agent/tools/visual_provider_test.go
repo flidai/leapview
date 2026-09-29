@@ -198,6 +198,42 @@ func TestCompactAgentVisualModelResultRespectsFormattedByteBudget(t *testing.T) 
 	}
 }
 
+func TestCompactAgentVisualModelResultKeepsRowsWhenFinalMetadataExceedsBudget(t *testing.T) {
+	// The second row should fit only before the result is marked truncated.
+	// A third oversized row makes the final status differ from the trial status.
+	rows := [][]any{{"small"}, {""}, {strings.Repeat("z", maxVisualModelBytes)}}
+	trial := agentVisualModelProjection{Columns: []string{"value"}, Rows: rows[:2], DataCompleteness: agentVisualModelDataCompleteness{PrimaryResultRows: 3, Status: "complete"}}
+	low, high := 0, maxVisualModelBytes
+	for low < high {
+		middle := low + (high-low+1)/2
+		trial.Rows[1][0] = strings.Repeat("x", middle)
+		if agentVisualModelProjectionBytes(trial) <= maxVisualModelBytes {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	rows[1][0] = strings.Repeat("x", low)
+	trial.Rows = rows[:2]
+	if agentVisualModelProjectionBytes(trial) > maxVisualModelBytes {
+		t.Fatal("trial projection unexpectedly exceeds budget")
+	}
+	trial.DataCompleteness.Status = "truncated"
+	trial.DataCompleteness.ReturnedRows = 2
+	if agentVisualModelProjectionBytes(trial) <= maxVisualModelBytes {
+		t.Fatal("test input did not reach the final-metadata boundary")
+	}
+	result := compactAgentVisualModelResult(agentcontracts.QueryVisualResult{}, visualizationir.VisualizationEnvelope{
+		DataState: visualizationir.VisualizationDataState{Value: &visualizationir.InlineVisualizationDataState{
+			Kind: "inline", Datasets: []visualizationir.VisualizationInlineDataset{{ID: "primary", Columns: []string{"value"}, Rows: rows}},
+		}},
+	}, maxVisualRows)
+	projection, ok := result.(agentVisualModelProjection)
+	if !ok || len(projection.Rows) == 0 || projection.DataCompleteness.Status != "truncated" {
+		t.Fatalf("model result = %#v; want a bounded projection retaining values", result)
+	}
+}
+
 func TestAgentVisualQueryRequiresServingSnapshot(t *testing.T) {
 	provider := VisualProvider{Resolve: func(_ context.Context, _ Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
 		return id, nil

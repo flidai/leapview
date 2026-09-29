@@ -61,8 +61,9 @@ class ChatThread extends LitElement {
         completedTools.clear()
         hasLaterAssistant = false
       } else if (item.kind === 'tool' && item.name) {
-        if (this.toolStatus(item) === 'complete') completedTools.add(item.name)
-        else if (this.toolStatus(item) === 'error' && completedTools.has(item.name)) recoveredErrors.add(item)
+        const requestKey = toolRequestKey(item)
+        if (requestKey && this.toolStatus(item) === 'complete') completedTools.add(requestKey)
+        else if (requestKey && this.toolStatus(item) === 'error' && completedTools.has(requestKey)) recoveredErrors.add(item)
       } else if (item.kind === 'assistant' || item.kind === 'summary') {
         if (hasLaterAssistant) earlierAssistantMessages.add(item)
         hasLaterAssistant = true
@@ -513,6 +514,13 @@ function formatElapsed(milliseconds: number): string {
 
 function toolStepName(item: ChatTranscriptItemSignal): string {
   return item.title?.trim() || (item.name || 'Tool').replace(/[_-]+/g, ' ').replace(/\b\w/g, character => character.toUpperCase())
+}
+
+function toolRequestKey(item: ChatTranscriptItemSignal): string | undefined {
+  // A later call to the same tool may target a different resource. Only an
+  // identical request can establish that the earlier failure was recovered.
+  const argumentsJSON = item.argumentsJson?.trim()
+  return item.name && argumentsJSON ? `${item.name}\u0000${argumentsJSON}` : undefined
 }
 
 function toolStepStatus(status: string): string {

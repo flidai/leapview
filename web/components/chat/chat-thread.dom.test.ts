@@ -546,8 +546,8 @@ test('chat thread hides recovered tool errors only within the same user turn', a
     thread.status = { enabled: true, running: false }
     thread.transcript = [
       { id: 'u1', kind: 'user', text: 'Show revenue' },
-      { id: 'e1', kind: 'tool', name: 'catalog_get', status: 'error', error: 'Recovered lookup.' },
-      { id: 's1', kind: 'tool', name: 'catalog_get', status: 'complete' },
+      { id: 'e1', kind: 'tool', name: 'catalog_get', status: 'error', argumentsJson: '{"ref":"dashboard:a"}', error: 'Recovered lookup.' },
+      { id: 's1', kind: 'tool', name: 'catalog_get', status: 'complete', argumentsJson: '{"ref":"dashboard:a"}' },
       { id: 'e2', kind: 'tool', name: 'query_visual', status: 'error', error: 'Unresolved visual error.' },
       { id: 'u2', kind: 'user', text: 'Try again' },
       { id: 's2', kind: 'tool', name: 'query_visual', status: 'complete' },
@@ -557,6 +557,33 @@ test('chat thread hides recovered tool errors only within the same user turn', a
     return Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim())
   })
   expect(errors).toEqual(['Unresolved visual error.', 'Current lookup error.'])
+  await page.close()
+})
+
+test('chat thread keeps an error when a different request to the same tool succeeds', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const errors = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'user', kind: 'user', text: 'Compare both dashboards' },
+      { id: 'failed', kind: 'tool', name: 'catalog_get', status: 'error', argumentsJson: '{"ref":{"id":"dashboard:a"}}', error: 'Dashboard A is unavailable.' },
+      { id: 'other', kind: 'tool', name: 'catalog_get', status: 'complete', argumentsJson: '{"ref":{"id":"dashboard:b"}}' },
+    ]
+    await thread.updateComplete
+    const afterOtherResult = Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim())
+    thread.transcript = [...thread.transcript,
+      { id: 'retry', kind: 'tool', name: 'catalog_get', status: 'complete', argumentsJson: '{"ref":{"id":"dashboard:a"}}' },
+    ]
+    await thread.updateComplete
+    return {
+      afterOtherResult,
+      afterMatchingRetry: Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim()),
+    }
+  })
+  expect(errors).toEqual({ afterOtherResult: ['Dashboard A is unavailable.'], afterMatchingRetry: [] })
   await page.close()
 })
 
@@ -571,7 +598,7 @@ test('chat thread waits until the active run ends before showing unresolved erro
       { id: 'old-error', kind: 'tool', name: 'catalog_get', status: 'error', error: 'Earlier failure.', runId: 'run-old' },
       { id: 'u2', kind: 'user', text: 'Show revenue', runId: 'run-new' },
       { id: 'progress', kind: 'assistant', markdown: 'Retrying the visual.', runId: 'run-new' },
-      { id: 'new-error', kind: 'tool', name: 'query_visual', status: 'error', error: 'Temporary visual failure.', runId: 'run-new' },
+      { id: 'new-error', kind: 'tool', name: 'query_visual', status: 'error', argumentsJson: '{"semanticModelId":"orders"}', error: 'Temporary visual failure.', runId: 'run-new' },
     ]
     const visible = () => ({
       errors: Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim()),
@@ -588,7 +615,7 @@ test('chat thread waits until the active run ends before showing unresolved erro
     const failed = visible()
     thread.transcript = [
       ...transcript,
-      { id: 'success', kind: 'tool', name: 'query_visual', status: 'complete', runId: 'run-new' },
+      { id: 'success', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: '{"semanticModelId":"orders"}', runId: 'run-new' },
       { id: 'final', kind: 'assistant', markdown: 'Open the chart.', runId: 'run-new' },
     ]
     await thread.updateComplete
@@ -612,9 +639,9 @@ test('chat thread keeps only the last assistant message in each user turn', asyn
     thread.transcript = [
       { id: 'user', kind: 'user', text: 'Show revenue' },
       { id: 'progress-1', kind: 'assistant', markdown: 'I will query the model.' },
-      { id: 'tool-error', kind: 'tool', name: 'query_visual', status: 'error', error: 'Invalid option.' },
+      { id: 'tool-error', kind: 'tool', name: 'query_visual', status: 'error', argumentsJson: '{"semanticModelId":"orders"}', error: 'Invalid option.' },
       { id: 'progress-2', kind: 'assistant', markdown: 'Retrying without the option.' },
-      { id: 'tool-success', kind: 'tool', name: 'query_visual', status: 'complete' },
+      { id: 'tool-success', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: '{"semanticModelId":"orders"}' },
       { id: 'answer-1', kind: 'assistant', markdown: 'The chart is ready.' },
       { id: 'final', kind: 'assistant', markdown: 'Open the Revenue chart.' },
       { id: 'user-2', kind: 'user', text: 'What is the total?' },
