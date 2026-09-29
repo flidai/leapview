@@ -66,6 +66,10 @@ surfaces:
     kind: ruby-lock
     updater: {ecosystem: bundler, directory: /deploy/kamal-site}
     scanners: [trivy]
+  - path: deploy/kamal-trial/Gemfile.lock
+    kind: ruby-lock
+    updater: {ecosystem: bundler, directory: /deploy/kamal-trial}
+    scanners: [trivy]
 
   - path: deploy/hetzner
     kind: terraform-root

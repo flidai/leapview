@@ -116,3 +116,9 @@ updates:
     open-pull-requests-limit: 2
     groups:
       site-deployment-tooling: {patterns: ["*"]}
+  - package-ecosystem: bundler
+    directory: /deploy/kamal-trial
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 2
+    groups:
+      kamal-trial-dependencies: {patterns: ["*"]}
