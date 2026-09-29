@@ -91,26 +91,6 @@ test('dashboard agent reads fresh signal state between render cycles', async () 
   } finally { await page.close() }
 })
 
-test('dashboard agent offers Explorer only when exploration context is present', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-chat-drawer'))
-    const drawer = page.locator('lv-dashboard-page').locator('lv-chat-drawer')
-    expect(await drawer.locator('a[aria-label="Explore this data"]').count()).toBe(0)
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      mergePatch({ agentContext: { surface: 'explore', exploration: {
-        schemaVersion: 1, modelId: 'semantic:sales', datasetId: 'orders',
-        dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 50,
-      } } })
-    })
-    const link = drawer.locator('a[aria-label="Explore this data"]')
-    await link.waitFor({ state: 'attached' })
-    expect(new URL((await link.getAttribute('href'))!, 'https://example.test').pathname).toBe('/explore')
-  } finally { await page.close() }
-})
-
 test('dashboard agent clears draft and references when the active conversation changes', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {

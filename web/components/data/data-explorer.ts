@@ -1247,6 +1247,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         </div>
         ${agentEnabled && this.agentDrawerOpen ? html`<lv-chat-drawer
           open
+          .exploreHref=${activeSpec.modelId?.trim() && !this.embedded ? dataExplorerURL({ mode: 'explore', explore: { spec: activeSpec } } as DataExplorerCommand) : ''}
           .suggestions=${dataExplorerAgentSuggestions(explorer, this.optimisticExplore ?? explorer.explore.command, this.page?.context)}
           @lv-chat-drawer-close=${() => this.setAgentDrawerOpen(false)}
           @lv-chat-new=${this.handleAgentNew}

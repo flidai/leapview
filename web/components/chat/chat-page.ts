@@ -9,7 +9,6 @@ import { lucideIcon } from '../shared/lucide-icons'
 import '../dashboard/visual-modal'
 import './chat-thread'
 import { agentIcon } from './agent-icon'
-import { exploreContextHref } from './explore-context'
 import { type ChatReferencesChangeDetail, defaultAgentReferenceLimit, latestAcceptedRunId, mergeReferences, normalizeReferenceLimit } from './reference'
 import './chat-composer'
 import './chat-list'
@@ -86,20 +85,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     .conversation-titlebar {
       display: grid;
       min-width: 0;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: center;
-      gap: var(--lv-space-sm);
+      grid-template-columns: minmax(0, 1fr);
       padding: 14px var(--base-size-16) var(--base-size-8);
     }
-
-    .explore-link {
-      color: var(--lv-accent);
-      font: var(--lv-type-caption);
-      text-decoration: none;
-      white-space: nowrap;
-    }
-
-    .explore-link:hover, .explore-link:focus-visible { text-decoration: underline; }
 
     h1 {
       margin: 0;
@@ -433,11 +421,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   private renderConversationTitlebar(title: string) {
-    const exploreHref = exploreContextHref(this.context)
     return html`
       <div class="conversation-titlebar">
         <h1>${title}</h1>
-        ${exploreHref ? html`<a class="explore-link" href=${exploreHref}>Explore data</a>` : null}
       </div>
     `
   }

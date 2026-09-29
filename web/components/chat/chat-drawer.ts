@@ -50,6 +50,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) open = false
   @property({ type: Boolean, reflect: true }) embedded = false
   @property({ attribute: false }) suggestions: AgentReferenceSignal[] = []
+  @property({ attribute: false }) exploreHref: string | null = null
   @state() private references: AgentReferenceSignal[] = []
   @state() private referenceLimitMessage = ''
 	@state() private editMessageId = ''
@@ -371,7 +372,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   render() {
     const agent = this.agent
 		const context = this.context
-		const exploreHref = exploreContextHref(context)
+		const exploreHref = this.exploreHref ?? exploreContextHref(context)
 		const currentFilters = this.dashboardFilters
 		const controls = Object.values(currentFilters.appliedControls ?? {})
 			.filter((control) => control.expression.kind !== 'unfiltered').length
@@ -393,7 +394,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
           <div class="toolbar">
             <div class="title">${agentIcon()}<span>Dashboard agent</span></div>
             <div class="toolbar-actions">
-              ${exploreHref ? html`<a class="text-action" href=${exploreHref} title="Open this data in Explorer" aria-label="Explore this data">Explore data</a>` : null}
+              ${exploreHref ? html`<a class="text-action" href=${exploreHref} target="_blank" rel="noopener noreferrer" title="Open Explorer in a new tab" aria-label="Open Explorer in a new tab">Open Explorer</a>` : null}
               <button class="text-action" type="button" title=${this.pending ? 'Wait for the current answer to finish' : agentEnabled ? 'New chat' : 'Agent is not configured'} aria-label="New chat" ?disabled=${!agentEnabled || this.pending} @click=${this.newChat}>${lucideIcon(Plus)}<span>New chat</span></button>
               <a class="text-action" href=${conversationHref} title="Open full chat" aria-label="Open full chat" aria-disabled=${String(this.pending && !agent.activeConversationId)} @click=${(event: MouseEvent) => { if (this.pending && !agent.activeConversationId) event.preventDefault() }}>${lucideIcon(ExternalLink)}<span>Full chat</span></a>
 					  <button class="close-action" type="button" title="Close" aria-label="Close agent" @click=${this.closeDrawer}>${lucideIcon(X)}</button>

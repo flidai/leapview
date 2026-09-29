@@ -2,15 +2,16 @@ import { expect, test } from 'bun:test'
 import type { AgentContextSignal } from '../../generated/signals'
 import { exploreContextHref } from './explore-context'
 
-test('only an authorized exploration context offers a link', () => {
+test('only an exploration context offers a link', () => {
   expect(exploreContextHref(null)).toBeUndefined()
   expect(exploreContextHref({ surface: 'dashboard' } as AgentContextSignal)).toBeUndefined()
+  expect(exploreContextHref({ surface: 'dashboard', exploration: { modelId: 'semantic:sales' } } as AgentContextSignal)).toBeUndefined()
   expect(exploreContextHref({ exploration: { modelId: ' ' } } as AgentContextSignal)).toBeUndefined()
 })
 
 test('chat handoff preserves canonical fields and filters without dashboard or transcript data', () => {
   const context = {
-    surface: 'explore',
+    surface: 'data',
     dashboardId: 'dashboard:private',
     exploration: {
       schemaVersion: 1,

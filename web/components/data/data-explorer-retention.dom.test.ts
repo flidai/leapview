@@ -357,6 +357,53 @@ test('Data Explorer reveals a newly hydrated selection and preserves manual side
   }
 })
 
+test('Explorer Ask drawer links back to the current governed exploration', async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer') && customElements.get('lv-chat-drawer'))
+    const link = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const spec = { schemaVersion: 1, modelId: 'semantic:sales', datasetId: 'orders',
+        dimensions: [{ field: 'orders.status' }], metrics: [], filters: [], sort: [], limit: 50 }
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: { objects: [], selectedKey: '', command: { mode: 'explore', explore: { spec } },
+          explore: { command: { spec }, semanticModels: [], datasets: [], fields: [],
+            result: { columns: [], rows: [], rowsReturned: 0 }, status: { state: 'success' } } },
+        agent: { status: { enabled: true, running: false }, composer: { value: '', disabled: false, placeholder: 'Ask' }, transcript: [] },
+        agentContext: { surface: 'data', modelId: spec.modelId, exploration: spec },
+      })
+      const explorer = document.createElement('lv-data-explorer') as any
+      document.body.append(explorer)
+      for (let index = 0; index < 8 && !explorer.shadowRoot?.querySelector('.ask-button'); index += 1) {
+        await explorer.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const ask = explorer.shadowRoot.querySelector('.ask-button') as HTMLButtonElement | null
+      if (!ask) throw new Error(`Ask button missing: ${explorer.shadowRoot.textContent?.slice(0, 350)}`)
+      ask.click()
+      await explorer.updateComplete
+      const drawer = explorer.shadowRoot.querySelector('lv-chat-drawer') as any
+      await drawer.updateComplete
+      const before = drawer.shadowRoot.querySelector('a[aria-label="Open Explorer in a new tab"]') as HTMLAnchorElement
+      const beforeHref = before?.getAttribute('href') ?? ''
+      explorer.optimisticExplore = { spec: { ...spec, dimensions: [{ field: 'orders.customer_id' }] } }
+      explorer.requestUpdate()
+      await explorer.updateComplete
+      await drawer.updateComplete
+      const after = drawer.shadowRoot.querySelector('a[aria-label="Open Explorer in a new tab"]') as HTMLAnchorElement
+      return { before: beforeHref, after: after?.getAttribute('href') ?? '', target: after?.target }
+    })
+    const before = new URL(link.before, 'https://example.test')
+    const after = new URL(link.after, 'https://example.test')
+    expect(before.pathname).toBe('/explore')
+    expect(JSON.parse(before.searchParams.get('state')!).dimensions).toEqual([{ field: 'orders.status' }])
+    expect(JSON.parse(after.searchParams.get('state')!).dimensions).toEqual([{ field: 'orders.customer_id' }])
+    expect(link.target).toBe('_blank')
+  } finally { await page.close() }
+})
+
 function testDocument() {
   return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%}lv-data-explorer{display:block;min-height:720px}</style></head><body><main data-signals="{}"></main><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script><script type="module" src="/data-explorer-under-test.js"></script></body></html>`
 }
