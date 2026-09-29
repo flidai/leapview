@@ -975,54 +975,18 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
 
     @media (max-width: 760px) {
-      .route {
-        height: 100svh;
-        min-height: 0;
-        overflow: hidden;
-      }
-
       .header { grid-template-columns: minmax(0, 1fr); }
       .header-actions { flex-wrap: wrap; gap: var(--base-size-4); }
-      .explorer {
-        display: block;
-        position: relative;
-        min-height: 0;
-      }
-
-      .browser-resizer {
-        display: none;
-      }
-
-      .browser,
-      .main {
-        min-height: 0;
-      }
-
+      .explorer { display: block; position: relative; min-height: 0; }
+      .browser-resizer { display: none; }
+      .browser, .main { min-height: 0; }
       .browser {
-        position: absolute;
-        z-index: var(--zIndex-sticky, 50);
-        inset: 0 auto 0 0;
-        width: min(320px, calc(100% - 44px)) !important;
-        box-shadow: var(--lv-shadow-floating-sm);
+        position: absolute; z-index: var(--zIndex-sticky, 50); inset: 0 auto 0 0;
+        width: min(320px, calc(100% - 44px)) !important; box-shadow: var(--lv-shadow-floating-sm);
       }
-
-      .browser-collapsed .browser {
-        bottom: auto;
-        width: 44px !important;
-        height: 44px;
-        box-shadow: none;
-      }
-
-      .main {
-        width: calc(100% - 44px);
-        height: 100%;
-        margin-left: 44px;
-      }
-
-      .filter-editor,
-      .diagnostics {
-        grid-template-columns: 1fr;
-      }
+      .browser-collapsed .browser { bottom: auto; width: 44px !important; height: 44px; box-shadow: none; }
+      .main { width: calc(100% - 44px); height: 100%; margin-left: 44px; }
+      .filter-editor, .diagnostics { grid-template-columns: 1fr; }
     }
   `, dataExplorerResultStyles]
 
@@ -1045,9 +1009,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   connectedCallback(): void {
-    if (!this.embedded && window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) {
-      this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
-    }
+    if (!this.embedded && window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
     if (!this.agentStateInitialized) {
       const stored = this.agentStateController.initialize()
       this.agentDrawerOpen = stored.open
@@ -1361,9 +1323,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.closeFilter()
       this.exploreExecutionState = 'idle'
       this.exploreTransportFailure = null
-    } else {
-      this.browseVisibleColumns = null
-    }
+    } else this.browseVisibleColumns = null
     this.emitCommand({ mode, explore })
   }
 
@@ -1956,9 +1916,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
   private selectObject(object: DataExplorerObjectSignal): void {
     this.browseVisibleColumns = null
-    if (window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) {
-      this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
-    }
+    if (window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
     this.optimisticExplore = null
     this.resultView = 'table'
     this.closeFilter()
