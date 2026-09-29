@@ -1107,6 +1107,7 @@ test('expired chat Undo refreshes the sidebar before releasing its temporary hid
   try {
     await page.goto(`${baseURL}/sidebar-history`)
     await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
+    await page.clock.install({ time: new Date('2026-09-29T12:00:00Z') })
     await page.evaluate(() => {
       sessionStorage.removeItem('lv-chat-manager.pending-undo')
       ;(window as any).chatActions = []
@@ -1117,9 +1118,10 @@ test('expired chat Undo refreshes the sidebar before releasing its temporary hid
     })
     await page.waitForFunction(() => (window as any).chatActions.length === 1)
     await page.evaluate(() => {
-      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
+      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
     await page.locator('lv-toast[data-conversation-id="c1"] button.action').waitFor()
+    await page.clock.fastForward(5_000)
     await page.waitForFunction(() => (window as any).managementLoads.length > 0)
 
     const duringRefresh = await page.locator('lv-app-shell').evaluate((element: any) => {
@@ -1158,6 +1160,7 @@ test('expired chat refresh keeps the current focus when the sidebar read succeed
   try {
     await page.goto(`${baseURL}/sidebar-history`)
     await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
+    await page.clock.install({ time: new Date('2026-09-29T12:00:00Z') })
     await page.evaluate(() => {
       sessionStorage.removeItem('lv-chat-manager.pending-undo')
       ;(window as any).chatActions = []
@@ -1168,9 +1171,10 @@ test('expired chat refresh keeps the current focus when the sidebar read succeed
     })
     await page.waitForFunction(() => (window as any).chatActions.length === 1)
     await page.evaluate(() => {
-      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
+      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
     await page.locator('lv-toast[data-conversation-id="c1"] button.action').waitFor()
+    await page.clock.fastForward(5_000)
     await page.waitForFunction(() => (window as any).managementLoads.length > 0)
     await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any

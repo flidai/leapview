@@ -1,0 +1,281 @@
+{
+  "synthetic": true,
+  "production_changed": false,
+  "observations": [],
+  "cycles": [
+    {
+      "n": 2,
+      "active": "ka16ebdbf17f0b53b2febc39236543af6b21350012de9e65ad3f0a11c73cbd61b",
+      "prior": "kb42a40b4d5956c31d9e5869ff6ee772cc19975262f058ed0972680d1d1e888cf",
+      "retained_images": 2,
+      "disk": 347738112
+    },
+    {
+      "n": 3,
+      "active": "k8d3c769434aca62d1a93a6d5ff712c901a58e8cb9e25af1eece154565bf9532c",
+      "prior": "ka16ebdbf17f0b53b2febc39236543af6b21350012de9e65ad3f0a11c73cbd61b",
+      "retained_images": 2,
+      "disk": 347783168
+    },
+    {
+      "n": 4,
+      "active": "k89f255a31ed0ae004a2f04f1447a45fe4123c40d100926f19a57b85101632c6e",
+      "prior": "k8d3c769434aca62d1a93a6d5ff712c901a58e8cb9e25af1eece154565bf9532c",
+      "retained_images": 2,
+      "disk": 347787264
+    },
+    {
+      "n": 5,
+      "active": "kebde853af49d1a29218d019d4b0815ca15567591645a8f4ac2eef86ca92cb85a",
+      "prior": "k89f255a31ed0ae004a2f04f1447a45fe4123c40d100926f19a57b85101632c6e",
+      "retained_images": 2,
+      "disk": 347787264
+    },
+    {
+      "n": 6,
+      "active": "k3e28637bdca53eb1b2b7a96b41a8363842882cab62d226bb003a6313fad94f42",
+      "prior": "kebde853af49d1a29218d019d4b0815ca15567591645a8f4ac2eef86ca92cb85a",
+      "retained_images": 2,
+      "disk": 347791360
+    },
+    {
+      "n": 7,
+      "active": "kd50fd2b819c9fe4a623ed18eeae96be77e3ec46da6265598afd91b3cafe5f620",
+      "prior": "k3e28637bdca53eb1b2b7a96b41a8363842882cab62d226bb003a6313fad94f42",
+      "retained_images": 2,
+      "disk": 347795456
+    },
+    {
+      "n": 8,
+      "active": "k69e2436201f7843c26ca85b5a28cbc39134e91fbb6732e542c8de125c53df840",
+      "prior": "kd50fd2b819c9fe4a623ed18eeae96be77e3ec46da6265598afd91b3cafe5f620",
+      "retained_images": 2,
+      "disk": 347799552
+    },
+    {
+      "n": 9,
+      "active": "k7f55046a54417ce4c80df3b3b6111f63f4c1403e1b58e244c6b706102e1d0f05",
+      "prior": "k69e2436201f7843c26ca85b5a28cbc39134e91fbb6732e542c8de125c53df840",
+      "retained_images": 2,
+      "disk": 347803648
+    },
+    {
+      "n": 10,
+      "active": "k96570f4bdad98fab26f97dd98df34486583c280906d72c87fa7cb855e7527bca",
+      "prior": "k7f55046a54417ce4c80df3b3b6111f63f4c1403e1b58e244c6b706102e1d0f05",
+      "retained_images": 2,
+      "disk": 347803648
+    },
+    {
+      "n": 11,
+      "active": "kc0807e412883ac18952b173e4b0a8a4feb3773a5a260f7cc6ea8c3180eb9ba4a",
+      "prior": "k96570f4bdad98fab26f97dd98df34486583c280906d72c87fa7cb855e7527bca",
+      "retained_images": 2,
+      "disk": 347807744
+    }
+  ],
+  "harness_sha256": "31e61e46a0fa64cadadcc78bd47ae1ad887c5df3452621ca0da55e66fc284d61",
+  "adapter_source_sha256": {
+    "contract.py": "4333a220a408bd6edc36a1467776d81a43d4d48bcc8fd84c90d4e1cfb7d61fc0",
+    "deploy.py": "4ca71a22e6cad67b6a3ec08181d988ae16e84c8b7596265d8624ee4e4fff3e6c",
+    "host.py": "a2057b903b21bce010445ebe2c6099e6698604877c44b4c0c7b0175e4b28fb9e",
+    "supervisor.py": "5becd05e13ada74f5e1f8d8260449ec46bbdf2ffaa6e9820c3a9eb4f922c7476",
+    "guard.rb": "53d495eeded9396fb354ba3dd0e5f024aaafab7318652c81e1cfbb520ba00835",
+    "qualification.py": "be8c4a3eb3145c8dacc0036689b149e86a1aa8217d8327af251733874902f773"
+  },
+  "docker": {
+    "ServerVersion": "29.1.3",
+    "Driver": "overlayfs",
+    "DriverStatus": [
+      [
+        "driver-type",
+        "io.containerd.snapshotter.v1"
+      ]
+    ]
+  },
+  "kamal": "2.12.0",
+  "private_remote_working_directory_verified": true,
+  "shared_fixture_layer": "sha256:a33baedb9486c07f9d8cf21382d30d8ea2c52cdcb971e60825d0ffa2fdcd2b64",
+  "capacity_recovery_and_foreign_alias_guards": true,
+  "cleanup_failure_then_explicit_maintenance": true,
+  "same_image_offline_noop": true,
+  "unhealthy_current_rollback": true,
+  "protected_compose_restoration": true,
+  "caddy_recreation": true,
+  "docker_restart": true,
+  "ssh_lock_loss_blocks_until_explicit_recovery": true,
+  "capacity_samples": [
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4816097280,
+        "start_free_inodes": 322523,
+        "incremental_peak_bytes": 335872,
+        "incremental_peak_inodes": 55
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4818874368,
+        "start_free_inodes": 322568,
+        "incremental_peak_bytes": 360448,
+        "incremental_peak_inodes": 2
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4839710720,
+        "start_free_inodes": 322989,
+        "incremental_peak_bytes": 14422016,
+        "incremental_peak_inodes": 136
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4816752640,
+        "start_free_inodes": 322519,
+        "incremental_peak_bytes": 69632,
+        "incremental_peak_inodes": 2
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4821716992,
+        "start_free_inodes": 322683,
+        "incremental_peak_bytes": 663552,
+        "incremental_peak_inodes": 63
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4816683008,
+        "start_free_inodes": 322518,
+        "incremental_peak_bytes": 335872,
+        "incremental_peak_inodes": 35
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4825014272,
+        "start_free_inodes": 322836,
+        "incremental_peak_bytes": 745472,
+        "incremental_peak_inodes": 65
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4820008960,
+        "start_free_inodes": 322614,
+        "incremental_peak_bytes": 659456,
+        "incremental_peak_inodes": 63
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4817891328,
+        "start_free_inodes": 322552,
+        "incremental_peak_bytes": 831488,
+        "incremental_peak_inodes": 93
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4822286336,
+        "start_free_inodes": 322705,
+        "incremental_peak_bytes": 671744,
+        "incremental_peak_inodes": 62
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4818513920,
+        "start_free_inodes": 322574,
+        "incremental_peak_bytes": 815104,
+        "incremental_peak_inodes": 93
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4822851584,
+        "start_free_inodes": 322728,
+        "incremental_peak_bytes": 659456,
+        "incremental_peak_inodes": 62
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4823425024,
+        "start_free_inodes": 322751,
+        "incremental_peak_bytes": 663552,
+        "incremental_peak_inodes": 63
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4821143552,
+        "start_free_inodes": 322660,
+        "incremental_peak_bytes": 659456,
+        "incremental_peak_inodes": 65
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4816621568,
+        "start_free_inodes": 322489,
+        "incremental_peak_bytes": 192512,
+        "incremental_peak_inodes": 2
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4824014848,
+        "start_free_inodes": 322774,
+        "incremental_peak_bytes": 679936,
+        "incremental_peak_inodes": 65
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4819447808,
+        "start_free_inodes": 322591,
+        "incremental_peak_bytes": 667648,
+        "incremental_peak_inodes": 63
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4816375808,
+        "start_free_inodes": 322517,
+        "incremental_peak_bytes": 311296,
+        "incremental_peak_inodes": 26
+      }
+    },
+    {
+      "1792": {
+        "path": "/home/codex/tmp/leapview-kamal-study/completion-17/containerd",
+        "start_free_bytes": 4820574208,
+        "start_free_inodes": 322637,
+        "incremental_peak_bytes": 655360,
+        "incremental_peak_inodes": 63
+      }
+    }
+  ],
+  "offline_broken_current_rollback": true
+}

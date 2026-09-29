@@ -2,6 +2,8 @@ package ci
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -160,6 +162,25 @@ func TestHistoricalQualificationConcurrencySeparatesCallingWorkflows(t *testing.
 	// reusable workflow must not cancel the other caller's required proof.
 	if !strings.Contains(workflow.Concurrency.Group, "${{ github.workflow }}") {
 		t.Fatal("historical qualification concurrency must distinguish calling workflows")
+	}
+}
+
+func TestHistoricalTransitionLocalTaskPreservesDockerImageIDTemplate(t *testing.T) {
+	if _, err := exec.LookPath("task"); err != nil {
+		t.Skip("Task CLI is required to verify Task template expansion")
+	}
+	root, err := filepath.Abs("../../../")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("task", "--dry", "test:qualification:historical-transition:local")
+	cmd.Dir = root
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("render local historical-transition task: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), `docker image inspect "${tag}" --format '{{.Id}}'`) {
+		t.Fatalf("Task must pass Docker's literal Go template through to image inspect; output was:\n%s", output)
 	}
 }
 
