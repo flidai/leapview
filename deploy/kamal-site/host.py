@@ -193,6 +193,19 @@ def rollback_ready(state):
         raise ValueError('prior recovery container missing or contradictory; inspect saved record; no pull permitted') from exc
 
 
+def recovery_ready(state):
+    """Validate an explicit restore without guessing whether a switch completed."""
+    if not state.get('pending') or state['pending'] == state['active']:
+        raise ValueError('no distinct unresolved candidate; inspect state or use maintain')
+    record = state['records'][state['active']]
+    if record.get('verified') is not True: raise ValueError('saved active is not verified')
+    scope(state['records'])
+    image = local_image(record)
+    container = inspect('container', SERVICE + '-web-' + record['version'])
+    validate_container(record, container, require_running=False)
+    if container['Image'] != image['Id']: raise ValueError('saved active image/container disagree')
+
+
 def preserve_prior(state):
     """Recreate only a missing stopped recovery container after acceptance.
 
@@ -268,6 +281,9 @@ def main():
     elif operation == 'rollback-begin':
         rollback_ready(state)
         state['pending'] = state['prior']; save(state)
+        result = state
+    elif operation == 'recovery-begin':
+        recovery_ready(state)
         result = state
     elif operation == 'maintenance-begin':
         running(state['records'][state['active']])

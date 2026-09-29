@@ -284,9 +284,22 @@ def transition(directory, record, previous, *, pull):
     print('Public site accepted; retained verified rollback and completed maintenance:', record['image'])
 
 
+def recover(directory):
+    # Ownership-journal reconciliation remains an explicit operator prerequisite.
+    # No admission, pull, or acceptance of an interrupted candidate occurs here.
+    state = remote('recovery-begin')
+    record = state['records'][state['active']]
+    config = configure(directory, record)
+    kamal(config, 'rollback', record['version'])
+    remote('verify', version=record['version']); public_check(record)
+    remote('restored', version=record['version'])
+    remote('preserve-prior')
+    remote('cleanup'); kamal(config, 'prune', 'all'); remote('maintained')
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('operation', choices=['status', 'prepare', 'deploy', 'rollback', 'maintain'])
+    p.add_argument('operation', choices=['status', 'prepare', 'deploy', 'rollback', 'recover', 'maintain'])
     p.add_argument('--image')
     p.add_argument('--record', type=Path)
     args = p.parse_args()
@@ -312,6 +325,8 @@ def main():
                 if args.operation == 'rollback':
                     state = remote('rollback-begin')
                     transition(directory, state['records'][state['prior']], state['records'][state['active']], pull=False)
+                elif args.operation == 'recover':
+                    recover(directory)
                 else:
                     state = remote('state')
                     record = state['records'][state['active']]

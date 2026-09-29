@@ -111,9 +111,14 @@ Explicit recovery, using the pinned operator SSH connection:
 6. Run `maintain`. It first verifies the recorded active container and public
    response. It can reconcile a stopped/interrupted candidate and finish cleanup;
    it never activates a candidate. If an unaccepted candidate is still serving,
-   or the recorded active cannot be verified, it refuses. Restore the saved
-   verified active through Kamal with its saved runtime under exclusive ownership,
-   verify identity/public responses, and record that recovery before retrying.
+   or the recorded active cannot be verified, it refuses. Run
+   `python3 deploy/kamal-site/deploy.py recover` after the ownership audit above. This restores the saved verified active through Kamal
+   using its local image and saved runtime under exclusive ownership, verifies
+   identity/public responses, then records restoration and completes maintenance.
+   It never pulls or accepts the interrupted candidate. A missing or contradictory
+   recovery container, failed switch, or failed verification leaves pending state
+   intact. If acceptance already committed (`pending` is empty), use `maintain`
+   instead; `recover` refuses to guess a rollback.
 
 A failed candidate restores the verified active version. Lost acceptance replies
 never cause a guessed rollback. A cleanup error after acceptance leaves the
