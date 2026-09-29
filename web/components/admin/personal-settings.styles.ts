@@ -42,7 +42,6 @@ export const personalSettingsStyles = css`
     .security-session-table th:nth-child(4), .security-session-table td:nth-child(4) { width: 18%; }
     .security-session-table th:last-child, .security-session-table td:last-child { width: 15%; padding-right: 0; text-align: right; }
     .security-session-table td { min-width: 0; padding: var(--base-size-8) var(--base-size-12); border-top: var(--lv-border-muted); color: var(--lv-fg-default); vertical-align: middle; }
-    .security-session-table tr.is-current { background: var(--lv-bg-accent-muted); }
     .security-session-table time, .security-session-access { color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
     .security-session-device { display: grid; width: 100%; min-width: 0; min-height: var(--base-size-40); grid-template-columns: var(--base-size-32) minmax(0, 1fr); align-items: center; column-gap: var(--base-size-16); border-color: transparent; border-radius: var(--lv-radius-default); background: transparent; padding: 0; text-align: left; }
     .security-session-device:hover { background: transparent; }
