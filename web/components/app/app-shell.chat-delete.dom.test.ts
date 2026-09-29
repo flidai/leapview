@@ -167,7 +167,7 @@ test('chat deletion persists after the undo window, refreshes the list, and stay
     await page.evaluate((requestId) => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: requestId, undoDeadline: new Date(Date.now() + 80).toISOString(), archivedConversations: [] } })
     }, pendingRequest)
-    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c2"] button.action').waitFor()
     expect(await page.locator('a[href="/chats/c2"]').count()).toBe(0)
     await page.waitForFunction(() => (window as any).managementLoads.length === 1)
     const refreshRequest = await page.evaluate(() => (window as any).managementLoads[0].requestId)
@@ -200,7 +200,7 @@ test('failed chat deletion keeps the conversation visible and reports the persis
     await page.locator('lv-chat-manager').evaluate((element: any) => document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } })))
     await page.getByRole('alert').filter({ hasText: 'temporarily unavailable' }).waitFor()
     expect(await page.locator('a[href="/chats/c2"]').count()).toBe(1)
-    expect(await page.locator('button.undo[data-conversation-id="c2"]').count()).toBe(0)
+    expect(await page.locator('lv-toast[data-conversation-id="c2"] button.action').count()).toBe(0)
   } finally {
     await page.close()
   }
@@ -222,7 +222,7 @@ test('deleting the open chat returns to a new conversation after persistence com
     await page.evaluate((requestId) => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: requestId, undoDeadline: new Date(Date.now() + 80).toISOString(), archivedConversations: [] } })
     }, pendingRequest)
-    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c2"] button.action').waitFor()
     await page.waitForURL(url => new URL(url).pathname === '/chats/new')
   } finally {
     await page.close()
@@ -290,3 +290,70 @@ test('mobile account menu fits above the footer and keeps search available after
     }
   } finally { await page.close() }
 }, 30_000)
+
+test('the shared pinned section appears only while a chat or dashboard is pinned', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    const pinned = page.locator('lv-sidebar .pinned-items')
+    expect(await pinned.getByRole('link', { name: 'Pinned title loading' }).count()).toBe(1)
+    expect(await pinned.locator('.pinned-chat-icon svg').count()).toBe(1)
+    expect(await page.getByRole('heading', { name: 'Pinned', exact: true }).count()).toBe(1)
+    expect(await pinned.getByRole('button', { name: 'Unpin Pinned title loading' }).count()).toBe(1)
+    await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
+      sidebar.config = { ...sidebar.config, history: { ...sidebar.config.history, items: sidebar.config.history.items.map((item: any) => ({ ...item, pinned: false })) } }
+      await sidebar.updateComplete
+    })
+    expect(await pinned.count()).toBe(0)
+    expect(await page.locator('lv-sidebar details.chats-history').count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
+
+test('pinned dashboard shortcuts appear only while dashboards are pinned', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    const sidebar = page.locator('lv-sidebar')
+    const shortcuts = sidebar.locator('.pinned-items')
+    expect(await shortcuts.count()).toBe(1)
+    expect(await shortcuts.getByRole('link', { name: 'Sales report' }).count()).toBe(0)
+    await page.evaluate(() => {
+      localStorage.setItem('leapview.dashboard-catalog.pins.v1:current-user', JSON.stringify(['sales', 'operations']))
+      localStorage.setItem('leapview.dashboard-catalog.pin-links.v1:current-user', JSON.stringify([
+        { id: 'sales', title: 'Sales report', href: '/dashboards/sales', icon: 'chart-no-axes-combined' },
+        { id: 'operations', title: 'Operations report', href: '/dashboards/operations', icon: 'package-check' },
+      ]))
+      window.dispatchEvent(new Event('leapview-dashboard-pins-change'))
+    })
+    await shortcuts.getByRole('link', { name: 'Sales report' }).waitFor()
+    expect(await shortcuts.getByRole('link').count()).toBe(3)
+    expect(await page.getByRole('heading', { name: 'Pinned', exact: true }).count()).toBe(1)
+    expect(await shortcuts.getByRole('link', { name: 'Operations report' }).getAttribute('href')).toBe('/dashboards/operations')
+    await sidebar.evaluate(async (element: any) => {
+      element.config = { ...element.config, principalId: 'other-user' }
+      await element.updateComplete
+    })
+    expect(await shortcuts.getByRole('link', { name: 'Sales report' }).count()).toBe(0)
+    await sidebar.evaluate(async (element: any) => {
+      element.config = { ...element.config, principalId: 'current-user' }
+      await element.updateComplete
+    })
+    expect(await shortcuts.getByRole('link', { name: 'Sales report' }).count()).toBe(1)
+    const icons = await shortcuts.locator('a.nav-item:not(.history-item) .nav-icon svg').evaluateAll(nodes => nodes.map(node => node.innerHTML))
+    expect(icons[0]).not.toBe(icons[1])
+    expect(await shortcuts.locator('a.nav-item:not(.history-item) .nav-icon svg[style]').count()).toBe(0)
+    await page.reload()
+    await shortcuts.getByRole('link', { name: 'Sales report' }).waitFor()
+    await page.evaluate(() => {
+      localStorage.setItem('leapview.dashboard-catalog.pins.v1:current-user', '[]')
+      localStorage.setItem('leapview.dashboard-catalog.pin-links.v1:current-user', '[]')
+      window.dispatchEvent(new Event('leapview-dashboard-pins-change'))
+    })
+    await shortcuts.getByRole('link', { name: 'Sales report' }).waitFor({ state: 'detached' })
+    expect(await shortcuts.getByRole('link', { name: 'Pinned title loading' }).count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+})

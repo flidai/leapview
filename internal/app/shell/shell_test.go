@@ -59,8 +59,14 @@ func TestProviderUsesDevelopNavigationForTechnicalRoutes(t *testing.T) {
 			if chrome.Sidebar.Area != "develop" || chrome.Sidebar.Admin {
 				t.Fatalf("sidebar = %#v, want develop area", chrome.Sidebar)
 			}
-			if len(chrome.Sidebar.Groups) != 2 || chrome.Sidebar.Groups[0].Label != "Catalog" || chrome.Sidebar.Groups[1].Label != "Operations" {
-				t.Fatalf("develop navigation groups = %#v, want Catalog and Operations", chrome.Sidebar.Groups)
+			if chrome.Sidebar.Active != "pipelines" && active == "runs" {
+				t.Fatalf("runs route sidebar active item = %q, want pipelines", chrome.Sidebar.Active)
+			}
+			if chrome.Sidebar.Active != active && active != "runs" {
+				t.Fatalf("sidebar active item = %q, want %q", chrome.Sidebar.Active, active)
+			}
+			if len(chrome.Sidebar.Groups) != 1 || chrome.Sidebar.Groups[0].Label != "Catalog" {
+				t.Fatalf("develop navigation groups = %#v, want Catalog only", chrome.Sidebar.Groups)
 			}
 			got := []string{}
 			gotIcons := []string{}
@@ -70,11 +76,11 @@ func TestProviderUsesDevelopNavigationForTechnicalRoutes(t *testing.T) {
 					gotIcons = append(gotIcons, item.Icon)
 				}
 			}
-			if len(chrome.Sidebar.Groups[0].Items) != 6 || len(chrome.Sidebar.Groups[1].Items) != 1 || chrome.Sidebar.Groups[1].Items[0].ID != "runs" {
+			if len(chrome.Sidebar.Groups[0].Items) != 6 {
 				t.Fatalf("develop navigation item grouping = %#v", chrome.Sidebar.Groups)
 			}
-			want := []string{"sources", "models", "semantic-models", "dashboard-catalog", "pipelines", "connections", "runs"}
-			wantIcons := []string{"database", "boxes", "waypoints", "dashboard", "workflow", "data", "activity"}
+			want := []string{"sources", "models", "semantic-models", "dashboard-catalog", "pipelines", "connections"}
+			wantIcons := []string{"database", "boxes", "waypoints", "dashboard", "workflow", "data"}
 			if len(got) != len(want) {
 				t.Fatalf("develop navigation = %v, want %v", got, want)
 			}
@@ -159,6 +165,23 @@ func TestProviderFiltersDevelopNavigationByResourceKind(t *testing.T) {
 	}
 	if chrome.Sidebar.Groups[0].Items[0].ID != "models" || chrome.Sidebar.Groups[0].Items[1].ID != "dashboard-catalog" {
 		t.Fatalf("navigation = %#v, want authorized resource kinds only", chrome.Sidebar.Groups)
+	}
+}
+
+func TestProviderPlacesRunOnlyAccessUnderPipelines(t *testing.T) {
+	provider := Provider(Config{
+		Presentation:      webpage.Presentation{ProductName: "LeapView"},
+		ProductNavigation: &ProductNavigationAccess{CanRuns: true},
+	})
+	chrome := provider(webpage.Context{Active: "runs"}).Signal.(Chrome)
+	if chrome.Sidebar.Area != "develop" || chrome.Sidebar.Active != "pipelines" {
+		t.Fatalf("sidebar = %#v, want Develop with Pipelines active", chrome.Sidebar)
+	}
+	if len(chrome.Sidebar.Areas) != 2 || chrome.Sidebar.Areas[1].Href != "/pipelines/runs" {
+		t.Fatalf("areas = %#v, want Develop rooted at pipeline runs", chrome.Sidebar.Areas)
+	}
+	if len(chrome.Sidebar.Groups) != 1 || len(chrome.Sidebar.Groups[0].Items) != 1 || chrome.Sidebar.Groups[0].Items[0].Href != "/pipelines/runs" {
+		t.Fatalf("navigation = %#v, want pipeline runs as the sole entry", chrome.Sidebar.Groups)
 	}
 }
 

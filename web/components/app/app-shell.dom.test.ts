@@ -1042,7 +1042,7 @@ test('archive persists before showing five-second Undo and waits for cancellatio
     })
     await page.getByRole('status').filter({ hasText: 'Archived chat' }).waitFor()
     expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('lv-chat-manager.pending-undo')!)[0].deadline - Date.now())).toBeGreaterThan(4_000)
-    await page.locator('button.undo').click()
+    await page.locator('lv-toast[data-conversation-id="c1"] button.action').click()
     expect(await page.evaluate(() => (window as any).chatActions.map((a: any) => a.action))).toEqual(['archive_pending', 'undo'])
     expect(await page.evaluate(() => (window as any).chatActions[0].requestId === (window as any).chatActions[1].requestId)).toBe(true)
     await page.evaluate(() => {
@@ -1070,7 +1070,7 @@ test('chat actions keep independent Undo notifications without waiting for the f
     await page.evaluate(() => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
-    await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c1"] button.action').waitFor()
 
     await page.evaluate(() => {
       document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'delete', conversationId: 'c2', title: 'Inventory status' } }))
@@ -1082,19 +1082,19 @@ test('chat actions keep independent Undo notifications without waiting for the f
       ;(window as any).testMergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: (window as any).chatActions[1].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
 
-    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
-    expect(await page.locator('button.undo').count()).toBe(2)
+    await page.locator('lv-toast[data-conversation-id="c2"] button.action').waitFor()
+    expect(await page.locator('lv-toast[data-conversation-id] button.action').count()).toBe(2)
     expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('lv-chat-manager.pending-undo')!).length)).toBe(2)
     expect(await page.locator('a[href="/chats/c1"], a[href="/chats/c2"]').count()).toBe(0)
 
-    await page.locator('button.undo[data-conversation-id="c1"]').click()
+    await page.locator('lv-toast[data-conversation-id="c1"] button.action').click()
     await page.waitForFunction(() => (window as any).chatActions.length === 3)
     await page.evaluate(() => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'undo', completedRequestId: (window as any).chatActions[2].requestId, message: '', archivedConversations: [] } })
     })
 
-    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
-    expect(await page.locator('button.undo').count()).toBe(1)
+    await page.locator('lv-toast[data-conversation-id="c2"] button.action').waitFor()
+    expect(await page.locator('lv-toast[data-conversation-id] button.action').count()).toBe(1)
     expect(await page.locator('a[href="/chats/c1"]').count()).toBe(1)
     expect(await page.locator('a[href="/chats/c2"]').count()).toBe(0)
   } finally {
@@ -1107,6 +1107,7 @@ test('expired chat Undo refreshes the sidebar before releasing its temporary hid
   try {
     await page.goto(`${baseURL}/sidebar-history`)
     await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
+    await page.clock.install({ time: new Date('2026-09-29T12:00:00Z') })
     await page.evaluate(() => {
       sessionStorage.removeItem('lv-chat-manager.pending-undo')
       ;(window as any).chatActions = []
@@ -1117,9 +1118,10 @@ test('expired chat Undo refreshes the sidebar before releasing its temporary hid
     })
     await page.waitForFunction(() => (window as any).chatActions.length === 1)
     await page.evaluate(() => {
-      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
+      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
-    await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c1"] button.action').waitFor()
+    await page.clock.fastForward(5_000)
     await page.waitForFunction(() => (window as any).managementLoads.length > 0)
 
     const duringRefresh = await page.locator('lv-app-shell').evaluate((element: any) => {
@@ -1158,6 +1160,7 @@ test('expired chat refresh keeps the current focus when the sidebar read succeed
   try {
     await page.goto(`${baseURL}/sidebar-history`)
     await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
+    await page.clock.install({ time: new Date('2026-09-29T12:00:00Z') })
     await page.evaluate(() => {
       sessionStorage.removeItem('lv-chat-manager.pending-undo')
       ;(window as any).chatActions = []
@@ -1168,9 +1171,10 @@ test('expired chat refresh keeps the current focus when the sidebar read succeed
     })
     await page.waitForFunction(() => (window as any).chatActions.length === 1)
     await page.evaluate(() => {
-      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
+      ;(window as any).testMergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
-    await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c1"] button.action').waitFor()
+    await page.clock.fastForward(5_000)
     await page.waitForFunction(() => (window as any).managementLoads.length > 0)
     await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
@@ -1239,9 +1243,9 @@ test('chat history can be hidden and reopened with mouse and keyboard without lo
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
     await page.goto(`${baseURL}/sidebar-history`)
-    const heading = page.locator('summary.history-label')
+    const heading = page.locator('details.chats-history > summary.history-label')
     await heading.waitFor({ timeout: 2000 })
-    const history = page.locator('details.history')
+    const history = page.locator('details.chats-history')
     await heading.click()
     expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(false)
     expect(await page.getByRole('link', { name: 'Revenue check', exact: true }).isVisible()).toBe(false)
@@ -1301,7 +1305,7 @@ test('sidebar renders global chat action and recent history', async () => {
             iconRadius: getComputedStyle(icon).borderRadius,
           }
         })(),
-        historyLabel: root.querySelector('.history-label')?.textContent?.trim(),
+        historyLabel: root.querySelector('.chats-history .history-label')?.textContent?.trim(),
         historySpinner: (() => {
           const spinner = root.querySelector('lv-loading-spinner') as HTMLElement | null
           return {
@@ -1311,7 +1315,7 @@ test('sidebar renders global chat action and recent history', async () => {
         })(),
         hasHistorySearch: Boolean(root.querySelector('.history-search')),
         historyStyle: (() => {
-          const history = root.querySelector('.history') as HTMLElement
+          const history = root.querySelector('.chats-history') as HTMLElement
           const style = getComputedStyle(history)
           return {
             borderTopWidth: style.borderTopWidth,
@@ -1319,11 +1323,11 @@ test('sidebar renders global chat action and recent history', async () => {
           }
         })(),
         historyItemMetrics: (() => {
-          const item = root.querySelector('.history-item') as HTMLElement
+          const item = root.querySelector('.chats-history .history-item') as HTMLElement
           const title = item?.querySelector('.history-title') as HTMLElement
           const navIcon = root.querySelector('a[href="/"] .nav-icon') as HTMLElement
           const navText = root.querySelector('a[href="/"] .nav-text') as HTMLElement
-          const label = root.querySelector('.history-label') as HTMLElement
+          const label = root.querySelector('.chats-history .history-label') as HTMLElement
           const mutedProbe = document.createElement('span')
           mutedProbe.style.color = 'var(--lv-fg-muted)'
           root.append(mutedProbe)
@@ -1350,7 +1354,7 @@ test('sidebar renders global chat action and recent history', async () => {
     expect(state.links).toContainEqual({ href: '/chats/c1', text: 'Revenue check', current: 'page', ariaLabel: 'Revenue check', title: 'Revenue check' })
     expect(state.spacing).toEqual({ navGroupGap: '2px', historyListGap: '2px', navItemHeight: 32 })
     expect(state.hasHistorySearch).toBe(false)
-    expect(state.historyStyle).toEqual({ borderTopWidth: '0px', paddingTop: '8px' })
+    expect(state.historyStyle).toEqual({ borderTopWidth: '0px', paddingTop: '0px' })
     expect(state.historyItemMetrics.gridTemplateColumns).not.toMatch(/^26px /)
     expect(state.historyItemMetrics.labelLeft).toBe(state.historyItemMetrics.navIconLeft)
     expect(state.historyItemMetrics.titleLeft).toBe(state.historyItemMetrics.navIconLeft)
@@ -1643,11 +1647,11 @@ test('insights and develop navigation expose the stable route contract with grou
       return {
         insights: links('Insights'),
         develop: [...links('Catalog'), ...links('Operations')],
-        subtitles: Array.from(root.querySelectorAll('.nav-group-label')).filter((label: Element) => {
+        subtitles: Array.from(root.querySelectorAll('.nav-group:not(.pinned-items) .nav-group-label')).filter((label: Element) => {
           const style = getComputedStyle(label)
           return style.display !== 'none' && style.visibility !== 'hidden'
         }).map((label: Element) => label.textContent?.trim()),
-        subtitleColors: Array.from(root.querySelectorAll('.nav-group-label')).map((label: Element) => getComputedStyle(label).color),
+        subtitleColors: Array.from(root.querySelectorAll('.nav-group:not(.pinned-items) .nav-group-label')).map((label: Element) => getComputedStyle(label).color),
       }
     })
     const developState = await navigationState()
@@ -2035,7 +2039,7 @@ async function sidebarAreaState(page: import('@playwright/test').Page) {
         href: item.getAttribute('href'),
       })),
       items: Array.from(root.querySelectorAll('#mobile-navigation > .nav-group:not(.primary-action) .nav-text strong')).map((item) => item.textContent?.trim()),
-      visibleGroupLabels: Array.from(root.querySelectorAll('#mobile-navigation > .nav-group .nav-group-label')).filter((item) => {
+      visibleGroupLabels: Array.from(root.querySelectorAll('#mobile-navigation > .nav-group:not(.pinned-items) .nav-group-label')).filter((item) => {
         const style = getComputedStyle(item)
         return style.display !== 'none' && style.visibility !== 'hidden'
       }).map((item) => item.textContent?.trim()),

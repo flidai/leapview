@@ -1,0 +1,31 @@
+{
+  "read_only": true,
+  "production_changed": false,
+  "inventory": {
+    "docker": "29.1.3",
+    "driver": "overlayfs",
+    "disks": {
+      "2049": {
+        "paths": [
+          "/var/lib/containerd",
+          "/var/lib/docker"
+        ],
+        "capacity_bytes": 39964635136,
+        "available_bytes": 34631495680,
+        "available_inodes": 2402003
+      }
+    },
+    "timer": "inactive"
+  },
+  "errors": [
+    "state: [Errno 2] No such file or directory: '/var/lib/leapview-site/kamal/state.json'",
+    "owner: [Errno 2] No such file or directory: '/var/lib/leapview-site/kamal/owner.json'",
+    "proxy: host command failed: docker container",
+    "handover: [Errno 2] No such file or directory: '/var/lib/leapview-site/kamal/ready.json'"
+  ],
+  "public_build": {
+    "schemaVersion": 1,
+    "revision": "5d870e7cf5f7e174dce115c416f6cab5e8259dcf",
+    "image": "ghcr.io/flidai/leapview-site@sha256:0d2d1ca0017baa3ecda8c3a2c9a75d3d149eef42b3c975d7d4a93702ed48f6c8"
+  }
+}

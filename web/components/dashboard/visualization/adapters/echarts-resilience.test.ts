@@ -176,19 +176,23 @@ test('ECharts handle reapplies compact layout after updates and restores desktop
   }
   const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
   const initial = cartesian(true)
-  handle.mount(initial, defaultRendererContext)
-  handle.resize(320, 240)
-  const compactCall = calls.at(-1)!
-  expect(compactCall.grid).toMatchObject({ bottom: 54 })
+  try {
+    handle.mount(initial, defaultRendererContext)
+    handle.resize(320, 240)
+    const compactCall = calls.at(-1)!
+    expect(compactCall.grid).toMatchObject({ bottom: 54 })
 
-  const updated = structuredClone(initial)
-  updated.dataRevision = 2
-  updated.dataState.dataRevision = 2
-  handle.update(updated, Change.Data, defaultRendererContext)
-  expect(calls.at(-1)!.grid).toMatchObject({ bottom: 54 })
+    const updated = structuredClone(initial)
+    updated.dataRevision = 2
+    updated.dataState.dataRevision = 2
+    handle.update(updated, Change.Data, defaultRendererContext)
+    expect(calls.at(-1)!.grid).toMatchObject({ bottom: 54 })
 
-  handle.resize(640, 360)
-  expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
+    handle.resize(640, 360)
+    expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
+  } finally {
+    handle.dispose()
+  }
 })
 
 test('ECharts handle reapplies width-sensitive legends and switches proportional labels across responsive breakpoints', () => {
@@ -205,46 +209,50 @@ test('ECharts handle reapplies width-sensitive legends and switches proportional
     rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { color: 'danger', icon: 'circle' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'square' } },
   }]
   const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
-  handle.mount(envelope, defaultRendererContext)
-  handle.resize(320, 300)
-  const first = calls.at(-1)!.series[0]
-  const count = calls.length
-  handle.resize(360, 300)
-  expect(calls.length).toBe(count + 1)
-  expect(calls.at(-1)!.legend).toMatchObject({ type: 'scroll', width: expect.any(Number) })
-  expect(first.radius).toEqual(['54%', '76%'])
-  expect(first.left).toBeUndefined()
-  expect(first.right).toBeUndefined()
-  expect(first.label.alignTo).toBe('edge')
+  try {
+    handle.mount(envelope, defaultRendererContext)
+    handle.resize(320, 300)
+    const first = calls.at(-1)!.series[0]
+    const count = calls.length
+    handle.resize(360, 300)
+    expect(calls.length).toBe(count + 1)
+    expect(calls.at(-1)!.legend).toMatchObject({ type: 'scroll', width: expect.any(Number) })
+    expect(first.radius).toEqual(['54%', '76%'])
+    expect(first.left).toBeUndefined()
+    expect(first.right).toBeUndefined()
+    expect(first.label.alignTo).toBe('edge')
 
-  handle.resize(435, 420)
-  expect(calls.at(-1)!.series[0]).toMatchObject({
-    id: 'series:primary:donut', label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
-  })
+    handle.resize(435, 420)
+    expect(calls.at(-1)!.series[0]).toMatchObject({
+      id: 'series:primary:donut', label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+    })
 
-  handle.resize(1200, 720)
-  expect(calls.at(-1)!.series[0]).toMatchObject({
-    id: 'series:primary:donut',
-    label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
-    labelLine: { length: 58, length2: 42 },
-  })
-  expect(calls.at(-1)!.series[0].radius).toEqual(['54%', '76%'])
+    handle.resize(1200, 720)
+    expect(calls.at(-1)!.series[0]).toMatchObject({
+      id: 'series:primary:donut',
+      label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+      labelLine: { length: 58, length2: 42 },
+    })
+    expect(calls.at(-1)!.series[0].radius).toEqual(['54%', '76%'])
 
-  const roomyCount = calls.length
-  handle.resize(900, 500)
-  expect(calls.length).toBe(roomyCount + 1)
-  expect(calls.at(-1)!.series[0].labelLine).toMatchObject({ length: 40, length2: 32 })
+    const roomyCount = calls.length
+    handle.resize(900, 500)
+    expect(calls.length).toBe(roomyCount + 1)
+    expect(calls.at(-1)!.series[0].labelLine).toMatchObject({ length: 40, length2: 32 })
 
-  handle.resize(320, 300)
-  expect(calls.at(-1)!.series[0]).toMatchObject({ id: 'series:primary:donut', label: { alignTo: 'edge' } })
+    handle.resize(320, 300)
+    expect(calls.at(-1)!.series[0]).toMatchObject({ id: 'series:primary:donut', label: { alignTo: 'edge' } })
 
-  const inside = structuredClone(envelope)
-  inside.spec.presentation.labelPosition = 'inside'
-  handle.update(inside, Change.Spec, defaultRendererContext)
-  handle.resize(535, 420)
-  expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 11, padding: 0 })
-  handle.resize(700, 500)
-  expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 12, padding: 3 })
+    const inside = structuredClone(envelope)
+    inside.spec.presentation.labelPosition = 'inside'
+    handle.update(inside, Change.Spec, defaultRendererContext)
+    handle.resize(535, 420)
+    expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 11, padding: 0 })
+    handle.resize(700, 500)
+    expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 12, padding: 3 })
+  } finally {
+    handle.dispose()
+  }
 })
 
 function legendHandle() {

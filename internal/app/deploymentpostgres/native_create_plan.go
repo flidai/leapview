@@ -30,7 +30,6 @@ import (
 	"github.com/flidai/leapview/internal/project"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
-	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -930,21 +929,7 @@ func (c *NativeCreatePlanCoordinator) readBaseTx(ctx context.Context, tx deploym
 }
 
 func nativePlanRequestDigest(request deploymentmodule.NativeDeliveryPlanRequest) (string, error) {
-	var pipelinePlan *projectpipelineplan.Plan
-	if request.PipelinePlan != nil {
-		canonical := request.PipelinePlan.Canonical()
-		pipelinePlan = &canonical
-	}
-	canonical := struct {
-		ProjectID, TargetID, Environment, PrincipalID, SourceOwnerID, Operation, SourceDigest, SourceAttestationDigest, IdempotencyKey string
-		PipelinePlan                                                                                                                   *projectpipelineplan.Plan `json:"pipelinePlan,omitempty"`
-	}{request.ProjectID.String(), request.TargetID, request.Environment, request.PrincipalID, request.SourceOwnerID, request.Operation, request.SourceDigest, request.SourceAttestationDigest, request.IdempotencyKey, pipelinePlan}
-	encoded, err := json.Marshal(canonical)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(encoded)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return deploymentmodule.NativeDeliveryPlanRequestDigest(request)
 }
 
 func sameNativeJSON(left, right []byte) bool {

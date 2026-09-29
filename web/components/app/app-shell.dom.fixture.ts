@@ -18,6 +18,7 @@ export function testDocument(includeShellScript: boolean, compact = false, histo
       modelTitle: '',
       compact,
       userName: admin ? 'Ada Lovelace' : 'Current User',
+      principalId: admin ? 'ada' : 'current-user',
       userAvatarUrl: admin ? '/profile/avatars/ada/avatar-digest' : undefined,
       userRole: admin ? 'Platform admin' : 'Member',
       userSettingsHref: '/admin/profile',

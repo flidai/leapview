@@ -26,6 +26,7 @@ type Config struct {
 	ProductLogoURL       string
 	UserAvatarURL        string
 	UserName             string
+	PrincipalID          string
 	ColorMode            string
 	AdminAccess          *AdminNavigationAccess
 	ProductNavigation    *ProductNavigationAccess
@@ -77,6 +78,7 @@ type Sidebar struct {
 	PrimaryAction    *Action  `json:"primaryAction,omitempty"`
 	ProductLogoURL   *string  `json:"productLogoUrl,omitempty"`
 	ProductName      string   `json:"productName"`
+	PrincipalID      *string  `json:"principalId,omitempty"`
 	UserAvatarURL    *string  `json:"userAvatarUrl,omitempty"`
 	UserName         *string  `json:"userName,omitempty"`
 	UserRole         *string  `json:"userRole,omitempty"`
@@ -140,6 +142,9 @@ func Provider(config Config) webpage.Provider {
 			area = ""
 		}
 		sidebarActive := context.Active
+		if sidebarActive == "runs" {
+			sidebarActive = "pipelines"
+		}
 		if fallbackToInsights {
 			sidebarActive = ""
 			if context.Active == "dashboard-catalog" {
@@ -154,7 +159,7 @@ func Provider(config Config) webpage.Provider {
 			DashboardID: optional(context.SectionID), DashboardTitle: context.SectionTitle,
 			ModelID: optional(context.RelatedID), ModelTitle: optional(context.RelatedTitle),
 			PageTitle: context.PageTitle, ProductLogoURL: optional(config.ProductLogoURL), ProductName: firstNonEmpty(config.Presentation.ProductName, "LeapView"),
-			UserAvatarURL: optional(config.UserAvatarURL), UserName: optional(config.UserName), UserRole: optional(config.RoleLabel),
+			PrincipalID: optional(config.PrincipalID), UserAvatarURL: optional(config.UserAvatarURL), UserName: optional(config.UserName), UserRole: optional(config.RoleLabel),
 			UserSettingsHref: "/admin/profile",
 			Groups:           navigation,
 		}
@@ -243,8 +248,12 @@ func developNavigation(access ProductNavigationAccess) []Group {
 	if access.CanDashboardCatalog {
 		catalog = append(catalog, Item{ID: "dashboard-catalog", Label: "Dashboards", Href: "/dashboards", Icon: "dashboard"})
 	}
-	if access.CanPipelines {
-		catalog = append(catalog, Item{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow"})
+	if access.CanPipelines || access.CanRuns {
+		href := "/pipelines"
+		if !access.CanPipelines {
+			href = "/pipelines/runs"
+		}
+		catalog = append(catalog, Item{ID: "pipelines", Label: "Pipelines", Href: href, Icon: "workflow"})
 	}
 	if access.CanConnections {
 		catalog = append(catalog, Item{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"})
@@ -252,9 +261,6 @@ func developNavigation(access ProductNavigationAccess) []Group {
 	groups := []Group{}
 	if len(catalog) > 0 {
 		groups = append(groups, Group{Label: "Catalog", Items: catalog})
-	}
-	if access.CanRuns {
-		groups = append(groups, Group{Label: "Operations", Items: []Item{{ID: "runs", Label: "Runs", Href: "/runs", Icon: "activity"}}})
 	}
 	return groups
 }
@@ -286,7 +292,7 @@ func (access ProductNavigationAccess) developHref() string {
 	case access.CanConnections:
 		return "/connections"
 	case access.CanRuns:
-		return "/runs"
+		return "/pipelines/runs"
 	default:
 		return "/"
 	}

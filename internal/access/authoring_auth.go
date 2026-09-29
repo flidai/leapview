@@ -179,6 +179,12 @@ func DefaultAuthoringActions() []Action {
 			actions = append(actions, action)
 		}
 	}
+	// Managed-data uploads are intentionally separate from connection.manage.
+	// This action is only a token ceiling here; a target-owned exact connection
+	// grant must independently authorize every upload operation.
+	if _, duplicate := seen[ActionConnectionUpload]; !duplicate {
+		actions = append(actions, ActionConnectionUpload)
+	}
 	sort.Slice(actions, func(left, right int) bool { return actions[left] < actions[right] })
 	return actions
 }

@@ -71,6 +71,28 @@ func TestSemanticQueryHasExplicitConsumptionPrerequisite(t *testing.T) {
 	}
 }
 
+func TestConnectionUploadIsExactDelegableAndSeparateFromConnectionManagement(t *testing.T) {
+	upload, ok := Permission(ActionConnectionUpload)
+	if !ok || upload.Scope != PermissionScopeResource || len(upload.ResourceKinds) != 1 || upload.ResourceKinds[0] != projectgraph.KindConnection || !upload.Delegable {
+		t.Fatalf("connection.upload definition = %+v, found=%t", upload, ok)
+	}
+	manage, ok := Permission(ActionConnectionManage)
+	if !ok || manage.Delegable {
+		t.Fatalf("connection.manage definition = %+v, found=%t; management must remain non-delegable", manage, ok)
+	}
+
+	projectID := "project_demo"
+	uploadPair := mustExactPermissionPair(t, ActionConnectionUpload, projectID, "connection_finance_files", projectgraph.KindConnection)
+	managePair := mustExactPermissionPair(t, ActionConnectionManage, projectID, "connection_finance_files", projectgraph.KindConnection)
+	if PermissionPairAllows(uploadPair, managePair) || PermissionPairAllows(managePair, uploadPair) {
+		t.Fatal("upload and connection-management permissions must not imply each other")
+	}
+	otherConnection := mustExactPermissionPair(t, ActionConnectionUpload, projectID, "connection_other", projectgraph.KindConnection)
+	if PermissionPairAllows(uploadPair, otherConnection) {
+		t.Fatal("exact upload permission crossed to another connection")
+	}
+}
+
 func TestPermissionCatalogRejectsUnknownPrerequisitesAndCycles(t *testing.T) {
 	base := PermissionDefinition{
 		Action: Action("test.read"), DisplayName: "View test data", Family: "Test", Description: "Read test data.", Scope: PermissionScopeResource,

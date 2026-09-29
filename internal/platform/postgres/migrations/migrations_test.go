@@ -39,6 +39,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		"033_platform_admin_token_capability.sql", "034_typed_api_token_permissions.sql", "035_job_authority_envelope.sql",
 		"036_typed_permission_validation_hardening.sql", "037_typed_authorization_assignments.sql", "038_durable_authority_grants.sql",
 		"039_resource_share_no_onward_delegation.sql", "040_reject_active_legacy_api_tokens.sql", "041_typed_authoring_permissions.sql", "042_edit_api_tokens.sql", "043_initial_publisher_password_setup.sql", "044_typed_authorization_policy_grants.sql",
+		"045_refresh_manual_intent.sql", "046_connection_upload_permission.sql",
 	}, ","); got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
@@ -162,6 +163,33 @@ func TestActiveAPITokenScopeHardeningIsForwardOnly(t *testing.T) {
 		if !strings.Contains(migration, required) {
 			t.Errorf("active typed API token migration missing %q", required)
 		}
+	}
+}
+
+func TestConnectionUploadPermissionMigrationIsExactAndForwardOnly(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "046_connection_upload_permission.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"CREATE OR REPLACE FUNCTION access.valid_permission_pairs",
+		"action_name = 'connection.upload'",
+		"allowed_resource_kinds := ARRAY['connection']::text[]",
+		"connection upload permission migration is immutable",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("connection upload permission migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration[:strings.Index(migration, "-- +goose Down")]), "RESET ROLE;") {
+		t.Error("connection upload permission migration Up must restore the migrator role")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("connection upload permission migration Down must restore the migrator role")
+	}
+	if strings.Contains(strings.ToUpper(migration[strings.Index(migration, "-- +goose Down"):]), "DROP FUNCTION") {
+		t.Error("connection upload permission migration Down must refuse instead of removing the validator")
 	}
 }
 

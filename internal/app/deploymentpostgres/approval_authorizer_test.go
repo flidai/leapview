@@ -3,6 +3,7 @@ package deploymentpostgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
@@ -126,6 +127,117 @@ func TestAccessApprovalAuthorizerRetainsActiveSnapshotAuthorization(t *testing.T
 		Action: depauth.ApprovalActionApprove, Request: depauth.ApprovalRequestInput{TargetID: target.TargetID}, Actor: depauth.ApprovalActor{PrincipalID: "reviewer"},
 	}); err != nil {
 		t.Fatalf("AuthorizeApproval() error = %v", err)
+	}
+}
+
+func TestAccessApprovalAuthorizerBindsLegacyTransitionToExactCandidateAndIndependentActors(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	publishPermission := approvalPermission(t, access.ActionDeliveryPublish, projectID)
+	approvePermission := approvalPermission(t, access.ActionDeliveryApprove, projectID)
+	target := depauth.DeliveryTarget{
+		TargetID: "target_demo", ProjectID: projectID.String(), Environment: "production",
+		ActiveGenerationID: "generation_old",
+	}
+	marker := accessmodule.AccessTransitionApprovalAuthorization{
+		TargetID: target.TargetID, ProjectID: projectID, Environment: target.Environment,
+		ExpectedActiveGenerationID: "generation_old", CandidateID: "candidate_new",
+		CandidateGenerationID: "generation_new", PublicationID: "publication_new",
+		PublisherPrincipalID: "publisher", ReviewerPrincipalID: "reviewer",
+		IntentDigest: "sha256:" + strings.Repeat("a", 64), CandidateSnapshotDigest: "sha256:" + strings.Repeat("b", 64),
+	}
+	baseRequest := depauth.ApprovalRequestInput{
+		RequestID: "request_new", PublicationID: marker.PublicationID, TargetID: marker.TargetID,
+		CandidateID: marker.CandidateID, GenerationID: marker.CandidateGenerationID,
+	}
+	current := &depauth.ApprovalRequest{
+		RequestID: baseRequest.RequestID, PublicationID: marker.PublicationID, TargetID: marker.TargetID,
+		CandidateID: marker.CandidateID, GenerationID: marker.CandidateGenerationID,
+		RequestedBy: depauth.ApprovalActor{PrincipalID: marker.PublisherPrincipalID},
+	}
+
+	tests := []struct {
+		name                 string
+		action               depauth.ApprovalAction
+		actor                string
+		current              *depauth.ApprovalRequest
+		mutateTarget         func(*depauth.DeliveryTarget)
+		mutateMarker         func(*accessmodule.AccessTransitionApprovalAuthorization)
+		mutateRequest        func(*depauth.ApprovalRequestInput)
+		candidateProject     string
+		candidateEnvironment string
+		permissions          []access.PermissionPair
+		candidateDigest      string
+		wantDenied           bool
+	}{
+		{name: "publisher requests exact candidate", action: depauth.ApprovalActionRequest, actor: "publisher", permissions: publishPermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest},
+		{name: "independent reviewer approves exact request", action: depauth.ApprovalActionApprove, actor: "reviewer", current: current, permissions: approvePermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest},
+		{name: "publisher cannot approve their own request", action: depauth.ApprovalActionApprove, actor: "publisher", current: current, permissions: approvePermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest, wantDenied: true},
+		{name: "reviewer cannot request publication", action: depauth.ApprovalActionRequest, actor: "reviewer", permissions: publishPermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest, wantDenied: true},
+		{name: "wrong current requester", action: depauth.ApprovalActionApprove, actor: "reviewer", current: &depauth.ApprovalRequest{PublicationID: marker.PublicationID, GenerationID: marker.CandidateGenerationID, RequestedBy: depauth.ApprovalActor{PrincipalID: "other"}}, permissions: approvePermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest, wantDenied: true},
+		{name: "wrong target active generation", action: depauth.ApprovalActionRequest, actor: "publisher", permissions: publishPermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest, mutateTarget: func(value *depauth.DeliveryTarget) { value.ActiveGenerationID = "generation_changed" }, wantDenied: true},
+		{name: "wrong candidate identity", action: depauth.ApprovalActionRequest, actor: "publisher", permissions: publishPermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest, mutateRequest: func(value *depauth.ApprovalRequestInput) { value.CandidateID = "candidate_other" }, wantDenied: true},
+		{name: "wrong candidate generation", action: depauth.ApprovalActionApprove, actor: "reviewer", current: current, permissions: approvePermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest, mutateRequest: func(value *depauth.ApprovalRequestInput) { value.GenerationID = "generation_other" }, wantDenied: true},
+		{name: "wrong publication identity", action: depauth.ApprovalActionApprove, actor: "reviewer", current: current, permissions: approvePermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest, mutateRequest: func(value *depauth.ApprovalRequestInput) { value.PublicationID = "publication_other" }, wantDenied: true},
+		{name: "wrong reviewer", action: depauth.ApprovalActionApprove, actor: "other", current: current, permissions: approvePermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest, wantDenied: true},
+		{name: "deny is outside transition admission", action: depauth.ApprovalActionDeny, actor: "reviewer", current: current, permissions: approvePermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest, wantDenied: true},
+		{name: "candidate project mismatch", action: depauth.ApprovalActionRequest, actor: "publisher", permissions: publishPermission, candidateProject: "project_foreign", candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest, wantDenied: true},
+		{name: "candidate environment mismatch", action: depauth.ApprovalActionApprove, actor: "reviewer", current: current, permissions: approvePermission, candidateProject: projectID.String(), candidateEnvironment: "staging", candidateDigest: marker.CandidateSnapshotDigest, wantDenied: true},
+		{name: "candidate snapshot digest mismatch", action: depauth.ApprovalActionApprove, actor: "reviewer", current: current, permissions: approvePermission, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: "sha256:" + strings.Repeat("c", 64), wantDenied: true},
+		{name: "candidate permission missing", action: depauth.ApprovalActionApprove, actor: "reviewer", current: current, candidateProject: projectID.String(), candidateEnvironment: target.Environment, candidateDigest: marker.CandidateSnapshotDigest, wantDenied: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resolvedTarget := target
+			if test.mutateTarget != nil {
+				test.mutateTarget(&resolvedTarget)
+			}
+			contextMarker := marker
+			if test.mutateMarker != nil {
+				test.mutateMarker(&contextMarker)
+			}
+			ctx, err := accessmodule.WithAccessTransitionApprovalAuthorization(t.Context(), contextMarker)
+			if err != nil {
+				t.Fatalf("create transition approval context: %v", err)
+			}
+			authorizer, err := NewAccessApprovalAuthorizer(target.TargetID, func(context.Context, string) (depauth.DeliveryTarget, error) {
+				return resolvedTarget, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			authorizer.bootstrapAuthorization = func(context.Context) (accessmodule.BootstrapAuthorization, bool) {
+				return accessmodule.BootstrapAuthorization{}, false
+			}
+			authorizer.publicationApprovalAuthorization = func(context.Context) (accessmodule.PublicationApprovalBootstrapAuthorization, bool) {
+				return accessmodule.PublicationApprovalBootstrapAuthorization{}, false
+			}
+			authorizer.SetCandidateResolver(func(_ context.Context, generationID, principalID string) (string, string, []access.PermissionPair, error) {
+				if generationID != marker.CandidateGenerationID || principalID != test.actor {
+					t.Fatalf("candidate resolver identity = %q/%q, want %q/%q", generationID, principalID, marker.CandidateGenerationID, test.actor)
+				}
+				return test.candidateProject, test.candidateEnvironment, test.permissions, nil
+			})
+			authorizer.CandidateSnapshotDigest = func(_ context.Context, generationID string) (string, error) {
+				if generationID != marker.CandidateGenerationID {
+					t.Fatalf("candidate digest generation = %q, want %q", generationID, marker.CandidateGenerationID)
+				}
+				return test.candidateDigest, nil
+			}
+			request := baseRequest
+			if test.mutateRequest != nil {
+				test.mutateRequest(&request)
+			}
+			err = authorizer.AuthorizeApproval(ctx, depauth.ApprovalAuthorizationInput{
+				Action: test.action, Request: request, Current: test.current,
+				Actor: depauth.ApprovalActor{PrincipalID: test.actor},
+			})
+			if test.wantDenied && !errors.Is(err, depauth.ErrApprovalUnauthorized) {
+				t.Fatalf("AuthorizeApproval() error = %v, want approval unauthorized", err)
+			}
+			if !test.wantDenied && err != nil {
+				t.Fatalf("AuthorizeApproval() error = %v", err)
+			}
+		})
 	}
 }
 
