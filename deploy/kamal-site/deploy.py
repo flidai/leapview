@@ -22,8 +22,8 @@ HERE = Path(__file__).resolve().parent
 HOST = '100.73.220.23'
 
 
-def run(args, *, data=None):
-    p = subprocess.run(args, input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900)
+def run(args, *, data=None, env=None):
+    p = subprocess.run(args, input=data, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900)
     if p.returncode == 255 and args[0] == 'ssh':
         raise ConnectionError('SSH result uncertain; stop and reconcile the owned attempt')
     if p.returncode:
@@ -118,6 +118,16 @@ def admitted_record(admission, release):
         'release': release, 'compressed_bytes': sum(layer['size'] for layer in platform['layers']) + platform['config']['size']})
 
 
+def admission_environment():
+    environment = os.environ.copy()
+    if not any(environment.get(name, '').strip() for name in ('GH_TOKEN', 'GITHUB_TOKEN')):
+        token = run(['gh', 'auth', 'token']).decode().strip()
+        if not token:
+            raise ValueError('authenticated GitHub CLI or explicit token required for live admission')
+        environment['GH_TOKEN'] = token
+    return environment
+
+
 def prepare(directory, reference):
     if not re.fullmatch(re.escape(REPOSITORY) + r'@sha256:[a-f0-9]{64}', reference):
         raise ValueError('immutable production repository required; trial images are not admitted')
@@ -144,7 +154,7 @@ def prepare(directory, reference):
     run(['go', 'run', './internal/app/tools/ociadmission', '--image', reference, '--repository', REPOSITORY,
          '--expected-workflow', 'flidai/leapview/.github/workflows/site-image.yml', '--source-revision', revision,
          '--policy', '.github/security/container-vulnerability-policy.json', '--platform', 'linux/amd64',
-         '--mode', 'live', '--output', str(admission_path)])
+         '--mode', 'live', '--output', str(admission_path)], env=admission_environment())
     release = json.loads(run(['gh', 'api', 'repos/flidai/leapview/contents/docs/public-release.json?ref=' + revision,
                               '-H', 'Accept: application/vnd.github.raw+json']))
     record = admitted_record(json.loads(admission_path.read_text()), release)
