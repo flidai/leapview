@@ -218,7 +218,7 @@ Neither the fallback controller nor automatic activation is installed by this wo
 ## Qualification and remaining gates
 
 Run focused tests, workflow lint and `task ci`. The synthetic lifecycle harness
-uses #751's fixture at commit `9786a0fd09f922e2e5da3f544bf9d2670d3d7019`, a private
+uses #751's fixture at commit `aaff8a43b8ed96c20e2fac93ce3111c809ab55d6`, a private
 PID/network/mount namespace, a disposable ext4 filesystem and a private Docker 29
 engine. It makes test-only source copies; production has no fixture/admission bypass.
 
@@ -230,6 +230,16 @@ sudo unshare --mount --net --pid --fork --mount-proc \
   --state /new/private/qualification-directory \
   --artifacts /prepared-fixture-proxy-caddy-archives \
   --gems /locked-gem-home --registry /pinned-registry-binary
+```
+
+Prepare `proxy.tar` as an OCI archive that retains the complete pinned registry
+index. A legacy `docker save` archive loses the digest required by production
+readiness checks. For example:
+
+```sh
+skopeo copy --all --preserve-digests \
+  docker://docker.io/basecamp/kamal-proxy@sha256:826a6f66c6ba26ac26197ac8755804403c9bb617b90cfac25c7972154c5328ab \
+  oci-archive:/absolute/fixture-artifacts/proxy.tar:docker.io/basecamp/kamal-proxy:v0.9.2
 ```
 
 The synthetic test cannot qualify production provenance or a real host reboot.

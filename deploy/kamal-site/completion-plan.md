@@ -1,7 +1,7 @@
 # LeapView Public-Site Kamal Completion Plan
 
-Updated: 28 September 2026  
-Status: Revised after scope and recovery review; implementation pending.
+Updated: 29 September 2026
+Status: Implementation and disposable qualification in progress; production acceptance pending.
 
 ## 1. Goal and scope
 
@@ -46,6 +46,7 @@ Update the existing implementation under `deploy/kamal-site`, preserving useful 
 | `deploy --record <path>` | Validate the prepared record and deploy its exact image through the guarded operator path. |
 | `rollback` | Restore the recorded verified prior version using local recovery material, without contacting the registry. |
 | `maintain` | Complete interrupted cleanup after verifying exclusive ownership and resolving any uncertain in-flight work. Never deploy a new candidate. |
+| `recover` | After explicit ownership reconciliation, restore the saved verified active version from local material when an unaccepted candidate may be serving. Verify the public result before clearing pending state. |
 
 Preparation must verify the canonical production repository, successful production image workflow, source revision, index/platform/config digests and qualification evidence. Capture release metadata from that exact source revision. Do not treat an arbitrary edited JSON admission claim as verification, and reject trial-package images in production commands.
 
