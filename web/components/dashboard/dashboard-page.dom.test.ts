@@ -2573,9 +2573,22 @@ test('pane defaults a relative-period definition to the structured shared leaf',
       }
       document.body.append(dock)
       await dock.updateComplete
+      const initialWidth = dock.getBoundingClientRect().width
       ;((dock.shadowRoot as ShadowRoot).querySelector('.rail') as HTMLButtonElement).click()
       await dock.updateComplete
-      await new Promise(resolve => setTimeout(resolve, 250))
+      let previousWidth = initialWidth
+      let observedResize = false
+      let stableFrames = 0
+      const settleStartedAt = performance.now()
+      while (stableFrames < 3) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        const width = dock.getBoundingClientRect().width
+        observedResize ||= Math.abs(width - initialWidth) > 0.1
+        stableFrames = observedResize && Math.abs(width - previousWidth) < 0.1 ? stableFrames + 1 : 0
+        previousWidth = width
+        if (performance.now() - settleStartedAt > 5000) throw new Error('Filter pane width did not settle after opening')
+      }
+      await new Promise(requestAnimationFrame)
       const card = (dock.shadowRoot as ShadowRoot).querySelector('lv-filter-pane-card') as any
       await card.updateComplete
       const leaf = (card.shadowRoot as ShadowRoot).querySelector('lv-filter-leaf') as any

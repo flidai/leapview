@@ -4,7 +4,8 @@ import type {
   DataExplorerCommand,
   DataExplorerObjectSignal,
 } from '../../generated/signals'
-import { explorationSpecFromCommand } from './data-explorer-spec'
+import type { ExplorationSpec } from '../../generated/exploration'
+import { explorationSpecFor, explorationSpecFromCommand } from './data-explorer-spec'
 
 const dataExplorerAgentStorageKey = 'leapview-data-explorer-agent-state'
 
@@ -169,11 +170,46 @@ export class DataExplorerQueryController {
     return command
   }
 
-  command(current: DataExplorerCommand, partial: Partial<DataExplorerCommand>): DataExplorerCommand {
+  exploreSpec(current: DataExploreCommand, next: Partial<ExplorationSpec>): DataExploreCommand {
+    const currentSpec = explorationSpecFor(current)
+    const datasetID = Object.prototype.hasOwnProperty.call(next, 'datasetId') ? next.datasetId : currentSpec.datasetId
     return {
+      ...current,
+      action: 'configure',
+      spec: {
+        ...currentSpec,
+        ...next,
+        schemaVersion: next.schemaVersion ?? currentSpec.schemaVersion ?? 1,
+        modelId: next.modelId ?? currentSpec.modelId ?? '',
+        datasetId: datasetID || undefined,
+        dimensions: [...(next.dimensions ?? currentSpec.dimensions ?? [])],
+        metrics: [...(next.metrics ?? currentSpec.metrics ?? [])],
+        filters: [...(next.filters ?? currentSpec.filters ?? [])],
+        sort: [...(next.sort ?? currentSpec.sort ?? [])],
+        limit: next.limit ?? currentSpec.limit ?? 100,
+      },
+      requestSeq: (current.requestSeq ?? 0) + 1,
+      resetVersion: (current.resetVersion ?? 0) + 1,
+      columnWidths: current.columnWidths ?? {},
+    }
+  }
+
+  command(current: DataExplorerCommand, partial: Partial<DataExplorerCommand>): DataExplorerCommand {
+    const explore = partial.explore ?? current.explore
+    const hasExplicitRunID = Object.prototype.hasOwnProperty.call(partial, 'runId')
+    const explicitAction = Object.prototype.hasOwnProperty.call(partial, 'action')
+      ? partial.action
+      : Object.prototype.hasOwnProperty.call(partial.explore ?? {}, 'action')
+        ? partial.explore?.action
+        : undefined
+    const clearRunID = !hasExplicitRunID && (explicitAction === 'configure' || partial.mode === 'browse')
+    const runId = hasExplicitRunID ? partial.runId : clearRunID ? undefined : current.runId
+    const command: DataExplorerCommand = {
+      action: Object.prototype.hasOwnProperty.call(partial, 'action') ? partial.action : current.action,
       mode: partial.mode ?? current.mode ?? 'browse',
-      explore: partial.explore ?? current.explore,
+      explore,
       objectKey: partial.objectKey ?? current.objectKey ?? '',
+      clientId: partial.clientId ?? current.clientId,
       offset: partial.offset ?? current.offset ?? 0,
       limit: partial.limit ?? current.limit ?? 100,
       block: partial.block ?? current.block ?? 'all',
@@ -185,7 +221,17 @@ export class DataExplorerQueryController {
       visibleColumns: partial.visibleColumns ?? current.visibleColumns ?? [],
       columnWidths: partial.columnWidths ?? current.columnWidths ?? {},
     }
+    if (runId) command.runId = runId
+    return command
   }
+}
+
+export function prepareExplorationRun(current: DataExploreCommand): DataExploreCommand {
+  return { ...current, action: 'run', requestSeq: (current.requestSeq ?? 0) + 1, resetVersion: (current.resetVersion ?? 0) + 1 }
+}
+
+export function prepareExplorationStop(current: DataExploreCommand): DataExploreCommand {
+  return { ...current, action: 'stop' }
 }
 
 export function clampBrowserWidth(value: number): number {

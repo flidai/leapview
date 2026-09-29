@@ -36,6 +36,11 @@ func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *
 		Mode:      projectsignals.Optional(strings.TrimSpace(values.Get("mode"))),
 		Limit:     dataExplorerDefaultLimit, Count: dataExplorerDefaultLimit, Block: projectsignals.Pointer("all"),
 	}
+	if r.URL.Path == "/updates" {
+		if clientID := strings.TrimSpace(values.Get("clientId")); clientID != "" {
+			command.ClientID = projectsignals.Optional(clientID)
+		}
+	}
 	if projectsignals.ValueOrZero(command.Mode) == "explore" {
 		explore, err := dataExploreCommandFromQuery(values)
 		if err != nil {

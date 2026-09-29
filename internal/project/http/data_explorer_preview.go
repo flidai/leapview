@@ -2,11 +2,14 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -104,6 +107,10 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 		RowHeight: dataExplorerRowHeight, ResetVersion: command.ResetVersion, Sort: command.Sort,
 		TotalRowLabel: object.RowCountLabel,
 	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		preview.Stale = true
+		return preview
+	}
 	if executor == nil {
 		preview.Error = projectsignals.Pointer("data preview execution is unavailable")
 		return preview
@@ -120,6 +127,10 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 		}
 		result, err := executor.ExecuteDataQuery(ctx, query)
 		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+				preview.Stale = true
+				return preview
+			}
 			preview.Error = projectsignals.Pointer(err.Error())
 			return preview
 		}
@@ -288,95 +299,102 @@ func dataExplorerRows(rows []dataquery.Row) []map[string]any {
 	return out
 }
 
-func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor, projectID projectgraph.ResourceID, command projectsignals.DataExploreCommand, fields []projectsignals.DataExploreFieldSignal) (projectsignals.DataExploreCommand, projectsignals.DataExploreResultSignal) {
+func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor, lowerer exploration.QueryLowerer, projectID projectgraph.ResourceID, command projectsignals.DataExploreCommand, fields []projectsignals.DataExploreFieldSignal, model *semanticmodel.Model, compiled *semanticquery.CompiledModel) (projectsignals.DataExploreCommand, projectsignals.DataExploreResultSignal) {
 	command = dataExploreCommandWithCanonicalSpec(command)
+	command.Spec = normalizeExplorationSpec(command.Spec)
 	resultSignal := projectsignals.DataExploreResultSignal{
 		Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}, RequestSeq: command.RequestSeq,
 	}
-	if command.Limit <= 0 {
-		command.Limit = dataExplorerDefaultLimit
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return command, resultSignal
 	}
-	if command.Limit > dataExplorerMaximumLimit {
-		command.Limit = dataExplorerMaximumLimit
+	if explorationSpecIsEmpty(command.Spec) {
+		return command, resultSignal
+	}
+	if err := exploration.ValidateAgainstModel(model, &command.Spec); err != nil {
+		resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
+		return command, resultSignal
 	}
 	fieldByID := make(map[string]projectsignals.DataExploreFieldSignal, len(fields))
 	for _, field := range fields {
 		fieldByID[field.ID] = field
 	}
-	command.Dimensions = validExplorerFields(command.Dimensions, "dimension", fieldByID)
-	command.Metrics = validExplorerFields(command.Metrics, "metric", fieldByID)
-	command.Filters = validExplorerFilters(command.Filters, fieldByID)
-	command.Sort = validExplorerSort(command.Sort, command)
-	if len(command.Dimensions) == 0 && len(command.Metrics) == 0 && command.Time == nil {
-		return dataExploreCommandWithCanonicalSpec(command), resultSignal
+	for _, selected := range command.Spec.Dimensions {
+		field, ok := fieldByID[selected.Field]
+		if !ok || field.Kind != "dimension" || !field.Compatible {
+			resultSignal.Error = projectsignals.Pointer(fmt.Sprintf("invalid exploration command: dimension %q is unavailable", selected.Field))
+			return command, resultSignal
+		}
+	}
+	for _, selected := range command.Spec.Metrics {
+		field, ok := fieldByID[selected.Field]
+		if !ok || field.Kind != "metric" || !field.Compatible {
+			resultSignal.Error = projectsignals.Pointer(fmt.Sprintf("invalid exploration command: metric %q is unavailable", selected.Field))
+			return command, resultSignal
+		}
+	}
+	for index, filter := range command.Spec.Filters {
+		field, ok := fieldByID[filter.Field]
+		if !ok || field.Kind != "dimension" || !field.Compatible {
+			resultSignal.Error = projectsignals.Pointer(fmt.Sprintf("invalid exploration command: filter %d field %q is unavailable", index+1, filter.Field))
+			return command, resultSignal
+		}
+	}
+	if err := validateExplorerFilterDatasets(command.Spec, fieldByID, compiled); err != nil {
+		resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
+		return command, resultSignal
+	}
+	if len(command.Spec.Dimensions) == 0 && len(command.Spec.Metrics) == 0 && command.Spec.Time == nil {
+		return command, resultSignal
 	}
 	if executor == nil {
 		resultSignal.Error = projectsignals.Pointer("governed exploration execution is unavailable")
-		return dataExploreCommandWithCanonicalSpec(command), resultSignal
+		return command, resultSignal
 	}
-	semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(command.SemanticModelID))
-	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
-	clearTarget := explorerCommandHasMultiRootMetric(command.Metrics, fieldByID)
-	if semanticModelID == "" || datasetID == "" {
-		resultSignal.Error = projectsignals.Pointer("semantic exploration target is incomplete")
-		return dataExploreCommandWithCanonicalSpec(command), resultSignal
+	if lowerer == nil {
+		resultSignal.Error = projectsignals.Pointer("governed exploration query lowering is unavailable")
+		return command, resultSignal
 	}
-	aliases := explorerQueryAliases(command.Dimensions, command.Metrics)
-	dimensions := make([]dataquery.Field, 0, len(command.Dimensions))
-	for _, field := range command.Dimensions {
-		dimensions = append(dimensions, dataquery.Field{Field: field, Alias: aliases[field]})
+	query, err := lowerer.QueryForModel(command.Spec, model)
+	if err != nil {
+		resultSignal.Error = projectsignals.Pointer(err.Error())
+		return command, resultSignal
 	}
-	metrics := make([]dataquery.Field, 0, len(command.Metrics))
-	for _, field := range command.Metrics {
-		metrics = append(metrics, dataquery.Field{Field: field, Alias: aliases[field]})
-	}
-	filters := make([]dataquery.Filter, 0, len(command.Filters))
-	for _, filter := range command.Filters {
-		values := make([]any, 0, len(filter.Values))
-		for _, value := range filter.Values {
-			values = append(values, value)
-		}
-		filters = append(filters, dataquery.Filter{Field: filter.Field, Dataset: projectsignals.ValueOrZero(filter.DatasetID), Operator: filter.Operator, Values: values})
-	}
-	sortSpec := make([]dataquery.Sort, 0, len(command.Sort))
-	for _, sortSignal := range command.Sort {
-		sortSpec = append(sortSpec, dataquery.Sort{Field: sortSignal.Field, Direction: sortSignal.Direction})
-	}
-	// A metric with multiple physical roots is not owned by the selected
-	// browser dataset. Leave the target unscoped so the governed planner can
-	// infer all metric datasets and validate the selected qualified dimensions.
-	queryTarget := datasetID
-	if clearTarget {
-		queryTarget = ""
-	}
-	query := dataquery.SemanticAggregate(semanticModelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(command.Limit)+1)
-	if command.Time != nil {
-		query.Time = dataquery.Time{Field: command.Time.Field, Grain: command.Time.Grain, Alias: projectsignals.ValueOrZero(command.Time.Alias)}
-	}
+	modelID := strings.TrimSpace(command.Spec.ModelID)
+	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.Spec.DatasetID))
 	query = query.WithMetadata(dataquery.Metadata{
 		ProjectID: projectID, Surface: dataquery.SurfaceDataExplorer, Operation: dataquery.OperationSemanticExplore,
-		ObjectType: "semantic_dataset", ObjectID: semanticModelID + ":" + datasetID,
+		ObjectType: "semantic_dataset", ObjectID: modelID + ":" + datasetID,
 	})
 	executed, err := executor.ExecuteDataQuery(ctx, query)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+			return command, resultSignal
+		}
 		resultSignal.Error = projectsignals.Pointer(err.Error())
-		return dataExploreCommandWithCanonicalSpec(command), resultSignal
+		return command, resultSignal
 	}
 	if strings.TrimSpace(executed.Error) != "" {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return command, resultSignal
+		}
 		resultSignal.Error = projectsignals.Pointer(executed.Error)
-		return dataExploreCommandWithCanonicalSpec(command), resultSignal
+		return command, resultSignal
 	}
 	rows := executed.Rows
-	truncated := int64(len(rows)) > command.Limit
+	limit := int64(command.Spec.Limit)
+	truncated := int64(len(rows)) > limit
 	if truncated {
-		rows = rows[:command.Limit]
+		rows = rows[:limit]
 	}
+	state := dataExploreStateFromSpec(command.Spec)
+	aliases := explorerQueryAliases(state.Dimensions, state.Metrics)
 	labels := explorerResultLabels(fields, aliases)
 	columns := make([]projectsignals.DataPreviewColumnSignal, 0, len(executed.Columns))
 	for _, column := range executed.Columns {
 		columns = append(columns, projectsignals.DataPreviewColumnSignal{Key: column.Name, Label: firstExplorerNonEmpty(labels[column.Name], column.Name)})
 	}
-	return dataExploreCommandWithCanonicalSpec(command), projectsignals.DataExploreResultSignal{
+	return command, projectsignals.DataExploreResultSignal{
 		Columns: columns, Rows: dataExplorerRows(rows), SQL: projectsignals.Optional(executed.SQL), Plan: projectsignals.Optional(executed.PlanText),
 		DurationMS: executed.DurationMS, RowsReturned: int64(len(rows)), Truncated: truncated,
 		Warnings: append([]string(nil), executed.Warnings...), RequestSeq: command.RequestSeq,

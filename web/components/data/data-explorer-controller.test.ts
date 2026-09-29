@@ -3,10 +3,14 @@ import {
   DataExplorerPanelController,
   DataExplorerQueryController,
   DataExplorerSelectionController,
+  prepareExplorationRun,
+  prepareExplorationStop,
   readDataExplorerAgentState,
   toggleVisibleColumns,
 } from './data-explorer-controller'
+import { DataExplorerClientState } from './data-explorer-client'
 import { emptyExplorationSpec } from './data-explorer-spec'
+import type { DataExploreCommand, DataExplorerCommand } from '../../generated/signals'
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>()
@@ -44,6 +48,53 @@ test('query controller advances request and reset sequences', () => {
   expect(next.spec.modelId).toBe('sales')
   expect(next.spec.datasetId).toBe('orders')
   expect(next.spec.dimensions).toEqual([{ field: 'orders.status' }])
+})
+
+test('canonical query edits and explicit run lifecycle remain separate', () => {
+  const query = new DataExplorerQueryController()
+  const current = {
+    spec: { schemaVersion: 1 as const, modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 },
+    semanticModelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100,
+    requestSeq: 7, resetVersion: 9, columnWidths: {},
+  }
+  const configured = query.exploreSpec(current, { dimensions: [{ field: 'orders.status' }] })
+  expect(configured).toMatchObject({ action: 'configure', requestSeq: 8, resetVersion: 10 })
+  expect(configured.spec.dimensions).toEqual([{ field: 'orders.status' }])
+  const run = prepareExplorationRun(configured)
+  expect(run).toMatchObject({ action: 'run', requestSeq: 9, resetVersion: 11 })
+  const stop = prepareExplorationStop(run)
+  expect(stop).toMatchObject({ action: 'stop', requestSeq: 9, resetVersion: 11 })
+})
+
+test('data explorer client identity is stable only for the current document', () => {
+  const first = new DataExplorerClientState().clientID()
+  const second = new DataExplorerClientState().clientID()
+  expect(first.startsWith('explorer-')).toBe(true)
+  expect(second).toBe(first)
+})
+
+test('unknown-outcome recovery omits the run ID and latest retries get a fresh ID', () => {
+  const query = new DataExplorerQueryController()
+  const client = new DataExplorerClientState()
+  const oldRunID = client.nextRunID()
+  const initialExplore: DataExploreCommand = {
+    spec: emptyExplorationSpec, requestSeq: 6, resetVersion: 6, columnWidths: {},
+    dimensions: [], metrics: [], filters: [], sort: [], limit: 100,
+  }
+  const run = prepareExplorationRun(initialExplore)
+  const current: DataExplorerCommand = {
+    action: 'run', mode: 'explore', runId: oldRunID, explore: run,
+    count: 100, limit: 100, offset: 0, requestSeq: run.requestSeq, resetVersion: run.resetVersion,
+    sort: {}, start: 0,
+  }
+  const stop = query.command(current, {
+    action: 'stop', runId: undefined, explore: prepareExplorationStop(run),
+  })
+
+  expect(stop.runId).toBeUndefined()
+  expect(stop.explore).toMatchObject({ action: 'stop', requestSeq: 7 })
+  const latestRunID = client.nextRunID()
+  expect(latestRunID).not.toBe(oldRunID)
 })
 
 test('visible column toggles preserve one visible fallback and reset all to defaults', () => {

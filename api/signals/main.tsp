@@ -1655,16 +1655,19 @@ model DashboardStatus {
 @apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
 model DataExplorerCommand {
+  `action`?: "configure" | "run" | "stop";
   `explore`?: DataExploreCommand;
   `mode`?: "browse" | "explore";
   `block`?: string;
   `columnWidths`?: Record<float64>;
+  `clientId`?: string;
   `count`: int64;
   `limit`: int64;
   `objectKey`?: string;
   `offset`: int64;
   `requestSeq`: int64;
   `resetVersion`: int64;
+  `runId`?: string;
   `sort`: DataPreviewSortSignal;
   `start`: int64;
   `visibleColumns`?: string[];
@@ -1673,8 +1676,10 @@ model DataExplorerCommand {
 @apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
 model DataExploreCommand {
+  `action`?: "configure" | "run" | "stop";
   `spec`: LeapViewExploration.ExplorationSpec;
   `columnWidths`?: Record<float64>;
+  `filterSuggestions`?: DataExploreFilterSuggestionsCommand;
   // Deprecated compatibility projection. The server rebuilds these fields
   // from spec before execution and never persists them independently.
   `datasetId`?: string;
@@ -1687,6 +1692,15 @@ model DataExploreCommand {
   `resetVersion`: int64;
   `sort`: DataExploreSortSignal[];
   `time`?: DataExploreTimeSignal;
+}
+
+model DataExploreFilterSuggestionsCommand {
+  `field`: LeapViewExploration.ExplorationFieldID;
+  `limit`?: int64;
+  `search`?: string;
+  @minValue(1)
+  @maxValue(9007199254740991)
+  `suggestionRequestSeq`: int64;
 }
 
 model DataExploreAgentContextSignal {
@@ -1713,6 +1727,8 @@ model DataExploreDatasetSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreFieldSignal {
+  `availability`?: "available" | "related" | "changes_grain" | "unavailable";
+  `availabilityReason`?: string;
   `compatible`: boolean;
   `compatibilityReason`?: string;
   `description`?: string;
@@ -1724,6 +1740,24 @@ model DataExploreFieldSignal {
   `relationshipPath`?: string[];
   `selected`: boolean;
   `type`?: string;
+}
+
+model DataExploreFilterValueSuggestionSignal {
+  `count`?: int64;
+  `label`: string;
+  `value`: LeapViewExploration.ExplorationFilterValue;
+}
+
+model DataExploreFilterSuggestionsSignal {
+  `error`?: string;
+  `field`: string;
+  `loading`: boolean;
+  `requestSeq`: int64;
+  `suggestionRequestSeq`: int64;
+  `stale`: boolean;
+  `truncated`: boolean;
+  `type`?: string;
+  `values`: DataExploreFilterValueSuggestionSignal[];
 }
 
 model DataExploreFilterSignal {
@@ -1757,6 +1791,16 @@ model DataExploreResultSignal {
   `warnings`: string[];
 }
 
+model DataExploreStatusSignal {
+  `error`?: string;
+  `loading`: boolean;
+  `message`?: string;
+  `progressPercent`?: float64;
+  `requestSeq`: int64;
+  `stale`: boolean;
+  `state`: "idle" | "loading" | "success" | "stale" | "error" | "cancelled";
+}
+
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreSignal {
@@ -1765,6 +1809,8 @@ model DataExploreSignal {
   `fields`: DataExploreFieldSignal[];
   `semanticModels`: DataExploreSemanticModelSignal[];
   `result`: DataExploreResultSignal;
+  `status`: DataExploreStatusSignal;
+  `filterSuggestions`?: DataExploreFilterSuggestionsSignal;
   `selectedDataset`?: DataExploreDatasetSignal;
   `selectedSemanticModel`?: DataExploreSemanticModelSignal;
 }
@@ -1888,10 +1934,13 @@ model DataPreviewSignal {
   `chunkSize`: int64;
   `columns`: DataPreviewColumnSignal[];
   `error`?: string;
+  `loading`: boolean;
   `loadingBlock`?: string;
+  `progressPercent`?: float64;
   `resetVersion`: int64;
   `rowHeight`: int64;
   `sort`: DataPreviewSortSignal;
+  `stale`: boolean;
   `sql`?: string;
   `totalRowLabel`?: string;
   `totalRows`: int64;

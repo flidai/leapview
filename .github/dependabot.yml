@@ -29,6 +29,12 @@ updates:
     groups:
       postgres-ha-image: {patterns: ["*"]}
   - package-ecosystem: docker
+    directory: /internal/platform/testminio
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      minio-fixture-builder: {patterns: ["*"]}
+  - package-ecosystem: docker
     directory: /internal/app/testing/maliciousinstance/electron
     schedule: {interval: weekly}
     open-pull-requests-limit: 5

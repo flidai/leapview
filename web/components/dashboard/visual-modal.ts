@@ -41,6 +41,7 @@ export class VisualModal extends LitElement {
   private focusSource: HTMLElement | null = null
   private restoreFocusTo: HTMLElement | null = null
   private actionEventTarget: Node | null = null
+  private noticeTimer: number | undefined
 
   static styles = css`
     :host {
@@ -61,6 +62,7 @@ export class VisualModal extends LitElement {
     .dialog {
       display: grid;
       width: min(1120px, 100%);
+      box-sizing: border-box;
       max-height: min(760px, calc(100vh - 56px));
       min-height: min(420px, calc(100vh - 56px));
       grid-template-rows: auto minmax(0, 1fr);
@@ -69,6 +71,23 @@ export class VisualModal extends LitElement {
       background: var(--lv-bg-overlay);
       box-shadow: var(--shadow-floating-large);
       overflow: hidden;
+    }
+
+    .data-dialog.is-single {
+      width: min(30rem, 100%);
+    }
+
+    .data-dialog.is-compact {
+      width: min(30rem, 100%);
+    }
+
+    .data-dialog.is-medium {
+      width: min(54rem, 100%);
+    }
+
+    .data-dialog.is-compact lv-record-table .record-table {
+      margin-inline: 0;
+      table-layout: auto;
     }
 
     .focus-dialog {
@@ -245,6 +264,8 @@ export class VisualModal extends LitElement {
     this.actionEventTarget?.removeEventListener('lv-visual-action', this.handleVisualAction as EventListener, { capture: true })
     this.actionEventTarget = null
     window.removeEventListener('keydown', this.handleKeydown)
+    window.clearTimeout(this.noticeTimer)
+    this.noticeTimer = undefined
     this.restoreFocusedVisual(false)
     super.disconnectedCallback()
   }
@@ -260,7 +281,7 @@ export class VisualModal extends LitElement {
     if (mode === 'focus') return this.renderFocusDialog(detail)
     return html`
       <div class="backdrop" @click=${this.closeFromBackdrop}>
-        <section class="dialog" role="dialog" aria-modal="true" aria-label=${detail.title}>
+        <section class=${`dialog data-dialog ${this.dataDialogSize(detail.columns.length)}`} role="dialog" aria-modal="true" aria-label=${detail.title}>
           <header>
             <div class="title">
               <p class="eyebrow">Show data · ${detail.visualType}</p>
@@ -294,6 +315,7 @@ export class VisualModal extends LitElement {
   private renderData(detail: VisualActionDetail) {
     const columns = detail.columns ?? []
     const rows = detail.rows ?? []
+    const compactColumns = columns.length === 2
     if (columns.length === 0 || rows.length === 0) return html`
       <div class="data-shell">
         <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
@@ -305,6 +327,7 @@ export class VisualModal extends LitElement {
         <div class="data-summary" role="status">${visualDataSummary(detail)}</div>
         <div class="data-scroll">
           <lv-record-table
+            variant="data"
             .table=${{
               columns: columns.map((column) => ({
                 id: column.key,
@@ -313,12 +336,21 @@ export class VisualModal extends LitElement {
               })),
               rows,
               empty: 'No visual data',
-              minWidth: `${Math.max(columns.length * 160, 520)}px`,
+              width: compactColumns ? '100%' : '',
+              minWidth: compactColumns ? '100%' : columns.length > 4 ? `${columns.length * 160}px` : '0',
+              density: 'tight',
             }}
           ></lv-record-table>
         </div>
       </div>
     `
+  }
+
+  private dataDialogSize(columnCount: number): string {
+    if (columnCount <= 1) return 'is-single'
+    if (columnCount <= 2) return 'is-compact'
+    if (columnCount <= 4) return 'is-medium'
+    return 'is-wide'
   }
 
   private handleVisualAction = (event: CustomEvent<VisualActionDetail>): void => {
@@ -498,9 +530,11 @@ export class VisualModal extends LitElement {
   }
 
   private flash(message: string): void {
+    window.clearTimeout(this.noticeTimer)
     this.notice = message
-    window.setTimeout(() => {
-      if (this.notice === message) this.notice = ''
+    this.noticeTimer = window.setTimeout(() => {
+      this.notice = ''
+      this.noticeTimer = undefined
     }, 1800)
   }
 }

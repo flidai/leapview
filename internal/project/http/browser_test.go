@@ -1038,18 +1038,23 @@ func TestDataExplorerPreviewExecutesGovernedModelQuery(t *testing.T) {
 }
 
 func TestDataExplorerSemanticExploreExecutesGovernedAggregate(t *testing.T) {
+	model := browserSemanticExploreTestModel()
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
 	executor := &browserDataQueryStub{result: dataquery.Result{
 		Columns: []dataquery.Column{{Name: "status"}, {Name: "orders"}},
 		Rows:    []dataquery.Row{{"status": "paid", "orders": int64(7)}}, SQL: "select status, count(*)", DurationMS: 12,
 	}}
-	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
+	command, result := dataExplorerSemanticResult(t.Context(), executor, testDataExplorerQueryLowerer, "project:test", projectsignals.DataExploreCommand{
 		SemanticModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("orders"),
 		Dimensions: []string{"orders.status"}, Metrics: []string{"orders"}, Filters: []projectsignals.DataExploreFilterSignal{},
 		Sort: []projectsignals.DataExploreSortSignal{{Field: "orders", Direction: "desc"}}, Limit: 100,
 	}, []projectsignals.DataExploreFieldSignal{
 		{ID: "orders.status", Label: "Status", Kind: "dimension", DatasetID: "orders", Compatible: true},
 		{ID: "orders", Label: "Orders", Kind: "metric", DatasetID: "orders", Compatible: true},
-	})
+	}, model, compiled)
 
 	if result.Error != nil || result.RowsReturned != 1 || len(result.Rows) != 1 {
 		t.Fatalf("result = %#v", result)
@@ -1066,18 +1071,23 @@ func TestDataExplorerSemanticExploreExecutesGovernedAggregate(t *testing.T) {
 }
 
 func TestDataExplorerSemanticExploreUnscopesMultiRootMetric(t *testing.T) {
+	model := browserSemanticExploreTestModel()
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
 	executor := &browserDataQueryStub{result: dataquery.Result{
 		Columns: []dataquery.Column{{Name: "order_share"}},
 		Rows:    []dataquery.Row{{"order_share": 0.5}}, SQL: "select order_share",
 	}}
-	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
+	command, result := dataExplorerSemanticResult(t.Context(), executor, testDataExplorerQueryLowerer, "project:test", projectsignals.DataExploreCommand{
 		SemanticModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("customers"),
 		Metrics: []string{"order_share"}, Limit: 100,
 	}, []projectsignals.DataExploreFieldSignal{
 		// An empty datasetId is the projection contract for a derived/ratio
 		// metric whose dependencies span more than one physical dataset.
 		{ID: "order_share", Label: "Order share", Kind: "metric", Compatible: true},
-	})
+	}, model, compiled)
 
 	if result.Error != nil {
 		t.Fatalf("result error = %q", *result.Error)
@@ -1112,7 +1122,7 @@ func TestAssetDataExplorerScopesModelsAndSemanticModels(t *testing.T) {
 			Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"]},
 			SemanticModels: map[string]*semanticmodel.Model{"semantic-model:sales": model}, NameIndex: projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
 		}, compiled: map[string]*semanticquery.CompiledModel{"semantic-model:sales": compiled}},
-		QueryExecutor: executor, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
+		QueryExecutor: executor, ExplorationQueryLowerer: testDataExplorerQueryLowerer, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
 		Environment: "dev", CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
 	}
 	for _, test := range []struct {

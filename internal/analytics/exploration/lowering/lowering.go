@@ -16,6 +16,19 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
+// Service exposes the lowering use case through the exploration contract.
+type Service struct{}
+
+var _ exploration.QueryLowerer = Service{}
+
+func (Service) QueryForModel(spec exploration.ExplorationSpec, model *semanticmodel.Model) (dataquery.Query, error) {
+	return QueryForModel(spec, model)
+}
+
+func (Service) Filters(spec exploration.ExplorationSpec) ([]dataquery.Filter, error) {
+	return Filters(spec)
+}
+
 // Query lowers one validated authored spec. Shape validation is repeated here
 // because this package is also a standalone boundary; callers that have
 // already validated the spec pay only the inexpensive deterministic check.
@@ -31,6 +44,14 @@ func Query(spec exploration.ExplorationSpec) (dataquery.Query, error) {
 // selected dataset.
 func QueryForModel(spec exploration.ExplorationSpec, model *semanticmodel.Model) (dataquery.Query, error) {
 	return queryForModel(spec, model)
+}
+
+// Filters lowers only the authored filter and time predicates. Callers use
+// this for governed value-suggestion queries, whose projected field differs
+// from the exploration selection but whose predicates must retain the same
+// typed canonical semantics.
+func Filters(spec exploration.ExplorationSpec) ([]dataquery.Filter, error) {
+	return lowerFilters(spec)
 }
 
 func queryForModel(spec exploration.ExplorationSpec, model *semanticmodel.Model) (dataquery.Query, error) {
