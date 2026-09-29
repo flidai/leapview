@@ -47,9 +47,13 @@ separate acceptance gates in [the completion plan](../completion-plan.md).
 All [39 Python operator regression tests](operator-tests-20260929.log) passed
 against operator commit `21907af07` using `python3 -m unittest discover -v -s
 deploy/kamal-site -p 'test_*.py'`. Focused Go deployment/config/
-security/OCI tests, actionlint and whitespace checks passed. Final aggregate
-local and exact-head hosted CI results are tracked on PR #752 and in
-[the remaining plan](../../../plan.md); draft-skipped checks are not evidence.
+security/OCI tests, actionlint and whitespace checks passed. Hosted CI, security and Electron passed on final code head `dfb89f61d`.
+The fresh frozen-source local aggregate failed when both reports attempts
+exceeded the unchanged 180-second watchdog; hosted reports finished in about
+137 seconds with the same command and pinned tool versions. No local reports
+assertion failure was recorded. See the [validation receipt](local-ci-20260929.md)
+and [remaining plan](../../../plan.md). This local gap requires an explicit
+review decision; draft-skipped checks and separate passes do not close it.
 The [28 September report](operator-qualification-20260928.json) and
 [transcript](operator-qualification-20260928.log) remain historical evidence for
 their recorded source hashes.

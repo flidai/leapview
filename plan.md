@@ -16,11 +16,15 @@ Updated: 29 September 2026. Implementation resumed after the 03:53 UTC reassessm
 - Expanded remote lifecycle and actual-topology readiness qualification passed.
   The 29 September evidence binds the final operator source hashes; independent
   review found no remaining recovery-guard defect.
-- Local `task ci` passed preparation, generators, Go packages/application shards,
-  external integration, PostgreSQL conformance and coverage. It then failed on
-  the app-shell Undo-expiry browser test (5-second timeout, followed by closed
-  browser errors). Diagnosis and unchanged-test rerun are underway; there is
-  still no green aggregate local result. Tests/watchdog limits remain unchanged.
+- Final-code-head hosted CI, security and Electron passed on `dfb89f61d`.
+  The fresh local `task ci` retry kept that source frozen and passed core frontend,
+  Go, integration, conformance and coverage checks, but both reports-shard
+  attempts exceeded the unchanged 180-second watchdog. No reports assertion
+  failure was recorded. The aggregate local result remains failed (exit 201).
+- The earlier app-shell Undo timing race was reproduced and fixed separately in
+  #770; focused tests and its hosted CI retry passed. That fix is not mixed into
+  the Kamal operator. The initial #770 hosted run failed an unchanged PostgreSQL
+  concurrency test; one failed-jobs retry passed.
 - The expanded interruption run reproduced a recovery cleanup bug: the correct
   site was restored but an extra container remained running. The guarded native
   Kamal stale-container stop is implemented and its regression tests pass. The
@@ -49,7 +53,7 @@ they are not a claim that later workflow runs have been reassessed.
 | Release metadata | Live site advertises `0.2.0-rc.1`; main expects `0.3.0-alpha.1`. Latest public adoption smoke run 36431566050 failed this exact comparison. |
 | Updater and Kamal | Legacy timer disabled/inactive; service inactive. No Kamal proxy or permanent state/handover records exist. |
 | Capacity | 34,621,898,752 bytes available (about 32.3 GiB), 2,402,001 available inodes on the shared Docker/containerd filesystem. |
-| #752 / #751 | Both open drafts, external review required. Both integrate current main; #751 head `671395792` is pushed with CI/security/Electron/image qualification passing. #752 implementation/requalification is ongoing locally. |
+| #752 / #751 | External review required. #751 is ready with CI/security/Electron/image qualification passing on `671395792`. #752 remains draft pending resolution or explicit review acceptance of the local CI gap; hosted CI/security/Electron passed on code head `dfb89f61d`. |
 | #748 | Still open as fallback; keep it uninstalled. |
 
 The deployment failure is consistent with the deliberately disabled updater:
@@ -81,14 +85,13 @@ Automatic VPS deployment remains disabled.
   container, failure recovery, storage guards, Caddy recreation, engine restart,
   and loss of the SSH lock connection while remote work continues. The expanded
   run also passed real interrupted pulls/switches and a lost acceptance response.
-- All 39 current operator regression tests passed. Earlier hosted CI, security,
-  and Electron checks passed on previous heads; refreshed final checks are being
-  collected. The earlier reports-lane watchdog issue was followed by a fresh Tini-based
-  aggregate run that reached frontend tests, then failed on the app-shell
-  Undo-expiry test:
-  **there is no green monolithic local `task ci` result**.
-- PR #752 contains the implementation and evidence. PR #751 contains the trial
-  harness and corrected status/docs. Both remain drafts with review required.
+- All 39 operator regression tests and final synthetic lifecycle qualification
+  passed. Hosted CI/security/Electron passed on the final code head. The fresh
+  local aggregate retry failed only at the reports-shard watchdog; separate
+  passing checks do not make that aggregate green.
+- PR #752 contains the implementation and evidence and remains draft. PR #751
+  contains the trial harness and is ready for review. Separate PR #770 fixes the
+  reproduced browser-test timing race and is also ready. All require review.
 
 The production inventory above was refreshed read-only on 29 September. Implementation is changing the operator and qualification tooling;
 production remains unchanged. Refresh inventory again
@@ -103,7 +106,7 @@ DONE: Build tooling → Initial disposable tests → Initial hosted checks
 
 DONE: Fix reviewed recovery/readiness gaps → Expanded lifecycle proof
 
-NOW:  Complete local and refreshed hosted checks
+NOW:  Resolve or explicitly accept the local reports-watchdog gap in review
 
 NEXT: External review and resolve feedback
       → Merge #752 and qualify real image A
@@ -133,10 +136,18 @@ They are not trial images or mutable version tags.
 - [ ] Resolve the local aggregate CI limitation in a suitable environment and
   obtain a passing bounded run. If an exception is proposed, record it explicitly
   through repository review; separate passing commands do not erase the timeout.
-- [ ] After integration or other code changes, rerun affected qualification and
-  final required checks, keeping source hashes current.
+- [x] Rerun affected qualification and required hosted checks on final code head
+  `dfb89f61d`, keeping source hashes current. Documentation-only follow-ups must
+  still satisfy applicable branch-protection checks before merge.
 - [ ] Mark the PRs ready when their pre-merge evidence is complete. Satisfy review,
   branch protection, and merge-queue requirements before merging.
+
+Proposed review decision: accept the documented local reports-watchdog limitation
+using the successful exact-code-head hosted CI and saved targeted/lifecycle
+results, or require a fresh bounded aggregate run on another suitable runner.
+This is a proposal, not an accepted exception. Do not merge or migrate until the
+review decision and branch protections permit it. No further timeout extension
+or automatic full local retry is planned. See the [validation receipt](deploy/kamal-site/evidence/local-ci-20260929.md).
 
 Exit: reviewed changes with accepted validation and no unresolved pre-merge gap.
 
@@ -247,8 +258,8 @@ maintenance recovery before another deployment.
 - [Accepted detailed completion plan](deploy/kamal-site/completion-plan.md)
 - [Operator and recovery runbook](deploy/kamal-site/README.md)
 - [Saved disposable qualification and production inventory](deploy/kamal-site/evidence/README.md)
-- [Production hosted CI](https://github.com/flidai/leapview/actions/runs/36393816085)
-- [Trial hosted CI](https://github.com/flidai/leapview/actions/runs/36394709478)
+- [Production hosted CI](https://github.com/flidai/leapview/actions/runs/36527313135)
+- [Trial hosted CI](https://github.com/flidai/leapview/actions/runs/36525617772)
 - [Latest merged deployment fix #762](https://github.com/flidai/leapview/pull/762)
 - [Image qualification prerequisite fix #759](https://github.com/flidai/leapview/pull/759)
 - [Latest successful demo deployment](https://github.com/flidai/leapview/actions/runs/36422789400)
