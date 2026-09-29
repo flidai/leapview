@@ -105,6 +105,8 @@ func managedDataMarkerCapability(action access.Action) (access.Capability, bool)
 		return access.CapabilityResourceUse, true
 	case access.ActionConnectionManage:
 		return access.CapabilityResourceEdit, true
+	case access.ActionConnectionUpload:
+		return access.CapabilityResourceEdit, true
 	default:
 		return "", false
 	}
@@ -687,7 +689,7 @@ func protectManagedDataTransportWithBootstrapTimeout(
 				next.ServeHTTP(w, r)
 				return
 			}
-			found, allowed, authErr := authorizeManagedDataConnection(r.Context(), accessModule, runtimeHost, principal.ID, activeProjectID, resource, access.ActionConnectionManage)
+			found, allowed, authErr := authorizeManagedDataConnection(r.Context(), accessModule, runtimeHost, principal.ID, activeProjectID, resource, access.ActionConnectionUpload)
 			if authErr != nil {
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
@@ -766,12 +768,12 @@ func authorizeTusManagedDataConnection(
 	if authorizer, ok := managedData.(interface {
 		AuthorizeConnection(context.Context, string, string, string, access.Action) (bool, error)
 	}); ok {
-		return authorizer.AuthorizeConnection(ctx, principalID, projectID.String(), resource.ID().String(), access.ActionConnectionManage)
+		return authorizer.AuthorizeConnection(ctx, principalID, projectID.String(), resource.ID().String(), access.ActionConnectionUpload)
 	}
 	// Small test doubles and older callers without the managed-data module port
 	// retain the canonical snapshot path. Production composition always passes
 	// Module, whose nil authorizer fails closed.
-	typed, allowed, err := authorizeTypedResourceAction(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, access.ActionConnectionManage)
+	typed, allowed, err := authorizeTypedResourceAction(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, access.ActionConnectionUpload)
 	return typed && allowed, err
 }
 

@@ -144,6 +144,10 @@ func TestOperatorAccessTransitionInstallsMultiActionGrantsAsSinglePermissionRows
 	if err != nil {
 		t.Fatal(err)
 	}
+	uploader, err := repo.CreateLocalUser(t.Context(), access.LocalUserInput{Email: "uploader-multi-transition@example.com", DisplayName: "Uploader"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	scope := access.AuthorizationPolicyScope{TargetID: "target:test", ProjectID: "project:test", Environment: "evaluation"}
 	legacyBinding := access.RoleBinding{
 		ID: "legacy-multi-deployer", Name: "legacy deployer",
@@ -169,20 +173,24 @@ func TestOperatorAccessTransitionInstallsMultiActionGrantsAsSinglePermissionRows
 		GrantID: "publisher-finance-connection", Name: "finance connection access",
 		Principal: publisher.Principal.ID, ResourceID: "connection:finance", ResourceKind: string(graph.KindConnection),
 		Actions: []string{string(access.ActionConnectionUse), string(access.ActionConnectionManage)},
+	}, {
+		GrantID: "publisher-finance-upload", Name: "finance managed data upload",
+		Principal: uploader.Principal.ID, ResourceID: "connection:finance", ResourceKind: string(graph.KindConnection),
+		Actions: []string{string(access.ActionConnectionUpload)},
 	}}
 	plan, err := request.Plan()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Grants) != 2 || len(plan.Grants[0].Permissions) != 1 || len(plan.Grants[1].Permissions) != 1 {
-		t.Fatalf("normalized transition grants = %+v, want two one-pair grants", plan.Grants)
+	if len(plan.Grants) != 3 || len(plan.Grants[0].Permissions) != 1 || len(plan.Grants[1].Permissions) != 1 || len(plan.Grants[2].Permissions) != 1 {
+		t.Fatalf("normalized transition grants = %+v, want three one-pair grants", plan.Grants)
 	}
 	staged, err := stageOperatorAccessTransition(t.Context(), repo, scope, request, plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(staged.Grants) != 3 {
-		t.Fatalf("staged policy has %d grants, want preserved legacy grant and two typed grants", len(staged.Grants))
+	if len(staged.Grants) != 4 {
+		t.Fatalf("staged policy has %d grants, want preserved legacy grant and three typed grants", len(staged.Grants))
 	}
 	project, err := graph.NewProjectGraph([]graph.Resource{
 		{ID: "dashboard:legacy", Kind: graph.KindDashboard, Name: "legacy"},
@@ -251,8 +259,8 @@ func TestOperatorAccessTransitionInstallsMultiActionGrantsAsSinglePermissionRows
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(seenActions) != 2 || !seenActions[string(access.ActionConnectionUse)] || !seenActions[string(access.ActionConnectionManage)] {
-		t.Fatalf("installed typed actions = %v, want exactly connection.use and connection.manage", seenActions)
+	if len(seenActions) != 3 || !seenActions[string(access.ActionConnectionUse)] || !seenActions[string(access.ActionConnectionManage)] || !seenActions[string(access.ActionConnectionUpload)] {
+		t.Fatalf("installed typed actions = %v, want connection.use, connection.manage, and connection.upload", seenActions)
 	}
 
 	publisherSubject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: publisher.Principal.ID}
@@ -270,11 +278,32 @@ func TestOperatorAccessTransitionInstallsMultiActionGrantsAsSinglePermissionRows
 			t.Fatalf("normalized action %q allowed=%t err=%v", action, allowed, err)
 		}
 	}
+	upload, err := access.NewExactPermissionPair(access.ActionConnectionUpload, identity.ProjectID, connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed, err := snapshot.AllowsTyped(publisherSubject, upload)
+	if err != nil || allowed {
+		t.Fatalf("connection.upload allowed for connection administrator=%t err=%v, want false", allowed, err)
+	}
+	uploaderSubject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: uploader.Principal.ID}
+	allowed, err = snapshot.AllowsTyped(uploaderSubject, upload)
+	if err != nil || !allowed {
+		t.Fatalf("exact connection.upload allowed=%t err=%v, want true", allowed, err)
+	}
+	manage, err := access.NewExactPermissionPair(access.ActionConnectionManage, identity.ProjectID, connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed, err = snapshot.AllowsTyped(uploaderSubject, manage)
+	if err != nil || allowed {
+		t.Fatalf("connection.manage allowed for uploader=%t err=%v, want false", allowed, err)
+	}
 	read, err := access.NewExactPermissionPair(access.ActionConnectionRead, identity.ProjectID, connection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowed, err := snapshot.AllowsTyped(publisherSubject, read)
+	allowed, err = snapshot.AllowsTyped(publisherSubject, read)
 	if err != nil || allowed {
 		t.Fatalf("unrequested connection.read authority allowed=%t err=%v", allowed, err)
 	}

@@ -15,10 +15,10 @@ func TestPermissionRolePresetsAreCatalogBoundAndDefensive(t *testing.T) {
 }
 
 func TestPermissionRolePresetsPreserveSeparationOfDuties(t *testing.T) {
-	assertRoleExcludes(t, PermissionRoleViewer, ActionSemanticQuery, ActionPipelineRun, ActionDashboardPublish)
-	assertRoleExcludes(t, PermissionRoleEditor, ActionDashboardPublish, ActionDashboardDelete, ActionResourceShare, ActionPipelineRun, ActionProjectAccessManage)
+	assertRoleExcludes(t, PermissionRoleViewer, ActionSemanticQuery, ActionPipelineRun, ActionDashboardPublish, ActionConnectionUpload)
+	assertRoleExcludes(t, PermissionRoleEditor, ActionDashboardPublish, ActionDashboardDelete, ActionResourceShare, ActionPipelineRun, ActionProjectAccessManage, ActionConnectionUpload)
 	assertRoleExcludes(t, PermissionRoleProjectAdmin, ActionSemanticConsume, ActionSemanticQuery, ActionPlatformAccessManage)
-	assertRoleExcludes(t, PermissionRolePublisher, ActionDashboardUpdate, ActionDashboardDelete, ActionResourceShare, ActionDeliveryApprove)
+	assertRoleExcludes(t, PermissionRolePublisher, ActionDashboardUpdate, ActionDashboardDelete, ActionResourceShare, ActionDeliveryApprove, ActionConnectionUpload)
 	assertRoleExcludes(t, PermissionRoleReleaseOperator, ActionDeliveryApprove)
 	assertRoleExcludes(t, PermissionRoleReleaseApprover, ActionDeliveryActivate)
 

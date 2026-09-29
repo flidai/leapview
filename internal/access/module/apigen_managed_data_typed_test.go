@@ -20,7 +20,7 @@ func TestManagedDataStagingRequiresTypedCreateAuthorityForMissingConnection(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	manage, err := access.NewExactPermissionPair(access.ActionConnectionManage, projectID, connection)
+	upload, err := access.NewExactPermissionPair(access.ActionConnectionUpload, projectID, connection)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,9 +66,65 @@ func TestManagedDataStagingRequiresTypedCreateAuthorityForMissingConnection(t *t
 				module:  browserGuardModule(browserGuardRepository{}, Principal{}, false),
 				runtime: apigenRuntimeFake{project: projectID, lease: apigenLeaseFake{identity: identity, snapshot: snapshot}},
 			}
-			found, allowed, err := authorizer.authorizeManagedDataConnection(context.Background(), "publisher", projectID, connection, []access.PermissionPair{manage}, []access.PermissionPair{create})
+			found, allowed, err := authorizer.authorizeManagedDataConnection(context.Background(), "publisher", projectID, connection, []access.PermissionPair{upload}, []access.PermissionPair{create})
 			if err != nil || found || allowed != tc.want {
 				t.Fatalf("found=%t allowed=%t error=%v, want missing allowed=%t", found, allowed, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestManagedDataStagingAuthorizesExistingConnectionOnlyWithExactUploadPermission(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	connectionID := projectgraph.ResourceID("connection_finance_files")
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := access.NewResourceRef(connectionID, projectgraph.KindConnection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: connectionID, Kind: projectgraph.KindConnection, Name: "finance_files"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := access.NewSubjectRef(access.SubjectKindPrincipal, "publisher")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload, err := access.NewExactPermissionPair(access.ActionConnectionUpload, projectID, connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manage, err := access.NewExactPermissionPair(access.ActionConnectionManage, projectID, connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		pairs []access.PermissionPair
+		want  bool
+	}{
+		{name: "exact upload", pairs: []access.PermissionPair{upload}, want: true},
+		{name: "connection administration does not imply upload", pairs: []access.PermissionPair{manage}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			grant, err := accesssnapshot.NewTypedGrant("grant_publisher", "publisher", principal, tc.pairs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{grant}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			authorizer := &APIGenAuthorizer{
+				module:  browserGuardModule(browserGuardRepository{}, Principal{}, false),
+				runtime: apigenRuntimeFake{project: projectID, lease: apigenLeaseFake{identity: identity, snapshot: snapshot}},
+			}
+			found, allowed, err := authorizer.authorizeManagedDataConnection(context.Background(), "publisher", projectID, connection, []access.PermissionPair{upload}, []access.PermissionPair{upload})
+			if err != nil || !found || allowed != tc.want {
+				t.Fatalf("found=%t allowed=%t error=%v, want existing found=true allowed=%t", found, allowed, err, tc.want)
 			}
 		})
 	}

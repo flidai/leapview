@@ -49,7 +49,7 @@ command -v python3 >/dev/null || {
 
 client_contract="$repo_root/scripts/demo_client_contract.py"
 permission_profile="${DEMO_PERMISSION_PROFILE:?Set DEMO_PERMISSION_PROFILE from trusted release or predecessor metadata}"
-publisher_scope="$(python3 "$client_contract" --profile "$permission_profile" --role publisher)"
+publisher_scope="$(python3 "$client_contract" --profile "$permission_profile" --role publisher --source-revision "$source_revision")"
 release_scope="$(python3 "$client_contract" --profile "$permission_profile" --role release)"
 python3 "$client_contract" --validate-environment
 

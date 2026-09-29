@@ -86,6 +86,40 @@
     "valid": true
   },
   {
+    "name": "exact managed data upload",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "connection.upload",
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "connection",
+          "resourceId": "connection:finance_files"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "managed data upload cannot target another resource kind",
+    "profile": "leapview.permissions/v1",
+    "pairs": [
+      {
+        "action": "connection.upload",
+        "target": {
+          "scope": "resource",
+          "projectId": "project:analytics",
+          "resourceKind": "source",
+          "resourceId": "source:finance_files"
+        },
+        "profile": "leapview.permissions/v1"
+      }
+    ],
+    "valid": false
+  },
+  {
     "name": "missing outer profile",
     "pairs": [],
     "valid": false
