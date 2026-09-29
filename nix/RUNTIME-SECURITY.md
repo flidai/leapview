@@ -62,6 +62,13 @@ Its Nix cataloger supplies inventory, not a Nix advisory feed aware of backporte
 patches. Retain findings until a package update or a reviewed, artifact-specific
 assessment resolves them. There are no automatic ignores or exemptions here.
 
+## Finding review
+
+The [glibc triage](GLIBC-TRIAGE.md) resolves the eleven matches into eight fixes
+already present in the pinned backport bundle, two disputed/non-security
+classifications, and one confirmed `strfmon` defect requiring an update.
+No suppressions have been activated; enforcement remains blocked.
+
 ## Qualification limits and production blockers
 
 Known-CVE controls establish representative matcher behavior; they do not prove
@@ -74,8 +81,8 @@ accounted for all 13 store paths (12 cataloged packages and the explicit map
 asset payload), passed all six matching controls, and found 11 HIGH/CRITICAL
 glibc matches that the default inventory missed. Some records
 are disputed or have broad version constraints; others require checking the
-pinned Nix glibc source and applied patches. They remain unresolved, not silently
-classified as exploitable or suppressed. The candidate is **not cleared for
+pinned Nix glibc source and applied patches. Their dispositions are documented in the triage above; they remain unsuppressed
+in scanner enforcement. The candidate is **not cleared for
 production release**.
 
 Before switching production:
