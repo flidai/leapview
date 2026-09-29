@@ -206,4 +206,3 @@ test('security settings use a unified session list, focused password dialog, and
     await page.close()
   }
 })
-
