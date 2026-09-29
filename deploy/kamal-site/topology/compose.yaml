@@ -1,0 +1,27 @@
+name: leapview-site
+
+services:
+  caddy:
+    image: ${CADDY_IMAGE:?must be an immutable digest}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /var/lib/leapview-site/caddy-data:/data
+      - /var/lib/leapview-site/caddy-config:/config
+    networks:
+      - kamal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  kamal:
+    external: true
+    name: kamal
