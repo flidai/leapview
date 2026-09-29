@@ -42,6 +42,12 @@ pkgs.stdenv.mkDerivation {
   # Deployment scripts leave the image and must retain portable interpreters.
   # Only build-time npm helpers are patched explicitly below.
   dontPatchShebangs = true;
+  # patchelf's default header sorting can move an empty GNU_STACK segment
+  # ahead of LOAD segments, hiding Go build info from Go/SBOM scanners.
+  # The native compiler already supplies the Nix loader and runtime RPATHs.
+  dontPatchELF = true;
+  dontAutoPatchelf = true;
+  dontStrip = true;
   preBuild = ''
     export GOPATH="$TMPDIR/go" GOCACHE="$TMPDIR/go-cache"
     export npm_config_cache="$TMPDIR/npm-cache"
@@ -95,6 +101,11 @@ pkgs.stdenv.mkDerivation {
       echo "exported host scripts contain a Nix-store dependency" >&2
       exit 1
     fi
+    for binary in "$out/bin/"*; do
+      go version -m "$binary" > "$TMPDIR/build-info"
+      grep -Fq 'github.com/flidai/leapview' "$TMPDIR/build-info"
+      grep -Fq 'github.com/jackc/pgx/v5' "$TMPDIR/build-info"
+    done
     "$out/bin/leapview" version
     "$out/bin/leapviewctl" --help >/dev/null
   '';

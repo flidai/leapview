@@ -49,7 +49,7 @@
         inherit pkgs toolchain application;
         src = source;
       };
-      portable = import ./nix/portable.nix { inherit pkgs application; };
+      portable = import ./nix/portable.nix { inherit pkgs application toolchain; };
       image = import ./nix/image.nix {
         inherit
           pkgs

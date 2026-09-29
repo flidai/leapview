@@ -1,7 +1,12 @@
-{ pkgs, application }:
+{
+  pkgs,
+  application,
+  toolchain,
+}:
 pkgs.runCommand "leapview-linux-${application.version}"
   {
     nativeBuildInputs = [
+      toolchain.go
       pkgs.patchelf
       pkgs.binutils
     ];
@@ -13,7 +18,10 @@ pkgs.runCommand "leapview-linux-${application.version}"
     for binary in "$out/bin/"*; do
       # Exported tools use the host's supported glibc/libstdc++ runtime. Native
       # Nix users retain the store-linked application output instead.
-      patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 --remove-rpath "$binary"
+      patchelf --no-sort --set-interpreter /lib64/ld-linux-x86-64.so.2 --remove-rpath "$binary"
+      go version -m "$binary" > "$TMPDIR/build-info"
+      grep -Fq 'github.com/flidai/leapview' "$TMPDIR/build-info"
+      grep -Fq 'github.com/jackc/pgx/v5' "$TMPDIR/build-info"
       for abi in GLIBC:2.38 GLIBCXX:3.4.30 CXXABI:1.3.13; do
         family="''${abi%%:*}"
         baseline="''${abi#*:}"
