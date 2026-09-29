@@ -42,6 +42,44 @@ for command in curl go jq; do
     exit 69
   fi
 done
+command -v python3 >/dev/null || {
+  echo "required command is unavailable: python3" >&2
+  exit 69
+}
+
+client_contract="$repo_root/scripts/demo_client_contract.py"
+permission_profile="${DEMO_PERMISSION_PROFILE:?Set DEMO_PERMISSION_PROFILE from trusted release or predecessor metadata}"
+publisher_scope="$(python3 "$client_contract" --profile "$permission_profile" --role publisher)"
+release_scope="$(python3 "$client_contract" --profile "$permission_profile" --role release)"
+python3 "$client_contract" --validate-environment
+
+# Synthetic qualification uses the same publication commands but cannot
+# substitute source/data on the public deployment path.
+fixture_source="${DEMO_FIXTURE_SOURCE_ROOT:-}"
+fixture_data="${DEMO_FIXTURE_DATA_PATH:-}"
+if [[ -n "$fixture_source" || -n "$fixture_data" ]]; then
+  if [[ "${DEMO_CLONE_ONLY:-}" != "1" || "$fixture_source" != /* || "$fixture_data" != /* || ! -d "$fixture_source" || ! -d "$fixture_data" ]]; then
+    echo "synthetic publication fixtures require both absolute directories and clone-only transport" >&2
+    exit 64
+  fi
+  source_root="$fixture_source"
+fi
+
+demo_curl() {
+  if [[ "${DEMO_CLONE_ONLY:-}" == "1" ]]; then
+    local clone_proxy="${DEMO_CLONE_PROXY:-}"
+    if [[ ! "$clone_proxy" =~ ^http://127\.0\.0\.1:[0-9]+$ ]]; then
+      echo "clone-only publication requires a loopback DEMO_CLONE_PROXY" >&2
+      return 64
+    fi
+    # Pin curl explicitly. Its redirect support stays disabled and both
+    # protocol lists exclude alternate origins if the command changes later.
+    command curl --proxy "$clone_proxy" --noproxy '' --proto '=https' \
+      --proto-redir '=https' --max-redirs 0 "$@"
+  else
+    command curl "$@"
+  fi
+}
 
 cleanup() {
   local status=$?
@@ -54,7 +92,7 @@ exchange_workload_token() {
   local client_secret="$2"
   local scope="$3"
   local response token
-  response="$(curl --fail --silent --show-error \
+  response="$(demo_curl --fail --silent --show-error \
     --request POST \
     --header 'Content-Type: application/x-www-form-urlencoded' \
     --data-urlencode 'grant_type=client_credentials' \
@@ -71,11 +109,11 @@ exchange_workload_token() {
 publisher_token="$(exchange_workload_token \
   "$publisher_client_id" \
   "$publisher_client_secret" \
-  'RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH')"
+  "$publisher_scope")"
 release_token="$(exchange_workload_token \
   "$release_client_id" \
   "$release_client_secret" \
-  'PROJECT_ADMIN')"
+  "$release_scope")"
 unset publisher_client_secret release_client_secret
 
 leapview="$temporary_directory/leapview"
@@ -102,8 +140,12 @@ jq -e --arg source_revision "$source_revision" '
   exit 1
 }
 go run ./internal/app/tools/configgen
-go run "$bootstrap_tool" --shared-cache --out "$data_link"
-data_path="$(cd -P "$data_link" && pwd)"
+if [[ -n "$fixture_data" ]]; then
+  data_path="$(cd -P "$fixture_data" && pwd)"
+else
+  go run "$bootstrap_tool" --shared-cache --out "$data_link"
+  data_path="$(cd -P "$data_link" && pwd)"
+fi
 "$leapview" data sync \
   --source-root "$source_root" \
   --connection "$data_connection" \
@@ -225,27 +267,44 @@ if [[ "$publication_status" != "committed" ]]; then
   echo "demo publication did not become committed" >&2
   exit 1
 fi
-
-generation_status="$("$leapview" api call getDeliveryGenerationStatus \
-  --target "$demo_target" \
-  --token "$release_token" \
-  --path "project=$project_id" \
-  --path "generation=$generation_id")"
-[[ "$(jq -r '.status' <<<"$generation_status")" == "active" ]] || {
-  echo "demo serving generation did not become active" >&2
+publication_target_id="$(jq -er '.targetId | strings | select(length > 0)' <<<"$publication_status_json")"
+publication_environment="$(jq -er '.environment | strings | select(length > 0)' <<<"$publication_status_json")"
+jq -e --arg publication "$publication_id" --arg project "$project_id" \
+  --arg candidate "$candidate_id" --arg generation "$generation_id" \
+  --arg target_id "$publication_target_id" --arg environment "$publication_environment" '
+  .id == $publication and .projectId == $project and
+  .candidateId == $candidate and .generationId == $generation and
+  .targetId == $target_id and .environment == $environment
+' <<<"$publication_status_json" >/dev/null || {
+  echo "committed publication evidence did not preserve the expected runtime identities" >&2
   exit 1
 }
 
-"$leapview" api call getProject \
-  --target "$demo_target" \
-  --token "$release_token" \
-  --path "project=$project_id" >/dev/null
+generation_status="$(DEMO_GENERATION_TOKEN="$release_token" \
+  python3 "$client_contract" --wait-generation \
+    --target "$demo_target" \
+    --project "$project_id" \
+    --generation "$generation_id" \
+    --candidate "$candidate_id" \
+    --target-id "$publication_target_id" \
+    --environment "$publication_environment" \
+    --timeout 90 \
+    --poll-interval 2)"
+jq -e --arg project "$project_id" --arg generation "$generation_id" --arg candidate "$candidate_id" \
+  --arg target_id "$publication_target_id" --arg environment "$publication_environment" '
+  .status == "active" and .projectId == $project and
+  .id == $generation and .candidateId == $candidate and
+  .targetId == $target_id and .environment == $environment
+' <<<"$generation_status" >/dev/null || {
+  echo "demo serving generation did not become active with the expected identities" >&2
+  exit 1
+}
 
 jq -e --arg project "$project_id" --arg candidate "$candidate_id" --arg generation "$generation_id" '
   .projectId == $project and .candidateId == $candidate and .generationId == $generation
 ' <<<"$publication_status_json" >/dev/null
-curl --fail --silent --show-error --max-time 15 "$demo_target/readyz" >/dev/null
-mapfile -t browser_entry < <(curl --silent --show-error --max-time 15 \
+demo_curl --fail --silent --show-error --max-time 15 "$demo_target/readyz" >/dev/null
+mapfile -t browser_entry < <(demo_curl --silent --show-error --max-time 15 \
   --output /dev/null \
   --write-out '%{http_code}\n%{redirect_url}\n' \
   "$demo_target/")
@@ -253,9 +312,32 @@ if [[ "${browser_entry[0]:-}" != "302" || "${browser_entry[1]:-}" != "$demo_targ
   echo "demo browser entry did not redirect unauthenticated visitors to /login" >&2
   exit 1
 fi
-login_page="$(curl --fail --silent --show-error --max-time 15 "$demo_target/login")"
+login_page="$(demo_curl --fail --silent --show-error --max-time 15 "$demo_target/login")"
 if [[ "$login_page" != *"<title>LeapView Login</title>"* ]]; then
   echo "demo login page did not render the branded sign-in surface" >&2
   exit 1
 fi
 printf 'published source %s to compatible runtime %s at %s\n' "$source_revision" "$runtime_revision" "$demo_target"
+if [[ -n "${DEMO_PUBLICATION_RECEIPT:-}" ]]; then
+  if [[ "$DEMO_PUBLICATION_RECEIPT" != /* || -e "$DEMO_PUBLICATION_RECEIPT" || -L "$DEMO_PUBLICATION_RECEIPT" ]]; then
+    echo "DEMO_PUBLICATION_RECEIPT must be an absolute new file path" >&2
+    exit 64
+  fi
+  receipt_directory="$(dirname "$DEMO_PUBLICATION_RECEIPT")"
+  [[ -d "$receipt_directory" ]] || {
+    echo "DEMO_PUBLICATION_RECEIPT parent directory must exist" >&2
+    exit 64
+  }
+  umask 077
+  jq -n --arg project "$project_id" --arg candidate "$candidate_id" \
+    --arg publication "$publication_id" --arg generation "$generation_id" \
+    --arg status "$publication_status" --arg source "$source_revision" \
+    --arg runtime "$runtime_revision" --arg profile "$permission_profile" \
+    --arg target "$demo_target" \
+    '{projectId:$project,candidateId:$candidate,publicationId:$publication,generationId:$generation,status:$status,sourceRevision:$source,runtimeRevision:$runtime,permissionProfile:$profile,target:$target}' \
+    > "$DEMO_PUBLICATION_RECEIPT"
+fi
+if [[ -n "${GITHUB_STEP_SUMMARY:-}" && "${DEMO_CLONE_ONLY:-}" != "1" ]]; then
+  printf '\n### Content publication\n\n- Source: `%s`\n- Publication: `%s`\n- Active generation: `%s`\n' \
+    "$source_revision" "$publication_id" "$generation_id" >> "$GITHUB_STEP_SUMMARY"
+fi

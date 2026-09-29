@@ -118,6 +118,13 @@ func (r *Repository) UpdateScopedAPITokenForPrincipal(ctx context.Context, in ac
 	if err != nil {
 		return access.APIToken{}, err
 	}
+	bootstrap, err := accessdb.New(db).HasInitialPublisherOrigin(ctx, tokenID)
+	if err != nil {
+		return access.APIToken{}, err
+	}
+	if bootstrap {
+		return access.APIToken{}, fmt.Errorf("%w: initial publisher credentials cannot be edited; exchange the live claim or create an ordinary token", access.ErrForbidden)
+	}
 	tag, err := accessdb.New(db).UpdateScopedAPITokenForPrincipal(ctx, accessdb.UpdateScopedAPITokenForPrincipalParams{
 		ID: tokenID, PrincipalID: principalID, Name: name, Description: description,
 		Permissions: permissions, ExpiresAt: pgTimestamp(in.ExpiresAt), ExpectedModifiedAt: pgTimestamp(in.ExpectedModifiedAt),

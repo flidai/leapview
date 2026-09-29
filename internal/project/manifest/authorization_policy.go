@@ -66,6 +66,15 @@ func AccessPolicyFromAuthorizationPolicy(policy access.AuthorizationPolicy) (Acc
 		} else {
 			subject.Group = grant.Subject.ID
 		}
+		if grant.PermissionProfile != "" || grant.Permissions != nil {
+			result.Grants[grant.ID] = Grant{
+				ID: grant.ID, Name: grant.Name, Subject: subject,
+				Object:            SecurableRef{Kind: string(grant.Resource.Kind()), ID: string(grant.Resource.ID())},
+				PermissionProfile: grant.PermissionProfile,
+				Permissions:       access.ClonePermissionPairs(grant.Permissions),
+			}
+			continue
+		}
 		result.Grants[grant.ID] = Grant{ID: grant.ID, Name: grant.Name, Subject: subject, Object: SecurableRef{Kind: string(grant.Resource.Kind()), ID: string(grant.Resource.ID())}, Capability: string(grant.Capability)}
 	}
 	return result, nil

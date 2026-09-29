@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
@@ -81,5 +82,38 @@ func TestPublicationApprovalBootstrapAuthorizationContextRejectsInvalidValues(t 
 	ctx = withPublicationApprovalBootstrapAuthorization(context.Background(), project, "")
 	if _, ok := PublicationApprovalBootstrapAuthorizationFromContext(ctx); ok {
 		t.Fatal("invalid principal approval marker unexpectedly resolved")
+	}
+}
+
+func TestAccessTransitionApprovalContextRequiresBoundDistinctActorsAndSnapshot(t *testing.T) {
+	marker := AccessTransitionApprovalAuthorization{
+		TargetID: "target_demo", ProjectID: "project_demo", Environment: "production",
+		ExpectedActiveGenerationID: "generation_old", CandidateID: "candidate_new", CandidateGenerationID: "generation_new", PublicationID: "publication_new",
+		PublisherPrincipalID: "publisher", ReviewerPrincipalID: "reviewer", IntentDigest: "sha256:" + strings.Repeat("a", 64), CandidateSnapshotDigest: "sha256:" + strings.Repeat("b", 64),
+	}
+	ctx, err := WithAccessTransitionApprovalAuthorization(context.Background(), marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := AccessTransitionApprovalAuthorizationFromContext(ctx)
+	if !ok || got != marker {
+		t.Fatalf("transition marker = %#v, %v; want %#v", got, ok, marker)
+	}
+	for name, mutate := range map[string]func(*AccessTransitionApprovalAuthorization){
+		"same actors": func(value *AccessTransitionApprovalAuthorization) {
+			value.ReviewerPrincipalID = value.PublisherPrincipalID
+		},
+		"missing candidate binding": func(value *AccessTransitionApprovalAuthorization) { value.CandidateGenerationID = "" },
+		"missing publication":       func(value *AccessTransitionApprovalAuthorization) { value.PublicationID = "" },
+		"invalid semantic digest":   func(value *AccessTransitionApprovalAuthorization) { value.IntentDigest = "sha256:invalid" },
+		"invalid candidate digest":  func(value *AccessTransitionApprovalAuthorization) { value.CandidateSnapshotDigest = "sha256:invalid" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := marker
+			mutate(&invalid)
+			if _, err := WithAccessTransitionApprovalAuthorization(context.Background(), invalid); err == nil {
+				t.Fatal("invalid transition marker was accepted")
+			}
+		})
 	}
 }

@@ -123,6 +123,56 @@ test('pivot-backed field wells describe their row and column roles', async () =>
   }
 })
 
+test('empty heatmap explains the two dimension axes and opens the Data fields', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const pages = structuredClone(element.builder.pages)
+      pages[0].visuals[0].type = 'heatmap'
+      pages[0].visuals[0].slots = []
+      const visualCatalog = structuredClone(element.builder.visualCatalog)
+      const heatmap = visualCatalog.find((entry: any) => entry.type === 'heatmap')
+      heatmap.roleLimits = [{ role: 'dimension', minimum: 2, maximum: 2 }, { role: 'metric', minimum: 1, maximum: 1 }]
+      mergePatch({ builder: { pages, visualCatalog } })
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const labels = [...root.querySelectorAll('.field-well-label')].map((node) => node.textContent?.trim())
+      const guidance = root.querySelector('.visual-field-help')?.textContent?.replace(/\s+/g, ' ').trim()
+      const firstPrompt = root.querySelector('[data-drop-well="dimension"] .empty-well')?.textContent?.trim()
+      ;(root.querySelector('.visual-field-help button') as HTMLButtonElement).click()
+      await element.updateComplete
+      const focusedDataSearch = root.activeElement === root.querySelector('.data-pane input[aria-label="Search fields"]')
+      const dimensionsShown = root.querySelector('[data-field-filter="dimension"]')?.getAttribute('aria-pressed') === 'true'
+      pages[0].visuals[0].slots = [{ id: 'x', kind: 'dimension', fieldId: 'orders.status', label: 'Status' }]
+      mergePatch({ builder: { pages } })
+      await element.updateComplete
+      let newVisualTitle = ''
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { newVisualTitle = event.detail.title }, { once: true })
+      element.addVisual('heatmap')
+      return {
+        labels,
+        guidance,
+        firstPrompt,
+        secondPrompt: root.querySelector('[data-drop-well="dimension"] .empty-well')?.textContent?.trim(),
+        focusedDataSearch,
+        dimensionsShown,
+        newVisualTitle,
+      }
+    })
+    expect(state.labels).toEqual(['Dimensions (X then Y)', 'Color value'])
+    expect(state.guidance).toContain('first sets X, second sets Y')
+    expect(state.firstPrompt).toBe('Drop X dimension')
+    expect(state.secondPrompt).toBe('Drop Y dimension')
+    expect(state.focusedDataSearch).toBe(true)
+    expect(state.dimensionsShown).toBe(true)
+    expect(state.newVisualTitle).toBe('Heatmap')
+  } finally { await page.close() }
+})
+
 test('a new Gauge starts with an available governed measure', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

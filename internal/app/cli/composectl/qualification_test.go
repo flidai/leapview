@@ -344,6 +344,7 @@ func TestQualificationWorkloadActionsAreExplicit(t *testing.T) {
 	for _, forbidden := range []string{
 		"project.access.manage",
 		"connection.manage",
+		"dashboard.publish",
 	} {
 		if slices.Contains(actions, forbidden) {
 			t.Errorf("workload actions unexpectedly include %s: %v", forbidden, actions)

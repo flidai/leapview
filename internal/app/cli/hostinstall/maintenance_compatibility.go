@@ -7,21 +7,24 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/flidai/leapview/internal/platform/releasecontract"
 )
 
 // SourceCompatibility is collected from the exact admitted Git revisions, not
 // the runner checkout. Qualification and OCI admission bind those revisions to
 // the images. The host recomputes the decision instead of trusting a mode flag.
 type SourceCompatibility struct {
-	Schema     int               `json:"schema"`
-	Migrations map[string]string `json:"migrations"`
-	Engines    map[string]string `json:"engines"`
-	RolePolicy string            `json:"rolePolicy"`
+	PermissionProfile string            `json:"permissionProfile"`
+	Schema            int               `json:"schema"`
+	Migrations        map[string]string `json:"migrations"`
+	Engines           map[string]string `json:"engines"`
+	RolePolicy        string            `json:"rolePolicy"`
 }
 
 func classifySources(before, after SourceCompatibility) (string, []string, error) {
 	for _, s := range []SourceCompatibility{before, after} {
-		if s.Schema < 1 || len(s.Migrations) != s.Schema || len(s.Engines) == 0 || !digestPattern.MatchString("sha256:"+s.RolePolicy) {
+		if !releasecontract.KnownPermissionProfile(s.PermissionProfile) || s.Schema < 1 || len(s.Migrations) != s.Schema || len(s.Engines) == 0 || !digestPattern.MatchString("sha256:"+s.RolePolicy) {
 			return "", nil, errors.New("incomplete immutable compatibility evidence")
 		}
 		versions := map[int]bool{}
@@ -33,6 +36,9 @@ func classifySources(before, after SourceCompatibility) (string, []string, error
 			}
 			versions[n] = true
 		}
+	}
+	if after.PermissionProfile != releasecontract.Current().PermissionProfile {
+		return "", nil, errors.New("candidate permission contract differs from controller")
 	}
 	if after.Schema < before.Schema {
 		return "", nil, errors.New("downgrade requires recovery")
@@ -58,7 +64,7 @@ func classifySources(before, after SourceCompatibility) (string, []string, error
 	if !reflect.DeepEqual(before.Engines, after.Engines) {
 		return "review-required", pending, nil
 	}
-	if len(pending) > 0 || before.RolePolicy != after.RolePolicy {
+	if len(pending) > 0 || before.RolePolicy != after.RolePolicy || before.PermissionProfile != after.PermissionProfile {
 		return "database-upgrade-required", pending, nil
 	}
 	return "image-only", pending, nil

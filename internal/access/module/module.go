@@ -19,6 +19,7 @@ import (
 )
 
 type Module struct {
+	initialReviewerBootstrap          func(*http.Request, func(context.Context, access.AuthorizationPolicyScope, string) error) (bool, error)
 	handler                           accesshttp.Handler
 	persistence                       *Persistence
 	auth                              *Auth
@@ -189,6 +190,9 @@ func (m *Module) RoleBindingAdministration(ctx context.Context) (access.RoleBind
 func (m *Module) ApplyRoleBindingAdministration(r *http.Request, command access.RoleBindingAdministrationCommand) (access.RoleBindingAdministrationState, error) {
 	if m == nil {
 		return access.RoleBindingAdministrationState{}, fmt.Errorf("access module is unavailable")
+	}
+	if state, handled, err := m.applyInitialReviewer(r, command); handled || err != nil {
+		return state, err
 	}
 	return m.handler.ApplyRoleBindingAdministration(r, command)
 }

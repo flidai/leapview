@@ -471,7 +471,7 @@ test('reference line labels use readable theme colors without an automatic text 
 test('compact chart legends page long series labels and restore desktop layout', () => {
   const option = { grid: { bottom: 30 }, legend: { bottom: 0, textStyle: { color: '#aaa' }, data: ['Monthly revenue', 'Budget revenue', 'Forecast revenue'] } }
   expect(responsiveEChartsPatch(option, 366, 320).legend).toMatchObject({ type: 'scroll', left: 'center', width: 350, pageIconColor: '#aaa' })
-  expect(responsiveEChartsPatch(option, 900, 500).legend).toMatchObject({ ...option.legend, type: 'scroll', width: 'auto', height: 'auto' })
+  expect(responsiveEChartsPatch(option, 900, 500).legend).toMatchObject({ ...option.legend, type: 'scroll', left: 'center', right: 'auto', width: 'auto', height: 'auto' })
 })
 
 test('outside horizontal bar labels stay visible when only negative values remain', () => {

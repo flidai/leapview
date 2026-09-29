@@ -135,7 +135,7 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
   // render; omit the tree series until there are hierarchy nodes to lay out.
   if (spec.mark === 'tree' && roots.length === 0) return { legend: legend(spec.presentation.legend, context), series: [] }
   const flatSingleRoot = roots.length === 1 && !roots[0]?.children?.length
-  const data = spec.mark === 'tree' && dataset && (roots.length > 1 || flatSingleRoot)
+  const data = spec.mark === 'tree' && dataset && roots.length > 1
     ? [{ name: 'All', __lv_dataset: dataset.id, __lv_row_index: -1, __lv_synthetic: true, children: roots }]
     : roots
   const common: EChartsTranslation = {
@@ -156,6 +156,33 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
       common.right = '25%'
       common.top = '8%'
       common.bottom = '8%'
+    }
+    if (flatSingleRoot) {
+      // A lone category has no tree relationship. ECharts otherwise stretches
+      // a synthetic All -> category edge across the entire visual, leaving
+      // both tiny labels at opposite ends of an otherwise empty card.
+      common.top = '48%'
+      common.bottom = '48%'
+      common.left = '30%'
+      common.right = '30%'
+      common.symbolSize = 22
+      common.label = {
+        ...(common.label ?? {}),
+        position: 'bottom',
+        align: 'center',
+        distance: 14,
+        fontSize: 24,
+        fontWeight: 600,
+        lineHeight: 34,
+        formatter: (params: { data?: HierarchyNode }) => {
+          const name = labels.label.formatter(params)
+          const node = params.data
+          return node && node.value !== undefined && node.value !== null
+            ? `${name}\n${hierarchyTooltipValue(envelope, node, context)}`
+            : name
+        },
+      }
+      common.leaves = { label: common.label }
     }
     const automaticCrowding = spec.presentation.labelPolicy.density === 'automatic'
       && countVisibleHierarchyLeaves(data, spec.presentation.initialDepth) > 16

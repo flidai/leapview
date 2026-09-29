@@ -21,17 +21,19 @@ type qualificationContainerVolume struct {
 }
 
 type qualificationContainerRequest struct {
-	Name        string
-	Image       string
-	NetworkMode string
-	ReadOnly    bool
-	Volumes     []qualificationContainerVolume
-	Tmpfs       []string
-	Environment map[string]string
-	Entrypoint  []string
-	Command     []string
-	NoHealth    bool
-	ReadyLog    string
+	Name         string
+	Image        string
+	NetworkMode  string
+	ExposedPorts []string
+	User         string
+	ReadOnly     bool
+	Volumes      []qualificationContainerVolume
+	Tmpfs        []string
+	Environment  map[string]string
+	Entrypoint   []string
+	Command      []string
+	NoHealth     bool
+	ReadyLog     string
 }
 
 type qualificationContainerRuntime interface {
@@ -162,6 +164,13 @@ func (runtime *dockerCLIQualificationRuntime) Start(
 	if network := strings.TrimSpace(request.NetworkMode); network != "" {
 		arguments = append(arguments, "--network", network)
 	}
+	for _, port := range request.ExposedPorts {
+		port = strings.TrimSpace(port)
+		if port == "" {
+			return nil, fmt.Errorf("qualification container exposed port is required")
+		}
+		arguments = append(arguments, "--publish", "127.0.0.1::"+port)
+	}
 	for _, volume := range request.Volumes {
 		source := strings.TrimSpace(volume.Source)
 		target := strings.TrimSpace(volume.Target)
@@ -204,6 +213,9 @@ func (runtime *dockerCLIQualificationRuntime) Start(
 	}
 	if request.NoHealth {
 		arguments = append(arguments, "--no-healthcheck")
+	}
+	if user := strings.TrimSpace(request.User); user != "" {
+		arguments = append(arguments, "--user", user)
 	}
 	if len(request.Entrypoint) > 0 {
 		arguments = append(arguments, "--entrypoint", request.Entrypoint[0])

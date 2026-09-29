@@ -160,6 +160,12 @@ func skippedPRRun(run HealthRun) bool {
 		}
 		expected[job] = true
 	}
+	// A draft PR never enters the reusable workflow, so GitHub reports the
+	// skipped caller job instead of materializing its two skipped child jobs.
+	if run.Results[hostRecoveryHealthLane] == "skipped" {
+		delete(expected, hostRecoveryRecoveryJob)
+		delete(expected, hostRecoveryHistoricalJob)
+	}
 	if len(run.Results) != len(expected) {
 		return false
 	}
@@ -216,8 +222,16 @@ func classifyHealthRun(run HealthRun) HealthRun {
 	if supported {
 		run.ExpectedSource = "plan"
 		run.ExpectedJobs = expectedPlanJobs(run.Plan)
+		if run.Workflow == "ci.yml" && (run.Event != "pull_request" || run.Plan.Version == PRPlanVersion) {
+			// Host recovery is an unconditional workflow-call lane, outside the
+			// current selective PR plan. Require the parent contract and both
+			// qualified child jobs as independent evidence alongside the selected
+			// plan. Historical PR plan versions retain their older inventory.
+			run.ExpectedJobs = append(run.ExpectedJobs, expectedHealthLaneJobs(hostRecoveryHealthLane)...)
+			run.ExpectedSource = "plan+workflow_registry"
+		}
 		if run.Workflow == "ci.yml" && run.Event == "pull_request" {
-			run.PlannedJobs = append([]string(nil), run.ExpectedJobs...)
+			run.PlannedJobs = expectedPlanJobs(run.Plan)
 		}
 		run.SelectionConfidence = "verified"
 	} else if !exhaustive {

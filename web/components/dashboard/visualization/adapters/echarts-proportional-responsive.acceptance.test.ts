@@ -128,6 +128,8 @@ test('proportional responsive helper keeps compact labels bounded and expanded l
     if (mark === 'funnel') {
       expect(compact.series[0].label.formatter({ value: ['United States of America', 1] })).toBe('United States of Ame…:\n1')
       expect(expanded.series[0].label.formatter({ value: ['United States of America', 1] })).toBe('United States of Ame…: 1')
+      expect(compact.series[0]).toMatchObject({ left: '6%', right: '44%' })
+      expect(expanded.series[0]).toMatchObject({ left: '25%', right: '25%' })
     } else {
       expect(compact.series[0].label.alignTo).toBe('edge')
       expect(expanded.series[0].label.alignTo).toBe('labelLine')
@@ -136,6 +138,38 @@ test('proportional responsive helper keeps compact labels bounded and expanded l
     }
     expect(option.series[0].id).toBe(`series:primary:${mark}`)
   }
+})
+
+test('funnel geometry recenters on expansion and restores card label space when collapsed', () => {
+  const envelope = proportionalWithIconFormat('funnel')
+  const source = echartsOption(envelope, defaultRendererContext) as any
+  expect(responsiveEChartsPatch(source, 1200, 720).legend.left).toBe('center')
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 320, height: 240 })
+  try {
+    chart.setOption({ ...source, ...responsiveEChartsPatch(source, 320, 240), animation: false })
+    chart.dispatchAction({ type: 'legendUnSelect', name: 'Status 0' })
+    chart.resize({ width: 1200, height: 720 })
+    chart.setOption(responsiveEChartsPatch(source, 1200, 720))
+    const expanded = (chart as any).getModel().getSeriesByIndex(0)
+    const layouts = Array.from({ length: expanded.getData().count() }, (_, index) => expanded.getData().getItemLayout(index).points)
+    const points = layouts.sort((a: number[][], b: number[][]) => (b[1][0] - b[0][0]) - (a[1][0] - a[0][0]))[0]
+    expect((points[0][0] + points[1][0]) / 2).toBeCloseTo(600, 3)
+    expect(expanded.get('funnelAlign')).toBe('left')
+    expect(expanded.get('sort')).toBe(source.series[0].sort)
+    expect((chart as any).getModel().getComponent('legend').isSelected('Status 0')).toBe(false)
+    chart.resize({ width: 320, height: 240 })
+    chart.setOption(responsiveEChartsPatch(source, 320, 240))
+    expect((chart as any).getModel().getSeriesByIndex(0).get('left')).toBe('6%')
+  } finally { chart.dispose() }
+})
+
+test('funnel without visible labels still centers its expanded plotting box', () => {
+  const envelope = proportionalWithIconFormat('funnel')
+  if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
+  envelope.spec.presentation.labelPolicy.density = 'hidden'
+  const source = echartsOption(envelope, defaultRendererContext) as any
+  expect(responsiveEChartsPatch(source, 1200, 720).series[0]).toMatchObject({ left: '25%', right: '25%' })
+  expect(responsiveEChartsPatch(source, 320, 240).series[0]).toMatchObject({ left: '6%', right: '44%' })
 })
 
 test('compact funnel labels wrap long category and value text inside the chart bounds', () => {

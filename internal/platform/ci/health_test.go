@@ -3,6 +3,7 @@ package ci
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -18,17 +19,17 @@ func TestAnalyzeHealth(t *testing.T) {
 		{
 			Workflow: "merge-validation.yml", Event: "merge_group", DurationSeconds: 600, QueueSeconds: 20, Conclusion: "success",
 			Plan:    Plan{Version: PlanVersion, Nominal: full, Effective: full},
-			Results: healthSuccessfulResults(full),
+			Results: healthSuccessfulResultsWithHostRecovery(full),
 		},
 		{
 			Workflow: "merge-validation.yml", Event: "merge_group", DurationSeconds: 700, QueueSeconds: 30, Conclusion: "success",
 			Plan:    Plan{Version: PlanVersion, Nominal: full, Effective: full},
-			Results: healthSuccessfulResults(full),
+			Results: healthSuccessfulResultsWithHostRecovery(full),
 		},
 		{
 			Workflow: "merge-validation.yml", Event: "merge_group", DurationSeconds: 800, QueueSeconds: 140, Conclusion: "failure",
 			Plan:    Plan{Version: PlanVersion, Nominal: full, Effective: full},
-			Results: healthSuccessfulResults(full),
+			Results: healthSuccessfulResultsWithHostRecovery(full),
 		},
 		{
 			Workflow: "ci.yml", Event: "pull_request", DurationSeconds: 240, QueueSeconds: 10, Conclusion: "success",
@@ -138,6 +139,7 @@ func TestSkippedPRHasNoMissingEvidenceOrExecutionMetrics(t *testing.T) {
 	for job := range results {
 		base.Results[job] = "skipped"
 	}
+	base.Results["host-recovery-validation"] = "skipped"
 	for _, conclusion := range []string{"success", "skipped"} {
 		base.Conclusion = conclusion
 		r := AnalyzeHealth([]HealthRun{base})
@@ -191,6 +193,14 @@ func TestUnsupportedPlanRemainsUnknown(t *testing.T) {
 func healthSuccessfulResults(jobs Jobs) map[string]string {
 	results := map[string]string{}
 	for _, job := range expectedPlanJobs(Plan{Effective: jobs}) {
+		results[job] = "success"
+	}
+	return results
+}
+
+func healthSuccessfulResultsWithHostRecovery(jobs Jobs) map[string]string {
+	results := healthSuccessfulResults(jobs)
+	for _, job := range expectedHealthLaneJobs(hostRecoveryHealthLane) {
 		results[job] = "success"
 	}
 	return results
@@ -280,7 +290,7 @@ func TestPlanningMetricsOnlyUsePullRequestPlans(t *testing.T) {
 	results := healthSuccessfulResults(jobs)
 	report := AnalyzeHealth([]HealthRun{
 		{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", DurationSeconds: 100, QueueSeconds: 1, Plan: plan, Results: results},
-		{Workflow: "ci.yml", Event: "workflow_dispatch", Conclusion: "success", DurationSeconds: 110, QueueSeconds: 1, Plan: fullPlan, Results: healthSuccessfulResults(full)},
+		{Workflow: "ci.yml", Event: "workflow_dispatch", Conclusion: "success", DurationSeconds: 110, QueueSeconds: 1, Plan: fullPlan, Results: healthSuccessfulResultsWithHostRecovery(full)},
 		{Workflow: "ci.yml", Event: "workflow_dispatch", Conclusion: "success", DurationSeconds: 120, QueueSeconds: 1, Plan: plan, Results: results},
 	})
 	if report.PlannedRuns != 1 || report.UnknownSelection != 0 || report.Selection["docs"].Selected != 1 {
@@ -307,5 +317,40 @@ func TestFailedExpectedJobIsCompleteFailureEvidence(t *testing.T) {
 	}})
 	if report.Incomplete != 0 || report.Failures != 1 || report.Runs[0].SelectionConfidence != "verified" {
 		t.Fatalf("known failure mislabeled as incomplete evidence: %+v", report)
+	}
+}
+
+func TestMandatoryHostRecoveryChildJobsAugmentSelectivePlanEvidence(t *testing.T) {
+	plan := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "M", Paths: []string{"README.md"}}})
+	results := map[string]string{}
+	for _, job := range expectedPlanJobs(plan) {
+		results[job] = "success"
+	}
+	for _, lane := range expectedHealthLaneJobs(hostRecoveryHealthLane) {
+		results[lane] = "success"
+	}
+	run := HealthRun{
+		Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", DurationSeconds: 10, QueueSeconds: 1,
+		Plan: plan, Results: results,
+	}
+	complete := AnalyzeHealth([]HealthRun{run})
+	if complete.Runs[0].SelectionConfidence != "verified" || complete.Incomplete != 0 {
+		t.Fatalf("mandatory host recovery lane was treated as unplanned or incomplete: %+v", complete.Runs[0])
+	}
+	for _, lane := range expectedHealthLaneJobs(hostRecoveryHealthLane) {
+		if !slices.Contains(complete.Runs[0].ExpectedJobs, lane) {
+			t.Errorf("selective plan omitted mandatory host recovery evidence %q: %+v", lane, complete.Runs[0].ExpectedJobs)
+		}
+	}
+
+	delete(results, hostRecoveryHistoricalJob)
+	incomplete := AnalyzeHealth([]HealthRun{run})
+	if incomplete.Incomplete != 1 || !slices.Contains(incomplete.Runs[0].UnknownJobs, hostRecoveryHistoricalJob) {
+		t.Fatalf("missing mandatory reusable child was accepted: %+v", incomplete.Runs[0])
+	}
+	for _, problem := range incomplete.Runs[0].Problems {
+		if strings.HasPrefix(problem, "unplanned execution: "+hostRecoveryHealthLane) {
+			t.Fatalf("mandatory host recovery lane was still classified as unplanned: %+v", incomplete.Runs[0])
+		}
 	}
 }

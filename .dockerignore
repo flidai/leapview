@@ -57,3 +57,8 @@ static/chunks
 !static/app.input.css
 !static/login-background-loader.js
 !static/theme.js
+
+# Python deployment-adapter bytecode caches
+__pycache__/
+**/__pycache__/
+*.py[cod]

@@ -14,12 +14,8 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/project/ui/signals"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
-	refreshpresentation "github.com/flidai/leapview/internal/refresh/presentation"
-	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
-	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 func TestConnectionConfigurationCarriesReferencesButNeverSecretValues(t *testing.T) {
@@ -106,7 +102,7 @@ func TestPipelineCommandFailsClosedWithoutResourceAuthorizer(t *testing.T) {
 		CurrentUser: func(*http.Request) (Principal, bool) {
 			return Principal{ID: "user:test"}, true
 		},
-		RunPipeline: func(context.Context, string, string, string) error {
+		RunPipeline: func(context.Context, string, string, string, string) error {
 			called = true
 			return nil
 		},
@@ -121,6 +117,48 @@ func TestPipelineCommandFailsClosedWithoutResourceAuthorizer(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "Pipeline operation is unavailable") {
 		t.Fatalf("fail-closed response = %q", recorder.Body.String())
+	}
+}
+
+func TestPipelineCommandCancelsWaitingIntentWithoutCancellingRun(t *testing.T) {
+	var cancelledPipeline, cancelledIntent, cancelledPrincipal string
+	h := &BrowserHandler{
+		PipelineCancelCommand: refreshgen.GenUIActionCancelRefreshRun(),
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return "project:test", nil
+		},
+		CurrentUser: func(*http.Request) (Principal, bool) {
+			return Principal{ID: "user:test"}, true
+		},
+		AuthorizePipeline: func(_ *http.Request, pipelineID string, capability access.Capability) (bool, error) {
+			return pipelineID == "pipeline:sales" && capability == access.CapabilityResourceUse, nil
+		},
+		BeginPipelineCommand: func(ctx context.Context, invocation CreatorCommandInvocation) (context.Context, error) {
+			if invocation.Action != "cancel-intent" {
+				t.Fatalf("invocation action = %q", invocation.Action)
+			}
+			return ctx, nil
+		},
+		CancelPipelineIntent: func(_ context.Context, pipelineID, intentID, principalID, key string) error {
+			cancelledPipeline, cancelledIntent, cancelledPrincipal = pipelineID, intentID, principalID
+			if key != "ui:pipeline-cancel-intent-1" {
+				t.Fatalf("cancel idempotency key = %q", key)
+			}
+			return nil
+		},
+		CancelPipeline: func(context.Context, string, string, string) error {
+			t.Fatal("waiting-intent cancellation called run cancellation")
+			return nil
+		},
+	}
+	body := strings.NewReader(`{"pipelineCommand":{"action":"cancel-intent","assetId":"pipeline:sales","pipelineId":"pipeline:sales","intentId":"intent:one"}}`)
+	request := httptest.NewRequest(http.MethodPost, "/pipelines/command", body)
+	request.Header.Set("X-LeapView-Operation-ID", refreshgen.GenUIActionCancelRefreshRun().OperationID())
+	request.Header.Set("X-Request-ID", "pipeline-cancel-intent-1")
+	recorder := httptest.NewRecorder()
+	h.PipelineCommand(recorder, request)
+	if cancelledPipeline != "pipeline:sales" || cancelledIntent != "intent:one" || cancelledPrincipal != "user:test" {
+		t.Fatalf("cancelled = %q, %q, %q; response = %s", cancelledPipeline, cancelledIntent, cancelledPrincipal, recorder.Body.String())
 	}
 }
 
@@ -145,8 +183,11 @@ func TestPipelineCommandUsesCanonicalAssetIDForAuthorizationAndRefresh(t *testin
 			invocationProject = invocation.Project
 			return ctx, nil
 		},
-		RunPipeline: func(_ context.Context, pipelineID, _ string, _ string) error {
+		RunPipeline: func(_ context.Context, pipelineID, _ string, _ string, key string) error {
 			queuedID = pipelineID
+			if key != "ui:pipeline-canonical-1" {
+				t.Fatalf("idempotency key = %q", key)
+			}
 			return errors.New("injected queue failure")
 		},
 	}
@@ -179,7 +220,7 @@ func TestPipelineCommandAndReplayAllowConfiguredDevelopmentBypass(t *testing.T) 
 		BeginPipelineCommand: func(ctx context.Context, _ CreatorCommandInvocation) (context.Context, error) {
 			return ctx, nil
 		},
-		RunPipeline: func(context.Context, string, string, string) error {
+		RunPipeline: func(context.Context, string, string, string, string) error {
 			queued = true
 			return errors.New("injected queue failure")
 		},
@@ -234,34 +275,30 @@ func TestConnectionCommandsAllowConfiguredDevelopmentBypass(t *testing.T) {
 	}
 }
 
-func TestPipelineAssetCommandSuccessPreservesDetailProjection(t *testing.T) {
-	const projectID = "project:test"
-	const assetID = "pipeline:sales"
-	h := &BrowserHandler{
-		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{{
-			ID: assetID, ProjectID: projectID, ServingStateID: "state:test", Type: "refresh_pipeline", Key: "sales", Title: "Sales refresh", PayloadJSON: `{}`,
-		}}}},
-		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
-		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.ResourceManifest{
-			RefreshPipelines: map[string]refreshschedule.Definition{assetID: {ID: assetID, Name: "Sales refresh"}},
-		}},
-		RefreshState: browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{
-			Latest: refreshpresentation.AssetRefreshRun{ID: "run:queued", Status: "queued"},
-		}},
-		CurrentUser: func(*http.Request) (Principal, bool) { return Principal{ID: "user:test", DevBypass: true}, true },
-		AuthorizePipeline: func(_ *http.Request, pipelineID string, capability access.Capability) (bool, error) {
-			return pipelineID == assetID && capability == access.CapabilityResourceUse, nil
-		},
+func TestPipelineCollectionCommandSuccessFitsDurableReplayLimit(t *testing.T) {
+	h := &BrowserHandler{}
+	command := signals.PipelineCommandSignal{Action: "run", AssetID: "pipeline:sales", PipelineID: "pipeline:sales"}
+	request := httptest.NewRequest(http.MethodPost, "/pipelines/command?view=pipelines", nil)
+	recorder := httptest.NewRecorder()
+	h.pipelineCommandSuccess(recorder, request, command, "Pipeline command accepted.")
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"pipelineCommandStatus"`) || !strings.Contains(body, "Pipeline command accepted") || strings.Contains(body, `"page"`) || recorder.Body.Len() >= 32768 {
+		t.Fatalf("collection success patch must be a bounded acknowledgement, got %d bytes: %s", recorder.Body.Len(), body)
 	}
+}
+
+func TestPipelineAssetCommandSuccessAcknowledgesWithoutReplacingPage(t *testing.T) {
+	const assetID = "pipeline:sales"
+	h := &BrowserHandler{}
 	request := httptest.NewRequest(http.MethodPost, "/pipelines/command?surface=asset&asset="+assetID+"&section=details", nil)
 	recorder := httptest.NewRecorder()
 	h.pipelineAssetCommandSuccess(recorder, request, signals.PipelineCommandSignal{Action: "run", AssetID: assetID, PipelineID: assetID}, "Pipeline command accepted.")
 	body := recorder.Body.String()
-	if !strings.Contains(body, `"assetId":"pipeline:sales"`) || !strings.Contains(body, `"refresh"`) {
-		t.Fatalf("detail success patch = %s, want ResourceAssetPageSignal", body)
+	if !strings.Contains(body, `"assetId":"pipeline:sales"`) || !strings.Contains(body, `"pipelineCommandStatus"`) || !strings.Contains(body, "Pipeline command accepted") {
+		t.Fatalf("asset success patch = %s, want command acknowledgement", body)
 	}
-	if strings.Contains(body, `"activeTab"`) || strings.Contains(body, `"metrics"`) {
-		t.Fatalf("detail success patch replaced asset page with pipeline list: %s", body)
+	if strings.Contains(body, `"page"`) || recorder.Body.Len() >= 32768 {
+		t.Fatalf("asset success patch unexpectedly included a page or exceeded replay limit: %s", body)
 	}
 	mismatchRequest := httptest.NewRequest(http.MethodPost, "/pipelines/command?surface=asset&asset=pipeline:other&section=details", nil)
 	mismatchRecorder := httptest.NewRecorder()
@@ -269,6 +306,26 @@ func TestPipelineAssetCommandSuccessPreservesDetailProjection(t *testing.T) {
 	mismatchBody := mismatchRecorder.Body.String()
 	if !strings.Contains(mismatchBody, "Pipeline command target is invalid") || strings.Contains(mismatchBody, `"page"`) {
 		t.Fatalf("mismatched detail target response = %s, want fail-closed status only", mismatchBody)
+	}
+}
+
+func TestPipelineDetailCommandSuccessAcknowledgesWithoutReplacingPage(t *testing.T) {
+	h := &BrowserHandler{}
+	command := signals.PipelineCommandSignal{Action: "run", AssetID: pipelineDetailHTTPAssetID, PipelineID: pipelineDetailHTTPAssetID}
+	request := httptest.NewRequest(http.MethodPost, "/pipelines/command?surface=pipeline_detail&asset=pipeline%3Adaily&section=overview", nil)
+	recorder := httptest.NewRecorder()
+	h.pipelineDetailCommandSuccess(recorder, request, command, "Pipeline command accepted.")
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"pipelineCommandStatus"`) || !strings.Contains(body, "Pipeline command accepted") {
+		t.Fatalf("pipeline detail success patch = %s, want command acknowledgement", body)
+	}
+	if strings.Contains(body, `"page"`) || recorder.Body.Len() >= 32768 {
+		t.Fatalf("pipeline detail success patch unexpectedly included a page or exceeded replay limit: %s", body)
+	}
+	mismatch := httptest.NewRecorder()
+	h.pipelineDetailCommandSuccess(mismatch, httptest.NewRequest(http.MethodPost, "/pipelines/command?surface=pipeline_detail&asset=pipeline%3Aother", nil), command, "Pipeline command accepted.")
+	if got := mismatch.Body.String(); !strings.Contains(got, "Pipeline command target is invalid") || strings.Contains(got, `"page"`) {
+		t.Fatalf("mismatched detail target response = %s, want fail-closed status only", got)
 	}
 }
 

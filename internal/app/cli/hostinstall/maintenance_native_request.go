@@ -14,8 +14,10 @@ import (
 	"strconv"
 	"strings"
 
+	admincli "github.com/flidai/leapview/internal/admin/cli"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/postgres/migrations"
+	"github.com/flidai/leapview/internal/platform/releasecontract"
 )
 
 // NativeRequest is the private handoff from the existing qualified-image
@@ -24,15 +26,21 @@ import (
 // substitute for a generic release-transition owner record, and is never
 // published into those authorities. It binds the operator-selected installation profile.
 type NativeRequest struct {
-	Profile             MaintenanceProfile `json:"profile"`
-	DeploymentRunID     string             `json:"deploymentRunId"`
-	DeploymentAttempt   string             `json:"deploymentAttempt"`
-	Version             int                `json:"version"`
-	PredecessorImage    string             `json:"predecessorImage"`
-	PredecessorRevision string             `json:"predecessorRevision"`
-	CandidateImage      string             `json:"candidateImage"`
-	CandidateRevision   string             `json:"candidateRevision"`
-	Qualification       struct {
+	AccessTransition    *admincli.AccessTransitionIntent `json:"accessTransition,omitempty"`
+	PreparationDigest   string                           `json:"preparationDigest,omitempty"`
+	Profile             MaintenanceProfile               `json:"profile"`
+	DeploymentRunID     string                           `json:"deploymentRunId"`
+	DeploymentAttempt   string                           `json:"deploymentAttempt"`
+	Version             int                              `json:"version"`
+	PredecessorImage    string                           `json:"predecessorImage"`
+	PredecessorRevision string                           `json:"predecessorRevision"`
+	CandidateImage      string                           `json:"candidateImage"`
+	CandidateRevision   string                           `json:"candidateRevision"`
+	// GitHub workflow_dispatch signs the protected workflow SHA, while an
+	// authorized PR image contains its own source SHA. Both identities are
+	// independently bound; omission retains the main-push equality contract.
+	CandidateAttestationRevision string `json:"candidateAttestationRevision,omitempty"`
+	Qualification                struct {
 		Image      string `json:"image"`
 		Revision   string `json:"revision"`
 		RunID      string `json:"runId"`
@@ -80,8 +88,18 @@ func ReadNativeRequest(path string) (NativeRequest, error) {
 	_, err = request.Identity()
 	return request, err
 }
+func (r NativeRequest) attestationRevision() string {
+	if r.CandidateAttestationRevision != "" {
+		return r.CandidateAttestationRevision
+	}
+	return r.CandidateRevision
+}
+
 func (r NativeRequest) Identity() (Identity, error) {
-	if !decimalPattern.MatchString(r.DeploymentRunID) || !decimalPattern.MatchString(r.DeploymentAttempt) || r.Version != 1 || !sourceRevisionPattern.MatchString(r.PredecessorRevision) || !sourceRevisionPattern.MatchString(r.CandidateRevision) {
+	if r.PreparationDigest != "" && !digestPattern.MatchString(r.PreparationDigest) {
+		return Identity{}, ErrIdentity
+	}
+	if !decimalPattern.MatchString(r.DeploymentRunID) || !decimalPattern.MatchString(r.DeploymentAttempt) || r.Version != 1 || !sourceRevisionPattern.MatchString(r.PredecessorRevision) || !sourceRevisionPattern.MatchString(r.CandidateRevision) || !sourceRevisionPattern.MatchString(r.attestationRevision()) {
 		return Identity{}, ErrIdentity
 	}
 	q := r.Qualification
@@ -89,6 +107,17 @@ func (r NativeRequest) Identity() (Identity, error) {
 		return Identity{}, errors.New("exact image qualification receipt required")
 	}
 	p := r.Plan
+	permissionTransition := p.SourceBefore.PermissionProfile != p.SourceAfter.PermissionProfile
+	if permissionTransition {
+		if p.SourceBefore.PermissionProfile != releasecontract.LegacyPermissions || p.SourceAfter.PermissionProfile != releasecontract.TypedPermissions || r.AccessTransition == nil {
+			return Identity{}, errors.New("legacy permissions require explicit admitted transition intent")
+		}
+		if _, err := r.AccessTransition.Plan(); err != nil {
+			return Identity{}, err
+		}
+	} else if r.AccessTransition != nil {
+		return Identity{}, errors.New("access conversion is not part of this transition")
+	}
 	if err := r.Profile.Validate(); err != nil {
 		return Identity{}, err
 	}
@@ -134,7 +163,7 @@ func (r NativeRequest) Identity() (Identity, error) {
 		return Identity{}, err
 	}
 	imageDigest := strings.TrimPrefix(r.CandidateImage, "ghcr.io/flidai/leapview@")
-	if admission.SchemaVersion != 1 || admission.Image != r.CandidateImage || admission.Digest != imageDigest || admission.RegistryDigest != imageDigest || !admission.Attestation.Verified || admission.Attestation.Repository != "flidai/leapview" || admission.Attestation.Workflow != "flidai/leapview/.github/workflows/artifacts.yml" || admission.Attestation.SourceRevision != r.CandidateRevision || !admission.SBOM.Discoverable || admission.SBOM.PredicateType != "https://spdx.dev/Document/v2.3" || !admission.Vulnerability.Passed || admission.Vulnerability.Scanner != "trivy" || (admission.Vulnerability.Platform != "" && admission.Vulnerability.Platform != "linux/amd64") {
+	if admission.SchemaVersion != 1 || admission.Image != r.CandidateImage || admission.Digest != imageDigest || admission.RegistryDigest != imageDigest || !admission.Attestation.Verified || admission.Attestation.Repository != "flidai/leapview" || admission.Attestation.Workflow != "flidai/leapview/.github/workflows/artifacts.yml" || admission.Attestation.SourceRevision != r.attestationRevision() || !admission.SBOM.Discoverable || admission.SBOM.PredicateType != "https://spdx.dev/Document/v2.3" || !admission.Vulnerability.Passed || admission.Vulnerability.Scanner != "trivy" || (admission.Vulnerability.Platform != "" && admission.Vulnerability.Platform != "linux/amd64") {
 		return Identity{}, errors.New("OCI admission does not bind the qualified candidate")
 	}
 	if len(admission.Vulnerability.SHA256) != 64 {

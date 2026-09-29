@@ -24,12 +24,14 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	apprefreshpostgres "github.com/flidai/leapview/internal/app/refreshpostgres"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	dashboardpublication "github.com/flidai/leapview/internal/dashboard/publication"
 	dashboardpublicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
+	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
@@ -59,6 +61,8 @@ type PostgresJourneyFixtureOptions struct {
 	// authentication so route tests can exercise session authority evidence.
 	// The default remains disabled-auth for route smoke tests.
 	BrowserSessionAuth bool
+	// ProjectClaimBootstrap wires the real durable claim into pre-publication authorization.
+	ProjectClaimBootstrap bool
 
 	// SkipRouteAssembly leaves the graph and native capability handles
 	// available without constructing HTTP routes. The default assembles routes.
@@ -235,6 +239,9 @@ func (f *PostgresJourneyFixture) buildCapabilities(t *testing.T, options Postgre
 		PublicURL: "http://localhost", InstanceID: options.TargetID,
 		CurrentProjectID: func(context.Context) (projectgraph.ResourceID, error) { return options.ProjectID, nil },
 	}
+	if options.ProjectClaimBootstrap {
+		accessConfig.AuthorizationPolicyEnvironment = "prod"
+	}
 	if options.BrowserSessionAuth {
 		auth, authErr := accessmodule.NewAuth(f.Graph.Access, accessmodule.AuthConfig{
 			LocalAuth: true, CSRFKey: strings.Repeat("journey-csrf", 4),
@@ -284,11 +291,17 @@ func (f *PostgresJourneyFixture) assembleRoutes(t *testing.T, options PostgresJo
 		AgentPersistence: f.Graph.AgentPersistence,
 	}
 	workflow := workflowAssemblyInputs{Workload: f.Workload, AgentSettings: f.Graph.Bootstrap}
+	if options.ProjectClaimBootstrap {
+		workflow.DeploymentConfig = deploymentmodule.Config{ProjectClaims: f.Graph.DeploymentRepository}
+	}
 	runtimeConfig := runtimeAssemblyInputs{
 		RuntimeHost: options.RuntimeHost, ProjectID: options.ProjectID,
 		ProjectIDResolver:       func(context.Context) (projectgraph.ResourceID, error) { return options.ProjectID, nil },
 		ServingSnapshotResolver: options.ServingSnapshotResolver,
 		InstanceID:              options.TargetID, DefaultEnvironment: "prod", AllowDevAuthBypass: true,
+	}
+	if options.ProjectClaimBootstrap {
+		runtimeConfig.DeliveryTargetReader = appdeploymentpostgres.NewTargetReader(f.Graph.DeploymentRepository)
 	}
 	if runtimeConfig.ServingSnapshotResolver == nil {
 		runtimeConfig.ServingSnapshotResolver = func(context.Context) (string, error) {
@@ -302,6 +315,13 @@ func (f *PostgresJourneyFixture) assembleRoutes(t *testing.T, options PostgresJo
 		data.RefreshPersistence = f.RefreshPersistence
 		data.RequireNativeDashboard = true
 		capabilities.Authoring = f.DashboardAuthoring
+		// Native refresh composition requires a source identity for manual
+		// request admission. Route-qualification fixtures do not activate an
+		// authored source, so keep this deterministic until a test supplies a
+		// complete serving runtime.
+		workflow.RefreshSourceDigest = func(context.Context, projectgraph.ServingIdentity) (string, error) {
+			return "sha256:" + strings.Repeat("a", 64), nil
+		}
 	}
 	routes, runtime, platform, policy, err := buildApplicationSurfaces(t.Context(), nil, data, capabilities, workflow, runtimeConfig, httpAssemblyInputs{PublicURL: "http://localhost"})
 	if err != nil {

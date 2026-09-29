@@ -698,7 +698,20 @@ func (a *Auth) mustChangeLocalPassword(r *http.Request, principalID string, cred
 		return false
 	}
 	localCredential, err := local.LocalCredential(r.Context(), principalID)
-	return err == nil && localCredential.MustChangePassword
+	if err != nil {
+		// A proven initial publisher must not bypass policy on an unavailable lookup.
+		return credential != nil && credential.InitialPublisher != nil
+	}
+	if !localCredential.MustChangePassword {
+		return false
+	}
+	if credential != nil && credential.InitialPublisher != nil {
+		if reader, ok := a.repo.(access.InitialPublisherPasswordSetupReader); ok {
+			open, err := reader.InitialPublisherPasswordSetupOpen(r.Context(), principalID, credential.Token.ID)
+			return err != nil || !open
+		}
+	}
+	return true
 }
 
 func writeBearerChallenge(w http.ResponseWriter, r *http.Request) {

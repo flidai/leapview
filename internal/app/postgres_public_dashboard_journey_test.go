@@ -303,7 +303,11 @@ func assemblePostgresPublicJourneyRoutes(t *testing.T, fixture *PostgresJourneyF
 		ServingSnapshotResolver: func(context.Context) (string, error) { return "", servingstate.ErrNotFound },
 		InstanceID:              postgresJourneyTargetID, DefaultEnvironment: "prod", AllowDevAuthBypass: true,
 	}
-	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(t.Context(), fakeMetrics{}, data, capabilities, workflowAssemblyInputs{Workload: fixture.Workload, AgentSettings: fixture.Graph.Bootstrap, Auth: auth}, runtimeConfig, httpAssemblyInputs{PublicURL: "http://localhost"})
+	workflow := workflowAssemblyInputs{Workload: fixture.Workload, AgentSettings: fixture.Graph.Bootstrap, Auth: auth}
+	workflow.RefreshSourceDigest = func(context.Context, projectgraph.ServingIdentity) (string, error) {
+		return "sha256:" + strings.Repeat("b", 64), nil
+	}
+	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(t.Context(), fakeMetrics{}, data, capabilities, workflow, runtimeConfig, httpAssemblyInputs{PublicURL: "http://localhost"})
 	if err != nil {
 		t.Fatalf("assemble PostgreSQL public dashboard journey routes: %v", err)
 	}

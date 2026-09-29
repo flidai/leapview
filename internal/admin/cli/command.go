@@ -141,6 +141,7 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	maintenance.Flags().IntVar(&values.AuthStateDays, "auth-state-days", defaultAuthStateRetentionDays, "expired or revoked auth state retention in days; 0 disables auth-state pruning")
 
 	parent.AddCommand(initialize, maintenance)
+	parent.AddCommand(accessGrantCommand(ctx, operations))
 	parent.AddCommand(projectClaimCommand(ctx, operations))
 	delivery := deliveryPoolCommand(ctx, operations)
 	parent.AddCommand(delivery)

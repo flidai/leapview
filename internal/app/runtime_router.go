@@ -49,6 +49,7 @@ import (
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
+	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
@@ -824,13 +825,17 @@ func buildApplicationSurfaces(
 	if reader, ok := any(servingStateRepo).(projecthttp.AssetVersionsReader); ok {
 		projectAssetVersions = reader
 	}
+	var projectHistoricalGraph projecthttp.HistoricalGraphReader
+	if reader, ok := any(servingStateRepo).(projecthttp.HistoricalGraphReader); ok {
+		projectHistoricalGraph = reader
+	}
 	var projectActiveServingState projecthttp.ActiveServingStateReader
 	if reader, ok := any(servingStateRepo).(projecthttp.ActiveServingStateReader); ok {
 		projectActiveServingState = reader
 	}
 	var dashboardAppearances projecthttp.DashboardAppearanceStore
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
+		Graph: capabilities.ProjectGraph, HistoricalGraph: projectHistoricalGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardAppearances, DashboardCatalog: capabilities.Authoring,
@@ -903,7 +908,7 @@ func buildApplicationSurfaces(
 			}
 			return snapshot, nil
 		}
-		snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, routes.accessModule.AuthorizationSubjects)
+		snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(runtimeConfig.InstanceID, authorizationSnapshot, routes.accessModule.AuthorizationSubjects)
 		authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection)
 		routes.accessModule.SetCurrentEffectiveCapabilities(func(ctx context.Context, principalID string) ([]access.Capability, error) {
 			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
@@ -960,11 +965,29 @@ func buildApplicationSurfaces(
 	if routes.projectBrowser != nil {
 		routes.projectBrowser.RefreshState = routes.refreshModule
 		routes.projectBrowser.RunMonitor = routes.refreshModule
+		routes.projectBrowser.RunDetailReader = routes.refreshModule
+		routes.projectBrowser.RunPublicationReader = routes.refreshModule
+		routes.projectBrowser.ReadPipelineIntents = func(ctx context.Context, scope refreshrun.ReadScope) ([]projecthttp.PipelineWaitingIntent, error) {
+			entries, err := routes.refreshModule.ListManualPipelineIntents(ctx, scope)
+			if err != nil {
+				return nil, err
+			}
+			intents := make([]projecthttp.PipelineWaitingIntent, 0, len(entries))
+			for _, entry := range entries {
+				intents = append(intents, projecthttp.PipelineWaitingIntent{
+					IntentID: entry.IntentID, PipelineID: entry.PipelineID, Status: entry.Status,
+					CreatedAt: entry.CreatedAt.UTC().Format(time.RFC3339Nano), QueuePosition: int64(entry.QueuePosition),
+					RunID: entry.RunID, Reason: entry.Reason, CancelAllowed: entry.CancelAllowed,
+				})
+			}
+			return intents, nil
+		}
 	}
 	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, persistence, moduleWorkflow, storage, data.AdditionalWorkers); err != nil {
 		return fail(err)
 	}
 	if platform.asyncJobs != nil {
+		routes.projectBrowser.RunEventReader = platform.asyncJobs
 		handlers := make([]jobs.Handler, 0, 4)
 		if routes.releaseModule != nil {
 			handlers = append(handlers, routes.releaseModule.JobHandlers()...)
@@ -1099,12 +1122,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			routes.projectBrowser.BeginPipelineCommand = func(ctx context.Context, invocation projecthttp.CreatorCommandInvocation) (context.Context, error) {
 				return routes.refreshModule.BeginPipelineUICommand(ctx, refreshmodule.PipelineUICommandInvocation{Action: invocation.Action, Project: invocation.Project, IdempotencyKey: invocation.IdempotencyKey, RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID})
 			}
-			routes.projectBrowser.RunPipeline = func(ctx context.Context, pipelineID, principalID, retryOf string) error {
+			routes.projectBrowser.RunPipeline = func(ctx context.Context, pipelineID, principalID, retryOf, idempotencyKey string) error {
 				identity, err := routes.refreshModule.ActiveServingIdentity(ctx)
 				if err != nil {
 					return err
 				}
-				return routes.refreshModule.QueuePipelineRefreshForUI(ctx, identity, pipelineID, principalID, retryOf)
+				return routes.refreshModule.QueuePipelineRefreshForUI(ctx, identity, pipelineID, principalID, retryOf, idempotencyKey)
 			}
 			routes.projectBrowser.CancelPipeline = func(ctx context.Context, pipelineID, runID, principalID string) error {
 				identity, err := routes.refreshModule.ActiveServingIdentity(ctx)
@@ -1112,6 +1135,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return err
 				}
 				return routes.refreshModule.CancelPipelineRefreshForUI(ctx, identity, pipelineID, runID, principalID)
+			}
+			routes.projectBrowser.CancelPipelineIntent = func(ctx context.Context, pipelineID, intentID, principalID, idempotencyKey string) error {
+				identity, err := routes.refreshModule.ActiveServingIdentity(ctx)
+				if err != nil {
+					return err
+				}
+				return routes.refreshModule.CancelManualPipelineIntentForUI(ctx, identity, pipelineID, intentID, principalID, idempotencyKey)
 			}
 			routes.projectBrowser.AuthorizePipeline = func(r *http.Request, pipelineID string, capability access.Capability) (bool, error) {
 				if capability != access.CapabilityResourceUse {
@@ -1741,6 +1771,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			CurrentEffectivePermissionOptions: routes.accessModule.CurrentEffectivePermissionOptions,
 			RoleBindingAdministration: func(ctx context.Context) (access.RoleBindingAdministrationState, error) {
 				state, err := routes.accessModule.RoleBindingAdministration(ctx)
+				// The instance user directory is needed to prepare the first
+				// publication, before there is an active project to project roles from.
+				if errors.Is(err, runtimehost.ErrNoActiveServingState) {
+					return access.RoleBindingAdministrationState{}, nil
+				}
 				if err != nil || runtime.runtimeHostModule == nil {
 					return state, err
 				}
@@ -1765,7 +1800,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return state, nil
 			},
-			RoleBindingMutation: routes.accessModule.ApplyRoleBindingAdministration,
+			RoleBindingAdministrationForRequest: routes.accessModule.RoleBindingAdministrationForRequest,
+			RoleBindingProjectID:                routes.accessModule.RoleBindingProjectID,
+			RoleBindingMutation:                 routes.accessModule.ApplyRoleBindingAdministration,
 			AuthorizeTypedDashboardAction: func(ctx context.Context, principalID string, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, error) {
 				return authorizeTypedDashboardAction(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, dashboardID, action)
 			},
@@ -1993,6 +2030,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		return fmt.Errorf("build APIGen authorizer: %w", err)
 	}
 	if claimReader := moduleWorkflow.deploymentConfig.ProjectClaims; claimReader != nil {
+		configureInitialReviewerBootstrap(routes.accessModule, claimReader, runtimeConfig.DeliveryTargetReader, runtimeConfig.InstanceID, policy.defaultEnvironment)
 		routes.accessModule.SetProjectClaimResolver(func(ctx context.Context) (string, string, error) {
 			claim, err := claimReader.GetProjectClaim(ctx)
 			if err != nil {
