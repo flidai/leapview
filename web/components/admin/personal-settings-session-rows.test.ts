@@ -29,3 +29,13 @@ test('current session label uses the detected browser and preserves other sessio
   expect(browserSessionLabel({ ...currentSession, clientLabel: 'Chromium on Linux' }, 'Brave')).toBe('Brave on Linux')
   expect(browserSessionLabel(olderSession, 'Edge')).toBe('Chrome on Linux')
 })
+
+test('an existing Brave iOS session replaces its old Safari label only on this device', () => {
+  const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Version/26.5 Mobile/15E148 Safari/604.1 Brave'
+  const browserName = browserNameFromClientHints(userAgent)
+  const session = { kind: 'browser', clientLabel: 'Safari on iOS', current: true } as PersonalSessionSignal
+
+  expect(browserName).toBe('Brave')
+  expect(browserSessionLabel(session, browserName)).toBe('Brave on iOS')
+  expect(browserSessionLabel({ ...session, current: false }, browserName)).toBe('Safari on iOS')
+})
