@@ -13,7 +13,7 @@ test('local frontend validation runs every bounded shard without suppressing fai
     task: 'ci:lane:frontend:shard', vars: { SHARD: shard },
   })))
   expect(tasks['ci:lane:frontend:shard'].cmds).toEqual([
-    'node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}',
+    'node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}',
   ])
   expect(tasks['ci:lane:frontend:local'].cmds).toEqual([{ task: 'ci:lane:frontend' }])
   expect(tasks['ci:lane:frontend'].ignore_error).toBeUndefined()
@@ -125,7 +125,7 @@ test('native PostgreSQL qualification generates the complete application fixture
 })
 
 test('hosted demo rejects an unknown dataset before requesting deployment credentials', () => {
-  const result = spawnSync('/bin/bash', ['scripts/deploy_demo.sh'], {
+  const result = spawnSync('bash', ['scripts/deploy_demo.sh'], {
     env: { PATH: process.env.PATH, DEMO_DATASET: 'unknown' }, encoding: 'utf8',
   })
   expect(result.status).toBe(64)
@@ -146,7 +146,7 @@ test('pinned publication rejects unsupported datasets before credentials or publ
   const directory = mkdtempSync(join(tmpdir(), 'demo-dataset-guard-'))
   try {
     mkdirSync(join(directory, 'deploy/demo'), { recursive: true })
-    const run = (dataset: string) => spawnSync('/bin/bash', ['-c', steps[guardIndex].run], {
+    const run = (dataset: string) => spawnSync('bash', ['-c', steps[guardIndex].run], {
       cwd: directory, env: { PATH: process.env.PATH, DEMO_DATASET: dataset }, encoding: 'utf8',
     })
     // Old pinned revisions have no capability manifest and only publish Olist.
