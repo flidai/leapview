@@ -46,7 +46,38 @@ class SupervisorTest(unittest.TestCase):
             contender = subprocess.run(args, input=b'finish\n', capture_output=True)
             self.assertNotEqual(contender.returncode, 0)
             self.assertIn(b'explicit recovery', contender.stderr)
-            owner.stdout.close(); owner.stderr.close()
+            owner.stdin.close(); owner.stdout.close(); owner.stderr.close()
+
+    def test_lost_mutation_reply_keeps_committed_work_unresolved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            locks = [root / 'reconcile.lock', root / 'deploy.lock']
+            source = ('import sys; sys.path.insert(0, sys.argv[1]); '
+                      'from pathlib import Path; import supervisor; '
+                      'supervisor.serve(Path(sys.argv[2]), sys.argv[3], '
+                      '[Path(p) for p in sys.argv[4:]])')
+            args = [sys.executable, '-B', '-c', source, str(Path(supervisor.__file__).parent),
+                    tmp, 'b' * 32, *map(str, locks)]
+            owner = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(json.loads(owner.stdout.readline())['attempt'], 'b' * 32)
+
+            reply = socket.socket(socket.AF_UNIX)
+            reply.connect(str(root / 'operator.sock'))
+            reply.sendall(json.dumps({'attempt': 'b' * 32,
+                                      'command': 'sleep .2; touch ' + str(root / 'accepted')}).encode() + b'\n')
+            reply.close()  # The remote mutation commits, but its acceptance reply is lost.
+
+            owner.wait(timeout=5)
+            self.assertTrue((root / 'accepted').exists())
+            journal = json.loads((root / 'owner.json').read_text())
+            self.assertEqual(journal['status'], 'unresolved')
+            self.assertEqual(len(journal['work']), 1)
+            self.assertEqual(journal['work'][0]['exit_code'], 0)
+
+            contender = subprocess.run(args, input=b'finish\n', capture_output=True)
+            self.assertNotEqual(contender.returncode, 0)
+            self.assertIn(b'explicit recovery', contender.stderr)
+            owner.stdin.close(); owner.stdout.close(); owner.stderr.close()
 
 
 if __name__ == '__main__': unittest.main()

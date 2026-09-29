@@ -124,6 +124,49 @@ class RecoveryFailureTest(unittest.TestCase):
             remote.assert_called_once_with('pull', version=record()['version'])
             kamal.assert_not_called()
 
+    def test_interrupted_switch_keeps_attempt_pending_without_guessing(self):
+        previous = record()
+        candidate = record()
+        candidate['image'] = candidate['image'].replace('a' * 64, 'e' * 64)
+        candidate['version'] = 'k' + 'e' * 64
+        calls = []
+
+        def remote(operation, **values):
+            calls.append((operation, values))
+            return {}
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(deploy, 'configure'), \
+                patch.object(deploy, 'remote', side_effect=remote), \
+                patch.object(deploy, 'kamal', side_effect=ConnectionError('switch reply lost')) as kamal:
+            with self.assertRaisesRegex(ConnectionError, 'switch reply lost'):
+                deploy.transition(Path(tmp), candidate, previous, pull=True)
+
+        self.assertEqual([operation for operation, _ in calls], ['pull', 'image'])
+        self.assertEqual(calls[0][1], {'version': candidate['version']})
+        self.assertEqual(calls[1][1], {'version': candidate['version']})
+        kamal.assert_called_once()
+
+    def test_lost_acceptance_reply_does_not_rollback_or_prune(self):
+        previous = record()
+        candidate = record()
+        candidate['image'] = candidate['image'].replace('a' * 64, 'e' * 64)
+        candidate['version'] = 'k' + 'e' * 64
+        calls = []
+
+        def remote(operation, **values):
+            calls.append(operation)
+            if operation == 'accept': raise ConnectionError('accept response lost')
+            return {}
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(deploy, 'configure'), \
+                patch.object(deploy, 'remote', side_effect=remote), patch.object(deploy, 'public_check'), \
+                patch.object(deploy, 'kamal') as kamal:
+            with self.assertRaisesRegex(ConnectionError, 'accept response lost'):
+                deploy.transition(Path(tmp), candidate, previous, pull=True)
+
+        self.assertEqual(calls, ['pull', 'image', 'verify', 'accept'])
+        self.assertEqual(kamal.call_count, 1)
+
     def test_cleanup_failure_does_not_rollback_accepted_version(self):
         calls = []
         def remote(operation, **kwargs):

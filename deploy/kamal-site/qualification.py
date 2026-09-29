@@ -5,6 +5,7 @@ Uses the pinned #751 fixture harness, but invokes this adapter and supervisor.
 Test bindings are confined to a generated copy in the disposable namespace.
 """
 import argparse
+import base64
 import fcntl
 import hashlib
 import gzip
@@ -14,13 +15,51 @@ import json
 import os
 from pathlib import Path
 import shlex
+import signal
+import socket
 import sys
 import subprocess
+import threading
+import tempfile
 import time
+import traceback
 import tarfile
 from urllib.request import urlopen, Request
 
+from qualification_topology import verify_topology
+
 HERE = Path(__file__).resolve().parent
+
+
+def host_command(adapter, operation, **values):
+    source = (adapter / 'contract.py').read_text() + '\n' + '\n'.join(
+        line for line in (adapter / 'host.py').read_text().splitlines()
+        if not line.startswith('from contract import '))
+    payload = base64.b64encode(json.dumps({'operation': operation, **values}).encode()).decode()
+    source = 'import io,base64,sys; sys.stdin=io.StringIO(base64.b64decode(' + repr(payload) + ').decode())\n' + source
+    return shlex.join(['python3', '-c', source])
+
+
+def drop_rpc_reply(state, attempt, command):
+    connection = socket.socket(socket.AF_UNIX)
+    connection.connect(str(state / 'operator.sock'))
+    connection.sendall(json.dumps({'attempt': attempt, 'command': command}).encode() + b'\n')
+    connection.close()
+
+
+def process_descendants(pid):
+    found, pending = set(), [pid]
+    while pending:
+        parent = pending.pop()
+        path = Path('/proc') / str(parent) / 'task' / str(parent) / 'children'
+        try:
+            children = [int(value) for value in path.read_text().split()]
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+        for child in children:
+            if child not in found:
+                found.add(child); pending.append(child)
+    return found
 
 
 def main():
@@ -32,7 +71,7 @@ def main():
     from lifecycle import Trial, run, wait_until
     args.mitigate, args.snapshotter, args.disk_mib = False, 'overlayfs', 0
     t = Trial(args)  # Verifies PID 1, root, and an isolated network before mutation.
-    t.report['adapter_source_sha256'] = {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest() for name in ('contract.py', 'deploy.py', 'host.py', 'supervisor.py', 'guard.rb', 'qualification.py')}
+    t.report['adapter_source_sha256'] = {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest() for name in ('contract.py', 'deploy.py', 'host.py', 'supervisor.py', 'guard.rb', 'qualification.py', 'qualification_topology.py')}
     spawn = t.spawn
     def fixture_spawn(name, argv):
         # Port publication needs userspace forwarding in this no-iptables namespace.
@@ -83,6 +122,74 @@ def main():
             with urlopen(req, timeout=5) as response:
                 if json.load(response)['version'] != record['revision']: raise ValueError('wrong proxy target')
         deploy.public_check = public_check
+        def public_revision():
+            ip = t.inspect('kamal-proxy')['NetworkSettings']['Networks']['kamal']['IPAddress']
+            req = Request('http://' + ip + '/', headers={'Host': 'leapview.dev'})
+            with urlopen(req, timeout=5) as response:
+                return json.load(response)['version']
+        def run_fixture_operation(operation):
+            connect = deploy.connect
+            argv = sys.argv
+            deploy.connect = lambda directory: None
+            try:
+                sys.argv = ['deploy.py', operation]
+                deploy.main()
+            finally:
+                deploy.connect = connect
+                sys.argv = argv
+        def settle_kamal_lock(record):
+            with tempfile.TemporaryDirectory(prefix='kamal-lock-audit-') as directory:
+                config = deploy.configure(Path(directory), record)
+                with deploy.ownership():
+                    status = deploy.kamal(config, 'lock', 'status').decode(errors='replace')
+                    if 'There is no deploy lock' in status:
+                        return False
+                    if 'Automatic deploy lock' not in status or 'Version:' not in status:
+                        raise AssertionError('Kamal lock owner is not the interrupted qualified deployment: ' + status)
+                    deploy.kamal(config, 'lock', 'release')
+                    return True
+        def archive_unresolved_owner(label, active, pending, route_revision):
+            journal_path = state / 'owner.json'
+            journal = json.loads(journal_path.read_text())
+            assert journal['status'] == 'unresolved', journal
+            assert journal['work'] and all(w['exit_code'] is not None for w in journal['work']), journal['work']
+            snapshot = json.loads((state / 'state.json').read_text())
+            assert snapshot['active'] == active and snapshot.get('pending') == pending, snapshot
+            assert public_revision() == route_revision
+            proxy = t.inspect('kamal-proxy')
+            active_record = snapshot['records'][active]
+            active_container = t.inspect('leapview-site-web-' + active)
+            host.validate_container(active_record, active_container, require_running=False)
+            assert active_container['Image'] == host.local_image(active_record)['Id']
+            pending_container = None
+            if pending:
+                result, raw = t.docker('inspect', 'leapview-site-web-' + pending, check=False)
+                if result == 0:
+                    pending_container = json.loads(raw)[0]
+            held = []
+            try:
+                for filename in ('reconcile.lock', 'deploy.lock'):
+                    fd = os.open(state / filename, os.O_RDWR)
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    held.append(fd)
+                evidence = {
+                    'attempt': journal['attempt'],
+                    'status': journal['status'],
+                    'completed_work_exit_codes': [w['exit_code'] for w in journal['work']],
+                    'active': active,
+                    'pending': pending,
+                    'route_revision': route_revision,
+                    'saved_active_container_id': active_container['Id'],
+                    'saved_active_running': active_container['State']['Running'],
+                    'candidate_container_id': pending_container['Id'] if pending_container else None,
+                    'proxy_container_id': proxy['Id'],
+                    'saved_active_revision': active_record['revision'],
+                }
+                journal_path.rename(state / (label + '-owner.json'))
+            finally:
+                for fd in held: os.close(fd)
+            t.report.setdefault('failure_matrix', {})[label] = evidence
+            return evidence
         def make_image(n, unhealthy=False):
             revision = f'{n:040x}'
             def layer(files):
@@ -129,6 +236,14 @@ def main():
                       'platform': digest, 'config': manifest['config']['digest'], 'runtime': deploy.RUNTIME,
                       'kamal': '2.12.0', 'release': {}, 'compressed_bytes': sum(l['size'] for l in manifest['layers'])}
             t.docker('image', 'rm', tag)
+            # Explicit synthetic fixture binding only. Production must measure
+            # each exact image on the matching runtime before recording it.
+            ready_file = state / 'ready.json'
+            if ready_file.exists():
+                fixture_ready = json.loads(ready_file.read_text())
+                for budget in fixture_ready['capacity'].values():
+                    budget['qualified_images'].append(record['image'])
+                ready_file.write_text(json.dumps(fixture_ready))
             return record
         first = make_image(1)
         ready = {'schema': 1, 'controller': 'kamal', 'handover_verified': True, 'capacity': {}}
@@ -136,7 +251,7 @@ def main():
         for device in host.inventory()['disks']:
             ready['capacity'][device] = dict(paths=host.inventory()['disks'][device]['paths'], measured_peak_bytes=1024**2, measured_peak_inodes=100,
                 candidate_headroom_bytes=2*1024**2, reserve_bytes=10**12, reserve_inodes=10000,
-                qualified_compressed_bytes=100*1024**2)
+                qualified_compressed_bytes=100*1024**2, qualified_images=[first['image']])
             ready['capacity'][device]['reserve_bytes'] = max(2*1024**3, (host.inventory()['disks'][device]['capacity_bytes']+9)//10)
         (state / 'ready.json').write_text(json.dumps(ready))
         (state / 'state.json').write_text(json.dumps({'schema': 1, 'active': first['version'], 'pending': first['version'],
@@ -167,9 +282,10 @@ def main():
             snapshot = deploy.remote('state')
             image_ids = set(t.docker('image', 'ls', '--quiet', '--no-trunc')[1].split())
             original_ready = (state / 'ready.json').read_text()
-            for field in ('candidate_headroom_bytes', 'reserve_inodes', 'qualified_compressed_bytes'):
+            for field in ('candidate_headroom_bytes', 'reserve_inodes', 'qualified_compressed_bytes', 'qualified_images'):
                 changed = json.loads(original_ready)
-                for budget in changed['capacity'].values(): budget[field] = 10**15 if field != 'qualified_compressed_bytes' else 1
+                for budget in changed['capacity'].values():
+                    budget[field] = [] if field == 'qualified_images' else (1 if field == 'qualified_compressed_bytes' else 10**15)
                 (state / 'ready.json').write_text(json.dumps(changed))
                 try:
                     deploy.remote('preflight', record=candidate)
@@ -312,12 +428,19 @@ def main():
             deploy.transition(adapter, before['records'][before['prior']], before['records'][before['active']], pull=False)
         t.report['unhealthy_current_rollback'] = True
         print('PASS offline rollback with unhealthy current', flush=True)
+        t.registry = t.spawn('registry-restarted-for-topology', list(t.registry.args))
+        wait_until(lambda: urlopen('http://127.0.0.1:5000/v2/').status == 200)
         topology = t.root / 'topology'; topology.mkdir()
         compose = (HERE / 'topology/compose.yaml').read_text().replace('/var/lib/leapview-site/', str(topology) + '/')
         (topology / 'compose.yaml').write_text(compose)
         caddy = (HERE / 'topology/Caddyfile').read_text().replace('leapview.dev {', 'leapview.dev {\n tls internal')
         (topology / 'Caddyfile').write_text(caddy)
-        (topology / 'deployment.env').write_text('CADDY_IMAGE=' + t.inspect('caddy:2.10.2-alpine')['Id'] + '\n')
+        caddy_tag = t.repo + ':caddy-topology-fixture'
+        t.docker('tag', 'caddy:2.10.2-alpine', caddy_tag)
+        t.docker('push', caddy_tag)
+        caddy_image = t.inspect(caddy_tag)
+        caddy_reference = caddy_image['RepoDigests'][0]
+        (topology / 'deployment.env').write_text('CADDY_IMAGE=' + caddy_reference + '\n')
         compose_args = ['compose', '--env-file', str(topology / 'deployment.env'), '-f', str(topology / 'compose.yaml')]
         def caddy_check():
             code, out = run(['curl', '--silent', '--show-error', '--fail', '--insecure', '--noproxy', '*',
@@ -348,6 +471,7 @@ def main():
         print('PASS protected legacy Compose restoration and return to Kamal topology', flush=True)
         t.report['caddy_recreation'] = True
         print('PASS Caddy-only Compose recreation with declarative external Kamal network and HTTPS', flush=True)
+        verify_topology(HERE, t, state, topology)
         # Restart both storage/engine daemons inside the disposable namespace.
         # A real host reboot remains a production migration acceptance gate.
         daemons = [p for p in t.processes if p.args[0] in ('dockerd', 'containerd')]
@@ -360,6 +484,204 @@ def main():
         wait_until(caddy_check, seconds=60)
         t.report['docker_restart'] = True
         print('PASS Docker/containerd restart restores HTTPS topology without the legacy app', flush=True)
+        verify_topology(HERE, t, state, topology)
+
+        # Real supervised pull interrupted while the Docker client is waiting
+        # on the private registry. Losing only the lock transport must leave
+        # the remote mutation journaled and block a second owner.
+        supervisor_source = (adapter / 'supervisor.py').read_text()
+        contender_args = ['ssh', '-F', str(t.root / 'ssh_config'), '127.0.0.1',
+                          shlex.join(['python3', '-c', supervisor_source, 'serve', 'f' * 32])]
+        pull_candidate = make_image(201)
+        previous_state = deploy.remote('state')
+        previous_record = previous_state['records'][previous_state['active']]
+        pull_outcome = {}
+        pull_thread = None
+        lock_process = None
+        try:
+            with deploy.ownership() as lock_process:
+                deploy.remote('preflight', record=pull_candidate)
+                deploy.remote('begin', record=pull_candidate)
+                baseline = len(json.loads((state / 'owner.json').read_text())['work'])
+                t.registry.send_signal(signal.SIGSTOP)
+
+                def execute_pull():
+                    try: pull_outcome['result'] = deploy.remote('pull', version=pull_candidate['version'])
+                    except BaseException as exc: pull_outcome['error'] = exc
+
+                pull_thread = threading.Thread(target=execute_pull, name='interrupted-site-pull')
+                pull_thread.start()
+
+                def docker_pull_running():
+                    journal = json.loads((state / 'owner.json').read_text())
+                    if len(journal['work']) <= baseline or journal['work'][-1]['exit_code'] is not None:
+                        return False
+                    root_pid = journal['work'][-1]['pid']
+                    for pid in (root_pid, *process_descendants(root_pid)):
+                        try:
+                            argv = (Path('/proc') / str(pid) / 'cmdline').read_bytes().decode(errors='ignore').split('\0')
+                        except (FileNotFoundError, ProcessLookupError, PermissionError):
+                            continue
+                        if Path(argv[0]).name == 'docker' and 'pull' in argv:
+                            return True
+                    return False
+
+                wait_until(docker_pull_running, seconds=15)
+                lock_process.stdin.close()
+                time.sleep(.2)
+                pull_journal = json.loads((state / 'owner.json').read_text())
+                assert pull_journal['status'] == 'unresolved'
+                assert pull_journal['work'][-1]['exit_code'] is None
+                assert subprocess.run(contender_args, input=b'finish\n', capture_output=True).returncode != 0
+                t.registry.send_signal(signal.SIGCONT)
+                t.registry.terminate(); t.registry.wait(timeout=10)
+                pull_thread.join(timeout=60)
+                assert not pull_thread.is_alive()
+                assert 'error' in pull_outcome, pull_outcome
+        except RuntimeError as exc:
+            assert 'lock connection lost' in str(exc), str(exc)
+        assert lock_process is not None
+        lock_process.wait(timeout=20)
+        assert subprocess.run(contender_args, input=b'finish\n', capture_output=True).returncode != 0
+        assert t.docker('image', 'inspect', deploy.LOCAL_REPOSITORY + ':' + pull_candidate['version'], check=False)[0] != 0
+        pull_state = json.loads((state / 'state.json').read_text())
+        assert pull_state['active'] == previous_record['version']
+        assert pull_state['pending'] == pull_candidate['version']
+        assert public_revision() == previous_record['revision']
+        archive_unresolved_owner('interrupted_pull', previous_record['version'], pull_candidate['version'],
+                                 previous_record['revision'])
+        run_fixture_operation('recover')
+        recovered = deploy.remote('state')
+        assert recovered['active'] == previous_record['version'] and recovered.get('pending') is None
+        assert public_revision() == previous_record['revision']
+        t.report['failure_matrix']['interrupted_pull']['recovered_without_registry_pull'] = True
+        print('PASS interrupted real digest pull stays pending, records remote failure, blocks takeover, then recovers locally', flush=True)
+        t.registry = t.spawn('registry-restarted-after-pull', list(t.registry.args))
+        wait_until(lambda: urlopen('http://127.0.0.1:5000/v2/').status == 200)
+
+        # Kill the local Kamal client after the real private proxy starts
+        # serving the candidate. The remote work is supervised; acceptance
+        # remains pending until the explicit recovery command restores active.
+        switch_candidate = make_image(202)
+        previous_record = None
+        original_run = deploy.run
+        interrupted_kamal = {}
+
+        def terminate_after_actual_switch(args, **kwargs):
+            if (args and args[0] == 'bundle' and 'app' in args and 'boot' in args
+                    and switch_candidate['version'] in args):
+                log_path = state / 'interrupted-kamal-client.log'
+                with log_path.open('wb') as log:
+                    process = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                    try:
+                        wait_until(lambda: public_revision() == switch_candidate['revision'], seconds=90)
+                        interrupted_kamal['route_revision'] = public_revision()
+                        if process.poll() is not None:
+                            raise AssertionError('Kamal finished before interruption; no live-client failure evidence')
+                        lock_process.stdin.close()
+                    except BaseException:
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGTERM)
+                            process.wait(timeout=15)
+                        raise
+                    if process.poll() is None:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    process.wait(timeout=15)
+                assert process.returncode != 0, 'Kamal finished normally before interruption'
+                interrupted_kamal['client_returncode'] = process.returncode
+                raise ConnectionError('injected local Kamal interruption after actual proxy switch')
+            return original_run(args, **kwargs)
+
+        deploy.run = terminate_after_actual_switch
+        switch_error = None
+        lock_process = None
+        try:
+            with deploy.ownership() as lock_process:
+                previous_state = deploy.remote('preflight', record=switch_candidate)['state']
+                previous_record = previous_state['records'][previous_state['active']]
+                deploy.remote('begin', record=switch_candidate)
+                try:
+                    deploy.transition(adapter, switch_candidate, previous_record, pull=True)
+                    raise AssertionError('interrupted switch unexpectedly accepted')
+                except ConnectionError as exc:
+                    switch_error = str(exc)
+        except RuntimeError as exc:
+            assert 'lock connection lost' in str(exc), str(exc)
+        finally:
+            deploy.run = original_run
+        assert switch_error and 'interruption' in switch_error
+        assert interrupted_kamal.get('route_revision') == switch_candidate['revision']
+        lock_process.wait(timeout=30)
+        assert subprocess.run(contender_args, input=b'finish\n', capture_output=True).returncode != 0
+        switch_state = json.loads((state / 'state.json').read_text())
+        assert switch_state['active'] == previous_record['version']
+        assert switch_state['pending'] == switch_candidate['version']
+        assert public_revision() == switch_candidate['revision']
+        archive_unresolved_owner('interrupted_switch', previous_record['version'], switch_candidate['version'],
+                                 switch_candidate['revision'])
+        stale_kamal_lock = settle_kamal_lock(switch_candidate)
+        t.report['failure_matrix']['interrupted_switch']['stale_kamal_lock_released_after_audit'] = stale_kamal_lock
+        run_fixture_operation('recover')
+        recovered = deploy.remote('state')
+        assert recovered['active'] == previous_record['version'] and recovered.get('pending') is None
+        assert public_revision() == previous_record['revision']
+        t.report['failure_matrix']['interrupted_switch']['recovered_to_saved_active'] = True
+        t.report['failure_matrix']['interrupted_switch']['kamal_client_returncode'] = interrupted_kamal['client_returncode']
+        print('PASS interrupted actual Kamal switch leaves prior+pending state and candidate route, then explicit recover restores prior', flush=True)
+
+        # Let the host commit acceptance and close the real supervisor RPC
+        # socket before its reply. This verifies route, durable state and work
+        # journal after an actually committed but unacknowledged acceptance.
+        acceptance_candidate = make_image(203)
+        previous_record = None
+        original_remote = deploy.remote
+        acceptance_attempt = {}
+
+        def drop_acceptance_reply(operation, **values):
+            if operation != 'accept': return original_remote(operation, **values)
+            attempt = os.environ['SITE_ATTEMPT']
+            acceptance_attempt['id'] = attempt
+            before = len(json.loads((state / 'owner.json').read_text())['work'])
+            drop_rpc_reply(state, attempt, host_command(adapter, 'accept', version=acceptance_candidate['version']))
+            wait_until(lambda: (len(json.loads((state / 'owner.json').read_text())['work']) > before
+                               and json.loads((state / 'owner.json').read_text())['work'][-1]['exit_code'] is not None),
+                       seconds=15)
+            raise ConnectionError('accept response lost after host commit')
+
+        deploy.remote = drop_acceptance_reply
+        acceptance_error = None
+        lock_process = None
+        try:
+            with deploy.ownership() as lock_process:
+                previous_state = original_remote('preflight', record=acceptance_candidate)['state']
+                previous_record = previous_state['records'][previous_state['active']]
+                original_remote('begin', record=acceptance_candidate)
+                try:
+                    deploy.transition(adapter, acceptance_candidate, previous_record, pull=True)
+                    raise AssertionError('lost acceptance reply unexpectedly completed maintenance')
+                except ConnectionError as exc:
+                    acceptance_error = str(exc)
+        except RuntimeError as exc:
+            assert 'lock connection lost' in str(exc), str(exc)
+        finally:
+            deploy.remote = original_remote
+        assert acceptance_error and 'after host commit' in acceptance_error
+        lock_process.wait(timeout=30)
+        assert subprocess.run(contender_args, input=b'finish\n', capture_output=True).returncode != 0
+        accepted_state = json.loads((state / 'state.json').read_text())
+        assert accepted_state['active'] == acceptance_candidate['version']
+        assert accepted_state.get('pending') is None and accepted_state.get('maintenance_pending') is True
+        assert public_revision() == acceptance_candidate['revision']
+        archive_unresolved_owner('lost_acceptance_reply', acceptance_candidate['version'], None,
+                                 acceptance_candidate['revision'])
+        run_fixture_operation('maintain')
+        maintained = deploy.remote('state')
+        assert maintained['active'] == acceptance_candidate['version'] and not maintained.get('maintenance_pending')
+        assert public_revision() == acceptance_candidate['revision']
+        t.report['failure_matrix']['lost_acceptance_reply']['maintenance_completed'] = True
+        t.report['failure_matrix']['lost_acceptance_reply']['host_accept_exit_code'] = 0
+        print('PASS host acceptance commits despite dropped reply; journal remains unresolved until audit and maintenance', flush=True)
+
         supervisor_source = (adapter / 'supervisor.py').read_text()
         contender_args = ['ssh', '-F', str(t.root / 'ssh_config'), '127.0.0.1',
                           shlex.join(['python3', '-c', supervisor_source, 'serve', 'f' * 32])]
@@ -389,7 +711,9 @@ def main():
         t.report['offline_broken_current_rollback'] = True
         print('PASS offline rollback with stopped current and fresh operator ownership', flush=True)
     except BaseException as exc:
-        t.report['error'] = str(exc); raise
+        t.report['error'] = str(exc)
+        t.report['error_traceback'] = traceback.format_exc()
+        raise
     finally:
         t.close()
         (t.root.parent / (t.root.name + '-report.json')).write_text(json.dumps(t.report, indent=2))

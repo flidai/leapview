@@ -191,7 +191,7 @@ def configure(directory, record):
 
 def kamal(config, *args):
     os.environ['BUNDLE_GEMFILE'] = str(HERE / 'Gemfile')
-    run(['bundle', 'exec', 'ruby', '-r', str(HERE / 'guard.rb'), '-S', 'kamal', *args, '-c', str(config)])
+    return run(['bundle', 'exec', 'ruby', '-r', str(HERE / 'guard.rb'), '-S', 'kamal', *args, '-c', str(config)])
 
 
 def public_check(record):
