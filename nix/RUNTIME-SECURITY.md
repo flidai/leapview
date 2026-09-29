@@ -33,6 +33,9 @@ promotion. `releaseReady` remains false even when this individual check passes.
   remain in the runtime SBOM. Certificate, timezone, MIME and protocol data have
   explicit classifications. The LeapView application keeps its existing admission
   requirements; classification is not a vulnerability waiver.
+- The image must contain exactly the glibc output built by this flake, which
+  includes the upstream fix for CVE-2026-19499. A second or older glibc output
+  fails inventory qualification even if Syft catalogs it.
 - Raw Syft evidence is retained. A separate runtime SBOM adds upstream CPEs from
   `runtime-security-policy.json` without changing installed versions or store paths.
 - Vulnerable synthetic controls exercise glibc, BusyBox, GCC (both outputs), xgcc
@@ -66,8 +69,11 @@ assessment resolves them. There are no automatic ignores or exemptions here.
 
 The [glibc triage](GLIBC-TRIAGE.md) resolves the eleven matches into eight fixes
 already present in the pinned backport bundle, two disputed/non-security
-classifications, and one confirmed `strfmon` defect requiring an update.
-No suppressions have been activated; enforcement remains blocked.
+classifications, and one confirmed `strfmon` defect fixed by the candidate's
+additional upstream patch. The image qualification exercises the corrected buffer
+boundary. Raw version-based matches may remain after a backport. No suppressions
+have been activated; enforcement remains blocked pending artifact-bound reviewed
+assessments of every remaining HIGH/CRITICAL match.
 
 ## Qualification limits and production blockers
 

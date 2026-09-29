@@ -2,10 +2,11 @@
 
 ## Result
 
-Of the eleven HIGH/CRITICAL matches in the candidate scan, **eight have fixes in
-the installed package's patch bundle, two are disputed/non-security issues, and
-one is a confirmed defect in the shipped library**. No scanner suppressions or
-release exceptions have been activated. Production promotion remains blocked.
+Of the eleven HIGH/CRITICAL matches in the original candidate scan, **eight have
+fixes in the pinned Nixpkgs patch bundle, two are disputed/non-security issues,
+and one was a confirmed defect in the shipped library**. The Nix candidate now
+adds the upstream stable fix for that defect. No scanner suppressions or release
+exceptions have been activated. Production promotion remains blocked.
 
 This assessment applies only to:
 
@@ -41,7 +42,7 @@ that all eight upstream regression tests were rerun on the installed binary.
 | CVE-2026-5435 | Fixed in installed backport bundle | `299e1d25c32c5f9ef78ddd6cbfd0c6a09a1f4227`: removes the problematic TSIG printer handling. |
 | CVE-2019-1010022 | Disputed/non-security; eligible for reviewed classification | [Debian's security assessment](https://security-tracker.debian.org/tracker/CVE-2019-1010022) marks this unimportant and records upstream's non-security position. It is not a patched-version claim. |
 | CVE-2019-1010023 | Disputed/non-security; eligible for reviewed classification | [Debian's security assessment](https://security-tracker.debian.org/tracker/CVE-2019-1010023) records the same position. The scenario involves running `ldd` on an attacker-supplied executable; do not turn this into permission to inspect arbitrary executables. |
-| CVE-2026-19499 | **Confirmed library defect; update required** | No `strfmon_l.c` fix is present in the bundle. The controlled runtime probe below detects a write beyond the caller-declared buffer. |
+| CVE-2026-19499 | Fixed in the new Nix candidate | The pinned bundle lacks the fix. The candidate applies upstream stable commit `6ad255db1dad9f2761935d3125b5bc7fa0e6128f` and its controlled boundary probe passes against the patched image. |
 
 The two disputed records remain described as unfixed in Debian's package table;
 its non-security classification does not mean they have been patched. Sourceware
@@ -57,7 +58,9 @@ identifies right-justification padding as the affected operation. The current
 [stable fix `6ad255db1dad9f2761935d3125b5bc7fa0e6128f`](https://sourceware.org/git/?p=glibc.git;a=commit;h=6ad255db1dad9f2761935d3125b5bc7fa0e6128f),
 backported from `b090cf226ff65b913e41536f1f573f500855615c`. It saves the field's
 written length before padding changes the buffer pointer, then uses that original
-length for `memmove`. Our pinned bundle lacks this change.
+length for `memmove`. Our pinned bundle lacks this change; [the additional patch](glibc-CVE-2026-19499.patch)
+is the unchanged upstream stable commit exported with `git format-patch`. Its
+SHA-256 is `21b4138b0c7cdbda4405d776592bab40d92fee4a50e9a73484feef598d797fcd`.
 
 A disposable, read-only, network-disabled container running the existing candidate
 executed this probe against its own Nix glibc:
@@ -87,28 +90,34 @@ library bug, not application-level remote exploitability. Reachability through
 LeapView, DuckDB and its native extensions has not been established; absence of a
 direct application call is not enough to exempt transitive native code.
 
+The patched glibc output is
+`/nix/store/kj7ia0isvb6xh74qavgcshmb7fcskj4l-glibc-2.42-84`.
+Running the same probe through its dynamic loader returned
+`glibc=2.42 result=10 bytes_changed_past_declared_size=0`, exit 0. The rebuilt
+candidate image returned the same passing result. Its Syft inventory contained
+exactly this glibc output and no copy of the old one. The Nix image qualification
+script now runs this probe for every candidate image. These observations establish
+the boundary fix in the tested library; they do not replace full image or scanner
+qualification for a clean revision.
+
 The loaded Docker image ID was
 `sha256:7b6566d639efc96e7aaa256d70629c3219751cd96961465de91a6a95b9ef9147`;
 its revision label matched the candidate above. This is the daemon's loaded image
 identity, distinct from Syft's archive identity in the prior scanner report.
 
-## Recommended next change
+## Remaining release work
 
-1. Prefer a reviewed Nixpkgs revision that incorporates the upstream stable fix.
-   If none is suitable, add the exact upstream backport with a pinned hash to the
-   shared glibc package definition. Replacing only one copied library is not an
-   acceptable fix for the Nix runtime closure.
-2. Rebuild the affected application/image outputs, verify the new closure, and
-   rerun this boundary probe: it must leave all bytes past index 10 unchanged.
-   Requalify DuckDB loading, image operation and export ABI compatibility.
-3. Record the eight backport dispositions and two disputed classifications as
+1. Qualify the exact clean image revision, including DuckDB loading, image
+   operation and export ABI compatibility. Confirm the runtime inventory contains
+   only the patched glibc output.
+2. Record the eight backport dispositions and two disputed classifications as
    reviewed, narrowly bound assessments in protected admission. Retain raw matches
    and require reassessment when the package/store identity changes. Do not install
    a package-wide or unfixed-CVE ignore rule.
-4. Rescan using a fresh database. Require no unassessed HIGH/CRITICAL findings before
+3. Rescan using a fresh database. Require no unassessed HIGH/CRITICAL findings before
    production promotion, then complete digest binding and the other release gates.
 
 The review supports continuing with Nix: most matches reflect missing backport
 knowledge in NVD matching. It also demonstrates why inventory and matching alone
 cannot grant clearance. Maintaining bounded package assessments is real ongoing
-work, and the one confirmed defect needs a dependency update rather than a waiver.
+work; the confirmed defect was fixed in the candidate rather than waived.

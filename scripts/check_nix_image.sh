@@ -10,6 +10,15 @@ nix build --no-update-lock-file .#leapview-image --out-link result-image
 archive="$(readlink -f result-image)"
 image="$(tar -xOf "$archive" manifest.json | jq -er '.[0].RepoTags[0]')"
 docker load --input "$archive"
+# Exercise the image's glibc rather than a host library. Compile with the pinned
+# Nix compiler, then use the image's loader and runtime library search path.
+mkdir -p .tmp/nix-image-qualification
+probe="$PWD/.tmp/nix-image-qualification/strfmon_probe"
+cc scripts/testdata/nix/strfmon_probe.c -o "$probe"
+patchelf --no-sort --set-interpreter /lib64/ld-linux-x86-64.so.2 --remove-rpath "$probe"
+chmod 0555 "$probe"
+docker run --rm --network none --read-only --cap-drop ALL \
+  --volume "$probe:/tmp/strfmon_probe:ro" --entrypoint /tmp/strfmon_probe "$image"
 registry="leapview-nix-qualification-$$"
 reference=""
 registry_id=""

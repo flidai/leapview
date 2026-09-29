@@ -46,7 +46,7 @@ def store_paths(archive):
     return paths
 
 
-def check_inventory(sbom, paths):
+def check_inventory(sbom, paths, expected_glibc_path=None):
     packages = [p for p in sbom['artifacts'] if p['type'] == 'nix']
     accounted = {p['metadata']['path'] for p in packages}
     for path in paths - accounted:
@@ -57,6 +57,10 @@ def check_inventory(sbom, paths):
     missing = set(POLICY['runtime']) - {p['name'] for p in packages}
     if missing:
         raise ValueError('missing runtime packages: ' + ', '.join(sorted(missing)))
+    if expected_glibc_path is not None:
+        actual = [p['metadata']['path'] for p in packages if p['name'] == 'glibc']
+        if actual != [expected_glibc_path]:
+            raise ValueError('image glibc does not match the patched Nix output: ' + repr(actual))
     for package in packages:
         enrich(package)  # Reject newly introduced, unclassified dependencies.
     return packages
@@ -154,7 +158,11 @@ def main():
                     shutil.copyfileobj(source, target)
             run('syft', '--config', str(syft_config), 'docker-archive:' + str(scan_archive), '-o', 'syft-json=' + str(raw_path), env=env)
         sbom = json.loads(raw_path.read_text())
-        packages = check_inventory(sbom, store_paths(archive))
+        expected_glibc_path = run(
+            'nix', 'eval', '--no-update-lock-file', '--raw',
+            '.#packages.x86_64-linux.glibc-runtime.outPath', env=env).strip()
+        packages = check_inventory(sbom, store_paths(archive), expected_glibc_path)
+        summary['expectedGlibcPath'] = expected_glibc_path
         summary['image'] = sbom['source']
         summary['inventory'] = [{'name': p['name'], 'version': p['version'], 'path': p['metadata']['path']} for p in packages]
         runtime = copy.deepcopy(sbom)

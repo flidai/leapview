@@ -36,6 +36,13 @@ class CoverageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unaccounted'):
             m.check_inventory({'artifacts': [p]}, {p['metadata']['path'], '/nix/store/' + 'b' * 32 + '-hidden-library'})
 
+    def test_old_glibc_path_fails_even_when_inventory_is_complete(self):
+        packages = [self.package(name) for name in m.POLICY['runtime']]
+        paths = {p['metadata']['path'] for p in packages}
+        with self.assertRaisesRegex(ValueError, 'does not match the patched Nix output'):
+            m.check_inventory({'artifacts': packages}, paths,
+                              '/nix/store/' + 'b' * 32 + '-glibc-2.42-84')
+
     def test_missing_required_library_fails(self):
         with self.assertRaisesRegex(ValueError, 'missing runtime'):
             m.check_inventory({'artifacts': []}, set())

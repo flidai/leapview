@@ -3,6 +3,7 @@
   application,
   assets,
   portable,
+  patchedRuntime,
   revision,
   dirty,
   buildTime,
@@ -12,11 +13,11 @@ let
     mkdir -p "$out"/{app,bin,sbin,lib64,etc,usr/bin,usr/local/bin,usr/local/libexec,usr/local/share/leapview,var/lib/leapview/home,tmp}
     cp ${portable}/bin/leapview "$out/usr/local/bin/leapview"
     cp ${portable}/bin/leapviewctl "$out/usr/local/libexec/leapviewctl"
-    ln -s ${pkgs.glibc}/lib/ld-linux-x86-64.so.2 "$out/lib64/ld-linux-x86-64.so.2"
-    ln -s ${pkgs.busybox}/bin "$out/busybox"
-    ln -s ${pkgs.busybox}/bin/sh "$out/bin/sh"
-    ln -s ${pkgs.busybox}/bin/env "$out/usr/bin/env"
-    ln -s ${pkgs.busybox}/bin/nologin "$out/sbin/nologin"
+    ln -s ${patchedRuntime.glibc}/lib/ld-linux-x86-64.so.2 "$out/lib64/ld-linux-x86-64.so.2"
+    ln -s ${patchedRuntime.busybox}/bin "$out/busybox"
+    ln -s ${patchedRuntime.busybox}/bin/sh "$out/bin/sh"
+    ln -s ${patchedRuntime.busybox}/bin/env "$out/usr/bin/env"
+    ln -s ${patchedRuntime.busybox}/bin/nologin "$out/sbin/nologin"
     ln -s ${pkgs.cacert}/etc/ssl "$out/etc/ssl"
     printf 'root:x:0:0:root:/root:/bin/sh\nleapview:x:999:999::/var/lib/leapview:/sbin/nologin\n' > "$out/etc/passwd"
     printf 'root:x:0:\nleapview:x:999:\n' > "$out/etc/group"
@@ -66,12 +67,12 @@ pkgs.dockerTools.buildLayeredImage {
       "--production"
     ];
     Env = [
-      "PATH=/usr/local/bin:${pkgs.busybox}/bin"
+      "PATH=/usr/local/bin:${patchedRuntime.busybox}/bin"
       "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
       "LD_LIBRARY_PATH=${
         pkgs.lib.makeLibraryPath [
-          pkgs.glibc
-          pkgs.stdenv.cc.cc.lib
+          patchedRuntime.glibc
+          patchedRuntime.gccLib
         ]
       }"
       "TZDIR=${pkgs.tzdata}/share/zoneinfo"

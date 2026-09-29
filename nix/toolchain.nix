@@ -69,6 +69,7 @@ assert manifest.devDependencies."@playwright/test" == "^${playwright.version}";
     pkg-config
     procps
     stdenv.cc
+    patchelf
     git
     curl
     jq

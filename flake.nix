@@ -43,12 +43,18 @@
             "AGENTS.md"
             "scripts/check_nix_development.mjs"
             "scripts/check_nix_image.sh"
+            "scripts/testdata/nix"
           ]);
       };
       assets = import ./nix/runtime-assets.nix {
         inherit pkgs toolchain application;
         src = source;
       };
+      patchedRuntime = import ./nix/patched-runtime.nix {
+        inherit pkgs;
+        application = applicationBuild;
+      };
+      application = patchedRuntime.application;
       portable = import ./nix/portable.nix { inherit pkgs application toolchain; };
       image = import ./nix/image.nix {
         inherit
@@ -56,12 +62,13 @@
           application
           assets
           portable
+          patchedRuntime
           revision
           dirty
           buildTime
           ;
       };
-      application = import ./nix/application.nix {
+      applicationBuild = import ./nix/application.nix {
         inherit
           pkgs
           toolchain
@@ -81,8 +88,9 @@
         leapview-linux = portable;
         map-assets = assets.maps;
         extension-supply = assets.extensions;
-        go-dependencies = application.dependencies.go;
-        javascript-dependencies = application.dependencies.javascript;
+        glibc-runtime = patchedRuntime.glibc;
+        go-dependencies = applicationBuild.dependencies.go;
+        javascript-dependencies = applicationBuild.dependencies.javascript;
       };
       devShells.${system} = {
         default = pkgs.mkShell {
