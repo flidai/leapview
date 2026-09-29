@@ -71,3 +71,12 @@ jobs:
         run: nix build --no-update-lock-file .#leapview .#leapview-image --no-link -L
       - name: Qualify the exact image with PostgreSQL and browser workflows
         run: nix develop --no-update-lock-file -c bash scripts/check_nix_image.sh
+      - name: Retain bounded image qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nix-image-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          include-hidden-files: true
+          path: .tmp/nix-image-qualification/evidence/image-qualification-report.json

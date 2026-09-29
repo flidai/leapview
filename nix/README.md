@@ -46,7 +46,7 @@ checkout containing secrets, because that copies ignored files into the store to
 | App build, dev process, tests and generation order | Existing Taskfile |
 | Container candidates | Nix application/image derivations; existing production qualifier |
 | Published releases and self-hosting | Existing release pipeline and public Compose package |
-| Managed OS configuration | Managed deployment scaffold in PR #760 |
+| Host provisioning and lifecycle | Existing `deploy/host` bootstrap and `leapviewctl`; OS migration is outside this flake |
 
 The shell includes Go, Bun, Node 24, Task, the native compiler, pkg-config, Git,
 curl, jq, OpenSSL, Python, Make, procps, PostgreSQL client/server tools, Docker CLI/Compose,
@@ -145,6 +145,30 @@ helpers are patched in the sandboxed application build. The Go input is a local
 module proxy, including deterministic version lists needed by sqlc. Neither
 input contains a developer's credentials or caches. Build from a Git flake so
 ignored local secrets do not enter the store.
+
+## Release adoption gates
+
+The application image is usable by Docker on a NixOS host. This does not qualify
+`deploy/host` on NixOS: its current supported host matrix is Ubuntu 24.04 and
+Debian 13. A native NixOS service/module and any Kamal integration need their own
+host lifecycle qualification.
+
+Before replacing the builder in `.github/workflows/release.yml`, satisfy the
+existing release contract:
+
+| Gate | Required integration |
+|---|---|
+| Platform matrix | Build and qualify both AMD64 and ARM64, or explicitly review a change to the supported release matrix. This flake currently supplies AMD64 only. |
+| Release identity | Bind the canonical `VERSION`, clean source revision, commit timestamp and release flag consistently in the binaries and OCI labels. Current Nix outputs intentionally carry development identity. |
+| Supply-chain admission | Publish by digest, attach trusted GitHub provenance and an SPDX SBOM discoverable by the existing OCI admission verifier, and pass its pinned vulnerability policy. A Docker-loadable archive alone does not supply these attestations. |
+| Installation package | Assemble the exported controller and Compose payload from the same build; qualify their loader/ABI compatibility on every advertised host platform. |
+| Upgrade and recovery | Run historical transition qualification against that exact clean image; run installed-candidate and host recovery journeys. Local candidate evidence does not replace final-artifact admission. |
+| Promotion | Preserve the existing pre-publication gates and publish only the digest that passed them. |
+
+The historical fixture uses a private synthetic CA. Its Python publication client
+receives `DEMO_GENERATION_CA_CERT` explicitly, because Nix OpenSSL's default trust
+store can prefer `NIX_SSL_CERT_FILE` over `SSL_CERT_FILE`. Certificate and hostname
+verification remain enabled.
 
 ## Follow-up work
 
