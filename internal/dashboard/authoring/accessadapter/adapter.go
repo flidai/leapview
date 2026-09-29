@@ -54,9 +54,6 @@ func (a *Adapter) Authorize(ctx context.Context, request service.AuthorizationRe
 	if err := request.ProjectID.Validate(); err != nil {
 		return fmt.Errorf("%w: project id: %v", ErrInvalid, err)
 	}
-	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
-		return fmt.Errorf("%w: dashboard id: %v", ErrInvalid, err)
-	}
 	capability, err := capabilityForAction(request.Action)
 	if err != nil {
 		return err
@@ -64,12 +61,18 @@ func (a *Adapter) Authorize(ctx context.Context, request service.AuthorizationRe
 	var allowed bool
 	switch request.Target {
 	case service.AuthorizationTargetProjectDashboard:
+		if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
+			return fmt.Errorf("%w: dashboard id: %v", ErrInvalid, err)
+		}
 		resource, resourceErr := access.NewResourceRef(request.DashboardID, graph.KindDashboard)
 		if resourceErr != nil {
 			return fmt.Errorf("%w: dashboard resource: %v", ErrInvalid, resourceErr)
 		}
 		allowed, err = a.authorizeResource(ctx, actorID, request.ProjectID, resource, capability)
 	case service.AuthorizationTargetNewDashboard:
+		if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
+			return fmt.Errorf("%w: dashboard id: %v", ErrInvalid, err)
+		}
 		if request.Action != authoring.AuthorizationActionEdit {
 			return fmt.Errorf("%w: new-dashboard authorization requires edit action", ErrInvalid)
 		}
@@ -88,6 +91,9 @@ func (a *Adapter) Authorize(ctx context.Context, request service.AuthorizationRe
 			allowed, err = a.authorizeResource(ctx, actorID, request.ProjectID, semanticResource, access.CapabilityResourceRead)
 		}
 	case service.AuthorizationTargetAuthoredDashboard:
+		if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
+			return fmt.Errorf("%w: dashboard id: %v", ErrInvalid, err)
+		}
 		allowed, err = a.authorizeProject(ctx, actorID, request.ProjectID, capability)
 		if err == nil && allowed && strings.TrimSpace(request.OwnerPrincipalID) != actorID {
 			if request.Action == authoring.AuthorizationActionView && request.Visibility == authoring.VisibilityOrganization {
@@ -95,6 +101,18 @@ func (a *Adapter) Authorize(ctx context.Context, request service.AuthorizationRe
 			}
 			allowed, err = a.authorizeProject(ctx, actorID, request.ProjectID, access.CapabilityProjectAdmin)
 		}
+	case service.AuthorizationTargetSemanticModel:
+		if request.Action != authoring.AuthorizationActionView {
+			return fmt.Errorf("%w: semantic-model authorization requires view action", ErrInvalid)
+		}
+		if err := request.SemanticModel.Validate(); err != nil {
+			return fmt.Errorf("%w: semantic model: %v", ErrInvalid, err)
+		}
+		resource, resourceErr := access.NewResourceRef(request.SemanticModel, graph.KindSemanticModel)
+		if resourceErr != nil {
+			return fmt.Errorf("%w: semantic model resource: %v", ErrInvalid, resourceErr)
+		}
+		allowed, err = a.authorizeResource(ctx, actorID, request.ProjectID, resource, access.CapabilityResourceRead)
 	default:
 		return fmt.Errorf("%w: unsupported authorization target %q", ErrInvalid, request.Target)
 	}

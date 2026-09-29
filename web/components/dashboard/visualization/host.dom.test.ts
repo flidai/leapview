@@ -232,6 +232,28 @@ test('mounted deferred hosts retain current renderer, shell, and actions after s
   }
 })
 
+test('Explore from here appears only when a trusted dashboard link is supplied', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (window as any).__lvSourceHosts)
+    const state = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.envelope = (window as any).__lvSourceHosts.orders_chart.envelope
+      document.body.append(host)
+      await host.updateComplete
+      const before = host.shadowRoot.querySelector('.visual-options a[role="menuitem"]')
+      host.exploreHref = '/dashboards/sales/pages/overview/visuals/revenue/explore'
+      await host.updateComplete
+      const link = host.shadowRoot.querySelector('.visual-options a[role="menuitem"]') as HTMLAnchorElement | null
+      const result = { before: Boolean(before), text: link?.textContent?.trim(), href: link?.getAttribute('href') }
+      host.remove()
+      return result
+    })
+    expect(state).toEqual({ before: false, text: 'Explore from here', href: '/dashboards/sales/pages/overview/visuals/revenue/explore' })
+  } finally { await page.close() }
+})
+
 test('visual option menus are exclusive and dismiss on Escape or outside pointer input', async () => {
   const page = await browser.newPage()
   try {

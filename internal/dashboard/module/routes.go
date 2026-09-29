@@ -68,6 +68,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	}
 	r.Get("/dashboards/{dashboard}", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Dashboard))
 	r.Get("/dashboards/{dashboard}/pages/{page}", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Page))
+	r.Get("/dashboards/{dashboard}/pages/{page}/visuals/{visual}/explore", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.ExploreVisualization))
 	// Draft creation is project-scoped. The shared project authorizer resolves
 	// RESOURCE_EDIT through the explicit project role bundle (the same fallback
 	// used by the generated project-root API), never as a direct unsupported

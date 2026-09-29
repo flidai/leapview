@@ -1,7 +1,14 @@
 import { expect, test } from 'bun:test'
 import type { DataExplorerCommand } from '../../generated/signals'
 import { DataExplorerQueryController } from './data-explorer-controller'
-import { dataExplorerExportURL, dataExplorerURL, savedExplorationShareURL } from './data-explorer-url'
+import { dashboardReturnPath, dataExplorerExportURL, dataExplorerURL, savedExplorationShareURL } from './data-explorer-url'
+
+test('dashboard return context accepts only a same-origin dashboard page path', () => {
+  expect(dashboardReturnPath('?returnTo=%2Fdashboards%2Fdashboard%3Asales%2Fpages%2Foverview')).toBe('/dashboards/dashboard:sales/pages/overview')
+  expect(dashboardReturnPath('?returnTo=https%3A%2F%2Fevil.example%2Fdashboards%2Fx%2Fpages%2Fy')).toBe('')
+  expect(dashboardReturnPath('?returnTo=%2F%2Fevil.example%2Fdashboards%2Fx%2Fpages%2Fy')).toBe('')
+  expect(dashboardReturnPath('?returnTo=%2Fexplore')).toBe('')
+})
 
 test('exploration URL deterministically includes durable query state only', () => {
   const command = {

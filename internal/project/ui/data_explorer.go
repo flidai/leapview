@@ -35,6 +35,12 @@ type DataExplorerSavedExplorationBootstrap struct {
 	Enabled  bool
 }
 
+type DataExplorerDashboardBootstrap struct {
+	TargetsURL string
+	AppendURL  string
+	Command    uicommand.Binding
+}
+
 type DataExplorerSavedExplorationCommandBindings struct {
 	Create    uicommand.Binding
 	Update    uicommand.Binding
@@ -75,14 +81,18 @@ func DataExplorerPage(catalog catalog.Catalog, page uisignals.DataExplorerPageSi
 }
 
 func DataExplorerPageWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, csrfToken string, providers ...webpage.Provider) g.Node {
-	return dataExplorerPageWithAgentAndSaved(page, explorer, agent, commands, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(false)}, csrfToken, providers...)
+	return dataExplorerPageWithAgentAndSaved(page, explorer, agent, commands, DataExplorerSavedExplorationBootstrap{State: DefaultDataExplorerSavedExplorationState(false)}, DataExplorerDashboardBootstrap{}, csrfToken, providers...)
 }
 
 func DataExplorerPageWithSavedExplorations(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
-	return dataExplorerPageWithAgentAndSaved(page, explorer, DataExplorerAgentBootstrap{}, DataExplorerAgentCommandBindings{}, saved, csrfToken, providers...)
+	return DataExplorerPageWithSavedExplorationsAndDashboard(catalog.Catalog{}, page, explorer, saved, DataExplorerDashboardBootstrap{}, csrfToken, providers...)
 }
 
-func dataExplorerPageWithAgentAndSaved(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, saved DataExplorerSavedExplorationBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
+func DataExplorerPageWithSavedExplorationsAndDashboard(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
+	return dataExplorerPageWithAgentAndSaved(page, explorer, DataExplorerAgentBootstrap{}, DataExplorerAgentCommandBindings{}, saved, dashboard, csrfToken, providers...)
+}
+
+func dataExplorerPageWithAgentAndSaved(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, saved DataExplorerSavedExplorationBootstrap, dashboard DataExplorerDashboardBootstrap, csrfToken string, providers ...webpage.Provider) g.Node {
 	saved.State = normalizeDataExplorerSavedExplorationState(saved.State, saved.Enabled)
 	layout := webpage.Resolve(firstProvider(providers), webpage.Context{Active: "data-explorer", PageTitle: page.Title})
 	explorerUpdatesURL := dataExplorerUpdatesURLWithOptions(explorer.Command, uisignals.ValueOrZero(saved.State.List.SelectedID), savedExplorationSelectionIncludesArchived(saved.State))
@@ -106,6 +116,9 @@ func dataExplorerPageWithAgentAndSaved(page uisignals.DataExplorerPageSignal, ex
 		UpdatesURL: explorerUpdatesURL,
 		Content: g.El("lv-data-explorer",
 			g.Attr("slot", "page"),
+			g.Attr("data-dashboard-targets-url", dashboard.TargetsURL),
+			g.Attr("data-dashboard-append-url", dashboard.AppendURL),
+			g.Attr("data-dashboard-append-operation-id", dashboard.Command.OperationID()),
 			g.Attr("data-indicator", "agentTurnPending"),
 			g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPost("/explore/command")),
 			g.Attr("data-on:lv-chat-submit", agentTurn),

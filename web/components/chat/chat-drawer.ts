@@ -14,7 +14,6 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import { agentIcon } from './agent-icon'
-import { exploreContextHref } from './explore-context'
 import './chat-composer'
 import './chat-thread'
 import {
@@ -50,7 +49,6 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) open = false
   @property({ type: Boolean, reflect: true }) embedded = false
   @property({ attribute: false }) suggestions: AgentReferenceSignal[] = []
-  @property({ attribute: false }) exploreHref: string | null = null
   @state() private references: AgentReferenceSignal[] = []
   @state() private referenceLimitMessage = ''
 	@state() private editMessageId = ''
@@ -205,16 +203,6 @@ class ChatDrawer extends DatastarLit(LitElement) {
       min-width: 0;
       align-items: center;
 			gap: var(--lv-space-xs);
-    }
-
-    .context-link {
-      width: auto;
-      height: auto;
-      flex: 0 0 auto;
-      margin-left: auto;
-      color: var(--lv-fg-link);
-      font: var(--lv-type-caption);
-      white-space: nowrap;
     }
 
     .page-context {
@@ -382,7 +370,6 @@ class ChatDrawer extends DatastarLit(LitElement) {
   render() {
     const agent = this.agent
 		const context = this.context
-		const exploreHref = this.exploreHref ?? exploreContextHref(context)
 		const currentFilters = this.dashboardFilters
 		const controls = Object.values(currentFilters.appliedControls ?? {})
 			.filter((control) => control.expression.kind !== 'unfiltered').length
@@ -413,7 +400,6 @@ class ChatDrawer extends DatastarLit(LitElement) {
             <div class="context-line">
               <span class="page-context">${context?.pageTitle || 'Current page'}</span>
               ${controls || selections ? html`<span class="context-separator" aria-hidden="true">·</span><span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>` : html`<span class="context-hint">· Page included</span>`}
-              ${exploreHref ? html`<a class="context-link" href=${exploreHref} target="_blank" rel="noopener noreferrer" title="Open Explorer in a new tab" aria-label="Open Explorer in a new tab">Open Explorer</a>` : null}
             </div>
             ${this.referenceLimitMessage ? html`
               <div class="reference-limit-status" data-reference-limit-status role="status" aria-live="polite">${this.referenceLimitMessage}</div>

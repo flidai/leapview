@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "11269282890d42e50c38b36f1c45ca48d934502d27881a94505dfd0627d90109"
+	const expectedRouteContractDigest = "962e9e89e6c62f9486e125da30dbf1da70b49c79b2d20ef1263516a99b7e050f"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -170,6 +170,9 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case path == "/dashboards/{dashboard}/preview" || path == "/dashboards/{dashboard}/export.yaml":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_READ"
+	case path == "/explore/dashboard-targets" || path == "/explore/dashboard-targets/{dashboard}" || path == "/explore/add-to-dashboard":
+		authenticated.owner = "dashboard"
+		authenticated.privilege = "RESOURCE_EDIT"
 	case path == "/dashboards/{asset}/appearance":
 		authenticated.owner = "project"
 		authenticated.privilege = "RESOURCE_MANAGE"
@@ -308,11 +311,14 @@ GET /dashboards/{dashboard}/edit
 GET /dashboards/{dashboard}/fork
 GET /dashboards/{dashboard}/export.yaml
 GET /dashboards/{dashboard}/pages/{page}
+GET /dashboards/{dashboard}/pages/{page}/visuals/{visual}/explore
 GET /dashboards/{dashboard}/preview
 GET /dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /embed/dashboards/{publicId}
 GET /embed/dashboards/{publicId}/pages/{page}
 GET /explore
+GET /explore/dashboard-targets
+GET /explore/dashboard-targets/{dashboard}
 GET /explore/export
 GET /explore/saved/{exploration}
 GET /favicon.ico
@@ -367,6 +373,7 @@ GET /catalog/search
 GET /connections/search
 GET /dashboards/search
 POST /explore/command
+POST /explore/add-to-dashboard
 POST /explore/saved/command
 POST /dashboards/{dashboard}/archive
 POST /dashboards/{dashboard}/delete

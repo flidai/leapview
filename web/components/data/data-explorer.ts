@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronRight, Code2, Columns3, Database, Filter, Play, RotateCcw, Search, Sigma, Square, SquareCheckBig, X } from 'lucide'
+import { ArrowLeft, ChevronRight, Code2, Columns3, Database, Filter, Play, RotateCcw, Search, Sigma, Square, SquareCheckBig, X } from 'lucide'
 import type {
   DataExploreCommand,
   DataExploreFieldSignal,
@@ -34,18 +34,17 @@ import {
   objectDatasetID,
   toggleVisibleColumns,
 } from './data-explorer-controller'
-import { dataExplorerURL, updateDataExplorerURL } from './data-explorer-url'
+import { dashboardReturnPath, updateDataExplorerURL } from './data-explorer-url'
 import { renderSelectedFieldRows, renderSemanticFieldPane, renderSemanticFilterDock, semanticLayoutStyles } from './data-explorer-semantic-layout'
 import {
   emptySavedExplorations,
   renderExplorationShareMenu,
   renderSavedExplorations,
   SavedExplorationTracker,
+  SavedExplorationViewController,
   savedExplorationSelectionIncludesArchived,
   savedExplorationStyles,
-  type SavedExplorationCurrent,
   type SavedExplorationViewOptions,
-  type SavedExplorationVisibility,
 } from './data-explorer-saved'
 import '../chat/chat-drawer'
 import './preview-table'
@@ -55,6 +54,8 @@ import '../dashboard/visualization/host'
 import { DataExplorerClientState } from './data-explorer-client'
 import type { DataExplorerFilterControlDetail } from './data-explorer-query-controls'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
+import '../shared/command'
+import { DashboardAppendController, dashboardAppendStyles } from './data-explorer-dashboard'
 import {
   emptyExplorationSpec,
   explorationRunValidation,
@@ -114,6 +115,8 @@ const emptyExplorer: DataExplorerSignal = {
 type ExplorerColumn = { key: string, label?: string }
 
 class DataExplorerPage extends DatastarLit(LitElement) {
+  private readonly dashboardAppend = new DashboardAppendController(this, () => this.requestUpdate())
+  private readonly savedViewController = new SavedExplorationViewController(this, () => this.requestUpdate())
   @property({ type: Boolean, reflect: true }) embedded = false
   @state() private search = ''
   @state() private semanticFieldSearch = ''
@@ -129,12 +132,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private browseVisibleColumns: { objectKey: string; keys: string[] } | null = null
   @state() private exploreVisibleColumns: string[] = []
   @state() private resultView: 'table' | 'chart' | 'pivot' | 'details' = 'table'
-  @state() private savedTitle = ''
-  @state() private savedDuplicateTitle = ''
-  @state() private savedVisibility: SavedExplorationVisibility = 'private'
-  @state() private currentSavedVisibility: SavedExplorationVisibility = 'private'
-  @state() private savedShareStatus = ''
-  @state() private savedShareFallbackURL = ''
   @state() private exploreExecutionState: 'idle' | 'pending' | 'running' | 'stopped' | 'uncertain' = 'idle'
   @state() private exploreTransportFailure: BrowserCommandFailure | null = null
   private exploreTransportAction: 'run' | 'stop' | null = null
@@ -154,8 +151,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private readonly clientState = new DataExplorerClientState()
   private readonly savedExplorationTracker = new SavedExplorationTracker({
     onBaselineChanged: (current) => {
-      this.savedDuplicateTitle = ''
-      this.currentSavedVisibility = current?.visibility ?? 'private'
+      this.savedViewController.baselineChanged(current)
     },
     onDirty: () => this.dispatchEvent(new CustomEvent('lv-saved-exploration-dirty', { bubbles: true, composed: true })),
   })
@@ -233,6 +229,15 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       padding: var(--base-size-8) var(--base-size-12);
       background: var(--lv-bg-app);
     }
+
+    .header-title { display: flex; min-width: 0; align-items: center; gap: var(--base-size-8); }
+    .return-link {
+      display: inline-flex; flex: 0 0 auto; align-items: center; gap: var(--base-size-4);
+      color: var(--lv-fg-muted); text-decoration: none; font: var(--lv-type-caption);
+    }
+    .return-link:hover, .return-link:focus-visible { color: var(--lv-fg-link); }
+    .return-link svg { width: var(--base-size-16); height: var(--base-size-16); }
+    .header-divider { flex: 0 0 auto; color: var(--lv-fg-muted); }
 
     .header-actions,
     .query-actions,
@@ -842,6 +847,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
 
     ${savedExplorationStyles}
+    ${dashboardAppendStyles}
     ${semanticLayoutStyles}
 
     .content {
@@ -1113,41 +1119,39 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const agentEnabled = this.signal<unknown | null>('agent', null) !== null
     const columns = this.headerColumns(explorer, semanticActive)
     const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
+    const returnPath = !this.embedded && typeof window !== 'undefined' ? dashboardReturnPath(window.location.search) : ''
     const savedExplorations = this.savedExplorations
     const activeSpec = this.activeExplorationSpec()
+    this.dashboardAppend.syncModel(activeSpec.modelId?.trim() ?? '')
     const canSaveCurrent = semanticActive && Boolean(activeSpec.modelId?.trim())
+    const currentExplore = explorer.explore
+    const expectedExploreRequest = this.optimisticExplore?.requestSeq ?? currentExplore?.command?.requestSeq ?? 0
+    const dashboardAppendEnabled = this.dashboardAppend.isAvailable(
+      !this.embedded && canSaveCurrent,
+      Boolean(this.getAttribute('data-dashboard-append-operation-id')),
+      expectedExploreRequest,
+      currentExplore?.status,
+      currentExplore?.result,
+      Boolean(currentExplore && explorationRunValidation(activeSpec, currentExplore.fields).length === 0),
+    )
     const savedVisible = savedExplorations.enabled && !this.embedded && (
       canSaveCurrent
       || Boolean(savedExplorations.current)
       || Boolean(savedExplorations.list?.items?.length)
       || savedExplorations.save?.state === 'error'
     )
-    const savedViewOptions: SavedExplorationViewOptions = {
-      savedTitle: () => this.savedTitle,
-      savedDuplicateTitle: () => this.savedDuplicateTitle,
-      savedVisibility: () => this.savedVisibility,
-      currentSavedVisibility: (current: SavedExplorationCurrent) => this.currentSavedVisibility || current.visibility,
-      canSaveCurrent: () => canSaveCurrent,
-      activeSpec: () => activeSpec,
-      onSavedTitleInput: (value) => this.savedTitle = value,
-      onDuplicateTitleInput: (value) => this.savedDuplicateTitle = value,
-      onSavedVisibilityInput: (value) => this.savedVisibility = value,
-      onCurrentSavedVisibilityInput: (value) => this.currentSavedVisibility = value,
-      onCommand: (command) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-command', { bubbles: true, composed: true, detail: command })),
-      onReopen: (current) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
-        bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },
-      })),
-      shareStatus: () => this.savedShareStatus,
-      shareFallbackURL: () => this.savedShareFallbackURL,
-      onShareStatus: (message, fallbackURL) => {
-        this.savedShareStatus = message
-        this.savedShareFallbackURL = fallbackURL
-      },
-    }
+    const savedViewOptions: SavedExplorationViewOptions = this.savedViewController.options(
+      canSaveCurrent, activeSpec,
+      dashboardAppendEnabled ? () => this.dashboardAppend.render(true, activeSpec) : undefined,
+    )
+    const shareVisible = savedVisible || dashboardAppendEnabled
     return html`
       <section class=${`route${semanticActive ? ' semantic' : ''}${savedVisible ? ' saved-enabled' : ''}${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
         <header class="header">
-          <h1>${page?.title ?? 'Data Explorer'}</h1>
+          <div class="header-title">
+            ${returnPath ? html`<a class="return-link" href=${returnPath} title="Back to dashboard">${lucideIcon(ArrowLeft)}<span>Dashboard</span></a><span class="header-divider" aria-hidden="true">/</span>` : nothing}
+            <h1>${page?.title ?? 'Data Explorer'}</h1>
+          </div>
           <div class="header-actions">
             ${selected ? html`
               <div class="mode-switch" role="group" aria-label="Exploration mode">
@@ -1179,7 +1183,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 </div>
               </details>
             ` : nothing}
-            ${savedVisible ? renderExplorationShareMenu(savedExplorations, savedViewOptions, Boolean(explorer.explore?.result?.truncated)) : nothing}
+            ${shareVisible ? renderExplorationShareMenu(savedExplorations, savedViewOptions, Boolean(explorer.explore?.result?.truncated)) : nothing}
             ${agentEnabled ? html`<button type="button" class="icon-button ask-button" aria-label="Ask about this data" aria-expanded=${String(this.agentDrawerOpen)} title="Ask about this data" @click=${() => this.setAgentDrawerOpen(!this.agentDrawerOpen)}>${agentIcon()}<span>Ask</span></button>` : nothing}
           </div>
         </header>
@@ -1247,7 +1251,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         </div>
         ${agentEnabled && this.agentDrawerOpen ? html`<lv-chat-drawer
           open
-          .exploreHref=${activeSpec.modelId?.trim() && !this.embedded ? dataExplorerURL({ mode: 'explore', explore: { spec: activeSpec } } as DataExplorerCommand) : ''}
           .suggestions=${dataExplorerAgentSuggestions(explorer, this.optimisticExplore ?? explorer.explore.command, this.page?.context)}
           @lv-chat-drawer-close=${() => this.setAgentDrawerOpen(false)}
           @lv-chat-new=${this.handleAgentNew}

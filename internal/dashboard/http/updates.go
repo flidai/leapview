@@ -111,6 +111,14 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 			return
 		}
 		filterState = record.State.Filters.State
+		if err := decodeDashboardSelectionState(record.State.InteractionSelections, &initialFilters.Selections); err != nil {
+			nethttp.Error(w, "dashboard interaction state is invalid", nethttp.StatusInternalServerError)
+			return
+		}
+		if err := decodeDashboardSelectionState(record.State.SpatialSelections, &initialFilters.SpatialSelections); err != nil {
+			nethttp.Error(w, "dashboard spatial state is invalid", nethttp.StatusInternalServerError)
+			return
+		}
 	}
 	if newSession {
 		h.recordDashboardView(r, projectID, dashboardID, activePage.ID)
@@ -144,8 +152,11 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		go keepDashboardSessionAlive(streamContext, h.SessionStore, sessionKey, dashboardSessionKeepAliveInterval, cancelStream)
 	}
 	coordinatorContext := h.analyticalStreamContext(streamContext, streamID)
+	authorizedExploreVisuals := h.authorizedExploreVisuals(r, reportDefinition, model, activePage)
 	coordinator, closeCoordinator, openErr := registry.OpenWithError(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
-		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
+		envelope := lddatastar.RefreshEventEnvelope(event)
+		envelope = h.decorateExploreHrefsForAuthorizedVisuals(envelope, event, reportDefinition, model, activePage, clientID, streamInstanceID, authorizedExploreVisuals)
+		broker.PublishEnvelope(streamID, envelope)
 	})
 	if openErr != nil {
 		nethttp.Error(w, "dashboard stream capacity is unavailable", nethttp.StatusServiceUnavailable)
@@ -159,7 +170,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		providers = []webpage.Provider{h.Layout(r)}
 	}
 	catalog := h.catalogWithDashboardAppearance(r.Context(), metrics.Catalog(), dashboardID)
-	bootstrap := reportui.BootstrapSignalsWithRouteScope(h.RouteScope, clientID, streamInstanceID, catalog, reportDefinition, model, definitions, pages, activePage, initialFilters, providers...)
+	bootstrap := reportui.BootstrapSignalsWithExploreAuthorization(h.RouteScope, clientID, streamInstanceID, catalog, reportDefinition, model, definitions, pages, activePage, initialFilters, authorizedExploreVisuals, providers...)
 	if presentation, ok := publicPresentationFromContext(r.Context()); ok {
 		bootstrap = reportui.PublicBootstrapSignals(clientID, streamInstanceID, presentation.PublicID, presentation.Presentation, catalog, reportDefinition, model, definitions, pages, activePage, initialFilters)
 	} else if hasClientAgentState(r) {

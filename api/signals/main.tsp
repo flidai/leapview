@@ -1517,6 +1517,8 @@ model DashboardInteractionCommand {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard" })
 model DashboardVisualizationSignal {
   `schemaVersion`: 14;
+  /** Authorized app-only handoff route when this query can be represented faithfully in Data Explorer. */
+  `exploreHref`?: string;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;

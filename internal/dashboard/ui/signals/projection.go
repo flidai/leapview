@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/dashboard/explorehandoff"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -171,6 +172,33 @@ func InitialVisualizationEnvelopes(definitions map[string]visualizationdefinitio
 		out[id] = signal
 	}
 	return out
+}
+
+// AttachDashboardExploreHrefs projects server-authorized app handoff routes
+// only for visual query definitions and initial session state that Explorer
+// can reproduce faithfully. The route validates the live session again.
+func AttachDashboardExploreHrefs(envelope *DashboardEnvelope, report dashboarddefinition.Definition, model *semanticmodel.Model, page dashboard.Page, filters dashboard.Filters, basePath, clientID, streamInstanceID string) {
+	if envelope == nil {
+		return
+	}
+	for visualID, signal := range envelope.Visuals {
+		signal.ExploreHref = nil
+		envelope.Visuals[visualID] = signal
+	}
+	if explorehandoff.HasActiveState(filters, len(report.CompiledFilterBindings()) != 0) {
+		return
+	}
+	for visualID, signal := range envelope.Visuals {
+		if _, eligible := explorehandoff.SpecForVisual(report.Visualizations[visualID], model); !eligible {
+			continue
+		}
+		href, ok := explorehandoff.RouteHref(basePath, report.ID, page.ID, visualID, clientID, streamInstanceID)
+		if !ok {
+			continue
+		}
+		signal.ExploreHref = &href
+		envelope.Visuals[visualID] = signal
+	}
 }
 
 func ReportPageHeaderDetail(activePage dashboard.Page) string {

@@ -1,4 +1,4 @@
-import { css, html, nothing } from 'lit'
+import { css, html, nothing, type TemplateResult } from 'lit'
 import { ChevronDown, Share2 } from 'lucide'
 import type { DataExplorerCommand, SavedExplorationCommandSignal, SavedExplorationStateSignal } from '../../generated/signals'
 import type { ExplorationSpec } from '../../generated/exploration'
@@ -301,6 +301,55 @@ export type SavedExplorationViewOptions = {
   shareStatus(): string
   shareFallbackURL(): string
   onShareStatus(message: string, fallbackURL: string): void
+  dashboardAppend?(): TemplateResult | typeof nothing
+}
+
+export class SavedExplorationViewController {
+  savedTitle = ''
+  savedDuplicateTitle = ''
+  savedVisibility: SavedExplorationVisibility = 'private'
+  currentSavedVisibility: SavedExplorationVisibility = 'private'
+  savedShareStatus = ''
+  savedShareFallbackURL = ''
+
+  constructor(private readonly host: EventTarget, private readonly refresh: () => void) {}
+
+  baselineChanged(current: SavedExplorationCurrent | null | undefined): void {
+    this.savedDuplicateTitle = ''
+    this.currentSavedVisibility = current?.visibility ?? 'private'
+    this.refresh()
+  }
+
+  options(
+    canSaveCurrent: boolean,
+    activeSpec: ExplorationSpec,
+    dashboardAppend?: () => TemplateResult | typeof nothing,
+  ): SavedExplorationViewOptions {
+    const update = <T>(setter: (value: T) => void) => (value: T) => { setter(value); this.refresh() }
+    return {
+      savedTitle: () => this.savedTitle,
+      savedDuplicateTitle: () => this.savedDuplicateTitle,
+      savedVisibility: () => this.savedVisibility,
+      currentSavedVisibility: (current) => this.currentSavedVisibility || current.visibility,
+      canSaveCurrent: () => canSaveCurrent,
+      activeSpec: () => activeSpec,
+      onSavedTitleInput: update((value: string) => { this.savedTitle = value }),
+      onDuplicateTitleInput: update((value: string) => { this.savedDuplicateTitle = value }),
+      onSavedVisibilityInput: update((value: SavedExplorationVisibility) => { this.savedVisibility = value }),
+      onCurrentSavedVisibilityInput: update((value: SavedExplorationVisibility) => { this.currentSavedVisibility = value }),
+      onCommand: (command) => this.host.dispatchEvent(new CustomEvent('lv-saved-exploration-command', { bubbles: true, composed: true, detail: command })),
+      onReopen: (current) => this.host.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
+        bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },
+      })),
+      shareStatus: () => this.savedShareStatus,
+      shareFallbackURL: () => this.savedShareFallbackURL,
+      onShareStatus: (message, fallbackURL) => update((value: [string, string]) => {
+        this.savedShareStatus = value[0]
+        this.savedShareFallbackURL = value[1]
+      })([message, fallbackURL]),
+      dashboardAppend,
+    }
+  }
 }
 
 export function synchronizeSavedExplorationURL(
@@ -357,12 +406,12 @@ export function renderSavedExplorations(state: SavedExplorationStateSignal, opti
 }
 
 export function renderExplorationShareMenu(state: SavedExplorationStateSignal, options: SavedExplorationViewOptions, exportTruncated = false) {
-  if (!state.enabled) return nothing
+  if (!state.enabled && !options.dashboardAppend) return nothing
   const currentQueryURL = options.canSaveCurrent() && options.activeSpec().modelId?.trim()
     ? dataExplorerURL({ mode: 'explore', explore: { spec: options.activeSpec() } } as DataExplorerCommand)
     : ''
   const savedURL = state.current ? savedExplorationShareURL(state.current.id, state.current.status === 'archived') : ''
-  if (!currentQueryURL && !savedURL) return nothing
+  if (!currentQueryURL && !savedURL && !options.dashboardAppend) return nothing
   return html`
     <details class="saved-exploration-sharing">
       <summary aria-label="Share or export exploration">${lucideIcon(Share2, { size: 15 })}<span>Share</span></summary>
@@ -370,6 +419,7 @@ export function renderExplorationShareMenu(state: SavedExplorationStateSignal, o
         <span class="saved-exploration-sharing-label">Share</span>
         ${currentQueryURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(currentQueryURL, options)}>Copy current query link</button>` : nothing}
         ${savedURL ? html`<button type="button" class="text-button" @click=${() => void copyExplorationLink(savedURL, options)}>Copy saved version link</button>` : nothing}
+        ${options.dashboardAppend?.() ?? nothing}
         ${currentQueryURL ? html`
           <span class="saved-exploration-sharing-label">Export</span>
           ${exportTruncated ? html`<span class="saved-exploration-export-unavailable">Increase row limit, then run to export.</span>` : html`

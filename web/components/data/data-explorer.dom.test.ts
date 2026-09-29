@@ -47,6 +47,110 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('dashboard handoff keeps a compact return link through Explorer URL edits', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/?returnTo=%2Fdashboards%2Fdashboard%3Aexecutive-sales%2Fpages%2Foverview`)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ page: { kind: 'data', title: 'Data Explorer', tabs: [] } })
+      const explorer = document.createElement('lv-data-explorer') as any
+      document.body.append(explorer)
+      await explorer.updateComplete
+      const before = (explorer.shadowRoot.querySelector('.return-link') as HTMLAnchorElement | null)?.getAttribute('href')
+      explorer.replaceDataExplorerURL({ mode: 'browse', objectKey: 'model:orders' })
+      await explorer.updateComplete
+      const after = (explorer.shadowRoot.querySelector('.return-link') as HTMLAnchorElement | null)?.getAttribute('href')
+      const search = window.location.search
+      explorer.remove()
+      return { before, after, search }
+    })
+    expect(state.before).toBe('/dashboards/dashboard:executive-sales/pages/overview')
+    expect(state.after).toBe(state.before)
+    expect(new URLSearchParams(state.search).get('returnTo')).toBe(state.before ?? null)
+  } finally { await page.close() }
+})
+
+test('Share menu appends a fresh canonical exploration through an inline authored-dashboard picker', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const captured: { body?: Record<string, unknown>; operationID?: string } = {}
+  let detailLoads = 0
+  let appendAttempts = 0
+  await page.route('**/explore/dashboard-targets**', async (route) => {
+    const url = new URL(route.request().url())
+    if (decodeURIComponent(url.pathname).endsWith('/dashboard:authored-sales')) {
+      detailLoads += 1
+      await route.fulfill({ json: {
+        id: 'dashboard:authored-sales', title: 'Sales', semanticModel: 'semantic-model:sales', draftId: 'draft-authored-sales',
+        revisionToken: detailLoads === 1 ? 'opaque-revision' : 'fresh-revision', pages: [{ id: 'overview', title: 'Overview' }],
+      } })
+    } else {
+      await route.fulfill({ json: { items: [{ id: 'dashboard:authored-sales', title: 'Sales', semanticModel: 'semantic-model:sales' }] } })
+    }
+  })
+  await page.route('**/explore/add-to-dashboard', async (route) => {
+    captured.body = route.request().postDataJSON() as Record<string, unknown>
+    captured.operationID = route.request().headers()['x-leapview-operation-id']
+    appendAttempts += 1
+    if (appendAttempts === 1) {
+      await route.fulfill({ status: 409, body: 'conflict' })
+      return
+    }
+    await route.fulfill({ status: 201, json: { dashboardId: 'dashboard:authored-sales', revision: { revisionId: 'revision-2', number: 2, contentHash: `sha256:${'b'.repeat(64)}` } } })
+  })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const spec = { schemaVersion: 1, modelId: 'semantic-model:sales', datasetId: 'orders', dimensions: [{ field: 'orders.status' }], metrics: [{ field: 'orders.revenue' }], filters: [], sort: [], limit: 100 }
+      const exploreCommand = { spec, semanticModelId: spec.modelId, datasetId: spec.datasetId, dimensions: ['orders.status'], metrics: ['orders.revenue'], filters: [], sort: [], limit: 100, requestSeq: 1, resetVersion: 0, columnWidths: {} }
+      const explore = {
+        command: exploreCommand, semanticModels: [{ id: spec.modelId, title: 'Sales', datasets: [] }], datasets: [],
+        fields: [
+          { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
+          { id: 'orders.revenue', label: 'Revenue', kind: 'metric', datasetId: 'orders', type: 'decimal', compatible: true, selected: true },
+        ],
+        result: { columns: [{ key: 'status' }, { key: 'revenue' }], rows: [{ status: 'paid', revenue: 25 }], rowsReturned: 1, durationMs: 4, requestSeq: 1, truncated: false, warnings: [] },
+        status: { state: 'success', requestSeq: 1, loading: false, stale: false },
+      }
+      mergePatch({ page: { kind: 'data', title: 'Data Explorer', tabs: [] }, dataExplorer: {
+        objects: [], selectedKey: '', command: { mode: 'explore', objectKey: '', explore: exploreCommand }, explore,
+        preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} }, warnings: [],
+      } })
+      const element = document.createElement('lv-data-explorer')
+      element.setAttribute('data-dashboard-targets-url', '/explore/dashboard-targets')
+      element.setAttribute('data-dashboard-append-url', '/explore/add-to-dashboard')
+      element.setAttribute('data-dashboard-append-operation-id', 'executeDashboardAuthoringCommand')
+      document.body.append(element)
+    })
+    const explorer = page.locator('lv-data-explorer')
+    await explorer.locator('summary[aria-label="Share or export exploration"]').click()
+    const picker = explorer.locator('.dashboard-append-picker')
+    await picker.locator('summary').click()
+    await page.waitForFunction(() => document.querySelector('lv-data-explorer')?.shadowRoot?.querySelector('option[value="dashboard:authored-sales"]'))
+    await picker.getByLabel('Choose dashboard').selectOption('dashboard:authored-sales')
+    await page.waitForFunction(() => document.querySelector('lv-data-explorer')?.shadowRoot?.querySelector<HTMLSelectElement>('[aria-label="Choose dashboard page"]')?.value === 'overview')
+    const position = await picker.locator('.dashboard-append-picker-panel').evaluate((node) => getComputedStyle(node).position)
+    expect(position).toBe('static')
+    await picker.getByRole('button', { name: 'Add tile' }).click()
+    await page.waitForFunction(() => document.querySelector('lv-data-explorer')?.shadowRoot?.querySelector('[role="status"]')?.textContent?.includes('target was refreshed'))
+    expect(detailLoads).toBe(2)
+    await picker.getByRole('button', { name: 'Add tile' }).click()
+    await page.waitForFunction(() => document.querySelector('lv-data-explorer')?.shadowRoot?.querySelector('[role="status"]')?.textContent?.includes('Exploration added as an independent tile.'))
+    expect(captured.operationID).toBe('executeDashboardAuthoringCommand')
+    expect(appendAttempts).toBe(2)
+    expect(captured.body).toMatchObject({
+      dashboardId: 'dashboard:authored-sales', pageId: 'overview', revisionToken: 'fresh-revision', placementChoice: 'half',
+      spec: { modelId: 'semantic-model:sales', dimensions: [{ field: 'orders.status' }], metrics: [{ field: 'orders.revenue' }] },
+    })
+    expect(await picker.locator('[role="status"] a').getAttribute('href')).toBe('/dashboards/dashboard%3Aauthored-sales/edit?draft=draft-authored-sales')
+  } finally {
+    await page.close()
+  }
+})
+
 test('data explorer renders object browser and emits preview commands', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

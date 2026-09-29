@@ -791,6 +791,7 @@ func buildApplicationSurfaces(
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, ExplorationQueryLowerer: analyticsmodule.NewExplorationQueryLowerer(), Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardAppearances, DashboardCatalog: capabilities.Authoring,
+		DashboardAuthoring: routes.dashboardAuthoring, DashboardAppendCommand: routes.dashboardModule.DashboardAuthoringCommandBinding(),
 		DashboardPopularity: func(ctx context.Context, dashboardCount int) (map[string]string, error) {
 			if routes.dashboardModule == nil {
 				return nil, nil

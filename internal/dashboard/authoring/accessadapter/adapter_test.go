@@ -110,6 +110,21 @@ func TestNewDashboardRequiresGovernedSemanticModelRead(t *testing.T) {
 	}
 }
 
+func TestSemanticModelAuthorizationChecksExactReadResource(t *testing.T) {
+	policy := &authorizationPolicy{resourceAllowed: true, projectAllowed: map[access.Capability]bool{}}
+	err := policy.adapter(t).Authorize(t.Context(), service.AuthorizationRequest{
+		ActorID: "actor", ProjectID: "project", SemanticModel: "semantic-model",
+		Target: service.AuthorizationTargetSemanticModel, Action: authoring.AuthorizationActionView,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policy.calls) != 1 || policy.calls[0].kind != "resource" || policy.calls[0].resource.Kind() != graph.KindSemanticModel ||
+		policy.calls[0].resource.CanonicalID() != "semantic-model" || policy.calls[0].capability != access.CapabilityResourceRead {
+		t.Fatalf("semantic-model authorization calls = %#v", policy.calls)
+	}
+}
+
 func TestAuthoredDashboardCombinesVisibilityOwnershipAndProjectCapability(t *testing.T) {
 	request := service.AuthorizationRequest{
 		ActorID: "reader", ProjectID: "project", DashboardID: "dashboard-authored", OwnerPrincipalID: "owner",

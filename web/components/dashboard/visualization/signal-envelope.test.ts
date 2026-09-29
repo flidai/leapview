@@ -9,6 +9,7 @@ test('dashboard visualization signals keep large frames opaque and reconstruct c
     specRevision: 'spec-1', dataRevision: 1, generation: 1, kind: 'inline',
     datasets: [{ id: 'primary', specRevision: 'spec-1', dataRevision: 1, generation: 1, columns: ['zip', 'value'], rows, completeness: 'complete' }],
   })
+  signal.exploreHref = '/dashboards/sales/pages/overview/visuals/revenue/explore'
   const decoder = new DashboardVisualizationSignalDecoder()
 
   const envelope = decoder.decode(signal)
@@ -20,6 +21,7 @@ test('dashboard visualization signals keep large frames opaque and reconstruct c
   expect(envelope).not.toHaveProperty('filterRevision')
   expect(envelope).not.toHaveProperty('interactionRevision')
   expect(envelope).not.toHaveProperty('servingStateID')
+  expect(envelope).not.toHaveProperty('exploreHref')
 })
 
 test('dashboard visualization signal decoder reuses data on status-only patches', () => {

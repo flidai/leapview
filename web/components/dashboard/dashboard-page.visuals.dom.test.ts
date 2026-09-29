@@ -20,6 +20,33 @@ test('dashboard fixtures satisfy the fail-closed visualization contract', () => 
   }
 })
 
+test('dashboard handoff is a visual-menu action only in the app presentation', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const href = '/dashboards/executive-sales/pages/overview/visuals/orders_chart/explore'
+      mergePatch({ visuals: { orders_chart: { exploreHref: href } } })
+      await dashboard.updateComplete
+      const host = () => (dashboard.shadowRoot as ShadowRoot).querySelector('[data-visual-id="orders_chart"] lv-visualization-host') as any
+      await host().updateComplete
+      const appHref = (host().shadowRoot as ShadowRoot).querySelector<HTMLAnchorElement>('.visual-options a[role="menuitem"]')?.getAttribute('href')
+      dashboard.presentation = 'public'
+      await dashboard.updateComplete
+      await host().updateComplete
+      const publicLink = (host().shadowRoot as ShadowRoot).querySelector('.visual-options a[role="menuitem"]')
+      dashboard.presentation = 'embed'
+      await dashboard.updateComplete
+      await host().updateComplete
+      const embedLink = (host().shadowRoot as ShadowRoot).querySelector('.visual-options a[role="menuitem"]')
+      return { appHref, publicLink: Boolean(publicLink), embedLink: Boolean(embedLink) }
+    })
+    expect(result).toEqual({ appHref: '/dashboards/executive-sales/pages/overview/visuals/orders_chart/explore', publicLink: false, embedLink: false })
+  } finally { await page.close() }
+})
+
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
