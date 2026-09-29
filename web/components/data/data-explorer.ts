@@ -124,6 +124,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private agentDrawerOpen = false
   @state() private browserCollapsed = false
   @state() private browserWidth = 320
+  @state() private browseVisibleColumns: { objectKey: string; keys: string[] } | null = null
   @state() private exploreVisibleColumns: string[] = []
   @state() private resultView: 'table' | 'chart' | 'pivot' | 'details' = 'table'
   @state() private savedTitle = ''
@@ -975,32 +976,47 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
     @media (max-width: 760px) {
       .route {
-        height: auto;
-        min-height: 100svh;
-        overflow: visible;
+        height: 100svh;
+        min-height: 0;
+        overflow: hidden;
       }
 
       .header { grid-template-columns: minmax(0, 1fr); }
       .header-actions { flex-wrap: wrap; gap: var(--base-size-4); }
       .explorer {
-        grid-template-columns: 1fr;
+        display: block;
+        position: relative;
+        min-height: 0;
       }
 
       .browser-resizer {
         display: none;
       }
 
-      .explorer.browser-collapsed {
-        grid-template-columns: 1fr;
-      }
-
       .browser,
       .main {
-        min-height: 22rem;
+        min-height: 0;
       }
 
       .browser {
-        width: auto !important;
+        position: absolute;
+        z-index: var(--zIndex-sticky, 50);
+        inset: 0 auto 0 0;
+        width: min(320px, calc(100% - 44px)) !important;
+        box-shadow: var(--lv-shadow-floating-sm);
+      }
+
+      .browser-collapsed .browser {
+        bottom: auto;
+        width: 44px !important;
+        height: 44px;
+        box-shadow: none;
+      }
+
+      .main {
+        width: calc(100% - 44px);
+        height: 100%;
+        margin-left: 44px;
       }
 
       .filter-editor,
@@ -1029,6 +1045,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   connectedCallback(): void {
+    if (!this.embedded && window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) {
+      this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
+    }
     if (!this.agentStateInitialized) {
       const stored = this.agentStateController.initialize()
       this.agentDrawerOpen = stored.open
@@ -1342,6 +1361,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.closeFilter()
       this.exploreExecutionState = 'idle'
       this.exploreTransportFailure = null
+    } else {
+      this.browseVisibleColumns = null
     }
     this.emitCommand({ mode, explore })
   }
@@ -1354,6 +1375,19 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   ) {
     if (field.compatible === false && !field.rebaseDatasetId) return
     const selected = this.dataExplorer.selectedObject
+    if (!semanticActive && field.kind !== 'metric') {
+      if (selected?.key !== object.key) {
+        this.selectObject(object)
+        return
+      }
+      const columns = object.columns ?? []
+      const key = fieldColumnID(field)
+      if (!columns.some((column) => column.key === key)) return
+      const visible = this.headerVisibleColumnKeys(this.dataExplorer, columns, false)
+      if (visible.length === 1 && visible.includes(key)) return
+      this.toggleHeaderColumn(key, !visible.includes(key), columns, false)
+      return
+    }
     const baseObject = selected && selected.semanticModelId === object.semanticModelId
       ? selected
       : object
@@ -1598,7 +1632,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private headerVisibleColumnKeys(explorer: DataExplorerSignal, columns: ExplorerColumn[], semanticActive: boolean): string[] {
-    const configured = semanticActive ? this.exploreVisibleColumns : explorer.command?.visibleColumns ?? []
+    const local = this.browseVisibleColumns
+    const configured = semanticActive
+      ? this.exploreVisibleColumns
+      : local && local.objectKey === explorer.selectedKey ? local.keys : explorer.command?.visibleColumns ?? []
     if (!configured.length) return columns.map((column) => column.key)
     const allowed = new Set(configured)
     const visible = columns.filter((column) => allowed.has(column.key)).map((column) => column.key)
@@ -1612,6 +1649,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.exploreVisibleColumns = configured
       return
     }
+    this.browseVisibleColumns = { objectKey: this.dataExplorer.selectedKey ?? '', keys: configured }
     this.emitCommand({ visibleColumns: configured })
   }
 
@@ -1691,8 +1729,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         selected: false,
       })
       const metrics = semanticFields.filter((field) => field.kind === 'metric')
-      const fields = [...dimensions, ...metrics]
+      const fields = semanticActive ? [...dimensions, ...metrics] : dimensions
       const queryFields = new Set([...(command.dimensions ?? []), ...(command.metrics ?? [])])
+      const browseVisibleColumns = selected ? this.headerVisibleColumnKeys(this.dataExplorer, object.columns ?? [], false) : []
       return html`
         <details class="object-node" data-column-match=${String(columnMatch)}>
           <summary
@@ -1712,9 +1751,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               const rebaseable = !compatible && Boolean(field.rebaseDatasetId)
               const selectable = compatible || rebaseable
               const relationshipPath = field.relationshipPath ?? []
-              const fieldSelected = compatible && semanticActive && contextMatches
-                ? queryFields.has(field.id)
-                : selected && field.kind !== 'metric'
+              const fieldSelected = semanticActive
+                ? compatible && contextMatches && queryFields.has(field.id)
+                : selected && browseVisibleColumns.includes(fieldColumnID(field))
+              const canToggle = selectable && (semanticActive || !selected || !fieldSelected || browseVisibleColumns.length > 1)
               const compatibilityTitle = compatible
                 ? relationshipPath.length
                   ? `Related through ${relationshipPath.join(' to ')}`
@@ -1726,8 +1766,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                   type="button"
                   class=${fieldSelected ? 'field-button is-selected' : 'field-button'}
                   aria-pressed=${String(fieldSelected)}
-                  aria-disabled=${String(!selectable)}
-                  ?disabled=${!selectable}
+                  aria-disabled=${String(!canToggle)}
+                  ?disabled=${!canToggle}
                   title=${compatible ? `${fieldSelected ? 'Remove' : 'Add'} ${field.label}${relationshipPath.length ? ` · ${compatibilityTitle}` : ''}` : compatibilityTitle}
                   @click=${() => this.toggleUnifiedField(field, object, explore, semanticActive)}
                 >
@@ -1759,7 +1799,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       <div class=${`content${filterable ? ` browse-layout${this.semanticFiltersOpen ? ' filters-open' : ''}` : ''}`} aria-label="Data preview">
         <lv-data-preview-table
           .preview=${preview}
-          .command=${command}
+          .command=${this.browseVisibleColumns?.objectKey === object.key
+            ? { ...command, visibleColumns: this.browseVisibleColumns.keys }
+            : command}
           @lv-data-preview-table-command=${(event: CustomEvent<Partial<DataExplorerCommand>>) => this.emitCommand(event.detail)}
         ></lv-data-preview-table>
         ${filterable ? renderSemanticFilterDock(spec, browseExplore, filterCommand, this.semanticFiltersOpen,
@@ -1913,6 +1955,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private selectObject(object: DataExplorerObjectSignal): void {
+    this.browseVisibleColumns = null
+    if (window.matchMedia('(max-width: 760px)').matches && !this.browserCollapsed) {
+      this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
+    }
     this.optimisticExplore = null
     this.resultView = 'table'
     this.closeFilter()
@@ -2000,8 +2046,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
   private emitCommand(partial: Partial<DataExplorerCommand>) {
     const current = this.dataExplorer?.command ?? emptyExplorer.command
+    const local = this.browseVisibleColumns
     const next = this.queryController.command({
       ...current,
+      visibleColumns: local?.objectKey === (this.dataExplorer?.selectedKey ?? '') && current.mode !== 'explore'
+        ? local.keys
+        : current.visibleColumns,
       explore: current.explore ?? this.dataExplorer?.explore?.command,
       objectKey: current.objectKey ?? this.dataExplorer?.selectedKey ?? '',
     }, partial)

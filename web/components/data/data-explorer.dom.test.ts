@@ -283,7 +283,7 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.searchLabel).toBe('Search data')
     expect(state.tabs).toEqual([])
     expect(state.selectedColumns).toEqual(['order_id', 'status'])
-    expect(state.selectedFieldStates).toEqual(['true', 'true'])
+    expect(state.selectedFieldStates).toEqual(['true', 'false'])
     expect(state.selectedNodeText).not.toContain('olist · orders')
     expect(state.selectedNodeText).toBe('orders')
     expect(state.selectedNodeSubtitle).toBe('orders')
@@ -294,7 +294,7 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.resourceIcons).toEqual(['Project resource'])
     expect(state.columnSearchMatchCount).toBe(2)
     expect(state.columnSearchMatchesOpen).toBe(true)
-    expect(state.hasHeaderColumnsControl).toBe('Columns2/2')
+    expect(state.hasHeaderColumnsControl).toBe('Columns1/2')
     expect(state.hasPreviewTable).toBe(true)
     expect(state.hasWindowedTable).toBe(true)
     expect(state.tableKey).toBe('model:model:olist.orders')
@@ -346,6 +346,19 @@ test('Rows filter dock applies a filter without switching to Analyze', async () 
       document.body.append(element)
     })
     const explorer = page.locator('lv-data-explorer')
+    const narrowLayout = await explorer.evaluate((host) => {
+      const root = (host as HTMLElement).shadowRoot!
+      const route = root.querySelector('.route')!.getBoundingClientRect()
+      const results = root.querySelector('.main')!.getBoundingClientRect()
+      return { routeHeight: route.height, resultsTop: results.top, collapsed: root.querySelector('.explorer')?.classList.contains('browser-collapsed') }
+    })
+    expect(narrowLayout.collapsed).toBe(true)
+    expect(narrowLayout.routeHeight).toBeLessThanOrEqual(620)
+    expect(narrowLayout.resultsTop).toBeLessThan(300)
+    await explorer.getByRole('button', { name: 'Open data browser' }).click()
+    expect(await explorer.locator('.explorer').evaluate((node) => node.classList.contains('browser-collapsed'))).toBe(false)
+    await explorer.getByRole('button', { name: 'Close data browser' }).click()
+    expect(await explorer.locator('.explorer').evaluate((node) => node.classList.contains('browser-collapsed'))).toBe(true)
     await explorer.getByRole('button', { name: 'Filters', exact: true }).click()
     await explorer.getByLabel('Add filter', { exact: true }).click()
     const chooser = explorer.locator('.semantic-filter-options')
@@ -382,6 +395,62 @@ test('Rows filter dock applies a filter without switching to Analyze', async () 
     expect(command.explore.spec.filters).toHaveLength(1)
     expect(command.explore.spec.filters[0].field).toBe('zip_geolocations.state')
     expect(new URL(page.url()).searchParams.get('mode')).toBe('browse')
+  } finally {
+    await page.close()
+  }
+})
+
+test('Rows field checkboxes only change visible preview columns', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    await page.evaluate(async () => {
+      const element = document.createElement('lv-data-explorer') as any
+      const object = { key: 'model:zip', resourceId: 'model:zip', layer: 'model', semanticModelId: 'semantic-model:visuals', datasetId: 'zip_geolocations', title: 'ZIP locations', columnCount: 2, columns: [{ key: 'city', label: 'City', type: 'string' }, { key: 'state', label: 'State', type: 'string' }] }
+      const exploreCommand = { semanticModelId: 'semantic-model:visuals', datasetId: 'zip_geolocations', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }
+      const command = { mode: 'browse', objectKey: object.key, explore: exploreCommand, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: { kind: 'data', title: 'Data Explorer', tabs: [] }, dataExplorer: { objects: [object], selectedKey: object.key, selectedObject: object, command, explore: { command: exploreCommand, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, preview: { columns: object.columns, totalRows: 1, availableRows: 1, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: [{ city: 'sao paulo', state: 'SP' }] } }, totalRowLabel: '1', sort: {}, error: '' }, warnings: [] } })
+      ;(window as any).rowColumnCommands = []
+      element.addEventListener('lv-data-explorer-command', (event: Event) => (window as any).rowColumnCommands.push((event as CustomEvent).detail))
+      document.body.append(element)
+    })
+    const explorer = page.locator('lv-data-explorer')
+    await explorer.locator('.object-node').evaluate((node) => (node as HTMLDetailsElement).open = true)
+    await explorer.locator('.object-node .field-button').first().click()
+    const immediate = await explorer.evaluate(async (host) => {
+      const element = host as any
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const preview = root.querySelector('lv-data-preview-table') as any
+      return {
+        columnCount: root.querySelector('.header-columns summary')?.textContent?.replace(/\s+/g, ' ').trim(),
+        selected: root.querySelector('.object-node .field-button')?.classList.contains('is-selected'),
+        previewColumns: preview.command.visibleColumns,
+      }
+    })
+    expect(immediate.columnCount).toContain('1/2')
+    expect(immediate.selected).toBe(false)
+    expect(immediate.previewColumns).toEqual(['state'])
+    await page.waitForFunction(() => (window as any).rowColumnCommands.length > 0)
+    const command = await page.evaluate(() => (window as any).rowColumnCommands.at(-1))
+    expect(command.mode).toBe('browse')
+    expect(command.visibleColumns).toEqual(['state'])
+    expect(new URL(page.url()).searchParams.get('mode')).not.toBe('explore')
+    await explorer.locator('.object-node .field-button').first().click()
+    const restored = await explorer.evaluate(async (host) => {
+      const element = host as any
+      await element.updateComplete
+      return {
+        columnCount: element.shadowRoot.querySelector('.header-columns summary')?.textContent?.replace(/\s+/g, ' ').trim(),
+        previewColumns: element.shadowRoot.querySelector('lv-data-preview-table')?.command.visibleColumns,
+      }
+    })
+    expect(restored.columnCount).toContain('2/2')
+    expect(restored.previewColumns).toEqual([])
+    await page.waitForFunction(() => (window as any).rowColumnCommands.length > 1)
+    expect(await page.evaluate(() => (window as any).rowColumnCommands.at(-1).mode)).toBe('browse')
   } finally {
     await page.close()
   }
