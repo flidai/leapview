@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Demo-02 image-only transaction. EOF/timeout before browser approval rolls back."""
-import datetime
 import contextlib
+import datetime
 import stat
 import fcntl
 import hashlib
@@ -25,6 +25,7 @@ POSTGRES = 'demo02-postgres-cfo'
 VOLUME = 'leapview-cfo_leapview-state'
 LOG = sys.stderr
 IMAGE_RE = r'ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}'
+RUN_ID_RE = re.compile(r'^[0-9]+$')
 # Match hostinstall's requiredPayloadFiles. The cross-language staging test
 # exercises both directions so the two generation formats cannot drift.
 RUNTIME_PAYLOAD_MODES = {
@@ -101,12 +102,15 @@ def inspect():
     return {'image': image, 'revision': version['revision']}
 
 
-def _private_json(path, label, maximum=1 << 20):
+def _private_json(path, label, maximum=1 << 20, required_mode=None):
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         info = os.fstat(descriptor)
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or
-                info.st_mode & 0o077 or info.st_size > maximum):
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_size > maximum):
+            raise ValueError('Invalid private '+label)
+        if required_mode is not None and stat.S_IMODE(info.st_mode) != required_mode:
+            raise ValueError('Invalid private '+label+' permissions')
+        if info.st_mode & 0o077:
             raise ValueError('Invalid private '+label)
         with os.fdopen(os.dup(descriptor), 'rb') as stream:
             value = json.load(stream)
@@ -115,6 +119,90 @@ def _private_json(path, label, maximum=1 << 20):
     if not isinstance(value, dict):
         raise ValueError('Invalid private '+label)
     return value
+
+
+def _valid_utc_timestamp(value):
+    if not isinstance(value, str) or not value.endswith('Z'):
+        return False
+    try:
+        parsed = datetime.datetime.fromisoformat(value[:-1]+'+00:00')
+    except ValueError:
+        return False
+    return parsed.utcoffset() == datetime.timedelta(0)
+
+
+def _active_payload_image():
+    link = ROOT/'current'
+    if not link.is_symlink():
+        raise ValueError('Active host payload link is missing')
+    target = os.readlink(link)
+    match = re.fullmatch(r'releases/sha256-([0-9a-f]{64})', target)
+    if not match:
+        raise ValueError('Active host payload target is invalid')
+    generation = ROOT/target
+    if not generation.is_dir() or generation.is_symlink():
+        raise ValueError('Active host payload generation is unavailable')
+    return 'ghcr.io/flidai/leapview@sha256:'+match.group(1)
+
+
+def _assert_no_unfinished_maintenance_journals():
+    paths = [ROOT/'upgrade-operation.json']
+    history = ROOT/'upgrade-history'
+    if history.is_dir():
+        paths.extend(sorted(history.glob('*.json')))
+    for path in paths:
+        try:
+            envelope = _private_json(path, 'upgrade journal', 16384)
+        except FileNotFoundError:
+            continue
+        if envelope.get('version') != 1:
+            raise ValueError('Unknown private upgrade journal version')
+        state = envelope.get('state')
+        if not isinstance(state, dict) or state.get('phase') not in ('succeeded', 'recovered'):
+            raise ValueError('Unfinished schema upgrade blocks first-install evidence')
+
+
+def _installation_record(marker, image, revision, schema, instance_id):
+    _assert_no_unfinished_maintenance_journals()
+    if _active_payload_image() != image:
+        raise ValueError('Active payload differs from the installed image')
+    value = _private_json(PROVIDER/'compose-installation.json', 'installation evidence',
+                          required_mode=0o600)
+    expected_fields = {
+        'version', 'host', 'installationRoot', 'hostTargetId', 'instanceId', 'image',
+        'revision', 'schema', 'permissionProfile', 'qualificationRunId',
+        'qualificationAttempt', 'validatedAt',
+    }
+    if set(value) != expected_fields:
+        raise ValueError('Installation evidence has an unsupported shape')
+    if (value.get('version') != 'leapview-compose-installation-v1'
+            or value.get('host') != 'app-leapview-demo-02'
+            or value.get('installationRoot') != str(ROOT)
+            or not isinstance(marker.get('targetId'), str) or not marker['targetId']
+            or value.get('hostTargetId') != marker['targetId']
+            or value.get('instanceId') != instance_id
+            or value.get('image') != image
+            or value.get('revision') != revision
+            or type(value.get('schema')) is not int or value['schema'] != schema
+            or not isinstance(value.get('permissionProfile'), str) or not value['permissionProfile'].strip()
+            or not isinstance(value.get('qualificationRunId'), str)
+            or not RUN_ID_RE.fullmatch(value['qualificationRunId'])
+            or not isinstance(value.get('qualificationAttempt'), str)
+            or not RUN_ID_RE.fullmatch(value['qualificationAttempt'])
+            or not _valid_utc_timestamp(value.get('validatedAt'))):
+        raise ValueError('Installation evidence differs from live host identity')
+    return value
+
+
+def _select_runtime_evidence(marker, image, revision, schema, instance_id):
+    try:
+        receipt = _private_json(PROVIDER/'compose-deployment.json', 'deployment receipt')
+    except FileNotFoundError:
+        evidence = _installation_record(marker, image, revision, schema, instance_id)
+        return 'installation', None, evidence
+    if receipt.get('image') != image or receipt.get('revision') != revision:
+        raise ValueError('Installed deployment descriptors disagree with the running identity')
+    return 'deployment', receipt, None
 
 
 def _journal_for_operation(operation_id):
@@ -203,25 +291,37 @@ def _runtime_outcome_evidence():
     if pins != [image]:
         raise ValueError('Deployment descriptor differs from the running image')
     marker = _private_json(ROOT/'.host-install.json', 'installation descriptor')
-    receipt = _private_json(PROVIDER/'compose-deployment.json', 'deployment receipt')
-    if marker.get('image') != image or receipt.get('image') != image or receipt.get('revision') != version['revision']:
+    if marker.get('image') != image:
         raise ValueError('Installed deployment descriptors disagree with the running identity')
     schema_raw = out('docker', 'exec', POSTGRES, 'sh', '-c',
         'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT max(version_id) FROM public.goose_db_version WHERE is_applied"')
     if not re.fullmatch(r'[0-9]+', schema_raw):
         raise ValueError('Live Goose schema is unavailable')
+    schema = int(schema_raw)
+    instance_id = out('docker', 'exec', POSTGRES, 'sh', '-c',
+        'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT instance_id FROM platform.instance_identity WHERE singleton_id = 1"')
+    if not re.fullmatch(r'(lvinst_[A-Za-z0-9_-]{32}|instance_[0-9a-f]{32})', instance_id):
+        raise ValueError('Live instance identity is unavailable')
+    # A present receipt remains authoritative, including malformed and
+    # mismatched receipts. Installation evidence is only a missing-file path.
+    evidence_type, receipt, installation = _select_runtime_evidence(
+        marker, image, version['revision'], schema, instance_id)
     return {
         'image': image,
         'revision': version['revision'],
         'containerImageID': info['Image'],
         'repositoryDigests': image_info.get('RepoDigests', []),
-        'schema': int(schema_raw),
+        'schema': schema,
         'descriptorImage': pins[0],
         'markerImage': marker.get('image'),
-        'receiptImage': receipt.get('image'),
-        'receiptRevision': receipt.get('revision'),
-        'receiptPreviousImage': receipt.get('previousImage'),
-        'receiptUpgradeOperation': receipt.get('upgradeOperation'),
+        'markerTargetId': marker.get('targetId'),
+        'instanceId': instance_id,
+        'evidenceType': evidence_type,
+        'installationEvidence': installation,
+        'receiptImage': receipt.get('image') if evidence_type == 'deployment' else None,
+        'receiptRevision': receipt.get('revision') if evidence_type == 'deployment' else None,
+        'receiptPreviousImage': receipt.get('previousImage') if evidence_type == 'deployment' else None,
+        'receiptUpgradeOperation': receipt.get('upgradeOperation') if evidence_type == 'deployment' else None,
     }
 
 
@@ -245,7 +345,11 @@ def outcome(operation, operation_id):
                 os.close(fd)
                 raise
             locks.append(fd)
+        if operation == 'deploy':
+            _assert_no_unfinished_maintenance_journals()
         evidence = _runtime_outcome_evidence()
+        if evidence['evidenceType'] == 'installation' and operation != 'deploy':
+            raise ValueError('Installation evidence is only valid for deploy')
         journal = None
         request = None
         journal_state = None

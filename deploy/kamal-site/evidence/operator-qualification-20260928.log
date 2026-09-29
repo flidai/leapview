@@ -1,0 +1,29 @@
+PASS isolated Docker/containerd, SSH and container execution
+PASS supervised boot/upload/identity/public proxy verification
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:a16ebdbf17f0b53b2febc39236543af6b21350012de9e65ad3f0a11c73cbd61b
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:8d3c769434aca62d1a93a6d5ff712c901a58e8cb9e25af1eece154565bf9532c
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:89f255a31ed0ae004a2f04f1447a45fe4123c40d100926f19a57b85101632c6e
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:ebde853af49d1a29218d019d4b0815ca15567591645a8f4ac2eef86ca92cb85a
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:3e28637bdca53eb1b2b7a96b41a8363842882cab62d226bb003a6313fad94f42
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:d50fd2b819c9fe4a623ed18eeae96be77e3ec46da6265598afd91b3cafe5f620
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:69e2436201f7843c26ca85b5a28cbc39134e91fbb6732e542c8de125c53df840
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:7f55046a54417ce4c80df3b3b6111f63f4c1403e1b58e244c6b706102e1d0f05
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:96570f4bdad98fab26f97dd98df34486583c280906d72c87fa7cb855e7527bca
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:c0807e412883ac18952b173e4b0a8a4feb3773a5a260f7cc6ea8c3180eb9ba4a
+PASS ten updates through the revised adapter
+PASS bytes/inodes/envelope gates, corrupt/missing recovery rejection and foreign-alias preservation
+PASS unhealthy rejection restores verified active
+PASS failed public acceptance restores verified active
+PASS accepted version survives cleanup failure and explicit maintenance recovery
+Already running the exact verified image; no deployment or pruning needed
+PASS same-image no-op with registry offline and unchanged container identity
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:c0807e412883ac18952b173e4b0a8a4feb3773a5a260f7cc6ea8c3180eb9ba4a
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:ba8fed90f53f3124ea0487a05e7a4ef5667c432bd51ee950c7b8f3c910c710d3
+PASS offline rollback with missing current preserves recovery material
+Public site accepted; retained verified rollback and completed maintenance: 127.0.0.1:5000/site@sha256:c0807e412883ac18952b173e4b0a8a4feb3773a5a260f7cc6ea8c3180eb9ba4a
+PASS offline rollback with unhealthy current
+PASS protected legacy Compose restoration and return to Kamal topology
+PASS Caddy-only Compose recreation with declarative external Kamal network and HTTPS
+PASS Docker/containerd restart restores HTTPS topology without the legacy app
+PASS real SSH lock-connection loss while separate remote mutation survives; takeover remains blocked
+PASS offline rollback with stopped current and fresh operator ownership

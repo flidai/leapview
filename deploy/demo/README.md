@@ -148,6 +148,106 @@ because the project graph is not active until its exact candidate is
 activated. The subsequent authoring, ingestion, publication, approval, and
 activation calls remain protected by the canonical project grants.
 
+### Fresh demo installation bootstrap
+
+For a fresh demo-02 instance, complete the application bootstrap before retrying
+the host installer. Install the PostgreSQL CA at the configured application
+home path, `/var/lib/leapview/home/postgres-root.crt`, before configuration
+validation or any TLS database connection. Preserve the existing credentials
+and encryption keys. Run `admin initialize` through the canonical
+`/opt/leapview` root (`LEAPVIEWCTL_ROOT=/opt/leapview`) and keep its one-time
+credential response in the root-private bootstrap handoff. Then use the
+qualified application image's `admin delivery pool qualify` to generate the
+physical-pool artifacts, and admit them with
+`admin delivery pool bootstrap --pool <pool.json> --evidence <evidence.json> --apply`.
+Retain the generated pool identity in the canonical private application
+configuration.
+
+Start the app on loopback at `127.0.0.1:8081`, then claim the issuer-owned
+project through the supported project-claim flow. A fresh target has no active
+publication, so the initial host-install attempt can remain waiting for
+readiness. That wait is expected until the first publication activates. Do not
+repeat initialization or create a host marker or receipt by hand.
+
+Before that first publication, the claimed human owner must nominate a separate
+human `release_approver` through the authenticated **Admin → Access** command.
+The pre-publication bootstrap accepts that human session and nominee; the
+principal-detail route currently returns HTTP 500 before publication, so use
+the Access surface instead. The reviewer completes OAuth device authorization
+with the custom scope `delivery.approve delivery.read`. Publish the first
+candidate to activate it and the pending access policy.
+
+To move release approval to the permanent service principal, temporarily grant
+the human reviewer `project_admin` and publish that policy change first. Then
+use the supported Admin → Access command to delegate `release_approver` to the
+service principal, then publish and activate that role binding. Confirm a
+release approved by that principal before removing the human reviewer’s
+temporary role or account through the supported admin commands. Stop the
+loopback app with `leapviewctl stop` before retrying host installation:
+credential acknowledgement takes the exclusive application-state lock. After
+the installer completes, continue with the one-time handoff below.
+
+### First-install runtime handoff
+
+A fresh host installation has `.host-install.json` but no rollout receipt. After
+the exact qualified image has been installed, the CFO project has been published,
+and the shared-viewer CFO check passes, create the one-time installation handoff
+with the operator adapter:
+
+```sh
+DEMO_HOST=89.58.13.145 \
+DEMO_IMAGE='ghcr.io/flidai/leapview@sha256:<qualified-digest>' \
+QUALIFICATION_RUN='<successful Main artifacts run ID>' \
+python3 scripts/bootstrap/compose_installation.py
+```
+
+The operator must have `gh` access to the qualification run, the publisher
+principal environment used by the normal publication validator, and the local
+browser dependencies used by `scripts/demo_validate_browser.mjs`. The adapter
+reads the qualification and transition receipts from that exact successful run,
+authenticates the public build revision, then checks the shared viewer's four
+CFO pages before it invokes the remote writer over the pinned demo-02 SSH key.
+If qualification or either authenticated check fails, the writer is not invoked.
+It reads the shared viewer login through the established root-protected handoff;
+the writer receives no credentials.
+
+The root-side writer independently checks the host-install marker, active
+generation bytes against the immutable image payload, running container digest
+and Compose identity, loopback readiness, live Goose schema, and instance ID
+from both PostgreSQL and the application. It records the host target ID from
+the marker and qualification metadata from the admitted artifact. It refuses
+to run when a deployment receipt or host upgrade history already exists.
+The resulting versioned, secret-free
+`/etc/leapview-provider-cfo/compose-installation.json` is created atomically as
+root with mode `0600`. Its UTC `validatedAt` is recorded only after these checks
+finish. The file supplies first-install runtime reconciliation; after a real
+replacement, `compose-deployment.json` remains authoritative.
+
+### First runtime pin and upload compatibility
+
+The restored schema-45 image predates the managed-data upload action used by
+the current publisher. Keep `DEMO_RUNTIME_REVISION` pinned to the exact source
+revision already running; do not point the fallback at a candidate that has
+not replaced it. After writing first-install evidence, dispatch the normal
+`deploy` action with the same installed digest and its qualification run. This
+same-image operation records the installed runtime because its candidate and
+predecessor are identical. The runtime job can succeed while the workflow's
+separate, mandatory publication job fails with HTTP 403 on the old image's
+upload path. Treat that workflow as an incomplete publication, even though its
+runtime record remains successful and authoritative. A `publish` retry still
+selects the old runtime and will fail the same way.
+
+Then complete the normal `prepare` and `upgrade` flow with the qualified
+schema-46 image that includes the upload action. This must be a real runtime
+replacement. After commit, the publication job uses the new runtime record and
+its permission profile, and must complete successfully before the release is
+considered published. Finally, use a second qualified digest for the same
+schema-46 source in the normal image-only `deploy` path; this verifies a
+distinct image replacement and its required publication. The first-install
+evidence exception applies only to the same-image runtime record and does not
+authorize a candidate whose image or source differs from the installed
+predecessor.
+
 ## Database upgrades and interrupted-operation recovery
 
 The demo workflow is a transport adapter for the shared **operator-authorized

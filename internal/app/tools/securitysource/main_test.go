@@ -104,6 +104,24 @@ func TestRunCleanScansCurrentTreeAndCandidateHistory(t *testing.T) {
 	}
 }
 
+func TestRunScansLockedRubyDeploymentDependencies(t *testing.T) {
+	fixture := newScannerFixture(t)
+	if err := os.WriteFile(filepath.Join(fixture.root, "Gemfile.lock"), []byte("GEM\n  specs:\n    kamal (2.12.0)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := Run(context.Background(), Config{Root: fixture.root, BaseRef: "origin/main", Timeout: 5 * time.Second, Stdout: &stdout, Stderr: &stderr}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readFixtureLog(t, fixture.log), "--scanners vuln --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed=false") {
+		t.Fatal("Ruby dependency graph was not scanned")
+	}
+	t.Setenv("SECURITY_TEST_SOURCE_FAILURE", "unavailable")
+	if err := Run(context.Background(), Config{Root: fixture.root, BaseRef: "origin/main", Timeout: 5 * time.Second, Stdout: &stdout, Stderr: &stderr}); err == nil {
+		t.Fatal("unavailable Ruby scanner must fail closed")
+	}
+}
+
 func TestRunRejectsSecretFindingWithoutLeakingValue(t *testing.T) {
 	fixture := newScannerFixture(t)
 	const secret = "sentinel_value_never_logged_123"
