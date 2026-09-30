@@ -101,9 +101,10 @@ flowchart TD
     E --> F[Done: prove original Compose restoration and return to A]
     F --> G[Done: deploy B, roll back offline to A, restore B]
     G --> H[Done: recreate Caddy and reboot the real host]
-    H --> I[Pending: final image-retention audit]
-    I --> J[In progress: complete 24-hour health and storage observation]
-    J --> K[Pending: final acceptance and fallback 748 closure]
+    H --> I[In progress: complete 24-hour health and storage observation]
+    I --> J[Pending: end public adoption smoke and final acceptance receipt]
+    J --> K[Pending: post-observation image-retention audit]
+    K --> L[Pending: final closeout and fallback 748 closure]
 ```
 
 Proceed in order. A failed exit check blocks the next phase. Existing approval
@@ -293,8 +294,10 @@ Caddy recreation passed, and the real host reboot recovered the intended topolog
 - [ ] Require a complete 24-hour stable period with no unresolved failure. Restart
   the period after a deployment, rollback or corrective production mutation;
   an unobserved interval does not count as successful monitoring.
-- [ ] Run the end public adoption smoke, finish the acceptance receipt and perform
-  the post-observation image-retention audit before closing #748.
+- [ ] After the full 24-hour period completes, run the end public adoption smoke
+  and finish the final acceptance receipt.
+- [ ] After the observation and end smoke pass, perform the post-observation
+  image-retention audit. Keep #748 open until this audit passes.
 
 **Exit:** recorded 24-hour health/storage acceptance with no unresolved deployment
 or maintenance problem and adequate measured capacity margins.
@@ -307,8 +310,10 @@ or maintenance problem and adequate measured capacity margins.
   details in the protected operator store, outside repository documentation.
 - [x] Attach sanitized qualification, cutover, rollback, reboot and ongoing
   observation evidence; preserve secret-bearing originals only in protected operator storage.
-- [ ] Close [#748](https://github.com/flidai/leapview/pull/748) as superseded,
-  linking the merged replacement and successful live acceptance evidence.
+- [ ] After the 24-hour observation, end adoption smoke, final acceptance receipt
+  and post-observation retention audit pass, close
+  [#748](https://github.com/flidai/leapview/pull/748) as superseded, linking the
+  merged replacement and successful live acceptance evidence.
 - [x] State explicitly that deployment remains operator-controlled. Treat any
   future automatic deployment proposal as separate work.
 
@@ -336,6 +341,7 @@ re-enable the retired updater. Use the existing pinned access path and the
 - [Merged operator PR #752](https://github.com/flidai/leapview/pull/752)
 - [Merged trial PR #751](https://github.com/flidai/leapview/pull/751)
 - [Merged Undo-test fix #770](https://github.com/flidai/leapview/pull/770)
+- [Portable observation and acceptance tools PR #782](https://github.com/flidai/leapview/pull/782)
 
 Earlier runbooks can retain historical draft/pre-merge wording. The verified
 starting-point table above supersedes those stale status statements; their
