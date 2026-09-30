@@ -49,6 +49,10 @@ test('dashboard pins share one searchable table across views and keep sidebar li
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      ;(window as any).__catalogTestMergePatch = mergePatch
+    })
     const catalog = page.locator('lv-catalog-page')
     const allTable = catalog.getByRole('table', { name: 'All dashboards' })
     expect(await catalog.locator('lv-entity-list').count()).toBe(1)
@@ -78,15 +82,14 @@ test('dashboard pins share one searchable table across views and keep sidebar li
     await catalog.getByRole('button', { name: 'Unpin Executive Sales Dashboard' }).click()
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1:jacob') ?? '[]'))).toEqual([])
 
-    await catalog.evaluate(async (element: any) => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+    await catalog.evaluate((element: any) => {
       const source = element.page.dashboards[0]
       const copies = Array.from({ length: 8 }, (_, index) => ({
         ...source, id: `sales-copy-${index + 1}`, dashboardId: `sales-copy-${index + 1}`,
         title: `Sales copy ${index + 1}`, href: `/dashboards/sales-copy-${index + 1}`,
         catalogScope: 'mine', status: 'private_draft',
       }))
-      mergePatch({ page: { ...element.page, dashboards: [...element.page.dashboards, ...copies] } })
+      ;(window as any).__catalogTestMergePatch({ page: { ...element.page, dashboards: [...element.page.dashboards, ...copies] } })
       localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['sales-copy-1', 'sales-copy-8']))
       localStorage.setItem('leapview.dashboard-catalog.pins.v1:jacob', JSON.stringify(copies.map((copy: any) => copy.dashboardId)))
       element.reloadDiscoveryPreferences()
