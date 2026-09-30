@@ -245,7 +245,7 @@ test('chat visual card opens a side panel with the chart and Data Explorer actio
   }
 })
 
-test('chat donut panel keeps outside value labels without duplicating the side legend', async () => {
+test('chat donut panel keeps outside value labels and places the legend below the chart', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
@@ -267,7 +267,7 @@ test('chat donut panel keeps outside value labels without duplicating the side l
         stablePayload: displayed === panel.shadowRoot.querySelector('lv-visual-artifact')?.payload,
       }
     })
-    expect(state).toEqual({ savedLegend: 'right', displayedLegend: 'hidden', displayedLabels: 'outside', stablePayload: true })
+    expect(state).toEqual({ savedLegend: 'right', displayedLegend: 'bottom', displayedLabels: 'outside', stablePayload: true })
   } finally {
     await page.close()
   }

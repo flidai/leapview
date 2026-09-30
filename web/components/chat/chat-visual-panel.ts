@@ -122,7 +122,7 @@ export class ChatVisualPanel extends LitElement {
     if (this.payload === this.displaySource) return this.displayVisual
     this.displaySource = this.payload
     this.displayVisual = this.payload?.spec.kind === 'proportional'
-      ? { ...this.payload, spec: { ...this.payload.spec, presentation: { ...this.payload.spec.presentation, legend: 'hidden' } } }
+      ? { ...this.payload, spec: { ...this.payload.spec, presentation: { ...this.payload.spec.presentation, legend: 'bottom' } } }
       : this.payload
     return this.displayVisual
   }

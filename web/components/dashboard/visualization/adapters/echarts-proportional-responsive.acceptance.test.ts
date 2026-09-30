@@ -104,12 +104,12 @@ test('proportional responsive sizing preserves roomy radii and reserves the comp
   ]))
 
   for (const [width, height, alignTo, lineLength, endLength] of [
-    [373, 282, 'edge'], [435, 420, 'labelLine', 34, 20],
-    [600, 360, 'labelLine', 29, 21], [330, 220, 'edge'],
+    [373, 282, 'edge'], [435, 420, 'edge'],
+    [600, 360, 'edge'], [330, 220, 'edge'], [800, 500, 'labelLine', 40, 28],
   ] as const) {
     const patch = responsiveEChartsPatch(option, width, height)
     expect(patch.series[0].id).toBe('series:primary:donut')
-    expect(patch.series[0].radius).toEqual(width < 480 || height < 280 ? ['39.79%', '56%'] : ['54%', '76%'])
+    expect(patch.series[0].radius).toEqual(width < 600 ? ['28.42%', '40%'] : width < 800 ? ['39.79%', '56%'] : ['54%', '76%'])
     expect(patch.series[0].label.alignTo).toBe(alignTo)
     if (alignTo === 'labelLine') {
       expect(patch.series[0].label).toMatchObject({ distanceToLabelLine: 12 })
