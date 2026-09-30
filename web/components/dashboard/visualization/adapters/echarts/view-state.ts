@@ -23,7 +23,7 @@ export function echartsNavigationDefaults(envelope: VisualizationEnvelope): ECha
   }
 }
 
-export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, width: number, height: number): string {
+export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, width: number, height: number, focused = false): string {
   const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
   if (envelope.spec.kind === 'polar' && envelope.spec.mark === 'gauge') {
     return `${compact ? 'compact' : 'roomy'}:gauge-${gaugeTickLabelsHidden(width, height) ? 'quiet' : 'labeled'}`
@@ -49,21 +49,21 @@ export function responsiveEChartsLayoutKey(envelope: VisualizationEnvelope, widt
     return compact ? 'compact' : 'roomy'
   }
   if (envelope.spec.presentation.labelPosition === 'inside') {
-    return `${compact ? 'compact' : 'roomy'}:inside-${width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT ? 'crowded' : 'full'}`
+    return `${compact ? 'compact' : 'roomy'}:inside-${width < CROWDED_INSIDE_LABEL_WIDTH || height < CROWDED_INSIDE_LABEL_HEIGHT ? 'crowded' : 'full'}:focus-${focused}`
   }
   const bounded = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
   return bounded
-    ? `${compact ? 'compact' : 'roomy'}:outside-bounded`
-    : `${compact ? 'compact' : 'roomy'}:outside-local-${proportionalLabelLineLength(width, height)}-${proportionalLabelLineEndLength(width)}`
+    ? `${compact ? 'compact' : 'roomy'}:outside-bounded:focus-${focused}`
+    : `${compact ? 'compact' : 'roomy'}:outside-local-${proportionalLabelLineLength(width, height)}-${proportionalLabelLineEndLength(width)}:focus-${focused}`
 }
 
-export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number): Record<string, any> {
+export function responsiveEChartsPatch(option: Record<string, any>, width: number, height: number, focused = false): Record<string, any> {
   if (!option || typeof option !== 'object' || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {}
   const compact = width < COMPACT_WIDTH || height < COMPACT_HEIGHT
-  const movedSide = compact && hasPieSeries(option.series) ? proportionalSideLegend(option.legend) : undefined
+  const movedSide = (compact || focused) && hasPieSeries(option.series) ? proportionalSideLegend(option.legend) : undefined
   const responsiveLegend = movedSide ? compactProportionalSideLegend(option.legend) : option.legend
-  const bottomLegend = compact && hasBottomLegend(responsiveLegend)
-  const proportionalSeries = responsiveProportionalSeries(option.series, width, height, bottomLegend, movedSide)
+  const bottomLegend = (compact || focused) && hasBottomLegend(responsiveLegend)
+  const proportionalSeries = responsiveProportionalSeries(option.series, width, height, bottomLegend, movedSide, focused && !compact ? 66 : 56)
   const gaugeSeries = responsiveGaugeSeries(option.series, width, height)
   const graphSeries = responsiveGraphSeries(option.series, width, compact)
   const hierarchySeries = responsiveHierarchySeries(option.series, width, height)
@@ -96,7 +96,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   if (gaugeGraphic !== undefined) patch.graphic = gaugeGraphic
   if (movedSide && option.graphic !== undefined) patch.graphic = compactProportionalLegendTitle(option.graphic, movedSide)
   if (option.legend !== undefined) {
-    patch.legend = compact ? compactLegend(responsiveLegend, width) : desktopLegend(option.legend, hasPieSeries(option.series))
+    patch.legend = compact ? compactLegend(responsiveLegend, width) : desktopLegend(responsiveLegend, hasPieSeries(option.series))
   }
   if (option.dataZoom !== undefined) patch.dataZoom = compact
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
@@ -289,7 +289,7 @@ function wrapWords(value: string, maxCharacters: number): string {
   return lines.join('\n')
 }
 
-function responsiveProportionalSeries(value: unknown, width: number, height: number, bottomLegend: boolean, movedSide?: 'left' | 'right'): unknown[] | undefined {
+function responsiveProportionalSeries(value: unknown, width: number, height: number, bottomLegend: boolean, movedSide?: 'left' | 'right', radiusCap = 56): unknown[] | undefined {
   if (!Array.isArray(value)) return undefined
   const boundedOutsideLabels = width < BOUNDED_OUTSIDE_LABEL_WIDTH || height < COMPACT_HEIGHT
   let hasResponsiveLabels = false
@@ -356,7 +356,7 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
     }
     if (labelOption.position !== 'outside') return entry
     hasResponsiveLabels = true
-    const reservedRadius = bottomLegend ? compactProportionalRadius(source.radius) : undefined
+    const reservedRadius = bottomLegend ? compactProportionalRadius(source.radius, radiusCap) : undefined
     return {
       ...source,
       ...pieLayout,
@@ -383,15 +383,15 @@ function responsiveProportionalSeries(value: unknown, width: number, height: num
   return hasResponsiveLabels ? series : undefined
 }
 
-function compactProportionalRadius(value: unknown): string[] | undefined {
+function compactProportionalRadius(value: unknown, cap: number): string[] | undefined {
   if (!Array.isArray(value) || value.length !== 2) return undefined
   const inner = percentNumber(value[0])
   const outer = percentNumber(value[1])
-  if (inner === undefined || outer === undefined || outer <= 56) return undefined
+  if (inner === undefined || outer === undefined || outer <= cap) return undefined
   // Outside pie labels can reach the bottom scroll legend in narrow chat cards.
   // Scale both radii so the donut ring keeps its authored thickness ratio.
-  const scale = 56 / outer
-  return [`${Math.round(inner * scale * 100) / 100}%`, '56%']
+  const scale = cap / outer
+  return [`${Math.round(inner * scale * 100) / 100}%`, `${cap}%`]
 }
 
 function wrapFunnelOutsideLabel(value: string, width: number, fontSize: number): string {

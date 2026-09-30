@@ -189,10 +189,11 @@ export class EChartsHandle implements RendererHandle {
     const envelope = this.envelope
     if (!envelope || !this.context || this.lastWidth <= 0 || this.lastHeight <= 0) return
     const compact = this.lastWidth < 480 || this.lastHeight < 280
-    const layout = responsiveEChartsLayoutKey(envelope, this.lastWidth, this.lastHeight)
+    const focused = visualizationHostIsFocused(this.container)
+    const layout = responsiveEChartsLayoutKey(envelope, this.lastWidth, this.lastHeight, focused)
     const sameLayout = layout === this.responsiveLayout
     if (!force && sameLayout && (!compact || this.compactWidth === this.lastWidth)) return
-    const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
+    const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight, focused)
     // Exact compact widths only affect scroll legends. Avoid reapplying an
     // unchanged proportional series while a card is continuously resized.
     if (!force && compact && sameLayout && patch.legend === undefined) {
@@ -364,8 +365,8 @@ export function heatmapFocusDataZoom(focused: boolean, compactRange: HeatmapZoom
 }
 
 function visualizationHostIsFocused(container: HTMLElement): boolean {
-  const root = container.getRootNode()
-  return root instanceof ShadowRoot && root.host.getAttribute('slot') === 'focus-visual'
+  const root = container.getRootNode?.()
+  return typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot && root.host.getAttribute('slot') === 'focus-visual'
 }
 
 export function preservesEChartsViewState(previous: VisualizationEnvelope, next: VisualizationEnvelope): boolean {
