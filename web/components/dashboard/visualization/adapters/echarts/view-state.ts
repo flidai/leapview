@@ -96,7 +96,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
   if (gaugeGraphic !== undefined) patch.graphic = gaugeGraphic
   if (movedSide && option.graphic !== undefined) patch.graphic = compactProportionalLegendTitle(option.graphic, movedSide)
   if (option.legend !== undefined) {
-    patch.legend = compact ? compactLegend(responsiveLegend, width) : desktopLegend(option.legend)
+    patch.legend = compact ? compactLegend(responsiveLegend, width) : desktopLegend(option.legend, hasPieSeries(option.series))
   }
   if (option.dataZoom !== undefined) patch.dataZoom = compact
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
@@ -491,10 +491,10 @@ function hasSliderDataZoom(value: unknown): boolean {
   return value.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && (entry as Record<string, unknown>).type === 'slider')
 }
 
-function desktopLegend(value: unknown): unknown {
+function desktopLegend(value: unknown, resetProportionalSide = false): unknown {
   const legends = Array.isArray(value) ? value : [value]
   const result = legends.map((entry) => {
-    if (entry && typeof entry === 'object' && !Array.isArray(entry) && entry.orient === 'vertical' && (entry.left !== undefined || entry.right !== undefined)) {
+    if (resetProportionalSide && entry && typeof entry === 'object' && !Array.isArray(entry) && entry.orient === 'vertical' && (entry.left !== undefined || entry.right !== undefined)) {
       return { ...entry, left: entry.left ?? 'auto', right: entry.right ?? 'auto', height: 'auto' }
     }
     if (!isHorizontalBottomLegend(entry)) return entry

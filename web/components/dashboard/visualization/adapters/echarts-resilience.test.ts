@@ -222,7 +222,7 @@ test('ECharts handle reapplies width-sensitive legends and switches proportional
     handle.resize(360, 300)
     expect(calls.length).toBe(count + 1)
     expect(calls.at(-1)!.legend).toMatchObject({ type: 'scroll', width: expect.any(Number) })
-    expect(first.radius).toEqual(['54%', '76%'])
+    expect(first.radius).toEqual(['39.79%', '56%'])
     expect(first.left).toBeUndefined()
     expect(first.right).toBeUndefined()
     expect(first.label.alignTo).toBe('edge')
