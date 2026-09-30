@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [core, reports, chat, data, site]
+        shard: [core, reports, reports-viewer, reports-builder, chat, data, site]
     if: github.repository == 'flidai/leapview'
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.shard == 'site' && 120 || 20 }}

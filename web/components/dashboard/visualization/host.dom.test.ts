@@ -755,17 +755,21 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
       await page.goto(baseURL)
       await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
 
-      const mounted = await page.evaluate(async () => {
+      await page.evaluate(async () => {
         const source = (window as any).__lvSourceHosts.orders_kpi
         const deferred = document.createElement('lv-visualization-host') as any
+        deferred.id = 'intersection-fallback-host'
         deferred.deferMount = true
         deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
         document.body.append(deferred)
         await deferred.updateComplete
-        await new Promise<void>((resolve) => setTimeout(resolve, 0))
-        return ((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0
       })
-      expect(mounted).toBe(true)
+      // Observe automatic fallback; ensureMounted() would force the behavior
+      // under test, while one timer tick does not await renderer loading.
+      await page.waitForFunction(() => {
+        const deferred = document.getElementById('intersection-fallback-host')
+        return (deferred?.shadowRoot?.querySelector('.renderer')?.childElementCount ?? 0) > 0
+      }, undefined, { timeout: 2_000 })
     } finally {
       await page.close()
     }

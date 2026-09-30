@@ -64,14 +64,18 @@ not across tests sharing one server. TLS-specific and direct-container qualifica
 their own containers. The lane does not substitute PGlite or skip migrations; changing those
 behaviors would need separate conformance evidence.
 
-Frontend validation has five isolated shards: `core`, `reports`, `chat`, `data`, and `site`.
-Each hosted shard runs `task ci:lane:frontend:shard SHARD=<name>` on its own runner with a
-180-second watchdog and at most one retry for a timeout, never for an assertion failure.
-This bounds each independent suite without treating the cumulative runtime of five healthy
-suites as a hang. Every selected shard must succeed for `CI gate` to pass. The gate requires successful
+Frontend validation has seven isolated shards: `core`, `reports`, `reports-viewer`,
+`reports-builder`, `chat`, `data`, and `site`. The dashboard viewer and builder browser
+suites each run in their own shard so they cannot push the rest of report validation
+past the per-shard watchdog. Each hosted shard runs
+`task ci:lane:frontend:shard SHARD=<name>` on its own runner with a 180-second watchdog
+and at most one retry for a timeout, never for an assertion failure. This bounds each
+independent suite without treating the cumulative runtime of seven healthy suites as a hang.
+Every selected shard must succeed for `CI gate` to pass. The gate requires successful
 planning, checks candidate/run/attempt provenance, and rejects missing lane results or a
-frontend matrix differing from the versioned plan. Unselected jobs must report skipped. Local `task ci` runs the
-same bounded shards sequentially to avoid browser and bundler contention on a shared machine.
+frontend matrix differing from the versioned plan. Unselected jobs must report skipped.
+Local `task ci` runs the same bounded shards sequentially to avoid browser and bundler
+contention on a shared machine.
 
 ## Toolchain and caches
 

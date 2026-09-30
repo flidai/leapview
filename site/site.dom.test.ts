@@ -180,6 +180,7 @@ test('homepage content aligns with the shared header and footer across screen si
   }
 })
 
+// This browser check measures ten viewport widths; allow it to finish under slower CI runners.
 test('architecture connections stay aligned with the layers across screen sizes', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
@@ -242,7 +243,7 @@ test('architecture connections stay aligned with the layers across screen sizes'
   } finally {
     await page.close()
   }
-})
+}, 15_000)
 
 test('analytics code walkthrough advances when visible and stops after a file is chosen', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })

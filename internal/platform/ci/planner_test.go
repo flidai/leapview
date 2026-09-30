@@ -43,7 +43,7 @@ func TestPlanChanges(t *testing.T) {
 			}},
 			want: Jobs{
 				FrontendPrepare: true,
-				Frontend:        []string{"core", "reports"},
+				Frontend:        []string{"core", "reports", "reports-viewer"},
 				ProductionImage: true,
 			},
 			reason: "frontend",
@@ -57,10 +57,37 @@ func TestPlanChanges(t *testing.T) {
 			}},
 			want: Jobs{
 				Prepare:         true,
-				Frontend:        []string{"core", "reports", "chat", "data"},
+				Frontend:        []string{"core", "reports", "reports-viewer", "reports-builder", "chat", "data"},
 				UIRouteQA:       true,
 				Docs:            true,
 				SiteImage:       true,
+				ProductionImage: true,
+			},
+			reason: "frontend",
+		},
+		{
+			name:  "frontend dashboard builder",
+			input: Input{Event: "pull_request", PullRequestNumber: 1},
+			changes: []Change{{
+				Status: "M",
+				Paths:  []string{"web/components/dashboard/dashboard-builder.dom.test.ts"},
+			}},
+			want: Jobs{
+				FrontendPrepare: true,
+				Frontend:        []string{"core", "reports-builder"},
+			},
+			reason: "frontend tests",
+		},
+		{
+			name:  "frontend dashboard builder source",
+			input: Input{Event: "pull_request", PullRequestNumber: 1},
+			changes: []Change{{
+				Status: "M",
+				Paths:  []string{"web/components/dashboard/dashboard-builder.ts"},
+			}},
+			want: Jobs{
+				FrontendPrepare: true,
+				Frontend:        []string{"core", "reports-builder"},
 				ProductionImage: true,
 			},
 			reason: "frontend",
@@ -330,6 +357,23 @@ func TestFullJobsIncludesIndependentDocumentationGate(t *testing.T) {
 			plan.Effective.Prepare,
 			plan.Effective.FrontendPrepare,
 		)
+	}
+	wantFrontend := []string{"core", "reports", "reports-viewer", "reports-builder", "chat", "data", "site"}
+	if !reflect.DeepEqual(plan.PR.Effective.Frontend, wantFrontend) {
+		t.Fatalf("full CI frontend shards = %#v, want %#v", plan.PR.Effective.Frontend, wantFrontend)
+	}
+}
+
+func TestDashboardBuilderTestChangeSelectsDedicatedPRShard(t *testing.T) {
+	t.Parallel()
+
+	plan := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{
+		Status: "M",
+		Paths:  []string{"web/components/dashboard/dashboard-builder.dom.test.ts"},
+	}})
+	want := []string{"core", "reports-builder"}
+	if !reflect.DeepEqual(plan.PR.Effective.Frontend, want) {
+		t.Fatalf("dashboard builder PR shards = %#v, want %#v", plan.PR.Effective.Frontend, want)
 	}
 }
 

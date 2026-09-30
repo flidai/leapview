@@ -80,7 +80,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	if strings.Contains(frontendLane, "- task: build") {
 		t.Fatal("frontend lane must not replace production assets while Go tests are running")
 	}
-	for _, shard := range []string{"core", "reports", "chat", "data", "site"} {
+	for _, shard := range []string{"core", "reports", "reports-viewer", "reports-builder", "chat", "data", "site"} {
 		want := "- task: ci:lane:frontend:shard\n        vars: { SHARD: " + shard + " }"
 		if !strings.Contains(frontendLane, want) {
 			t.Fatalf("frontend aggregate lane missing shard %q", shard)
@@ -88,7 +88,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	}
 	frontendShard := taskfileTaskBlock(t, taskfile, "ci:lane:frontend:shard")
 	for _, want := range []string{
-		"enum: [core, reports, chat, data, site]",
+		"enum: [core, reports, reports-viewer, reports-builder, chat, data, site]",
 		"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}",
 	} {
 		if !strings.Contains(frontendShard, want) {
@@ -272,7 +272,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"nightly.yml":          nightlyWorkflow,
 	} {
 		frontend := workflowJobBlock(t, workflow, "frontend-validation")
-		matrix := "shard: [core, reports, chat, data, site]"
+		matrix := "shard: [core, reports, reports-viewer, reports-builder, chat, data, site]"
 		if workflowName == "ci.yml" {
 			matrix = "matrix: ${{ fromJSON(needs.prepare.outputs.frontend_matrix) }}"
 		}

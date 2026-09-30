@@ -814,6 +814,7 @@ test('pending page preview shows loading without false invalid-preview errors', 
   } finally { await page.close() }
 })
 
+// Allow setup and browser round trips while keeping the continuation's 1.5s wait below.
 test('background dashboard updates preserve an in-flight filter continuation', async () => {
   const page = await browser.newPage()
   try {
@@ -854,7 +855,7 @@ test('background dashboard updates preserve an in-flight filter continuation', a
     expect(requests).toHaveLength(2)
     expect(requests[1]).toMatchObject({ cursor: 'cursor-2', requestGeneration: 2 })
   } finally { await page.close() }
-})
+}, 10_000)
 
 test('filter settings stay with their selected card and fit a narrow pane', async () => {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } })
