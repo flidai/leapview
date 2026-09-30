@@ -73,6 +73,9 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(reader.requests) != 1 || !reader.requests[0].IncludeEditableDrafts {
+		t.Fatalf("dashboard discovery must request editable drafts: %#v", reader.requests)
+	}
 	if len(options.Dashboards) != 3 {
 		t.Fatalf("dashboards = %#v", options.Dashboards)
 	}
