@@ -38,7 +38,7 @@ func TestSiteUnknownRouteReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestDesktopDownloadPagePublishesManifestBackedPreviewState(t *testing.T) {
+func TestDesktopDownloadPageWithdrawsUnavailablePreview(t *testing.T) {
 	baseURL, err := url.Parse("https://leapview.dev")
 	if err != nil {
 		t.Fatal(err)
@@ -57,9 +57,8 @@ func TestDesktopDownloadPagePublishesManifestBackedPreviewState(t *testing.T) {
 	}
 	for _, want := range []string{
 		`<h1>LeapView on your desktop.</h1>`,
-		`Early preview`,
-		`LeapView Desktop 0.1.0-alpha.1`,
-		`These installers are not code-signed.`,
+		`Desktop downloads are temporarily withdrawn.`,
+		`No installer is currently offered.`,
 		`href="/docs/desktop/install"`,
 		`href="/docs/desktop/security"`,
 		`macOS 13 Ventura`,
@@ -73,7 +72,12 @@ func TestDesktopDownloadPagePublishesManifestBackedPreviewState(t *testing.T) {
 			t.Errorf("download page missing %q:\n%s", want, body)
 		}
 	}
-	for _, forbidden := range []string{`href="https://releases.leapview.dev/`, `unsigned-candidate`} {
+	for _, forbidden := range []string{
+		`href="https://releases.leapview.dev/`,
+		`href="https://github.com/flidai/leapview/releases/`,
+		`download="`,
+		`unsigned-candidate`,
+	} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("unpublished download page contains %q:\n%s", forbidden, body)
 		}
@@ -93,7 +97,7 @@ func TestDesktopDownloadPagePublishesManifestBackedPreviewState(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"schemaVersion": 1`,
-		`"status": "published"`,
+		`"status": "withdrawn"`,
 		`"applicationId": "dev.leapview.desktop"`,
 		`"name": "preview"`,
 		`"updateOrigin": ""`,

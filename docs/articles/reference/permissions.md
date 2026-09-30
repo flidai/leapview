@@ -40,6 +40,7 @@ Catalog presence defines stable vocabulary, not blanket runtime availability. `U
 | `connection.create` | Create connections | Connection | `project` | `connection` | `project` | — | yes | yes | Create a Connection in the bound Project. |
 | `connection.use` | Use connection | Connection | `resource` | `connection` | `connection` | — | yes | yes | Execute through an approved Connection binding without revealing credentials. |
 | `connection.manage` | Manage connection | Connection | `resource` | `connection` | `connection` | — | no | yes | Update, rotate, test, or delete a Connection. |
+| `connection.upload` | Upload managed data | Connection | `resource` | `connection` | `connection` | — | yes | yes | Stage and commit managed-data revisions through an exact Connection without changing its configuration or credentials. |
 | `resource.share` | Share resource | Sharing | `resource` | `connection`, `source`, `model`, `semantic_model`, `pipeline`, `dashboard` | `connection`, `source`, `model`, `semantic_model`, `pipeline`, `dashboard` | — | no | yes | Issue a bounded independent grant on an exact supported resource. |
 | `delivery.read` | View releases | Delivery | `project` | `project` | `project` | — | yes | yes | Inspect delivery plans and retained evidence. |
 | `delivery.plan` | Plan releases | Delivery | `project` | `project` | `project` | — | yes | yes | Persist an exact delivery plan. |

@@ -278,11 +278,11 @@ func (m *Module) authorizeAPIGenOperation(ctx context.Context, scope agentcap.Sc
 	typedCredential := scope.Credential.PermissionProfile != "" || scope.Credential.Permissions != nil
 	typedOperation := strings.TrimSpace(operation.Contract.Action) != "" || strings.TrimSpace(operation.Contract.Resolver) != ""
 	if typedOperation {
-		if !scope.DevAuthBypass && !typedCredential {
+		if scope.Credential.Restricted && !scope.DevAuthBypass && !typedCredential {
 			m.recordToolAudit(ctx, scope, capability, "agent_tool", operationID, "denied", fmt.Errorf("typed operation requires typed credential scope"))
 			return agenttools.ToolError("forbidden", "typed credential scope is required for this operation"), false
 		}
-		if !scope.DevAuthBypass {
+		if scope.Credential.Restricted && !scope.DevAuthBypass {
 			pairs, err := agentAPIGenPermissionPairs(operation, request, scope.ProjectID)
 			if err != nil || scope.Credential.PermissionProfile != access.PermissionCatalogProfile || !permissionPairsAllowAll(scope.Credential.Permissions, pairs) {
 				if err == nil {

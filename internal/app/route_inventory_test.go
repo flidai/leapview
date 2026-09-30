@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "601d01ef1da5066a06cb236136b082f7d56b8bbf90f4f365314a90810ad71d9a"
+	const expectedRouteContractDigest = "68ee1d6bf8736ef1033fcf07cd0cdbd7650fab9fc308a67889ea55c60f3bd818"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -182,7 +182,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.Contains(path, "/dashboards/") || strings.Contains(path, "/commands/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_READ"
-	case path == "/explore" || path == "/explore/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
+	case path == "/explore" || path == "/explore/saved" || path == "/explore/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
 		authenticated.owner = "project"
 		authenticated.privilege = "RESOURCE_USE"
 	case path == "/pipelines/command":
@@ -291,6 +291,7 @@ GET /chats/management
 GET /chats/references/search
 GET /chats/restore
 GET /chats/{conversation}
+GET /chats/{conversation}/visuals/{artifact}/dashboards
 GET /candidates/{candidate}
 GET /candidates/{candidate}/review
 GET /candidates/{candidate}/dashboards/{dashboard}
@@ -320,6 +321,7 @@ GET /dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /embed/dashboards/{publicId}
 GET /embed/dashboards/{publicId}/pages/{page}
 GET /explore
+GET /explore/saved
 GET /favicon.ico
 GET /healthz
 GET /login
@@ -330,6 +332,10 @@ GET /metrics
 GET /models
 GET /models/{asset}/{section}
 GET /pipelines
+GET /pipelines/runs
+GET /pipelines/{asset}
+GET /pipelines/{asset}/runs/{run}
+GET /pipelines/{asset}/runs/{run}/{section}
 GET /pipelines/{asset}/{section}
 GET /runs
 POST /pipelines/command
@@ -366,6 +372,7 @@ POST /auth/local/password
 POST /auth/logout
 POST /auth/logout-all
 POST /chats/stop
+POST /chats/{conversation}/visuals/{artifact}/dashboards
 POST /chats/turns
 POST /chats/manage
 POST /candidates/{candidate}/dashboards/{dashboard}/commands/{command}
@@ -373,6 +380,7 @@ GET /catalog/search
 GET /connections/search
 GET /dashboards/search
 POST /explore/command
+POST /explore/saved
 POST /dashboards/{dashboard}/archive
 POST /dashboards/{dashboard}/delete
 POST /dashboards/{dashboard}/commands/clear-selection

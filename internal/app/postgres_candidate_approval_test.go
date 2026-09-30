@@ -17,6 +17,8 @@ import (
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
+	projectmodule "github.com/flidai/leapview/internal/project/module"
+	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -147,6 +149,39 @@ func TestCandidateApprovalPermissionsUsesPersistedTypedReviewerPolicy(t *testing
 	}
 	if access.PermissionSetAllows(permissions, publishPair) {
 		t.Fatalf("release approver unexpectedly has delivery.publish authority: %v", permissions)
+	}
+
+	digests, err := candidateApprovalSnapshotDigests(
+		t.Context(), candidateApprovalStateReaderFake{state: state, artifact: artifact}, store, string(generationID),
+	)
+	if err != nil {
+		t.Fatalf("compile candidate transition snapshot identities: %v", err)
+	}
+	planningIdentity, err := projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), release.CandidatePolicyGenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planningSnapshot, err := projectmodule.CompileAuthorizationSnapshotJSON(planningIdentity, compiled.Graph, state.AccessPolicyJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planningDigest, err := planningSnapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	servingSnapshot, err := projectmodule.CompileAuthorizationSnapshotJSON(
+		projectgraph.ServingIdentity{ProjectID: state.ProjectID, Environment: string(state.Environment), GenerationID: string(state.ID)},
+		compiled.Graph, state.AccessPolicyJSON,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	servingDigest, err := servingSnapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digests.PlanPolicySnapshotDigest != planningDigest || digests.ServingPolicySnapshotDigest != servingDigest || planningDigest == servingDigest {
+		t.Fatalf("candidate snapshot digests = %+v; want distinct plan %s and serving %s identities", digests, planningDigest, servingDigest)
 	}
 }
 

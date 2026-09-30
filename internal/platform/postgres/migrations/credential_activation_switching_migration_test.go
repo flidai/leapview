@@ -16,7 +16,7 @@ func TestCredentialActivationSwitchingMigrationAndLifecycle(t *testing.T) {
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
 	backup := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
-	database := h.NewDatabase(t, "credential_activation_switching_050_goose")
+	database := h.NewDatabase(t, "credential_activation_switching_053_goose")
 	h.GrantDatabase(t, database.Name, owner, "CONNECT", "CREATE")
 	h.GrantDatabase(t, database.Name, runtime, "CONNECT")
 	h.GrantDatabase(t, database.Name, backup, "CONNECT")
@@ -26,29 +26,29 @@ func TestCredentialActivationSwitchingMigrationAndLifecycle(t *testing.T) {
 	}
 	defer db.Close()
 
-	priorMigrations := credentialMigrationSource(t, "045_credential_draft_storage.sql", "047_credential_validation_receipts.sql", "048_credential_activation_preparation.sql", "049_credential_activation_abort.sql")
+	priorMigrations := credentialMigrationSource(t, "048_credential_draft_storage.sql", "050_credential_validation_receipts.sql", "051_credential_activation_preparation.sql", "052_credential_activation_abort.sql")
 	priorProvider, err := newProviderWithoutLock(db, priorMigrations)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := priorProvider.Up(t.Context()); err != nil {
-		t.Fatalf("apply credential migrations through 049: %v", err)
+		t.Fatalf("apply credential migrations through 052: %v", err)
 	}
 
 	prepared := insertCredentialPreparationFixture(t, db, "deployment-switching", false)
 	aborted := insertCredentialPreparationFixture(t, db, "deployment-aborted", true)
 
 	allMigrations := credentialMigrationSource(t,
-		"045_credential_draft_storage.sql", "047_credential_validation_receipts.sql",
-		"048_credential_activation_preparation.sql", "049_credential_activation_abort.sql",
-		"050_credential_activation_switching.sql",
+		"048_credential_draft_storage.sql", "050_credential_validation_receipts.sql",
+		"051_credential_activation_preparation.sql", "052_credential_activation_abort.sql",
+		"053_credential_activation_switching.sql",
 	)
 	provider, err := newProviderWithoutLock(db, allMigrations)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := provider.Up(t.Context()); err != nil {
-		t.Fatalf("upgrade credential lifecycle from 049 to 050: %v", err)
+		t.Fatalf("upgrade credential lifecycle from 052 to 053: %v", err)
 	}
 
 	var preservedPreparedSwitching, preservedPreparedAbort, preservedAbortSwitching, preservedAbortTime sql.NullTime

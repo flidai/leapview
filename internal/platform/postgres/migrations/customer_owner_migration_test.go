@@ -16,7 +16,7 @@ func TestCustomerOwnerMigrationRunsThroughGooseAndRestrictsRoles(t *testing.T) {
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
 	readonly := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
 	backup := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
-	database := h.NewDatabase(t, "bootstrap_customer_owner_046")
+	database := h.NewDatabase(t, "bootstrap_customer_owner_049")
 	h.GrantDatabase(t, database.Name, owner, "CREATE")
 	h.GrantDatabase(t, database.Name, runtime, "CONNECT")
 	db, err := sql.Open("pgx", database.AdminURL())
@@ -58,7 +58,7 @@ func TestCustomerOwnerMigrationRunsThroughGooseAndRestrictsRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	migration, err := MigrationFS().Open("046_instance_customer_owner.sql")
+	migration, err := MigrationFS().Open("049_instance_customer_owner.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestCustomerOwnerMigrationRunsThroughGooseAndRestrictsRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider, err := newProviderWithoutLock(db, fstest.MapFS{
-		"046_instance_customer_owner.sql": &fstest.MapFile{Data: body},
+		"049_instance_customer_owner.sql": &fstest.MapFile{Data: body},
 	})
 	if err != nil {
 		t.Fatal(err)

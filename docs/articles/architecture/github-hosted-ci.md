@@ -68,9 +68,10 @@ Frontend validation has seven isolated shards: `core`, `reports`, `reports-viewe
 `reports-builder`, `chat`, `data`, and `site`. The dashboard viewer and builder browser
 suites each run in their own shard so they cannot push the rest of report validation
 past the per-shard watchdog. Each hosted shard runs
-`task ci:lane:frontend:shard SHARD=<name>` on its own runner with a 180-second watchdog
-and at most one retry for a timeout, never for an assertion failure. This bounds each
-independent suite without treating the cumulative runtime of seven healthy suites as a hang.
+`task ci:lane:frontend:shard SHARD=<name>` on its own runner. The `reports` shard has
+a 300-second watchdog; the other six use 180 seconds, with at most one retry
+for a timeout and never for an assertion failure. This bounds each independent suite
+without treating the cumulative runtime of seven healthy suites as a hang.
 Every selected shard must succeed for `CI gate` to pass. The gate requires successful
 planning, checks candidate/run/attempt provenance, and rejects missing lane results or a
 frontend matrix differing from the versioned plan. Unselected jobs must report skipped.

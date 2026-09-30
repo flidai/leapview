@@ -75,3 +75,24 @@ func BuildProduction(ctx context.Context, cfg config.Config) (*Application, erro
 	}
 	return buildPostgresTarget(ctx, cfg, true)
 }
+
+// BuildAccessTransitionRunner composes the production PostgreSQL authority
+// graph for one offline transition. The returned runner owns the unstarted
+// graph's lifecycle independently of Application's process-facing surface.
+func BuildAccessTransitionRunner(ctx context.Context, cfg config.Config) (*AccessTransitionRunner, error) {
+	cfg.Production = true
+	if err := cfg.ValidatePostgresProduction(); err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(config.ProfileServe); err != nil {
+		return nil, err
+	}
+	var runner *AccessTransitionRunner
+	if _, err := buildPostgresTargetWithTransition(ctx, cfg, true, &runner); err != nil {
+		return nil, err
+	}
+	if runner == nil {
+		return nil, errors.New("production access-transition runner was not composed")
+	}
+	return runner, nil
+}

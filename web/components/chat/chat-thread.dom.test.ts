@@ -303,7 +303,11 @@ test('chat thread renders visual artifacts with dashboard web components', async
         kind: 'tool',
         name: 'query_visual',
         status: 'complete',
-        resultJson: '{\n  "ok": true,\n  "type": "bar",\n  "id": "agent_chart_1",\n  "signal": "visuals.agent_chart_1"\n}',
+        argumentsJson: JSON.stringify({ semanticModelId: 'semantic:sales', visual: { type: 'bar', query: { type: 'aggregate', dimensions: ['country'], metrics: ['revenue'], limit: 25 }, presentation: { type: 'cartesian' } } }),
+        resultJson: JSON.stringify({ ok: true, type: 'bar', id: 'agent_chart_1', datasetId: 'orders', semanticModelRef: { kind: 'semantic_model', id: 'semantic:sales' }, fields: [
+          { fieldId: 'semantic:sales.country', role: 'dimension', alias: 'country', explorerFieldId: 'orders.country', label: 'Country' },
+          { fieldId: 'semantic:sales.revenue', role: 'metric', alias: 'revenue', label: 'Revenue' },
+        ] }),
         artifact: {
           type: 'bar',
           id: 'agent_chart_1',
@@ -323,14 +327,13 @@ test('chat thread renders visual artifacts with dashboard web components', async
         },
       },
     ]
+    thread.surface = 'drawer'
     await thread.updateComplete
   })
   await page.waitForFunction(() => Boolean(
     document.querySelector('lv-chat-thread')!
       .shadowRoot!
-      .querySelector('lv-visual-artifact[artifact-id="agent_chart_1"]')
-      ?.shadowRoot
-      ?.querySelector('lv-visualization-host'),
+      .querySelector('.artifact-card[data-visual-id="agent_chart_1"]'),
   ))
   await page.waitForFunction(() => Boolean(
     document.querySelector('lv-chat-thread')!
@@ -341,19 +344,34 @@ test('chat thread renders visual artifacts with dashboard web components', async
   ))
 
   const rendered = await page.evaluate(() => {
-    const root = document.querySelector('lv-chat-thread')!.shadowRoot!
+    const thread = document.querySelector('lv-chat-thread')!
+    const root = thread.shadowRoot!
+    let explorerHref = ''
+    thread.addEventListener('lv-chat-visual-open', (event: Event) => {
+      explorerHref = (event as CustomEvent<{ explorerHref: string }>).detail.explorerHref
+    }, { once: true })
+    root.querySelector<HTMLButtonElement>('.artifact-card[data-visual-id="agent_chart_1"]')?.click()
     return {
-      chart: (root.querySelector('lv-visual-artifact[artifact-id="agent_chart_1"]')?.shadowRoot?.querySelector('lv-visualization-host') as any)?.envelope?.spec?.kind,
+      chartCard: root.querySelector('.artifact-card[data-visual-id="agent_chart_1"]')?.textContent?.includes('Orders'),
       table: (root.querySelector('lv-visual-artifact[artifact-id="agent_table_1"]')?.shadowRoot?.querySelector('lv-visualization-host') as any)?.envelope?.spec?.kind,
+      explorerHref,
       toolRows: root.querySelectorAll('.tool-call').length,
       bodyText: root.textContent || '',
       artifactBackground: getComputedStyle(root.querySelector('lv-visual-artifact')!.shadowRoot!.querySelector('.artifact')!).backgroundColor,
       artifactBorderTopWidth: getComputedStyle(root.querySelector('lv-visual-artifact')!.shadowRoot!.querySelector('.artifact')!).borderTopWidth,
     }
   })
-  expect(rendered.chart).toBe('cartesian')
+  expect(rendered.chartCard).toBe(true)
   expect(rendered.table).toBe('table')
-  expect(rendered.toolRows).toBe(2)
+  const explorerURL = new URL(rendered.explorerHref!, 'https://example.test')
+  expect(explorerURL.pathname).toBe('/explore')
+  expect(explorerURL.searchParams.get('mode')).toBe('explore')
+  expect(explorerURL.searchParams.get('semanticModel')).toBe('semantic:sales')
+  expect(explorerURL.searchParams.get('dataset')).toBe('orders')
+  expect(explorerURL.searchParams.getAll('dimension')).toEqual(['orders.country'])
+  expect(explorerURL.searchParams.getAll('metric')).toEqual(['revenue'])
+  expect(explorerURL.searchParams.get('limit')).toBe('25')
+  expect(rendered.toolRows).toBe(0)
   expect(rendered.bodyText.includes('delivered')).toBe(false)
   expect(rendered.artifactBackground).toBe('rgb(1, 2, 3)')
   expect(rendered.artifactBorderTopWidth).toBe('2px')
@@ -366,18 +384,55 @@ test('chat thread renders visual artifacts with dashboard web components', async
       artifacts: thread.shadowRoot.querySelectorAll('lv-visual-artifact').length,
     }
   })
-  expect(drawer).toEqual({ toolRows: 0, artifacts: 2 })
+  expect(drawer).toEqual({ toolRows: 0, artifacts: 1 })
 
   await page.close()
 })
 
-test('chat thread renders tool activity with accessible expandable details', async () => {
+test('chat thread hides Explorer action when aggregate query has unsupported state', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
-    thread.status = { enabled: true, running: true }
+    thread.visuals = Object.fromEntries(['filtered', 'secondary', 'records', 'input-only', 'unqualified'].map((id) => [id, {
+      schemaVersion: 4, visualID: id, rendererID: 'echarts', specRevision: `sha256:${id}`, dataRevision: 1,
+      spec: { kind: 'cartesian', mark: 'bar', title: 'Orders', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Orders' }] }], dataBudget: { maxRows: 50, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Orders' }, interactions: [], x: { dataset: 'primary', field: 'value' }, y: [{ dataset: 'primary', field: 'value' }], presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false } },
+      dataState: { kind: 'inline', specRevision: `sha256:${id}`, dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: `sha256:${id}`, dataRevision: 1, generation: 1, columns: ['value'], rows: [[42]], completeness: 'complete' }] },
+      selection: [], status: { kind: 'ready' }, diagnostics: [],
+    }]))
+    const args = (extraVisual: Record<string, unknown> = {}, filters?: unknown[]) => JSON.stringify({
+      semanticModelId: 'semantic:sales',
+      ...(filters ? { filters } : {}),
+      visual: { type: 'bar', query: { type: 'aggregate', dimensions: ['status'], metrics: ['orders.count'] }, ...extraVisual },
+    })
+    const result = (id: string, explorerFieldId?: string) => JSON.stringify({
+      ok: true, type: 'bar', id, datasetId: 'orders', semanticModelRef: { kind: 'semantic_model', id: 'semantic:sales' },
+      fields: [{ fieldId: 'semantic:sales.status', role: 'dimension', alias: 'status', ...(explorerFieldId ? { explorerFieldId } : {}), label: 'Status' }],
+    })
+    thread.transcript = [
+      { id: 'filtered', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: args({}, [{ id: 'status-filter', dimension: 'status', control: { type: 'singleSelect' } }]), resultJson: result('filtered', 'orders.status'), artifact: { type: 'bar', id: 'filtered', summary: 'Filtered chart.' } },
+      { id: 'secondary', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: args({ datasets: { comparison: { type: 'aggregate', dimensions: [], metrics: ['orders.count'] } } }), resultJson: result('secondary', 'orders.status'), artifact: { type: 'bar', id: 'secondary', summary: 'Secondary chart.' } },
+      { id: 'records', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: JSON.stringify({ semanticModelId: 'semantic:sales', visual: { type: 'bar', query: { type: 'records', dataset: 'orders', fields: ['status'] } } }), resultJson: result('records', 'orders.status'), artifact: { type: 'bar', id: 'records', summary: 'Record chart.' } },
+      { id: 'input-only', kind: 'tool', name: 'query_visual', status: 'complete', inputJson: args(), resultJson: result('input-only', 'orders.status'), artifact: { type: 'bar', id: 'input-only', summary: 'Input only chart.' } },
+      { id: 'unqualified', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: args(), resultJson: result('unqualified'), artifact: { type: 'bar', id: 'unqualified', summary: 'Unqualified chart.' } },
+    ]
+    thread.surface = 'drawer'
+    await thread.updateComplete
+  })
+  await page.waitForFunction(() => document.querySelector('lv-chat-thread')?.shadowRoot?.querySelectorAll('lv-visual-artifact').length === 5)
+  const actions = await page.locator('lv-chat-thread').evaluate((thread: any) => Array.from(thread.shadowRoot.querySelectorAll('lv-visual-artifact')).map((artifact: any) => Boolean(artifact.shadowRoot.querySelector('lv-visualization-host')?.querySelector('[slot="agent-action"]'))))
+  expect(actions).toEqual([false, false, false, false, false])
+  await page.close()
+})
+
+test('chat thread hides processing rows while retaining finished errors and answers', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: false }
     thread.transcript = [
       { id: 'user-1', kind: 'user', text: 'Find the sales dashboard.' },
       {
@@ -407,60 +462,280 @@ test('chat thread renders tool activity with accessible expandable details', asy
       working: root.querySelector('.working')?.textContent?.replace(/\s+/g, ' ').trim(),
       toolRows: root.querySelectorAll('.tool-call').length,
       codeBlocks: root.querySelectorAll('lv-code-block').length,
-      labels: Array.from(root.querySelectorAll('.tool-trigger')).map((trigger: any) => trigger.textContent.replace(/\s+/g, ' ').trim()),
-      statuses: Array.from(root.querySelectorAll('.tool-call')).map((row: any) => ({
-        className: row.className,
-        expanded: row.querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
-        controls: row.querySelector('.tool-trigger')?.getAttribute('aria-controls'),
-      })),
       agentTurns: root.querySelectorAll('.agent-turn').length,
-      runError: root.querySelector('.message.error')?.textContent?.replace(/\s+/g, ' ').trim(),
+      errors: Array.from(root.querySelectorAll('.message.error')).map((node: any) => node.textContent?.replace(/\s+/g, ' ').trim()),
       assistantMarkdown: (root.querySelector('.agent-markdown') as any)?.value,
+      transcriptTools: element.transcript.filter((item: any) => item.kind === 'tool').map((item: any) => ({ name: item.name, inputJson: item.inputJson, resultJson: item.resultJson })),
     }
   })
 
   expect(state.working).toBeUndefined()
-  expect(state.toolRows).toBe(3)
+  expect(state.toolRows).toBe(0)
   expect(state.codeBlocks).toBe(0)
-  expect(state.labels).toEqual(['Catalog Search Running', 'Catalog Get Failed', 'Catalog List Complete'])
-  expect(state.statuses).toEqual([
-    { className: 'tool-call running', expanded: 'false', controls: 'tool-details-tool-running' },
-    { className: 'tool-call error', expanded: 'false', controls: 'tool-details-tool-error' },
-    { className: 'tool-call done', expanded: 'false', controls: 'tool-details-tool-complete' },
-  ])
   expect(state.agentTurns).toBe(1)
-  expect(state.runError).toBe('The dashboard could not be loaded.')
+  expect(state.errors).toEqual(['Catalog lookup failed.', 'The dashboard could not be loaded.'])
   expect(state.text).toContain('Find the sales dashboard.')
   expect(state.assistantMarkdown).toBe('I could not load that dashboard.')
-  expect(state.text).not.toContain('Catalog lookup failed.')
   expect(state.text).not.toContain('secret tool result')
-
-  await page.locator('lv-chat-thread').evaluate(async (element: any) => {
-    for (const trigger of Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.tool-trigger')) as HTMLButtonElement[]) {
-      trigger.click()
-    }
-    await element.updateComplete
-  })
-  const details = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const root = element.shadowRoot as ShadowRoot
-    return {
-      expanded: Array.from(root.querySelectorAll('.tool-trigger')).map((trigger) => trigger.getAttribute('aria-expanded')),
-      codeBlocks: root.querySelectorAll('lv-code-block').length,
-      detailsText: Array.from(root.querySelectorAll('.tool-details')).map((detail) => detail.textContent?.replace(/\s+/g, ' ').trim()),
-      errorText: root.querySelector('.tool-error')?.textContent,
-    }
-  })
-  expect(details.expanded).toEqual(['true', 'true', 'true'])
-  expect(details.codeBlocks).toBe(5)
-  expect(details.detailsText[0]).toContain('sales')
-  expect(details.detailsText[1]).toContain('secret tool result')
-  expect(details.detailsText[1]).not.toContain('Catalog lookup failed.')
-  expect(details.errorText).toBeUndefined()
-  expect(details.detailsText[2]).toContain('dashboard:sales')
+  expect(state.transcriptTools).toEqual([
+    { name: 'catalog_search', inputJson: '{"query":"sales"}', resultJson: 'items[1]{id}: sales' },
+    { name: 'catalog_get', inputJson: '{"id":"dashboard:sales"}', resultJson: '{"error":"secret tool result"}' },
+    { name: 'catalog_list', inputJson: undefined, resultJson: 'items[1]{id}: dashboard:sales' },
+  ])
   await page.close()
 })
 
-test('drawer keeps answers and failures but hides routine tool activity', async () => {
+test('chat thread expands completed steps with an elapsed label while keeping answers visible', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const thread = page.locator('lv-chat-thread')
+  await thread.evaluate(async (element: any) => {
+    element.status = { enabled: true, running: false }
+    element.transcript = [
+      { id: 'u1', kind: 'user', text: 'Show revenue', createdAt: '2026-09-28T10:00:00Z' },
+      { id: 't1', kind: 'tool', name: 'catalog_search', status: 'complete', createdAt: '2026-09-28T10:00:02Z', inputJson: '{"secret":"hidden"}' },
+      { id: 'a1', kind: 'assistant', markdown: 'Looking for the model.', createdAt: '2026-09-28T10:00:03Z' },
+      { id: 't2', kind: 'tool', name: 'query_visual', status: 'complete', createdAt: '2026-09-28T10:00:07Z' },
+      { id: 'a2', kind: 'assistant', markdown: 'Here is the chart.', createdAt: '2026-09-28T10:00:11Z' },
+    ]
+    await element.updateComplete
+  })
+  const details = thread.locator('.run-steps')
+  expect(await details.count()).toBe(1)
+  expect(await details.getAttribute('open')).toBeNull()
+  expect(await details.locator('summary').textContent()).toContain('Worked for 11s')
+  expect(await thread.locator('.agent-markdown').evaluate((node: any) => node.value)).toBe('Here is the chart.')
+  await details.locator('summary').click()
+  expect(await details.getAttribute('open')).not.toBeNull()
+  const steps = await details.locator('.run-step').allTextContents()
+  expect(steps).toEqual(['Looking for the model.'])
+  expect((await details.textContent()) || '').not.toContain('secret')
+  await page.close()
+})
+
+test('chat thread keeps visual context inside Worked while leaving the chart card visible', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const thread = page.locator('lv-chat-thread')
+  await thread.evaluate(async (element: any) => {
+    element.status = { enabled: true, running: false }
+    element.transcript = [
+      { id: 'u1', kind: 'user', text: 'Show revenue by state', createdAt: '2026-09-28T10:00:00Z' },
+      { id: 't1', kind: 'tool', name: 'query_visual', status: 'complete', createdAt: '2026-09-28T10:00:02Z', artifact: { type: 'bar', id: 'revenue-by-state', summary: 'Revenue by State' } },
+      { id: 'a1', kind: 'assistant', markdown: '### Underlying values\n\n| State | Revenue |\n| --- | ---: |\n| SP | 5,998,226.96 |\n\nData freshness: current.', createdAt: '2026-09-28T10:00:14Z' },
+    ]
+    await element.updateComplete
+  })
+  const details = thread.locator('.run-steps')
+  expect(await details.locator('summary').textContent()).toContain('Worked for 14s')
+  expect(await thread.locator('lv-visual-artifact').isVisible()).toBe(true)
+  expect(await thread.locator('.agent-markdown').isVisible()).toBe(false)
+  expect(await details.locator('.agent-markdown').count()).toBe(1)
+  await details.locator('summary').click()
+  expect(await details.locator('.agent-markdown').isVisible()).toBe(true)
+  expect(await details.locator('.agent-markdown').evaluate((node: any) => node.value)).toContain('Data freshness: current.')
+  await page.close()
+})
+
+test('chat thread hides recovered tool errors only within the same user turn', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const errors = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'u1', kind: 'user', text: 'Show revenue' },
+      { id: 'e1', kind: 'tool', name: 'catalog_get', status: 'error', argumentsJson: '{"ref":"dashboard:a"}', error: 'Recovered lookup.' },
+      { id: 's1', kind: 'tool', name: 'catalog_get', status: 'complete', argumentsJson: '{"ref":"dashboard:a"}' },
+      { id: 'e2', kind: 'tool', name: 'query_visual', status: 'error', error: 'Unresolved visual error.' },
+      { id: 'u2', kind: 'user', text: 'Try again' },
+      { id: 's2', kind: 'tool', name: 'query_visual', status: 'complete' },
+      { id: 'e3', kind: 'tool', name: 'catalog_search', status: 'error', error: 'Current lookup error.' },
+    ]
+    await thread.updateComplete
+    return Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim())
+  })
+  expect(errors).toEqual(['Unresolved visual error.', 'Current lookup error.'])
+  await page.close()
+})
+
+test('chat thread keeps an error when a different request to the same tool succeeds', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const errors = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'user', kind: 'user', text: 'Compare both dashboards' },
+      { id: 'failed', kind: 'tool', name: 'catalog_get', status: 'error', argumentsJson: '{"ref":{"id":"dashboard:a"}}', error: 'Dashboard A is unavailable.' },
+      { id: 'other', kind: 'tool', name: 'catalog_get', status: 'complete', argumentsJson: '{"ref":{"id":"dashboard:b"}}' },
+    ]
+    await thread.updateComplete
+    const afterOtherResult = Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim())
+    thread.transcript = [...thread.transcript,
+      { id: 'retry', kind: 'tool', name: 'catalog_get', status: 'complete', argumentsJson: '{"ref":{"id":"dashboard:a"}}' },
+    ]
+    await thread.updateComplete
+    return {
+      afterOtherResult,
+      afterMatchingRetry: Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim()),
+    }
+  })
+  expect(errors).toEqual({ afterOtherResult: ['Dashboard A is unavailable.'], afterMatchingRetry: [] })
+  await page.close()
+})
+
+test('chat thread keeps a repaired visual presentation error inside Worked', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const state = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    const query = { type: 'aggregate', metrics: [{ metric: 'net_sales' }], dimensions: [{ dimension: 'country' }] }
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'user', kind: 'user', text: 'Show net sales by country' },
+      { id: 'failed', kind: 'tool', name: 'query_visual', status: 'error', error: 'Unsupported orientation.', argumentsJson: JSON.stringify({ semanticModelId: 'semantic-model:finance', visual: { type: 'bar', query, presentation: { orientation: 'horizontal' } } }) },
+      { id: 'fixed', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { type: 'bar', id: 'by-country', summary: 'Net sales by country' }, argumentsJson: JSON.stringify({ semanticModelId: 'semantic-model:finance', visual: { type: 'bar', query } }) },
+    ]
+    await thread.updateComplete
+    return {
+      visibleErrors: thread.shadowRoot.querySelectorAll('.message.error').length,
+      steps: thread.shadowRoot.querySelector('.run-step-list')?.textContent?.replace(/\s+/g, ' ').trim(),
+      visual: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact')),
+    }
+  })
+  expect(state).toEqual({ visibleErrors: 0, steps: undefined, visual: true })
+  await page.close()
+})
+
+test('chat thread does not treat different visual filters or datasets as retries', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    const errors = await page.evaluate(async () => {
+      await customElements.whenDefined('lv-chat-thread')
+      const thread = document.querySelector('lv-chat-thread') as any
+      const query = { type: 'aggregate', metrics: [{ metric: 'net_sales' }], dimensions: [{ dimension: 'country' }] }
+      const visual = { type: 'bar', query }
+      const input = (extra: Record<string, unknown>, visualExtra: Record<string, unknown> = {}) => JSON.stringify({ semanticModelId: 'semantic-model:finance', ...extra, visual: { ...visual, ...visualExtra } })
+      thread.status = { enabled: true, running: false }
+      thread.transcript = [
+        { id: 'user', kind: 'user', text: 'Compare revenue charts' },
+        { id: 'filtered-error', kind: 'tool', name: 'query_visual', status: 'error', error: 'Filtered chart failed.', argumentsJson: input({ filters: [{ id: 'region', dimension: 'region', default: { type: 'text', value: 'west' } }] }) },
+        { id: 'filtered-success', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: input({ filters: [{ id: 'region', dimension: 'region', default: { type: 'text', value: 'east' } }] }) },
+        { id: 'dataset-error', kind: 'tool', name: 'query_visual', status: 'error', error: 'Comparison dataset failed.', argumentsJson: input({}, { datasets: { comparison: { type: 'aggregate', metrics: ['gross_sales'] } } }) },
+        { id: 'dataset-success', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: input({}, { datasets: { comparison: { type: 'aggregate', metrics: ['net_sales'] } } }) },
+      ]
+      await thread.updateComplete
+      return Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim())
+    })
+    expect(errors).toEqual(['Filtered chart failed.', 'Comparison dataset failed.'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('chat thread hides failed tool lookups once the turn produces a visual', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const state = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'user', kind: 'user', text: 'Show net sales by country' },
+      { id: 'failed', kind: 'tool', name: 'catalog_get', status: 'error', error: 'Catalog resource not found.', argumentsJson: '{"ref":"unknown"}' },
+      { id: 'found', kind: 'tool', name: 'catalog_get', status: 'complete', argumentsJson: '{"ref":"finance"}' },
+      { id: 'visual', kind: 'tool', name: 'query_visual', status: 'complete', artifact: { type: 'donut', id: 'by-country', summary: 'Net sales by country' } },
+      { id: 'answer', kind: 'assistant', markdown: 'Visual' },
+    ]
+    await thread.updateComplete
+    return {
+      topLevelErrors: thread.shadowRoot.querySelectorAll('.agent-stack > .message.error').length,
+      workedErrors: Array.from(thread.shadowRoot.querySelectorAll('.run-steps .message.error')).map((node: any) => node.textContent?.trim()),
+      numberedSteps: thread.shadowRoot.querySelectorAll('.run-steps ol').length,
+      toolLabels: thread.shadowRoot.querySelector('.run-steps')?.textContent?.includes('Catalog Get'),
+      visual: Boolean(thread.shadowRoot.querySelector('lv-visual-artifact')),
+    }
+  })
+  expect(state).toEqual({ topLevelErrors: 0, workedErrors: [], numberedSteps: 0, toolLabels: false, visual: true })
+  await page.close()
+})
+
+test('chat thread waits until the active run ends before showing unresolved errors', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const states = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    const transcript = [
+      { id: 'u1', kind: 'user', text: 'Earlier question', runId: 'run-old' },
+      { id: 'old-error', kind: 'tool', name: 'catalog_get', status: 'error', error: 'Earlier failure.', runId: 'run-old' },
+      { id: 'u2', kind: 'user', text: 'Show revenue', runId: 'run-new' },
+      { id: 'progress', kind: 'assistant', markdown: 'Retrying the visual.', runId: 'run-new' },
+      { id: 'new-error', kind: 'tool', name: 'query_visual', status: 'error', argumentsJson: '{"semanticModelId":"orders"}', error: 'Temporary visual failure.', runId: 'run-new' },
+    ]
+    const visible = () => ({
+      errors: Array.from(thread.shadowRoot.querySelectorAll('.message.error')).map((node: any) => node.textContent?.trim()),
+      answers: Array.from(thread.shadowRoot.querySelectorAll('.agent-markdown')).map((node: any) => node.value),
+      stepsLabel: (Array.from(thread.shadowRoot.querySelectorAll('.run-steps summary')) as HTMLElement[]).at(-1)?.textContent?.trim(),
+      stepsText: (Array.from(thread.shadowRoot.querySelectorAll('.run-step-list')) as HTMLElement[]).at(-1)?.textContent?.replace(/\s+/g, ' ').trim(),
+    })
+    thread.status = { enabled: true, running: true, runId: 'run-new' }
+    thread.transcript = transcript
+    await thread.updateComplete
+    const running = visible()
+    thread.status = { enabled: true, running: false, runId: 'run-new' }
+    await thread.updateComplete
+    const failed = visible()
+    thread.transcript = [
+      ...transcript,
+      { id: 'success', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: '{"semanticModelId":"orders"}', runId: 'run-new' },
+      { id: 'final', kind: 'assistant', markdown: 'Open the chart.', runId: 'run-new' },
+    ]
+    await thread.updateComplete
+    return { running, failed, recovered: visible() }
+  })
+  expect(states).toEqual({
+    running: { errors: ['Earlier failure.'], answers: [], stepsLabel: 'Working', stepsText: 'Retrying the visual.' },
+    failed: { errors: ['Earlier failure.', 'Temporary visual failure.'], answers: ['Retrying the visual.'], stepsLabel: undefined, stepsText: undefined },
+    recovered: { errors: ['Earlier failure.'], answers: ['Open the chart.'], stepsLabel: 'View steps', stepsText: 'Retrying the visual.' },
+  })
+  await page.close()
+})
+
+test('chat thread keeps only the last assistant message in each user turn', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  const answers = await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: false }
+    thread.transcript = [
+      { id: 'user', kind: 'user', text: 'Show revenue' },
+      { id: 'progress-1', kind: 'assistant', markdown: 'I will query the model.' },
+      { id: 'tool-error', kind: 'tool', name: 'query_visual', status: 'error', argumentsJson: '{"semanticModelId":"orders"}', error: 'Invalid option.' },
+      { id: 'progress-2', kind: 'assistant', markdown: 'Retrying without the option.' },
+      { id: 'tool-success', kind: 'tool', name: 'query_visual', status: 'complete', argumentsJson: '{"semanticModelId":"orders"}' },
+      { id: 'answer-1', kind: 'assistant', markdown: 'The chart is ready.' },
+      { id: 'final', kind: 'assistant', markdown: 'Open the Revenue chart.' },
+      { id: 'user-2', kind: 'user', text: 'What is the total?' },
+      { id: 'answer-2', kind: 'assistant', markdown: 'The total is 42.' },
+    ]
+    await thread.updateComplete
+    return {
+      answers: Array.from(thread.shadowRoot.querySelectorAll('.agent-markdown')).map((node: any) => node.value),
+      errors: thread.shadowRoot.querySelectorAll('.message.error').length,
+    }
+  })
+  expect(answers).toEqual({ answers: ['Open the Revenue chart.', 'The total is 42.'], errors: 0 })
+  await page.close()
+})
+
+test('drawer shows only working state until the active run finishes', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
@@ -477,21 +752,23 @@ test('drawer keeps answers and failures but hides routine tool activity', async 
       await thread.updateComplete
     })
     const state = await page.locator('lv-chat-thread').evaluate((thread: any) => ({
-      tools: [...thread.shadowRoot.querySelectorAll('.tool-trigger')].map((node: Element) => node.textContent?.replace(/\s+/g, ' ').trim()),
+      toolRows: thread.shadowRoot.querySelectorAll('.tool-call').length,
       working: Boolean(thread.shadowRoot.querySelector('.working')),
+      error: thread.shadowRoot.querySelector('.message.error')?.textContent?.trim(),
       answer: thread.shadowRoot.querySelector('.agent-markdown')?.value,
       user: thread.shadowRoot.querySelector('.message.user')?.textContent?.trim(),
     }))
-    expect(state.tools).toEqual(['Edit Dashboard Source Failed'])
+    expect(state.toolRows).toBe(0)
     expect(state.working).toBe(true)
-    expect(state.answer).toBe('I could not add the chart.')
+    expect(state.error).toBeUndefined()
+    expect(state.answer).toBeUndefined()
     expect(state.user).toContain('Add a chart.')
   } finally {
     await page.close()
   }
 })
 
-test('tool failure keeps a distinct error message when its result has no error details', async () => {
+test('tool failure remains accessible without its processing row', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
@@ -499,16 +776,16 @@ test('tool failure keeps a distinct error message when its result has no error d
       thread.status = { enabled: true, running: false }
       thread.transcript = [{ id: 'failed-tool', kind: 'tool', name: 'catalog_get', status: 'error', resultJson: '{"ok":false}', error: 'Network timed out.' }]
       await thread.updateComplete
-      thread.shadowRoot.querySelector('.tool-trigger').click()
-      await thread.updateComplete
     })
-    expect(await page.locator('lv-chat-thread').locator('.tool-error').textContent()).toBe('Network timed out.')
+    const thread = page.locator('lv-chat-thread')
+    expect(await thread.locator('.tool-call').count()).toBe(0)
+    expect((await thread.getByRole('alert').textContent())?.trim()).toBe('Network timed out.')
   } finally {
     await page.close()
   }
 })
 
-test('chat thread keeps one tool row per call when durable history replaces live activity', async () => {
+test('chat thread keeps structured tool history when durable history replaces live activity', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
@@ -529,17 +806,22 @@ test('chat thread keeps one tool row per call when durable history replaces live
     const root = element.shadowRoot as ShadowRoot
     return {
       rows: root.querySelectorAll('.tool-call').length,
-      labels: Array.from(root.querySelectorAll('.tool-trigger')).map((trigger: any) => trigger.textContent.replace(/\s+/g, ' ').trim()),
-      ids: Array.from(root.querySelectorAll('.tool-details')).map((detail: any) => detail.id),
+      transcript: element.transcript.map((item: any) => ({ name: item.name, status: item.status, resultJson: item.resultJson })),
+      stepsOpen: root.querySelector('.run-steps')?.hasAttribute('open'),
+      stepText: root.querySelector('.run-step-list')?.textContent,
     }
   })
-  expect(state.rows).toBe(2)
-  expect(state.labels).toEqual(['Catalog Search Complete', 'Catalog List Complete'])
-  expect(state.ids).toEqual([])
+  expect(state.rows).toBe(0)
+  expect(state.transcript).toEqual([
+    { name: 'catalog_search', status: 'complete', resultJson: 'items[1]{id}: sales' },
+    { name: 'catalog_list', status: 'complete', resultJson: 'items[1]{id}: sales' },
+  ])
+  expect(state.stepsOpen).toBeUndefined()
+  expect(state.stepText).toBeUndefined()
   await page.close()
 })
 
-test('chat thread marks orphaned historical tools interrupted without hiding a new run indicator', async () => {
+test('chat thread hides orphaned historical tools while keeping the new run indicator', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
@@ -554,12 +836,11 @@ test('chat thread marks orphaned historical tools interrupted without hiding a n
   const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
     const root = element.shadowRoot as ShadowRoot
     return {
-      label: root.querySelector('.tool-trigger')?.textContent?.replace(/\s+/g, ' ').trim(),
-      className: root.querySelector('.tool-call')?.className,
+      rows: root.querySelectorAll('.tool-call').length,
       working: root.querySelector('.working')?.textContent?.replace(/\s+/g, ' ').trim(),
     }
   })
-  expect(state).toEqual({ label: 'Catalog Search Interrupted', className: 'tool-call interrupted', working: '' })
+  expect(state).toEqual({ rows: 0, working: '' })
   await page.close()
 })
 
@@ -645,6 +926,7 @@ test('chat thread rejects payloads embedded in artifact metadata', async () => {
         },
       },
     }]
+    thread.surface = 'drawer'
     await thread.updateComplete
   })
   const artifact = page.locator('lv-chat-thread').locator('lv-visual-artifact[artifact-id="legacy_chart_1"]')

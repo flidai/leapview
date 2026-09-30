@@ -109,7 +109,12 @@ test('ECharts responsive patch keeps proportional geometry stable while adapting
         label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
         labelLine: { length: 58, length2: 42 },
       })
-      expect(compact.series[0].radius).toEqual(option.series[0].radius)
+      if (Array.isArray(option.series[0].radius)) {
+        expect(Number.parseFloat(compact.series[0].radius[1])).toBeLessThanOrEqual(66)
+        expect(Number.parseFloat(compact.series[0].radius[0])).toBeLessThan(Number.parseFloat(compact.series[0].radius[1]))
+      } else {
+        expect(compact.series[0].radius).toEqual(option.series[0].radius)
+      }
       expect(expanded.series[0].radius).toEqual(option.series[0].radius)
     }
     expect(option.series[0].id).toBe(`series:primary:${mark}`)
@@ -176,19 +181,23 @@ test('ECharts handle reapplies compact layout after updates and restores desktop
   }
   const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
   const initial = cartesian(true)
-  handle.mount(initial, defaultRendererContext)
-  handle.resize(320, 240)
-  const compactCall = calls.at(-1)!
-  expect(compactCall.grid).toMatchObject({ bottom: 54 })
+  try {
+    handle.mount(initial, defaultRendererContext)
+    handle.resize(320, 240)
+    const compactCall = calls.at(-1)!
+    expect(compactCall.grid).toMatchObject({ bottom: 54 })
 
-  const updated = structuredClone(initial)
-  updated.dataRevision = 2
-  updated.dataState.dataRevision = 2
-  handle.update(updated, Change.Data, defaultRendererContext)
-  expect(calls.at(-1)!.grid).toMatchObject({ bottom: 54 })
+    const updated = structuredClone(initial)
+    updated.dataRevision = 2
+    updated.dataState.dataRevision = 2
+    handle.update(updated, Change.Data, defaultRendererContext)
+    expect(calls.at(-1)!.grid).toMatchObject({ bottom: 54 })
 
-  handle.resize(640, 360)
-  expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
+    handle.resize(640, 360)
+    expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
+  } finally {
+    handle.dispose()
+  }
 })
 
 test('ECharts handle reapplies width-sensitive legends and switches proportional labels across responsive breakpoints', () => {
@@ -205,46 +214,50 @@ test('ECharts handle reapplies width-sensitive legends and switches proportional
     rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { color: 'danger', icon: 'circle' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'square' } },
   }]
   const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
-  handle.mount(envelope, defaultRendererContext)
-  handle.resize(320, 300)
-  const first = calls.at(-1)!.series[0]
-  const count = calls.length
-  handle.resize(360, 300)
-  expect(calls.length).toBe(count + 1)
-  expect(calls.at(-1)!.legend).toMatchObject({ type: 'scroll', width: expect.any(Number) })
-  expect(first.radius).toEqual(['54%', '76%'])
-  expect(first.left).toBeUndefined()
-  expect(first.right).toBeUndefined()
-  expect(first.label.alignTo).toBe('edge')
+  try {
+    handle.mount(envelope, defaultRendererContext)
+    handle.resize(320, 300)
+    const first = calls.at(-1)!.series[0]
+    const count = calls.length
+    handle.resize(360, 300)
+    expect(calls.length).toBe(count + 1)
+    expect(calls.at(-1)!.legend).toMatchObject({ type: 'scroll', width: expect.any(Number) })
+    expect(first.radius).toEqual(['28.42%', '40%'])
+    expect(first.left).toBeUndefined()
+    expect(first.right).toBeUndefined()
+    expect(first.label.alignTo).toBe('edge')
 
-  handle.resize(435, 420)
-  expect(calls.at(-1)!.series[0]).toMatchObject({
-    id: 'series:primary:donut', label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
-  })
+    handle.resize(435, 420)
+    expect(calls.at(-1)!.series[0]).toMatchObject({
+      id: 'series:primary:donut', label: { alignTo: 'edge' },
+    })
 
-  handle.resize(1200, 720)
-  expect(calls.at(-1)!.series[0]).toMatchObject({
-    id: 'series:primary:donut',
-    label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
-    labelLine: { length: 58, length2: 42 },
-  })
-  expect(calls.at(-1)!.series[0].radius).toEqual(['54%', '76%'])
+    handle.resize(1200, 720)
+    expect(calls.at(-1)!.series[0]).toMatchObject({
+      id: 'series:primary:donut',
+      label: { alignTo: 'labelLine', distanceToLabelLine: 12 },
+      labelLine: { length: 58, length2: 42 },
+    })
+    expect(calls.at(-1)!.series[0].radius).toEqual(['54%', '76%'])
 
-  const roomyCount = calls.length
-  handle.resize(900, 500)
-  expect(calls.length).toBe(roomyCount + 1)
-  expect(calls.at(-1)!.series[0].labelLine).toMatchObject({ length: 40, length2: 32 })
+    const roomyCount = calls.length
+    handle.resize(900, 500)
+    expect(calls.length).toBe(roomyCount + 1)
+    expect(calls.at(-1)!.series[0].labelLine).toMatchObject({ length: 40, length2: 32 })
 
-  handle.resize(320, 300)
-  expect(calls.at(-1)!.series[0]).toMatchObject({ id: 'series:primary:donut', label: { alignTo: 'edge' } })
+    handle.resize(320, 300)
+    expect(calls.at(-1)!.series[0]).toMatchObject({ id: 'series:primary:donut', label: { alignTo: 'edge' } })
 
-  const inside = structuredClone(envelope)
-  inside.spec.presentation.labelPosition = 'inside'
-  handle.update(inside, Change.Spec, defaultRendererContext)
-  handle.resize(535, 420)
-  expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 11, padding: 0 })
-  handle.resize(700, 500)
-  expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 12, padding: 3 })
+    const inside = structuredClone(envelope)
+    inside.spec.presentation.labelPosition = 'inside'
+    handle.update(inside, Change.Spec, defaultRendererContext)
+    handle.resize(535, 420)
+    expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 11, padding: 0 })
+    handle.resize(700, 500)
+    expect(calls.at(-1)!.series[0].label).toMatchObject({ position: 'inside', fontSize: 12, padding: 3 })
+  } finally {
+    handle.dispose()
+  }
 })
 
 function legendHandle() {
@@ -322,6 +335,64 @@ test('ECharts SSR legend actions distinguish native visibility from governed sel
   expect(selected.events).toHaveLength(1)
 })
 
+test('focused ECharts handles reapply bottom radius geometry for bottom and moved side legends', () => {
+  class FocusShadowRoot {}
+  const shadowRootDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'ShadowRoot')
+  Object.defineProperty(globalThis, 'ShadowRoot', { configurable: true, writable: true, value: FocusShadowRoot })
+  try {
+    const sideLegend = proportionalFixture('donut') as any
+    sideLegend.spec.presentation.legend = 'right'
+    expect(responsiveEChartsLayoutKey(sideLegend, 599, 500, true)).not.toBe(responsiveEChartsLayoutKey(sideLegend, 600, 500, true))
+    expect(responsiveEChartsLayoutKey(sideLegend, 799, 500, true)).not.toBe(responsiveEChartsLayoutKey(sideLegend, 800, 500, true))
+
+    for (const legend of ['bottom', 'right'] as const) {
+      const calls: Record<string, any>[] = []
+      const chart = {
+        on() {}, off() {}, resize() {}, dispose() {},
+        setOption(option: Record<string, any>) { calls.push(option) },
+        getOption() { return {} },
+      }
+      const focusState = { focused: true }
+      const root = new FocusShadowRoot() as any
+      root.host = { getAttribute: (name: string) => name === 'slot' && focusState.focused ? 'focus-visual' : null }
+      const container = { getRootNode: () => focusState.focused ? root : { host: root.host } }
+      const envelope = proportionalFixture('donut') as any
+      envelope.spec.presentation.legend = legend
+      const handle = new EChartsHandle(container as any, {} as any, chart as any, new CategoryColorRegistry())
+      try {
+        handle.mount(envelope, defaultRendererContext)
+        handle.resize(550, 500)
+        expect(calls.at(-1)!.series[0].radius).toEqual(['28.42%', '40%'])
+        let count = calls.length
+
+        handle.resize(650, 500)
+        expect(calls.length).toBe(count + 1)
+        expect(calls.at(-1)!.series[0].radius).toEqual(['46.89%', '66%'])
+        count = calls.length
+
+        if (legend === 'right') {
+          handle.resize(799, 500)
+          expect(calls.at(-1)!.series[0].label.alignTo).toBe('edge')
+          count = calls.length
+          handle.resize(800, 500)
+          expect(calls.length).toBe(count + 1)
+          expect(calls.at(-1)!.series[0].label.alignTo).toBe('labelLine')
+        }
+        count = calls.length
+
+        handle.resize(550, 500)
+        expect(calls.length).toBe(count + 1)
+        expect(calls.at(-1)!.series[0].radius).toEqual(['28.42%', '40%'])
+      } finally {
+        handle.dispose()
+      }
+    }
+  } finally {
+    if (shadowRootDescriptor) Object.defineProperty(globalThis, 'ShadowRoot', shadowRootDescriptor)
+    else Reflect.deleteProperty(globalThis, 'ShadowRoot')
+  }
+})
+
 test('ECharts responsive and view-state helpers fail closed on malformed renderer options', () => {
   expect(responsiveEChartsPatch({ grid: [null] } as any, 320, 240)).toEqual({ grid: [{ left: 8, right: 8, top: 10, bottom: 12 }] })
   expect(captureEChartsViewState({ dataZoom: [null], series: [null] } as any)).toEqual({})
@@ -333,4 +404,40 @@ test('ECharts accessibility describes empty and null data without exposing raw n
   const option = echartsOption(empty, defaultRendererContext) as any
   expect(option.aria.description).toContain('No data rows are available.')
   expect(option.aria.description).not.toContain('null')
+})
+
+test('ECharts handle reapplies donut radius when crossing the bottom-legend narrow breakpoint in both directions', () => {
+  const calls: Record<string, any>[] = []
+  const chart = {
+    on() {}, off() {}, resize() {}, dispose() {},
+    setOption(option: Record<string, any>) { calls.push(option) },
+    getOption() { return {} },
+  }
+  const envelope = proportionalFixture('donut') as any
+  envelope.spec.presentation.legend = 'bottom'
+  expect(responsiveEChartsLayoutKey(envelope, 550, 500)).not.toBe(responsiveEChartsLayoutKey(envelope, 650, 500))
+  expect(responsiveEChartsLayoutKey(envelope, 650, 500)).toBe(responsiveEChartsLayoutKey(envelope, 700, 500))
+  const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
+  try {
+    handle.mount(envelope, defaultRendererContext)
+
+    handle.resize(550, 500)
+    expect(calls.at(-1)!.series[0].radius).toEqual(['28.42%', '40%'])
+    let count = calls.length
+
+    handle.resize(650, 500)
+    expect(calls.length).toBe(count + 1)
+    expect(calls.at(-1)!.series[0].radius).toEqual(['39.79%', '56%'])
+    count = calls.length
+
+    handle.resize(700, 500)
+    expect(calls.length).toBe(count)
+    count = calls.length
+
+    handle.resize(550, 500)
+    expect(calls.length).toBe(count + 1)
+    expect(calls.at(-1)!.series[0].radius).toEqual(['28.42%', '40%'])
+  } finally {
+    handle.dispose()
+  }
 })

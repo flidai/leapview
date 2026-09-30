@@ -106,6 +106,10 @@ class ChatComposer extends LitElement {
     this.resizeTextarea()
   }
 
+  public focusInput(): void {
+    this.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
+  }
+
   public setDraft(value: string, focus = true): void {
     this.draft = value
     this.mentionIndex = 0

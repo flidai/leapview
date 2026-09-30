@@ -108,6 +108,7 @@ func (authority foregroundRuntimeCredentialAuthority) ResolveRuntimeCredential(
 		return credentialmodule.RuntimeCredentialReference{}, credentialmodule.ErrRuntimeInvalid
 	}
 	checkConnection := accessmodule.ConnectionAuthorizerFromSnapshot(
+		authority.instanceID,
 		func(context.Context) (accesssnapshot.AuthorizationSnapshot, error) { return leasedSnapshot, nil },
 		authority.subjects,
 	)

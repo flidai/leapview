@@ -18,11 +18,13 @@ import (
 )
 
 var (
-	ErrUnavailable     = errors.New("project catalog unavailable")
-	ErrNotFound        = errors.New("catalog resource not found")
-	ErrInvalidRequest  = errors.New("invalid catalog request")
-	ErrInvalidCursor   = errors.New("invalid catalog cursor")
-	ErrSnapshotChanged = errors.New("catalog snapshot changed")
+	ErrUnavailable       = errors.New("project catalog unavailable")
+	ErrNotFound          = errors.New("catalog resource not found")
+	ErrNotTraversable    = errors.New("catalog resource is not traversable")
+	ErrUnsupportedDomain = errors.New("catalog domain filtering is unsupported")
+	ErrInvalidRequest    = errors.New("invalid catalog request")
+	ErrInvalidCursor     = errors.New("invalid catalog cursor")
+	ErrSnapshotChanged   = errors.New("catalog snapshot changed")
 )
 
 const (
@@ -50,6 +52,11 @@ type LeaseProvider interface {
 // semantic model, rather than acquiring a second generation snapshot.
 type SemanticModelVisibility func(context.Context, Lease, string, projectgraph.ResourceID) (bool, error)
 
+// SemanticModelSearchTerms projects safe semantic names and labels into
+// catalog search. Implementations must use the exact leased generation and
+// omit terms for hidden or protected semantic members.
+type SemanticModelSearchTerms func(context.Context, Lease, string, projectgraph.ResourceID) ([]string, error)
+
 type ServiceOption func(*Service)
 
 // WithSemanticModelVisibility adds the compiled-semantic access gate used for
@@ -57,6 +64,12 @@ type ServiceOption func(*Service)
 // model resources; non-semantic resources retain ordinary RBAC behavior.
 func WithSemanticModelVisibility(visibility SemanticModelVisibility) ServiceOption {
 	return func(service *Service) { service.semanticModelVisibility = visibility }
+}
+
+// WithSemanticModelSearchTerms adds a generation-bound projection of
+// searchable semantic metric and dimension metadata.
+func WithSemanticModelSearchTerms(terms SemanticModelSearchTerms) ServiceOption {
+	return func(service *Service) { service.semanticModelSearchTerms = terms }
 }
 
 // SubjectResolver expands the authenticated principal into the principal plus
@@ -126,9 +139,10 @@ type ListRequest struct {
 // a mutable graph cache: every operation leases the active generation and
 // reads its bound graph and immutable AuthorizationSnapshot.
 type Service struct {
-	leases                  LeaseProvider
-	subjects                SubjectResolver
-	semanticModelVisibility SemanticModelVisibility
+	leases                   LeaseProvider
+	subjects                 SubjectResolver
+	semanticModelVisibility  SemanticModelVisibility
+	semanticModelSearchTerms SemanticModelSearchTerms
 }
 
 func NewService(leasing LeaseProvider, subjects SubjectResolver, options ...ServiceOption) (*Service, error) {
@@ -180,6 +194,9 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, erro
 		return Page{}, err
 	}
 	domain := strings.ToLower(strings.TrimSpace(request.Domain))
+	if err := s.validateDomainFilter(ctx, lease, snapshot, graph, subjects, request.PrincipalID, request.DevAuthBypass, kinds, domain); err != nil {
+		return Page{}, err
+	}
 	candidates := make([]projectgraph.Resource, 0)
 	for _, resource := range graph.Resources() {
 		if len(kinds) != 0 && !containsKind(kinds, resource.Kind) {
@@ -188,7 +205,35 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, erro
 		if domain != "" && strings.ToLower(resource.Metadata.Domain) != domain {
 			continue
 		}
-		if !matches(resource, request.Query) {
+		if matches(resource, request.Query) {
+			candidates = append(candidates, resource)
+			continue
+		}
+		terms := []string(nil)
+		if resource.Kind == projectgraph.KindSemanticModel && s.semanticModelSearchTerms != nil {
+			allowed := request.DevAuthBypass
+			if !request.DevAuthBypass {
+				allowed, err = allowsAny(snapshot, subjects, resource)
+				if err != nil {
+					return Page{}, err
+				}
+			}
+			if !allowed {
+				continue
+			}
+			semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
+			if err != nil {
+				return Page{}, err
+			}
+			if !semanticAllowed {
+				continue
+			}
+			terms, err = s.semanticModelSearchTerms(ctx, lease, request.PrincipalID, resource.ID)
+			if err != nil {
+				return Page{}, err
+			}
+		}
+		if !matchesWithTerms(resource, request.Query, terms) {
 			continue
 		}
 		candidates = append(candidates, resource)
@@ -243,36 +288,69 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 	}
 	domain := strings.ToLower(strings.TrimSpace(request.Domain))
 	var parent projectgraph.ResourceID
+	projectParent := false
 	if request.Parent != nil {
 		if !request.Parent.valid() {
 			return Page{}, fmt.Errorf("%w: parent ref is invalid", ErrInvalidRequest)
 		}
-		resource, ok := graph.Resource(request.Parent.ID)
-		if !ok || resource.Kind != request.Parent.Kind {
-			return Page{}, ErrNotFound
-		}
-		semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
-		if err != nil {
-			return Page{}, err
-		}
-		if !semanticAllowed {
-			return Page{}, ErrNotFound
-		}
-		allowed := request.DevAuthBypass
-		if !request.DevAuthBypass {
-			allowed, err = allowsAny(snapshot, subjects, resource)
+		if request.Parent.Kind == projectgraph.KindProjectNamespace {
+			if request.Parent.ID != snapshot.Identity().ProjectID {
+				return Page{}, ErrNotFound
+			}
+			resource := projectgraph.Resource{ID: request.Parent.ID, Kind: projectgraph.KindProjectNamespace, Name: request.Parent.ID.String()}
+			allowed := request.DevAuthBypass
+			if !request.DevAuthBypass {
+				allowed, err = allowsAny(snapshot, subjects, resource)
+				if err != nil {
+					return Page{}, err
+				}
+			}
+			if !allowed {
+				return Page{}, ErrNotFound
+			}
+			parent = request.Parent.ID
+			projectParent = true
+		} else {
+			resource, ok := graph.Resource(request.Parent.ID)
+			if !ok || resource.Kind != request.Parent.Kind {
+				return Page{}, ErrNotFound
+			}
+			semanticAllowed, err := s.semanticModelAllowed(ctx, lease, request.PrincipalID, resource)
 			if err != nil {
 				return Page{}, err
 			}
+			if !semanticAllowed {
+				return Page{}, ErrNotFound
+			}
+			allowed := request.DevAuthBypass
+			if !request.DevAuthBypass {
+				allowed, err = allowsAny(snapshot, subjects, resource)
+				if err != nil {
+					return Page{}, err
+				}
+			}
+			if !allowed {
+				return Page{}, ErrNotFound
+			}
+			parent = request.Parent.ID
+			hasChildren := false
+			for _, edge := range graph.Edges() {
+				if edge.From == parent {
+					hasChildren = true
+					break
+				}
+			}
+			if !hasChildren {
+				return Page{}, ErrNotTraversable
+			}
 		}
-		if !allowed {
-			return Page{}, ErrNotFound
-		}
-		parent = request.Parent.ID
+	}
+	if err := s.validateDomainFilter(ctx, lease, snapshot, graph, subjects, request.PrincipalID, request.DevAuthBypass, kinds, domain); err != nil {
+		return Page{}, err
 	}
 	candidates := make([]projectgraph.Resource, 0)
 	seen := map[projectgraph.ResourceID]struct{}{}
-	if parent == "" {
+	if request.Parent == nil || projectParent {
 		// Project graphs do not require edges from the root. Root browsing is a
 		// project-wide catalog operation and therefore scans every graph node,
 		// filtering each one against the exact generation snapshot.
@@ -427,6 +505,24 @@ func (s *Service) Resolve(ctx context.Context, principalID string, ref Ref, capa
 	if devAuthBypass {
 		return resultFor(resource), nil
 	}
+	if capability == access.CapabilityResourceUse && resource.Kind == projectgraph.KindSemanticModel {
+		ref, err := access.NewResourceRef(resource.ID, resource.Kind)
+		if err != nil {
+			return Result{}, err
+		}
+		pair, err := access.NewExactPermissionPair(access.ActionSemanticQuery, snapshot.Identity().ProjectID, ref)
+		if err != nil {
+			return Result{}, err
+		}
+		granted, err := snapshot.EffectiveTypedPermissions(subjects)
+		if err != nil {
+			return Result{}, err
+		}
+		if access.PermissionSetAllows(granted, pair) {
+			return resultFor(resource), nil
+		}
+		return Result{}, ErrNotFound
+	}
 	for _, subject := range subjects {
 		allowed, err := allowsCatalogResource(snapshot, subject, resource, capability)
 		if err != nil {
@@ -556,12 +652,17 @@ func resultFor(resource projectgraph.Resource) Result {
 }
 
 func matches(resource projectgraph.Resource, query string) bool {
+	return matchesWithTerms(resource, query, nil)
+}
+
+func matchesWithTerms(resource projectgraph.Resource, query string, additionalTerms []string) bool {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
 		return true
 	}
 	words := strings.Fields(query)
 	values := []string{resource.ID.String(), string(resource.Kind), resource.Name, resource.Metadata.DisplayName, resource.Metadata.Description, resource.Metadata.Domain, resource.Metadata.Owner, strings.Join(resource.Metadata.Tags, " ")}
+	values = append(values, additionalTerms...)
 	joined := strings.ToLower(strings.Join(values, " "))
 	for _, word := range words {
 		if !strings.Contains(joined, word) {
@@ -569,6 +670,35 @@ func matches(resource projectgraph.Resource, query string) bool {
 		}
 	}
 	return true
+}
+
+func (s *Service) validateDomainFilter(ctx context.Context, lease Lease, snapshot accesssnapshot.AuthorizationSnapshot, graph projectgraph.ProjectGraph, subjects []access.SubjectRef, principalID string, devAuthBypass bool, kinds []projectgraph.Kind, domain string) error {
+	if domain == "" {
+		return nil
+	}
+	for _, resource := range graph.Resources() {
+		if (len(kinds) != 0 && !containsKind(kinds, resource.Kind)) || strings.TrimSpace(resource.Metadata.Domain) == "" {
+			continue
+		}
+		semanticAllowed, err := s.semanticModelAllowed(ctx, lease, principalID, resource)
+		if err != nil {
+			return err
+		}
+		if !semanticAllowed {
+			continue
+		}
+		allowed := devAuthBypass
+		if !devAuthBypass {
+			allowed, err = allowsAny(snapshot, subjects, resource)
+			if err != nil {
+				return err
+			}
+		}
+		if allowed {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: no authorized catalog resource exposes domain metadata", ErrUnsupportedDomain)
 }
 
 func sortResources(items []projectgraph.Resource) {

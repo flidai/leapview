@@ -8,6 +8,7 @@ import (
 
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -52,6 +53,46 @@ func (a *Application) CreateFromDocument(ctx context.Context, request authorings
 	}
 	request.ProjectID = projectID
 	return a.authoring.CreateFromDocument(ctx, request)
+}
+
+// LoadSource returns an exact authored source after the source adapter's
+// VIEW authorization. Callers may use it to construct one atomic fork with
+// additional authored content before calling CreateFromDocument.
+func (a *Application) LoadSource(ctx context.Context, request sourceadapter.ExportRequest) (sourceadapter.Source, error) {
+	if err := a.validate(); err != nil {
+		return sourceadapter.Source{}, err
+	}
+	project, err := projectID(request.Source.ProjectID)
+	if err != nil {
+		return sourceadapter.Source{}, err
+	}
+	request.Source.ProjectID = project
+	return a.sources.Load(ctx, request.Source, request.ActorID)
+}
+
+// AuthorizeNewDashboard checks create authority for a private draft without
+// creating a resource. The actual create path repeats this decision against
+// the generated dashboard ID before persisting.
+func (a *Application) AuthorizeNewDashboard(ctx context.Context, project projectgraph.ResourceID, actorID string, semanticModel projectgraph.ResourceID) error {
+	if err := a.validate(); err != nil {
+		return err
+	}
+	project, err := projectID(project)
+	if err != nil {
+		return err
+	}
+	if err := semanticModel.Validate(); err != nil {
+		return fmt.Errorf("semantic model id is invalid: %w", err)
+	}
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return fmt.Errorf("actor id is required")
+	}
+	return a.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
+		ActorID: actorID, ProjectID: project, DashboardID: authoring.DashboardID("pending-dashboard"),
+		SemanticModel: semanticModel, Target: authoringservice.AuthorizationTargetNewDashboard,
+		Visibility: authoring.VisibilityPrivate, Action: authoring.AuthorizationActionEdit,
+	})
 }
 
 // Draft loads the current draft pointer and exact retained revision after an

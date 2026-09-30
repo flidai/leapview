@@ -111,7 +111,7 @@ func TestRefreshClaimedJobOrchestratesLocalMaterializationBeforeCompletion(t *te
 				allowExactCapturedJobForLocalRefreshOrchestrationTest(job, &events),
 			)
 			require.NoError(t, err)
-			runs := &localRefreshExecutionRuns{events: &events}
+			runs := &localRefreshExecutionRuns{events: &events, job: job}
 			publication := &localRefreshExecutionPublication{t: t, events: &events, mutations: mutations, runs: runs}
 			coordinatorEntries := 0
 			coordinator, err := apprefreshpostgres.NewNativeCanonicalCompletionCoordinator(
@@ -170,6 +170,7 @@ func TestRefreshClaimedJobOrchestratesLocalMaterializationBeforeCompletion(t *te
 				require.Contains(t, events, "source-registration-closed")
 				require.Contains(t, events, "source-work-drained")
 				require.NotContains(t, events, "complete-native-build")
+				require.NotContains(t, events, "run-prepared")
 				require.NotContains(t, events, "completion-coordinator-enter")
 				require.NotContains(t, events, "prepare-runtime-host")
 				require.NotContains(t, events, "canonical-publication")
@@ -194,7 +195,7 @@ func TestRefreshClaimedJobOrchestratesLocalMaterializationBeforeCompletion(t *te
 			require.Equal(t, fixture.reference.VersionID, mutations.connectionEvidence.CredentialVersionID)
 			require.Equal(t, fixture.binding.Evidence().EndpointConfigHash, mutations.connectionEvidence.EndpointConfigHash)
 			require.Equal(t, mutations.connectionEvidence, mutations.acquiredEvidence)
-			requireLocalRefreshEventOrder(t, events, "run-prepared", "complete-plan", "materialize-source-snapshot", "source-registration-closed", "source-backend-gone", "source-work-drained", "complete-native-build", "completion-coordinator-enter", "canonical-publication")
+			requireLocalRefreshEventOrder(t, events, "run-lease-checked", "complete-plan", "materialize-source-snapshot", "source-registration-closed", "source-backend-gone", "source-work-drained", "complete-native-build", "run-prepared", "completion-coordinator-enter", "canonical-publication")
 		})
 	}
 }
@@ -610,6 +611,12 @@ type localRefreshExecutionRuns struct {
 	refreshrun.LeaseFencedRunRepository
 	events *[]string
 	status string
+	job    refreshrun.JobRecord
+}
+
+func (runs *localRefreshExecutionRuns) RunMayPublish(_ context.Context, job refreshrun.JobRecord) (bool, error) {
+	*runs.events = append(*runs.events, "run-lease-checked")
+	return reflect.DeepEqual(job, runs.job), nil
 }
 
 func (runs *localRefreshExecutionRuns) MarkRunPrepared(_ context.Context, job refreshrun.JobRecord) (refreshrun.RunRecord, error) {

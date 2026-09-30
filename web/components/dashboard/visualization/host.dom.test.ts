@@ -739,7 +739,21 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
 for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
   test(`deferred hosts fall back to eager mounting when IntersectionObserver ${failureMode}`, async () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+    let releaseRendererChunk = () => {}
+    let rendererChunkRequested: Promise<void> | undefined
     try {
+      if (failureMode === 'constructor') {
+        let markRendererChunkRequested!: () => void
+        rendererChunkRequested = new Promise((resolve) => { markRendererChunkRequested = resolve })
+        let continueRendererChunk!: () => void
+        const rendererChunkGate = new Promise<void>((resolve) => { continueRendererChunk = resolve })
+        releaseRendererChunk = continueRendererChunk
+        await page.route('**/chunks/html-*.js', async (route) => {
+          markRendererChunkRequested()
+          await rendererChunkGate
+          await route.continue()
+        })
+      }
       await page.addInitScript((mode) => {
         if (mode === 'missing') {
           Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: undefined })
@@ -754,6 +768,7 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
       }, failureMode)
       await page.goto(baseURL)
       await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+      if (rendererChunkRequested) await rendererChunkRequested
 
       await page.evaluate(async () => {
         const source = (window as any).__lvSourceHosts.orders_kpi
@@ -764,13 +779,16 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
         document.body.append(deferred)
         await deferred.updateComplete
       })
-      // Observe automatic fallback; ensureMounted() would force the behavior
-      // under test, while one timer tick does not await renderer loading.
-      await page.waitForFunction(() => {
-        const deferred = document.getElementById('intersection-fallback-host')
-        return (deferred?.shadowRoot?.querySelector('.renderer')?.childElementCount ?? 0) > 0
-      }, undefined, { timeout: 2_000 })
+      // When the lazy renderer chunk is held, fallback mounting waits for the
+      // chunk. Releasing it must let the deferred host mount without a manual
+      // ensureMounted() call.
+      const renderer = page.locator('#intersection-fallback-host .renderer > *')
+      if (rendererChunkRequested) expect(await renderer.count()).toBe(0)
+      releaseRendererChunk()
+      await renderer.waitFor({ state: 'attached' })
+      expect(await renderer.count()).toBeGreaterThan(0)
     } finally {
+      releaseRendererChunk()
       await page.close()
     }
   })

@@ -348,9 +348,14 @@ digest regardless of map order, dispatcher, process, or invocation time.
 
 When a scheduled nominal time becomes due, LeapView durably creates the logical
 occurrence before dispatch. That transaction captures the then-active serving
-generation and artifact digest. A manual invocation captures them when its
-authorized request is admitted. The subsequent plan and run never silently
-switch generations.
+generation and artifact digest. A manual request may instead be accepted as a
+durable *waiting request*, which is not yet a run or execution invocation. It
+captures the authored Pipeline definition digest, principal, target, and
+idempotency identity. When the request reaches the head of its target's queue,
+admission creates a run against the then-active serving generation and target
+revision. The subsequent plan and run never silently switch generations. If
+the authored definition changed while waiting, the request becomes stale and
+requires a new, authorized request; it must not execute a different definition.
 
 Immutability does not authorize stale publication. If the captured generation
 or target revision is no longer active before execution or publication, the run
@@ -399,7 +404,17 @@ The collision outcomes are:
 |---|---|---|
 | Scheduled | Scheduled | Apply the Pipeline's Argo `Forbid` or `Replace` policy. |
 | Manual or backfill | Scheduled | Durably record the occurrence and terminal `admission_denied_external_active` outcome; perform no work and do not queue it. |
-| Any nonterminal invocation | Manual or backfill | Reject the request as a conflict by default; do not reinterpret `concurrencyPolicy`. |
+| Any nonterminal invocation | Direct manual or backfill run admission | Reject as a conflict by default; do not reinterpret `concurrencyPolicy`. |
+| Any nonterminal invocation | Deferred manual request | Accept a distinct durable waiting request, subject to authorization, idempotency, and queue limits; admit its run only when the target is available. |
+
+Deferred manual requests are ordered FIFO per publication target across
+Pipelines. A target admits at most one nonterminal root execution at a time;
+the dispatcher must claim, recheck this condition, and attach the newly
+admitted run with a durable lease/fence. Cancellation of a waiting request
+prevents later run admission. A request already attached to a run follows run
+cancellation semantics instead. Replay after a lost acknowledgement returns
+the same request identity, and recovery may not mint a second run. Queue
+position is an estimate, not execution status or a promised start time.
 
 `Replace` never authorizes a scheduled occurrence to terminate a manual or
 backfill run. Replacing any externally initiated or scheduled run outside the

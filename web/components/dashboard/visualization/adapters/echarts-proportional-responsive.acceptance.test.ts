@@ -89,7 +89,7 @@ test('outside funnel labels preserve the formatted value when a category uses th
   expect([...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(label)]).toHaveLength(24)
 })
 
-test('proportional responsive sizing keeps authored radii and the bottom legend band', () => {
+test('proportional responsive sizing preserves roomy radii and reserves the compact bottom legend band', () => {
   const envelope = proportionalWithIconFormat('donut')
   if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
   envelope.spec.presentation.legendTitle = 'Order status'
@@ -104,12 +104,12 @@ test('proportional responsive sizing keeps authored radii and the bottom legend 
   ]))
 
   for (const [width, height, alignTo, lineLength, endLength] of [
-    [373, 282, 'edge'], [435, 420, 'labelLine', 34, 20],
-    [600, 360, 'labelLine', 29, 21], [330, 220, 'edge'],
+    [373, 282, 'edge'], [435, 420, 'edge'],
+    [600, 360, 'edge'], [330, 220, 'edge'], [800, 500, 'labelLine', 40, 28],
   ] as const) {
     const patch = responsiveEChartsPatch(option, width, height)
     expect(patch.series[0].id).toBe('series:primary:donut')
-    expect(patch.series[0].radius).toEqual(['54%', '76%'])
+    expect(patch.series[0].radius).toEqual(width < 600 ? ['28.42%', '40%'] : width < 800 ? ['39.79%', '56%'] : ['54%', '76%'])
     expect(patch.series[0].label.alignTo).toBe(alignTo)
     if (alignTo === 'labelLine') {
       expect(patch.series[0].label).toMatchObject({ distanceToLabelLine: 12 })
@@ -137,6 +137,165 @@ test('proportional responsive helper keeps compact labels bounded and expanded l
       expect(expanded.series[0].id).toBe(`series:primary:${mark}`)
     }
     expect(option.series[0].id).toBe(`series:primary:${mark}`)
+  }
+})
+
+test('compact side legends move their title and donut inset with the legend', () => {
+  const envelope = proportionalWithIconFormat('donut')
+  if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
+  envelope.spec.presentation.legend = 'right'
+  envelope.spec.presentation.legendTitle = 'Country'
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const compact = responsiveEChartsPatch(option, 465, 409)
+  expect(compact.series[0].right).toBe(0)
+  expect(compact.legend).toMatchObject({ orient: 'horizontal', bottom: 0 })
+  expect(compact.graphic).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'text', top: 'auto', bottom: 28, left: 8, right: 'auto', style: expect.objectContaining({ text: 'Country' }) }),
+  ]))
+  const roomy = responsiveEChartsPatch(option, 800, 500)
+  expect(roomy.series[0].right).toBe('12%')
+  expect(roomy.legend).toMatchObject({ orient: 'vertical', right: 0 })
+})
+
+test('compact side legends remove the donut inset when slice labels are hidden', () => {
+  const envelope = proportionalWithIconFormat('donut')
+  if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
+  envelope.spec.presentation.legend = 'right'
+  envelope.spec.presentation.legendTitle = 'Country'
+  envelope.spec.presentation.labelPolicy.density = 'hidden'
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const compact = responsiveEChartsPatch(option, 465, 409)
+  expect(option.series[0].right).toBe('12%')
+  expect(option.series[0].label.show).toBe(false)
+  expect(compact.legend).toMatchObject({ orient: 'horizontal', bottom: 0 })
+  expect(compact.series[0].right).toBe(0)
+  const focused = responsiveEChartsPatch(option, 1384, 844, true)
+  expect(focused.legend).toMatchObject({ orient: 'horizontal', bottom: 0 })
+  expect(focused.series[0].right).toBe(0)
+})
+
+test('focused donuts center side legends below the chart without changing the regular layout', () => {
+  const envelope = proportionalWithIconFormat('donut')
+  if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
+  envelope.spec.presentation.legend = 'right'
+  envelope.spec.presentation.legendTitle = 'Country'
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const regular = responsiveEChartsPatch(option, 1384, 844)
+  const focused = responsiveEChartsPatch(option, 1384, 844, true)
+  expect(regular.legend).toMatchObject({ orient: 'vertical', right: 0 })
+  expect(focused.legend).toMatchObject({ orient: 'horizontal', bottom: 0, left: 'center', right: 'auto' })
+  expect(focused.series[0].right).toBe(0)
+  expect(focused.series[0].radius).toEqual(['46.89%', '66%'])
+  expect(focused.graphic).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'text', top: 'auto', bottom: 28, left: 8, style: expect.objectContaining({ text: 'Country' }) }),
+  ]))
+  expect(responsiveEChartsLayoutKey(envelope, 1384, 844)).not.toBe(responsiveEChartsLayoutKey(envelope, 1384, 844, true))
+})
+
+test('compact donuts without a legend reserve space for outside value labels', () => {
+  const envelope = proportionalWithIconFormat('donut')
+  if (envelope.spec.kind !== 'proportional') throw new Error('Expected proportional fixture')
+  envelope.spec.presentation.legend = 'hidden'
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const compact = responsiveEChartsPatch(option, 468, 410)
+  expect(option.legend).toBeUndefined()
+  expect(compact.series[0].label.alignTo).toBe('edge')
+  expect(compact.series[0].radius).toEqual(['28.42%', '40%'])
+  expect(responsiveEChartsPatch(option, 560, 410).series[0].radius).toEqual(['28.42%', '40%'])
+  expect(responsiveEChartsPatch(option, 640, 410).series[0].radius).toEqual(['54%', '76%'])
+})
+
+test('short status labels earn a larger ring when their measured footprint fits the compact chart', () => {
+  const envelope = proportionalFixture('donut')
+  if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected inline donut fixture')
+  envelope.spec.presentation.legend = 'bottom'
+  envelope.spec.presentation.rose = false
+  envelope.spec.presentation.centerLabel = 'Orders'
+  envelope.spec.presentation.labelPolicy.priority = []
+  envelope.dataState.datasets[0]!.rows = [
+    ['delivered', 96_500], ['shipped', 1_110], ['canceled', 800], ['approved', 600],
+    ['created', 450], ['invoiced', 300], ['processing', 180], ['unavailable', 60],
+  ]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const width = 319.5
+  const height = 262.734375
+  const patch = responsiveEChartsPatch(option, width, height)
+  expect(patch.series[0].radius).toEqual(['39.79%', '56%'])
+  const fittingLayout = responsiveEChartsLayoutKey(envelope, width, height, false, option)
+  expect(fittingLayout).not.toBe(responsiveEChartsLayoutKey(envelope, width, height + 20, false, option))
+  expect(fittingLayout).not.toBe(responsiveEChartsLayoutKey(envelope, 210, height, false, option))
+
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+  try {
+    chart.setOption({ ...option, ...patch, animation: false })
+    chart.renderToSVGString()
+    const donutRadius = (chart as any).getModel().getSeriesByIndex(0).getData().getItemLayout(0).r
+    expect(donutRadius).toBeGreaterThan(60)
+    const labels = chart.getZr().storage.getDisplayList()
+      .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string')
+    const legendItems = labels.filter((item: any) => ['delivered', 'shipped', 'canceled', 'approved', 'created', 'invoiced', 'processing', 'unavailable'].includes(item.style.text))
+    const outsideLabels = labels.filter((item: any) => item.style.text.includes(': '))
+    expect(outsideLabels.length).toBeGreaterThan(0)
+    expect(legendItems.length).toBeGreaterThan(0)
+    for (const outsideLabel of outsideLabels) {
+      for (const legendItem of legendItems) {
+        expect(labelBoxesOverlap(transformedLabelBox(outsideLabel), transformedLabelBox(legendItem)), `${outsideLabel.style.text} overlaps ${legendItem.style.text}`).toBe(false)
+      }
+    }
+  } finally {
+    chart.dispose()
+  }
+})
+
+test('donut outside labels stay clear of bottom and compact side legends', () => {
+  const envelope = proportionalFixture('donut')
+  if (envelope.spec.kind !== 'proportional' || envelope.dataState.kind !== 'inline') throw new Error('Expected inline donut fixture')
+  envelope.spec.presentation.rose = false
+  envelope.spec.presentation.centerLabel = undefined
+  envelope.spec.datasets[0]!.fields[1]!.format = { kind: 'currency', currency: 'USD' }
+  envelope.dataState.datasets[0]!.rows = [
+    ['United States of America', 25_000_000], ['Canada', 24_900_000],
+    ['France', 24_400_000], ['Germany', 23_500_000], ['Mexico', 20_900_000],
+  ]
+  for (const [legend, width, height] of [['bottom', 319.5, 262.734375], ['bottom', 480, 250], ['bottom', 465, 409], ['bottom', 635, 520], ['bottom', 800, 400], ['right', 465, 409]] as const) {
+    envelope.spec.presentation.legend = legend
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    const patch = responsiveEChartsPatch(option, width, height)
+    if (legend === 'bottom') expect(patch.series[0].bottom).toBe('12%')
+    if (legend === 'right') {
+      expect(patch.legend).toMatchObject({ orient: 'horizontal', bottom: 0, left: 'center', right: 'auto' })
+      expect(responsiveEChartsPatch(option, 800, 500).legend).toMatchObject({ orient: 'vertical', right: 0, left: 'auto', height: 'auto' })
+    }
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+    try {
+      chart.setOption({ ...option, ...patch, animation: false })
+      chart.renderToSVGString()
+      const labels = chart.getZr().storage.getDisplayList()
+        .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string')
+      const bounds = (item: any) => {
+        const box = item.getBoundingRect().clone()
+        const transform = item.getComputedTransform?.() ?? item.transform
+        if (transform) box.applyTransform(transform)
+        return box
+      }
+      const legendItems = labels.filter((item: any) => ['United States of America', 'Canada', 'France', 'Germany', 'Mexico'].includes(item.style.text))
+      const outsideLabels = labels.filter((item: any) => item.style.text.includes(': '))
+      expect(outsideLabels.length).toBeGreaterThan(0)
+      expect(legendItems.length).toBeGreaterThan(0)
+      for (const outsideLabel of outsideLabels) {
+        for (const legendItem of legendItems) {
+          expect(labelBoxesOverlap(transformedLabelBox(outsideLabel), transformedLabelBox(legendItem)), `${outsideLabel.style.text} overlaps ${legendItem.style.text}`).toBe(false)
+        }
+      }
+      const centerText = labels.filter((item: any) => item.style.text === 'Total' || item.style.text.startsWith('$'))
+      expect(centerText).toHaveLength(2)
+      const centerTextBounds = centerText.map(bounds)
+      const textCenterY = (Math.min(...centerTextBounds.map((box: any) => box.y)) + Math.max(...centerTextBounds.map((box: any) => box.y + box.height))) / 2
+      const donutCenterY = (chart as any).getModel().getSeriesByIndex(0).getData().getItemLayout(0).cy
+      expect(textCenterY).toBeCloseTo(donutCenterY, 0)
+    } finally {
+      chart.dispose()
+    }
   }
 })
 

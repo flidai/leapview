@@ -29,6 +29,7 @@ type qualificationProcess struct {
 	dir         string
 	executable  string
 	environment []string
+	stdoutOnly  bool
 }
 
 type qualificationCommandRequest struct {
@@ -37,6 +38,7 @@ type qualificationCommandRequest struct {
 	Environment []string
 	Stdin       io.Reader
 	Arguments   []string
+	StdoutOnly  bool
 }
 
 type qualificationCommandExecutor interface {
@@ -56,6 +58,17 @@ func (osQualificationCommandExecutor) Execute(
 		command.Env = os.Environ()
 	}
 	command.Stdin = request.Stdin
+	if request.StdoutOnly {
+		// Compose progress is written to stderr. Successful one-shot commands
+		// return machine-readable stdout; retain both streams when they fail.
+		var stderr bytes.Buffer
+		command.Stderr = &stderr
+		output, err := command.Output()
+		if err != nil {
+			return append(output, stderr.Bytes()...), err
+		}
+		return output, nil
+	}
 	return command.CombinedOutput()
 }
 
@@ -72,6 +85,7 @@ func (p qualificationProcess) Run(
 		Directory: p.dir, Executable: p.executable,
 		Environment: append([]string(nil), p.environment...),
 		Stdin:       stdin, Arguments: append([]string(nil), args...),
+		StdoutOnly: p.stdoutOnly,
 	})
 	if err != nil {
 		commandText := string(redactQualificationBytes(
@@ -145,6 +159,7 @@ func (c *Controller) qualificationCompose(
 	}
 	return qualificationProcess{
 		dir: c.root, executable: c.dockerBin, environment: c.dockerEnvironment(processEnvironment),
+		stdoutOnly: len(args) > 0 && args[0] == "run",
 	}.Run(ctx, nil, c.qualificationExecutor, c.dockerArguments(commandArgs...)...)
 }
 
@@ -179,6 +194,7 @@ func (c *Controller) qualificationComposeEnvironment(
 	}
 	return qualificationProcess{
 		dir: c.root, executable: c.dockerBin, environment: c.dockerEnvironment(processEnvironment),
+		stdoutOnly: len(args) > 0 && args[0] == "run",
 	}.Run(ctx, nil, c.qualificationExecutor, c.dockerArguments(commandArgs...)...)
 }
 

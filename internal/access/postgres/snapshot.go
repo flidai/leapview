@@ -12,6 +12,7 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -93,6 +94,37 @@ func InstallAuthorizationSnapshotTx(ctx context.Context, tx Tx, snapshot accesss
 		}
 	}
 	return nil
+}
+
+// AuthorizationSnapshotDigest reads the immutable digest for one exact
+// project/environment/generation identity. The found result lets candidate
+// approval retain compatibility with validated generations whose snapshot
+// row is installed only as part of activation.
+func (r *Repository) AuthorizationSnapshotDigest(ctx context.Context, projectID, environment, generationID string) (digest string, found bool, err error) {
+	project, err := projectgraph.NewResourceID(projectID)
+	if err != nil || project.String() != projectID || strings.TrimSpace(environment) == "" || environment != strings.TrimSpace(environment) {
+		return "", false, errors.New("authorization snapshot digest scope is invalid")
+	}
+	if generationID == "" || generationID != strings.TrimSpace(generationID) || len(generationID) > 200 || strings.ContainsAny(generationID, "\x00\r\n") {
+		return "", false, errors.New("authorization snapshot generation identity is invalid")
+	}
+	db, err := r.requireDB()
+	if err != nil {
+		return "", false, err
+	}
+	digest, err = accessdb.New(db).GetAuthorizationSnapshotDigest(ctx, accessdb.GetAuthorizationSnapshotDigestParams{
+		ProjectID: project.String(), Environment: environment, GenerationID: generationID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !canonicalPolicyDigest(digest) {
+		return "", false, errors.New("stored authorization snapshot digest is not canonical")
+	}
+	return digest, true, nil
 }
 
 func stringPtr(value string) *string { return &value }

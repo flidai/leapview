@@ -14,8 +14,11 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import { agentIcon } from './agent-icon'
+import './chat-visual-panel'
 import './chat-composer'
 import './chat-thread'
+import type { ChatVisualPanel } from './chat-visual-panel'
+import { saveChatVisual } from './saved-visuals'
 import {
   type ChatReferencesChangeDetail,
   defaultAgentReferenceLimit,
@@ -65,6 +68,12 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @state() private references: AgentReferenceSignal[] = []
   @state() private referenceLimitMessage = ''
 	@state() private editMessageId = ''
+  @state() private selectedVisualID = ''
+  @state() private selectedExplorerHref = ''
+  @state() private selectedVisualTitle = ''
+  @state() private visualSaving = false
+  @state() private visualSaved = false
+  @state() private visualSaveError = ''
   private focusReturnTarget: HTMLElement | null = null
 	private trackedConversationID: string | null = null
 	private trackedAcceptedRunID: string | null = null
@@ -265,6 +274,14 @@ class ChatDrawer extends DatastarLit(LitElement) {
 
     lv-chat-thread[hidden] { display: none; }
 
+    lv-chat-visual-panel {
+      grid-row: 2 / 4;
+      min-width: 0;
+      min-height: 0;
+      z-index: 1;
+      background: var(--lv-bg-app);
+    }
+
     lv-chat-composer {
       display: block;
       border-top: 0;
@@ -374,6 +391,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
 
   protected updated(changed: Map<string, unknown>): void {
 		this.syncEditState()
+		if (this.selectedVisualID && !this.visuals[this.selectedVisualID]) this.closeVisual(false)
     if (!changed.has('open')) return
     if (!this.open) {
       this.focusReturnTarget?.focus()
@@ -466,15 +484,29 @@ class ChatDrawer extends DatastarLit(LitElement) {
             <p class="welcome-hint">Type <kbd>@</kbd> to attach ${this.embedded ? 'a chart on this page.' : 'a dashboard, metric, model, page, or visual.'}</p>
           </section>
         ` : null}
-        <lv-chat-thread ?hidden=${showWelcome}
+        <lv-chat-thread ?hidden=${showWelcome || Boolean(this.selectedVisualID)}
           surface="drawer"
           .transcript=${agent.transcript ?? []}
           .visuals=${this.visuals}
           .status=${this.pending ? { ...agent.status, running: true } : agent.status}
           conversation-id=${agent.activeConversationId ?? ''}
           @lv-chat-reuse=${this.reuseDraft}
+          @lv-chat-visual-open=${this.openVisual}
         ></lv-chat-thread>
-        ${showWelcome ? null : composer}
+        ${showWelcome || this.selectedVisualID ? null : composer}
+        ${this.selectedVisualID && this.visuals[this.selectedVisualID] ? html`
+          <lv-chat-visual-panel
+            artifact-id=${this.selectedVisualID}
+            title=${this.selectedVisualTitle || this.visuals[this.selectedVisualID].spec.title || 'Visual result'}
+            .payload=${this.visuals[this.selectedVisualID]}
+            .explorerHref=${this.selectedExplorerHref}
+            .saving=${this.visualSaving}
+            .saved=${this.visualSaved}
+            .saveError=${this.visualSaveError}
+            @lv-chat-visual-close=${() => this.closeVisual()}
+            @lv-chat-visual-save=${this.saveVisual}
+          ></lv-chat-visual-panel>
+        ` : null}
       </aside>
     `
   }
@@ -486,6 +518,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
 
   private newChat() {
     if (this.pending) return
+		this.clearSelectedVisual()
 		this.clearEditMessage()
     this.fillPrompt('')
     this.references = []
@@ -498,6 +531,52 @@ class ChatDrawer extends DatastarLit(LitElement) {
 		this.open = false
 		emitDomainEvent(this, domainEvents.chatDrawerClose, undefined)
 	}
+
+  private openVisual = (event: CustomEvent<{ artifactId: string; explorerHref: string; title: string }>): void => {
+    const artifactId = event.detail?.artifactId ?? ''
+    if (!artifactId || !this.visuals[artifactId]) return
+    this.selectedVisualID = artifactId
+    this.selectedExplorerHref = event.detail.explorerHref ?? ''
+    this.selectedVisualTitle = event.detail.title ?? ''
+    this.visualSaved = false
+    this.visualSaveError = ''
+    void this.updateComplete.then(() => this.shadowRoot?.querySelector<ChatVisualPanel>('lv-chat-visual-panel')?.focusClose())
+  }
+
+  private closeVisual(restoreFocus = true): void {
+    const artifactId = this.selectedVisualID
+    if (!artifactId) return
+    this.clearSelectedVisual()
+    if (!restoreFocus) return
+    void this.updateComplete.then(() => {
+      const cards = this.shadowRoot?.querySelector('lv-chat-thread')?.shadowRoot?.querySelectorAll<HTMLButtonElement>('.artifact-card')
+      Array.from(cards ?? []).find(card => card.dataset.visualId === artifactId)?.focus()
+    })
+  }
+
+  private clearSelectedVisual(): void {
+    this.selectedVisualID = ''
+    this.selectedExplorerHref = ''
+    this.selectedVisualTitle = ''
+    this.visualSaved = false
+    this.visualSaveError = ''
+  }
+
+  private saveVisual = async (event: CustomEvent<{ title: string; explorerHref: string; artifactId: string }>): Promise<void> => {
+    if (this.visualSaving || !this.selectedVisualID || event.detail?.artifactId !== this.selectedVisualID) return
+    const { title, explorerHref } = event.detail
+    if (!explorerHref) return
+    this.visualSaving = true
+    this.visualSaveError = ''
+    try {
+      await saveChatVisual(title, explorerHref)
+      if (event.detail.artifactId === this.selectedVisualID) this.visualSaved = true
+    } catch {
+      if (event.detail.artifactId === this.selectedVisualID) this.visualSaveError = 'Could not save this visual. Please try again.'
+    } finally {
+      this.visualSaving = false
+    }
+  }
 
   private handleKeydown = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape' || !this.open || event.defaultPrevented) return
@@ -534,6 +613,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
 		const acceptedRunID = latestAcceptedRunId(this.agent.transcript ?? [])
 		const conversationChanged = this.trackedConversationID !== null && this.trackedConversationID !== conversationID
 		if (conversationChanged) {
+			this.clearSelectedVisual()
 			// Composer state belongs to the active conversation. A route signal can
 			// switch conversations without recreating the drawer, so clear an
 			// unsent draft and attached references before they leak into the next

@@ -26,7 +26,6 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
-	appobjectstore "github.com/flidai/leapview/internal/app/objectstore"
 	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
 	projectsource "github.com/flidai/leapview/internal/app/projectsource"
 	apprefreshpostgres "github.com/flidai/leapview/internal/app/refreshpostgres"
@@ -44,9 +43,7 @@ import (
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	platformlifecycle "github.com/flidai/leapview/internal/platform/lifecycle"
-	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
-	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
@@ -63,152 +60,16 @@ import (
 	"github.com/flidai/leapview/pkg/pagestream"
 )
 
-// nativeProjectSourceComposition keeps the native source reader's authority
-// set visible to composition tests. The synchronizer remains the sole
-// capability injected into release.
-type nativeProjectSourceComposition struct {
-	Objects               platformobjectstore.ImmutableStore
-	StorageSecurityDomain string
-	Sources               projectsource.NativeSourceRepository
-	CandidateSourceReader *projectsource.NativeCandidateSourceSynchronizer
-}
-
-type candidateApprovalServingStateReader interface {
-	ByID(context.Context, servingstate.ID) (servingstate.State, error)
-	ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error)
-}
-
-// candidateApprovalPermissions compiles the immutable authorization policy
-// attached to the exact not-yet-active generation. This is the reviewer
-// authority for a first publication: it does not depend on a preview runtime
-// having been opened and never consults mutable source files.
-func candidateApprovalPermissions(
-	ctx context.Context,
-	states candidateApprovalServingStateReader,
-	objects projectbundle.ArtifactObjectReader,
-	subjects func(context.Context, string) ([]access.SubjectRef, error),
-	generationID, principalID string,
-) (string, string, []access.PermissionPair, error) {
-	if states == nil || objects == nil || subjects == nil || strings.TrimSpace(generationID) == "" || strings.TrimSpace(principalID) == "" {
-		return "", "", nil, errors.New("candidate approval authorization dependencies are unavailable")
-	}
-	id := servingstate.ID(strings.TrimSpace(generationID))
-	state, err := states.ByID(ctx, id)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("read candidate approval generation: %w", err)
-	}
-	if state.ID != id || state.ProjectID.Validate() != nil || strings.TrimSpace(string(state.Environment)) == "" || state.Status != servingstate.StatusValidated {
-		return "", "", nil, errors.New("candidate approval generation identity is invalid")
-	}
-	artifact, err := states.ArtifactByServingState(ctx, id)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("read candidate approval artifact: %w", err)
-	}
-	if artifact.ServingStateID != id || artifact.Digest != state.Digest {
-		return "", "", nil, errors.New("candidate approval artifact differs from its generation")
-	}
-	compiled, err := (projectbundle.ServingArtifactLoader{Objects: objects}).LoadCompiled(ctx, artifact, "")
-	if err != nil {
-		return "", "", nil, fmt.Errorf("load candidate approval artifact: %w", err)
-	}
-	if compiled.BundleDigest != state.ProjectDigest {
-		return "", "", nil, errors.New("candidate approval compiled source bundle differs from its generation")
-	}
-	identity, err := projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID))
-	if err != nil {
-		return "", "", nil, fmt.Errorf("bind candidate approval identity: %w", err)
-	}
-	snapshot, err := projectmodule.CompileAuthorizationSnapshotJSON(identity, compiled.Graph, state.AccessPolicyJSON)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("compile candidate approval policy: %w", err)
-	}
-	// Subject membership remains durable and current, exactly like the active
-	// authorization path. The generation freezes policy; disabling a principal
-	// or removing a group membership must revoke approval immediately.
-	resolvedSubjects, err := subjects(ctx, principalID)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("resolve candidate approval subjects: %w", err)
-	}
-	permissions, err := snapshot.EffectiveTypedPermissions(resolvedSubjects)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("resolve candidate approval permissions: %w", err)
-	}
-	return state.ProjectID.String(), string(state.Environment), permissions, nil
-}
-
-// resolvePostgresSealedActiveState resolves the sealed runtime's authoritative
-// active generation through the public deployment target port. A clean
-// PostgreSQL installation has no delivery_target row until the first plan is
-// admitted; that absence is the normal unbound/no-active state and must map to
-// servingstate.ErrNotFound so runtimehost can remain administrable without
-// fabricating an active delivery. Other authority failures stay fail-closed.
-func resolvePostgresSealedActiveState(ctx context.Context, delivery deployment.DeliveryTargetResolver, targetID string) (servingstate.ID, error) {
-	if delivery == nil || strings.TrimSpace(targetID) == "" {
-		return "", errors.New("PostgreSQL sealed active-state target authority is unavailable")
-	}
-	target, err := delivery.ResolveDeliveryTarget(ctx, targetID)
-	if err != nil {
-		if errors.Is(err, deployment.ErrNotFound) {
-			return "", servingstate.ErrNotFound
-		}
-		return "", err
-	}
-	if strings.TrimSpace(target.ActiveGenerationID) == "" {
-		return "", servingstate.ErrNotFound
-	}
-	return servingstate.ID(target.ActiveGenerationID), nil
-}
-
-// composeNativeProjectSource wires the process-bound immutable object store
-// to the PostgreSQL project authority. The caller owns transaction lifecycle
-// through begin; this helper never opens a second database or derives a
-// filesystem-backed project repository.
-func composeNativeProjectSource(
-	ctx context.Context,
-	cfg config.Config,
-	instanceID string,
-	environment string,
-	begin projectsource.BeginFunc,
-	sources projectsource.NativeSourceRepository,
-) (nativeProjectSourceComposition, error) {
-	if begin == nil || sources == nil {
-		return nativeProjectSourceComposition{}, errors.New("native project source composition requires PostgreSQL begin and project authorities")
-	}
-	objects, storageDomain, err := appobjectstore.New(ctx, cfg, instanceID, environment)
-	if err != nil {
-		return nativeProjectSourceComposition{}, fmt.Errorf("construct native project object store: %w", err)
-	}
-	compiler := projectsource.Compiler{}
-	reader, err := projectsource.NewNativeCandidateSourceSynchronizer(projectsource.NativeCandidateSourceConfig{
-		Begin:                 begin,
-		Sources:               sources,
-		Objects:               objects,
-		Compiler:              compiler,
-		StorageSecurityDomain: storageDomain,
-	})
-	if err != nil {
-		return nativeProjectSourceComposition{}, fmt.Errorf("construct native candidate source synchronizer: %w", err)
-	}
-	return nativeProjectSourceComposition{
-		Objects: objects, StorageSecurityDomain: storageDomain,
-		Sources: sources, CandidateSourceReader: reader,
-	}, nil
-}
-
-func dashboardPrewarmConfig(cfg config.Config) dashboardmodule.PrewarmConfig {
-	var ids []string
-	if cfg.DashboardPrewarmPublicationIDs != "" {
-		ids = strings.Split(cfg.DashboardPrewarmPublicationIDs, ",")
-	}
-	return dashboardmodule.PrewarmConfig{PublicationIDs: ids, MaxPublications: cfg.DashboardPrewarmMaxPublications, MaxTargets: cfg.DashboardPrewarmMaxTargets, ExecutionDeadline: cfg.DashboardPrewarmDeadline, Concurrency: cfg.DashboardPrewarmConcurrency}
-}
-
 // buildPostgresTarget assembles the native graph and HTTP surface. Production
 // and local development differ only in policy toggles; both use the same
 // PostgreSQL authority graph and lifecycle.
 // The retained PostgreSQL lifecycle is an application component, so pool
 // shutdown follows worker/runtime-host shutdown on the reverse component path.
 func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool) (*Application, error) {
+	return buildPostgresTargetWithTransition(ctx, cfg, production, nil)
+}
+
+func buildPostgresTargetWithTransition(ctx context.Context, cfg config.Config, production bool, runnerOut **AccessTransitionRunner) (*Application, error) {
 	cfg.Production = production
 	bootstrap, err := openPostgresControlPlane(ctx, cfg)
 	if err != nil {
@@ -646,8 +507,13 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	graph.ApprovalAuthorizer.SetCandidateResolver(func(resolveCtx context.Context, generationID, principalID string) (string, string, []access.PermissionPair, error) {
 		return candidateApprovalPermissions(resolveCtx, graph.ServingState, nativeProjectSource.Objects, accessBundle.Module.AuthorizationSubjects, generationID, principalID)
 	})
+	graph.ApprovalAuthorizer.CandidateSnapshotDigest = func(resolveCtx context.Context, generationID string) (string, error) {
+		return candidateApprovalSnapshotDigest(resolveCtx, graph.ServingState, nativeProjectSource.Objects, generationID)
+	}
 	semanticCatalogAuditRecorder, _ := accessBundle.Repository.(access.CanonicalAuditRecorder)
-	projectCatalogService, err := projectcatalog.NewService(projectCatalogLeaseProvider{provider: runtimeHost.Provider()}, projectCatalogSubjectResolver{resolve: accessBundle.Module.AuthorizationSubjects}, projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility(instanceID, accessBundle.Module.ResolveSemanticAttributes, semanticCatalogAuditRecorder)))
+	projectCatalogService, err := projectcatalog.NewService(projectCatalogLeaseProvider{provider: runtimeHost.Provider()}, projectCatalogSubjectResolver{resolve: accessBundle.Module.AuthorizationSubjects},
+		projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility(instanceID, accessBundle.Module.ResolveSemanticAttributes, semanticCatalogAuditRecorder)),
+		projectcatalog.WithSemanticModelSearchTerms(projectmodule.SemanticCatalogSearchTerms()))
 	if err != nil {
 		return fail(err)
 	}
@@ -1026,6 +892,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		CustomerOwner: graph.Bootstrap, Bindings: newCredentialTargetBindingReader(graph.ConnectionBinding),
 		CurrentProject: currentProject,
 		AuthorizeConnection: accessmodule.ConnectionAuthorizerFromSnapshot(
+			instanceID,
 			authorizationSnapshotFromProvider(runtimeHost.Provider()), accessBundle.Module.AuthorizationSubjects,
 		),
 		ValidationProbe:   newCredentialValidationProbe(graph.ConnectionBinding, analytics),
@@ -1046,7 +913,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		credentialAPI.Service = credentialServices.Drafts
 		credentialAPI.Validation = credentialServices.Validation
 	}
-	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, BypassDurableIdempotency: map[string]struct{}{refreshmodule.CreateRefreshRunOperationID: {}, refreshmodule.CancelRefreshRunOperationID: {}, deploymentmodule.PlanProjectCandidateSynchronizationOperationID: {}, "exchangeProjectClaimPublisher": {}}, ReclaimExpiredIdempotency: map[string]struct{}{deploymentmodule.RetainProjectCandidateSourceOperationID: {}}, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true, AdditionalWorkers: additionalWorkers}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, CredentialDraftAPI: credentialAPI, ProfileApplications: graph.ProfileApplication, DevelopmentSessions: graph.DevelopmentSession, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState)}, workflowAssemblyInputs{AgentSettings: graph.Bootstrap, AgentConfigFile: cfg.AgentConfigFile, AgentConfig: agentmodule.ModelConfig{CredentialKey: cfg.AgentCredentialKey, APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel, ReasoningEffort: cfg.AgentReasoningEffort}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, ServingArtifacts: nativeProjectSource.Objects, RefreshPipelineClock: refreshmodule.NewRealClock(), RefreshTargetRevision: resolveRefreshTargetRevision, RefreshSourceDigest: resolveRefreshSourceDigest, CanonicalRefreshExecutor: nativeRefreshExecutor.Execute, CanonicalCompletionCoordinator: canonicalCompletionCoordinator, PublishedVersion: appdeploymentpostgres.NewNativePublishedDataVersionResolver(nativeDeliveryReader, instanceID)}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: production, LocalCheckoutID: cfg.LocalCheckoutID, LocalRuntimeID: cfg.LocalOwnerID, DevelopmentProfileName: cfg.DevelopmentProfileName, DevelopmentGraphDigest: cfg.DevelopmentGraphDigest, DevelopmentProfileDigest: cfg.DevelopmentProfileDigest, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
+	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, BypassDurableIdempotency: map[string]struct{}{refreshmodule.CreateRefreshRunOperationID: {}, refreshmodule.CancelRefreshRunOperationID: {}, deploymentmodule.PlanProjectCandidateSynchronizationOperationID: {}, "exchangeProjectClaimPublisher": {}}, ReclaimExpiredIdempotency: map[string]struct{}{deploymentmodule.RetainProjectCandidateSourceOperationID: {}}, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true, AdditionalWorkers: additionalWorkers}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, CredentialDraftAPI: credentialAPI, ProfileApplications: graph.ProfileApplication, DevelopmentSessions: graph.DevelopmentSession, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState), SavedExplorations: graph.Project}, workflowAssemblyInputs{AgentSettings: graph.Bootstrap, AgentConfigFile: cfg.AgentConfigFile, AgentConfig: agentmodule.ModelConfig{CredentialKey: cfg.AgentCredentialKey, APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel, ReasoningEffort: cfg.AgentReasoningEffort}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, ServingArtifacts: nativeProjectSource.Objects, RefreshPipelineClock: refreshmodule.NewRealClock(), RefreshTargetRevision: resolveRefreshTargetRevision, RefreshSourceDigest: resolveRefreshSourceDigest, CanonicalRefreshExecutor: nativeRefreshExecutor.Execute, CanonicalCompletionCoordinator: canonicalCompletionCoordinator, PublishedVersion: appdeploymentpostgres.NewNativePublishedDataVersionResolver(nativeDeliveryReader, instanceID)}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: production, LocalCheckoutID: cfg.LocalCheckoutID, LocalRuntimeID: cfg.LocalOwnerID, DevelopmentProfileName: cfg.DevelopmentProfileName, DevelopmentGraphDigest: cfg.DevelopmentGraphDigest, DevelopmentProfileDigest: cfg.DevelopmentProfileDigest, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
 		generationID, err := resolvePostgresSealedActiveState(ctx, targetReader, instanceID)
 		return string(generationID), err
 	}, IdempotencyProjectIDResolver: authoringProject, Prewarm: dashboardPrewarmConfig(cfg), DefaultEnvironment: string(environment), SCIMBearerToken: cfg.SCIMBearerToken, MetricsBearerToken: cfg.MetricsBearerToken, Assets: assets, InstanceID: instanceID, AllowedHosts: allowedHosts, RequireActiveDeployment: production || cfg.RequireActiveDeployment, RequireQueryAuthorization: production || !cfg.DevAuthBypass, AllowDevAuthBypass: !production && cfg.DevAuthBypass, SealedServing: true, DeliveryStartup: deliveryStartup}, httpAssemblyInputs{PublicURL: publicURL, DesktopDiscovery: desktopdiscovery.Config{CanonicalOrigin: publicURL, InstanceID: instanceID, DisplayName: "LeapView", ServerVersion: assets.Version(), AllowLoopbackHTTP: !production}, RateLimits: rateLimits, SecurityHeaders: apihttpmiddleware.SecurityHeaders(cfg.HSTSEnabled(cookieSecure)), RequestLogging: cfg.RequestLoggingEnabled(), Logger: slog.Default(), JobLeaseTimeout: cfg.RefreshJobLeaseTimeout, ManagedDataTus: managedData.TusHandler()})
@@ -1078,79 +945,50 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		return errors.Join(closeRuntimeHost(), closeResources())
 	}
 	components := []Lifecycle{bootstrapLifecycle, resourceLifecycle, runtimeHostLifecycle, refreshChanges, runtimeLifecycle}
-	return newApplication(handler, components), nil
-}
-
-// postgresResourceLifecycle owns capability resources that are safe to start
-// during composition but must close after workers and runtimehost have
-// drained. Start is intentionally a no-op because construction already
-// completed all resource initialization.
-type postgresResourceLifecycle struct {
-	analytics postgresAnalyticsCloser
-	workloads workloadControl
-	stop      sync.Once
-	err       error
-}
-
-type postgresAnalyticsCloser interface {
-	Close() error
-}
-
-func newPostgresResourceLifecycle(analytics postgresAnalyticsCloser, workloads workloadControl) *postgresResourceLifecycle {
-	return &postgresResourceLifecycle{analytics: analytics, workloads: workloads}
-}
-
-func (l *postgresResourceLifecycle) Start(context.Context) error { return nil }
-
-func (l *postgresResourceLifecycle) Stop(_ context.Context) error {
-	if l == nil {
-		return nil
-	}
-	l.stop.Do(func() {
-		if l.workloads != nil {
-			l.workloads.Close()
+	application := newApplication(handler, components)
+	transitionExecute := func(transitionCtx context.Context, request AccessTransitionExecutionRequest) (AccessTransitionExecutionResult, error) {
+		if routes.deploymentModule == nil {
+			return AccessTransitionExecutionResult{}, errors.New("native deployment module is unavailable for access transition")
 		}
-		if l.analytics != nil {
-			l.err = l.analytics.Close()
+		transitionSnapshotDigests := func(digestCtx context.Context, generationID string) (deploymentmodule.AccessTransitionSnapshotDigests, error) {
+			operator, err := nativeDeliveryReader.OperatorSnapshot(digestCtx, instanceID)
+			if err != nil {
+				return deploymentmodule.AccessTransitionSnapshotDigests{}, err
+			}
+			if operator.TargetID != instanceID || operator.ProjectID != request.Intent.ProjectID || operator.Environment != string(environment) ||
+				(operator.ActiveGenerationID != request.Intent.ExpectedServingGeneration && operator.ActiveGenerationID != generationID) {
+				return deploymentmodule.AccessTransitionSnapshotDigests{}, errors.New("access-transition snapshot target or active generation changed")
+			}
+			generation, err := nativeDeliveryReader.LoadGeneration(digestCtx, generationID)
+			if err != nil {
+				return deploymentmodule.AccessTransitionSnapshotDigests{}, err
+			}
+			if generation.GenerationID != generationID || generation.TargetID != instanceID {
+				return deploymentmodule.AccessTransitionSnapshotDigests{}, errors.New("access-transition snapshot generation belongs to another target")
+			}
+			snapshotReader, ok := accessBundle.Repository.(interface {
+				AuthorizationSnapshotDigest(context.Context, string, string, string) (string, bool, error)
+			})
+			if !ok {
+				return deploymentmodule.AccessTransitionSnapshotDigests{}, errors.New("immutable authorization snapshot digest reader is unavailable")
+			}
+			return resolveAccessTransitionSnapshotDigests(
+				digestCtx, instanceID, request.Intent.ProjectID, string(environment),
+				request.Intent.ExpectedServingGeneration, operator.ActiveGenerationID,
+				generationID, generation.TargetID, snapshotReader,
+				func(candidateCtx context.Context, candidateGenerationID string) (deploymentmodule.AccessTransitionSnapshotDigests, error) {
+					return candidateApprovalSnapshotDigests(candidateCtx, graph.ServingState, nativeProjectSource.Objects, candidateGenerationID)
+				},
+			)
 		}
-	})
-	return l.err
-}
-
-// postgresBootstrapLifecycle wraps the pool owner so a failed startup ping
-// cannot leak serving pools: Application only marks a component started after
-// Start succeeds and therefore would otherwise skip its Stop method.
-type postgresBootstrapLifecycle struct {
-	owner          Lifecycle
-	onStartFailure func() error
-	stop           sync.Once
-	stopErr        error
-}
-
-func newPostgresBootstrapLifecycle(owner Lifecycle) *postgresBootstrapLifecycle {
-	return &postgresBootstrapLifecycle{owner: owner}
-}
-
-func (l *postgresBootstrapLifecycle) Start(ctx context.Context) error {
-	if l == nil || l.owner == nil {
-		return errors.New("PostgreSQL bootstrap lifecycle is not initialized")
+		return accessTransitionExecutionFromModules(
+			transitionCtx, request, instanceID, string(environment), accessBundle.Module, policyReader,
+			routes.deploymentModule,
+			transitionSnapshotDigests,
+		)
 	}
-	if err := l.owner.Start(ctx); err != nil {
-		cleanupErr := error(nil)
-		if l.onStartFailure != nil {
-			cleanupErr = l.onStartFailure()
-		}
-		return errors.Join(err, cleanupErr, l.Stop(context.Background()))
+	if runnerOut != nil {
+		*runnerOut = &AccessTransitionRunner{lifecycle: application.lifecycle, execute: transitionExecute}
 	}
-	return nil
-}
-
-func (l *postgresBootstrapLifecycle) Stop(ctx context.Context) error {
-	if l == nil || l.owner == nil {
-		return nil
-	}
-	l.stop.Do(func() {
-		l.stopErr = l.owner.Stop(ctx)
-	})
-	return l.stopErr
+	return application, nil
 }

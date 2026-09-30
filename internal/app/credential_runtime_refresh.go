@@ -168,7 +168,7 @@ func (authority refreshRuntimeCredentialAuthority) ResolveRuntimeCredential(ctx 
 	snapshot := lease.(interface {
 		AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
 	}).AuthorizationSnapshot()
-	check := accessmodule.ConnectionAuthorizerFromSnapshot(func(context.Context) (accesssnapshot.AuthorizationSnapshot, error) { return snapshot, nil }, authority.subjects)
+	check := accessmodule.ConnectionAuthorizerFromSnapshot(authority.instanceID, func(context.Context) (accesssnapshot.AuthorizationSnapshot, error) { return snapshot, nil }, authority.subjects)
 	allowed, err := check(ctx, authority.queued.ExecutionPrincipalID, resource.ProjectID, resource.ResourceID, access.ActionConnectionUse)
 	if err != nil {
 		return credentialmodule.RuntimeCredentialReference{}, safeRuntimeCredentialAuthorityError(ctx, err)

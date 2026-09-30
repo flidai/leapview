@@ -167,7 +167,7 @@ test('chat deletion persists after the undo window, refreshes the list, and stay
     await page.evaluate((requestId) => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: requestId, undoDeadline: new Date(Date.now() + 80).toISOString(), archivedConversations: [] } })
     }, pendingRequest)
-    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c2"] button.action').waitFor()
     expect(await page.locator('a[href="/chats/c2"]').count()).toBe(0)
     await page.waitForFunction(() => (window as any).managementLoads.length === 1)
     const refreshRequest = await page.evaluate(() => (window as any).managementLoads[0].requestId)
@@ -200,7 +200,7 @@ test('failed chat deletion keeps the conversation visible and reports the persis
     await page.locator('lv-chat-manager').evaluate((element: any) => document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } })))
     await page.getByRole('alert').filter({ hasText: 'temporarily unavailable' }).waitFor()
     expect(await page.locator('a[href="/chats/c2"]').count()).toBe(1)
-    expect(await page.locator('button.undo[data-conversation-id="c2"]').count()).toBe(0)
+    expect(await page.locator('lv-toast[data-conversation-id="c2"] button.action').count()).toBe(0)
   } finally {
     await page.close()
   }
@@ -222,7 +222,7 @@ test('deleting the open chat returns to a new conversation after persistence com
     await page.evaluate((requestId) => {
       ;(window as any).testMergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: requestId, undoDeadline: new Date(Date.now() + 80).toISOString(), archivedConversations: [] } })
     }, pendingRequest)
-    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
+    await page.locator('lv-toast[data-conversation-id="c2"] button.action').waitFor()
     await page.waitForURL(url => new URL(url).pathname === '/chats/new')
   } finally {
     await page.close()
@@ -353,6 +353,38 @@ test('pinned dashboard shortcuts appear only while dashboards are pinned', async
     })
     await shortcuts.getByRole('link', { name: 'Sales report' }).waitFor({ state: 'detached' })
     expect(await shortcuts.getByRole('link', { name: 'Pinned title loading' }).count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
+
+test('pinned dashboard unpin action appears on hover and removes only that shortcut', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.evaluate(() => {
+      localStorage.setItem('leapview.dashboard-catalog.pins.v1:current-user', JSON.stringify(['sales', 'operations']))
+      localStorage.setItem('leapview.dashboard-catalog.pin-links.v1:current-user', JSON.stringify([
+        { id: 'sales', title: 'Sales report', href: '/dashboards/sales' },
+        { id: 'operations', title: 'Operations report', href: '/dashboards/operations' },
+      ]))
+      window.dispatchEvent(new Event('leapview-dashboard-pins-change'))
+    })
+    const row = page.locator('lv-sidebar .pinned-dashboard-row').filter({ has: page.getByRole('link', { name: 'Sales report' }) })
+    await row.waitFor()
+    const actions = row.locator('.history-actions')
+    expect(await actions.evaluate(element => getComputedStyle(element).opacity)).toBe('0')
+    await row.hover()
+    expect(await actions.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+    await row.getByRole('button', { name: 'Unpin Sales report' }).click()
+    await row.waitFor({ state: 'detached' })
+    expect(await page.locator('lv-sidebar').getByRole('link', { name: 'Operations report' }).count()).toBe(1)
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pins.v1:current-user') ?? '[]'))).toEqual(['operations'])
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('leapview.dashboard-catalog.pin-links.v1:current-user') ?? '[]').map((link: { id: string }) => link.id))).toEqual(['operations'])
+    expect(new URL(page.url()).pathname).toBe('/sidebar-history')
+    await page.reload()
+    expect(await page.locator('lv-sidebar').getByRole('link', { name: 'Sales report' }).count()).toBe(0)
+    expect(await page.locator('lv-sidebar').getByRole('link', { name: 'Operations report' }).count()).toBe(1)
   } finally {
     await page.close()
   }

@@ -113,6 +113,10 @@ func TestPostgresRefreshRouteJourney(t *testing.T) {
 		Persistence: fixture.RefreshPersistence, Production: true,
 		AuthorityRevalidator: authorityRevalidator,
 		CurrentCredential:    accessmodule.APICredentialFromContext,
+		TargetID:             postgresJourneyTargetID,
+		ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) {
+			return identity, nil
+		},
 		Service: refreshrun.Service{
 			ServingStates:         state,
 			ResolveTargetRevision: func(context.Context, projectgraph.ServingIdentity) (int64, error) { return 1, nil },

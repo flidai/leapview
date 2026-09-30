@@ -76,3 +76,13 @@ static/semantic-model-graph.css
 .env.*
 !.env.example
 infisical-export.*
+
+# Python deployment-adapter bytecode caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Local Nix result links and optional direnv cache
+/result
+/result-*
+/.direnv/

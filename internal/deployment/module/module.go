@@ -47,6 +47,7 @@ type Module struct {
 	nativeDeliveryMutations   NativeDeliveryMutationPort
 	nativeDeliveryPublication NativeDeliveryPublicationPort
 	nativeDeliveryApproval    NativeDeliveryApprovalPort
+	nativeOperationAuthority  NativeOperationAuthority
 	projectClaimAudit         ProjectClaimAuditAppender
 	projectClaimBootstrap     ProjectClaimBootstrapFunc
 	persistence               *Persistence
@@ -366,7 +367,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		bootstrapPolicies:    config.BootstrapPolicies, authorizeBootstrap: config.AuthorizeBootstrap,
 		nativeDeliveryReader:    config.NativeDeliveryReader,
 		nativeDeliveryMutations: config.NativeDeliveryMutations, nativeDeliveryPublication: config.NativeDeliveryPublication,
-		nativeDeliveryApproval: config.NativeDeliveryApproval,
+		nativeDeliveryApproval: config.NativeDeliveryApproval, nativeOperationAuthority: config.NativeOperationAuthority,
 		projectClaimAudit: func() ProjectClaimAuditAppender {
 			audit, _ := config.Persistence.Audit.(ProjectClaimAuditAppender)
 			return audit

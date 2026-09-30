@@ -14,7 +14,7 @@ test('local frontend validation runs every bounded shard without suppressing fai
     task: 'ci:lane:frontend:shard', vars: { SHARD: shard },
   })))
   expect(tasks['ci:lane:frontend:shard'].cmds).toEqual([
-    'node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:test:frontend:{{.SHARD}}',
+    'node scripts/ci_watchdog.mjs --timeout-seconds {{if eq .SHARD "reports"}}300{{else}}180{{end}} --attempts 2 -- task ci:test:frontend:{{.SHARD}}',
   ])
   expect(tasks['ci:lane:frontend:shard'].requires.vars[0].enum).toEqual(shards)
   expect(tasks['ci:test:frontend:reports-viewer'].cmds).toEqual([
@@ -66,13 +66,15 @@ test('hosted demo generates build-only packages before publishing', () => {
   expect(publicationSource.outputs).toEqual({
     publish: '${{ steps.resolve.outputs.publish }}',
     revision: '${{ steps.resolve.outputs.revision }}',
+    permission_profile: '${{ steps.resolve.outputs.permission_profile }}',
   })
   expect(resolver.run).toBe('python3 scripts/demo_runtime_record.py resolve')
 
   const deploy = config.jobs.deploy
-  expect(deploy.needs).toBe('publication-source')
-  expect(deploy.if).toBe("needs.publication-source.outputs.publish == 'true'")
-  expect(deploy.env.SOURCE_REVISION).toBe('${{ needs.publication-source.outputs.revision }}')
+  expect(deploy.needs).toEqual(['publication-source', 'runtime'])
+  expect(deploy.if).toBe("${{ always() && (needs.publication-source.outputs.publish == 'true' || (needs.runtime.result == 'success' && contains(fromJSON('[\"deploy\",\"upgrade\"]'), inputs.action))) }}")
+  expect(deploy.env.SOURCE_REVISION).toBe('${{ needs.publication-source.outputs.revision || needs.runtime.outputs.revision }}')
+  expect(deploy.env.DEMO_PERMISSION_PROFILE).toBe('${{ needs.publication-source.outputs.permission_profile || needs.runtime.outputs.permission_profile }}')
   expect(deploy.env.DEMO_DATASET).toBe("${{ vars.DEMO_DATASET || 'olist' }}")
   const steps = deploy.steps
   const setupIndex = steps.findIndex((step: any) => step.uses === './.github/actions/setup-ci')
@@ -84,17 +86,65 @@ test('hosted demo generates build-only packages before publishing', () => {
   expect(publishIndex).toBeGreaterThan(generateIndex)
 })
 
-test('production image qualification generates SQL packages before compiling the qualifier', () => {
-  const commands = tasks['image:qualify:production'].cmds
-  expect(commands.slice(0, 2)).toEqual([
-    { task: 'db:generate' },
-    { task: 'api:generate' },
-  ])
-  expect(commands.at(-1)).toContain('go run ./cmd/leapviewctl qualify image')
+test('hosted demo runs the protected version-aware publication adapter against the selected source checkout', () => {
+  const config = parse(readFileSync('.github/workflows/demo-deploy.yml', 'utf8'))
+  const steps = config.jobs.deploy.steps
+  const selectedSource = steps.findIndex((step: any) => step.name === 'Check out the qualified revision')
+  const adapterCheckout = steps.findIndex((step: any) => step.name === 'Check out current publication adapter')
+  const adapterInstall = steps.findIndex((step: any) => step.name === 'Install current publication adapter in selected source')
+  const datasetGuard = steps.findIndex((step: any) => step.name === 'Validate pinned dataset support')
+  const credentials = steps.findIndex((step: any) => step.name === 'Fetch demo deployment credentials')
+  const publication = steps.findIndex((step: any) => step.id === 'publication')
+
+  expect(selectedSource).toBeGreaterThan(-1)
+  expect(adapterCheckout).toBeGreaterThan(-1)
+  expect(adapterInstall).toBeGreaterThan(-1)
+  expect(steps[selectedSource].with.ref).toBe('${{ env.SOURCE_REVISION }}')
+  expect(steps[adapterCheckout].uses).toBe('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1')
+  expect(steps[adapterCheckout].with).toEqual({
+    ref: '${{ github.sha }}',
+    path: '.demo-publication-adapter',
+    'fetch-depth': 1,
+    'persist-credentials': false,
+    'sparse-checkout': 'scripts/deploy_demo.sh\nscripts/demo_client_contract.py\n',
+    'sparse-checkout-cone-mode': false,
+  })
+  expect(adapterCheckout).toBeGreaterThan(selectedSource)
+  expect(adapterInstall).toBeGreaterThan(adapterCheckout)
+  expect(adapterInstall).toBeLessThan(datasetGuard)
+  expect(datasetGuard).toBeLessThan(credentials)
+  expect(credentials).toBeLessThan(publication)
+  expect(steps[adapterInstall].run).toBe([
+    'set -euo pipefail',
+    'install -m 0755 .demo-publication-adapter/scripts/deploy_demo.sh scripts/deploy_demo.sh',
+    'install -m 0644 .demo-publication-adapter/scripts/demo_client_contract.py scripts/demo_client_contract.py',
+    'rm -rf .demo-publication-adapter',
+  ].join('\n') + '\n')
+})
+
+for (const [target, command] of [['production', 'image'], ['site', 'site-image']]) {
+  test(`${target} image qualification generates SQL, API and UI packages before compiling leapviewctl`, () => {
+    const commands = tasks[`image:qualify:${target}`].cmds
+    // The host upgrade command reaches access/module through its transition
+    // intent; that module also compiles the generated login signal package.
+    // Both entrypoints must work without a prior application build/generate.
+    expect(commands.slice(0, 3)).toEqual([
+      { task: 'db:generate' },
+      { task: 'api:generate' },
+      { task: 'ui-signals:generate' },
+    ])
+    expect(commands.at(-1)).toContain(`go run ./cmd/leapviewctl qualify ${command}`)
+  })
+}
+
+test('native PostgreSQL qualification generates the complete application fixture before compilation', () => {
+  const commands = tasks['test:qualification:native-postgres'].cmds
+  expect(commands[0]).toEqual({ task: 'generate' })
+  expect(commands.at(-1)).toContain('TestQualificationNativePostgresTopologyContainerBackedContract')
 })
 
 test('hosted demo rejects an unknown dataset before requesting deployment credentials', () => {
-  const result = spawnSync('/bin/bash', ['scripts/deploy_demo.sh'], {
+  const result = spawnSync('bash', ['scripts/deploy_demo.sh'], {
     env: { PATH: process.env.PATH, DEMO_DATASET: 'unknown' }, encoding: 'utf8',
   })
   expect(result.status).toBe(64)
@@ -106,13 +156,16 @@ test('pinned publication rejects unsupported datasets before credentials or publ
   const workflow = parse(readFileSync('.github/workflows/demo-deploy.yml', 'utf8'))
   const steps = workflow.jobs.deploy.steps
   const guardIndex = steps.findIndex((step: any) => step.name === 'Validate pinned dataset support')
+  const sourceCheckout = steps.findIndex((step: any) => step.name === 'Check out the qualified revision')
   expect(guardIndex).toBeGreaterThan(0)
   expect(guardIndex).toBeLessThan(steps.findIndex((step: any) => step.name === 'Fetch demo deployment credentials'))
-  expect(steps[guardIndex - 1].with.ref).toBe('${{ env.SOURCE_REVISION }}')
+  expect(sourceCheckout).toBeGreaterThan(-1)
+  expect(sourceCheckout).toBeLessThan(guardIndex)
+  expect(steps[sourceCheckout].with.ref).toBe('${{ env.SOURCE_REVISION }}')
   const directory = mkdtempSync(join(tmpdir(), 'demo-dataset-guard-'))
   try {
     mkdirSync(join(directory, 'deploy/demo'), { recursive: true })
-    const run = (dataset: string) => spawnSync('/bin/bash', ['-c', steps[guardIndex].run], {
+    const run = (dataset: string) => spawnSync('bash', ['-c', steps[guardIndex].run], {
       cwd: directory, env: { PATH: process.env.PATH, DEMO_DATASET: dataset }, encoding: 'utf8',
     })
     // Old pinned revisions have no capability manifest and only publish Olist.
@@ -130,7 +183,7 @@ test('pinned publication rejects unsupported datasets before credentials or publ
 
 test('runtime deployment admits exact evidence before secrets and advances pin only after validation', () => {
   const workflow = parse(readFileSync('.github/workflows/demo-deploy.yml', 'utf8'))
-  expect(workflow.on.workflow_dispatch.inputs.action.options).toEqual(['publish', 'deploy', 'upgrade', 'recover'])
+  expect(workflow.on.workflow_dispatch.inputs.action.options).toEqual(['publish', 'prepare', 'deploy', 'upgrade', 'recover', 'reconcile'])
   expect(workflow.on.workflow_run).toBeUndefined()
   expect(workflow.concurrency['cancel-in-progress']).toBe(false)
   const runtime = workflow.jobs.runtime
@@ -144,7 +197,7 @@ test('runtime deployment admits exact evidence before secrets and advances pin o
   const preflight = steps.findIndex((s: any) => s.run === 'python3 scripts/demo_compose_deploy.py --preflight')
   const record = steps.findIndex((s: any) => s.id === 'record')
   const rollout = steps.findIndex((s: any) => s.id === 'rollout')
-  const pin = steps.findIndex((s: any) => s.name === 'Advance verified runtime pin')
+  const pin = steps.findIndex((s: any) => s.id === 'reconcile')
   expect(qualified).toBeGreaterThan(-1)
   expect(admission).toBeGreaterThan(qualified)
   expect(browser).toBeGreaterThan(admission)
@@ -154,7 +207,61 @@ test('runtime deployment admits exact evidence before secrets and advances pin o
   expect(record).toBeGreaterThan(preflight)
   expect(rollout).toBeGreaterThan(record)
   expect(pin).toBeGreaterThan(rollout)
-  expect(steps[pin].if).toBe('success()')
+  expect(steps[pin].if).toBe("${{ always() && steps.record.outputs.id != '' }}")
+  expect(steps[pin].run).toBe('python3 scripts/demo_runtime_record.py reconcile')
+  expect(steps[record].if).toBe("inputs.action != 'prepare'")
+  // A failed rollout must still reconcile its verified recovery; no raw
+  // workflow success flag may invent a running image.
+  expect(JSON.stringify(steps)).not.toContain('demo_runtime_record.py success')
+  const repair = workflow.jobs['runtime-reconcile'].steps
+  const inspect = repair.findIndex((s: any) => s.id === 'inspect')
+  const reconcile = repair.findIndex((s: any) => s.run === 'python3 scripts/demo_runtime_record.py reconcile')
+  expect(reconcile).toBeGreaterThan(inspect)
+  expect(repair[reconcile].if).toBe("${{ always() && steps.inspect.outcome != 'skipped' }}")
   expect(JSON.stringify(steps)).not.toContain('/hetzner-qualification/infrastructure')
   expect(JSON.stringify(steps)).not.toContain('secret-path":"/demo/access')
+})
+
+
+test('publication checks the new CFO generation without invoking another runtime mutation', () => {
+  const { jobs } = parse(readFileSync('.github/workflows/demo-deploy.yml', 'utf8'))
+  const steps = jobs.deploy.steps
+  const publication = steps.findIndex((s: any) => s.id === 'publication')
+  const policy = steps.findIndex((s: any) => s.name === 'Check out current publication verification policy')
+  const verify = steps.findIndex((s: any) => s.id === 'verify-publication')
+  expect(policy).toBeGreaterThan(publication)
+  expect(steps[policy].with.ref).toBe('${{ github.sha }}')
+  expect(verify).toBeGreaterThan(policy)
+  expect(steps[verify].if).toBe("env.DEMO_DATASET == 'cfo'")
+  expect(steps[verify].run).toBe('bun install --frozen-lockfile\npython3 scripts/demo_compose_deploy.py --verify-publication\n')
+  expect(steps[verify].env.DEMO_PROJECT_ID).toBe('${{ vars.DEMO_PROJECT_ID }}')
+  expect(JSON.stringify(steps)).not.toContain('demo_runtime_record.py start')
+  expect(JSON.stringify(steps)).not.toContain('demo_runtime_record.py reconcile')
+})
+
+test('historical browser launcher requires a private proxy and exact synthetic certificate pin', () => {
+  const probe = (env: Record<string, string>) => spawnSync('node', ['--input-type=module', '-e',
+    `import { historicalBrowserOptions } from './internal/app/cli/composectl/testdata/historical_browser.mjs';
+     process.stdout.write(JSON.stringify(historicalBrowserOptions(process.env)));`], {
+    env: { PATH: process.env.PATH, ...env }, encoding: 'utf8',
+  })
+  const valid = {
+    DEMO_CLONE_ONLY: '1',
+    DEMO_BROWSER_PROXY: 'http://127.0.0.1:43210',
+    DEMO_CLONE_PROXY: 'http://127.0.0.1:43210',
+    DEMO_HISTORICAL_BROWSER_SPKI: Buffer.alloc(32, 1).toString('base64'),
+  }
+  expect(probe(valid).status).toBe(0)
+  for (const change of [
+    { DEMO_CLONE_ONLY: '' },
+    { DEMO_CLONE_PROXY: 'http://127.0.0.1:43211' },
+    { DEMO_BROWSER_PROXY: 'http://example.com:43210' },
+    { DEMO_BROWSER_PROXY: 'http://127.0.0.1:99999' },
+    { DEMO_HISTORICAL_BROWSER_SPKI: '' },
+    { DEMO_HISTORICAL_BROWSER_SPKI: '--ignore-certificate-errors' },
+    { DEMO_HISTORICAL_BROWSER_SPKI: valid.DEMO_HISTORICAL_BROWSER_SPKI + ',extra-pin' },
+  ]) expect(probe({ ...valid, ...change }).status).not.toBe(0)
+  const options = JSON.parse(probe(valid).stdout)
+  expect(options.ignoreHTTPSErrors).toBeUndefined()
+  expect(options.args).toEqual(['--ignore-certificate-errors-spki-list=' + valid.DEMO_HISTORICAL_BROWSER_SPKI])
 })

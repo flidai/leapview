@@ -27,7 +27,7 @@ import (
 
 // Combined generated surface including target-policy and development-profile
 // operations. This count is a contract snapshot, not a feature-coverage claim.
-const expectedAPIGenAggregateOperationCount = 202
+const expectedAPIGenAggregateOperationCount = 204
 
 func TestAPIGenTypedAuthzMetadataReachesAccessBoundary(t *testing.T) {
 	contracts := accessAPIGenOperationContracts()
@@ -106,7 +106,7 @@ func TestAPIGenAgentCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenAgentCapabilityOwnsItsOperationSurface(t *testing.T) {
 	agentContracts := agentgen.GetAPIGenOperationContracts()
-	if got, want := len(agentContracts), 15; got != want {
+	if got, want := len(agentContracts), 17; got != want {
 		t.Fatalf("Agent generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range agentContracts {
@@ -436,6 +436,15 @@ func TestAPIGenManagedDataCapabilityOwnsItsOperationSurface(t *testing.T) {
 		t.Fatalf("ManagedData generated operations = %d, want %d", got, want)
 	}
 	appContracts := apigenapi.GetAPIGenOperationContracts()
+	uploadMutations := map[string]bool{
+		"createManagedDataUploadSession":       true,
+		"cancelManagedDataUploadSession":       true,
+		"finalizeManagedDataUploadSession":     true,
+		"createManagedDataS3MultipartUpload":   true,
+		"signManagedDataS3MultipartPart":       true,
+		"completeManagedDataS3MultipartUpload": true,
+		"abortManagedDataS3MultipartUpload":    true,
+	}
 	for operationID, contract := range contracts {
 		if len(contract.Tags) != 1 || contract.Tags[0] != "Managed Data" {
 			t.Errorf("ManagedData operation %q tags = %v, want [Managed Data]", operationID, contract.Tags)
@@ -443,6 +452,15 @@ func TestAPIGenManagedDataCapabilityOwnsItsOperationSurface(t *testing.T) {
 		if _, exists := appContracts[operationID]; exists {
 			t.Errorf("ManagedData operation %q is still emitted by the application package", operationID)
 		}
+		if uploadMutations[operationID] {
+			if contract.Authz == nil || contract.Authz.Action != "connection.upload" {
+				t.Errorf("ManagedData mutation %q action = %#v, want connection.upload", operationID, contract.Authz)
+			}
+			delete(uploadMutations, operationID)
+		}
+	}
+	for operationID := range uploadMutations {
+		t.Errorf("ManagedData upload mutation contract %q is missing", operationID)
 	}
 	if got, want := len(apiaggregate.GetAPIGenOperationContracts()), expectedAPIGenAggregateOperationCount; got != want {
 		t.Fatalf("aggregate generated operations = %d, want %d", got, want)
@@ -719,8 +737,8 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 132 {
-		t.Fatalf("UI signal IR contracts = %d, want 132", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 136 {
+		t.Fatalf("UI signal IR contracts = %d, want 136", len(irDoc.Contracts))
 	}
 	foundEnvelopeMetadata := false
 	foundImportedVisualizationRoot := false
@@ -881,6 +899,8 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"getInstance": true,
 	}
 	authenticatedOperations := map[string]bool{
+		"addChatVisualToDashboard":         true,
+		"listChatVisualDashboards":         true,
 		"archiveAgentConversation":         true,
 		"cancelAgentRun":                   true,
 		"cancelRefreshRun":                 true,

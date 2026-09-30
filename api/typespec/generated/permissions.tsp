@@ -45,6 +45,7 @@ enum PermissionAction {
   connectionCreate: "connection.create";
   connectionUse: "connection.use";
   connectionManage: "connection.manage";
+  connectionUpload: "connection.upload";
   resourceShare: "resource.share";
   deliveryRead: "delivery.read";
   deliveryPlan: "delivery.plan";

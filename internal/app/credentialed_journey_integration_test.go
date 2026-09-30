@@ -74,7 +74,7 @@ func TestCredentialedBrowserAndPipelineJourney(t *testing.T) {
 		return ok && principal.ID == created.Principal.ID && pipelineID == "pipeline:visuals-refresh" && capability == access.CapabilityResourceUse, nil
 	}
 	var pipelineCalls []credentialedJourneyPipelineCall
-	server.routes.projectBrowser.RunPipeline = func(_ context.Context, pipelineID, principalID, retryOf string) error {
+	server.routes.projectBrowser.RunPipeline = func(_ context.Context, pipelineID, principalID, retryOf, _ string) error {
 		pipelineCalls = append(pipelineCalls, credentialedJourneyPipelineCall{pipelineID: pipelineID, principalID: principalID, retryOf: retryOf})
 		switch len(pipelineCalls) {
 		case 1:
@@ -235,8 +235,11 @@ func TestCredentialedBrowserAndPipelineJourney(t *testing.T) {
 		}
 		switch index {
 		case 0, 3:
-			if !strings.Contains(message, "Pipeline command accepted") {
+			if !strings.Contains(message, "Pipeline request queued") {
 				t.Fatalf("pipeline %s success body=%s", action, message)
+			}
+			if strings.Contains(message, `"page"`) || len(message) >= 32768 {
+				t.Fatalf("pipeline %s success response must fit durable replay without a page projection, got %d bytes: %s", action, len(message), message)
 			}
 		case 1, 2:
 			if !strings.Contains(message, "Pipeline operation failed") {

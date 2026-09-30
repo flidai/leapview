@@ -164,25 +164,27 @@ func TestComposeNativeProjectSourceRejectsFreshMissingAuthoritiesWithoutStoreSid
 }
 
 func TestPostgresBuildSourceCompositionHasNoSQLiteOrPathFallbackImports(t *testing.T) {
-	contents, err := os.ReadFile("postgres_build.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	file, err := parser.ParseFile(token.NewFileSet(), "postgres_build.go", contents, parser.ImportsOnly)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, spec := range file.Imports {
-		path, err := strconv.Unquote(spec.Path.Value)
+	for _, filename := range []string{"postgres_build.go", "postgres_build_helpers.go", "postgres_lifecycle.go"} {
+		contents, err := os.ReadFile(filename)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if path == "database/sql" {
-			t.Fatalf("postgres build imports forbidden SQLite fallback %q", path)
+		file, err := parser.ParseFile(token.NewFileSet(), filename, contents, parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if strings.Contains(string(contents), "DBPath(") {
-		t.Fatal("postgres build contains a database-path fallback")
+		for _, spec := range file.Imports {
+			path, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if path == "database/sql" {
+				t.Fatalf("%s imports forbidden SQLite fallback %q", filename, path)
+			}
+		}
+		if strings.Contains(string(contents), "DBPath(") {
+			t.Fatalf("%s contains a database-path fallback", filename)
+		}
 	}
 }
 

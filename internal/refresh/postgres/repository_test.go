@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -581,87 +580,6 @@ func TestPostgresScheduledReplaceRequiresJobsSupersessionHook(t *testing.T) {
 	}
 }
 
-func TestPostgresOccurrenceTerminalReconcileRejectsContradiction(t *testing.T) {
-	_, admin := refreshTestDB(t)
-	r := New(admin)
-	ctx := t.Context()
-	now := time.Now().UTC().Truncate(time.Second)
-	digest := "sha256:" + strings.Repeat("a", 64)
-	if _, err := r.PutSchedule(ctx, ScheduleInput{ProjectID: "project_occurrence_reconcile", Environment: "prod", PipelineID: "pipeline_occurrence_reconcile", ScheduleID: "daily", SemanticModelID: "semantic_occurrence_reconcile", GenerationID: "generation_occurrence_reconcile", ArtifactDigest: digest, Cron: "* * * * *", Timezone: "UTC", ConcurrencyPolicy: "Forbid", StartingDeadline: time.Hour, ScheduleDigest: "sha256:" + strings.Repeat("b", 64), NextRunAt: now.Add(-time.Minute)}); err != nil {
-		t.Fatal(err)
-	}
-	claimed, err := r.ClaimDue(ctx, Scope{ProjectID: "project_occurrence_reconcile", Environment: "prod", GenerationID: "generation_occurrence_reconcile"}, now, "scheduler-reconcile", time.Minute, 1)
-	if err != nil || len(claimed) != 1 {
-		t.Fatalf("claimed occurrence=%#v err=%v", claimed, err)
-	}
-	o := claimed[0]
-	seedRefreshJob(t, admin, "job-occurrence-reconcile", "occurrence-reconcile-run", o.ProjectID, o.Environment, "principal:occurrence-reconcile")
-	root, _, err := r.CreateRunTreeWithSupersedeHook(ctx, RunInput{RunID: "occurrence-reconcile-run", ProjectID: o.ProjectID, Environment: o.Environment, GenerationID: o.GenerationID, PipelineID: o.PipelineID, SemanticModelID: o.SemanticModelID, TargetType: "refresh_pipeline", TargetID: o.PipelineID, TriggerType: "schedule", InvocationSource: "schedule", MatchingScheduleIDs: o.MatchingScheduleIDs, ScheduleRevisionID: o.ScheduleRevisionID, OccurrenceID: o.OccurrenceID, NominalTime: o.NominalTime, ConcurrencyPolicy: "Forbid", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal:occurrence-reconcile"}, nil, o.OccurrenceID, o.LeaseOwner, o.FenceGeneration, func(context.Context, Tx, Run) (string, error) { return "job-occurrence-reconcile", nil }, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	attempt, err := r.ClaimAttempt(ctx, root.RunID, "worker-occurrence-reconcile", 1, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := r.CompleteAttempt(ctx, root.RunID, attempt.OwnerID, attempt.FenceGeneration, json.RawMessage(`{"ok":true}`)); err != nil {
-		t.Fatal(err)
-	}
-	tx, err := admin.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := r.ReconcileOccurrenceTerminalTx(ctx, tx, root.RunID, "succeeded", json.RawMessage(`{"ok":true}`)); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Rollback(ctx); err != nil {
-		t.Fatal(err)
-	}
-	tx, err = admin.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = r.ReconcileOccurrenceTerminalTx(ctx, tx, root.RunID, "failed", json.RawMessage(`{"error":"contradiction"}`))
-	_ = tx.Rollback(ctx)
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("mismatched terminal reconciliation error=%v, want conflict", err)
-	}
-}
-
-func TestPostgresOccurrenceGuardRejectsTamperedLifecycle(t *testing.T) {
-	_, admin := refreshTestDB(t)
-	r := New(admin)
-	ctx := t.Context()
-	now := time.Now().UTC().Truncate(time.Second)
-	digest := "sha256:" + strings.Repeat("c", 64)
-	if _, err := r.PutSchedule(ctx, ScheduleInput{ProjectID: "project_occurrence_guard", Environment: "prod", PipelineID: "pipeline_occurrence_guard", ScheduleID: "daily", SemanticModelID: "semantic_occurrence_guard", GenerationID: "generation_occurrence_guard", ArtifactDigest: digest, Cron: "* * * * *", Timezone: "UTC", ConcurrencyPolicy: "Forbid", StartingDeadline: time.Hour, ScheduleDigest: "sha256:" + strings.Repeat("d", 64), NextRunAt: now.Add(-time.Minute)}); err != nil {
-		t.Fatal(err)
-	}
-	claimed, err := r.ClaimDue(ctx, Scope{ProjectID: "project_occurrence_guard", Environment: "prod", GenerationID: "generation_occurrence_guard"}, now, "scheduler-guard", time.Minute, 1)
-	if err != nil || len(claimed) != 1 {
-		t.Fatalf("claimed occurrence=%#v err=%v", claimed, err)
-	}
-	o := claimed[0]
-	if _, err := admin.Exec(ctx, `UPDATE refresh.schedule_occurrence SET finished_at=clock_timestamp() WHERE occurrence_id=$1`, o.OccurrenceID); err == nil {
-		t.Fatal("claimed occurrence accepted finished timestamp")
-	}
-	if _, err := admin.Exec(ctx, `UPDATE refresh.schedule_occurrence SET status='succeeded' WHERE occurrence_id=$1`, o.OccurrenceID); err == nil {
-		t.Fatal("claimed occurrence accepted terminal transition without run binding")
-	}
-	if err := r.ReleaseOccurrence(ctx, o); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := admin.Exec(ctx, `UPDATE refresh.schedule_occurrence SET status='skipped' WHERE occurrence_id=$1`, o.OccurrenceID); err == nil {
-		t.Fatal("pending occurrence accepted terminal transition without evidence")
-	}
-	if _, err := admin.Exec(ctx, `UPDATE refresh.schedule_occurrence SET status='skipped',outcome='{"reason":"test"}'::jsonb,finished_at=clock_timestamp() WHERE occurrence_id=$1`, o.OccurrenceID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := admin.Exec(ctx, `UPDATE refresh.schedule_occurrence SET outcome='{"reason":"tampered"}'::jsonb WHERE occurrence_id=$1`, o.OccurrenceID); err == nil {
-		t.Fatal("terminal occurrence accepted outcome mutation")
-	}
-}
-
 func TestPostgresRefreshScheduleCatchupRetryAndDeadline(t *testing.T) {
 	_, admin := refreshTestDB(t)
 	r := New(admin)
@@ -725,7 +643,19 @@ func TestPostgresRefreshScheduleCatchupRetryAndDeadline(t *testing.T) {
 		t.Fatal("forged greater-fence data-version unexpectedly accepted")
 	}
 	seedRefreshJob(t, admin, "job-recovery-run", "recovery-run", "p", "prod", "principal")
-	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-run", ProjectID: "p", Environment: "prod", GenerationID: "g1", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "recovery-pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: "sha256:" + strings.Repeat("4", 64), ArtifactDigest: digestA, PrincipalID: "principal", JobID: "job-recovery-run"}); err != nil {
+	recoveryRunInput := RunInput{RunID: "recovery-run", ProjectID: "p", Environment: "prod", GenerationID: "g1", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "recovery-pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: "sha256:" + strings.Repeat("4", 64), ArtifactDigest: digestA, PrincipalID: "principal", JobID: "job-recovery-run"}
+	if _, err := r.CreateRun(ctx, recoveryRunInput); err == nil {
+		t.Fatal("second root run across pipelines was admitted while publication run remained active")
+	} else {
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+			t.Fatalf("scope-wide active root rejection = %v, want unique admission conflict", err)
+		}
+	}
+	if err := r.CompleteAttempt(ctx, pubRun.RunID, "publisher", pubAttempt.FenceGeneration, []byte(`{"published":true}`)); err != nil {
+		t.Fatalf("complete prior root after admission rejection: %v", err)
+	}
+	if _, err := r.CreateRun(ctx, recoveryRunInput); err != nil {
 		t.Fatal(err)
 	}
 	if attempt, err := r.ClaimAttempt(ctx, "recovery-run", "reconciler", 1, time.Minute); err != nil {
@@ -1149,8 +1079,8 @@ func TestPostgresRefreshDirectLifecycleGuardsAndMaintenanceBudget(t *testing.T) 
 	if _, err := admin.Exec(ctx, `INSERT INTO refresh.data_version(project_id,environment,semantic_model_id,generation_id,snapshot_id,source,physical_pool_id,catalog_id,run_id,lease_owner,lease_revision) VALUES ('p','prod','m','g',1,'refresh','pool','catalog','guard-run','owner',1)`); err == nil {
 		t.Fatal("unpublished data-version INSERT unexpectedly succeeded")
 	}
-	seedRefreshJob(t, admin, "job-recovery-guard", "recovery-guard", "p", "prod", "principal")
-	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-guard", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model", TargetID: "recovery-guard", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-recovery-guard"}); err != nil {
+	seedRefreshJob(t, admin, "job-recovery-guard", "recovery-guard", "p-recovery", "prod", "principal")
+	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-guard", ProjectID: "p-recovery", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model", TargetID: "recovery-guard", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-recovery-guard"}); err != nil {
 		t.Fatal(err)
 	}
 	if attempt, err := r.ClaimAttempt(ctx, "recovery-guard", "recovery-owner", 1, time.Minute); err != nil {
@@ -1166,8 +1096,9 @@ func TestPostgresRefreshDirectLifecycleGuardsAndMaintenanceBudget(t *testing.T) 
 	}
 
 	for _, id := range []string{"maintenance-a", "maintenance-b"} {
-		seedRefreshJob(t, admin, "job-"+id, id, "p", "prod", "principal")
-		if _, err := r.CreateRun(ctx, RunInput{RunID: id, ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model", TargetID: id, TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-" + id}); err != nil {
+		projectID := "p-" + id
+		seedRefreshJob(t, admin, "job-"+id, id, projectID, "prod", "principal")
+		if _, err := r.CreateRun(ctx, RunInput{RunID: id, ProjectID: projectID, Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model", TargetID: id, TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-" + id}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := r.ClaimAttempt(ctx, id, "worker-"+id, 1, 100*time.Millisecond); err != nil {

@@ -67,6 +67,26 @@ func TestAgentAPIGenTypedCredentialUsesExactOperationPair(t *testing.T) {
 	}
 }
 
+func TestAgentAPIGenBrowserSessionReachesGovernedHandler(t *testing.T) {
+	operation := agenttools.APIGenOperation{Contract: agenttools.OperationContract{
+		OperationID: "querySemanticModel", Protected: true, AuthzMode: "privilege", Action: string(access.ActionSemanticQuery),
+		Resolver:   string(access.TypedOperationResolverSemanticModel),
+		Extensions: map[string]any{"x-authz": map[string]any{"mode": "privilege", "privilege": "RESOURCE_USE"}},
+	}}
+	request := typedAgentRouteRequest(operation.Contract.Path, map[string]string{"project": "project:analytics", "model": "model:sales"})
+	scope := agent.Scope{ProjectID: "project:analytics", PrincipalID: "principal"}
+	result, allowed := (&Module{}).authorizeAPIGenOperation(context.Background(), scope, operation, request)
+	if !allowed {
+		t.Fatalf("browser session denied before governed handler: %#v", result)
+	}
+
+	scope.Credential.Restricted = true
+	result, allowed = (&Module{}).authorizeAPIGenOperation(context.Background(), scope, operation, request)
+	if allowed {
+		t.Fatalf("restricted credential without typed scope was allowed: %#v", result)
+	}
+}
+
 func typedAgentRouteRequest(path string, params map[string]string) *http.Request {
 	request, _ := http.NewRequest(http.MethodPost, path, nil)
 	route := chi.NewRouteContext()

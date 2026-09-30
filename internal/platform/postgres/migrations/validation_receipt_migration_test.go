@@ -16,7 +16,7 @@ func TestCredentialValidationReceiptMigrationAndRolePolicy(t *testing.T) {
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
 	backup := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
-	database := h.NewDatabase(t, "credential_validation_receipt_047_goose")
+	database := h.NewDatabase(t, "credential_validation_receipt_050_goose")
 	h.GrantDatabase(t, database.Name, owner, "CONNECT", "CREATE")
 	h.GrantDatabase(t, database.Name, runtime, "CONNECT")
 	h.GrantDatabase(t, database.Name, backup, "CONNECT")
@@ -27,7 +27,7 @@ func TestCredentialValidationReceiptMigrationAndRolePolicy(t *testing.T) {
 	defer db.Close()
 
 	migrations := make(fstest.MapFS)
-	for _, name := range []string{"045_credential_draft_storage.sql", "047_credential_validation_receipts.sql"} {
+	for _, name := range []string{"048_credential_draft_storage.sql", "050_credential_validation_receipts.sql"} {
 		file, err := MigrationFS().Open(name)
 		if err != nil {
 			t.Fatal(err)

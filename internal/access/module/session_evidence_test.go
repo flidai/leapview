@@ -23,6 +23,21 @@ func TestBrowserSessionEvidenceIsNotAnAPICredential(t *testing.T) {
 	}
 }
 
+func TestCurrentSessionIDFromAuthenticatedEvidence(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/admin/security", nil)
+	r = r.WithContext(withSessionCredentialEvidence(r.Context(), access.CredentialEvidence{
+		Class: "session", ID: "session-1", PrincipalID: "principal-1",
+	}))
+	principal := func(*http.Request) (Principal, bool) { return Principal{ID: "principal-1"}, true }
+	if id, ok := currentSessionIDFromEvidence(r, principal); !ok || id != "session-1" {
+		t.Fatalf("current session = %q, found=%t", id, ok)
+	}
+	otherPrincipal := func(*http.Request) (Principal, bool) { return Principal{ID: "principal-2"}, true }
+	if id, ok := currentSessionIDFromEvidence(r, otherPrincipal); ok || id != "" {
+		t.Fatalf("cross-principal session = %q, found=%t", id, ok)
+	}
+}
+
 func TestBrowserSessionEvidenceDoesNotAttenuateNormalCapabilityProjection(t *testing.T) {
 	principal := Principal{ID: "principal-1", Kind: access.PrincipalKindUser}
 	capabilities := []access.Capability{access.CapabilityResourceRead}

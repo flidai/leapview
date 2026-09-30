@@ -15,7 +15,7 @@ func TestCredentialDraftMigrationRunsThroughGooseParser(t *testing.T) {
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
 	backup := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
-	database := h.NewDatabase(t, "credential_045_goose")
+	database := h.NewDatabase(t, "credential_048_goose")
 	h.GrantDatabase(t, database.Name, owner, "CONNECT", "CREATE")
 	h.GrantDatabase(t, database.Name, runtime, "CONNECT")
 	h.GrantDatabase(t, database.Name, backup, "CONNECT")
@@ -24,7 +24,7 @@ func TestCredentialDraftMigrationRunsThroughGooseParser(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	migration, err := MigrationFS().Open("045_credential_draft_storage.sql")
+	migration, err := MigrationFS().Open("048_credential_draft_storage.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestCredentialDraftMigrationRunsThroughGooseParser(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider, err := newProviderWithoutLock(db, fstest.MapFS{
-		"045_credential_draft_storage.sql": &fstest.MapFile{Data: body},
+		"048_credential_draft_storage.sql": &fstest.MapFile{Data: body},
 	})
 	if err != nil {
 		t.Fatal(err)

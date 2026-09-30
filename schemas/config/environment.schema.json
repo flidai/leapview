@@ -2790,12 +2790,60 @@
       "x-lifecycle": "supported",
       "x-scope": "healthcheck"
     },
+    "LEAPVIEW_HISTORICAL_TRANSITION_ADMISSION": {
+      "description": "Absolute path to exact-image OCI admission evidence for final artifact qualification.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
+    "LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_IMAGE": {
+      "description": "Exact OCI digest or local pre-merge image ID tested by the transition fixture.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
+    "LEAPVIEW_HISTORICAL_TRANSITION_CANDIDATE_REVISION": {
+      "description": "Full source revision bound to the candidate image.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
+    "LEAPVIEW_HISTORICAL_TRANSITION_EVIDENCE": {
+      "description": "Private absolute path for the passed transition receipt.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
+    "LEAPVIEW_HISTORICAL_TRANSITION_FINAL_ARTIFACT": {
+      "default": "false",
+      "description": "Require an admitted published OCI digest instead of a local pre-merge image.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
+    "LEAPVIEW_HISTORICAL_TRANSITION_REQUIRED": {
+      "default": "false",
+      "description": "Require execution of the supported predecessor-to-candidate transition fixture.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "historical transition qualification"
+    },
     "LEAPVIEW_HOME": {
       "default": ".leapview",
       "description": "Instance state directory containing databases, artifacts, and runtime files.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve,admin,client"
+    },
+    "LEAPVIEW_HOST_UPGRADE_QUALIFICATION": {
+      "default": "false",
+      "description": "Require the real isolated PostgreSQL recovery and host-layout tests.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "isolated host recovery qualification"
     },
     "LEAPVIEW_IMAGE": {
       "description": "Exact immutable LeapView OCI image identity used by release, backup, and qualification workflows.",
