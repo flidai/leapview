@@ -24,15 +24,15 @@ import (
 )
 
 const (
-	planetURL                = "https://build.protomaps.com/20260720.pmtiles"
-	archiveDigest            = visualizationmapasset.ArchiveSHA256
-	globalArchiveDigest      = "2d97ee8907670936ab722da7ca06eafec0734392f73fa1cd337d4debd85d676f"
-	regionalBounds           = "-82,-56,-30,14"
-	regionalMinimumZoom      = "7"
-	regionalMaximumZoom      = "10"
-	archiveDownloadThreads   = "2"
-	pmtilesRateLimitAttempts = 3
-	basemapAssetsSHA         = visualizationmapasset.BasemapAssetsRevision
+	planetURL               = "https://build.protomaps.com/20260720.pmtiles"
+	archiveDigest           = visualizationmapasset.ArchiveSHA256
+	globalArchiveDigest     = "2d97ee8907670936ab722da7ca06eafec0734392f73fa1cd337d4debd85d676f"
+	regionalBounds          = "-82,-56,-30,14"
+	regionalMinimumZoom     = "7"
+	regionalMaximumZoom     = "10"
+	archiveDownloadThreads  = "2"
+	pmtilesDownloadAttempts = 3
+	basemapAssetsSHA        = visualizationmapasset.BasemapAssetsRevision
 )
 
 var glyphRanges = []string{
@@ -293,25 +293,33 @@ func reuseVerifiedArchive(primary, legacy, digest, target string) error {
 
 func runPMTiles(ctx context.Context, arguments ...string) error {
 	var lastErr error
-	for attempt := 1; attempt <= pmtilesRateLimitAttempts; attempt++ {
-		var stderr strings.Builder
+	for attempt := 1; attempt <= pmtilesDownloadAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var stdout, stderr strings.Builder
 		command := pmtilesCommand(ctx, arguments...)
+		// The pinned PMTiles CLI logs extraction failures on stdout. go run
+		// adds its exit status on stderr; capture both without mixing writers.
+		command.Stdout = io.MultiWriter(os.Stdout, &stdout)
 		command.Stderr = io.MultiWriter(os.Stderr, &stderr)
 		err := command.Run()
 		if err == nil {
 			return nil
 		}
 		lastErr = err
-		if !isPMTilesRateLimit(stderr.String()) || attempt == pmtilesRateLimitAttempts {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if len(arguments) < 3 || arguments[0] != "extract" ||
+			!isPMTilesTransientExtraction(stdout.String()+"\n"+stderr.String()) || attempt == pmtilesDownloadAttempts {
 			return err
 		}
-		if len(arguments) >= 3 && arguments[0] == "extract" {
-			if removeErr := os.Remove(arguments[2]); removeErr != nil && !os.IsNotExist(removeErr) {
-				return fmt.Errorf("remove partial PMTiles extraction before retry: %w", removeErr)
-			}
+		if removeErr := os.Remove(arguments[2]); removeErr != nil && !os.IsNotExist(removeErr) {
+			return fmt.Errorf("remove partial PMTiles extraction before retry: %w", removeErr)
 		}
 		delay := time.Duration(attempt*5) * time.Second
-		fmt.Fprintf(os.Stderr, "PMTiles source rate limited; retrying in %s (attempt %d/%d)\n", delay, attempt+1, pmtilesRateLimitAttempts)
+		fmt.Fprintf(os.Stderr, "PMTiles source download interrupted; retrying in %s (attempt %d/%d)\n", delay, attempt+1, pmtilesDownloadAttempts)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -323,8 +331,18 @@ func runPMTiles(ctx context.Context, arguments ...string) error {
 	return lastErr
 }
 
-func isPMTilesRateLimit(stderr string) bool {
-	return strings.Contains(stderr, "HTTP error: 429")
+func isPMTilesTransientExtraction(output string) bool {
+	for line := range strings.SplitSeq(output, "\n") {
+		_, failure, found := strings.Cut(line, "Failed to extract, ")
+		if !found {
+			continue
+		}
+		switch strings.TrimSpace(failure) {
+		case "HTTP error: 429", "HTTP error: 500", "HTTP error: 502", "HTTP error: 503", "HTTP error: 504", "unexpected EOF", "EOF":
+			return true
+		}
+	}
+	return false
 }
 
 func pmtilesCommand(ctx context.Context, arguments ...string) *exec.Cmd {

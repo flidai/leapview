@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPMTilesCommandPinsArchiveEncodingToolchain(t *testing.T) {
@@ -36,19 +38,122 @@ func TestPMTilesCommandPinsArchiveEncodingToolchain(t *testing.T) {
 	}
 }
 
-func TestPMTilesRateLimitClassificationIsExact(t *testing.T) {
-	if !isPMTilesRateLimit("Failed to extract, HTTP error: 429") {
-		t.Fatal("HTTP 429 was not classified as a retryable PMTiles rate limit")
+func TestPMTilesTransientExtractionClassificationIsExact(t *testing.T) {
+	for _, failure := range []string{"HTTP error: 429", "HTTP error: 500", "HTTP error: 502", "HTTP error: 503", "HTTP error: 504", "unexpected EOF", "EOF"} {
+		if !isPMTilesTransientExtraction("2026/09/30 14:24:48 main.go:185: Failed to extract, " + failure + "\nexit status 1\n") {
+			t.Errorf("transient extraction failure %q was not retryable", failure)
+		}
 	}
 	for _, message := range []string{
 		"Failed to extract, HTTP error: 404",
+		"Failed to extract, HTTP error: 401",
+		"Failed to extract, HTTP error: 5000",
+		"Failed to extract, write output: no space left on device",
+		"Failed to merge, unexpected EOF",
 		"unexpected archive digest",
 		"HTTP 429 returned by an unrelated message",
+		"unexpected EOF",
 	} {
-		if isPMTilesRateLimit(message) {
-			t.Fatalf("classified non-PMTiles rate limit %q as retryable", message)
+		if isPMTilesTransientExtraction(message) {
+			t.Errorf("classified permanent or unrelated failure %q as retryable", message)
 		}
 	}
+}
+
+func TestRunPMTilesRetriesStdoutFailureAndRemovesPartialOutput(t *testing.T) {
+	for _, mode := range []string{"recover", "recover-eof"} {
+		t.Run(mode, func(t *testing.T) {
+			output, attempts := fakePMTiles(t, mode)
+			if err := runPMTiles(context.Background(), "extract", planetURL, output); err != nil {
+				t.Fatal(err)
+			}
+			if got := readPMTilesAttempts(t, attempts); got != "xx" {
+				t.Fatalf("attempts = %q, want two invocations", got)
+			}
+			contents, err := os.ReadFile(output)
+			if err != nil || string(contents) != "complete" {
+				t.Fatalf("extracted output = %q, error %v", contents, err)
+			}
+		})
+	}
+}
+
+func TestRunPMTilesBoundsRepeatedTransportFailures(t *testing.T) {
+	output, attempts := fakePMTiles(t, "exhaust")
+	if err := runPMTiles(context.Background(), "extract", planetURL, output); err == nil {
+		t.Fatal("repeated transport failures accepted")
+	}
+	if got := readPMTilesAttempts(t, attempts); got != "xxx" {
+		t.Fatalf("attempts = %q, want three invocations", got)
+	}
+}
+
+func TestRunPMTilesDoesNotRetryPermanentFailures(t *testing.T) {
+	output, attempts := fakePMTiles(t, "permanent")
+	if err := runPMTiles(context.Background(), "extract", planetURL, output); err == nil {
+		t.Fatal("permanent extraction failure accepted")
+	}
+	if got := readPMTilesAttempts(t, attempts); got != "x" {
+		t.Fatalf("attempts = %q, want one invocation", got)
+	}
+}
+
+func TestRunPMTilesCancellationInterruptsBackoff(t *testing.T) {
+	output, attempts := fakePMTiles(t, "exhaust")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := runPMTiles(ctx, "extract", planetURL, output); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cancellation error = %v, want context deadline", err)
+	}
+	if got := readPMTilesAttempts(t, attempts); got != "x" {
+		t.Fatalf("attempts = %q, want one invocation before cancellation", got)
+	}
+}
+
+func fakePMTiles(t *testing.T, mode string) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	attempts := filepath.Join(root, "attempts")
+	// The pinned CLI logs its extraction failure on stdout, while go run adds
+	// its exit status on stderr. A retry must discard the interrupted archive.
+	script := `#!/bin/sh
+output="$5"
+if [ -e "$output" ]; then
+  echo 'stale partial archive was not removed' >&2
+  exit 2
+fi
+printf x >> "$PMTILES_TEST_ATTEMPTS"
+if [ "${PMTILES_TEST_MODE#recover}" != "$PMTILES_TEST_MODE" ] && [ "$(cat "$PMTILES_TEST_ATTEMPTS")" = xx ]; then
+  printf complete > "$output"
+  exit 0
+fi
+printf partial > "$output"
+if [ "$PMTILES_TEST_MODE" = permanent ]; then
+  echo '2026/09/30 14:24:48 main.go:185: Failed to extract, HTTP error: 404'
+elif [ "$PMTILES_TEST_MODE" = recover-eof ]; then
+  echo '2026/09/30 14:24:48 main.go:185: Failed to extract, unexpected EOF'
+else
+  echo '2026/09/30 14:24:48 main.go:185: Failed to extract, HTTP error: 500'
+fi
+echo 'exit status 1' >&2
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(root, "go"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PMTILES_TEST_ATTEMPTS", attempts)
+	t.Setenv("PMTILES_TEST_MODE", mode)
+	return filepath.Join(root, "output.pmtiles"), attempts
+}
+
+func readPMTilesAttempts(t *testing.T, path string) string {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(contents)
 }
 
 func TestVerifyFileFailsClosedOnDigestMismatch(t *testing.T) {
