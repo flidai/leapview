@@ -432,7 +432,7 @@ func appendChatVisualFilters(value *document.DashboardDocument, filters []docume
 		}
 	}
 
-	usedURLParameters := make(map[string]int, len(value.Spec.Filters)+len(imports))
+	usedURLParameters := make(map[string]int)
 	for _, filter := range value.Spec.Filters {
 		if filter.URLParameter != nil {
 			usedURLParameters[*filter.URLParameter]++
