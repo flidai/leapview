@@ -28,6 +28,19 @@ def verify_namespaces(parent):
         raise SystemExit("Requires root as PID 1 in isolated mount, network and PID namespaces")
 
 
+def daemon_environment(root):
+    # /run is hidden by the fixture's tmpfs. Do not inherit an operator/runner
+    # runtime or temporary path beneath it into dockerd and its child processes.
+    temporary = root / "tmp"
+    runtime = root / "runtime"
+    temporary.mkdir(mode=0o700)
+    runtime.mkdir(mode=0o700)
+    return dict(os.environ) | {
+        "XDG_RUNTIME_DIR": str(runtime),
+        **{key: str(temporary) for key in ("DOCKER_TMPDIR", "TMPDIR", "TMP", "TEMP")},
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=Path)
@@ -80,11 +93,12 @@ def main():
         run('ip', 'netns', 'exec', name, 'ip', '-6', 'route', 'add', 'default', 'via', subnet6 + '::1')
     scratch = tempfile.TemporaryDirectory(prefix="daemon-", dir=args.workdir.resolve())
     ROOT = Path(scratch.name)
+    environment = daemon_environment(ROOT)
     log = open(ROOT / 'daemon.log', 'a')
     configuration = ROOT / 'daemon.json'
     configuration.write_text('{}')
     def start():
-        daemon = subprocess.Popen([DOCKERD, '--config-file=' + str(configuration), '--host=unix:///run/test-docker.sock', '--data-root=' + str(ROOT / 'data'), '--exec-root=/run/test-docker', '--pidfile=/run/test-docker.pid', '--firewall-backend=iptables', '--userland-proxy=false', '--exec-opt=native.cgroupdriver=cgroupfs'], stdout=log, stderr=log)
+        daemon = subprocess.Popen([DOCKERD, '--config-file=' + str(configuration), '--host=unix:///run/test-docker.sock', '--data-root=' + str(ROOT / 'data'), '--exec-root=/run/test-docker', '--pidfile=/run/test-docker.pid', '--firewall-backend=iptables', '--userland-proxy=false', '--exec-opt=native.cgroupdriver=cgroupfs'], stdout=log, stderr=log, env=environment)
         deadline = time.monotonic() + 30
         while run(DOCKER, '-H', 'unix:///run/test-docker.sock', 'info', check=False).returncode:
             if time.monotonic() > deadline or daemon.poll() is not None:

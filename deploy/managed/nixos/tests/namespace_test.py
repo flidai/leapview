@@ -1,6 +1,10 @@
 """Safety regressions for the privileged Docker fixture; no root required."""
 
 import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -49,6 +53,26 @@ class NamespaceSafetyTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "isolated"):
                 fixture.main()
             command.assert_not_called()
+
+    def test_daemon_temp_paths_survive_hidden_host_runtime_directory(self):
+        hidden = "/run/user/1001/host-only"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.dict(fixture.os.environ, {
+                key: hidden for key in ("XDG_RUNTIME_DIR", "DOCKER_TMPDIR", "TMPDIR", "TMP", "TEMP")
+            }):
+                environment = fixture.daemon_environment(root)
+                self.assertEqual(fixture.os.environ["XDG_RUNTIME_DIR"], hidden)
+            for key in ("DOCKER_TMPDIR", "TMPDIR", "TMP", "TEMP"):
+                self.assertEqual(environment[key], str(root / "tmp"))
+            self.assertEqual(environment["XDG_RUNTIME_DIR"], str(root / "runtime"))
+            for path in (root / "tmp", root / "runtime"):
+                self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+            actual = subprocess.check_output(
+                [sys.executable, "-c", "import tempfile; print(tempfile.gettempdir())"],
+                env=environment, text=True,
+            ).strip()
+            self.assertEqual(actual, str(root / "tmp"))
 
 
 if __name__ == "__main__":
