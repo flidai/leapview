@@ -232,7 +232,7 @@ test('mounted deferred hosts retain current renderer, shell, and actions after s
   }
 })
 
-test('Explore from here appears only when a trusted dashboard link is supplied', async () => {
+test('Explore appears only when a trusted dashboard link is supplied', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
@@ -250,7 +250,7 @@ test('Explore from here appears only when a trusted dashboard link is supplied',
       host.remove()
       return result
     })
-    expect(state).toEqual({ before: false, text: 'Explore from here', href: '/dashboards/sales/pages/overview/visuals/revenue/explore' })
+    expect(state).toEqual({ before: false, text: 'Explore', href: '/dashboards/sales/pages/overview/visuals/revenue/explore' })
   } finally { await page.close() }
 })
 
