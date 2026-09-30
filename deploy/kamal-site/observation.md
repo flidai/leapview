@@ -4,8 +4,12 @@ These read-only tools make the observation repeatable from an operator machine.
 They do not deploy, prune images, reboot the host, change DNS, close PRs, or enable
 automatic activation. Use the [deployment runbook](README.md) to establish active
 B, retained A, qualified reserves, completed recovery checks, and no unresolved
-ownership before starting. Any failed check requires investigation and a fresh
-full interval after a new start smoke; preserve each failed run.
+ownership before starting. A failed/interrupted observation requires investigation
+and a fresh full interval after a new start smoke; preserve each failed run.
+Restart the interval after any deployment, rollback or
+corrective production mutation. A rejected setup/preflight check may be corrected
+while the unchanged observer is still running; it does not itself invalidate that
+observation.
 
 ## Inputs and start smoke
 
@@ -132,8 +136,10 @@ default for the public site; another HTTPS origin requires explicit aliases.
 
 An attempt is one-shot. Failed checks produce a protected receipt with the failing
 stage and a sanitized reason, without copying subprocess stderr or private paths.
-A killed attempt is interrupted; keep its artifacts
-and investigate before creating a new bundle/run. Even a passed receipt covers
+A killed attempt is interrupted; keep its artifacts and investigate before
+creating a replacement bundle. Preparation requires the unchanged observer to
+still be running. If it has finished, a new full interval and start smoke are
+required; a failed receipt cannot be overwritten. Even a passed receipt covers
 only observation and boundary smokes: final backup integrity, retained-image
 inventory, recovery evidence/runbook review, and fallback closure remain required.
 

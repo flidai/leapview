@@ -6,8 +6,9 @@ The public website now serves through the manually managed Kamal deployment.
 Production A/B admission and capacity qualification, original Compose
 restoration, B-to-A offline rollback and return to B, Caddy recreation, and a
 real host reboot all passed. Image B is active and A is the verified prior.
-The 24-hour observer is still running; its end adoption smoke, final retention
-audit, final acceptance receipt, and closure of fallback PR #748 remain pending.
+The 24-hour observer is still running. Completion requires the full interval,
+then its end adoption smoke and observation acceptance receipt, then the final
+retention/recovery audit, and finally closure of fallback PR #748.
 
 See the [sanitized rollout report](live-rollout-20260930.md) and
 [machine-readable receipt](live-rollout-20260930.json). They preserve UTC and
