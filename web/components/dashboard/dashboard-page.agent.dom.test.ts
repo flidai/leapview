@@ -44,11 +44,11 @@ test('reopening an active agent drawer refocuses the composer and preserves retu
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-drawer') && customElements.get('lv-chat-composer'))
-    await page.evaluate(async () => {
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agent: { status: { enabled: true, running: false }, composer: { value: '', disabled: false, placeholder: 'Ask' } } })
-    })
-    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    }))
+    const result = await evaluateAcrossContextTurnover(page, () => page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot
       const trigger = root.querySelector('.agent-toggle') as HTMLButtonElement
@@ -67,7 +67,7 @@ test('reopening an active agent drawer refocuses the composer and preserves retu
       drawer.open = false
       await drawer.updateComplete
       return { composerFocused, focusReturned: root.activeElement === trigger }
-    })
+    }))
     expect(result).toEqual({ composerFocused: true, focusReturned: true })
   } finally { await page.close() }
 })
