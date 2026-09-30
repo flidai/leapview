@@ -1,6 +1,7 @@
 """Real Docker regression in fresh mount, network and PID namespaces.
 
-Requires root, Docker, iproute2, iptables and curl. The private daemon uses a
+Requires root, unshare, Docker, iproute2, iptables and curl. Creates and verifies
+its own namespaces before any mount or network mutation. The private daemon uses a
 unique temporary data root and a socket hidden from the host by a private /run.
 The existing daemon, containers and host network remain outside this fixture.
 """
@@ -14,12 +15,36 @@ import sys
 import time
 import tempfile
 
+
+def namespace_ids():
+    return {kind: os.readlink(f"/proc/self/ns/{kind}") for kind in ("mnt", "net", "pid")}
+
+
+def verify_namespaces(parent):
+    current = namespace_ids()
+    if os.geteuid() != 0 or os.getpid() != 1 or any(
+        current[kind] == parent[kind] for kind in current
+    ):
+        raise SystemExit("Requires root as PID 1 in isolated mount, network and PID namespaces")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=Path)
-    parser.add_argument("--workdir", type=Path, required=True)
+    parser.add_argument("--workdir", type=Path, default=Path(tempfile.gettempdir()))
     parser.add_argument("--docker-package", type=Path, required=True)
+    parser.add_argument("--namespace-parent", type=json.loads, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if os.geteuid() != 0:
+        raise SystemExit("Run with sudo; the fixture creates its own isolated namespaces")
+    if args.namespace_parent is None:
+        subprocess.run([
+            "unshare", "--mount", "--net", "--pid", "--fork", "--mount-proc",
+            sys.executable, str(Path(__file__).resolve()), *sys.argv[1:],
+            "--namespace-parent", json.dumps(namespace_ids()),
+        ], check=True)
+        return
+    verify_namespaces(args.namespace_parent)
     POLICY = str(Path(__file__).resolve().parent.parent / "modules/docker-firewall.sh")
     IMAGE = str(args.image.resolve())
     DOCKER = str(args.docker_package.resolve() / "bin/docker")
@@ -33,22 +58,26 @@ def main():
             raise RuntimeError(f'{args}: {p.stderr}')
         return p
 
-    if os.geteuid() != 0 or os.getpid() != 1 or {x['ifname'] for x in json.loads(run('ip', '-j', 'link', 'show').stdout)} != {'lo'}:
-        raise SystemExit('Requires root in fresh mount, network and PID namespaces')
+    if {x['ifname'] for x in json.loads(run('ip', '-j', 'link', 'show').stdout)} != {'lo'}:
+        raise SystemExit('Requires an empty isolated network namespace')
     run('mount', '--make-rprivate', '/')
     run('mount', '-t', 'tmpfs', 'tmpfs', '/run')
     Path('/run/netns').mkdir()
     run('ip', 'link', 'set', 'lo', 'up')
-    for name, iface, subnet in [('public', 'eth-public', '198.18.0'), ('private', 'eth-private', '192.168.2')]:
+    run('sysctl', '-qw', 'net.ipv6.conf.all.forwarding=1')
+    for name, iface, subnet, subnet6 in [('public', 'eth-public', '198.18.0', 'fd00:1'), ('private', 'eth-private', '192.168.2', 'fd00:2')]:
         run('ip', 'netns', 'add', name)
         run('ip', 'link', 'add', iface, 'type', 'veth', 'peer', 'name', name + '-peer')
         run('ip', 'link', 'set', name + '-peer', 'netns', name)
         run('ip', 'addr', 'add', subnet + '.1/24', 'dev', iface)
+        run('ip', '-6', 'addr', 'add', subnet6 + '::1/64', 'dev', iface, 'nodad')
         run('ip', 'link', 'set', iface, 'up')
         run('ip', 'netns', 'exec', name, 'ip', 'addr', 'add', subnet + '.2/24', 'dev', name + '-peer')
+        run('ip', 'netns', 'exec', name, 'ip', '-6', 'addr', 'add', subnet6 + '::2/64', 'dev', name + '-peer', 'nodad')
         run('ip', 'netns', 'exec', name, 'ip', 'link', 'set', name + '-peer', 'up')
         run('ip', 'netns', 'exec', name, 'ip', 'link', 'set', 'lo', 'up')
         run('ip', 'netns', 'exec', name, 'ip', 'route', 'add', 'default', 'via', subnet + '.1')
+        run('ip', 'netns', 'exec', name, 'ip', '-6', 'route', 'add', 'default', 'via', subnet6 + '::1')
     scratch = tempfile.TemporaryDirectory(prefix="daemon-", dir=args.workdir.resolve())
     ROOT = Path(scratch.name)
     log = open(ROOT / 'daemon.log', 'a')
@@ -70,13 +99,17 @@ def main():
         return run(DOCKER, '-H', 'unix:///run/test-docker.sock', *args)
 
     def assert_ports():
-        for namespace, address in [('public', '198.18.0.1'), ('private', '192.168.2.1')]:
+        for namespace, address in [('public', '198.18.0.1'), ('public', '[fd00:1::1]'), ('private', '192.168.2.1'), ('private', '[fd00:2::1]')]:
             for port in [80, 443, 8080, 9090]:
                 p = run('ip', 'netns', 'exec', namespace, 'curl', '--noproxy', '*', '-s', '--connect-timeout', '1', '--max-time', '2', '-o', '/dev/null', f'http://{address}:{port}', check=False)
                 actual = p.returncode == 0
                 expected = namespace == 'public' and port in [80, 443]
-                assert actual == expected, f'{namespace}:{port}: expected {expected}, got {actual}'
-                print(f'{namespace}:{port}: {"allowed" if actual else "denied"}', flush=True)
+                assert actual == expected, f'{namespace}:{address}:{port}: expected {expected}, got {actual}'
+                print(f'{namespace}:{address}:{port}: {"allowed" if actual else "denied"}', flush=True)
+        for namespace in ('public', 'private'):
+            for destination in (container['IPAddress'], '[' + container['GlobalIPv6Address'] + ']'):
+                for port in (80, 8080):
+                    assert run('ip', 'netns', 'exec', namespace, 'curl', '--noproxy', '*', '-s', '--max-time', '1', '-o', '/dev/null', f'http://{destination}:{port}', check=False).returncode != 0, f'Direct container ingress allowed: {namespace}:{destination}:{port}'
 
     run('bash', POLICY, 'eth-public')
     daemon = start()
@@ -84,8 +117,9 @@ def main():
     try:
         print(docker('version', '--format', '{{.Server.Version}}').stdout, flush=True)
         docker('load', '-i', IMAGE)
-        docker('network', 'create', 'probe')
+        docker('network', 'create', '--ipv6', '--subnet', 'fd00:3::/64', 'probe')
         docker('run', '-d', '--name', 'port-probe', '--restart', 'always', '--network', 'probe', '-p', '80:8080', '-p', '443:8080', '-p', '8080:8080', '-p', '9090:80', 'managed-port-probe:fixture')
+        container = json.loads(docker('inspect', 'port-probe').stdout)[0]['NetworkSettings']['Networks']['probe']
         deadline = time.monotonic() + 30
         while run('curl', '--noproxy', '*', '-s', '--max-time', '1', '-o', '/dev/null', 'http://127.0.0.1:8080', check=False).returncode:
             if time.monotonic() > deadline:
@@ -110,7 +144,7 @@ def main():
                 raise RuntimeError('Outbound-response fixture did not start')
             time.sleep(.1)
         docker('exec', 'port-probe', '/bin/wget', '-q', '-O', '/dev/null', 'http://198.18.0.2:8000')
-        print('Real Docker custom-bridge ingress, policy reload, daemon restart and outbound response checks passed', flush=True)
+        print('Real Docker IPv4/IPv6 custom-bridge ingress, direct-route denial, policy reload, daemon restart and outbound response checks passed', flush=True)
     finally:
         if server:
             server.terminate()

@@ -1567,11 +1567,11 @@ tasks:
   managed:hosts:docker-test:
     desc: Exercise real Docker forwarding and restart in isolated namespaces (requires sudo)
     cmds:
+      - python3 deploy/managed/nixos/tests/namespace_test.py
       - |
         probe_image="$(nix build path:./deploy/managed/nixos#port-probe --no-link --no-update-lock-file --print-out-paths)"
         docker_package="$(nix build path:./deploy/managed/nixos#nixosConfigurations.example-app.config.virtualisation.docker.package --no-link --no-update-lock-file --print-out-paths)"
-        mkdir -p .tmp/managed-docker
-        sudo unshare --mount --net --pid --fork --mount-proc python3 deploy/managed/nixos/tests/docker_daemon_test.py "$probe_image" --docker-package "$docker_package" --workdir .tmp/managed-docker
+        sudo python3 deploy/managed/nixos/tests/docker_daemon_test.py "$probe_image" --docker-package "$docker_package"
 
   managed:kamal:check:
     desc: Parse the application template with locked Kamal dependencies (no SSH)

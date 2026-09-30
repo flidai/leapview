@@ -17,7 +17,7 @@ import time
 
 
 def run(*args, check=True):
-    result = subprocess.run(args, capture_output=True, text=True)
+    result = subprocess.run(args, capture_output=True, text=True, timeout=30)
     if check and result.returncode:
         raise RuntimeError(f"{args}: {result.stderr}")
     return result
@@ -68,7 +68,7 @@ def main():
             run(family, "-A", "FORWARD", "-i", "docker0", "-j", "ACCEPT")
             run(family, "-P", "FORWARD", "DROP")
             for port, target in ((80, 8080), (443, 8080), (8080, 8080), (9000, 80)):
-                run(family, "-t", "nat", "-A", "PREROUTING", "-p", "tcp", "--dport", str(port), "-j", "DNAT", "--to-destination", f"{destination}:{target}")
+                run(family, "-t", "nat", "-A", "PREROUTING", "-m", "addrtype", "--dst-type", "LOCAL", "-p", "tcp", "--dport", str(port), "-j", "DNAT", "--to-destination", f"{destination}:{target}")
 
         for namespace, port in (("container", 80), ("container", 8080), ("private", 8000)):
             servers.append(subprocess.Popen(
@@ -82,6 +82,14 @@ def main():
                     raise AssertionError(f"Fixture server {address}:{port} did not start")
                 time.sleep(0.1)
 
+        # Prove both direct routes are functional before the policy is installed,
+        # so later denial cannot pass because of a missing route or listener.
+        for namespace in ("public", "private"):
+            for destination in ("172.30.0.2", "[fd00:3::2]"):
+                for port in (80, 8080):
+                    run("ip", "netns", "exec", namespace, "curl", "--noproxy", "*", "-s", "--max-time", "2", "-o", "/dev/null", f"http://{destination}:{port}")
+        # Baseline connections used distinct client ports and have closed. New
+        # requests below must be denied rather than inheriting established state.
         for iteration in range(2):
             run("bash", str(policy), "eth-public")
             for namespace, address in (
@@ -93,9 +101,16 @@ def main():
                     expected = namespace == "public" and port in (80, 443)
                     if allowed != expected:
                         raise AssertionError(f"{namespace}:{address}:{port}: expected allowed={expected}, got {allowed}")
+            for namespace in ("public", "private"):
+                # Direct routes have no DNAT/original host-port authorization.
+                for destination in ("172.30.0.2", "[fd00:3::2]"):
+                    for port in (80, 8080):
+                        result = run("ip", "netns", "exec", namespace, "curl", "--noproxy", "*", "-s", "--max-time", "1", "-o", "/dev/null", f"http://{destination}:{port}", check=False)
+                        if result.returncode == 0:
+                            raise AssertionError(f"Direct container ingress allowed: {namespace}:{destination}:{port}")
             for address in ("192.168.2.2", "[fd00:2::2]"):
                 run("ip", "netns", "exec", "container", "curl", "--noproxy", "*", "-s", "--max-time", "2", "-o", "/dev/null", f"http://{address}:8000")
-            print(f"Pass {iteration + 1}: IPv4/IPv6 proxy ingress, bypass denial, private isolation and outbound responses", flush=True)
+            print(f"Pass {iteration + 1}: IPv4/IPv6 proxy ingress, bypass/direct-route denial, private isolation and outbound responses", flush=True)
     finally:
         for server in servers:
             server.terminate()
